@@ -35,6 +35,76 @@ const BUTTON_X: i32 = 330;
 const BUTTON_Y: i32 = 36;
 const BUTTON_GAP: i32 = 2;
 const MAX_PAGE_BUTTONS: usize = 8;
+const OPTIONS_SETTINGS_PER_PAGE: usize = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OptionRowAction {
+    Enter(OptionsPage),
+    Adjust { page: OptionsPage, setting: usize },
+    Rebind(u16),
+    ShortcutPreset(u8),
+    PreviousPage,
+    NextPage,
+    AcceptPage,
+    CancelPage,
+    ChangeDataDir,
+    Finish,
+}
+
+impl OptionRowAction {
+    fn is_page_footer(self) -> bool {
+        matches!(self, Self::AcceptPage | Self::CancelPage)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OptionRow {
+    pub(super) action: OptionRowAction,
+    pub(super) label: String,
+    pub(super) help: Option<String>,
+    pub(super) enabled: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct OptionsPager {
+    page: usize,
+}
+
+impl OptionsPager {
+    pub(super) fn page_count(total_settings: usize) -> usize {
+        total_settings.div_ceil(OPTIONS_SETTINGS_PER_PAGE).max(1)
+    }
+
+    pub(super) fn visible_range(self, total_settings: usize) -> std::ops::Range<usize> {
+        let start = self
+            .page
+            .min(Self::page_count(total_settings) - 1)
+            .saturating_mul(OPTIONS_SETTINGS_PER_PAGE);
+        start..(start + OPTIONS_SETTINGS_PER_PAGE).min(total_settings)
+    }
+
+    pub(super) fn can_move_previous(self) -> bool {
+        self.page > 0
+    }
+
+    pub(super) fn can_move_next(self, total_settings: usize) -> bool {
+        self.page + 1 < Self::page_count(total_settings)
+    }
+
+    pub(super) fn move_by(&mut self, delta: i32, total_settings: usize) -> bool {
+        let last_page = Self::page_count(total_settings) - 1;
+        let next_page = if delta < 0 {
+            self.page.saturating_sub(1)
+        } else if delta > 0 {
+            (self.page + 1).min(last_page)
+        } else {
+            self.page
+        };
+        let changed = next_page != self.page;
+        self.page = next_page;
+        changed
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct OptionsTaskResult {
@@ -248,7 +318,7 @@ impl QuickLoadTaskState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OptionsPage {
+pub(super) enum OptionsPage {
     Hub,
     Graphics,
     Sounds,
@@ -286,8 +356,9 @@ pub(super) struct OptionsTaskState {
     page: OptionsPage,
     page_snapshot: PageSnapshot,
     frame: FrameWnd,
-    labels: Vec<String>,
+    rows: Vec<OptionRow>,
     selected: usize,
+    pager: OptionsPager,
     input: ModalInputState,
     transform: MenuTransform,
     shortcut_scroll: usize,
@@ -338,8 +409,9 @@ impl OptionsTaskState {
             page: OptionsPage::Hub,
             page_snapshot: PageSnapshot::None,
             frame: FrameWnd::default(),
-            labels: Vec::new(),
+            rows: Vec::new(),
             selected: 0,
+            pager: OptionsPager::default(),
             input,
             transform,
             shortcut_scroll: 0,
@@ -365,6 +437,11 @@ impl OptionsTaskState {
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
         let events = window.poll_events();
+        renderer.sync_window_size(window);
+        self.transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
         if events.iter().any(|event| matches!(event, GameEvent::Quit)) {
             self.render(renderer, resources, cursor);
             renderer.present();
@@ -419,9 +496,7 @@ impl OptionsTaskState {
                     GameEvent::KeyDown {
                         keycode: Keycode::Down,
                         ..
-                    } => {
-                        self.selected = (self.selected + 1).min(self.labels.len().saturating_sub(1))
-                    }
+                    } => self.selected = (self.selected + 1).min(self.rows.len().saturating_sub(1)),
                     GameEvent::KeyDown {
                         keycode: Keycode::Left,
                         ..
@@ -449,6 +524,13 @@ impl OptionsTaskState {
                             self.shortcut_scroll = (self.shortcut_scroll + 1).min(max);
                         }
                         self.rebuild_frame(resources);
+                    }
+                    GameEvent::MouseWheel(delta) if self.page != OptionsPage::Hub => {
+                        if *delta > 0 {
+                            self.change_options_page(-1, resources);
+                        } else if *delta < 0 {
+                            self.change_options_page(1, resources);
+                        }
                     }
                     _ => {}
                 }
@@ -478,113 +560,56 @@ impl OptionsTaskState {
     }
 
     fn activate(&mut self, index: usize, resources: &IngameMenuResources) -> Option<UiTaskOutcome> {
-        self.selected = index.min(self.labels.len().saturating_sub(1));
-        match self.page {
-            OptionsPage::Hub => match index {
-                0 => self.enter_page(OptionsPage::Graphics, resources),
-                1 => self.enter_page(OptionsPage::Sounds, resources),
-                2 => self.enter_page(OptionsPage::Shortcuts, resources),
-                3 => self.enter_page(OptionsPage::Gameplay, resources),
-                #[cfg(not(target_arch = "wasm32"))]
-                4 => self.enter_page(OptionsPage::MultiplayerPrivacy, resources),
-                #[cfg(all(
-                    not(target_arch = "wasm32"),
-                    any(target_os = "windows", target_os = "linux", target_os = "macos")
-                ))]
-                5 => {
-                    crate::datadir_locator::change_datadir_interactive();
-                }
-                #[cfg(all(
-                    not(target_arch = "wasm32"),
-                    any(target_os = "windows", target_os = "linux", target_os = "macos")
-                ))]
-                6 => return Some(self.finish()),
-                #[cfg(all(
-                    not(target_arch = "wasm32"),
-                    not(any(target_os = "windows", target_os = "linux", target_os = "macos"))
-                ))]
-                5 => return Some(self.finish()),
-                #[cfg(target_arch = "wasm32")]
-                4 => {
-                    return Some(self.finish());
-                }
-                _ => {}
-            },
-            OptionsPage::Graphics => match index {
-                0..=9 => self.adjust_selected(1, resources),
-                10 => self.accept_page(resources),
-                11 => self.restore_page(resources),
-                _ => {}
-            },
-            OptionsPage::Sounds => match index {
-                0..=6 => self.adjust_selected(1, resources),
-                7 => self.accept_page(resources),
-                8 => self.restore_page(resources),
-                _ => {}
-            },
-            OptionsPage::Gameplay => match index {
-                index if index < crate::ingame_menu::gameplay::OPTION_LABELS.len() => {
-                    self.adjust_selected(1, resources)
-                }
-                index if index == crate::ingame_menu::gameplay::OPTION_LABELS.len() => {
-                    self.accept_page(resources)
-                }
-                index if index == crate::ingame_menu::gameplay::OPTION_LABELS.len() + 1 => {
-                    self.restore_page(resources)
-                }
-                _ => {}
-            },
-            #[cfg(not(target_arch = "wasm32"))]
-            OptionsPage::MultiplayerPrivacy => match index {
-                0 => self.adjust_selected(1, resources),
-                1 => self.accept_page(resources),
-                2 => self.restore_page(resources),
-                _ => {}
-            },
-            OptionsPage::Shortcuts => {
-                let visible = MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
-                match index {
-                    i if i < visible => {
-                        self.rebinding = Some((self.shortcut_scroll + i) as u16);
-                        self.shortcut_reserved = false;
-                        self.rebuild_frame(resources);
-                    }
-                    i if i == visible => {
-                        promote_shortcut_edits(
-                            &self.keys,
-                            &mut self.custom_keys,
-                            &mut self.shortcut_dirty,
-                        );
-                        self.keys = KeyConfig::default_preset();
-                        self.rebuild_frame(resources);
-                    }
-                    i if i == visible + 1 => {
-                        promote_shortcut_edits(
-                            &self.keys,
-                            &mut self.custom_keys,
-                            &mut self.shortcut_dirty,
-                        );
-                        self.keys = KeyConfig::alternate_preset();
-                        self.rebuild_frame(resources);
-                    }
-                    i if i == visible + 2 => {
+        self.selected = index.min(self.rows.len().saturating_sub(1));
+        let Some(row) = self.rows.get(self.selected).cloned() else {
+            return None;
+        };
+        if !row.enabled {
+            return None;
+        }
+        match row.action {
+            OptionRowAction::Enter(page) => self.enter_page(page, resources),
+            OptionRowAction::Adjust { .. } => self.adjust_selected(1, resources),
+            OptionRowAction::Rebind(index) => {
+                self.rebinding = Some(index);
+                self.shortcut_reserved = false;
+                self.rebuild_frame(resources);
+            }
+            OptionRowAction::ShortcutPreset(preset) => {
+                promote_shortcut_edits(&self.keys, &mut self.custom_keys, &mut self.shortcut_dirty);
+                match preset {
+                    0 => self.keys = KeyConfig::default_preset(),
+                    1 => self.keys = KeyConfig::alternate_preset(),
+                    2 => {
                         self.keys = self.custom_keys.clone();
                         self.keys.key_type = 1;
                         self.shortcut_dirty = false;
                         self.shortcut_reserved = false;
-                        self.rebuild_frame(resources);
                     }
-                    i if i == visible + 3 => self.accept_page(resources),
-                    i if i == visible + 4 => self.restore_page(resources),
-                    _ => {}
+                    _ => panic!("unknown shortcut preset {preset}"),
                 }
+                self.rebuild_frame(resources);
             }
+            OptionRowAction::PreviousPage => self.change_options_page(-1, resources),
+            OptionRowAction::NextPage => self.change_options_page(1, resources),
+            OptionRowAction::AcceptPage => self.accept_page(resources),
+            OptionRowAction::CancelPage => self.restore_page(resources),
+            OptionRowAction::ChangeDataDir => {
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::datadir_locator::change_datadir_interactive();
+            }
+            OptionRowAction::Finish => return Some(self.finish()),
         }
         None
     }
 
     fn adjust_selected(&mut self, delta: i32, resources: &IngameMenuResources) {
-        match (self.page, self.selected) {
+        let Some(OptionRowAction::Adjust { page, setting }) =
+            self.rows.get(self.selected).map(|row| row.action)
+        else {
+            return;
+        };
+        match (page, setting) {
             (OptionsPage::Graphics, 0) => {
                 const MODES: &[(f32, f32)] = &[(640.0, 480.0), (800.0, 600.0), (1024.0, 768.0)];
                 let current = MODES
@@ -660,6 +685,18 @@ impl OptionsTaskState {
         self.rebuild_frame(resources);
     }
 
+    fn change_options_page(&mut self, delta: i32, resources: &IngameMenuResources) {
+        let total_settings = self
+            .all_rows(resources)
+            .into_iter()
+            .filter(|row| matches!(row.action, OptionRowAction::Adjust { .. }))
+            .count();
+        if self.pager.move_by(delta, total_settings) {
+            self.selected = 0;
+            self.rebuild_frame(resources);
+        }
+    }
+
     fn enter_page(&mut self, page: OptionsPage, resources: &IngameMenuResources) {
         self.page_snapshot = match page {
             OptionsPage::Graphics => PageSnapshot::Graphics(self.graphic.clone()),
@@ -674,6 +711,7 @@ impl OptionsTaskState {
         };
         self.page = page;
         self.selected = 0;
+        self.pager = OptionsPager::default();
         self.rebinding = None;
         self.shortcut_dirty = false;
         self.shortcut_reserved = false;
@@ -687,6 +725,7 @@ impl OptionsTaskState {
         self.page = OptionsPage::Hub;
         self.page_snapshot = PageSnapshot::None;
         self.selected = 0;
+        self.pager = OptionsPager::default();
         self.rebinding = None;
         self.shortcut_dirty = false;
         self.shortcut_reserved = false;
@@ -708,6 +747,7 @@ impl OptionsTaskState {
         }
         self.page = OptionsPage::Hub;
         self.selected = 0;
+        self.pager = OptionsPager::default();
         self.rebinding = None;
         self.shortcut_dirty = false;
         self.shortcut_reserved = false;
@@ -748,21 +788,55 @@ impl OptionsTaskState {
         })
     }
 
-    fn labels(&self, resources: &IngameMenuResources) -> Vec<String> {
+    fn all_rows(&self, resources: &IngameMenuResources) -> Vec<OptionRow> {
+        let row = |action, label: String, enabled| OptionRow {
+            action,
+            label,
+            help: None,
+            enabled,
+        };
         match self.page {
             OptionsPage::Hub => {
-                let mut labels = vec![
-                    resources.menu_text.get(MT_BTN_GRAPHICS),
-                    resources.menu_text.get(MT_BTN_SOUNDS),
-                    resources.menu_text.get(MT_BTN_SHORTCUTS),
-                    "Gameplay".to_string(),
+                let mut rows = vec![
+                    row(
+                        OptionRowAction::Enter(OptionsPage::Graphics),
+                        resources.menu_text.get(MT_BTN_GRAPHICS),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::Enter(OptionsPage::Sounds),
+                        resources.menu_text.get(MT_BTN_SOUNDS),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::Enter(OptionsPage::Shortcuts),
+                        resources.menu_text.get(MT_BTN_SHORTCUTS),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::Enter(OptionsPage::Gameplay),
+                        "Gameplay".to_string(),
+                        true,
+                    ),
                 ];
                 #[cfg(not(target_arch = "wasm32"))]
-                labels.push("Multiplayer / Privacy".to_string());
+                rows.push(row(
+                    OptionRowAction::Enter(OptionsPage::MultiplayerPrivacy),
+                    "Multiplayer / Privacy".to_string(),
+                    true,
+                ));
                 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
-                labels.push("Game Data Folder".to_string());
-                labels.push(resources.menu_text.get(MT_BTN_BACK));
-                labels
+                rows.push(row(
+                    OptionRowAction::ChangeDataDir,
+                    "Game Data Folder".to_string(),
+                    true,
+                ));
+                rows.push(row(
+                    OptionRowAction::Finish,
+                    resources.menu_text.get(MT_BTN_BACK),
+                    true,
+                ));
+                rows
             }
             OptionsPage::Graphics => {
                 let preset = crate::shader_preset::retroarch_presets()
@@ -770,7 +844,7 @@ impl OptionsTaskState {
                     .find(|preset| preset.id == self.graphic.shader_preset)
                     .map(|preset| preset.label.as_str())
                     .unwrap_or("Default");
-                vec![
+                let labels = vec![
                     format!(
                         "Resolution: {}x{}",
                         self.graphic.resolution_x.round(),
@@ -788,27 +862,57 @@ impl OptionsTaskState {
                     toggle_label("Hardware Cursor", self.graphic.hardware_cursor),
                     format!("Scaling: {}", self.graphic.scale_mode.label()),
                     format!("Shader Preset: {preset}"),
-                    resources.menu_text.get(MT_BTN_OK),
-                    resources.menu_text.get(MT_BTN_CANCEL),
-                ]
+                ];
+                let mut rows = labels
+                    .into_iter()
+                    .enumerate()
+                    .map(|(setting, label)| {
+                        row(
+                            OptionRowAction::Adjust {
+                                page: OptionsPage::Graphics,
+                                setting,
+                            },
+                            label,
+                            true,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                rows.extend(options_footer_rows(resources));
+                rows
             }
-            OptionsPage::Sounds => vec![
-                toggle_label("3D Sound", self.sound.sound_3d),
-                toggle_label("8-bit Sound", self.sound.sound_8bit),
-                format!("FX Volume: {}", self.sound.fx_volume),
-                format!("Dialogue Volume: {}", self.sound.dialogue_volume),
-                format!("Music Volume: {}", self.sound.music_volume),
-                format!("Comment Volume: {}", self.sound.exclamation_volume),
-                format!("Comment Frequency: {}", self.sound.amount_of_speaking),
-                resources.menu_text.get(MT_BTN_OK),
-                resources.menu_text.get(MT_BTN_CANCEL),
-            ],
+            OptionsPage::Sounds => {
+                let labels = vec![
+                    toggle_label("3D Sound", self.sound.sound_3d),
+                    toggle_label("8-bit Sound", self.sound.sound_8bit),
+                    format!("FX Volume: {}", self.sound.fx_volume),
+                    format!("Dialogue Volume: {}", self.sound.dialogue_volume),
+                    format!("Music Volume: {}", self.sound.music_volume),
+                    format!("Comment Volume: {}", self.sound.exclamation_volume),
+                    format!("Comment Frequency: {}", self.sound.amount_of_speaking),
+                ];
+                let mut rows = labels
+                    .into_iter()
+                    .enumerate()
+                    .map(|(setting, label)| {
+                        row(
+                            OptionRowAction::Adjust {
+                                page: OptionsPage::Sounds,
+                                setting,
+                            },
+                            label,
+                            setting != 0 || self.can_3d_sound,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                rows.extend(options_footer_rows(resources));
+                rows
+            }
             OptionsPage::Gameplay => {
-                let mut labels = crate::ingame_menu::gameplay::OPTION_LABELS
+                let mut rows = crate::ingame_menu::gameplay::OPTION_LABELS
                     .iter()
                     .enumerate()
                     .map(|(index, label)| {
-                        if index == 5 {
+                        let label = if index == 5 {
                             format!(
                                 "Campaign Presentation: {}",
                                 self.gameplay.campaign_presentation.label()
@@ -821,32 +925,45 @@ impl OptionsTaskState {
                                     index,
                                 ),
                             )
-                        }
+                        };
+                        row(
+                            OptionRowAction::Adjust {
+                                page: OptionsPage::Gameplay,
+                                setting: index,
+                            },
+                            label,
+                            index != crate::ingame_menu::gameplay::SHERWOOD_TRADING_OPTION_INDEX
+                                || self.sherwood_trading_editable,
+                        )
                     })
                     .collect::<Vec<_>>();
-                labels.extend([
-                    resources.menu_text.get(MT_BTN_OK),
-                    resources.menu_text.get(MT_BTN_CANCEL),
-                ]);
-                labels
+                rows.extend(options_footer_rows(resources));
+                rows
             }
             #[cfg(not(target_arch = "wasm32"))]
-            OptionsPage::MultiplayerPrivacy => vec![
-                toggle_label(
-                    "Publish Browser Join Links",
-                    self.multiplayer.publish_browser_join_links,
-                ),
-                resources.menu_text.get(MT_BTN_OK),
-                resources.menu_text.get(MT_BTN_CANCEL),
-            ],
+            OptionsPage::MultiplayerPrivacy => {
+                let mut rows = vec![row(
+                    OptionRowAction::Adjust {
+                        page: OptionsPage::MultiplayerPrivacy,
+                        setting: 0,
+                    },
+                    toggle_label(
+                        "Publish Browser Join Links",
+                        self.multiplayer.publish_browser_join_links,
+                    ),
+                    true,
+                )];
+                rows.extend(options_footer_rows(resources));
+                rows
+            }
             OptionsPage::Shortcuts => {
                 let visible = MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
-                let mut labels = (0..visible)
+                let mut rows = (0..visible)
                     .map(|offset| {
                         let index = self.shortcut_scroll + offset;
                         let action = KEY_ACTIONS.get(index).copied().unwrap_or("Unknown");
                         let key = self.keys.get_key_by_index(index as u16);
-                        if self.rebinding == Some(index as u16) {
+                        let label = if self.rebinding == Some(index as u16) {
                             if self.shortcut_reserved {
                                 format!("{action}: <Reserved key>")
                             } else {
@@ -857,76 +974,110 @@ impl OptionsTaskState {
                                 "{action}: {}",
                                 key.map_or_else(|| "None".into(), |key| format!("{key:?}"))
                             )
-                        }
+                        };
+                        row(OptionRowAction::Rebind(index as u16), label, true)
                     })
                     .collect::<Vec<_>>();
-                labels.extend([
-                    "Default 1".to_string(),
-                    "Default 2".to_string(),
-                    "User Defined".to_string(),
-                    resources.menu_text.get(MT_BTN_OK),
-                    resources.menu_text.get(MT_BTN_CANCEL),
+                rows.extend([
+                    row(
+                        OptionRowAction::ShortcutPreset(0),
+                        "Default 1".to_string(),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::ShortcutPreset(1),
+                        "Default 2".to_string(),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::ShortcutPreset(2),
+                        "User Defined".to_string(),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::AcceptPage,
+                        resources.menu_text.get(MT_BTN_OK),
+                        true,
+                    ),
+                    row(
+                        OptionRowAction::CancelPage,
+                        resources.menu_text.get(MT_BTN_CANCEL),
+                        true,
+                    ),
                 ]);
-                labels
+                rows
             }
         }
     }
 
     fn rebuild_frame(&mut self, resources: &IngameMenuResources) {
-        self.labels = self.labels(resources);
-        self.selected = self.selected.min(self.labels.len().saturating_sub(1));
-        let (button_w, button_h) = resources.button_dimensions();
-        let row_h = if self.labels.len() > 12 {
-            27
+        let all_rows = self.all_rows(resources);
+        self.rows = if matches!(self.page, OptionsPage::Hub | OptionsPage::Shortcuts) {
+            all_rows
         } else {
-            button_h.min(34)
+            let (settings, footer): (Vec<_>, Vec<_>) = all_rows
+                .into_iter()
+                .partition(|row| !row.action.is_page_footer());
+            let total_settings = settings.len();
+            self.pager.page = self
+                .pager
+                .page
+                .min(OptionsPager::page_count(total_settings) - 1);
+            let mut visible = settings[self.pager.visible_range(total_settings)].to_vec();
+            visible.push(OptionRow {
+                action: OptionRowAction::PreviousPage,
+                label: "Previous Page".to_string(),
+                help: Some("Show the previous settings page.".to_string()),
+                enabled: self.pager.can_move_previous(),
+            });
+            visible.push(OptionRow {
+                action: OptionRowAction::NextPage,
+                label: "Next Page".to_string(),
+                help: Some("Show the next settings page.".to_string()),
+                enabled: self.pager.can_move_next(total_settings),
+            });
+            visible.extend(footer);
+            visible
         };
+        self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+        let (button_w, button_h) = resources.button_dimensions();
+        let row_h = button_h.min(34);
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
-        for (index, label) in self.labels.iter().enumerate() {
-            let enabled = !matches!(
-                (self.page, index),
-                (OptionsPage::Sounds, 0) if !self.can_3d_sound
-            ) && !(self.page == OptionsPage::Gameplay
-                && index == crate::ingame_menu::gameplay::SHERWOOD_TRADING_OPTION_INDEX
-                && !self.sherwood_trading_editable);
-            let (x, y, width, height) = if self.page == OptionsPage::Gameplay {
-                let option_count = crate::ingame_menu::gameplay::OPTION_LABELS.len();
-                if index < option_count {
-                    let rows = option_count.div_ceil(2);
+        let mut settings_seen = 0usize;
+        for (index, row) in self.rows.iter().enumerate() {
+            let (x, y, width, height) = match row.action {
+                OptionRowAction::Adjust { .. } => {
+                    let setting = settings_seen;
+                    settings_seen += 1;
                     (
-                        if index < rows { 30 } else { 320 },
-                        100 + i32::try_from(index % rows).expect("gameplay option row fits i32")
+                        if setting < 6 { 30 } else { 320 },
+                        100 + i32::try_from(setting % 6).expect("option row fits i32")
                             * (row_h + BUTTON_GAP),
                         button_w,
                         row_h,
                     )
-                } else {
-                    let (button_width, button_height) = resources.button_dimensions();
-                    let bottom = crate::ingame_menu::layout::align_bottom_right(
-                        &[
-                            (&self.labels[option_count], true),
-                            (&self.labels[option_count + 1], true),
-                        ],
-                        button_width,
-                        button_height,
-                    );
-                    let button = &bottom[index - option_count];
-                    (button.x, button.y, button.w, button.h)
                 }
-            } else {
-                (
+                OptionRowAction::PreviousPage => (30, 388, button_w, row_h),
+                OptionRowAction::NextPage => (30, 388 + row_h + BUTTON_GAP, button_w, row_h),
+                OptionRowAction::AcceptPage if self.page != OptionsPage::Shortcuts => {
+                    (640 - button_w, 388, button_w, row_h)
+                }
+                OptionRowAction::CancelPage if self.page != OptionsPage::Shortcuts => {
+                    (640 - button_w, 388 + row_h + BUTTON_GAP, button_w, row_h)
+                }
+                _ => (
                     BUTTON_X,
                     BUTTON_Y + index as i32 * (row_h + BUTTON_GAP),
                     button_w,
                     row_h,
-                )
+                ),
             };
             frame.add_widget_absolute(widget_bridge::make_button_enabled(
                 index as u32,
-                label,
-                enabled,
+                &row.label,
+                row.enabled,
                 x,
                 y,
                 width,
@@ -960,7 +1111,7 @@ impl OptionsTaskState {
             render_text_virt_font(renderer, font, self.transform, &title, 20, 20);
         }
         if let Some(font) = resources.label_font_any() {
-            let help = match self.page {
+            let fallback_help = match self.page {
                 OptionsPage::Hub => "Select a settings page.",
                 OptionsPage::Shortcuts => "Click a binding, then press a key. Mouse wheel scrolls.",
                 #[cfg(not(target_arch = "wasm32"))]
@@ -969,9 +1120,22 @@ impl OptionsTaskState {
                 }
                 _ => "Click a value or use Left/Right. OK accepts; Cancel restores.",
             };
+            let help = self
+                .rows
+                .get(self.selected)
+                .and_then(|row| row.help.as_deref())
+                .unwrap_or(fallback_help);
             render_text_virt_font(renderer, font, self.transform, help, 24, 76);
         }
-        widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
+        for (index, widget) in self.frame.widgets().iter().enumerate() {
+            widget_bridge::draw_widget_button(
+                renderer,
+                resources,
+                self.transform,
+                widget,
+                index == self.selected,
+            );
+        }
         if let Some(cursor) = cursor {
             cursor.draw(renderer, self.transform, &self.input);
         }
@@ -1527,6 +1691,23 @@ fn toggle_label(label: &str, selected: bool) -> String {
     format!("{} {label}", if selected { "[x]" } else { "[ ]" })
 }
 
+fn options_footer_rows(resources: &IngameMenuResources) -> [OptionRow; 2] {
+    [
+        OptionRow {
+            action: OptionRowAction::AcceptPage,
+            label: resources.menu_text.get(MT_BTN_OK),
+            help: Some("Accept changes on this settings page.".to_string()),
+            enabled: true,
+        },
+        OptionRow {
+            action: OptionRowAction::CancelPage,
+            label: resources.menu_text.get(MT_BTN_CANCEL),
+            help: Some("Discard changes on this settings page.".to_string()),
+            enabled: true,
+        },
+    ]
+}
+
 fn play_button_noise(
     events: &[crate::ui::UiEvent],
     sound_manager: Option<&mut SoundManager>,
@@ -1641,6 +1822,34 @@ const KEY_ACTIONS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn options_pager_covers_large_setting_sets_exactly_once() {
+        let total = 45;
+        assert_eq!(OptionsPager::page_count(total), 4);
+        let covered = (0..OptionsPager::page_count(total))
+            .flat_map(|page| OptionsPager { page }.visible_range(total))
+            .collect::<Vec<_>>();
+        assert_eq!(covered, (0..total).collect::<Vec<_>>());
+        assert_eq!(OptionsPager { page: 0 }.visible_range(total), 0..12);
+        assert_eq!(OptionsPager { page: 3 }.visible_range(total), 36..45);
+    }
+
+    #[test]
+    fn options_pager_stops_at_navigation_boundaries() {
+        let mut pager = OptionsPager::default();
+        assert!(!pager.can_move_previous());
+        assert!(!pager.move_by(-1, 45));
+        assert!(pager.move_by(1, 45));
+        assert_eq!(pager.page, 1);
+        assert!(pager.move_by(99, 45));
+        assert_eq!(pager.page, 2, "one activation advances exactly one page");
+        assert!(pager.move_by(1, 45));
+        assert_eq!(pager.page, 3);
+        assert!(!pager.can_move_next(45));
+        assert!(!pager.move_by(1, 45));
+        assert_eq!(pager.page, 3);
+    }
 
     #[test]
     fn stable_save_filter_matches_legacy_picker_rules() {
