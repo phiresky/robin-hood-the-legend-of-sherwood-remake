@@ -12,13 +12,16 @@ const options = parseArgs(process.argv.slice(2));
 const ticket = required(options, "ticket");
 const devtoolsPort = Number(options["devtools-port"] ?? 9222);
 const hostHttp = options["host-http"] ?? "http://127.0.0.1:18641";
-const pageUrl = new URL(options["page-url"] ?? "http://127.0.0.1:41739/");
-pageUrl.searchParams.set("wasm-base", options["wasm-base"] ?? "/wasm/local");
-pageUrl.searchParams.set("join", ticket);
-pageUrl.searchParams.set("mp-nickname", options.nickname ?? "e2e-browser");
+const pageUrl = new URL(options["page-url"] ?? "https://robinhood.phiresky.xyz/");
+if (options["wasm-base"] !== undefined) {
+    pageUrl.searchParams.set("wasm-base", options["wasm-base"]);
+}
 pageUrl.searchParams.set("no-sound", "true");
 pageUrl.searchParams.set("rollback-check", "false");
 pageUrl.searchParams.set("wasm-log", options["wasm-log"] ?? "info");
+// Invitations live only in the fragment. The stable shell captures and
+// removes it before its first artifact/content request.
+pageUrl.hash = `join=${ticket}`;
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 const pages = await fetch(`http://127.0.0.1:${devtoolsPort}/json/list`).then(response => {
@@ -164,6 +167,31 @@ async function waitForHostFlags(expected, timeoutMilliseconds = 30_000) {
     }
 }
 
+async function hostReplay() {
+    const response = await fetch(`${hostHttp}/get-replay`);
+    const body = await response.json();
+    if (!response.ok) {
+        throw new Error(`host replay returned HTTP ${response.status}: ${JSON.stringify(body)}`);
+    }
+    const replay = body.content;
+    if (typeof replay !== "string" || !replay.startsWith("rhrec-")) {
+        throw new Error(`host did not expose a canonical compact replay: ${JSON.stringify(body)}`);
+    }
+    return replay;
+}
+
+async function assertPeerReplayDisabled(label) {
+    try {
+        const result = await rpc("get-replay");
+        throw new Error(`${label}: browser peer unexpectedly recorded replay ${JSON.stringify(result)}`);
+    } catch (error) {
+        if (!String(error.message).includes("no active replay recording")) {
+            throw error;
+        }
+        console.log(`${label} no active replay recording`);
+    }
+}
+
 async function stepHost(frames) {
     for (let index = 0; index < frames; index += 1) {
         const response = await fetch(`${hostHttp}/step-forward`, {
@@ -205,7 +233,7 @@ try {
     });
 
     const redactedUrl = new URL(pageUrl);
-    redactedUrl.searchParams.set("join", "rhmp1-<ticket>");
+    redactedUrl.hash = "join=<redacted-ticket>";
     console.log(`NAVIGATE ${redactedUrl}`);
     // Runtime.enable may replay console entries from a previous page in a
     // reused Chrome target. Only protocol events from this navigation count.
@@ -225,14 +253,11 @@ try {
     console.log(
         `HOST_LOCK_FLAGS_AFTER_FIRST_INPUT ${JSON.stringify(await waitForHostFlags([false, true]))}`,
     );
-    try {
-        const replayReply = await rpc("get-replay");
-        const replay =
-            typeof replayReply === "string" ? replayReply : String(replayReply?.content ?? "");
-        console.log(`REPLAY_AFTER_FIRST_INPUT prefix=${replay.slice(0, 18)} length=${replay.length}`);
-    } catch (error) {
-        console.log(`REPLAY_AFTER_FIRST_INPUT unavailable=${error.message}`);
-    }
+    await assertPeerReplayDisabled("PEER_REPLAY_AFTER_FIRST_INPUT");
+    const hostReplayAfterFirstInput = await hostReplay();
+    console.log(
+        `HOST_REPLAY_AFTER_FIRST_INPUT prefix=${hostReplayAfterFirstInput.slice(0, 18)} length=${hostReplayAfterFirstInput.length}`,
+    );
 
     const socketExpression =
         "globalThis.__robinE2ESockets.map((socket, index) => ({ index, url: socket.url, state: socket.readyState }))";
@@ -305,14 +330,11 @@ try {
     console.log(
         `HOST_LOCK_FLAGS_AFTER_SECOND_INPUT ${JSON.stringify(await waitForHostFlags([false, false]))}`,
     );
-    try {
-        const replayReply = await rpc("get-replay");
-        const replay =
-            typeof replayReply === "string" ? replayReply : String(replayReply?.content ?? "");
-        console.log(`REPLAY_FINAL prefix=${replay.slice(0, 18)} length=${replay.length}`);
-    } catch (error) {
-        console.log(`REPLAY_FINAL unavailable=${error.message}`);
-    }
+    await assertPeerReplayDisabled("PEER_REPLAY_FINAL");
+    const finalHostReplay = await hostReplay();
+    console.log(
+        `HOST_REPLAY_FINAL prefix=${finalHostReplay.slice(0, 18)} length=${finalHostReplay.length}`,
+    );
     console.log(`SOCKETS_FINAL ${JSON.stringify(await evaluate(socketExpression))}`);
     console.log("E2E_COMPLETE");
     await send("Browser.close").catch(() => {});
