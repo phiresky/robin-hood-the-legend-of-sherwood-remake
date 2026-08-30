@@ -927,6 +927,13 @@ impl SbFile {
         global_file_system().overlay_paths()
     }
 
+    /// Whether an in-memory ZIP overlay is active. Callers that require a
+    /// filesystem-verifiable content closure must fail instead of silently
+    /// omitting these roots from [`Self::overlay_paths`].
+    pub fn has_zip_overlays() -> bool {
+        global_file_system().has_zip_overlays()
+    }
+
     pub fn set_primary_path(path: &str) -> i32 {
         global_file_system().set_primary_path(path)
     }
@@ -1159,6 +1166,14 @@ impl SbFileSystem {
                 OverlayRoot::Zip(_) => None,
             })
             .collect()
+    }
+
+    pub fn has_zip_overlays(&self) -> bool {
+        self.overlay_paths
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|overlay| matches!(overlay, OverlayRoot::Zip(_)))
     }
 
     pub fn set_primary_path(&self, path: &str) -> i32 {

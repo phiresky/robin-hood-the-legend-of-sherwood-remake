@@ -58,6 +58,7 @@ pub mod mission_stat;
 pub mod movement;
 pub mod movement_diagnostics;
 pub mod multiplayer;
+pub mod multiplayer_config;
 pub mod natives;
 pub mod order;
 pub mod parameters_ai;

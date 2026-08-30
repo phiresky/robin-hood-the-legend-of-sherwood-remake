@@ -57,6 +57,11 @@ struct Args {
     #[arg(short, long, value_enum, default_value_t = OutFormat::Hackable)]
     format: OutFormat,
 
+    /// Shipping: write the canonical browser Full-content package manifest.
+    /// It binds every converted byte to the exact source Data/locale closure.
+    #[arg(long)]
+    web_content_manifest: bool,
+
     /// Overwrite `output` if it exists.
     #[arg(long, conflicts_with = "resume")]
     force: bool,
@@ -232,20 +237,36 @@ fn main() -> Result<()> {
         OutFormat::Hackable if args.resume => {
             bail!("--resume is supported only with --format shipping")
         }
+        OutFormat::Hackable if args.web_content_manifest => {
+            bail!("--web-content-manifest is supported only with --format shipping")
+        }
         OutFormat::Hackable => Converter::new(data_in, data_out).run(),
-        OutFormat::Shipping => convert_shipping(
-            data_in,
-            &data_out,
-            ShippingOpts {
-                map_format: args.map_format,
-                interface_image_format: args.interface_image_format,
-                audio_format: args.audio_format,
-                zstd_window_log: args.zstd_window_log,
-                resume: args.resume,
-                rank_dictionaries: args.rank_dictionaries,
-                rle_sprite_format: args.rle_sprite_format,
-            },
-        ),
+        OutFormat::Shipping => {
+            let native_content_sha256 = args
+                .web_content_manifest
+                .then(|| {
+                    robin_rs::multiplayer::content_identity::source_content_identity(&data_in)
+                        .map_err(anyhow::Error::msg)
+                })
+                .transpose()?;
+            convert_shipping(
+                data_in,
+                &data_out,
+                ShippingOpts {
+                    map_format: args.map_format,
+                    interface_image_format: args.interface_image_format,
+                    audio_format: args.audio_format,
+                    zstd_window_log: args.zstd_window_log,
+                    resume: args.resume,
+                    rank_dictionaries: args.rank_dictionaries,
+                    rle_sprite_format: args.rle_sprite_format,
+                },
+            )?;
+            if let Some(identity) = native_content_sha256 {
+                write_web_content_manifest(&data_out, identity)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -4318,6 +4339,127 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         opts.audio_format
     );
     Ok(())
+}
+
+fn write_web_content_manifest(data_out: &Path, native_content_sha256: String) -> Result<()> {
+    use robin_rs::multiplayer::content_identity::{
+        WEB_CONTENT_MANIFEST_NAME, WEB_CONTENT_MANIFEST_SCHEMA, WebContentDatadir, WebContentFile,
+        WebContentFileKind, WebContentManifest,
+    };
+
+    let manifest_path = data_out.join(WEB_CONTENT_MANIFEST_NAME);
+    if manifest_path.exists() {
+        fs::remove_file(&manifest_path)
+            .with_context(|| format!("remove stale {}", manifest_path.display()))?;
+    }
+    let mut paths = Vec::new();
+    let mut pending = vec![data_out.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("enumerate web content {}", directory.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("enumerate web content {}", directory.display()))?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("stat web content {}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                bail!("web content package refuses symlink {}", path.display());
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                paths.push(path);
+            } else {
+                bail!("web content package refuses non-file {}", path.display());
+            }
+        }
+    }
+    paths.sort_by_key(|path| {
+        path.strip_prefix(data_out)
+            .expect("enumerated path stays in package")
+            .to_string_lossy()
+            .replace('\\', "/")
+    });
+
+    let mut datadir = None;
+    let mut files = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in paths {
+        let relative = path
+            .strip_prefix(data_out)
+            .expect("enumerated path stays in package")
+            .to_str()
+            .ok_or_else(|| anyhow!("web content path is not UTF-8: {}", path.display()))?
+            .replace('\\', "/");
+        let canonical_key = relative.to_ascii_lowercase();
+        if !seen.insert(canonical_key) {
+            bail!("web content paths collide case-insensitively at {relative}");
+        }
+        let (byte_length, sha256) = digest_file(&path)?;
+        if relative == "datadir.bin" {
+            datadir = Some(WebContentDatadir {
+                path: relative,
+                byte_length,
+                sha256,
+            });
+        } else {
+            let kind = if relative.starts_with("audio/assets/")
+                || relative.starts_with("audio/bundles/")
+            {
+                WebContentFileKind::Asset
+            } else {
+                WebContentFileKind::Shipping
+            };
+            files.push(WebContentFile {
+                path: relative,
+                kind,
+                byte_length,
+                sha256,
+            });
+        }
+    }
+    let datadir = datadir.ok_or_else(|| anyhow!("web content package has no datadir.bin"))?;
+    if files.is_empty() {
+        bail!("web Full content package has no split mission/audio files");
+    }
+    let manifest = WebContentManifest {
+        schema: WEB_CONTENT_MANIFEST_SCHEMA,
+        edition: "full".to_string(),
+        engine_version: robin_rs::replay_format::ENGINE_SOURCE_COMMIT.to_string(),
+        native_content_sha256,
+        datadir,
+        files,
+    };
+    let bytes = serde_json::to_vec(&manifest).context("serialize web content manifest")?;
+    fs::write(&manifest_path, bytes)
+        .with_context(|| format!("write {}", manifest_path.display()))?;
+    tracing::info!(manifest = %manifest_path.display(), "wrote exact web content closure");
+    Ok(())
+}
+
+fn digest_file(path: &Path) -> Result<(u64, String)> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let byte_length = file
+        .metadata()
+        .with_context(|| format!("stat {}", path.display()))?
+        .len();
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok((
+        byte_length,
+        robin_rs::multiplayer::content_identity::hex_digest(hasher.finalize().into()),
+    ))
 }
 
 fn shipping_file_stem(name: &str) -> String {

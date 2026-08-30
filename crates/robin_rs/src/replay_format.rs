@@ -35,6 +35,11 @@ use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile};
 /// Falls back to `"unknown"` when built outside a git checkout.
 pub const ENGINE_VERSION_HASH: &str = env!("ROBIN_GIT_HASH");
 
+/// Exact source commit for authenticated executable-artifact selection.
+/// Replays retain the historical 12-character tag above; browser multiplayer
+/// invitations use this full identity and separately verify the artifact.
+pub const ENGINE_SOURCE_COMMIT: &str = env!("ROBIN_GIT_COMMIT");
+
 /// Prefix byte sequence for the compact format; also the file-format
 /// magic when a `rhrec-…` string is written to disk.
 pub const COMPACT_PREFIX: &str = "rhrec-";

@@ -330,6 +330,8 @@ impl MissionBootstrap {
             self.loaded.engine_rng_seed,
             self.loaded.engine_sim_config,
             self.host.transport.net.is_some(),
+            self.host.transport.net.is_none()
+                || self.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST,
         );
         let mut timeline = TimelineRuntime::new(
             replay,

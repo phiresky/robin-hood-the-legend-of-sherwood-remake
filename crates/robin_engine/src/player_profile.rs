@@ -636,6 +636,8 @@ pub struct PlayerProfile {
     pub graphic_config: GraphicConfig,
     #[serde(default = "GameplayConfig::migrated")]
     pub gameplay_config: GameplayConfig,
+    #[serde(default)]
+    pub multiplayer_config: crate::multiplayer_config::MultiplayerConfig,
     pub sound_config: SoundConfig,
     // KeyConfig moved to host (robin_rs) — it's input binding config,
     // not sim state. See Decision 5B. Host keeps a parallel KeyConfig
@@ -665,6 +667,7 @@ impl PlayerProfile {
             minimap_y: 65536.0,
             graphic_config: GraphicConfig::default(),
             gameplay_config: GameplayConfig::default(),
+            multiplayer_config: crate::multiplayer_config::MultiplayerConfig::default(),
             sound_config: SoundConfig::default(),
             active: false,
         }
