@@ -61,7 +61,7 @@ pub const DEFAULT_PORT: u16 = 7878;
 /// second at 25 Hz) so the same sampling point is reused.
 pub const STATE_HASH_INTERVAL: u32 = 25;
 
-/// Unpredictable identity for one host process's multiplayer mission session.
+/// Unpredictable identity for one host process's multiplayer campaign session.
 ///
 /// Modal traffic carries this value so a delayed packet from an earlier host
 /// lifecycle can never resolve a UI surface in a replacement session.

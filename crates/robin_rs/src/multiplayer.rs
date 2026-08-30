@@ -110,6 +110,11 @@ mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{ClientHandle, ServerHandle, connect_client, start_server};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn discard_host_session_continuation() {
+    native::discard_host_session_continuation();
+}
+
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
@@ -209,6 +214,19 @@ impl NetChannels {
     pub fn shutdown(&mut self) {
         if let Some(mut runtime) = self.runtime.take() {
             runtime.shutdown();
+        }
+    }
+
+    /// Retain the authenticated host session/seat roster when this mission's
+    /// transport shuts down. Clients require no explicit flag: their durable
+    /// browser owner or process-held native key reclaims the retained seat.
+    pub(crate) fn preserve_session_for_next_mission(&mut self) {
+        match self.runtime.as_mut() {
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(MultiplayerRuntime::Server(handle)) => {
+                handle.preserve_session_for_next_mission();
+            }
+            Some(MultiplayerRuntime::Client(_)) | None => {}
         }
     }
 }

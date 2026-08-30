@@ -576,6 +576,18 @@ pub(crate) async fn run_mission_headless(
 /// `initial_load` lets the caller pre-seed a load request — used by the
 /// main menu's "Load Game" entry to kick straight into a saved mission
 /// (see `main_menu::save_load`).
+#[cfg(not(target_arch = "wasm32"))]
+struct HostSessionContinuationCleanup(bool);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for HostSessionContinuationCleanup {
+    fn drop(&mut self) {
+        if self.0 {
+            crate::multiplayer::discard_host_session_continuation();
+        }
+    }
+}
+
 pub(crate) async fn run_session(
     window: &mut GameWindow,
     mut campaign: Campaign,
@@ -584,6 +596,9 @@ pub(crate) async fn run_session(
     args: &crate::main_entry::CliArgs,
     initial_load: Option<SaveLoadRequest>,
 ) -> SessionOutcome {
+    let mut session_args = args.clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let _host_continuation_cleanup = HostSessionContinuationCleanup(session_args.server);
     let mut callbacks = RustCallbacks::new(application_context.clone());
     callbacks.pending = initial_load;
     if args.replay_data.is_some() || args.replay.is_some() {
@@ -698,7 +713,7 @@ pub(crate) async fn run_session(
             let location = campaign.missions[mission_idx].profile(profiles).location;
             (mission_idx, location, restart_rng_seed, restart_sim_config)
         };
-        let mission_args = mission_args_storage.as_ref().unwrap_or(args);
+        let mission_args = mission_args_storage.as_ref().unwrap_or(&session_args);
 
         // Sherwood is a real loaded mission (level geometry, PCs,
         // NPCs, production sectors, script). The campaign map is an
@@ -792,6 +807,7 @@ pub(crate) async fn run_session(
                     replay_for_restart.is_some(),
                 );
                 replay_restart = replay_for_restart;
+                session_args.mp_continue_session = session_args.server;
                 tracing::info!("Restarting mission idx={}", mission_idx);
                 continue;
             }
@@ -832,10 +848,12 @@ pub(crate) async fn run_session(
                     mission_id: req.target_mission_id,
                     save: Some(save),
                 });
+                session_args.mp_continue_session = session_args.server;
                 continue;
             }
             _ => {}
         }
+        session_args.mp_continue_session = session_args.server;
     }
 }
 

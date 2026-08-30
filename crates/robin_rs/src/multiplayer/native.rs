@@ -13,7 +13,9 @@
 //! side opens the stream and sends `Hello`; the host answers
 //! `Welcome` on the same stream.
 
-use super::identity::{GAME_ALPN, bind_endpoint, game_secret_key, parse_connect_addr};
+use super::identity::{
+    GAME_ALPN, bind_endpoint, bind_endpoint_with_relay, game_secret_key, parse_connect_addr,
+};
 use super::{
     FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot, MultiplayerSessionId,
     NET_PROTOCOL_VERSION, NetEvent, NetFrameClass, NetMsg, NetOutbound, decode_msg, encode_msg,
@@ -28,6 +30,7 @@ use robin_engine::multiplayer::{BrowserPeerAuth, browser_seat_proof_message};
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
@@ -38,6 +41,72 @@ const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// QUIC close code used for orderly application shutdown.
 const CLOSE_GRACEFUL: u32 = 0;
+
+/// One-shot process-local handoff between the old and replacement mission
+/// transports. The outer campaign loop deliberately destroys each QUIC
+/// endpoint at a load/restart boundary, but the authenticated session and its
+/// seat ownership must survive that implementation detail.
+#[derive(Clone)]
+struct HostSessionContinuation {
+    host_endpoint_id: EndpointId,
+    session_id: MultiplayerSessionId,
+    expected_players: u32,
+    owner_seats: HashMap<PeerOwner, u8>,
+    relay_url: Option<iroh::RelayUrl>,
+}
+
+fn host_session_continuation() -> &'static Mutex<Option<HostSessionContinuation>> {
+    static SLOT: OnceLock<Mutex<Option<HostSessionContinuation>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn publish_host_session_continuation(continuation: HostSessionContinuation) {
+    let mut slot = host_session_continuation().lock();
+    if let Some(existing) = slot.as_mut()
+        && existing.host_endpoint_id == continuation.host_endpoint_id
+        && existing.session_id == continuation.session_id
+    {
+        existing.owner_seats.extend(continuation.owner_seats);
+        return;
+    }
+    assert!(
+        slot.is_none(),
+        "another multiplayer continuation is pending"
+    );
+    *slot = Some(continuation);
+}
+
+pub(super) fn discard_host_session_continuation() {
+    *host_session_continuation().lock() = None;
+}
+
+fn take_host_session_continuation(
+    host_endpoint_id: EndpointId,
+    expected_players: u32,
+) -> Result<Option<HostSessionContinuation>, String> {
+    let mut slot = host_session_continuation().lock();
+    let Some(continuation) = slot.as_ref() else {
+        return Ok(None);
+    };
+    if continuation.host_endpoint_id != host_endpoint_id {
+        return Err("pending multiplayer continuation belongs to another host identity".into());
+    }
+    if continuation.expected_players != expected_players {
+        return Err(format!(
+            "continued multiplayer session expects {} players, replacement requested {expected_players}",
+            continuation.expected_players
+        ));
+    }
+    Ok(slot.take())
+}
+
+/// Native reconnects within one process retain a transport identity across
+/// outer-mission rebuilds. Browser peers prove their durable IndexedDB owner;
+/// native peers use this process-held iroh key for the equivalent continuity.
+fn native_client_secret_key() -> SecretKey {
+    static KEY: OnceLock<SecretKey> = OnceLock::new();
+    KEY.get_or_init(SecretKey::generate).clone()
+}
 
 // ─── Framing ─────────────────────────────────────────────────────
 
@@ -150,6 +219,8 @@ pub struct ServerHandle {
     endpoint_addr: EndpointAddr,
     host_key: SecretKey,
     mission_id: String,
+    context: Arc<ServerContext>,
+    preserve_on_shutdown: bool,
     cancellation: Arc<AtomicBool>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     runtime_thread: Option<JoinHandle<()>>,
@@ -193,6 +264,10 @@ impl ServerHandle {
     }
 
     pub fn shutdown(&mut self) {
+        if self.preserve_on_shutdown {
+            publish_context_continuation(&self.context);
+            self.preserve_on_shutdown = false;
+        }
         self.cancellation.store(true, Ordering::Release);
         let _ = self.shutdown_tx.send(true);
         if let Some(handle) = self.runtime_thread.take()
@@ -201,6 +276,23 @@ impl ServerHandle {
             tracing::error!("multiplayer server runtime panicked during shutdown");
         }
     }
+
+    pub(super) fn preserve_session_for_next_mission(&mut self) {
+        self.preserve_on_shutdown = true;
+    }
+}
+
+fn publish_context_continuation(context: &ServerContext) {
+    let peers = context.peers.lock();
+    let mut owner_seats = peers.disconnected_seats.clone();
+    owner_seats.extend(peers.owners.iter().map(|(&seat, &owner)| (owner, seat)));
+    publish_host_session_continuation(HostSessionContinuation {
+        host_endpoint_id: context.host_endpoint_id,
+        session_id: context.session_id,
+        expected_players: peers.expected_players,
+        owner_seats,
+        relay_url: context.relay_url.lock().clone(),
+    });
 }
 
 impl Drop for ServerHandle {
@@ -250,6 +342,31 @@ impl ServerPeers {
             session_generations: HashMap::new(),
             next_session_generation: 1,
             expected_players,
+            host_ready_frame: None,
+            ready_seats: HashMap::new(),
+            begin_sent: None,
+            snapshot_transition: None,
+        }
+    }
+
+    fn from_continuation(continuation: &HostSessionContinuation) -> Self {
+        let next_seat = continuation
+            .owner_seats
+            .values()
+            .copied()
+            .max()
+            .map_or(1, |seat| {
+                seat.checked_add(1).expect("multiplayer seat overflow")
+            });
+        Self {
+            next_seat,
+            senders: HashMap::new(),
+            nicknames: HashMap::new(),
+            owners: HashMap::new(),
+            disconnected_seats: continuation.owner_seats.clone(),
+            session_generations: HashMap::new(),
+            next_session_generation: 1,
+            expected_players: continuation.expected_players,
             host_ready_frame: None,
             ready_seats: HashMap::new(),
             begin_sent: None,
@@ -368,6 +485,7 @@ fn commit_snapshot_transition(
     let Some((id, senders)) = committed else {
         return;
     };
+    publish_context_continuation(context);
     for sender in &senders {
         sender
             .send(NetMsg::CommitSnapshotTransition { id })
@@ -426,6 +544,8 @@ struct ServerContext {
     sim_config: robin_engine::engine::SimConfig,
     host_endpoint_id: EndpointId,
     session_id: MultiplayerSessionId,
+    continued_session: bool,
+    relay_url: Mutex<Option<iroh::RelayUrl>>,
     speech_timing_locale: Option<String>,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
@@ -531,7 +651,12 @@ fn start_server_inner(
         )));
     }
     let host_endpoint_id = key.public();
-    let session_id = MultiplayerSessionId(SecretKey::generate().to_bytes());
+    let continuation = take_host_session_continuation(host_endpoint_id, expected_players)
+        .map_err(std::io::Error::other)?;
+    let session_id = continuation.as_ref().map_or_else(
+        || MultiplayerSessionId(SecretKey::generate().to_bytes()),
+        |continuation| continuation.session_id,
+    );
     let handle_key = key.clone();
     let handle_mission_id = mission_id.clone();
     let cancellation = Arc::new(AtomicBool::new(false));
@@ -543,7 +668,10 @@ fn start_server_inner(
     )?;
 
     let context = Arc::new(ServerContext {
-        peers: Mutex::new(ServerPeers::new(expected_players.max(1))),
+        peers: Mutex::new(continuation.as_ref().map_or_else(
+            || ServerPeers::new(expected_players.max(1)),
+            ServerPeers::from_continuation,
+        )),
         incoming_tx,
         host_nickname,
         mission_id,
@@ -551,6 +679,12 @@ fn start_server_inner(
         sim_config,
         host_endpoint_id,
         session_id,
+        continued_session: continuation.is_some(),
+        relay_url: Mutex::new(
+            continuation
+                .as_ref()
+                .and_then(|continuation| continuation.relay_url.clone()),
+        ),
         speech_timing_locale,
         frame_cursor,
         initial_snapshot,
@@ -617,6 +751,8 @@ fn start_server_inner(
         endpoint_addr,
         host_key: handle_key,
         mission_id: handle_mission_id,
+        context,
+        preserve_on_shutdown: false,
         cancellation,
         shutdown_tx,
         runtime_thread: Some(runtime_thread),
@@ -631,7 +767,8 @@ async fn run_server(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     browser_join_enabled: bool,
 ) {
-    let endpoint = match bind_endpoint(key, GAME_ALPN).await {
+    let retained_relay = context.relay_url.lock().clone();
+    let endpoint = match bind_endpoint_with_relay(key, GAME_ALPN, retained_relay).await {
         Ok(endpoint) => endpoint,
         Err(e) => {
             let _ = startup_tx.send(Err(e));
@@ -659,6 +796,7 @@ async fn run_server(
             return;
         }
     }
+    *context.relay_url.lock() = endpoint.addr().relay_urls().next().cloned();
     let _ = startup_tx.send(Ok((endpoint.id(), endpoint.addr())));
 
     let pump = tokio::spawn(run_server_outgoing_pump(
@@ -1208,12 +1346,14 @@ fn authenticate_peer(
     let payload = ticket.payload();
     if payload.host_endpoint_id != context.host_endpoint_id.to_string()
         || ticket.session_id()? != context.session_id.0
-        || payload.mission_id != context.mission_id
         || payload.expected_players != context.peers.lock().expected_players
     {
         return Err(
             "browser invitation does not belong to this exact hosted mission session".to_string(),
         );
+    }
+    if payload.mission_id != context.mission_id && !context.continued_session {
+        return Err("browser invitation belongs to another hosted mission".to_string());
     }
     let owner = PeerOwner::Browser(auth.durable_public_key);
     let use_kind = if context.peers.lock().owner_seat(owner).is_some() {
@@ -1651,7 +1791,7 @@ async fn run_client_io_async(
     >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let endpoint = match bind_endpoint(SecretKey::generate(), GAME_ALPN).await {
+    let endpoint = match bind_endpoint(native_client_secret_key(), GAME_ALPN).await {
         Ok(endpoint) => endpoint,
         Err(e) => {
             let _ = initial_handshake_tx.send(Err(e));
@@ -2101,14 +2241,47 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
 #[cfg(test)]
 mod tests {
     use super::{
-        PeerOwner, PendingSnapshotTransition, ServerPeers, discard_session_outbound,
-        handle_client_wire_msg, retain_transition_peer_for_reconnect,
+        HostSessionContinuation, PeerOwner, PendingSnapshotTransition, ServerPeers,
+        discard_session_outbound, handle_client_wire_msg, retain_transition_peer_for_reconnect,
         take_committed_snapshot_transition, validate_reconnect_session_id,
         validate_reconnect_state,
     };
     use robin_engine::player_command::PlayerId;
     use std::collections::HashSet;
     use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn replacement_transport_seeds_exact_authenticated_seats() {
+        let browser = PeerOwner::Browser([7; 32]);
+        let native = PeerOwner::Native([8; 32]);
+        let continuation = HostSessionContinuation {
+            host_endpoint_id: iroh::SecretKey::from_bytes(&[3; 32]).public(),
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([4; 32]),
+            expected_players: 3,
+            owner_seats: std::collections::HashMap::from([(browser, 1), (native, 2)]),
+            relay_url: None,
+        };
+        let mut peers = ServerPeers::from_continuation(&continuation);
+
+        let (browser_tx, _browser_rx) = unbounded_channel();
+        let (browser_seat, _) = peers
+            .claim_seat(browser, "renamed browser", browser_tx)
+            .unwrap();
+        let (native_tx, _native_rx) = unbounded_channel();
+        let (native_seat, _) = peers
+            .claim_seat(native, "renamed native", native_tx)
+            .unwrap();
+
+        assert_eq!(browser_seat, 1);
+        assert_eq!(native_seat, 2);
+        let (intruder_tx, _intruder_rx) = unbounded_channel();
+        assert!(
+            peers
+                .claim_seat(PeerOwner::Browser([9; 32]), "same nickname", intruder_tx)
+                .is_err(),
+            "a replacement session may not allocate beyond its retained roster"
+        );
+    }
 
     #[test]
     fn snapshot_transition_waits_for_every_current_peer() {

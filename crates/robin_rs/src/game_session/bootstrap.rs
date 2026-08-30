@@ -800,7 +800,12 @@ impl BuiltInteractiveMission {
         self.mission.run(&mut services).await
     }
 
-    pub(super) fn finish(self, result: Result<GameCode, String>) -> MissionOutcome {
+    pub(super) fn finish(mut self, result: Result<GameCode, String>) -> MissionOutcome {
+        if result.is_ok() {
+            self.mission
+                .runtime
+                .preserve_multiplayer_session_for_next_mission();
+        }
         let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
         MissionOutcome::from_engine(campaign, rng_seed, sim_config, result)
     }

@@ -877,6 +877,9 @@ pub(super) async fn setup_multiplayer_session(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            if !args.mp_continue_session {
+                crate::multiplayer::discard_host_session_continuation();
+            }
             let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host
                 .application_context

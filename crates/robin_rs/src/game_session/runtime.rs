@@ -214,6 +214,12 @@ impl MissionWorld {
         self.manager.engine.into_campaign_and_simulation()
     }
 
+    pub(super) fn preserve_multiplayer_session_for_next_mission(&mut self) {
+        if let Some(net) = self.host.transport.net.as_mut() {
+            net.preserve_session_for_next_mission();
+        }
+    }
+
     pub(super) fn ingress(&mut self) -> MissionIngress<'_> {
         MissionIngress {
             host: &mut self.host,
@@ -620,6 +626,10 @@ impl MissionRuntime {
         robin_engine::engine::SimConfig,
     ) {
         self.world.into_campaign_and_simulation()
+    }
+
+    pub(super) fn preserve_multiplayer_session_for_next_mission(&mut self) {
+        self.world.preserve_multiplayer_session_for_next_mission();
     }
 
     /// Open one host frame at the deterministic pre-command boundary.

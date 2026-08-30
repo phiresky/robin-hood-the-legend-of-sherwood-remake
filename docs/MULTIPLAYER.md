@@ -50,6 +50,11 @@ the same directional allocation limits as native before decoding a body.
   HTTPS relay, Demo/Full edition, and the native host's exact content-closure
   SHA-256. The URL stores the public ticket in its fragment; the stable shell
   captures and erases it before its first request.
+- One authenticated multiplayer session spans its campaign's mission
+  transports. At load/restart/campaign boundaries the host retains the exact
+  session id, authenticated owner-to-seat roster, expected player count, and
+  disclosed relay route for the one replacement transport. The next host
+  endpoint consumes that state once; leaving the session discards it.
 - The browser's durable seat key is an IndexedDB-held, non-extractable Ed25519
   private key on the isolated `identity.robinhood.phiresky.xyz` origin. That
   origin exposes only typed status, redemption, and seat-proof operations.
@@ -134,6 +139,14 @@ voice pack on every peer. `None` is an explicit selection of the installation's
 base `Data/Sounds`, not a missing field or permission to auto-select a local
 presentation language. Browser connection state tracks "Welcome pending"
 separately from the received `None` value.
+
+The session id is stable across an authorized outer-mission rebuild. A native
+client reuses its process-held iroh owner key, while a browser re-proves its
+durable signer key. The replacement server seeds those authenticated owners as
+disconnected seats and accepts only their exact reclamation; nicknames carry
+no authority. The host pins the previously disclosed relay route for the
+replacement endpoint, so a redeemed browser invitation remains reachable
+without silently minting a new invitation lifetime.
 
 ## Input scheduling and rollback
 

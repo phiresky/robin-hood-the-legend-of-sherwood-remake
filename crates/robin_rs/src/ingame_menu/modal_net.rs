@@ -188,7 +188,7 @@ mod tests {
         std::sync::mpsc::Receiver<NetOutbound>,
     ) {
         let (net, incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
-        net.install_session_id(engine_multiplayer::MultiplayerSessionId([4; 16]))
+        net.install_session_id(engine_multiplayer::MultiplayerSessionId([4; 32]))
             .unwrap();
         (net, incoming, outgoing)
     }

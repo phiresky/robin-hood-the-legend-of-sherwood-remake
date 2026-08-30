@@ -1114,7 +1114,7 @@ mod tests {
         use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
 
         let (net, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
-        net.install_session_id(crate::multiplayer::MultiplayerSessionId([1; 16]))
+        net.install_session_id(crate::multiplayer::MultiplayerSessionId([1; 32]))
             .unwrap();
         let mut host = Host::default();
         host.transport.local_seat = PlayerId(1);
@@ -1144,7 +1144,7 @@ mod tests {
         use robin_engine::player_command::{DialogResult, ModalKind, PlayerId};
 
         let (net, _incoming, outgoing, _cursor, _snapshot) = NetChannels::new();
-        net.install_session_id(crate::multiplayer::MultiplayerSessionId([2; 16]))
+        net.install_session_id(crate::multiplayer::MultiplayerSessionId([2; 32]))
             .unwrap();
         let mut host = Host::default();
         host.transport.local_seat = PlayerId::HOST;

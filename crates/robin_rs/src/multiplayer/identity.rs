@@ -12,7 +12,7 @@
 //! iroh's relay + DNS address lookup, so no bind address, port, or NAT
 //! configuration is ever exchanged.
 
-use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey, endpoint::presets};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, RelayUrl, SecretKey, endpoint::presets};
 use std::path::PathBuf;
 
 /// ALPN for game-session connections (`--server` / `--connect`).
@@ -85,10 +85,25 @@ pub fn local_endpoint_id_string() -> Result<String, String> {
 /// on the BitTorrent Mainline DHT, which works with no hosted
 /// infrastructure at all.
 pub async fn bind_endpoint(key: SecretKey, alpn: &[u8]) -> Result<Endpoint, String> {
-    Endpoint::builder(presets::N0)
+    bind_endpoint_with_relay(key, alpn, None).await
+}
+
+/// Bind while optionally retaining the exact relay route of a cross-mission
+/// session, so already-redeemed browser peers can reach the replacement
+/// transport through the route authenticated by their invitation.
+pub async fn bind_endpoint_with_relay(
+    key: SecretKey,
+    alpn: &[u8],
+    relay_url: Option<RelayUrl>,
+) -> Result<Endpoint, String> {
+    let mut builder = Endpoint::builder(presets::N0)
         .secret_key(key)
         .alpns(vec![alpn.to_vec()])
-        .address_lookup(iroh_mainline_address_lookup::DhtAddressLookup::builder())
+        .address_lookup(iroh_mainline_address_lookup::DhtAddressLookup::builder());
+    if let Some(relay_url) = relay_url {
+        builder = builder.relay_mode(RelayMode::custom([relay_url]));
+    }
+    builder
         .bind()
         .await
         .map_err(|e| format!("bind iroh endpoint: {e}"))
