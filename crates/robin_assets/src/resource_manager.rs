@@ -270,7 +270,7 @@ fn read_wave_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>
 /// Does **not** create draw-manager surfaces; it stores decoded [`Picture`]
 /// data directly.  Delayed-load resources are loaded eagerly (simplification
 /// for modern HW).
-#[derive(Debug, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ResourceManager {
     /// Picture collections keyed by resource ID.
     pictures: HashMap<ResourceId, Vec<Option<Picture>>>,
@@ -323,6 +323,35 @@ impl ResourceManager {
         shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
     ) -> Result<()> {
         if let Some(dd) = shipping {
+            if let Some(src) = dd.active_resource(path) {
+                let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
+                tracing::info!(
+                    locale = dd.active_locale_name().as_deref().unwrap_or("base"),
+                    "Resource file {rel}: loaded from active shipping locale"
+                );
+                merge_resource_manager(self, src);
+                return Ok(());
+            }
+            if let Some(locale) = dd.active_locale_name()
+                && crate::shipping_datadir::is_optional_english_fallback_key(path)
+                && let Ok(Some(src)) = dd.locale_resource("en-US", path)
+            {
+                let rel = crate::shipping_datadir::canonical_shipping_asset_key(path);
+                tracing::info!(
+                    locale,
+                    "Resource file {rel}: using optional English fallback"
+                );
+                merge_resource_manager(self, src);
+                return Ok(());
+            }
+            if dd.active_locale_name().is_some()
+                && crate::shipping_datadir::is_required_locale_key(path)
+            {
+                // The active raw locale bundle is authoritative here. This
+                // deliberately errors on an incomplete pack rather than
+                // silently mixing its UI with the top-level/default language.
+                return self.attach_resource_file(path);
+            }
             // Keys in shipping.res_files omit any `Data/` prefix.
             let rel = path.strip_prefix("Data/").unwrap_or(path);
             if let Some(src) = dd.res_files.get(rel) {
@@ -713,6 +742,15 @@ impl ResourceManager {
             .get(&id)
             .map(|v| v.len())
             .ok_or_else(|| anyhow!("string resource {id}: not found"))
+    }
+
+    /// Number of strings already resident in a decoded resource manager.
+    ///
+    /// Shipping manifests contain eagerly decoded resources and are shared by
+    /// reference, so validating a locale must not require mutable access or
+    /// attempt delayed disk I/O.
+    pub fn resident_string_count(&self, id: ResourceId) -> Option<usize> {
+        self.strings.get(&id).map(Vec::len)
     }
 
     /// Get a wave/sound path by resource ID and sub-index.

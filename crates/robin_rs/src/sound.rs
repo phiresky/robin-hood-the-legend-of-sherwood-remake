@@ -1139,6 +1139,24 @@ impl SoundManager {
         found_channel
     }
 
+    /// Stop every currently audible speech channel while preserving the
+    /// simulation's queued logical speech requests. Runtime language changes
+    /// use this before replacing the localized sample cache so an old-language
+    /// bark cannot continue over the newly selected presentation.
+    pub fn stop_all_exclamation_channels(&mut self, backend: &mut dyn AudioBackend) {
+        let channels: Vec<i32> = self
+            .channel_info
+            .iter()
+            .enumerate()
+            .filter_map(|(index, info)| {
+                (info.sound_type == SoundType::Exclamation).then_some(index as i32)
+            })
+            .collect();
+        for channel in channels {
+            self.stop_channel(channel, backend);
+        }
+    }
+
     // ── Jingle management ────────────────────────────────────────────
 
     /// Play a jingle sound effect.

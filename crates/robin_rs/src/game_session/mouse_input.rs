@@ -5,6 +5,7 @@
 //! dispatchers, and `choose_recording_place` (the empty-slot picker for
 //! the macro recorder).
 
+use super::interactive::MissionResources;
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
@@ -1430,9 +1431,8 @@ pub(super) async fn handle_pause_menu_events(
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
     cursor_renderer: &mut CursorRenderer,
-    menu_resources: &Option<IngameMenuResources>,
+    mission_resources: &mut MissionResources,
     audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
@@ -1510,7 +1510,7 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
-                if let Some(resources) = menu_resources.as_ref() {
+                if mission_resources.menu.is_some() {
                     // Snapshot profile-backed settings before entering the
                     // async modal. No ApplicationContext lock crosses await.
                     let profile = host
@@ -1552,9 +1552,16 @@ pub(super) async fn handle_pause_menu_events(
                             gameplay_config.clean_hands_npc_kills_invalidate;
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let simulation_sherwood_trading = gameplay_config.sherwood_trading;
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                        let resources =
+                            required_menu_resources(&mission_resources.menu, "pause-menu options");
+                        let cursor = Some(default_modal_cursor(
+                            cursor_renderer,
+                            &mut mission_resources.cursor,
+                            renderer,
+                        ));
                         let options_outcome = ingame_menu::show_options(
+                            &host.application_context,
+                            false,
                             event_pump,
                             renderer,
                             resources,
@@ -1723,6 +1730,12 @@ pub(super) async fn handle_pause_menu_events(
                             host.minimap_fast_key =
                                 input_translator.get_binding(GameKey::DisplayMap);
                         }
+                        if options_outcome.language_changed {
+                            *pause_menu = mission_resources
+                                .menu
+                                .as_ref()
+                                .map(|resources| PauseMenu::new(resources, !game.is_sherwood));
+                        }
                     } else {
                         tracing::error!("Options: cannot open without an active player profile");
                     }
@@ -1742,10 +1755,14 @@ pub(super) async fn handle_pause_menu_events(
                 };
                 let mut close_pause_menu = false;
                 let resources =
-                    required_menu_resources(menu_resources, "pause-menu save/load picker");
+                    required_menu_resources(&mission_resources.menu, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let cursor = Some(default_modal_cursor(
+                    cursor_renderer,
+                    &mut mission_resources.cursor,
+                    renderer,
+                ));
                 let picker_outcome = ingame_menu::show_save_load(
                     event_pump,
                     renderer,
@@ -1802,10 +1819,16 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::Quit => {
                 // Show the "really quit?" Yes/No prompt.
-                let resources =
-                    required_menu_resources(menu_resources, "pause-menu Quit confirmation");
+                let resources = required_menu_resources(
+                    &mission_resources.menu,
+                    "pause-menu Quit confirmation",
+                );
                 let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
-                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let cursor = Some(default_modal_cursor(
+                    cursor_renderer,
+                    &mut mission_resources.cursor,
+                    renderer,
+                ));
                 let confirmed =
                     ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
                 if confirmed {
@@ -2251,6 +2274,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
 
         let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
         let choice = campaign_map::show_campaign_map(
+            &host.application_context,
             event_pump,
             renderer,
             game,
@@ -2316,7 +2340,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         let filename = assets_res_descr::red_filename(last_id);
                         host.shipping
                             .as_deref()
-                            .and_then(|dd| dd.red_files.get(&filename).cloned())
+                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
                                 assets_res_descr::load(&path)
@@ -2401,7 +2425,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         let filename = assets_res_descr::red_filename(mission_id);
                         host.shipping
                             .as_deref()
-                            .and_then(|dd| dd.red_files.get(&filename).cloned())
+                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
                             .or_else(|| {
                                 let path = format!("Data/Text/{filename}");
                                 assets_res_descr::load(&path).ok()

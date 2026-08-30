@@ -123,6 +123,11 @@ different protocol version.
 `Welcome` is authoritative. A peer must not substitute a local mission, seed,
 or `SimConfig` after decode failure. The snapshot payload uses the current
 Engine schema and is rejected rather than migrated when incompatible.
+`speech_timing_locale: Some(locale)` likewise requires that exact validated
+voice pack on every peer. `None` is an explicit selection of the installation's
+base `Data/Sounds`, not a missing field or permission to auto-select a local
+presentation language. Browser connection state tracks "Welcome pending"
+separately from the received `None` value.
 
 ## Input scheduling and rollback
 

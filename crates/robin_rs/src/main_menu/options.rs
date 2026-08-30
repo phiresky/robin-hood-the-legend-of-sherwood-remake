@@ -34,7 +34,7 @@ pub(crate) async fn show_main_menu_options(
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
     cursor_renderer: &mut crate::cursor::CursorRenderer,
-) {
+) -> bool {
     let profile = application_context
         .active_profile_snapshot()
         .unwrap_or_else(|error| panic!("Main menu Options requires an active profile: {error}"));
@@ -90,6 +90,8 @@ pub(crate) async fn show_main_menu_options(
         .map(|b| b as &mut dyn crate::sound::AudioBackend);
 
     let outcome = show_options(
+        application_context,
+        true,
         event_pump,
         renderer,
         resources,
@@ -152,4 +154,5 @@ pub(crate) async fn show_main_menu_options(
     }
     // `audio_backend` drops here: KiraAudioBackend::drop stops playback and
     // releases its audio resources, so the next session can re-initialize.
+    outcome.language_changed
 }

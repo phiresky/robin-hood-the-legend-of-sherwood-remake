@@ -31,6 +31,7 @@ pub mod debriefing;
 pub mod dialogue;
 pub mod gameplay;
 pub mod graphics;
+pub mod language;
 pub mod layout;
 pub mod mission_description;
 pub mod mission_state;
@@ -56,7 +57,7 @@ pub use dialogue::{
 pub use layout::{MENU_H, MENU_W, MenuButton, MenuTransform};
 pub use mission_state::{MissionStatePopupState, show_mission_state_popup};
 pub use modal_net::ModalNet;
-pub use options::show_options;
+pub use options::{OptionsOutcome, show_options};
 pub use pause::{PauseMenu, PauseMenuOutcome};
 pub(crate) use popup_scroll::show_popup_scroll;
 pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};

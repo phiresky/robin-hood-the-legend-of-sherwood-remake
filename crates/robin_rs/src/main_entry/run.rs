@@ -248,16 +248,23 @@ pub async fn run_rust_game(
     }
 
     // ── Full game: outer main menu loop ──
+    let mut reopen_main_options = false;
     loop {
+        let open_options_initially = std::mem::take(&mut reopen_main_options);
         let menu_choice = Box::pin(show_main_menu(
             window,
             &campaign,
             &profiles,
             &application_context,
+            open_options_initially,
         ))
         .await?;
 
         match menu_choice {
+            MainMenuChoice::RedisplayOptions => {
+                reopen_main_options = true;
+                continue;
+            }
             MainMenuChoice::Start => {
                 // Reset campaign for a new game
                 campaign.reset(&profiles, application_context.sim_config().difficulty);

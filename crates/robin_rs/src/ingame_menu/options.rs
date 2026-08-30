@@ -25,9 +25,10 @@ use robin_engine::sound_config::SoundConfig;
 
 use super::gameplay::show_gameplay;
 use super::graphics::show_graphics;
+use super::language::show_language;
 use super::layout::{
     MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt,
+    render_text_virt_font,
 };
 use super::multiplayer_privacy::show_multiplayer_privacy;
 use super::resources::{
@@ -47,6 +48,9 @@ pub struct OptionsOutcome {
     /// Callers must react by reloading the input translator's bindings
     /// and refreshing derived UI-shortcut state.
     pub key_config_changed: bool,
+    /// The locale lookup generation changed. Callers must discard every
+    /// eager localized presentation cache before drawing another menu frame.
+    pub language_changed: bool,
 }
 
 const BUTTON_GRAPHICS: u32 = 0;
@@ -60,6 +64,11 @@ const BUTTON_MULTIPLAYER_PRIVACY: u32 = 4;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 const BUTTON_GAME_DATA: u32 = 5;
 const BUTTON_BACK: u32 = 6;
+const BUTTON_LANGUAGE: u32 = 7;
+
+fn language_option_visible(allow_language_switching: bool, selector_visible: bool) -> bool {
+    allow_language_switching && selector_visible
+}
 
 /// Display the in-game options hub.
 ///
@@ -71,6 +80,8 @@ const BUTTON_BACK: u32 = 6;
 /// entry path).
 #[allow(clippy::too_many_arguments)]
 pub async fn show_options(
+    application_context: &crate::host::ApplicationContext,
+    allow_language_switching: bool,
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
     resources: &IngameMenuResources,
@@ -113,6 +124,16 @@ pub async fn show_options(
         ];
         #[cfg(not(target_arch = "wasm32"))]
         entries.push((BUTTON_MULTIPLAYER_PRIVACY, "Multiplayer / Privacy"));
+        let language_label = application_context
+            .port_text(crate::localization::PortTextKey::Language)
+            .unwrap_or_else(|error| panic!("Options lost localized text: {error}"));
+        let selector_visible = allow_language_switching
+            && application_context
+                .language_selector_visible()
+                .unwrap_or_else(|error| panic!("Options lost language preferences: {error}"));
+        if language_option_visible(allow_language_switching, selector_visible) {
+            entries.push((BUTTON_LANGUAGE, language_label));
+        }
         #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
         entries.push((BUTTON_GAME_DATA, "Game Data Folder"));
         entries.push((BUTTON_BACK, &back_label));
@@ -277,6 +298,21 @@ pub async fn show_options(
                         .await;
                         outcome.changed |= changed;
                     }
+                    BUTTON_LANGUAGE => {
+                        if show_language(
+                            application_context,
+                            event_pump,
+                            renderer,
+                            resources,
+                            cursor.as_mut().map(|c| c.reborrow()),
+                        )
+                        .await
+                        {
+                            outcome.language_changed = true;
+                            outcome.changed = true;
+                            done = true;
+                        }
+                    }
                     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
                     BUTTON_GAME_DATA => {
                         // Opens the native folder picker; the modal loop is
@@ -298,13 +334,13 @@ pub async fn show_options(
                 draw_screen_background(renderer, &bg);
             }
 
-            if let Some(font) = resources.title_font() {
-                render_text_virt(renderer, font, transform, &title, 20, 20);
+            if let Some(font) = resources.title_font_any() {
+                render_text_virt_font(renderer, font, transform, &title, 20, 20);
             }
-            if let Some(font) = resources.label_font() {
+            if let Some(font) = resources.label_font_any() {
                 let mut y = 120;
                 for line in info.lines() {
-                    render_text_virt(renderer, font, transform, line, 40, y);
+                    render_text_virt_font(renderer, font, transform, line, 40, y);
                     y += font.height() as i32 + 4;
                 }
             }
@@ -319,12 +355,25 @@ pub async fn show_options(
             crate::window::sleep_ui_frame().await;
         }
 
-        if !re_display {
+        if outcome.language_changed || !re_display {
             break;
         }
     }
 
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_option_visible;
+
+    #[test]
+    fn language_option_respects_main_menu_only_scope() {
+        assert!(language_option_visible(true, true));
+        assert!(!language_option_visible(true, false));
+        assert!(!language_option_visible(false, true));
+        assert!(!language_option_visible(false, false));
+    }
 }
 
 /// Build the hardware description line shown on the options hub.

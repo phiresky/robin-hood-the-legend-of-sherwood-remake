@@ -28,8 +28,8 @@ use std::collections::VecDeque;
 use crate::gfx_types::Keycode;
 
 use crate::gfx_types::GameEvent;
-use crate::ingame_menu::layout::render_text_screen;
-use crate::native_font::NativeFont;
+use crate::ingame_menu::layout::render_text_screen_font;
+use crate::native_font::Font;
 use crate::renderer::Renderer;
 use robin_engine::console::{ConsoleCommand, parse_with_final};
 use robin_engine::engine::{
@@ -784,7 +784,7 @@ impl ConsoleOverlay {
     /// phase (after `flush_base_layer`); the menu modal helper handles
     /// that for us, but in the live-game path we're already past
     /// `flush_base_layer` by the time this renders, so no extra setup.
-    pub fn render(&self, renderer: &mut Renderer, font: Option<&NativeFont>) {
+    pub fn render(&self, renderer: &mut Renderer, font: Option<&Font>) {
         if !self.visible {
             return;
         }
@@ -833,7 +833,7 @@ impl ConsoleOverlay {
             let mut combined = String::with_capacity(prefix.len() + body.len());
             combined.push_str(prefix);
             combined.push_str(body);
-            render_text_screen(renderer, font, &combined, pad_x, y);
+            render_text_screen_font(renderer, font, &combined, pad_x, y);
             y += line_step;
             if y > input_y - line_step {
                 break;
@@ -843,7 +843,7 @@ impl ConsoleOverlay {
         // Scroll indicator (top of panel) when scrolled up.
         if self.scroll_from_bottom > 0 {
             let label = format!("[scrolled {} lines]", self.scroll_from_bottom);
-            render_text_screen(
+            render_text_screen_font(
                 renderer,
                 font,
                 &label,
@@ -855,8 +855,8 @@ impl ConsoleOverlay {
         // ── Input line ──
         let prompt = "> ";
         let prompt_w = font.text_width(prompt);
-        render_text_screen(renderer, font, prompt, pad_x, input_y);
-        render_text_screen(renderer, font, &self.input, pad_x + prompt_w, input_y);
+        render_text_screen_font(renderer, font, prompt, pad_x, input_y);
+        render_text_screen_font(renderer, font, &self.input, pad_x + prompt_w, input_y);
 
         // Blinking caret at the cursor position (not necessarily at
         // end-of-line, since Left/Right/Home/End / Delete all reposition

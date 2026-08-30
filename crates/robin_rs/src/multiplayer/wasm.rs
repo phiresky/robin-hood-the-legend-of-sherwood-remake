@@ -38,6 +38,7 @@ pub struct ClientHandle {
     pub assigned_seat: Rc<RefCell<Option<PlayerId>>>,
     pub mission_seed: Rc<RefCell<Option<u64>>>,
     pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
+    pub speech_timing_locale: Rc<RefCell<Option<Option<String>>>>,
     pub mission_id: Rc<RefCell<Option<String>>>,
     startup_error: Rc<RefCell<Option<String>>>,
     cancellation: Rc<Cell<bool>>,
@@ -58,6 +59,16 @@ impl ClientHandle {
 
     pub fn mission_id(&self) -> Option<String> {
         self.mission_id.borrow().clone()
+    }
+
+    pub fn speech_timing_locale(&self) -> Option<String> {
+        self.speech_timing_locale.borrow().clone().flatten()
+    }
+
+    /// The outer option distinguishes a pending handshake from an explicit
+    /// `None`, which authoritatively selects base `Data/Sounds` timing.
+    pub fn speech_timing_authority(&self) -> Option<Option<String>> {
+        self.speech_timing_locale.borrow().clone()
     }
 
     pub fn startup_error(&self) -> Option<String> {
@@ -91,6 +102,7 @@ pub fn connect_client(
     let assigned_seat = Rc::new(RefCell::new(None));
     let mission_seed = Rc::new(RefCell::new(None));
     let mission_sim_config = Rc::new(RefCell::new(None));
+    let speech_timing_locale = Rc::new(RefCell::new(None));
     let mission_id = Rc::new(RefCell::new(None));
     let startup_error = Rc::new(RefCell::new(None));
     let cancellation = Rc::new(Cell::new(false));
@@ -104,6 +116,7 @@ pub fn connect_client(
         Rc::clone(&assigned_seat),
         Rc::clone(&mission_seed),
         Rc::clone(&mission_sim_config),
+        Rc::clone(&speech_timing_locale),
         Rc::clone(&mission_id),
         Rc::clone(&startup_error),
         Rc::clone(&cancellation),
@@ -113,6 +126,7 @@ pub fn connect_client(
         assigned_seat,
         mission_seed,
         mission_sim_config,
+        speech_timing_locale,
         mission_id,
         startup_error,
         cancellation,
@@ -193,6 +207,7 @@ async fn run_client_io(
     assigned: Rc<RefCell<Option<PlayerId>>>,
     mission_seed_slot: Rc<RefCell<Option<u64>>>,
     sim_config_slot: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
+    speech_timing_locale_slot: Rc<RefCell<Option<Option<String>>>>,
     mission_id_slot: Rc<RefCell<Option<String>>>,
     startup_error: Rc<RefCell<Option<String>>>,
     cancellation: Rc<Cell<bool>>,
@@ -243,7 +258,15 @@ async fn run_client_io(
         &cancellation,
     )
     .await;
-    let (mut session, your_seat, mission_id, mission_seed, sim_config, session_id) = match first {
+    let (
+        mut session,
+        your_seat,
+        mission_id,
+        mission_seed,
+        sim_config,
+        speech_timing_locale,
+        session_id,
+    ) = match first {
         Ok(result) => result,
         Err(error) => {
             publish_startup_error(&startup_error, &incoming_tx, error);
@@ -260,12 +283,14 @@ async fn run_client_io(
     *assigned.borrow_mut() = Some(your_seat);
     *mission_seed_slot.borrow_mut() = Some(mission_seed);
     *sim_config_slot.borrow_mut() = Some(sim_config);
+    *speech_timing_locale_slot.borrow_mut() = Some(speech_timing_locale.clone());
     *mission_id_slot.borrow_mut() = Some(mission_id.clone());
     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
     let _ = incoming_tx.send(NetEvent::MissionConfig {
         mission_id: mission_id.clone(),
         rng_seed: mission_seed,
         sim_config,
+        speech_timing_locale: speech_timing_locale.clone(),
     });
 
     let mut backoff_ms = 500_u32;
@@ -303,17 +328,27 @@ async fn run_client_io(
             )
             .await
             {
-                Ok((next, next_seat, next_mission, next_seed, next_config, next_session_id)) => {
+                Ok((
+                    next,
+                    next_seat,
+                    next_mission,
+                    next_seed,
+                    next_config,
+                    next_speech_timing_locale,
+                    next_session_id,
+                )) => {
                     if let Err(error) = validate_reconnect_state(
                         your_seat,
                         &mission_id,
                         mission_seed,
                         sim_config,
+                        speech_timing_locale.as_deref(),
                         session_id,
                         next_seat,
                         &next_mission,
                         next_seed,
                         next_config,
+                        next_speech_timing_locale.as_deref(),
                         next_session_id,
                     ) {
                         let _ = incoming_tx.send(NetEvent::Fatal(error));
@@ -328,12 +363,15 @@ async fn run_client_io(
                         );
                     }
                     *assigned.borrow_mut() = Some(next_seat);
+                    *speech_timing_locale_slot.borrow_mut() =
+                        Some(next_speech_timing_locale.clone());
                     let _ = incoming_tx.send(NetEvent::Reconnected);
                     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(next_seat));
                     let _ = incoming_tx.send(NetEvent::MissionConfig {
                         mission_id: next_mission,
                         rng_seed: next_seed,
                         sim_config: next_config,
+                        speech_timing_locale: next_speech_timing_locale,
                     });
                     backoff_ms = 500;
                     break next;
@@ -405,6 +443,7 @@ type Handshake = (
     String,
     u64,
     robin_engine::engine::SimConfig,
+    Option<String>,
     [u8; 32],
 );
 
@@ -446,6 +485,7 @@ async fn handshake(
             mission_id,
             mission_seed,
             sim_config,
+            speech_timing_locale,
             host_nickname,
             session_id,
         }) => {
@@ -468,6 +508,7 @@ async fn handshake(
                 mission_id,
                 mission_seed,
                 sim_config,
+                speech_timing_locale,
                 session_id,
             ))
         }
@@ -483,21 +524,24 @@ fn validate_reconnect_state(
     expected_mission_id: &str,
     expected_seed: u64,
     expected_config: robin_engine::engine::SimConfig,
+    expected_speech_timing_locale: Option<&str>,
     expected_session_id: [u8; 32],
     seat: PlayerId,
     mission_id: &str,
     seed: u64,
     config: robin_engine::engine::SimConfig,
+    speech_timing_locale: Option<&str>,
     session_id: [u8; 32],
 ) -> Result<(), String> {
     if seat != expected_seat
         || mission_id != expected_mission_id
         || seed != expected_seed
         || config != expected_config
+        || speech_timing_locale != expected_speech_timing_locale
         || session_id != expected_session_id
     {
         return Err(format!(
-            "browser reconnect joined incompatible seat {seat:?} mission `{mission_id}` seed {seed} config {config:?} session {session_id:?}; expected seat {expected_seat:?} mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} session {expected_session_id:?}"
+            "browser reconnect joined incompatible seat {seat:?} mission `{mission_id}` seed {seed} config {config:?} speech timing {speech_timing_locale:?} session {session_id:?}; expected seat {expected_seat:?} mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} speech timing {expected_speech_timing_locale:?} session {expected_session_id:?}"
         ));
     }
     Ok(())
@@ -769,11 +813,13 @@ mod tests {
                 "A",
                 7,
                 expected,
+                Some("en-US"),
                 [1; 32],
                 PlayerId(1),
                 "A",
                 7,
                 expected,
+                Some("en-US"),
                 [1; 32],
             )
             .is_ok()
@@ -784,11 +830,13 @@ mod tests {
                 "A",
                 7,
                 expected,
+                Some("en-US"),
                 [1; 32],
                 PlayerId(2),
                 "A",
                 7,
                 expected,
+                Some("en-US"),
                 [1; 32],
             )
             .is_err()
@@ -799,12 +847,31 @@ mod tests {
                 "A",
                 7,
                 expected,
+                Some("en-US"),
                 [1; 32],
                 PlayerId(1),
                 "A",
                 7,
                 expected,
+                Some("en-US"),
                 [2; 32],
+            )
+            .is_err()
+        );
+        assert!(
+            validate_reconnect_state(
+                PlayerId(1),
+                "A",
+                7,
+                expected,
+                Some("en-US"),
+                [1; 32],
+                PlayerId(1),
+                "A",
+                7,
+                expected,
+                Some("de-DE"),
+                [1; 32],
             )
             .is_err()
         );

@@ -32,6 +32,10 @@ use crate::bg_cache::BackgroundDecal;
 use crate::draw_manager::DrawManager;
 use crate::key_config::KeyConfig;
 use crate::key_config_store::{KeyConfigStore, ProfileKeyConfig};
+use crate::localization::{
+    LanguageChange, LanguagePack, LanguageSelection, LocalizationPreferences, LocalizationService,
+    PortTextKey,
+};
 use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
@@ -56,6 +60,7 @@ pub enum TacticalTargetMode {
 struct ApplicationServices {
     player_profiles: Mutex<PlayerProfileManager>,
     key_configs: Mutex<KeyConfigStore>,
+    localization: Mutex<LocalizationService>,
     shipping: Option<Arc<ShippingDatadir>>,
 }
 
@@ -105,8 +110,27 @@ impl ApplicationContext {
     pub fn complete(
         options: engine_api::GlobalOptions,
         player_profiles: PlayerProfileManager,
+        key_configs: KeyConfigStore,
+        shipping: Option<Arc<ShippingDatadir>>,
+    ) -> Result<Self, String> {
+        Self::complete_with_localization(
+            options,
+            player_profiles,
+            key_configs,
+            shipping,
+            LocalizationService::disabled(),
+        )
+    }
+
+    /// Complete a production application context with localization already
+    /// installed. Keeping this separate from [`Self::complete`] prevents unit
+    /// test contexts from mutating the process-wide resource search order.
+    pub fn complete_with_localization(
+        options: engine_api::GlobalOptions,
+        player_profiles: PlayerProfileManager,
         mut key_configs: KeyConfigStore,
         shipping: Option<Arc<ShippingDatadir>>,
+        localization: LocalizationService,
     ) -> Result<Self, String> {
         let active = player_profiles
             .get_active()
@@ -143,6 +167,7 @@ impl ApplicationContext {
             services: Some(Arc::new(ApplicationServices {
                 player_profiles: Mutex::new(player_profiles),
                 key_configs: Mutex::new(key_configs),
+                localization: Mutex::new(localization),
                 shipping,
             })),
         })
@@ -182,6 +207,85 @@ impl ApplicationContext {
 
     pub fn shipping_arc(&self) -> Result<Option<Arc<ShippingDatadir>>, String> {
         Ok(self.required_services()?.shipping.clone())
+    }
+
+    pub fn localization_preferences(&self) -> Result<LocalizationPreferences, String> {
+        self.with_localization(|localization| localization.preferences().clone())
+    }
+
+    pub fn installed_languages(&self) -> Result<Vec<LanguagePack>, String> {
+        self.with_localization(|localization| localization.installed().to_vec())
+    }
+
+    pub fn active_locale(&self) -> Result<Option<String>, String> {
+        self.with_localization(|localization| localization.active_locale().map(str::to_owned))
+    }
+
+    pub fn localized_mission_name(&self, mission_id: u32, fallback: &str) -> String {
+        self.with_localization(|localization| {
+            localization
+                .active_locale()
+                .and_then(|locale| {
+                    localization
+                        .installed()
+                        .iter()
+                        .find(|pack| pack.locale == locale)
+                })
+                .and_then(|pack| pack.mission_names.get(&mission_id))
+                .cloned()
+                .unwrap_or_else(|| fallback.to_owned())
+        })
+        .unwrap_or_else(|error| panic!("mission title lost localization service: {error}"))
+    }
+
+    pub fn localization_generation(&self) -> Result<u64, String> {
+        self.with_localization(LocalizationService::generation)
+    }
+
+    pub fn language_selector_visible(&self) -> Result<bool, String> {
+        self.with_localization(LocalizationService::selector_visible)
+    }
+
+    pub fn canonical_speech_timing_locale(&self) -> Result<Option<String>, String> {
+        self.with_localization(|localization| {
+            localization
+                .canonical_speech_timing_locale()
+                .map(str::to_owned)
+        })
+    }
+
+    pub fn port_text(&self, key: PortTextKey) -> Result<&'static str, String> {
+        self.with_localization(|localization| {
+            crate::localization::port_text(localization.active_locale(), key)
+        })
+    }
+
+    pub fn set_language(&self, selection: LanguageSelection) -> Result<LanguageChange, String> {
+        let services = self.required_services()?;
+        let mut localization = services
+            .localization
+            .lock()
+            .map_err(|_| "ApplicationContext localization lock poisoned".to_string())?;
+        let change = localization
+            .set_selection(selection, services.shipping.as_deref())
+            .map_err(|error| error.to_string())?;
+        drop(localization);
+        if change.previous_locale != change.active_locale {
+            crate::process_asset_cache::invalidate_localized();
+        }
+        Ok(change)
+    }
+
+    fn with_localization<R>(
+        &self,
+        read: impl FnOnce(&LocalizationService) -> R,
+    ) -> Result<R, String> {
+        let localization = self
+            .required_services()?
+            .localization
+            .lock()
+            .map_err(|_| "ApplicationContext localization lock poisoned".to_string())?;
+        Ok(read(&localization))
     }
 
     pub fn player_profiles_snapshot(&self) -> Result<PlayerProfileManager, String> {
@@ -1028,6 +1132,7 @@ pub struct HostTransport {
     pub net: Option<crate::multiplayer::NetChannels>,
     pub mission_seed: Option<u64>,
     pub mission_sim_config: Option<engine_api::SimConfig>,
+    pub speech_timing_locale: Option<String>,
     pub mission_id: Option<String>,
     pub reconnecting: bool,
 }

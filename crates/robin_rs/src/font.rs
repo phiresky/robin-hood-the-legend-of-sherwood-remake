@@ -113,10 +113,15 @@ impl TrueTypeFont {
     pub fn load(sbf_path: &Path) -> Self {
         let mut font = Self::new_invalid();
 
-        let data = match std::fs::read(sbf_path) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::error!("robin_rs font: cannot read '{}': {}", sbf_path.display(), e);
+        let path = sbf_path.to_string_lossy();
+        let data = match robin_engine::sbfile::SbFile::read_all(&path) {
+            Ok(data) => data,
+            Err(status) => {
+                tracing::error!(
+                    "robin_rs font: cannot read '{}' through the active asset lookup: SBFile {}",
+                    sbf_path.display(),
+                    status
+                );
                 return font;
             }
         };

@@ -233,6 +233,7 @@ mod tests {
             "Dem_Lei_MP".into(),
             42,
             robin_engine::engine::SimConfig::default(),
+            Some("en-US".into()),
             incoming_tx,
             outgoing_rx,
             frame_cursor,
@@ -280,6 +281,7 @@ mod tests {
             "Dem_Lei_MP".into(),
             42,
             expected_config,
+            Some("en-US".into()),
             server_in_tx,
             server_out_rx,
             server_cursor,
@@ -297,6 +299,7 @@ mod tests {
         assert_eq!(_client.mission_id(), Some("Dem_Lei_MP"));
         assert_eq!(_client.mission_seed(), Some(42));
         assert_eq!(_client.mission_sim_config(), Some(expected_config));
+        assert_eq!(_client.speech_timing_locale().as_deref(), Some("en-US"));
 
         let assigned = loop {
             match client_in_rx.recv_timeout(Duration::from_secs(2)) {
@@ -384,6 +387,7 @@ mod tests {
             "Dem_Lei_MP".into(),
             42,
             robin_engine::engine::SimConfig::default(),
+            Some("en-US".into()),
             server_in_tx,
             server_out_rx,
             server_cursor,

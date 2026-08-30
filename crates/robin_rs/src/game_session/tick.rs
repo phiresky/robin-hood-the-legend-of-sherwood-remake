@@ -29,6 +29,7 @@ pub(super) fn tick_audio(
     backend: &mut KiraAudioBackend,
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
+    assets: &engine_api::LevelAssets,
 ) -> Option<engine_api::SoundBoundary> {
     let alert_status = match manager.engine.ai_global().overall_alert_status {
         AlertLevel::Green => AlertStatus::Green,
@@ -91,11 +92,41 @@ pub(super) fn tick_audio(
     );
     let resolved_exclamations: Vec<_> = resolved_exclamations
         .into_iter()
-        .map(|resolved| robin_engine::sound::ResolvedExclamation {
-            actor_id: resolved.actor_id,
-            identifier: resolved.identifier,
-            exclamation_id: resolved.exclamation_id,
-            duration_frames: resolved.length_ms.saturating_add(39) / 40,
+        .map(|resolved| {
+            let pending = manager
+                .engine
+                .sound_sim()
+                .pending_exclamations
+                .iter()
+                .find(|pending| {
+                    pending.actor_id == resolved.actor_id
+                        && pending.exclamation_id == resolved.exclamation_id
+                        && ((pending.profile_id & 0xFFFF_0000)
+                            | u32::from(pending.exclamation_id))
+                            == resolved.identifier
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "host resolved speech ({}, {}, {}) without its authoritative pending request",
+                        resolved.actor_id, resolved.identifier, resolved.exclamation_id
+                    )
+                });
+            let duration_frames = assets
+                .exclamation_durations
+                .get(&(pending.group, pending.profile_id, pending.exclamation_id))
+                .copied()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "authoritative speech duration missing for {:?} profile {} exclamation {}",
+                        pending.group, pending.profile_id, pending.exclamation_id
+                    )
+                });
+            robin_engine::sound::ResolvedExclamation {
+                actor_id: resolved.actor_id,
+                identifier: resolved.identifier,
+                exclamation_id: resolved.exclamation_id,
+                duration_frames,
+            }
         })
         .collect();
     // The hourglass drains the queue; whatever it left behind

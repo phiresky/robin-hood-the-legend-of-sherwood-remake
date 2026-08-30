@@ -15,7 +15,7 @@ use robin_engine::graphic_config::GraphicConfig;
 
 use super::layout::{
     MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_fallback_rect,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_ALPHA_VISION_FIELD,
@@ -480,15 +480,15 @@ pub async fn show_graphics(
             draw_screen_background(renderer, &bg);
         }
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(&title);
-            render_text_virt(renderer, font, transform, &title, (490 - tw) / 2, 20);
+            render_text_virt_font(renderer, font, transform, &title, (490 - tw) / 2, 20);
         }
-        if let Some(font) = resources.label_font() {
-            render_text_virt(renderer, font, transform, &res_label, 30, 80);
-            render_text_virt(renderer, font, transform, &fx_label, 30, 250);
-            render_text_virt(renderer, font, transform, "Scaling", scale_x, 80);
-            render_text_virt(
+        if let Some(font) = resources.label_font_any() {
+            render_text_virt_font(renderer, font, transform, &res_label, 30, 80);
+            render_text_virt_font(renderer, font, transform, &fx_label, 30, 250);
+            render_text_virt_font(renderer, font, transform, "Scaling", scale_x, 80);
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -497,7 +497,7 @@ pub async fn show_graphics(
                 effect_y - 12,
             );
             if working.scale_mode == TextureScaleMode::RetroArch && !parameter_page_effect {
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -505,7 +505,7 @@ pub async fn show_graphics(
                     PRESET_LIST_X,
                     PRESET_LIST_Y - 18,
                 );
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -519,10 +519,10 @@ pub async fn show_graphics(
                 } else {
                     "Upscaler parameters (Tab)"
                 };
-                render_text_virt(renderer, font, transform, page, scale_x, parameter_y - 12);
+                render_text_virt_font(renderer, font, transform, page, scale_x, parameter_y - 12);
             }
             if !parameter_status.is_empty() {
-                render_text_virt(renderer, font, transform, &parameter_status, 30, 410);
+                render_text_virt_font(renderer, font, transform, &parameter_status, 30, 410);
             }
         }
 
@@ -667,7 +667,7 @@ fn draw_preset_list(
         false,
     );
 
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
     for row in 0..PRESET_LIST_ROWS {
@@ -689,11 +689,11 @@ fn draw_preset_list(
             );
         }
         let label = fit_label(font, &preset.label, PRESET_LIST_W - 8);
-        render_text_virt(renderer, font, transform, &label, PRESET_LIST_X + 4, y + 1);
+        render_text_virt_font(renderer, font, transform, &label, PRESET_LIST_X + 4, y + 1);
     }
 }
 
-fn fit_label(font: &crate::native_font::NativeFont, label: &str, max_w: i32) -> String {
+fn fit_label(font: &crate::native_font::Font, label: &str, max_w: i32) -> String {
     if font.text_width(label) <= max_w {
         return label.to_string();
     }
@@ -740,7 +740,7 @@ fn draw_parameter_panel(
     y: i32,
     width: i32,
 ) {
-    let Some(font) = resources.label_font() else {
+    let Some(font) = resources.label_font_any() else {
         return;
     };
     let upscale_values = [
@@ -771,7 +771,7 @@ fn draw_parameter_panel(
     };
     for (row, (label, value)) in values.iter().enumerate() {
         let row_y = y + row as i32 * 12;
-        render_text_virt(
+        render_text_virt_font(
             renderer,
             font,
             transform,

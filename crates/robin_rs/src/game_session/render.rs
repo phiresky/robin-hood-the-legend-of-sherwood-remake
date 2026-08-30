@@ -704,7 +704,7 @@ fn render_display_info_overlay(
     let shadow = fonts.shadow_font.as_ref();
     let text = |renderer: &mut crate::renderer::Renderer, line: &str, x: i32, y: i32| {
         crate::hud_text::render_text_background(font, shadow, line, x, y, |f, t, fx, fy| {
-            renderer.render_text_argb(f, t, fx, fy);
+            crate::ingame_menu::layout::render_text_screen_font(renderer, f, t, fx, fy);
         });
     };
 
@@ -1802,7 +1802,7 @@ pub(super) fn render_frame(
         console_overlay.tick_animation();
     }
     if console_overlay.is_visible() {
-        let console_font = menu_resources.and_then(|r| r.label_font());
+        let console_font = menu_resources.and_then(|r| r.label_font_any());
         console_overlay.render(renderer, console_font);
     }
 
