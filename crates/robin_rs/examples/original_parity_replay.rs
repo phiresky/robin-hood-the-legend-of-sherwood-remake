@@ -2261,7 +2261,7 @@ fn recorded_gate_path_from_event(
                     .gates
                     .iter()
                     .map(|gate| robin_engine::gate::GatePathStep {
-                        door_index: robin_engine::gate::DoorIndex(
+                        door_index: robin_engine::gate::DoorIndex::from(
                             entity_map.translate_gate(gate.gate_id),
                         ),
                         direct: gate.direct,
@@ -8022,7 +8022,10 @@ fn restore_campaign(
                     pc_description_idx: validate_character_index(occupant.character_index),
                     x: occupant.x.value(),
                     y: occupant.y.value(),
-                    obstacle: occupant.obstacle,
+                    obstacle:
+                        robin_engine::position_interface::ObstacleHandle::from_serialized_pointer(
+                            occupant.obstacle,
+                        ),
                 })
                 .collect(),
             amount: source.amount,
@@ -9661,7 +9664,7 @@ fn compare_frame(
                     .map(trace_pass_door_key);
                 let actual_pass = engine
                     .actor_selected_pass_door(id)
-                    .map(|(gate_id, direction)| (gate_id.0, direction != 0));
+                    .map(|(gate_id, direction)| (gate_id.get(), direction != 0));
                 if !active_pass_door_keys_match(
                     expected_actor.active_pass_door.as_ref(),
                     actual_pass,
@@ -13694,9 +13697,9 @@ mod tests {
             // Rust installed the stateful doors first, so its runtime peer is
             // door-table index 3.
             gates: vec![
-                robin_engine::gate::DoorIndex(0),
-                robin_engine::gate::DoorIndex(3),
-                robin_engine::gate::DoorIndex(1),
+                robin_engine::gate::DoorIndex::from(0),
+                robin_engine::gate::DoorIndex::from(3),
+                robin_engine::gate::DoorIndex::from(1),
             ],
             runtime_creation_order_boundary: 0,
         };
@@ -13742,7 +13745,9 @@ mod tests {
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
             sector_indices: BTreeMap::new(),
-            gates: (0..=max_gate).map(robin_engine::gate::DoorIndex).collect(),
+            gates: (0..=max_gate)
+                .map(robin_engine::gate::DoorIndex::from)
+                .collect(),
             runtime_creation_order_boundary: 0,
         }
     }
@@ -14164,7 +14169,7 @@ mod tests {
                     robin_engine::fast_find_grid::SectorIndex::new(38).unwrap(),
                 ),
             ]),
-            gates: vec![robin_engine::gate::DoorIndex(42)],
+            gates: vec![robin_engine::gate::DoorIndex::from(42)],
             runtime_creation_order_boundary: 0,
         }
     }
@@ -14209,7 +14214,7 @@ mod tests {
                     source_layer: 6,
                     outcome: robin_engine::gate::RecordedGateOutcome::Success(vec![
                         robin_engine::gate::GatePathStep {
-                            door_index: robin_engine::gate::DoorIndex(42),
+                            door_index: robin_engine::gate::DoorIndex::from(42),
                             direct: false,
                         },
                     ]),

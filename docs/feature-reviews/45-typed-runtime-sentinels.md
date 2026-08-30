@@ -5,7 +5,7 @@
 - **Owner decision:** **Accepted.**
 - **Implementation status:** The reviewed implementation is complete at
   `b938d6734`; its documentation checkpoint is `21bbcb6ce`. It is now
-  semantically reconciled with exact rolling-main commit `26d42fd57` on
+  semantically reconciled with exact rolling-main commit `938d1f3d6` on
   `codex/accepted-45-typed-runtime-sentinels`.
 - **Verification confidence:** High for typed state, strict serialization,
   Original-save adoption, replay/rollback/network round trips, and engine
@@ -170,7 +170,7 @@ They remain unchanged until their semantics are independently proven.
 ## Verification evidence
 
 Validation was run first on reviewed checkpoint `b938d6734`, then repeated on
-the reconciled branch after merging exact rolling-main commit `26d42fd57`:
+the reconciled branch after merging exact rolling-main commit `938d1f3d6`:
 
 - `cargo test -p robin_engine` passed:
   - 4,153 unit tests on the integrated feature set;
@@ -189,6 +189,9 @@ the reconciled branch after merging exact rolling-main commit `26d42fd57`:
   network-protocol-v30 assertion, and `pnpm typecheck` passed.
 - The `wasm32-unknown-unknown` `wasm-dev` build passed with the same protocol
   and typed state.
+- `cargo test -p robin_rs --example original_parity_replay` passed all 99
+  Original-parity harness tests after its runtime-snapshot normalization was
+  reconciled with typed gate and obstacle handles.
 - `cargo fmt --all` and `git diff --check` passed.
 
 Focused coverage within those suites includes:
@@ -224,8 +227,8 @@ Rolling `main` independently used 58/18/25 for per-mission achievement state
 and then advanced for browser multiplayer, item rebalancing, localization,
 trading, autosaves, and authoritative difficulty. The accepted reconciliation
 was performed only after Feature 16 landed. Exact pre-Feature-45 main commit
-`26d42fd570a180d62aa25bbd14fcca3c722701e0` uses save v61, replay v21, and
-network protocol v29.
+`938d1f3d6` uses save v61, replay v21, and network protocol v29; its final
+change after `26d42fd57` only normalizes Original-parity example snapshots.
 
 | Boundary | Isolated Feature 45 | Pre-Feature-45 `main` | Reconciled branch |
 | --- | ---: | ---: | ---: |
@@ -256,7 +259,10 @@ The reconciliation did the following:
 5. Re-ran the engine, save, native, network, browser, and WASM gates listed
    above. Integration compile failures exposed and corrected the remaining
    three typed boundaries: distraction `NoiseOrigin`, projectile optional
-   layer propagation, and net-crumple preview layer conversion.
+   layer propagation, and net-crumple preview layer conversion. The later
+   Original-parity harness merge additionally exposed and corrected raw gate,
+   production-obstacle, and active-pass-door comparison boundaries in that
+   example without changing production schemas.
 
 The next independently changing replay layout must therefore use replay v23;
 it must not reuse v22. No additional save or network bump is needed unless it
