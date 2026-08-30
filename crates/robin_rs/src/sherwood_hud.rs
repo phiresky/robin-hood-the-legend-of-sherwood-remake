@@ -1,5 +1,5 @@
 //! Sherwood-mission HUD buttons (DisplayCampaignMap, GoToExit,
-//! StartMission, QuitMission).
+//! StartMission, QuitMission, SherwoodTrading).
 //!
 //! Only the logical layout + hit-test + enabled-state machine is
 //! implemented here; visual polish (proper sprite backgrounds, tooltips,
@@ -31,7 +31,8 @@ use crate::native_font::NativeFont;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids::{
-    RHID_DISPLAY_CAMPAIGN_MAP, RHID_FLOATING_CANCEL, RHID_FLOATING_OK, RHID_GO_TO_EXIT,
+    RHID_CONVERT_MONEY_TO_BLAZONS, RHID_DISPLAY_CAMPAIGN_MAP, RHID_FLOATING_CANCEL,
+    RHID_FLOATING_OK, RHID_GO_TO_EXIT,
 };
 
 fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
@@ -54,6 +55,8 @@ pub enum SherwoodButton {
     StartMission,
     /// Return to the campaign map.
     QuitMission,
+    /// Open the post-port Sherwood inventory-trading panel.
+    SherwoodTrading,
 }
 
 impl SherwoodButton {
@@ -63,6 +66,7 @@ impl SherwoodButton {
             SherwoodButton::GoToExit => 1,
             SherwoodButton::StartMission => 2,
             SherwoodButton::QuitMission => 3,
+            SherwoodButton::SherwoodTrading => 4,
         }
     }
 }
@@ -79,6 +83,7 @@ pub struct SherwoodButtonEnable {
     pub go_to_exit: bool,
     pub start_mission: bool,
     pub quit_mission: bool,
+    pub sherwood_trading: bool,
 }
 
 impl SherwoodButtonEnable {
@@ -92,6 +97,7 @@ impl SherwoodButtonEnable {
             go_to_exit: false,
             start_mission: false,
             quit_mission: false,
+            sherwood_trading: false,
         }
     }
 
@@ -107,6 +113,7 @@ impl SherwoodButtonEnable {
             go_to_exit: true,
             start_mission: false,
             quit_mission: true,
+            sherwood_trading: false,
         }
     }
 
@@ -200,6 +207,7 @@ pub struct SherwoodHudLayout {
     pub go_to_exit: ScreenRect,
     pub start_mission: ScreenRect,
     pub quit_mission: ScreenRect,
+    pub sherwood_trading: ScreenRect,
 }
 
 impl SherwoodHudLayout {
@@ -231,6 +239,7 @@ impl SherwoodHudLayout {
         let tall_x = sw - 45;
         let start_y = 105;
         let quit_y = 150;
+        let trading_y = 195;
 
         let (dcm_w, dcm_h) = sprites
             .size(SherwoodButton::DisplayCampaignMap)
@@ -244,12 +253,16 @@ impl SherwoodHudLayout {
         let (qm_w, qm_h) = sprites
             .size(SherwoodButton::QuitMission)
             .unwrap_or((FALLBACK_TALL_W, FALLBACK_TALL_H));
+        let (trade_w, trade_h) = sprites
+            .size(SherwoodButton::SherwoodTrading)
+            .unwrap_or((FALLBACK_TALL_W, FALLBACK_TALL_H));
 
         Self {
             display_campaign_map: ScreenRect::new(wide_x, wide_y, dcm_w as u32, dcm_h as u32),
             go_to_exit: ScreenRect::new(wide_x, wide_y, gte_w as u32, gte_h as u32),
             start_mission: ScreenRect::new(tall_x, start_y, sm_w as u32, sm_h as u32),
             quit_mission: ScreenRect::new(tall_x, quit_y, qm_w as u32, qm_h as u32),
+            sherwood_trading: ScreenRect::new(tall_x, trading_y, trade_w as u32, trade_h as u32),
         }
     }
 
@@ -270,6 +283,9 @@ impl SherwoodHudLayout {
         }
         if enable.quit_mission && self.quit_mission.contains_point(pt) {
             return Some(SherwoodButton::QuitMission);
+        }
+        if enable.sherwood_trading && self.sherwood_trading.contains_point(pt) {
+            return Some(SherwoodButton::SherwoodTrading);
         }
         None
     }
@@ -306,6 +322,7 @@ pub struct SherwoodButtonSprites {
     pub go_to_exit: [Option<SpriteFrame>; 4],
     pub start_mission: [Option<SpriteFrame>; 4],
     pub quit_mission: [Option<SpriteFrame>; 4],
+    pub sherwood_trading: [Option<SpriteFrame>; 4],
 }
 
 impl SherwoodButtonSprites {
@@ -360,6 +377,14 @@ impl SherwoodButtonSprites {
             go_to_exit: fetch_all(res, renderer, RHID_GO_TO_EXIT, "GoToExit"),
             start_mission: fetch_all(res, renderer, RHID_FLOATING_OK, "StartMission"),
             quit_mission: fetch_all(res, renderer, RHID_FLOATING_CANCEL, "QuitMission"),
+            // Reuse the shipped money-conversion button: its coin/ransom
+            // imagery is the closest authored visual for item sales.
+            sherwood_trading: fetch_all(
+                res,
+                renderer,
+                RHID_CONVERT_MONEY_TO_BLAZONS,
+                "SherwoodTrading",
+            ),
         }
     }
 
@@ -369,6 +394,7 @@ impl SherwoodButtonSprites {
             SherwoodButton::GoToExit => &self.go_to_exit,
             SherwoodButton::StartMission => &self.start_mission,
             SherwoodButton::QuitMission => &self.quit_mission,
+            SherwoodButton::SherwoodTrading => &self.sherwood_trading,
         }
     }
 
@@ -436,6 +462,11 @@ pub fn draw_with_sprites(
             enable.quit_mission,
             SherwoodButton::QuitMission,
         ),
+        (
+            &layout.sherwood_trading,
+            enable.sherwood_trading,
+            SherwoodButton::SherwoodTrading,
+        ),
     ];
 
     for (rect, enabled, btn) in buttons {
@@ -450,7 +481,9 @@ pub fn draw_with_sprites(
             let dst = screen_rect_to_sprite_bbox(*rect);
             if matches!(
                 btn,
-                SherwoodButton::StartMission | SherwoodButton::QuitMission
+                SherwoodButton::StartMission
+                    | SherwoodButton::QuitMission
+                    | SherwoodButton::SherwoodTrading
             ) {
                 renderer.blit_with_shadow(
                     sid,
@@ -495,6 +528,7 @@ impl SherwoodTooltipTracker {
             1 => Some(SherwoodButton::GoToExit),
             2 => Some(SherwoodButton::StartMission),
             3 => Some(SherwoodButton::QuitMission),
+            4 => Some(SherwoodButton::SherwoodTrading),
             _ => None,
         })
     }
@@ -540,6 +574,9 @@ pub fn sherwood_button_tooltip_mt_id(
     match btn {
         SherwoodButton::StartMission => Some(start_id),
         SherwoodButton::QuitMission => Some(quit_id),
+        SherwoodButton::SherwoodTrading => {
+            Some(crate::ingame_menu::resources::MT_TTL_SHERWOOD_TRADING)
+        }
         // DisplayCampaignMap / GoToExit use their own fixed menu-text
         // IDs (`MT_INFOBULLE_QG_SELECT_MISSION` = 299 and
         // `MT_INFOBULLE_QG_DEPLOY` = 296), set once at initialization.
@@ -598,6 +635,7 @@ mod tests {
         assert_eq!(layout.start_mission.x(), 800 - 45);
         assert_eq!(layout.start_mission.y(), 105);
         assert_eq!(layout.quit_mission.y(), 150);
+        assert_eq!(layout.sherwood_trading.y(), 195);
     }
 
     #[test]
@@ -619,6 +657,17 @@ mod tests {
         assert_eq!(
             layout.hit_test(pt_map.0, pt_map.1, pre),
             Some(SherwoodButton::DisplayCampaignMap)
+        );
+
+        let mut trading = SherwoodButtonEnable::pre_commit();
+        trading.sherwood_trading = true;
+        let pt_trade = (
+            layout.sherwood_trading.x() + 1,
+            layout.sherwood_trading.y() + 1,
+        );
+        assert_eq!(
+            layout.hit_test(pt_trade.0, pt_trade.1, trading),
+            Some(SherwoodButton::SherwoodTrading)
         );
     }
 

@@ -582,6 +582,11 @@ pub struct SimulationFrameOutput {
     pub hourglass_ran: bool,
     /// Output for the host to consume after the transaction.
     pub events: SimEvents,
+    /// Ordered effects emitted by post-hourglass external actions and player
+    /// commands. These must be delivered even when no hourglass or one-shot
+    /// PostInitialize stage runs; otherwise a modal-issued command can strand
+    /// its acknowledgement behind the modal that is waiting for it.
+    pub post_boundary_events: SimEvents,
     /// Ordered effects produced by the optional one-shot lifecycle stage.
     pub post_initialize_events: Option<SimEvents>,
     /// Results for pre- then post-hourglass external actions, in order.

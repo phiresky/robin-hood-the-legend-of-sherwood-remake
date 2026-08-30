@@ -118,6 +118,7 @@ impl ApplicationContext {
         let clean_hands_npc_kills_invalidate =
             active.gameplay_config.clean_hands_npc_kills_invalidate;
         let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+        let sherwood_trading = active.gameplay_config.sherwood_trading;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -135,6 +136,7 @@ impl ApplicationContext {
         sim_config.enable_unbinding = enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.sherwood_trading = sherwood_trading;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -154,6 +156,7 @@ impl ApplicationContext {
         sim_config.enable_unbinding = existing.enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
+        sim_config.sherwood_trading = existing.sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -214,6 +217,7 @@ impl ApplicationContext {
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         ) = {
             let mut profiles = self
                 .required_services()?
@@ -232,6 +236,7 @@ impl ApplicationContext {
                 active.gameplay_config.enable_unbinding,
                 active.gameplay_config.clean_hands_npc_kills_invalidate,
                 active.gameplay_config.reusable_cloaks,
+                active.gameplay_config.sherwood_trading,
             )
         };
         self.refresh_profile_derived_state(
@@ -241,6 +246,7 @@ impl ApplicationContext {
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         )?;
         Ok(result)
     }
@@ -263,6 +269,7 @@ impl ApplicationContext {
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         ) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
@@ -315,6 +322,7 @@ impl ApplicationContext {
             let clean_hands_npc_kills_invalidate =
                 active.gameplay_config.clean_hands_npc_kills_invalidate;
             let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+            let sherwood_trading = active.gameplay_config.sherwood_trading;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -346,6 +354,7 @@ impl ApplicationContext {
                 enable_unbinding,
                 clean_hands_npc_kills_invalidate,
                 reusable_cloaks,
+                sherwood_trading,
             )
         };
 
@@ -356,6 +365,7 @@ impl ApplicationContext {
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         )?;
         Ok(profile_id)
     }
@@ -436,6 +446,7 @@ impl ApplicationContext {
         enable_unbinding: bool,
         clean_hands_npc_kills_invalidate: bool,
         reusable_cloaks: bool,
+        sherwood_trading: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
@@ -443,6 +454,7 @@ impl ApplicationContext {
         sim_config.enable_unbinding = enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.sherwood_trading = sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -1051,6 +1063,36 @@ pub enum HostSignal {
     MissionStatePopup,
     ResetInput,
     PromoteFpsCheat,
+    SherwoodTrading,
+}
+
+/// Live presentation facts required to admit a Sherwood trading-panel request.
+///
+/// These checks intentionally mirror the authoritative sale-command ordering:
+/// host ownership, feature rule, then mission location. The engine repeats the
+/// same checks when a sale reaches the deterministic command frame, so a stale
+/// or forged presentation request cannot mutate campaign state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SherwoodTradingAccess {
+    pub(crate) local_is_host: bool,
+    pub(crate) enabled: bool,
+    pub(crate) in_sherwood: bool,
+}
+
+impl SherwoodTradingAccess {
+    pub(crate) fn validate(self) -> Result<(), robin_engine::trading::TradeRejectReason> {
+        use robin_engine::trading::TradeRejectReason;
+        if !self.local_is_host {
+            return Err(TradeRejectReason::HostOnly);
+        }
+        if !self.enabled {
+            return Err(TradeRejectReason::TradingDisabled);
+        }
+        if !self.in_sherwood {
+            return Err(TradeRejectReason::NotInSherwood);
+        }
+        Ok(())
+    }
 }
 
 /// Ordered, typed work emitted at the post-tick boundary. Variant-specific
@@ -1059,6 +1101,8 @@ pub enum HostSignal {
 pub struct HostEffectBatches {
     modals: Vec<HostModalRequest>,
     signals: Vec<HostSignal>,
+    trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
+    next_trade_request_id: u64,
     pub background_blits: Vec<PendingBgBlit>,
 }
 
@@ -1101,6 +1145,28 @@ impl HostEffectBatches {
         };
         self.modals.remove(index);
         true
+    }
+
+    pub fn extend_trade_receipts(
+        &mut self,
+        receipts: impl IntoIterator<Item = robin_engine::trading::TradeReceipt>,
+    ) {
+        self.trade_receipts.extend(receipts);
+    }
+
+    pub fn take_trade_receipts(&mut self) -> Vec<robin_engine::trading::TradeReceipt> {
+        std::mem::take(&mut self.trade_receipts)
+    }
+
+    /// Allocate a process-session correlation id for one authoritative sale.
+    /// This counter deliberately survives panel close/reopen and effect-queue
+    /// clears so a delayed network receipt cannot alias a newer request.
+    pub(crate) fn allocate_trade_request_id(&mut self) -> u64 {
+        self.next_trade_request_id = self
+            .next_trade_request_id
+            .checked_add(1)
+            .expect("Sherwood trade request id exhausted");
+        self.next_trade_request_id
     }
 
     pub fn dialogue_count(&self) -> usize {
@@ -1151,6 +1217,31 @@ impl HostEffectBatches {
         }
     }
 
+    /// Queue a player-facing trading-panel request only after all live access
+    /// checks pass. This is the single producer used by keyboard and menu UI.
+    pub(crate) fn request_sherwood_trading(
+        &mut self,
+        access: SherwoodTradingAccess,
+    ) -> Result<(), robin_engine::trading::TradeRejectReason> {
+        access.validate()?;
+        self.request_signal(HostSignal::SherwoodTrading);
+        Ok(())
+    }
+
+    /// Consume and revalidate a queued request immediately before modal
+    /// construction. A settings/location/seat transition between input and
+    /// presentation therefore fails closed, while an empty queue is ordinary.
+    pub(crate) fn take_sherwood_trading(
+        &mut self,
+        access: SherwoodTradingAccess,
+    ) -> Result<bool, robin_engine::trading::TradeRejectReason> {
+        if !self.take_signal(HostSignal::SherwoodTrading) {
+            return Ok(false);
+        }
+        access.validate()?;
+        Ok(true)
+    }
+
     pub fn has_signal(&self, signal: HostSignal) -> bool {
         self.signals.contains(&signal)
     }
@@ -1166,6 +1257,7 @@ impl HostEffectBatches {
     pub fn clear(&mut self) {
         self.modals.clear();
         self.signals.clear();
+        self.trade_receipts.clear();
         self.background_blits.clear();
     }
 }
@@ -1552,6 +1644,14 @@ impl Host {
         if fx.pending_sherwood_report {
             self.effects.request_sherwood_report();
         }
+        if self.transport.local_seat == engine_player_command::PlayerId::HOST {
+            self.effects.extend_trade_receipts(fx.trade_receipts);
+        } else if !fx.trade_receipts.is_empty() {
+            tracing::trace!(
+                count = fx.trade_receipts.len(),
+                "discarding host-only Sherwood trade receipts on a client"
+            );
+        }
         if fx.pending_show_console {
             self.effects.request_signal(HostSignal::ShowConsole);
         }
@@ -1915,6 +2015,75 @@ mod application_context_tests {
         assert!(effects.take_signal(HostSignal::ResetInput));
         assert!(!effects.take_signal(HostSignal::ResetInput));
         assert!(effects.take_signal(HostSignal::ShowConsole));
+    }
+
+    #[test]
+    fn trading_signal_requires_host_enabled_rule_and_sherwood() {
+        use robin_engine::trading::TradeRejectReason;
+
+        let allowed = SherwoodTradingAccess {
+            local_is_host: true,
+            enabled: true,
+            in_sherwood: true,
+        };
+        let cases = [
+            (
+                SherwoodTradingAccess {
+                    local_is_host: false,
+                    ..allowed
+                },
+                TradeRejectReason::HostOnly,
+            ),
+            (
+                SherwoodTradingAccess {
+                    enabled: false,
+                    ..allowed
+                },
+                TradeRejectReason::TradingDisabled,
+            ),
+            (
+                SherwoodTradingAccess {
+                    in_sherwood: false,
+                    ..allowed
+                },
+                TradeRejectReason::NotInSherwood,
+            ),
+        ];
+
+        for (access, reason) in cases {
+            let mut effects = HostEffectBatches::default();
+            assert_eq!(effects.request_sherwood_trading(access), Err(reason));
+            assert!(!effects.has_signal(HostSignal::SherwoodTrading));
+        }
+
+        let mut effects = HostEffectBatches::default();
+        assert_eq!(effects.request_sherwood_trading(allowed), Ok(()));
+        assert!(effects.has_signal(HostSignal::SherwoodTrading));
+        assert_eq!(effects.take_sherwood_trading(allowed), Ok(true));
+        assert_eq!(effects.take_sherwood_trading(allowed), Ok(false));
+    }
+
+    #[test]
+    fn queued_trading_signal_is_revalidated_and_drained_before_modal_dispatch() {
+        use robin_engine::trading::TradeRejectReason;
+
+        let allowed = SherwoodTradingAccess {
+            local_is_host: true,
+            enabled: true,
+            in_sherwood: true,
+        };
+        let mut effects = HostEffectBatches::default();
+        effects.request_sherwood_trading(allowed).unwrap();
+
+        let disabled = SherwoodTradingAccess {
+            enabled: false,
+            ..allowed
+        };
+        assert_eq!(
+            effects.take_sherwood_trading(disabled),
+            Err(TradeRejectReason::TradingDisabled)
+        );
+        assert!(!effects.has_signal(HostSignal::SherwoodTrading));
     }
 
     fn dictionary_frame_holder(shadow_color: u16) -> FrameHolder {
