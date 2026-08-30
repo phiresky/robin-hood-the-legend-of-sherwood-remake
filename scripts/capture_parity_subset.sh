@@ -17,7 +17,7 @@ set -euo pipefail
 # Environment:
 #   SAVE_DIR=./reference-saves      ROBINHOOD_DATA_DIR=./datadirs/fullgame_linux
 #   ROBIN_BINARY=./original-code/build/native-full/robin
-#   PARITY_CONVERTER=./target/release/examples/original_parity_replay
+#   PARITY_CONVERTER=./target/release/original_parity_replay
 #   PARITY_FRAMES=1500  PARITY_SEED=1  WATCHDOG_SECONDS=2700
 #   CAPTURE_JOBS=10  COMPRESS=1  HEADFUL=0  FORCE=0
 #
@@ -37,7 +37,7 @@ frames="${PARITY_FRAMES:-1500}"
 seed="${PARITY_SEED:-1}"
 watchdog_seconds="${WATCHDOG_SECONDS:-2700}"
 capture_jobs="${CAPTURE_JOBS:-10}"
-converter="${PARITY_CONVERTER:-$PWD/target/release/examples/original_parity_replay}"
+converter="${PARITY_CONVERTER:-$PWD/target/release/original_parity_replay}"
 compress="${COMPRESS:-1}"
 headful="${HEADFUL:-0}"
 
@@ -62,7 +62,7 @@ if [[ ! -x "$binary" ]]; then
     exit 2
 fi
 if [[ "$compress" == 1 && ! -x "$converter" ]]; then
-    printf 'error: COMPRESS=1 requires the parity converter (build with `cargo build --release --example original_parity_replay`, or set PARITY_CONVERTER): %s\n' \
+    printf 'error: COMPRESS=1 requires the parity converter (build with `cargo build -p robin_parity --release --bin original_parity_replay`, or set PARITY_CONVERTER): %s\n' \
         "$converter" >&2
     exit 2
 fi

@@ -14,10 +14,8 @@
 //! ESC, mouse-click, or window-close all skip playback. Missing configured
 //! cinematic content is returned as an explicit error to the calling menu.
 //!
-//! The whole module is gated on the `video` cargo feature. When the
-//! feature is off (e.g. `wasm32-unknown-emscripten` builds, which
-//! cannot link ffmpeg), [`play_video`] is exported but returns
-//! `Ok(())` after logging.
+//! The whole module is gated on the `video` cargo feature. When the feature is
+//! off, [`play_video`] reports that the requested cinematic is unavailable.
 
 #[cfg(not(feature = "video"))]
 pub async fn play_video(
@@ -25,8 +23,9 @@ pub async fn play_video(
     _window: &mut crate::window::GameWindow,
     path: &str,
 ) -> Result<(), String> {
-    tracing::warn!("video feature disabled, skipping cinematic {path}");
-    Ok(())
+    Err(format!(
+        "cinematic `{path}` is unavailable in this build; rebuild with `--features video`"
+    ))
 }
 
 /// Whole-playback gate on the application sound flag. When sound is disabled

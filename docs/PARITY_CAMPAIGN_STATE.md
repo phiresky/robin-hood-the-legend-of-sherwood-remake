@@ -863,7 +863,7 @@ access inside the launch loop (e.g. a resumable launch action).
   `interest`, not the sweep.
 
 ### The `position_goal_map` comparison tolerance is HIDING real drift
-`crates/robin_parity/examples/original_parity_replay.rs` compares `position_goal_map` with a **0.011
+`crates/robin_parity/src/original_parity_replay.rs` compares `position_goal_map` with a **0.011
 absolute** tolerance (floats elsewhere use 1e-5 relative). A whole class of 1-ULP goal errors is therefore
 invisible, and only surfaces indirectly via `movement_map` — which is the derived
 `mpointMap - mpointOldMap` (`original-code/RHpositioninterface.h:215`), a small difference of two large
@@ -1573,7 +1573,7 @@ rather than landed unproven; it is still a real missing statement and wants its 
 
 ## Key mechanics reference (hard-won, do not relearn)
 
-- Remote sweep: `ssh atlasbio-robin-cpu4`; corpora + datadirs + original-code + rust-src at `~/robinhood/`; build `cd ~/robinhood/rust-src && cargo build --release --example original_parity_replay`; sweep script reads `<audit>/traces.snapshot`, writes per-trace `status/<key>.status` (0 pass, 1 state-div, 101 rng-panic, 124 timeout) and `logs/<key>.log`; key = trace path with `/`→`__`.
+- Remote sweep: `ssh rh-serv`; corpora + datadirs + original-code + rust-src at `~/robinhood/`; build `cd ~/robinhood/rust-src && cargo build -p robin_parity --release --bin original_parity_replay`; sweep script reads `<audit>/traces.snapshot`, writes per-trace `status/<key>.status` (0 pass, 1 state-div, 101 rng-panic, 124 timeout) and `logs/<key>.log`; key = trace path with `/`→`__`.
 - classify_parity_failures.py groups by first divergence boundary; output classification.json.
 - Substates in dumps: C++ `RHsubstate` and Rust `ai::model::Substate` align **1:1** — both are 256 entries starting at `START_SLEEPING_SUBSTATES`/`StartSleepingSubstates = 0`, and e.g. 155 = RUNNING_TO_ENEMY, 208 = RIDER_CHARGING_APPROACHING, 250 = RUN_TO_AVENGER_ON_ROOF on both sides (only 114/201/202 differ in spelling). The earlier "C++ enum = Rust index + 1" note in this file was WRONG and caused misreadings of dumps; verified 2026-08-15 by parsing both enums with explicit discriminants honored. Aim previews burn creation-order in Original, not in Rust (see memory project_creation_order_preview_gaps).
 - RNG contract: Rust consumes recorded draw VALUES; "replay exhausted" = Rust drew MORE than Original; extra/missing draws → compare gate conditions at the named site.

@@ -179,7 +179,7 @@ impl Hardware {
 
     /// Query CPU frequency (MHz) and total physical memory (MB) via
     /// `sysinfo`. Values the platform cannot report stay `None`.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hardware-info"))]
     fn query_speed_and_memory() -> (Option<u16>, Option<u64>) {
         use sysinfo::System;
         let mut sys = System::new();
@@ -196,8 +196,8 @@ impl Hardware {
         (speed_mhz, memory_mb)
     }
 
-    /// Wasm has no host to query — both values are honestly unknown.
-    #[cfg(target_arch = "wasm32")]
+    /// This build has no host query backend — both values are honestly unknown.
+    #[cfg(any(target_arch = "wasm32", not(feature = "hardware-info")))]
     fn query_speed_and_memory() -> (Option<u16>, Option<u64>) {
         (None, None)
     }

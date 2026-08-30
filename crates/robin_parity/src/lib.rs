@@ -4,6 +4,10 @@
 //! simulation and legacy assets, but it does not need a renderer, window,
 //! audio device, updater, gamepad, or networking stack.
 
+#![recursion_limit = "256"]
+
+pub mod original_parity_replay;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;

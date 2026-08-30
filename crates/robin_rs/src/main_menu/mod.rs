@@ -46,6 +46,7 @@ use robin_engine::sound_config::SoundConfig;
 pub(crate) mod credits;
 pub(crate) mod custom_missions;
 pub(crate) mod movies;
+#[cfg(feature = "multiplayer")]
 pub(crate) mod multiplayer_menu;
 pub(crate) mod options;
 pub(crate) mod player_select;
@@ -58,6 +59,7 @@ pub(crate) enum MainMenuChoice {
     /// then reopen Options at the same navigation depth.
     RedisplayOptions,
     Start,
+    #[cfg(feature = "multiplayer")]
     Multiplayer(multiplayer_menu::MultiplayerLaunch),
     /// Player chose a save slot to load — the caller should start a
     /// session seeded with a `SaveLoadRequest::Load` for that slot.
@@ -83,6 +85,7 @@ enum ClickAction {
     /// [`MainMenuChoice::Load`].
     LoadGame,
     /// Open the serverless matchmaking browser and select/create a game.
+    #[cfg(feature = "multiplayer")]
     Multiplayer,
     /// Open the player-profile selector in place.  Mutates the global
     /// [`robin_engine::player_profile::PlayerProfileManager`].
@@ -247,18 +250,19 @@ pub(crate) async fn show_main_menu(
     // ── Button layout (align_bottom_right, spacing=2) ────────────────
     let (btn_w, btn_h) = menu_resources.button_dimensions();
 
-    let mut buttons: Vec<(String, ClickAction)> = vec![
-        (
-            menu_resources.menu_text.get(MT_BTN_START_GAME),
-            ClickAction::Return(MainMenuChoice::Start),
-        ),
-        ("Multiplayer".to_string(), ClickAction::Multiplayer),
+    let mut buttons: Vec<(String, ClickAction)> = vec![(
+        menu_resources.menu_text.get(MT_BTN_START_GAME),
+        ClickAction::Return(MainMenuChoice::Start),
+    )];
+    #[cfg(feature = "multiplayer")]
+    buttons.push(("Multiplayer".to_string(), ClickAction::Multiplayer));
+    buttons.extend([
         (
             menu_resources.menu_text.get(MT_BTN_LOAD),
             ClickAction::LoadGame,
         ),
         ("Custom Missions".to_string(), ClickAction::CustomMissions),
-    ];
+    ]);
     buttons.extend([
         (
             menu_resources.menu_text.get(MT_BTN_SELECT_PLAYER),
@@ -632,6 +636,8 @@ async fn dispatch_click(
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
 ) -> Option<MainMenuChoice> {
+    #[cfg(not(feature = "multiplayer"))]
+    let _ = (campaign, profiles);
     match action {
         ClickAction::Return(c) => Some(c),
         ClickAction::LoadGame => {
@@ -645,6 +651,7 @@ async fn dispatch_click(
             )
             .await
         }
+        #[cfg(feature = "multiplayer")]
         ClickAction::Multiplayer => multiplayer_menu::show_multiplayer_menu(
             event_pump,
             renderer,
@@ -842,7 +849,10 @@ fn render_text_layer(
 /// corner.
 fn update_status_line() -> String {
     let version = crate::version::version_label();
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+    #[cfg(all(
+        feature = "auto-update",
+        any(target_os = "windows", target_os = "linux", target_os = "macos")
+    ))]
     {
         use crate::auto_update::UpdateStatus;
         match crate::auto_update::update_status() {
@@ -859,9 +869,12 @@ fn update_status_line() -> String {
             None => format!("{version} - Up to date"),
         }
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    #[cfg(not(all(
+        feature = "auto-update",
+        any(target_os = "windows", target_os = "linux", target_os = "macos")
+    )))]
     {
-        format!("{version} - Up to date")
+        version
     }
 }
 

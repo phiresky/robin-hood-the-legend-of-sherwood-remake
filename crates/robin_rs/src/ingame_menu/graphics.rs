@@ -805,7 +805,10 @@ fn draw_parameter_panel(
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[cfg(all(
+    feature = "dialogs",
+    any(target_os = "windows", target_os = "linux", target_os = "macos")
+))]
 async fn pick_retroarch_preset() -> Result<Option<std::path::PathBuf>, String> {
     let Some(file) = rfd::AsyncFileDialog::new()
         .add_filter("RetroArch shader preset", &["slangp"])
@@ -824,9 +827,15 @@ async fn pick_retroarch_preset() -> Result<Option<std::path::PathBuf>, String> {
         .map_err(|error| format!("cannot read imported preset {}: {error}", path.display()))
 }
 
-#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+#[cfg(not(all(
+    feature = "dialogs",
+    any(target_os = "windows", target_os = "linux", target_os = "macos")
+)))]
 async fn pick_retroarch_preset() -> Result<Option<std::path::PathBuf>, String> {
-    Err("RetroArch preset import is only available in native desktop builds".to_string())
+    Err(
+        "RetroArch preset import is unavailable in this build; rebuild a native client with `--features dialogs`"
+            .to_string(),
+    )
 }
 
 fn apply_resolution(config: &mut GraphicConfig, idx: usize) {

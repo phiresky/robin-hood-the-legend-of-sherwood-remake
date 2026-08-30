@@ -192,9 +192,9 @@ jobs:
         env:
           ROBIN_PACKAGE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # TODO: Bundle FFmpeg DLLs on Windows, then restore the default
-          # `video` feature for packaged builds.
-          cargo build --locked --release --no-default-features --features native-fs,audio -p robin_rs --bin robin --target ${{ matrix.target }}
+          # TODO: Bundle FFmpeg DLLs on Windows, then switch `release` to
+          # `full` so packaged builds also include video and RetroArch presets.
+          cargo build --locked --release --no-default-features --features release -p robin_rs --bin robin --target ${{ matrix.target }}
 
       - name: Stage package input
         shell: bash

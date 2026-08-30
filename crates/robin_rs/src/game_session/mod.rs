@@ -578,10 +578,10 @@ pub(crate) async fn run_mission_headless(
 /// `initial_load` lets the caller pre-seed a load request — used by the
 /// main menu's "Load Game" entry to kick straight into a saved mission
 /// (see `main_menu::save_load`).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 struct HostSessionContinuationCleanup(bool);
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 impl Drop for HostSessionContinuationCleanup {
     fn drop(&mut self) {
         if self.0 {
@@ -599,7 +599,7 @@ pub(crate) async fn run_session(
     initial_load: Option<SaveLoadRequest>,
 ) -> SessionOutcome {
     let mut session_args = args.clone();
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
     let _host_continuation_cleanup = HostSessionContinuationCleanup(session_args.server);
     let mut callbacks = RustCallbacks::new(application_context.clone());
     callbacks.pending = initial_load;

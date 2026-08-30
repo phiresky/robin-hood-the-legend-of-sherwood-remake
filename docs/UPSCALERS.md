@@ -32,9 +32,10 @@ copies.
 
 ## RetroArch presets
 
-Standard desktop/native builds include the MPL-2.0 librashader runtime through
-the `retroarch-shaders` Cargo feature (minimal native builds may opt out with
-`--no-default-features`). That enables discovery of repository Libretro
+Desktop/native builds can opt into the MPL-2.0 librashader runtime with the
+`retroarch-shaders` Cargo feature. It is disabled by default because its
+glslang and SPIRV-Cross C++ toolchains are expensive to compile. Enabling it
+adds discovery of repository Libretro
 `.slangp` presets when that collection is installed alongside the game, plus
 the native file picker (`I` on the Graphics screen). An imported preset is
 validated immediately and its absolute path is persisted; referenced shader

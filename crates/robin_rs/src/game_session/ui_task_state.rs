@@ -40,13 +40,20 @@ const OPTIONS_SETTINGS_PER_PAGE: usize = 12;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum OptionRowAction {
     Enter(OptionsPage),
-    Adjust { page: OptionsPage, setting: usize },
+    Adjust {
+        page: OptionsPage,
+        setting: usize,
+    },
     Rebind(u16),
     ShortcutPreset(u8),
     PreviousPage,
     NextPage,
     AcceptPage,
     CancelPage,
+    #[cfg(all(
+        feature = "dialogs",
+        any(target_os = "windows", target_os = "linux", target_os = "macos")
+    ))]
     ChangeDataDir,
     Finish,
 }
@@ -324,7 +331,7 @@ pub(super) enum OptionsPage {
     Sounds,
     Shortcuts,
     Gameplay,
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
     MultiplayerPrivacy,
 }
 
@@ -335,7 +342,7 @@ enum PageSnapshot {
     Sounds(SoundConfig),
     Shortcuts(KeyConfig, KeyConfig),
     Gameplay(GameplayConfig),
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
     MultiplayerPrivacy(MultiplayerConfig),
 }
 
@@ -594,8 +601,11 @@ impl OptionsTaskState {
             OptionRowAction::NextPage => self.change_options_page(1, resources),
             OptionRowAction::AcceptPage => self.accept_page(resources),
             OptionRowAction::CancelPage => self.restore_page(resources),
+            #[cfg(all(
+                feature = "dialogs",
+                any(target_os = "windows", target_os = "linux", target_os = "macos")
+            ))]
             OptionRowAction::ChangeDataDir => {
-                #[cfg(not(target_arch = "wasm32"))]
                 crate::datadir_locator::change_datadir_interactive();
             }
             OptionRowAction::Finish => return Some(self.finish()),
@@ -675,7 +685,7 @@ impl OptionsTaskState {
             {
                 crate::ingame_menu::gameplay::apply_option_toggle(&mut self.gameplay, index)
             }
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             (OptionsPage::MultiplayerPrivacy, 0) => {
                 self.multiplayer.publish_browser_join_links =
                     !self.multiplayer.publish_browser_join_links;
@@ -705,7 +715,7 @@ impl OptionsTaskState {
                 PageSnapshot::Shortcuts(self.keys.clone(), self.custom_keys.clone())
             }
             OptionsPage::Gameplay => PageSnapshot::Gameplay(self.gameplay),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             OptionsPage::MultiplayerPrivacy => PageSnapshot::MultiplayerPrivacy(self.multiplayer),
             OptionsPage::Hub => PageSnapshot::None,
         };
@@ -741,7 +751,7 @@ impl OptionsTaskState {
                 self.custom_keys = custom;
             }
             PageSnapshot::Gameplay(value) => self.gameplay = value,
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             PageSnapshot::MultiplayerPrivacy(value) => self.multiplayer = value,
             PageSnapshot::None => {}
         }
@@ -819,13 +829,16 @@ impl OptionsTaskState {
                         true,
                     ),
                 ];
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
                 rows.push(row(
                     OptionRowAction::Enter(OptionsPage::MultiplayerPrivacy),
                     "Multiplayer / Privacy".to_string(),
                     true,
                 ));
-                #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+                #[cfg(all(
+                    feature = "dialogs",
+                    any(target_os = "windows", target_os = "linux", target_os = "macos")
+                ))]
                 rows.push(row(
                     OptionRowAction::ChangeDataDir,
                     "Game Data Folder".to_string(),
@@ -943,7 +956,7 @@ impl OptionsTaskState {
                 rows.extend(options_footer_rows(resources));
                 rows
             }
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             OptionsPage::MultiplayerPrivacy => {
                 let mut rows = vec![row(
                     OptionRowAction::Adjust {
@@ -1111,7 +1124,7 @@ impl OptionsTaskState {
             OptionsPage::Sounds => resources.menu_text.get(MT_TTL_SOUNDS),
             OptionsPage::Shortcuts => resources.menu_text.get(MT_BTN_SHORTCUTS),
             OptionsPage::Gameplay => "Gameplay".to_string(),
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             OptionsPage::MultiplayerPrivacy => "Multiplayer / Privacy".to_string(),
         };
         if let Some(font) = resources.title_font_any() {
@@ -1121,7 +1134,7 @@ impl OptionsTaskState {
             let fallback_help = match self.page {
                 OptionsPage::Hub => "Select a settings page.",
                 OptionsPage::Shortcuts => "Click a binding, then press a key. Mouse wheel scrolls.",
-                #[cfg(not(target_arch = "wasm32"))]
+                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
                 OptionsPage::MultiplayerPrivacy => {
                     "Applies to the next hosted game; traffic remains end-to-end encrypted."
                 }

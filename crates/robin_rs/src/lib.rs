@@ -15,7 +15,10 @@
 
 use std::sync::{Mutex, Once, OnceLock};
 
-#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
+#[cfg(all(
+    feature = "auto-update",
+    any(target_os = "windows", target_os = "linux", target_os = "macos")
+))]
 pub mod auto_update;
 pub mod localization;
 pub(crate) mod touch_input;
@@ -214,9 +217,9 @@ pub mod key_config;
 pub mod key_config_store;
 pub mod loading_dissolve_gpu;
 pub mod loading_screen;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "lua"))]
 pub mod lua_session;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", not(feature = "lua")))]
 #[path = "lua_session_wasm.rs"]
 pub mod lua_session;
 pub mod main_entry;

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 workspace_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-runner="${PARITY_RUNNER:-$workspace_dir/target/parity/examples/original_parity_replay}"
+runner="${PARITY_RUNNER:-$workspace_dir/target/parity/original_parity_replay}"
 data_dir="${ROBINHOOD_DATA_DIR:-$workspace_dir/datadirs/fullgame_linux}"
 validation_jobs="${VALIDATION_JOBS:-3}"
 timeout_seconds="${VALIDATION_TIMEOUT_SECONDS:-900}"
