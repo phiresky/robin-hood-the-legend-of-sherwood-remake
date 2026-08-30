@@ -592,12 +592,9 @@ impl EnemyAi {
         if !ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
             return self.soldier_profile_iq;
         }
-        ctx.difficulty.modify_capacity(
-            self.soldier_profile_iq,
-            difficulty::EASY_ENEMY_IQ,
-            difficulty::HARD_ENEMY_IQ,
-            100,
-        )
+        ctx.difficulty
+            .rules()
+            .enemy_iq(self.soldier_profile_iq, 100)
     }
 
     pub fn get_courage(&self) -> u16 {
@@ -614,12 +611,12 @@ impl EnemyAi {
     /// the soldier's *intelligence* instead of its shooting skill.
     pub fn get_shooting_ability(&self, ctx: &AiContext) -> u16 {
         let mut shooting = if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
-            ctx.difficulty.modify_capacity(
-                self.soldier_profile_shooting,
-                difficulty::EASY_ENEMY_FIGHTING,
-                difficulty::HARD_ENEMY_FIGHTING,
-                100,
-            )
+            // Retail accidentally selects the fighting modifier here. The
+            // classic presets keep that result exactly; Custom deliberately
+            // exposes shooting as its own rule at this typed boundary.
+            ctx.difficulty
+                .rules()
+                .enemy_shooting(self.soldier_profile_shooting, 100)
         } else {
             self.soldier_profile_shooting
         } as u32;
@@ -4740,19 +4737,20 @@ impl EnemyAi {
             return;
         }
 
-        // The slowdown only
-        // applies when the NPC is Lacklandist *and* difficulty is Easy or Hard.
-        // Royalist soldiers (also EnemyAi-driven) and Medium difficulty leave
-        // the modifier at 1.0. The original's Easy==Hard copy-paste bug is
-        // optional: the gameplay tweak selects the intended Hard constant.
+        // Scaling applies only when the NPC is Lacklandist. Royalist soldiers
+        // (also EnemyAi-driven) retain 1.0. The original's Easy==Hard
+        // copy-paste bug remains optional for the exact Hard preset; Legendary
+        // and Custom always use their resolved reaction rule.
         let modifier = if ctx.camp.is_hostile_to(crate::element::Camp::Royalists) {
-            match ctx.difficulty {
-                crate::player_profile::DifficultyLevel::Easy => difficulty::EASY_REACTIONTIME,
-                crate::player_profile::DifficultyLevel::Hard if tick.fix_hard_reaction_times => {
-                    difficulty::HARD_REACTIONTIME
-                }
-                crate::player_profile::DifficultyLevel::Hard => difficulty::EASY_REACTIONTIME,
-                crate::player_profile::DifficultyLevel::Medium => 1.0,
+            if ctx.difficulty == crate::player_profile::DifficultyLevel::Hard
+                && !tick.fix_hard_reaction_times
+            {
+                // Optional preservation of the retail Hard copy/paste bug.
+                2.0
+            } else {
+                crate::player_profile::DifficultyRules::percent_as_f32(
+                    ctx.difficulty.rules().reaction_time_percent,
+                )
             }
         } else {
             1.0

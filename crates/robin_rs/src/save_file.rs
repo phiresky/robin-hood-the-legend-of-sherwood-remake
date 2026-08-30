@@ -509,7 +509,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v59** (2026-08-30, authoritative Sherwood trading): records the
 ///   deterministic trading rule, exact sale commands, receipts, campaign
 ///   ransom, and production-item inventory state.
-pub const SAVE_FORMAT_VERSION: u32 = 59;
+/// - **v60** (2026-08-30, resolved difficulty rules): stores Legendary or
+///   validated Custom difficulty, including independent hostile-soldier
+///   distance, cone-width, and hearing modifiers.
+pub const SAVE_FORMAT_VERSION: u32 = 60;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -771,8 +774,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_achievements_and_authoritative_trading() {
-        assert_eq!(SAVE_FORMAT_VERSION, 59);
+    fn save_format_version_requires_achievements_trading_and_resolved_difficulty() {
+        assert_eq!(SAVE_FORMAT_VERSION, 60);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {

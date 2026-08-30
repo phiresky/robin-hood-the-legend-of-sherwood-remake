@@ -284,19 +284,7 @@ impl Default for PcStatus {
 /// max-ammo value.  Only the hardcoded max values `6` and `12` are
 /// remapped; any other value passes through unchanged.
 pub fn scale_full_pockets_ammo(base: u16, difficulty: DifficultyLevel) -> u16 {
-    match difficulty {
-        DifficultyLevel::Easy => match base {
-            6 => 8,
-            12 => 15,
-            other => other,
-        },
-        DifficultyLevel::Medium => base,
-        DifficultyLevel::Hard => match base {
-            6 => 4,
-            12 => 9,
-            other => other,
-        },
-    }
+    difficulty.rules().ammo_capacity(base)
 }
 
 /// Apply a healing amount in place, with the same guards as the

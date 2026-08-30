@@ -55,6 +55,9 @@ pub(crate) struct SimulationControl {
 
 impl SimulationControl {
     pub(crate) fn new(seed: u64, sim_config: SimConfig) -> Self {
+        sim_config
+            .validate()
+            .expect("cannot start simulation with invalid difficulty rules");
         Self {
             frame_counter: 0,
             simulation_gates: SimulationGateState::default(),

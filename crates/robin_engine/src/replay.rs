@@ -74,7 +74,8 @@ pub struct ReplayHeader {
 /// earlier incompatible layouts are rejected at the header.
 /// Version 18 adds deterministic achievement tracker state. Version 19 adds
 /// authoritative Sherwood trading configuration, commands, and receipts.
-pub const REPLAY_SCHEMA_VERSION: u32 = 19;
+/// Version 20 carries resolved Legendary/Custom difficulty rules.
+pub const REPLAY_SCHEMA_VERSION: u32 = 20;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -780,8 +781,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_achievements_and_trading() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 19);
+    fn replay_schema_version_identifies_achievements_trading_and_resolved_difficulty() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 20);
     }
 
     fn unique_replay_path(label: &str) -> String {
