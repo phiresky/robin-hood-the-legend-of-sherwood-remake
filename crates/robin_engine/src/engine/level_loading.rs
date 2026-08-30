@@ -888,8 +888,9 @@ fn append_door_constructor(
 mod legacy_grid_topology_tests {
     use super::*;
     use crate::level_data::{
-        ProtoGridChunk, RawArcheryPoint, RawArcherySector, RawBuildingEntry, RawDoor, RawJumpLine,
-        RawJumpLinePair, RawJumpZone, RawLift, RawSeekPoint, RawTacticData, SectorPolygon,
+        ProtoGridChunk, RawAmbushPoint, RawArcheryPoint, RawArcherySector, RawBuildingEntry,
+        RawDoor, RawJumpLine, RawJumpLinePair, RawJumpZone, RawLift, RawSeekPoint, RawTacticData,
+        SectorPolygon,
     };
 
     fn door(has_click_sector: bool) -> RawDoor {
@@ -1223,6 +1224,51 @@ mod legacy_grid_topology_tests {
         let installed = &engine.ai.global.seek_points[0].position;
         assert_eq!((installed.x, installed.y), (658.0, 2905.0));
         assert_eq!(installed.sector, Some(tactic_position));
+    }
+
+    #[test]
+    fn tactic_ambush_position_resolves_sparse_slot_to_exact_sector_object() {
+        let mut assets = LevelAssets::new();
+        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+            sectors: vec![
+                LegacyGridSectorAsset::NullOrOrdinary,
+                LegacyGridSectorAsset::NullOrOrdinary,
+            ],
+            position_sector_numbers: vec![Some(27), Some(27)],
+            position_sector_indices: vec![
+                crate::fast_find_grid::SectorIndex::new(42),
+                crate::fast_find_grid::SectorIndex::new(43),
+            ],
+            ..LegacyGridTopologyAssets::default()
+        });
+        let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        loaded.mission.tactic_data = Some(RawTacticData {
+            reinforcement_points: Vec::new(),
+            ambush_points: vec![RawAmbushPoint {
+                x: 1120,
+                y: 840,
+                sector: 1,
+                level: 3,
+            }],
+            seek_points: Vec::new(),
+            archery_sectors: Vec::new(),
+        });
+        let mut engine = EngineInner::new();
+
+        engine.install_tactic_ambush_points_stage(&assets, &loaded);
+
+        let installed = &engine.ai.global.ambush_points[0].position;
+        assert_eq!(
+            (installed.x, installed.y, installed.level),
+            (1120.0, 840.0, 3)
+        );
+        let sector = installed.sector.expect("ambush point sector");
+        assert_eq!(sector.get(), 27);
+        assert_eq!(
+            sector.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(43),
+            "the AMBU sector field is an Original sparse slot, not public sector 1"
+        );
     }
 
     #[test]
@@ -3483,6 +3529,7 @@ impl EngineInner {
         .unwrap_or_else(|detail| panic!("legacy position-sector registration drifted: {detail}"));
         retain_script_location_sector_identities(assets, &loaded);
         self.install_tactic_seek_points_stage(assets, &loaded);
+        self.install_tactic_ambush_points_stage(assets, &loaded);
         resolve_hiking_waypoint_sector_identities(assets, &self.world.fast_grid.level.sectors);
         let level_plan = level_builder.preflight(self, assets, &loaded)?;
         self.build_mission_level_stages(assets, &loaded, &level_plan)?;

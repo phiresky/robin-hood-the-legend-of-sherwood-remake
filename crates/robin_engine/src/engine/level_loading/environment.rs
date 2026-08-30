@@ -236,29 +236,6 @@ impl EngineInner {
         self.ai.global.reset_seek_points();
         self.ai.global.reset_ambush_points();
         if let Some(ref tactic) = loaded.mission.tactic_data {
-            // Install ambush points.
-            // `position_3d` and `id` get fixed up later by the AI-init
-            // loop at `engine/ai.rs`.
-            for raw in &tactic.ambush_points {
-                self.ai.global.ambush_points.push(crate::ai::AmbushPoint {
-                    position: crate::ai::Position {
-                        x: raw.x as f32,
-                        y: raw.y as f32,
-                        sector: crate::position_interface::SectorHandle::new(raw.sector),
-                        level: raw.level,
-                    },
-                    direction: 0,
-                    position_3d: crate::coordinates::WorldPoint3D::default(),
-                    id: 0,
-                });
-            }
-            if !tactic.ambush_points.is_empty() {
-                tracing::debug!(
-                    "Loaded {} ambush points into AiGlobalState",
-                    tactic.ambush_points.len(),
-                );
-            }
-
             // Wire archery sectors into AiGlobalState.
             // Archery sectors are populated during InitAI from tactic data.
             self.ai.global.reset_archery_sectors();
@@ -579,6 +556,41 @@ impl EngineInner {
             "Loaded {} raw seek-point directions → {} unified seek points",
             tactic.seek_points.len(),
             self.ai.global.seek_points.len(),
+        );
+    }
+
+    /// Install tactic ambush points after Original's sparse sector topology
+    /// has been retained and validated. The mission stream stores an
+    /// `marraySectors` slot, and `RHAmbushPoint::InitializeFromMissionStream`
+    /// resolves it with `GetSector(uwSector)` rather than treating it as the
+    /// sector's public number.
+    pub(super) fn install_tactic_ambush_points_stage(
+        &mut self,
+        assets: &LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) {
+        self.ai.global.reset_ambush_points();
+        let Some(tactic) = loaded.mission.tactic_data.as_ref() else {
+            return;
+        };
+        for raw in &tactic.ambush_points {
+            self.ai.global.ambush_points.push(crate::ai::AmbushPoint {
+                position: crate::ai::Position {
+                    x: raw.x as f32,
+                    y: raw.y as f32,
+                    sector: Some(Self::resolve_sparse_position_handle(assets, raw.sector)),
+                    level: raw.level,
+                },
+                direction: 0,
+                // `InitAI` lifts the point onto its projection plane and
+                // assigns the stable array ID after all NPCs initialize.
+                position_3d: crate::coordinates::WorldPoint3D::default(),
+                id: 0,
+            });
+        }
+        tracing::debug!(
+            "Loaded {} ambush points into AiGlobalState",
+            tactic.ambush_points.len(),
         );
     }
 
