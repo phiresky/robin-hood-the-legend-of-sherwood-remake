@@ -1,30 +1,46 @@
 //! WGPU integration for RetroArch `.slangp` shader presets.
 
 use robin_engine::graphic_config::TextureScaleMode;
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::collections::{HashMap, HashSet};
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::fs;
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::path::{Path, PathBuf};
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use std::sync::LazyLock;
 
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use librashader::presets::{ShaderFeatures, ShaderPreset};
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use librashader::runtime::wgpu::{FilterChain, WgpuOutputView};
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 use librashader::runtime::{Size, Viewport};
 
 use crate::window::GpuContext;
 
-#[cfg(feature = "retroarch-shaders")]
-static REPO_ROOT: LazyLock<PathBuf> =
-    LazyLock::new(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-#[cfg(feature = "retroarch-shaders")]
-static SLANG_SHADER_ROOT: LazyLock<PathBuf> =
-    LazyLock::new(|| REPO_ROOT.join("third_party/slang-shaders"));
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
+static SLANG_SHADER_ROOT: LazyLock<PathBuf> = LazyLock::new(|| {
+    let relative = Path::new("third_party/slang-shaders");
+    let mut candidates = vec![
+        relative.to_path_buf(),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(relative),
+    ];
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        candidates.push(directory.join(relative));
+        candidates.push(directory.join("../..").join(relative));
+    }
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
+        // Keep a deterministic path for explicit errors even when the
+        // optional preset collection was not packaged.
+        .unwrap_or_else(|| relative.to_path_buf())
+});
 
 #[derive(Debug, Clone)]
 pub struct RetroArchPresetInfo {
@@ -32,30 +48,39 @@ pub struct RetroArchPresetInfo {
     pub label: String,
 }
 
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 static RETROARCH_PRESETS: LazyLock<Vec<RetroArchPresetInfo>> =
     LazyLock::new(discover_retroarch_presets_uncached);
 
 pub fn is_shader_preset_mode(mode: TextureScaleMode) -> bool {
-    #[cfg(not(feature = "retroarch-shaders"))]
-    {
-        let _ = mode;
-        false
-    }
-    #[cfg(feature = "retroarch-shaders")]
     matches!(mode, TextureScaleMode::RetroArch)
 }
 
 pub fn retroarch_presets() -> &'static [RetroArchPresetInfo] {
-    #[cfg(not(feature = "retroarch-shaders"))]
+    #[cfg(not(all(feature = "retroarch-shaders", not(target_arch = "wasm32"))))]
     {
         &[]
     }
-    #[cfg(feature = "retroarch-shaders")]
+    #[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
     &RETROARCH_PRESETS
 }
 
-#[cfg(feature = "retroarch-shaders")]
+/// RetroArch import is a native-only integration. Browser WebGPU uses the
+/// curated WGSL suite because librashader's web path requires offline preset
+/// compilation, and WebGL2 cannot run it at all.
+pub const fn retroarch_runtime_available() -> bool {
+    cfg!(all(
+        feature = "retroarch-shaders",
+        not(target_arch = "wasm32"),
+        any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "macos"
+        )
+    ))
+}
+
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 pub struct ShaderPresetRenderer {
     gpu: GpuContext,
     chains: HashMap<String, FilterChain>,
@@ -63,10 +88,10 @@ pub struct ShaderPresetRenderer {
     frame_count: usize,
 }
 
-#[cfg(not(feature = "retroarch-shaders"))]
+#[cfg(not(all(feature = "retroarch-shaders", not(target_arch = "wasm32"))))]
 pub struct ShaderPresetRenderer;
 
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 impl ShaderPresetRenderer {
     pub fn new(gpu: GpuContext) -> Self {
         Self {
@@ -75,6 +100,16 @@ impl ShaderPresetRenderer {
             failed_keys: HashSet::new(),
             frame_count: 0,
         }
+    }
+
+    pub fn validate_preset(&mut self, key: &str) -> Result<(), String> {
+        if self.chains.contains_key(key) {
+            return Ok(());
+        }
+        let chain = self.load_chain(key)?;
+        self.failed_keys.remove(key);
+        self.chains.insert(key.to_string(), chain);
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -89,22 +124,24 @@ impl ShaderPresetRenderer {
         target_format: wgpu::TextureFormat,
         frame_count: Option<usize>,
         retroarch_preset: Option<&str>,
-    ) -> Option<()> {
+    ) -> Result<(), String> {
         if !is_shader_preset_mode(mode) {
-            return None;
+            return Err(format!("{mode:?} is not a RetroArch preset mode"));
         }
         let key = preset_key(mode, retroarch_preset)?;
         if self.failed_keys.contains(&key) {
-            return None;
+            return Err(format!(
+                "shader preset {key} failed earlier in this session"
+            ));
         }
         if !self.chains.contains_key(&key) {
             match self.load_chain(&key) {
-                Some(chain) => {
+                Ok(chain) => {
                     self.chains.insert(key.clone(), chain);
                 }
-                None => {
-                    self.failed_keys.insert(key);
-                    return None;
+                Err(error) => {
+                    self.failed_keys.insert(key.clone());
+                    return Err(error);
                 }
             }
         }
@@ -137,37 +174,47 @@ impl ShaderPresetRenderer {
             tracing::error!("librashader WGPU frame failed for {key}: {e}");
             self.failed_keys.insert(key.clone());
             self.chains.remove(&key);
-            return None;
+            return Err(format!("librashader WGPU frame failed for {key}: {e}"));
         }
         if frame_count.is_none() {
             self.frame_count = self.frame_count.wrapping_add(1);
         }
-        Some(())
+        Ok(())
     }
 
-    fn load_chain(&self, key: &str) -> Option<FilterChain> {
+    fn load_chain(&self, key: &str) -> Result<FilterChain, String> {
         let path = preset_path(key);
         let preset = match ShaderPreset::try_parse(&path, ShaderFeatures::NONE) {
             Ok(preset) => preset,
             Err(e) => {
                 tracing::error!("failed to parse shader preset {}: {e}", path.display());
-                return None;
+                return Err(format!(
+                    "failed to parse shader preset {}: {e}",
+                    path.display()
+                ));
             }
         };
         match FilterChain::load_from_preset(preset, &self.gpu.device, &self.gpu.queue, None) {
-            Ok(chain) => Some(chain),
+            Ok(chain) => Ok(chain),
             Err(e) => {
                 tracing::error!("failed to compile shader preset {}: {e}", path.display());
-                None
+                Err(format!(
+                    "failed to compile shader preset {}: {e}",
+                    path.display()
+                ))
             }
         }
     }
 }
 
-#[cfg(not(feature = "retroarch-shaders"))]
+#[cfg(not(all(feature = "retroarch-shaders", not(target_arch = "wasm32"))))]
 impl ShaderPresetRenderer {
     pub fn new(_gpu: GpuContext) -> Self {
         Self
+    }
+
+    pub fn validate_preset(&mut self, _key: &str) -> Result<(), String> {
+        Err("RetroArch preset support is unavailable in this build; rebuild with --features retroarch-shaders".to_string())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -182,32 +229,36 @@ impl ShaderPresetRenderer {
         _target_format: wgpu::TextureFormat,
         _frame_count: Option<usize>,
         _retroarch_preset: Option<&str>,
-    ) -> Option<()> {
-        None
+    ) -> Result<(), String> {
+        Err("RetroArch preset support is unavailable in this build; rebuild with --features retroarch-shaders".to_string())
     }
 }
 
-#[cfg(feature = "retroarch-shaders")]
-fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Option<String> {
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
+fn preset_key(mode: TextureScaleMode, retroarch_preset: Option<&str>) -> Result<String, String> {
     match mode {
         TextureScaleMode::RetroArch => retroarch_preset
             .filter(|preset| !preset.trim().is_empty())
             .or_else(|| retroarch_presets().first().map(|preset| preset.id.as_str()))
             .map(str::to_string)
-            .or_else(|| {
-                tracing::warn!("RetroArch shader mode selected but no .slangp presets were found");
-                None
+            .ok_or_else(|| {
+                "RetroArch shader mode selected but no .slangp preset was chosen".to_string()
             }),
         _ => unreachable!("non-preset mode checked before preset_key"),
     }
 }
 
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 fn preset_path(key: &str) -> PathBuf {
-    SLANG_SHADER_ROOT.join(key)
+    let path = PathBuf::from(key);
+    if path.is_absolute() {
+        path
+    } else {
+        SLANG_SHADER_ROOT.join(path)
+    }
 }
 
-#[cfg(feature = "retroarch-shaders")]
+#[cfg(all(feature = "retroarch-shaders", not(target_arch = "wasm32")))]
 fn discover_retroarch_presets_uncached() -> Vec<RetroArchPresetInfo> {
     fn visit(root: &Path, dir: &Path, out: &mut Vec<RetroArchPresetInfo>) {
         let Ok(entries) = fs::read_dir(dir) else {

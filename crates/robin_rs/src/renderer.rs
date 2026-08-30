@@ -533,8 +533,18 @@ impl Renderer {
         self.pipelines.set_shader_preset(preset);
     }
 
-    pub fn set_shader_frame_count(&mut self, frame_count: Option<usize>) {
-        self.frame.set_shader_frame_count(frame_count);
+    /// Apply the complete persisted upscaler/effect configuration atomically.
+    /// This avoids one-frame combinations of old parameters with a new mode
+    /// while the Graphics screen is being accepted.
+    pub fn apply_upscale_config(&mut self, config: &robin_engine::graphic_config::GraphicConfig) {
+        self.pipelines.apply_upscale_config(config);
+    }
+
+    pub fn validate_retroarch_preset(
+        &mut self,
+        preset: &str,
+    ) -> Result<(), crate::gpu_upscale::UpscaleError> {
+        self.pipelines.validate_retroarch_preset(preset)
     }
 
     pub(crate) fn update_zoom_presentation(
@@ -885,6 +895,21 @@ impl Renderer {
     /// background and all overlays as GPU quads.
     pub fn flush_base_layer(&mut self) {
         self.frame.enter_gpu_phase();
+    }
+
+    /// Mark subsequent draws as screen-space UI. Presentation effects are
+    /// applied to the preceding world/video layer; this layer is composited
+    /// afterwards through a sharp fractional-scale filter.
+    pub fn begin_ui_layer(&mut self) {
+        self.frame.begin_ui_layer();
+    }
+
+    /// Present this whole logical frame with the sharp UI scaler, bypassing
+    /// gameplay upscalers and post-effects. Top-level menus use this instead
+    /// of splitting a transparent UI layer so their rendered frame remains
+    /// available to the modal-freeze path.
+    pub fn begin_ui_only_frame(&mut self) {
+        self.frame.begin_ui_only_frame();
     }
 
     /// Snapshot the offscreen render target into a held texture so a
