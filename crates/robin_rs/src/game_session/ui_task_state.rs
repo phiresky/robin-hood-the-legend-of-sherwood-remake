@@ -926,7 +926,7 @@ impl OptionsTaskState {
                                 ),
                             )
                         };
-                        row(
+                        let mut row = row(
                             OptionRowAction::Adjust {
                                 page: OptionsPage::Gameplay,
                                 setting: index,
@@ -934,7 +934,10 @@ impl OptionsTaskState {
                             label,
                             index != crate::ingame_menu::gameplay::SHERWOOD_TRADING_OPTION_INDEX
                                 || self.sherwood_trading_editable,
-                        )
+                        );
+                        row.help =
+                            Some(crate::ingame_menu::gameplay::option_tooltip(index).to_string());
+                        row
                     })
                     .collect::<Vec<_>>();
                 rows.extend(options_footer_rows(resources));

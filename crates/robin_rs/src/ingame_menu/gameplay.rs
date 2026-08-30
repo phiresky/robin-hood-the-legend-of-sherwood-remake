@@ -17,8 +17,8 @@ use robin_engine::gameplay_config::GameplayConfig;
 
 use super::ModalScreenOutcome;
 use super::layout::{
-    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt_font,
+    MenuTransform, TooltipState, align_bottom_right, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -49,7 +49,65 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Touch Camera Gestures",
     "Sherwood Item Trading",
     "Rotating Autosaves",
+    "Apple Combat Interrupt",
+    "Reliable Wasp Acquisition",
+    "Stone Ground Distraction",
+    "Longer Stone Range",
+    "Selective Net Immunity",
+    "Reliable Ale Distraction",
+    "Stone Distraction Feedback",
+    "Preview Apple Effect",
+    "Preview Stone Direct Hit",
+    "Preview Stone Noise Area",
+    "Preview Net Capture Area",
+    "Predict Net Crumpling",
+    "Preview Ale Effect",
+    "Preview Purse Effect",
+    "Preview Wasp Area",
 ];
+
+const OPTION_TOOLTIPS: &[&str] = &[
+    "Use the intended Hard reaction-time multiplier.",
+    "Allow high-level commands for actors authored with the tactical command interface.",
+    "Allow a hero with Tie to release a tied NPC.",
+    "Show live item-production forecasts in Sherwood.",
+    "Allow heroes with shipped cape art to put their cloaks back on.",
+    "Cycle the campaign-map presentation.",
+    "Count hostile deaths caused by other NPCs against Clean Hands.",
+    "Show detailed sword and bow experience progress.",
+    "Show the current mission speedrun clock.",
+    "Show live Clean Hands achievement progress.",
+    "Show live Ghost achievement progress.",
+    "Show live Pile-o-Bones achievement progress.",
+    "Show live All Enemies Stashed achievement progress.",
+    "Show achievement badges in campaign presentations.",
+    "Include achievement details in mission debriefs.",
+    "Enable one-finger camera panning, anchored pinch zoom, and touch inertia.",
+    "Allow the host to sell Sherwood production inventory for campaign ransom.",
+    "Keep rotating campaign and mission autosaves according to the autosave policy.",
+    "Let direct apple hits interrupt active swordfights.",
+    "Increase initial wasp acquisition from 50 to 75 world units.",
+    "Allow ground-thrown stones to attract eligible hostiles within 240 world units.",
+    "Use base range 300 for stones instead of the shipped 200.",
+    "Skip VIPs, riders, and Stuteley while catching other people in the net circle.",
+    "Let outdoor non-VIP soldiers with no beer interest accept ale at potency 20.",
+    "Play the optional impact cue for a ground-thrown stone distraction.",
+    "Explain apple daze, scent, and combat-interrupt eligibility while aiming.",
+    "Explain stone direct-hit damage and concussion while aiming.",
+    "Show the 240-unit ground-stone distraction area.",
+    "Show the original 40-unit net capture area and friendly-capture behavior.",
+    "Predict victim and terrain conditions that crumple a net.",
+    "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
+    "Explain purse value and money-interest conditions.",
+    "Show wasp acquisition range and target eligibility.",
+];
+
+pub(crate) fn option_tooltip(index: usize) -> &'static str {
+    OPTION_TOOLTIPS
+        .get(index)
+        .copied()
+        .unwrap_or_else(|| panic!("gameplay option tooltip index {index} is out of range"))
+}
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
 /// accepted changed settings.
@@ -87,6 +145,7 @@ pub struct GameplayScreenState {
     original: GameplayConfig,
     frame: FrameWnd,
     input_state: ModalInputState,
+    tooltip: TooltipState,
     transform: MenuTransform,
     sherwood_trading_editable: bool,
 }
@@ -144,6 +203,11 @@ impl GameplayScreenState {
                 mb.w,
                 mb.h,
             ));
+            frame
+                .widget_mut(ID_OPT_BASE + i as u32)
+                .expect("new gameplay option widget")
+                .base_mut()
+                .set_tooltip_text(option_tooltip(i));
         }
         frame.add_widget_absolute(widget_bridge::make_button(
             ID_OK,
@@ -170,6 +234,7 @@ impl GameplayScreenState {
             original: *config,
             frame,
             input_state,
+            tooltip: TooltipState::new(),
             transform,
             sherwood_trading_editable,
         }
@@ -183,6 +248,11 @@ impl GameplayScreenState {
         cursor: Option<&ModalCursor<'_>>,
     ) -> Option<ModalScreenOutcome<GameplayConfig>> {
         let mut outcome = None;
+        renderer.sync_window_size(event_pump);
+        self.transform = MenuTransform::centered(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
         for event in event_pump.poll_events() {
             self.input_state.update_from_event(&event, self.transform);
             match event {
@@ -276,6 +346,16 @@ impl GameplayScreenState {
             widget_bridge::draw_widget_button(renderer, resources, self.transform, w, false);
         }
 
+        let mouse_point = robin_engine::coordinates::ScreenPoint::new(
+            self.input_state.virt_x,
+            self.input_state.virt_y,
+        );
+        self.tooltip.update(&self.frame, mouse_point);
+        if let Some(font) = resources.popup_font_any() {
+            self.tooltip
+                .draw(renderer, font, self.transform, &self.frame, mouse_point);
+        }
+
         if let Some(c) = cursor {
             c.draw(renderer, self.transform, &self.input_state);
         }
@@ -312,6 +392,42 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         15 => config.touch_camera_gestures = !config.touch_camera_gestures,
         SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading = !config.sherwood_trading,
         AUTOSAVE_OPTION_INDEX => config.autosave_enabled = !config.autosave_enabled,
+        18 => {
+            config.item_gameplay.apple_combat_interrupt =
+                !config.item_gameplay.apple_combat_interrupt
+        }
+        19 => {
+            config.item_gameplay.wasp_reliable_acquisition =
+                !config.item_gameplay.wasp_reliable_acquisition
+        }
+        20 => {
+            config.item_gameplay.stone_ground_distraction =
+                !config.item_gameplay.stone_ground_distraction
+        }
+        21 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
+        22 => {
+            config.item_gameplay.net_selective_immunity =
+                !config.item_gameplay.net_selective_immunity
+        }
+        23 => {
+            config.item_gameplay.ale_reliable_distraction =
+                !config.item_gameplay.ale_reliable_distraction
+        }
+        24 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
+        25 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
+        26 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
+        27 => {
+            config.item_previews.stone_distraction_area =
+                !config.item_previews.stone_distraction_area
+        }
+        28 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
+        29 => {
+            config.item_previews.net_crumple_prediction =
+                !config.item_previews.net_crumple_prediction
+        }
+        30 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
+        31 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
+        32 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
         _ => {}
     }
 }
@@ -339,6 +455,21 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         15 => config.touch_camera_gestures,
         SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading,
         AUTOSAVE_OPTION_INDEX => config.autosave_enabled,
+        18 => config.item_gameplay.apple_combat_interrupt,
+        19 => config.item_gameplay.wasp_reliable_acquisition,
+        20 => config.item_gameplay.stone_ground_distraction,
+        21 => config.item_gameplay.stone_longer_range,
+        22 => config.item_gameplay.net_selective_immunity,
+        23 => config.item_gameplay.ale_reliable_distraction,
+        24 => config.noise_distraction_feedback,
+        25 => config.item_previews.apple_effect,
+        26 => config.item_previews.stone_direct_effect,
+        27 => config.item_previews.stone_distraction_area,
+        28 => config.item_previews.net_capture_area,
+        29 => config.item_previews.net_crumple_prediction,
+        30 => config.item_previews.ale_effect,
+        31 => config.item_previews.purse_effect,
+        32 => config.item_previews.wasp_area,
         _ => false,
     }
 }
@@ -370,8 +501,24 @@ mod tests {
                 "Touch Camera Gestures",
                 "Sherwood Item Trading",
                 "Rotating Autosaves",
+                "Apple Combat Interrupt",
+                "Reliable Wasp Acquisition",
+                "Stone Ground Distraction",
+                "Longer Stone Range",
+                "Selective Net Immunity",
+                "Reliable Ale Distraction",
+                "Stone Distraction Feedback",
+                "Preview Apple Effect",
+                "Preview Stone Direct Hit",
+                "Preview Stone Noise Area",
+                "Preview Net Capture Area",
+                "Predict Net Crumpling",
+                "Preview Ale Effect",
+                "Preview Purse Effect",
+                "Preview Wasp Area",
             ]
         );
+        assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
 
         let mut config = GameplayConfig::default();
         assert!(!is_option_selected(&config, 1));
@@ -384,6 +531,8 @@ mod tests {
         assert!(is_option_selected(&config, 14));
         assert!(is_option_selected(&config, 15));
         assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
+        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        assert!(is_option_selected(&config, 32));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -442,6 +591,15 @@ mod tests {
         );
         assert!(!is_option_selected(&config, 15));
 
+        let autosave_enabled = config.autosave_enabled;
+        apply_option_toggle(&mut config, 21);
+        assert!(!config.item_gameplay.stone_longer_range);
+        assert!(config.item_gameplay.net_selective_immunity);
+        apply_option_toggle(&mut config, 22);
+        assert!(!config.item_gameplay.stone_longer_range);
+        assert!(!config.item_gameplay.net_selective_immunity);
+        assert!(config.item_gameplay.ale_reliable_distraction);
+        assert_eq!(config.autosave_enabled, autosave_enabled);
         apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
         assert!(!config.sherwood_trading);
     }
@@ -467,5 +625,11 @@ mod tests {
         assert_eq!(config.reusable_cloaks, before.reusable_cloaks);
         assert_eq!(config.campaign_presentation, before.campaign_presentation);
         assert_eq!(config.touch_camera_gestures, before.touch_camera_gestures);
+        assert_eq!(config.item_gameplay, before.item_gameplay);
+        assert_eq!(config.item_previews, before.item_previews);
+        assert_eq!(
+            config.noise_distraction_feedback,
+            before.noise_distraction_feedback
+        );
     }
 }

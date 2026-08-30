@@ -906,6 +906,32 @@ impl InteractiveFrameSimulation {
                                 },
                             );
                         }
+                        if result.gameplay_config.item_gameplay
+                            != result.original_gameplay_config.item_gameplay
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetItemGameplayConfig {
+                                    config: result.gameplay_config.item_gameplay,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.noise_distraction_feedback
+                            != result.original_gameplay_config.noise_distraction_feedback
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetNoiseDistractionFeedback {
+                                    enabled: result.gameplay_config.noise_distraction_feedback,
+                                },
+                            );
+                        }
                         if result.gameplay_config.sherwood_trading
                             != result.original_gameplay_config.sherwood_trading
                         {

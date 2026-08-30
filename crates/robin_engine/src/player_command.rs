@@ -1049,6 +1049,50 @@ pub enum PlayerCommand {
     SetCleanHandsNpcKillsInvalidate {
         enabled: bool,
     },
+    /// Replace the complete deterministic item-rule set on this frame.
+    SetItemGameplayConfig {
+        config: crate::gameplay_config::ItemGameplayConfig,
+    },
+    /// Toggle the optional distraction-impact cue independently.
+    SetNoiseDistractionFeedback {
+        enabled: bool,
+    },
+}
+
+impl PlayerCommand {
+    /// Whether transport clients must be prevented from authoring this
+    /// command. These mutations define shared campaign/session state rather
+    /// than the issuing seat's controlled actors, so only the host may place
+    /// them in the deterministic command stream.
+    pub fn requires_host_authority(&self) -> bool {
+        matches!(
+            self,
+            Self::ReleaseTacticalControl
+                | Self::SetGoldenEyeMode { .. }
+                | Self::SetMenToBlazonConversionMode { .. }
+                | Self::RegisterPeasantName { .. }
+                | Self::DispatchStartupMessage { .. }
+                | Self::RevealAllBlips
+                | Self::CampaignSelectNextMission { .. }
+                | Self::CampaignSwapPendingToAccessibleMissions
+                | Self::CampaignHarvestProductionSectorState
+                | Self::CampaignSellProductionItem { .. }
+                | Self::CampaignConvertSelectedPeasantsToBlazons
+                | Self::ApplyQuitMissionUpdates { .. }
+                | Self::QuitMissionRequested
+                | Self::SetAmountOfSpeaking { .. }
+                | Self::SetFixHardReactionTimes { .. }
+                | Self::SetUnbindingEnabled { .. }
+                | Self::SetSherwoodTrading { .. }
+                | Self::ModalDismiss { .. }
+                | Self::ConnectSeat { .. }
+                | Self::DisconnectSeat { .. }
+                | Self::SetReusableCloaks { .. }
+                | Self::SetCleanHandsNpcKillsInvalidate { .. }
+                | Self::SetItemGameplayConfig { .. }
+                | Self::SetNoiseDistractionFeedback { .. }
+        )
+    }
 }
 
 /// Deserialize an explicitly present optional value.
@@ -1108,6 +1152,30 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(decoded).expect("serialize decoded cloak command"),
                 serde_json::to_value(command).expect("serialize cloak command")
+            );
+        }
+    }
+
+    #[test]
+    fn item_gameplay_command_roundtrips_for_replay_and_network() {
+        let command = PlayerCommand::SetItemGameplayConfig {
+            config: crate::gameplay_config::ItemGameplayConfig {
+                apple_combat_interrupt: true,
+                wasp_reliable_acquisition: false,
+                stone_ground_distraction: true,
+                stone_longer_range: false,
+                net_selective_immunity: true,
+                ale_reliable_distraction: false,
+            },
+        };
+        let native = bitcode::encode(&command);
+        let decoded_native: PlayerCommand = bitcode::decode(&native).expect("decode item command");
+        let json = serde_json::to_string(&command).expect("serialize item command");
+        let decoded_json: PlayerCommand = serde_json::from_str(&json).expect("decode item JSON");
+        for decoded in [decoded_native, decoded_json] {
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded item command"),
+                serde_json::to_value(&command).expect("serialize source item command")
             );
         }
     }

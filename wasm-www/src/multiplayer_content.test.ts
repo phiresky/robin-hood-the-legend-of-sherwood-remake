@@ -18,7 +18,7 @@ function ticket(contentIdentity = HOST_CONTENT): VerifiedBrowserJoinTicket {
         payload: {
             schema: 3,
             transport: 'iroh-relay-websocket',
-            net_protocol: 29,
+            net_protocol: 30,
             engine_version: COMMIT,
             host_endpoint_id: '02'.repeat(32),
             host_public_key: 'A'.repeat(43),
@@ -39,7 +39,7 @@ function manifest(nativeContentSha256 = HOST_CONTENT): unknown {
     return {
         commit: COMMIT,
         short: COMMIT.slice(0, 12),
-        netProtocol: 29,
+        netProtocol: 30,
         ticketSchema: 3,
         multiplayerContent: {
             schema: 2,

@@ -504,15 +504,19 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
 ///   append-only attempt schema and exact practice-return snapshot. Earlier
 ///   Rust save layouts are rejected rather than migrated.
-/// - **v58** (2026-08-30, per-mission achievements): records deterministic
-///   achievement tracker state and its campaign-history evidence.
-/// - **v59** (2026-08-30, authoritative Sherwood trading): records the
+/// - **v58** (2026-08-30, achievements): records deterministic achievement
+///   tracker state and the NPC-on-NPC Clean Hands rule.
+/// - **v59** (2026-08-30, item rebalance): combines that state with expanded
+///   item rules, cached ale eligibility, and ground-stone command/projectiles.
+/// - **v60** (2026-08-30, authoritative Sherwood trading): combines those
+///   item-rebalance fields with the
 ///   deterministic trading rule, exact sale commands, receipts, campaign
 ///   ransom, and production-item inventory state.
-/// - **v60** (2026-08-30, resolved difficulty rules): stores Legendary or
+/// - **v61** (2026-08-30, resolved difficulty rules): combines the preceding
+///   feature state with Legendary or
 ///   validated Custom difficulty, including independent hostile-soldier
 ///   distance, cone-width, and hearing modifiers.
-pub const SAVE_FORMAT_VERSION: u32 = 60;
+pub const SAVE_FORMAT_VERSION: u32 = 61;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -774,8 +778,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_achievements_trading_and_resolved_difficulty() {
-        assert_eq!(SAVE_FORMAT_VERSION, 60);
+    fn save_format_version_requires_items_trading_and_resolved_difficulty() {
+        assert_eq!(SAVE_FORMAT_VERSION, 61);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -1019,13 +1023,13 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_previous_rust_campaign_schema_at_header() {
+    fn read_rejects_previous_rust_achievement_schema_at_header() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("previous_rust_save.json");
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 57,
+                "version": 59,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Previous Rust Save"
@@ -1036,10 +1040,10 @@ mod tests {
 
         let error = GameSaveFile::read_from(&path)
             .err()
-            .expect("previous Rust campaign schema must be rejected");
+            .expect("previous Rust achievement schema must be rejected");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 57")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 59")
         );
     }
 

@@ -137,12 +137,7 @@ impl ApplicationContext {
             .ok_or_else(|| "ApplicationContext requires an active player profile".to_string())?;
         let difficulty = active.difficulty;
         let amount_of_speaking = active.sound_config.amount_of_speaking;
-        let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
-        let enable_unbinding = active.gameplay_config.enable_unbinding;
-        let clean_hands_npc_kills_invalidate =
-            active.gameplay_config.clean_hands_npc_kills_invalidate;
-        let reusable_cloaks = active.gameplay_config.reusable_cloaks;
-        let sherwood_trading = active.gameplay_config.sherwood_trading;
+        let gameplay_config = active.gameplay_config;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -156,11 +151,14 @@ impl ApplicationContext {
 
         let mut sim_config = engine_api::SimConfig::from_options(&options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
-        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
-        sim_config.enable_unbinding = enable_unbinding;
-        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
-        sim_config.reusable_cloaks = reusable_cloaks;
-        sim_config.sherwood_trading = sherwood_trading;
+        sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
+        sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate =
+            gameplay_config.clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+        sim_config.item_gameplay = gameplay_config.item_gameplay;
+        sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
+        sim_config.sherwood_trading = gameplay_config.sherwood_trading;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -181,6 +179,8 @@ impl ApplicationContext {
         sim_config.enable_unbinding = existing.enable_unbinding;
         sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
+        sim_config.item_gameplay = existing.item_gameplay;
+        sim_config.noise_distraction_feedback = existing.noise_distraction_feedback;
         sim_config.sherwood_trading = existing.sherwood_trading;
         *self
             .sim_config
@@ -313,16 +313,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (
-            result,
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-            sherwood_trading,
-        ) = {
+        let (result, difficulty, amount_of_speaking, gameplay_config) = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -336,22 +327,10 @@ impl ApplicationContext {
                 result,
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
-                active.gameplay_config.fix_hard_reaction_times,
-                active.gameplay_config.enable_unbinding,
-                active.gameplay_config.clean_hands_npc_kills_invalidate,
-                active.gameplay_config.reusable_cloaks,
-                active.gameplay_config.sherwood_trading,
+                active.gameplay_config,
             )
         };
-        self.refresh_profile_derived_state(
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-            sherwood_trading,
-        )?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(result)
     }
 
@@ -365,16 +344,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (
-            profile_id,
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-            sherwood_trading,
-        ) = {
+        let (profile_id, difficulty, amount_of_speaking, gameplay_config) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -421,12 +391,7 @@ impl ApplicationContext {
             let profile_id = active.id;
             let difficulty = active.difficulty;
             let amount_of_speaking = active.sound_config.amount_of_speaking;
-            let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
-            let enable_unbinding = active.gameplay_config.enable_unbinding;
-            let clean_hands_npc_kills_invalidate =
-                active.gameplay_config.clean_hands_npc_kills_invalidate;
-            let reusable_cloaks = active.gameplay_config.reusable_cloaks;
-            let sherwood_trading = active.gameplay_config.sherwood_trading;
+            let gameplay_config = active.gameplay_config;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -450,27 +415,10 @@ impl ApplicationContext {
             }
             // TODO: Persist browser profiles and key configurations in
             // IndexedDB instead of keeping first-launch changes session-only.
-            (
-                profile_id,
-                difficulty,
-                amount_of_speaking,
-                fix_hard_reaction_times,
-                enable_unbinding,
-                clean_hands_npc_kills_invalidate,
-                reusable_cloaks,
-                sherwood_trading,
-            )
+            (profile_id, difficulty, amount_of_speaking, gameplay_config)
         };
 
-        self.refresh_profile_derived_state(
-            difficulty,
-            amount_of_speaking,
-            fix_hard_reaction_times,
-            enable_unbinding,
-            clean_hands_npc_kills_invalidate,
-            reusable_cloaks,
-            sherwood_trading,
-        )?;
+        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(profile_id)
     }
 
@@ -546,19 +494,18 @@ impl ApplicationContext {
         &self,
         difficulty: robin_engine::player_profile::DifficultyLevel,
         amount_of_speaking: u16,
-        fix_hard_reaction_times: bool,
-        enable_unbinding: bool,
-        clean_hands_npc_kills_invalidate: bool,
-        reusable_cloaks: bool,
-        sherwood_trading: bool,
+        gameplay_config: robin_engine::gameplay_config::GameplayConfig,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
-        sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
-        sim_config.enable_unbinding = enable_unbinding;
-        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
-        sim_config.reusable_cloaks = reusable_cloaks;
-        sim_config.sherwood_trading = sherwood_trading;
+        sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
+        sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate =
+            gameplay_config.clean_hands_npc_kills_invalidate;
+        sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+        sim_config.item_gameplay = gameplay_config.item_gameplay;
+        sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
+        sim_config.sherwood_trading = gameplay_config.sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -1000,6 +947,8 @@ pub struct HostFrontend {
     /// (Easy-mode nets).  Read by the trajectory-preview renderer to
     /// swap the arc colour from cyan (default) to pink (crumpled).
     pub net_crumpled: bool,
+    /// Host-only explanation rendered at the current item target.
+    pub item_effect_preview: Option<ItemEffectPreview>,
     pub time_no_mouse_move: u32,
     pub mouse_map_prev: MapPoint,
     /// Rolling counter for the once-every-10-frames ground-mark drop
@@ -1124,6 +1073,15 @@ pub struct HostFrontend {
     /// Stable draw order for [`Self::background_decals`], preserving the
     /// order in which patch effects became permanent.
     pub background_decal_order: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemEffectPreview {
+    pub center: MapPoint,
+    pub radius: Option<u16>,
+    pub localization_key: &'static str,
+    pub fallback_text: &'static str,
+    pub blocked: bool,
 }
 
 #[derive(Default)]

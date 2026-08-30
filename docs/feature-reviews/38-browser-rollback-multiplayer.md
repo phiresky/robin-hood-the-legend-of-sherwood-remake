@@ -1,8 +1,8 @@
 # Feature 38 owner review: browser rollback multiplayer
 
-Review date: 2026-08-30  
-Implementation checkpoint: `5bd80ff2f` (`Keep content closure helpers native-only`)  
-Primary final feature checkpoint: `7b0ecd856` (`Bind browser invitations to exact host content`)  
+Review date: 2026-08-30
+Implementation checkpoint: `5bd80ff2f` (`Keep content closure helpers native-only`)
+Primary final feature checkpoint: `7b0ecd856` (`Bind browser invitations to exact host content`)
 Branch: `codex/feature38-revised`
 
 ## Acceptance summary
@@ -41,7 +41,7 @@ be called production-ready until those prerequisites and the live QA gate pass.
 ### Signed invitation
 
 - The canonical public artifact is an `rhmp3-...` ticket with schema 3. The
-  final integration uses gameplay wire protocol 29; invitation and content
+  final integration uses gameplay wire protocol 30; invitation and content
   schemas are independently versioned.
 - The native host's persistent iroh endpoint key signs the ticket in the
   `robinhood/browser-join-ticket/v3` domain. The public key must be the key that
@@ -263,7 +263,7 @@ not converted into fake local success.
 
 - Browser transport is relay-WebSocket only. Browser direct UDP/hole punching
   is not implemented.
-- Builds must match the full engine commit and protocol 29. There is no legacy
+- Builds must match the full engine commit and protocol 30. There is no legacy
   protocol, snapshot, ticket, or content-manifest migration.
 - Browser multiplayer requires WebCrypto Ed25519 and durable IndexedDB. If the
   browser deletes the isolated origin's storage, it loses the durable owner and

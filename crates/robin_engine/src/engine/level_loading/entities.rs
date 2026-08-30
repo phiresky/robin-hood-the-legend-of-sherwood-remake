@@ -16,6 +16,7 @@ fn configure_enemy_ai_profile(
     endurance: u16,
     profiles: &crate::profiles::ProfileManager,
     profile_number: u32,
+    ale_reliability_eligible: bool,
 ) {
     ai.soldier_profile_courage = behavior.courage;
     ai.soldier_profile_iq = behavior.intelligence;
@@ -24,6 +25,7 @@ fn configure_enemy_ai_profile(
     ai.soldier_profile_rank = behavior.rank;
     ai.soldier_profile_initiative = behavior.initiative;
     ai.soldier_profile_beer = behavior.beer;
+    ai.ale_reliable_distraction = ale_reliability_eligible;
     ai.soldier_profile_money = behavior.money;
     ai.soldier_profile_apple = behavior.apple;
     ai.soldier_profile_whistle = behavior.whistle;
@@ -601,6 +603,7 @@ impl EngineInner {
                     char_profile.endurance,
                     &profiles,
                     behavior_profile_index.0,
+                    false,
                 );
                 Some(Box::new(crate::element::AiActorData {
                     ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
@@ -813,6 +816,7 @@ impl EngineInner {
                 soldier_profile.endurance,
                 &profiles,
                 profile_number,
+                config.item_gameplay.ale_reliable_distraction && !soldier_profile.vip,
             );
 
             // Set the sprite's move box + pathfinder index from the

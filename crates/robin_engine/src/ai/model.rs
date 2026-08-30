@@ -1928,6 +1928,9 @@ pub enum NoiseType {
     Drawbridge,
     ZingZing,
     Off,
+    /// An intentionally thrown object impact. Appended after every Original
+    /// ordinal so legacy enum values remain stable.
+    Distraction,
 }
 
 /// A noise event with origin, type, volume, and elevation.

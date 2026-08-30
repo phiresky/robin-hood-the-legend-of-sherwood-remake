@@ -1527,6 +1527,9 @@ pub(super) fn handle_pause_menu_events(
                 gameplay_config.clean_hands_npc_kills_invalidate =
                     engine.sim_config().clean_hands_npc_kills_invalidate;
                 gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
+                gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
+                gameplay_config.noise_distraction_feedback =
+                    engine.sim_config().noise_distraction_feedback;
                 gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
                 *active_ui_task = Some(ActiveUiTask::Options(OptionsTaskState::new(
                     event_pump,

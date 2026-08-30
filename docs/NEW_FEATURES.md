@@ -502,7 +502,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the protocol-29 game wire,
+  relay-over-WebSocket transport with the protocol-30 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native
@@ -598,7 +598,21 @@ A list of which additional features we have added, which ones we might still wan
   user can learn.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
-- throw something skill that makes a noise somewhere else so guards run there
+- Item reliability rebalances are implemented as independent Gameplay
+  settings. Direct apples can interrupt active swordfights; wasps acquire
+  valid initial targets within 75 instead of 50 units; Will Scarlet's stone
+  can use the sibling throwable base range 300 instead of its shipped 200;
+  resistant VIPs/riders/Stuteley are skipped while a net catches other people
+  in its original strict 40-unit circle; and outdoor non-VIP soldiers with
+  authored beer value zero accept ale at minimum potency 20. Positive authored
+  beer, net terrain crumpling, ally capture, and purse behavior are unchanged.
+  Each rule defaults on independently; Original-parity sessions force them off.
+- Ground-targeted stone noise distractions are implemented. With the
+  independent gameplay toggle enabled, a real Stone projectile may target
+  valid ground and emits one deterministic 240-unit noise stimulus on its
+  terminal impact. Guards use the existing heard-noise search behavior. The
+  command, target layer, replay, rollback, multiplayer, and quick-action paths
+  remain authoritative; its additional impact cue is independently toggleable.
 - Cloaking (implemented, optional): selected heroes whose sprite profile has
   the shipped cape rows can put the cloak back on with a rebindable key. The
   reversed original transition leads to a dedicated stationary Cloaked state;

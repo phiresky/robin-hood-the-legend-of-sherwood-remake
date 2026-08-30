@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::gameplay_config::ItemGameplayConfig;
 use crate::player_profile::DifficultyLevel;
 
 const fn enabled_by_default() -> bool {
@@ -46,6 +47,13 @@ pub struct SimConfig {
     /// Missing state predates the extension and retains Original behavior.
     #[serde(default)]
     pub reusable_cloaks: bool,
+    /// Deterministic item rules selected by the active profile.
+    #[serde(default = "ItemGameplayConfig::classic")]
+    pub item_gameplay: ItemGameplayConfig,
+    /// Optional distraction impact cue. Kept in snapshot state so peers agree
+    /// on the side-effect stream.
+    #[serde(default)]
+    pub noise_distraction_feedback: bool,
     pub script_enabled: bool,
     pub highlander: bool,
     pub highlander2: bool,
@@ -77,6 +85,8 @@ impl SimConfig {
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
             reusable_cloaks: true,
+            item_gameplay: ItemGameplayConfig::classic(),
+            noise_distraction_feedback: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,
             highlander2: options.highlander2,
@@ -214,11 +224,17 @@ impl GlobalOptions {
 #[cfg(test)]
 mod tests {
     use super::SimConfig;
+    use crate::gameplay_config::ItemGameplayConfig;
 
     #[test]
     fn hard_reaction_time_fix_is_the_fresh_simulation_default() {
         assert!(SimConfig::default().fix_hard_reaction_times);
         assert!(SimConfig::default().enable_unbinding);
+        assert_eq!(
+            SimConfig::default().item_gameplay,
+            ItemGameplayConfig::classic()
+        );
+        assert!(SimConfig::default().noise_distraction_feedback);
         assert!(SimConfig::default().sherwood_trading);
     }
 
@@ -238,12 +254,22 @@ mod tests {
             .as_object_mut()
             .expect("simulation config is an object")
             .remove("reusable_cloaks");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("item_gameplay");
+        serialized
+            .as_object_mut()
+            .expect("simulation config is an object")
+            .remove("noise_distraction_feedback");
 
         let config: SimConfig =
             serde_json::from_value(serialized).expect("deserialize legacy simulation config");
         assert!(!config.fix_hard_reaction_times);
         assert!(config.enable_unbinding);
         assert!(!config.reusable_cloaks);
+        assert_eq!(config.item_gameplay, ItemGameplayConfig::classic());
+        assert!(!config.noise_distraction_feedback);
     }
 
     #[test]

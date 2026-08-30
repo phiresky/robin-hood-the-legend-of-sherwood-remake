@@ -2693,30 +2693,34 @@ impl EnemyAi {
         _tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            let do_not_investigate = match self.get_rank() {
-                ProfileRank::Officer => {
-                    // Original checks `mlistPatrol`, the officer's current
-                    // patrol, not whether any camp snapshot still names this
-                    // officer as chief. A separated member lives in
-                    // `mlistMissedPatrolMembers` and must not stop the officer
-                    // from investigating a nearby noise himself.
-                    let has_patrol = !self.base.patrol.is_empty();
-                    let dx = (ctx.position.x - self.base.seek_position.x).abs();
-                    let dy = (ctx.position.y - self.base.seek_position.y).abs();
-                    const OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE: f32 = 100.0;
-                    has_patrol || dx.max(dy) > OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE
+            let do_not_investigate = if self.investigating_distraction {
+                false
+            } else {
+                match self.get_rank() {
+                    ProfileRank::Officer => {
+                        // Original checks `mlistPatrol`, the officer's current
+                        // patrol, not whether any camp snapshot still names this
+                        // officer as chief. A separated member lives in
+                        // `mlistMissedPatrolMembers` and must not stop the officer
+                        // from investigating a nearby noise himself.
+                        let has_patrol = !self.base.patrol.is_empty();
+                        let dx = (ctx.position.x - self.base.seek_position.x).abs();
+                        let dy = (ctx.position.y - self.base.seek_position.y).abs();
+                        const OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE: f32 = 100.0;
+                        has_patrol || dx.max(dy) > OFFICER_EXAMINE_NOISE_HIMSELF_DISTANCE
+                    }
+                    // Soldier / knight: defer to ShallIFollowSteps.
+                    ProfileRank::Soldier | ProfileRank::Knight => {
+                        !self.answer_question(Question::ShallIFollowSteps, ctx)
+                    }
+                    // Original's switch has no RANK_NONE arm and leaves its local
+                    // `bDoNotInvestigateYourself` unchanged.  The shipped Linux
+                    // v48 build's stable result is false here (observed for the
+                    // same inactive rank-less soldier in Savegame_023 replays 004
+                    // and 005), so make that binary behaviour defined instead of
+                    // incorrectly folding RANK_NONE into the soldier question.
+                    ProfileRank::None => false,
                 }
-                // Soldier / knight: defer to ShallIFollowSteps.
-                ProfileRank::Soldier | ProfileRank::Knight => {
-                    !self.answer_question(Question::ShallIFollowSteps, ctx)
-                }
-                // Original's switch has no RANK_NONE arm and leaves its local
-                // `bDoNotInvestigateYourself` unchanged.  The shipped Linux
-                // v48 build's stable result is false here (observed for the
-                // same inactive rank-less soldier in Savegame_023 replays 004
-                // and 005), so make that binary behaviour defined instead of
-                // incorrectly folding RANK_NONE into the soldier question.
-                ProfileRank::None => false,
             };
             self.base.set_emoticon(EmoticonType::QuestionMark);
             if do_not_investigate {
@@ -2753,11 +2757,16 @@ impl EnemyAi {
                 self.set_state(AiState::Default, Substate::DefaultLookingOfficerForAdvice);
                 self.base.launch_timer(100, ctx.frame);
             } else {
+                let goto_flags = if self.investigating_distraction {
+                    GotoFlags::RUN
+                } else {
+                    GotoFlags::empty()
+                };
                 self.go_to(
                     AiState::Seeking,
                     Substate::SeekingHeardsteps,
                     self.base.seek_position,
-                    GotoFlags::empty(),
+                    goto_flags,
                     ctx,
                 );
                 self.base.launch_timer(200, ctx.frame);

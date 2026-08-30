@@ -167,6 +167,12 @@ pub struct EnemyAi {
     pub heard_nets: Vec<ObjectHandle>,
     /// Last position at which an unexplained stimulus was detected.
     pub detected_something_there: Position,
+    /// The current heard-steps route was caused by an intentional stone
+    /// distraction and therefore uses a running approach. This is explicit
+    /// serialized AI memory: save/load and rollback must not infer it from a
+    /// transient sound side effect.
+    #[serde(default)]
+    pub investigating_distraction: bool,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
     pub beggar_to_examine: HumanHandle,
@@ -342,6 +348,11 @@ pub struct EnemyAi {
     pub soldier_profile_initiative: u16,
     /// Cached beer count — used by `Q_SHALL_I_TAKE_ALE`.
     pub soldier_profile_beer: u16,
+    /// Cached eligibility for the optional zero-beer reliability rule. This
+    /// is true only for a non-VIP soldier while the authoritative setting is
+    /// enabled, so live menu commands affect spawned AI on the same frame.
+    #[serde(default)]
+    pub ale_reliable_distraction: bool,
     /// Cached money count — used by `Q_SHALL_I_TAKE_MONEY`
     /// and `Q_SHALL_I_FIGHT_FOR_MONEY`.
     pub soldier_profile_money: u16,
@@ -409,6 +420,7 @@ impl Default for EnemyAi {
             frame_when_missed_charly: 0,
             heard_nets: Vec::new(),
             detected_something_there: Position::default(),
+            investigating_distraction: false,
             last_seek_direction_index: 0,
             beggar_to_examine: 0,
             beggar_is_npc: false,
@@ -493,6 +505,7 @@ impl Default for EnemyAi {
             soldier_profile_rank: ProfileRank::Soldier,
             soldier_profile_initiative: 50,
             soldier_profile_beer: 0,
+            ale_reliable_distraction: false,
             soldier_profile_money: 0,
             soldier_profile_apple: 0,
             soldier_profile_whistle: 0,
@@ -4376,6 +4389,8 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) {
+        self.investigating_distraction = false;
+
         // DeleteAllDetectables(DETECTABLE_BEGGAR) is synchronous in
         // Original. In particular, SeekNextPoint can call ReturnToDuty after
         // SeekArea queued beggars earlier in the same borrowed AI dispatch;
@@ -4928,7 +4943,9 @@ impl EnemyAi {
         // Gate: hypothetical || (active && outside building).
         if hypothetical || (ctx.self_is_active && !ctx.in_building) {
             return match question {
-                Question::ShallITakeAle => self.soldier_profile_beer > 0,
+                Question::ShallITakeAle => {
+                    self.soldier_profile_beer > 0 || self.ale_reliable_distraction
+                }
                 Question::ShallITakeMoney => self.soldier_profile_money > 0,
                 Question::ShallIFightForMoney => self.soldier_profile_money > 0,
                 Question::ShallIReactOnApple => self.soldier_profile_apple > 0,

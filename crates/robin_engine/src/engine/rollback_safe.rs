@@ -618,16 +618,29 @@ impl Engine {
         };
         let sector = |handle: Option<crate::position_interface::SectorHandle>| {
             handle.map_or(Value::Null, |handle| {
-                let sector = self
-                    .inner
-                    .world
-                    .fast_grid
-                    .level
-                    .sectors
-                    .get(handle.get() as usize)
-                    .unwrap_or_else(|| {
-                        panic!("parity position references missing sector {handle}")
-                    });
+                let level = &self.inner.world.fast_grid.level;
+                let arena_index = handle.arena_index().map_or_else(
+                    || {
+                        let public = crate::sector::SectorNumber::new(i16::from(handle));
+                        level.sector_number_map.get(&public).copied().unwrap_or_else(|| {
+                            panic!(
+                                "parity position for {id:?} references missing public sector {handle}"
+                            )
+                        })
+                    },
+                    usize::from,
+                );
+                let sector = level.sectors.get(arena_index).unwrap_or_else(|| {
+                    panic!(
+                        "parity position for {id:?} references missing sector arena index {arena_index} (public {handle})"
+                    )
+                });
+                assert_eq!(
+                    u16::from(sector.sector_number),
+                    handle.get(),
+                    "parity position for {id:?} sector arena index {arena_index} has public number {}, expected {handle}",
+                    sector.sector_number.get(),
+                );
                 json!(sector.sector_number.get())
             })
         };
@@ -3016,6 +3029,20 @@ impl Engine {
     /// the seeded stream for fresh Rust construction, then rewind to the
     /// post-load stream boundary recorded by the Original.
     fn replace_original_rng_replay(&mut self, draws: Vec<u32>) {
+        self.inner.control.sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::classic();
+        self.inner.control.mission_start_sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::classic();
+        self.inner.control.sim_config.noise_distraction_feedback = false;
+        self.inner
+            .control
+            .mission_start_sim_config
+            .noise_distraction_feedback = false;
+        for (_, entity) in self.inner.world.entities.actors_mut() {
+            if let Some(enemy) = entity.enemy_ai_mut() {
+                enemy.ale_reliable_distraction = false;
+            }
+        }
         self.inner.control.rng.replace_original_replay(draws);
     }
 
@@ -3056,11 +3083,15 @@ impl Engine {
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let original_parity = args.original_rng_replay.is_some();
-        let sim_config = if original_parity {
+        let mut sim_config = if original_parity {
             super::cloak::preserve_original_gameplay_behavior(args.sim_config)
         } else {
             args.sim_config
         };
+        if original_parity {
+            sim_config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+            sim_config.noise_distraction_feedback = false;
+        }
         let mut inner = EngineInner::new_with_campaign(args.campaign);
         inner.control.sim_config = sim_config;
         inner.control.mission_start_rng_seed = args.rng_seed;
@@ -4245,6 +4276,69 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn item_rules_apply_on_the_command_frame_and_survive_native_snapshot() {
+        let (mut engine, assets) = frame_api_fixture();
+        let rules = crate::gameplay_config::ItemGameplayConfig {
+            apple_combat_interrupt: true,
+            wasp_reliable_acquisition: false,
+            stone_ground_distraction: true,
+            stone_longer_range: false,
+            net_selective_immunity: true,
+            ale_reliable_distraction: false,
+        };
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetItemGameplayConfig { config: rules }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("item rules command frame");
+        assert_eq!(engine.sim_config().item_gameplay, rules);
+
+        let restored = Engine::decode_native_snapshot(&engine.encode_native_snapshot())
+            .expect("decode item rules snapshot");
+        assert_eq!(restored.sim_config().item_gameplay, rules);
+    }
+
+    #[test]
+    fn installing_original_parity_replay_forces_classic_item_rules() {
+        let (mut engine, assets) = frame_api_fixture();
+        engine.inner.control.sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::default();
+        engine.inner.control.sim_config.noise_distraction_feedback = true;
+        engine
+            .parity_replay_setup()
+            .replace_rng_draws(vec![0x1234_5678]);
+
+        assert_eq!(
+            engine.sim_config().item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!engine.sim_config().noise_distraction_feedback);
+
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetItemGameplayConfig {
+                        config: crate::gameplay_config::ItemGameplayConfig::default(),
+                    }
+                    .into(),
+                    PlayerCommand::SetNoiseDistractionFeedback { enabled: true }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("Original-parity settings command frame");
+        assert_eq!(
+            engine.sim_config().item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!engine.sim_config().noise_distraction_feedback);
     }
 
     #[test]

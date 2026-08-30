@@ -50,7 +50,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 29;
+pub const NET_PROTOCOL_VERSION: u32 = 30;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -932,13 +932,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_snapshot_transition_barrier() {
-        // Version 29 adds the exact-byte prepare/ready/commit transition on
-        // top of version 28's browser authentication/content admission,
-        // canonical speech timing, resolved difficulty, achievements, and
-        // authoritative trading.
-        // Older peers fail before decoding incompatible snapshot/input bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 29);
+    fn protocol_version_includes_all_version_29_authority_rules() {
+        // Version 30 combines authenticated browser seats, exact-byte
+        // prepare/ready/commit snapshot transitions, canonical speech timing,
+        // rebalanced item rules, deterministic achievements, authoritative
+        // Sherwood trading, and resolved Legendary/Custom difficulty. Older
+        // peers fail before decoding incompatible wire or snapshot bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 30);
     }
 
     #[test]
@@ -1255,8 +1255,9 @@ mod tests {
             decoded,
             NetMsg::Welcome {
                 sim_config: decoded_config,
+                speech_timing_locale: Some(locale),
                 ..
-            } if decoded_config == sim_config
+            } if decoded_config == sim_config && locale == "en-US"
         ));
     }
 

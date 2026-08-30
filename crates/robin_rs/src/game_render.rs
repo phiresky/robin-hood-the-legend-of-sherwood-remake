@@ -34,8 +34,8 @@ pub(crate) use debug::{
     render_noise_display, render_shadow_polygon_sphere_debug,
 };
 pub(crate) use hud::{
-    draw_multi_selection_box, render_combat_status_bars, render_listen_ping,
-    render_ransom_amulet_overlay, render_trajectory_preview,
+    draw_multi_selection_box, render_combat_status_bars, render_item_effect_preview,
+    render_listen_ping, render_ransom_amulet_overlay, render_trajectory_preview,
 };
 pub(crate) use minimap::render_minimap;
 

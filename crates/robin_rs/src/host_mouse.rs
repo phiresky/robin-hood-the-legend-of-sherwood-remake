@@ -7,7 +7,7 @@
 //! such as patch door highlights; sim-visible mouse commands are dispatched
 //! earlier in the frame so replay / rollback can record them.
 
-use crate::host::Host;
+use crate::host::{Host, ItemEffectPreview};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::MapPoint;
 use robin_engine::element as engine_element;
@@ -49,6 +49,56 @@ fn apply_trajectory_preview(host: &mut Host, preview: TrajectoryPreview) {
             host.trajectory_preview_layer = layer;
             host.net_crumpled = crumpled;
         }
+    }
+}
+
+fn set_item_effect_preview(
+    host: &mut Host,
+    center: MapPoint,
+    radius: Option<u16>,
+    localization_key: &'static str,
+    fallback_text: &'static str,
+    blocked: bool,
+) {
+    host.item_effect_preview = Some(ItemEffectPreview {
+        center,
+        radius,
+        localization_key,
+        fallback_text,
+        blocked,
+    });
+}
+
+fn trajectory_landing(host: &Host, fallback: MapPoint) -> MapPoint {
+    host.trajectory_preview_points
+        .last()
+        .map(|point| point.position.to_map())
+        .unwrap_or(fallback)
+}
+
+fn item_preview_enabled(engine: &Engine, profile_setting: bool) -> bool {
+    profile_setting && engine.original_rng_replay_cursor().is_none()
+}
+
+/// Integration seam for the ground-target arm supplied by the stone-noise
+/// feature. Keeping the presentation here makes the mechanics and radius use
+/// one canonical item config without duplicating the authoritative stimulus.
+#[allow(dead_code)]
+pub(crate) fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, center: MapPoint) {
+    if engine.sim_config().item_gameplay.stone_ground_distraction
+        && item_preview_enabled(
+            engine,
+            host.gameplay_config.item_previews.stone_distraction_area,
+        )
+    {
+        set_item_effect_preview(
+            host,
+            center,
+            Some(robin_engine::gameplay_config::STONE_DISTRACTION_RADIUS as u16),
+            "item_preview.stone.distraction",
+            "Stone noise: eligible hostiles investigate within 240",
+            false,
+        );
     }
 }
 
@@ -715,6 +765,7 @@ pub fn update_mouse(
     host.input.mouse_shadow_color = 0;
     host.input.increment_cursor_animation = true;
     host.input.display_door = false; // set true in choose_mouse_pointer_for_no_action
+    host.item_effect_preview = None;
 
     let mouse_map_pt = mouse_map;
 
@@ -1156,6 +1207,26 @@ fn cursor_for_apple(
                         };
                         apply_trajectory_preview(host, preview);
                     }
+                    if item_preview_enabled(engine, host.gameplay_config.item_previews.apple_effect)
+                        && let Some(center) = target_pos
+                    {
+                        let (key, text) = if engine
+                            .sim_config()
+                            .item_gameplay
+                            .apple_combat_interrupt
+                        {
+                            (
+                                "item_preview.apple.interrupt",
+                                "Apple: 60-frame daze; 1500-frame scent; interrupts combat",
+                            )
+                        } else {
+                            (
+                                "item_preview.apple.classic",
+                                "Apple: 60-frame daze; 1500-frame scent; fighting target immune",
+                            )
+                        };
+                        set_item_effect_preview(host, center, None, key, text, false);
+                    }
                 } else {
                     host.valid_trajectory = false;
                 }
@@ -1243,11 +1314,63 @@ fn cursor_for_stone(
                         };
                         apply_trajectory_preview(host, preview);
                     }
+                    if item_preview_enabled(
+                        engine,
+                        host.gameplay_config.item_previews.stone_direct_effect,
+                    ) && let Some(center) = target_pos
+                    {
+                        let text = if engine.sim_config().item_gameplay.stone_longer_range {
+                            "Stone hit: 10 damage, strong concussion; base range 300"
+                        } else {
+                            "Stone hit: 10 damage, strong concussion; classic base range 200"
+                        };
+                        set_item_effect_preview(
+                            host,
+                            center,
+                            None,
+                            "item_preview.stone.direct",
+                            text,
+                            false,
+                        );
+                    }
                 } else {
                     host.valid_trajectory = false;
                 }
             } else {
-                host.valid_trajectory = false;
+                let ground_allowed = engine.sim_config().item_gameplay.stone_ground_distraction
+                    && engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt)
+                    && (shift_held
+                        || pc_id.is_some_and(|pid| {
+                            engine.is_in_range_for_projectile(
+                                assets,
+                                pid,
+                                mouse_map_pt,
+                                Action::Stone,
+                                None,
+                            )
+                        }));
+                if ground_allowed {
+                    cursor = RHMOUSE_STONE_YES;
+                    const TIME_TRAJECTORY_DISPLAY: u32 = 1;
+                    if host.time_no_mouse_move > TIME_TRAJECTORY_DISPLAY
+                        && !host.valid_trajectory
+                        && let Some(pid) = pc_id
+                    {
+                        let preview = if shift_held {
+                            engine.compute_planned_trajectory_preview_ground(
+                                assets,
+                                pid,
+                                mouse_map_pt,
+                                Action::Stone,
+                            )
+                        } else {
+                            engine.compute_trajectory_preview_ground(assets, pid, mouse_map_pt)
+                        };
+                        apply_trajectory_preview(host, preview);
+                    }
+                } else {
+                    host.valid_trajectory = false;
+                }
             }
         } else {
             host.valid_trajectory = false;
@@ -1300,6 +1423,18 @@ fn cursor_for_purse(
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
                     apply_trajectory_preview(host, preview);
+                }
+                if item_preview_enabled(engine, host.gameplay_config.item_previews.purse_effect)
+                    && host.valid_trajectory
+                {
+                    set_item_effect_preview(
+                        host,
+                        trajectory_landing(host, mouse_elem),
+                        None,
+                        "item_preview.purse.effect",
+                        "Purse: 5 coins (£50); visible outdoor enemies need money interest",
+                        host.net_crumpled,
+                    );
                 }
             } else {
                 host.valid_trajectory = false;
@@ -1379,6 +1514,28 @@ fn cursor_for_wasp_nest(
                         engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
                     };
                     apply_trajectory_preview(host, preview);
+                }
+                if item_preview_enabled(engine, host.gameplay_config.item_previews.wasp_area)
+                    && host.valid_trajectory
+                {
+                    let radius = if engine.sim_config().item_gameplay.wasp_reliable_acquisition {
+                        robin_engine::gameplay_config::REBALANCED_WASP_ACQUISITION_RADIUS
+                    } else {
+                        robin_engine::gameplay_config::CLASSIC_WASP_ACQUISITION_RADIUS
+                    } as u16;
+                    let text = if radius == 75 {
+                        "Wasps: acquire within 75 (225 scented); VIP/fighting targets immune"
+                    } else {
+                        "Wasps: acquire within 50 (150 scented); VIP/fighting targets immune"
+                    };
+                    set_item_effect_preview(
+                        host,
+                        trajectory_landing(host, mouse_elem),
+                        Some(radius),
+                        "item_preview.wasp.area",
+                        text,
+                        host.net_crumpled,
+                    );
                 }
             } else {
                 host.valid_trajectory = false;
@@ -1511,6 +1668,80 @@ fn cursor_for_net(
                     };
                     apply_trajectory_preview(host, preview);
                 }
+                let preview_capture = item_preview_enabled(
+                    engine,
+                    host.gameplay_config.item_previews.net_capture_area,
+                );
+                let preview_crumple = item_preview_enabled(
+                    engine,
+                    host.gameplay_config.item_previews.net_crumple_prediction,
+                );
+                if (preview_capture || preview_crumple) && host.valid_trajectory {
+                    let landing = host
+                        .trajectory_preview_points
+                        .last()
+                        .map(|point| point.position);
+                    let crumpled = if preview_crumple {
+                        let predicted = landing.is_some_and(|point| {
+                            engine.predict_net_crumple_at(
+                                assets,
+                                point,
+                                host.trajectory_preview_layer,
+                            )
+                        });
+                        host.net_crumpled = predicted;
+                        predicted
+                    } else {
+                        // Preserve the original Easy-only trajectory tint;
+                        // the capture-area switch must not silently enable
+                        // enhanced crumple prediction on Medium or Hard.
+                        host.net_crumpled
+                    };
+                    let selective = engine.sim_config().item_gameplay.net_selective_immunity;
+                    let (key, text) = match (preview_capture, preview_crumple, crumpled, selective)
+                    {
+                        (true, true, true, _) => (
+                            "item_preview.net.capture_and_crumple",
+                            "Net: will crumple here; captures people within 40 when clear",
+                        ),
+                        (true, true, false, true) => (
+                            "item_preview.net.capture_and_clear_selective",
+                            "Net: clear; captures people within 40 including allies; resistant actors skipped",
+                        ),
+                        (true, true, false, false) => (
+                            "item_preview.net.capture_and_clear",
+                            "Net: clear landing; captures active people within 40 (including allies)",
+                        ),
+                        (true, false, _, true) => (
+                            "item_preview.net.capture_selective",
+                            "Net: captures people within 40 including allies; resistant actors skipped",
+                        ),
+                        (true, false, _, false) => (
+                            "item_preview.net.capture",
+                            "Net: captures active people within 40 (including allies)",
+                        ),
+                        (false, true, true, _) => (
+                            "item_preview.net.crumple",
+                            "Net: will crumple at this landing point",
+                        ),
+                        (false, true, false, true) => (
+                            "item_preview.net.clear_selective",
+                            "Net: terrain is clear; resistant actors are skipped",
+                        ),
+                        (false, true, false, false) => {
+                            ("item_preview.net.clear", "Net: landing point is clear")
+                        }
+                        (false, false, _, _) => unreachable!("preview gate checked above"),
+                    };
+                    set_item_effect_preview(
+                        host,
+                        trajectory_landing(host, mouse_elem),
+                        preview_capture.then_some(40),
+                        key,
+                        text,
+                        crumpled,
+                    );
+                }
             } else {
                 host.valid_trajectory = false;
             }
@@ -1545,7 +1776,7 @@ fn cursor_for_lever(
 /// Ale cursor arm.
 fn cursor_for_ale(
     engine: &mut Engine,
-    _host: &mut Host,
+    host: &mut Host,
     _assets: &LevelAssets,
     mouse_map_pt: MapPoint,
     _shift_held: bool,
@@ -1554,6 +1785,21 @@ fn cursor_for_ale(
     {
         // Validate mouse sector (no door, no wall/ladder).
         if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
+            if item_preview_enabled(engine, host.gameplay_config.item_previews.ale_effect) {
+                let text = if engine.sim_config().item_gameplay.ale_reliable_distraction {
+                    "Ale: zero-interest outdoor non-VIPs also accept at potency 20; authored/drunk behavior unchanged"
+                } else {
+                    "Ale: visible outdoor enemies need authored beer interest; drunk enemies accept"
+                };
+                set_item_effect_preview(
+                    host,
+                    mouse_map_pt,
+                    None,
+                    "item_preview.ale.effect",
+                    text,
+                    false,
+                );
+            }
             RHMOUSE_ALE_YES
         } else {
             RHMOUSE_ALE_NO
