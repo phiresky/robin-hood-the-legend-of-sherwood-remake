@@ -33,6 +33,7 @@ use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 #[cfg(feature = "client")]
 use robin_engine::engine::{HostDisplayState, InputState};
 use robin_engine::fast_find_grid::LineIndex;
+use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::player_command::PlayerCommand;
@@ -98,11 +99,11 @@ struct TraceHeader {
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
     /// Current session-boundary state omitted by Original's RHSG payload.
-    /// Early schema-16 interactive recordings predate this additive overlay.
-    /// An empty compatibility value leaves constructor/restored state intact;
-    /// a present nonempty overlay remains strictly validated below.
+    /// Early schema-16 interactive recordings predate this additive overlay;
+    /// `None` selects the narrowly-scoped legacy reconstruction below while a
+    /// present (including empty) list remains authoritative.
     #[serde(default)]
-    initial_npc_transients: Vec<TraceInitialNpcTransient>,
+    initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
 }
@@ -418,6 +419,356 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
             .parity_replay_setup()
             .restore_npc_maximal_visibility(id, transient.maximal_visibility);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyBlockedBoxTuple {
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyBlockedBoxValidity {
+    Unknown,
+    Unset,
+    Set,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyBlockedBoxShadow {
+    tuple: LegacyBlockedBoxTuple,
+    validity: LegacyBlockedBoxValidity,
+    last_processed_order_id: u32,
+    direct_validity_observed: bool,
+}
+
+fn initial_legacy_blocked_box_shadows(
+    save: &robin_engine::legacy_save::body::LegacySaveBody,
+) -> BTreeMap<u32, LegacyBlockedBoxShadow> {
+    save.element_payloads
+        .records
+        .iter()
+        .filter_map(|record| {
+            let sprite = record.payload.actor_sprite()?;
+            let blocked = sprite.position.blocked_box;
+            Some((
+                record.header.creation_order,
+                LegacyBlockedBoxShadow {
+                    tuple: LegacyBlockedBoxTuple {
+                        min_x: blocked.top_left.x.to_bits(),
+                        min_y: blocked.top_left.y.to_bits(),
+                        max_x: blocked.bottom_right.x.to_bits(),
+                        max_y: blocked.bottom_right.y.to_bits(),
+                    },
+                    validity: if blocked.bounds_are_set {
+                        LegacyBlockedBoxValidity::Set
+                    } else {
+                        LegacyBlockedBoxValidity::Unset
+                    },
+                    last_processed_order_id: sprite.last_processed_order_id,
+                    direct_validity_observed: false,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn legacy_blocked_box_tuple(runtime: &serde_json::Value) -> Option<LegacyBlockedBoxTuple> {
+    let blocked = runtime.pointer("/position/blocked_box")?;
+    if blocked.is_null() {
+        return None;
+    }
+    let bits = |pointer: &str| {
+        blocked
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+    };
+    Some(LegacyBlockedBoxTuple {
+        min_x: bits("/min/x/bits")?,
+        min_y: bits("/min/y/bits")?,
+        max_x: bits("/max/x/bits")?,
+        max_y: bits("/max/y/bits")?,
+    })
+}
+
+/// Old schema-16 runtime capture omitted `SBGeoBoundingBox2D::bounds_are_set`
+/// and printed its stale coordinate words unconditionally. Track Original's
+/// validity bit from transitions which prove it without touching Rust state.
+/// `RHSprite::PerformMotion` changes the processed movement-order id and then
+/// calls `ResetBoxBlocked`; `UpdateBoxBlocked` is the sole tuple mutator and
+/// makes the box valid again.
+///
+/// TODO(parity-recorder): have new Original captures emit null when
+/// `mboxBlocked.IsSomewhere()` is false. A legacy capture cannot distinguish
+/// an update which happens to recreate the exact same stale tuple; the shadow
+/// deliberately retains its last proven validity in that intrinsically
+/// ambiguous case.
+fn canonicalize_legacy_blocked_box(
+    runtime: &mut serde_json::Value,
+    creation_order: u32,
+    reset_by_new_movement_order: bool,
+    shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
+) -> bool {
+    let blocked_is_null = runtime
+        .pointer("/position/blocked_box")
+        .is_some_and(serde_json::Value::is_null);
+    let tuple = legacy_blocked_box_tuple(runtime);
+    if tuple.is_none() && !blocked_is_null {
+        return false;
+    }
+    let Some(last_processed_order_id) = runtime
+        .pointer("/sprite/last_processed_order_id")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+    else {
+        return false;
+    };
+
+    let Some(shadow) = shadows.get_mut(&creation_order) else {
+        // Runtime-created actors have no saved validity bit. Their first old
+        // capture is observationally ambiguous, so retain it until a later
+        // transition proves whether the cache is valid.
+        if let Some(tuple) = tuple {
+            shadows.insert(
+                creation_order,
+                LegacyBlockedBoxShadow {
+                    tuple,
+                    validity: LegacyBlockedBoxValidity::Unknown,
+                    last_processed_order_id,
+                    direct_validity_observed: false,
+                },
+            );
+        }
+        return blocked_is_null;
+    };
+
+    let tuple_changed = tuple.is_some_and(|tuple| tuple != shadow.tuple);
+    let order_changed = last_processed_order_id != shadow.last_processed_order_id;
+    if blocked_is_null {
+        // New recordings carry the validity bit directly by emitting null.
+        shadow.validity = LegacyBlockedBoxValidity::Unset;
+        shadow.direct_validity_observed = true;
+    } else if shadow.direct_validity_observed {
+        shadow.validity = LegacyBlockedBoxValidity::Set;
+    } else if reset_by_new_movement_order && order_changed {
+        shadow.validity = LegacyBlockedBoxValidity::Unset;
+    }
+    if let Some(tuple) = tuple {
+        // PerformMotion resets before any UpdateBoxBlocked in the same call,
+        // so a changed tuple proves that the later update revalidated it.
+        if tuple_changed {
+            shadow.validity = LegacyBlockedBoxValidity::Set;
+        }
+        shadow.tuple = tuple;
+    }
+    shadow.last_processed_order_id = last_processed_order_id;
+
+    if shadow.validity == LegacyBlockedBoxValidity::Unset {
+        if let Some(blocked) = runtime.pointer_mut("/position/blocked_box") {
+            *blocked = serde_json::Value::Null;
+        }
+        true
+    } else {
+        false
+    }
+}
+
+fn reconstruct_unrecorded_maximal_visibility(
+    leaning_out: bool,
+    visibilities: impl IntoIterator<Item = f32>,
+) -> u16 {
+    let view_speed = if leaning_out {
+        robin_engine::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
+    } else {
+        robin_engine::ai_vision::BASE_VIEW_SPEED
+    };
+    visibilities
+        .into_iter()
+        .map(|visibility| (view_speed as f32 * visibility) as u16)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Reconstruct the process-local maximum omitted by old interactive segments.
+///
+/// Original clears this value before an ordinary vision pass, but dead and
+/// unconscious actors return first and retain the preceding segment's value.
+/// Their serialized detectable buckets retain the visibility which supplied
+/// that maximum, making this exact reconstruction possible.
+fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
+    let restorations = engine
+        .npc_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let entity = engine
+                .get_entity(id)
+                .unwrap_or_else(|| panic!("legacy parity fallback lost NPC {id:?}"));
+            let npc = entity
+                .npc_data()
+                .unwrap_or_else(|| panic!("legacy parity fallback found non-NPC {id:?}"));
+            let retains_maximum =
+                entity.is_dead() || entity.human_data().is_some_and(|human| human.unconscious);
+            retains_maximum.then(|| {
+                let value = reconstruct_unrecorded_maximal_visibility(
+                    npc.view_lean_out,
+                    npc.detectable_lists
+                        .iter()
+                        .flatten()
+                        .map(|detectable| detectable.last_visibility),
+                );
+                (id, value)
+            })
+        })
+        .collect::<Vec<_>>();
+    for &(id, value) in &restorations {
+        engine
+            .parity_replay_setup()
+            .restore_npc_maximal_visibility(id, value);
+    }
+    restorations.len()
+}
+
+/// An in-process load starts recording after save adoption and consequently
+/// has no setup RNG prefix. A nonempty prefix proves a fresh engine, whose
+/// constructor-zero process-local state is authoritative.
+fn legacy_loaded_save_retains_process_transients(prefix_draw_count: usize) -> bool {
+    prefix_draw_count == 0
+}
+
+fn preceding_interactive_session_path(path: &Path, session_index: u32) -> Option<PathBuf> {
+    if session_index <= 1 {
+        return None;
+    }
+    let previous = session_index.checked_sub(1)?;
+    let name = path.file_name()?.to_str()?;
+    let suffix = format!("-session-{session_index:04}.jsonl.zst");
+    let stem = name.strip_suffix(&suffix)?;
+    Some(path.with_file_name(format!("{stem}-session-{previous:04}.jsonl.zst")))
+}
+
+fn terminal_macro_waypoint(
+    element: &TraceElement,
+    paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(robin_engine::ai::PathId, u8, usize)> {
+    let ai = element.ai.as_ref()?;
+    terminal_macro_waypoint_at(
+        (element.position_map.x.bits, element.position_map.y.bits),
+        ai.macro_cursor,
+        ai.macro_in_progress,
+        paths,
+    )
+}
+
+fn terminal_macro_waypoint_at(
+    position_bits: (u32, u32),
+    cursor: Option<u16>,
+    macro_in_progress: bool,
+    paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(robin_engine::ai::PathId, u8, usize)> {
+    if !macro_in_progress {
+        return None;
+    }
+    let offset = usize::from(cursor?);
+    let mut matches = paths.iter().enumerate().flat_map(|(path_index, path)| {
+        path.waypoints
+            .iter()
+            .enumerate()
+            .filter_map(move |(waypoint_index, waypoint)| {
+                let robin_engine::level_data::WaypointCommand::Macro(command) = &waypoint.command
+                else {
+                    return None;
+                };
+                (offset <= command.len()
+                    && position_bits.0 == f32::from(waypoint.x).to_bits()
+                    && position_bits.1 == f32::from(waypoint.y).to_bits())
+                .then_some((path_index, waypoint_index))
+            })
+    });
+    let (path_index, waypoint_index) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some((
+        robin_engine::ai::PathId::new(u16::try_from(path_index).ok()?)?,
+        u8::try_from(waypoint_index).ok()?,
+        offset,
+    ))
+}
+
+fn apply_legacy_interactive_chain_macro_fallback(
+    trace_path: &Path,
+    header: &TraceHeader,
+    prefix_draw_count: usize,
+    engine: &mut Engine,
+    assets: &LevelAssets,
+) -> usize {
+    if header.schema != TRACE_SCHEMA_VERSION
+        || header.start_state != TraceStartState::LoadedSave
+        || header.initial_npc_transients.is_some()
+        || !legacy_loaded_save_retains_process_transients(prefix_draw_count)
+    {
+        return 0;
+    }
+    let Some(previous_path) = preceding_interactive_session_path(trace_path, header.session_index)
+        .filter(|path| path.is_file() || native_binary_trace_path(path).is_file())
+    else {
+        return 0;
+    };
+    let previous_native = ensure_native_binary_trace(&previous_path);
+    let mut reader = BinaryTraceReader::open(&previous_native);
+    let previous_header = reader.read_header().trace;
+    if previous_header.schema != TRACE_SCHEMA_VERSION
+        || previous_header.session_index.checked_add(1) != Some(header.session_index)
+        || previous_header.mission != header.mission
+        || previous_header.proto_level != header.proto_level
+        || previous_header.rng_seed != header.rng_seed
+    {
+        return 0;
+    }
+    let mut final_frame = None;
+    loop {
+        match reader.read_record() {
+            BinaryTraceRecord::Frame(frame) => final_frame = Some(frame),
+            BinaryTraceRecord::End {
+                final_frame: end,
+                frame_count,
+                ..
+            } => {
+                reader
+                    .validate_terminator(frame_count.unwrap(), end.unwrap())
+                    .unwrap_or_else(|error| panic!("invalid preceding interactive trace: {error}"));
+                break;
+            }
+        }
+    }
+    let mut runtime = engine
+        .npc_ids()
+        .into_iter()
+        .map(|id| (engine.original_creation_order(id), id))
+        .collect::<BTreeMap<_, _>>();
+    let mut restored = 0;
+    for element in &final_frame
+        .expect("preceding interactive trace has no frames")
+        .elements
+    {
+        let Some((path_id, waypoint, offset)) =
+            terminal_macro_waypoint(element, &assets.hiking_paths)
+        else {
+            continue;
+        };
+        let Some(id) = runtime.remove(&element.creation_order) else {
+            continue;
+        };
+        restored += usize::from(
+            engine
+                .parity_replay_setup()
+                .restore_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
+        );
+    }
+    restored
 }
 
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
@@ -1544,10 +1895,10 @@ struct TraceElement {
     elevation: TraceFloat,
     old_elevation: TraceFloat,
     increment_map: TracePoint,
-    /// Missing in early schema-16 frames. The compatibility default is never
-    /// compared when the header identifies that legacy recorder generation.
+    /// Missing in early schema-16 frames. Presence, including an authoritative
+    /// `false`, must survive conversion to the native trace.
     #[serde(default)]
-    increment_map_valid: bool,
+    increment_map_valid: Option<bool>,
     movement_map: TracePoint,
     layer: u16,
     layer_goal: u16,
@@ -3232,7 +3583,108 @@ impl TraceTimeline {
     }
 }
 
+/// Recover the quit-mission message omitted by old schema-16 recorders.
+///
+/// `RHEngine::PerformHourglass` can report success without advancing only
+/// through its leading `mbQuitWon` branch. The UI message which set that flag
+/// was not captured, so this exact terminal envelope proves the omitted input.
+// TODO(parity-trace): record MSG_QUIT_MISSION in Original and remove this
+// compatibility inference after every surviving schema-16 trace includes it.
+fn is_legacy_retained_terminal_success(
+    schema: u32,
+    frame_before: u64,
+    frame_after: u64,
+    simulation_body_ran: bool,
+    game_code: i32,
+) -> bool {
+    schema == TRACE_SCHEMA_VERSION
+        && frame_before == frame_after
+        && !simulation_body_ran
+        && game_code == GameCode::LevelSucceeded as i32
+}
+
+/// Stable host identity for campaign attempts synthesized by this replay tool.
+///
+/// Original predates native attempt history, so an archived trace cannot carry
+/// the host nonce which current live sessions attach to terminal commands. Use
+/// the logical recording-family name: chained `-session-NNNN` files belong to
+/// one host run and therefore receive one identity, independent of their disk
+/// location. The domain separator keeps this namespace distinct from future
+/// deterministic tool identities.
+fn replay_campaign_run_id(trace_path: &Path, session_index: u32) -> u64 {
+    let file_name = trace_path.file_name().unwrap_or_else(|| {
+        panic!(
+            "parity trace path {} has no file name for campaign identity",
+            trace_path.display()
+        )
+    });
+    let file_name = file_name.to_string_lossy();
+    let session_suffix = format!("-session-{session_index:04}");
+    let logical_stem = file_name.strip_suffix(".jsonl.zst").unwrap_or(&file_name);
+    let recording_family = logical_stem
+        .strip_suffix(&session_suffix)
+        .unwrap_or(logical_stem);
+
+    let mut digest = Sha256::new();
+    digest.update(b"robin-original-parity-campaign-run-v1\0");
+    digest.update(recording_family.as_bytes());
+    let digest = digest.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    let identity = u64::from_le_bytes(bytes);
+    // Zero is reserved as an invalid durable campaign-history identity.
+    if identity == 0 { u64::MAX } else { identity }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_legacy_retained_terminal_success_repair(
+    commands_before_hourglass: &mut Vec<PlayerCommand>,
+    commands_after_hourglass: &mut Vec<PlayerCommand>,
+    difficulty: robin_engine::player_profile::DifficultyLevel,
+    campaign_run_id: u64,
+    schema: u32,
+    frame_before: u64,
+    frame_after: u64,
+    simulation_body_ran: bool,
+    game_code: i32,
+    already_applied: &mut bool,
+) -> bool {
+    if *already_applied
+        || !is_legacy_retained_terminal_success(
+            schema,
+            frame_before,
+            frame_after,
+            simulation_body_ran,
+            game_code,
+        )
+    {
+        return false;
+    }
+
+    // The omitted Original MSG_QUIT_MISSION both applies campaign/stat updates
+    // and arms mbQuitWon before the retained Hourglass boundary. Rust keeps
+    // terminal campaign updates in a post-hourglass command so achievement
+    // evidence is finalized only after that final engine boundary, matching the
+    // live Rust session transaction. Both phases still complete before parity
+    // compares the Original terminal snapshot.
+    *already_applied = true;
+    commands_before_hourglass.push(PlayerCommand::QuitMissionRequested);
+    commands_after_hourglass.push(PlayerCommand::ApplyQuitMissionUpdates {
+        exit_code: GameCode::LevelSucceeded,
+        difficulty,
+        completed_at_unix_seconds: None,
+        campaign_run_nonce: Some(campaign_run_id),
+    });
+    true
+}
+
 fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
+    engine
+        .parity_replay_setup()
+        // Schema 16 omits the capture viewport and per-Draw camera position.
+        // Keep its presentation-only edge compatibility isolated here; a
+        // future schema carrying that provenance must pass `false` instead.
+        .refresh_sprite_dimension_cache(assets, true);
     engine
         .advance_frame(
             assets,
@@ -3855,6 +4307,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let (mut engine, assets, mission_scb) =
         initialize_headless_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
+    let mut legacy_blocked_box_shadows = BTreeMap::new();
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
             initial_save,
@@ -3890,6 +4343,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 eprintln!("parity stage: saved failed path {index}: {request:?}");
             }
         }
+        legacy_blocked_box_shadows = initial_legacy_blocked_box_shadows(&save);
         loaded_save_host = Some(
             robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
                 &mut engine,
@@ -3900,15 +4354,35 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
         );
         eprintln!("atomically adopted current-schema Original Linux-v48 save");
     }
-    if header.initial_npc_transients.is_empty() {
+    let restored_dormant_macros = apply_legacy_interactive_chain_macro_fallback(
+        &trace_path,
+        &header,
+        prefix_end,
+        &mut engine,
+        &assets,
+    );
+    if restored_dormant_macros != 0 {
         eprintln!(
-            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retaining restored/constructor NPC transient state"
+            "restored {restored_dormant_macros} dormant waypoint-macro cursors from the authoritative preceding interactive-session terminal snapshot"
         );
-    } else {
-        apply_initial_npc_transients(&mut engine, &header.initial_npc_transients);
+    }
+    if let Some(transients) = header.initial_npc_transients.as_deref() {
+        apply_initial_npc_transients(&mut engine, transients);
         eprintln!(
             "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
-            header.initial_npc_transients.len()
+            transients.len()
+        );
+    } else if header.start_state == TraceStartState::LoadedSave
+        && header.session_index > 1
+        && legacy_loaded_save_retains_process_transients(prefix_end)
+    {
+        let restored = apply_legacy_segment_visibility_fallback(&mut engine);
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} segment lacks initial_npc_transients; reconstructed maximal_visibility for {restored} dead/unconscious NPCs"
+        );
+    } else {
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retained authoritative constructor/restored NPC transient state"
         );
     }
     if rewind_loaded_save_rng {
@@ -3978,6 +4452,8 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
     let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
+    let mut legacy_terminal_success_repair_applied = false;
+    let campaign_run_id = replay_campaign_run_id(&trace_path, header.session_index);
 
     #[cfg(feature = "client")]
     if let Some(port) = http_server {
@@ -4249,7 +4725,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 commands_before_hourglass_resolved.push(command);
             }
         }
-        let commands_after_hourglass = commands_after_hourglass
+        let mut commands_after_hourglass = commands_after_hourglass
             .into_iter()
             .filter_map(|command| {
                 let drop_ale_resolution = resolve_current_drop_ale(
@@ -4281,6 +4757,18 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 )
             })
             .collect::<Vec<_>>();
+        append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass_resolved,
+            &mut commands_after_hourglass,
+            header.sim_config.difficulty.into(),
+            campaign_run_id,
+            header.schema,
+            frame.frame_before,
+            frame.frame_after,
+            frame.simulation_body_ran,
+            frame.game_code,
+            &mut legacy_terminal_success_repair_applied,
+        );
         let delayed_drop_ale_route_engine = match delayed_drop_ale_fact_preview.as_mut() {
             Some(preview) => preview,
             None => &mut engine,
@@ -4290,7 +4778,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             &mut consumed_drop_ale_route_ordinals,
             &consumed_group_move_route_ordinals,
             map,
-            header.initial_npc_transients.is_empty(),
+            header.initial_npc_transients.is_none(),
             delayed_drop_ale_route_engine,
         );
         if debug_stage_timing {
@@ -4476,7 +4964,8 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             &frame,
             tick_effects.code as i32,
             map,
-            header.initial_npc_transients.is_empty(),
+            header.initial_npc_transients.is_none(),
+            &mut legacy_blocked_box_shadows,
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -8225,6 +8714,7 @@ fn initialize_headless_engine(
     .expect("initialize engine");
     crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
         .expect("load deterministic sound duration tables");
+    assets.pixel_opacity = Some(Arc::new(frame_holder));
     (engine, assets, scb)
 }
 
@@ -8350,6 +8840,11 @@ fn initialize_engine(
         &profiles,
         "Data/Sounds",
     );
+    // Original's CreateTargetSprite writes the active bank frame's native
+    // dimensions into the serialized RHSprite frontier. The parity engine is
+    // intentionally headless, so publish the immutable frame metadata used
+    // to project that post-render state without mutating the simulation.
+    assets.pixel_opacity = Some(host.publish_frame_holder_opacity());
     (engine, assets, host, background, scb, menu_text)
 }
 
@@ -9506,6 +10001,7 @@ fn compare_frame(
     actual_game_code: i32,
     entity_map: &EntityMap,
     legacy_additive_omissions: bool,
+    legacy_blocked_box_shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
@@ -9686,12 +10182,12 @@ fn compare_frame(
             expected.increment_map,
             MapPoint::new(increment_map.x, increment_map.y),
         );
-        if !legacy_additive_omissions {
+        if let Some(expected_increment_map_valid) = expected.increment_map_valid {
             compare(
                 &mut differences,
                 id,
                 "increment_map_valid",
-                expected.increment_map_valid,
+                expected_increment_map_valid,
                 pi.is_increment_map_computed(),
             );
         }
@@ -9784,6 +10280,19 @@ fn compare_frame(
         );
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
+            let reset_by_new_movement_order = expected.actor.as_ref().is_some_and(|actor| {
+                actor.motion_state == robin_engine::sprite::MotionState::Start as u32
+                    && actor
+                        .sequence_element
+                        .as_ref()
+                        .is_some_and(|sequence| sequence.movement.is_some())
+            });
+            canonicalize_legacy_blocked_box(
+                &mut expected_runtime,
+                expected.creation_order,
+                reset_by_new_movement_order,
+                legacy_blocked_box_shadows,
+            );
             canonicalize_original_runtime_representation(&mut expected_runtime);
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
@@ -10616,6 +11125,169 @@ mod tests {
     use super::*;
     use bitcode_parity as bitcode;
 
+    fn blocked_box_json(
+        last_processed_order_id: u32,
+        min_x: u32,
+        min_y: u32,
+        max_x: u32,
+        max_y: u32,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "sprite": {"last_processed_order_id": last_processed_order_id},
+            "position": {
+                "blocked_box": {
+                    "min": {"x": {"bits": min_x}, "y": {"bits": min_y}},
+                    "max": {"x": {"bits": max_x}, "y": {"bits": max_y}}
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_tracks_resets_and_revalidation() {
+        let tuple = LegacyBlockedBoxTuple {
+            min_x: 1,
+            min_y: 2,
+            max_x: 3,
+            max_y: 4,
+        };
+        let mut shadows = BTreeMap::from([(
+            10,
+            LegacyBlockedBoxShadow {
+                tuple,
+                validity: LegacyBlockedBoxValidity::Set,
+                last_processed_order_id: 20,
+                direct_validity_observed: false,
+            },
+        )]);
+
+        let mut active = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut active,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert!(!active.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut continuing_motion = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut continuing_motion,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "MotionState::Start alone is insufficient without a new raw order id"
+        );
+
+        let mut action_order = blocked_box_json(21, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut action_order,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "PerformAction also changes the raw order id but does not reset the box"
+        );
+
+        let mut reset = blocked_box_json(22, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut reset,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert!(reset.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut still_unset = blocked_box_json(22, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut still_unset,
+            10,
+            false,
+            &mut shadows,
+        ));
+
+        let mut revalidated = blocked_box_json(23, 1, 2, 3, 5);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut revalidated,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "a post-reset tuple update revalidates the box"
+        );
+
+        let mut revisited_old_tuple = blocked_box_json(23, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut revisited_old_tuple,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert!(
+            !revisited_old_tuple
+                .pointer("/position/blocked_box")
+                .unwrap()
+                .is_null()
+        );
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_does_not_guess_for_runtime_actor() {
+        let mut shadows = BTreeMap::new();
+        let mut first = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut first,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert_eq!(shadows[&10].validity, LegacyBlockedBoxValidity::Unknown);
+
+        let mut reset = blocked_box_json(21, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut reset,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert!(reset.pointer("/position/blocked_box").unwrap().is_null());
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_preserves_save_proven_inactive_box() {
+        let mut shadows = BTreeMap::from([(
+            10,
+            LegacyBlockedBoxShadow {
+                tuple: LegacyBlockedBoxTuple {
+                    min_x: 1,
+                    min_y: 2,
+                    max_x: 3,
+                    max_y: 4,
+                },
+                validity: LegacyBlockedBoxValidity::Unset,
+                last_processed_order_id: 20,
+                direct_validity_observed: false,
+            },
+        )]);
+        let mut runtime = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut runtime,
+            10,
+            false,
+            &mut shadows,
+        ));
+    }
+
     #[test]
     fn native_suffix_appends_to_the_recording_identity() {
         // The `.jsonl.zst` path is the stable trace identity; the native
@@ -10671,7 +11343,36 @@ mod tests {
             .remove("initial_npc_transients");
         let legacy = serde_json::from_value::<TraceHeader>(header)
             .expect("legacy schema-16 headers default the additive NPC transient boundary");
-        assert!(legacy.initial_npc_transients.is_empty());
+        assert!(legacy.initial_npc_transients.is_none());
+
+        let present_empty = minimal_test_native_header("test").trace;
+        assert_eq!(present_empty.initial_npc_transients, Some(Vec::new()));
+    }
+
+    #[test]
+    fn legacy_segment_visibility_fallback_matches_original_uword_conversion() {
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [0.0, 1.599_999_9, 0.25]),
+            31
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [2.399_999_9]),
+            47
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(true, [1.599_999_9]),
+            319
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, std::iter::empty()),
+            0
+        );
+    }
+
+    #[test]
+    fn legacy_visibility_fallback_only_applies_to_in_process_reload_envelopes() {
+        assert!(legacy_loaded_save_retains_process_transients(0));
+        assert!(!legacy_loaded_save_retains_process_transients(76));
     }
 
     fn write_test_native_records(
@@ -10738,7 +11439,7 @@ mod tests {
                     production_sectors: Vec::new(),
                 },
                 motion_grid: TraceMotionGrid { layers: Vec::new() },
-                initial_npc_transients: Vec::new(),
+                initial_npc_transients: Some(Vec::new()),
                 initial_save: None,
             },
             rng_prefix: TraceRngPrefix {
@@ -11348,6 +12049,104 @@ mod tests {
                 .unwrap_err()
                 .contains("retain or advance")
         );
+    }
+
+    #[test]
+    fn retained_terminal_success_selects_the_omitted_quit_repair_only() {
+        assert!(is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_601,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            true,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelFailed as i32,
+        ));
+    }
+
+    #[test]
+    fn retained_terminal_success_repair_is_emitted_exactly_once() {
+        let mut commands_before_hourglass = Vec::new();
+        let mut commands_after_hourglass = Vec::new();
+        let mut applied = false;
+        let campaign_run_id = 0x1234_5678_9abc_def0;
+        assert!(append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass,
+            &mut commands_after_hourglass,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+            campaign_run_id,
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+            &mut applied,
+        ));
+        assert!(!append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass,
+            &mut commands_after_hourglass,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+            campaign_run_id,
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+            &mut applied,
+        ));
+        assert_eq!(commands_before_hourglass.len(), 1);
+        assert_eq!(commands_after_hourglass.len(), 1);
+        assert!(matches!(
+            commands_before_hourglass[0],
+            PlayerCommand::QuitMissionRequested
+        ));
+        assert!(matches!(
+            commands_after_hourglass[0],
+            PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: GameCode::LevelSucceeded,
+                campaign_run_nonce: Some(actual),
+                ..
+            } if actual == campaign_run_id
+        ));
+    }
+
+    #[test]
+    fn replay_campaign_identity_is_stable_across_recording_family_sessions() {
+        let first = replay_campaign_run_id(
+            Path::new("interactive-session-002-session-0001.jsonl.zst"),
+            1,
+        );
+        let ninth = replay_campaign_run_id(
+            Path::new("interactive-session-002-session-0009.jsonl.zst"),
+            9,
+        );
+        let other = replay_campaign_run_id(
+            Path::new("interactive-session-003-session-0001.jsonl.zst"),
+            1,
+        );
+
+        assert_ne!(first, 0);
+        assert_eq!(first, ninth);
+        assert_ne!(first, other);
     }
 
     #[test]
@@ -12681,6 +13480,70 @@ mod tests {
     }
 
     #[test]
+    fn interactive_chain_requires_the_exact_adjacent_session_name() {
+        assert_eq!(
+            preceding_interactive_session_path(Path::new("chain-session-0007.jsonl.zst"), 7),
+            Some(PathBuf::from("chain-session-0006.jsonl.zst"))
+        );
+        assert!(
+            preceding_interactive_session_path(Path::new("chain-session-0001.jsonl.zst"), 1)
+                .is_none()
+        );
+        assert!(preceding_interactive_session_path(Path::new("unrelated.jsonl.zst"), 7).is_none());
+    }
+
+    #[test]
+    fn terminal_macro_identity_requires_active_cursor_and_unique_position() {
+        use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+        let waypoint = |x| RawWaypoint {
+            x,
+            y: 1050,
+            sector: 0,
+            level: 0,
+            command: WaypointCommand::Macro(vec![0; 19]),
+        };
+        let unique = vec![RawHikingPath {
+            waypoints: vec![waypoint(353)],
+        }];
+        assert_eq!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                true,
+                &unique,
+            )
+            .map(|(path, waypoint, offset)| (path.get(), waypoint, offset)),
+            Some((0, 0, 18))
+        );
+        assert!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                false,
+                &unique,
+            )
+            .is_none()
+        );
+        let ambiguous = vec![
+            RawHikingPath {
+                waypoints: vec![waypoint(353)],
+            },
+            RawHikingPath {
+                waypoints: vec![waypoint(353)],
+            },
+        ];
+        assert!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                true,
+                &ambiguous,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn windows_i386_save_preserves_and_accepts_gshr_magic() {
         let save = valid_initial_save_with_profile(TraceSaveSourceProfile::WindowsI386GshrV48);
         let decoded = save
@@ -12805,6 +13668,49 @@ mod tests {
                 "domains": []
             }
         })
+    }
+
+    fn minimal_element_json() -> serde_json::Value {
+        serde_json::json!({
+            "entity_id": {"kind": "pc", "index": 1},
+            "creation_order": 1,
+            "class_id": 0,
+            "kind": "pc",
+            "active": true,
+            "blipped": false,
+            "unreachable": false,
+            "surface_id": 0,
+            "posture": 0,
+            "position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "old_position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "position_goal_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "elevation": {"bits": 0},
+            "old_elevation": {"bits": 0},
+            "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "layer": 0,
+            "layer_goal": 0,
+            "sector": 0,
+            "direction": 0,
+            "direction_goal": 0,
+            "moving": false,
+            "moving_map": false,
+            "sprite_row": 0,
+            "sprite_frame": 0,
+            "sprite_frame_count": 0,
+            "runtime": {}
+        })
+    }
+
+    #[test]
+    fn increment_map_valid_preserves_absent_and_explicit_false() {
+        let absent: TraceElement = serde_json::from_value(minimal_element_json()).unwrap();
+        assert_eq!(absent.increment_map_valid, None);
+
+        let mut present = minimal_element_json();
+        present["increment_map_valid"] = serde_json::json!(false);
+        let present: TraceElement = serde_json::from_value(present).unwrap();
+        assert_eq!(present.increment_map_valid, Some(false));
     }
 
     #[test]

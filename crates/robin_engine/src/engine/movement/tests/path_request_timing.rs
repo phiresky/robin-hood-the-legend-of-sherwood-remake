@@ -25,6 +25,171 @@ mod suite {
     }
 
     #[test]
+    fn postponed_move_resumes_directly_at_terminal_door_handoff() {
+        use crate::element::{
+            ActorData, ActorSoldier, Command, ElementData, ElementKind, HumanData, NpcData,
+            Posture, SoldierData,
+        };
+        use crate::sequence::{Sequence, SequenceElement, SequenceElementData};
+
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(64, 64);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let source = MapPoint::new(707.0, 1560.0);
+        let destination = MapPoint::new(737.5406, 1709.7073);
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_layer(1);
+        element.set_sector(crate::position_interface::SectorHandle::new(70));
+        element
+            .sprite
+            .position_iface
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -6.0, -4.0, 6.0, 4.0,
+            ));
+        element.sprite.position_iface.set_pathfinder_index(
+            crate::position_interface::PathfinderIndex::new(0)
+                .expect("zero is a valid test pathfinder index"),
+        );
+        element.set_position_map(source);
+        let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        }));
+
+        let mut pass = SequenceElement::new_movement(
+            1,
+            Command::PassDoor,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            destination: pass_destination,
+            layer: pass_layer,
+            gate_id,
+            ..
+        } = &mut pass.data
+        else {
+            unreachable!()
+        };
+        *pass_destination = source;
+        *pass_layer = 1;
+        *gate_id = Some(crate::gate::DoorIndex::new(114).expect("114 is a valid test door index"));
+
+        let mut route_assert = SequenceElement::new_movement(
+            2,
+            Command::AssertPosition,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let SequenceElementData::Movement {
+            destination: assert_destination,
+            ..
+        } = &mut route_assert.data
+        else {
+            unreachable!()
+        };
+        *assert_destination = source;
+        let route_move =
+            SequenceElement::new_movement(3, Command::Move, Some(owner), OrderType::WalkingUpright);
+        let mut route = Sequence::new();
+        route.append_element(pass);
+        route.append_element(route_assert);
+        route.append_element(route_move);
+        let route_id = engine.orders.sequence_manager.launch_sequence(route);
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_some()
+        );
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(route_id, 0);
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(route_id, 0);
+        engine.dispatch_condolations_for_owner_boundary(
+            &crate::sim_rng::test_context(),
+            owner,
+            &LevelAssets::new(),
+        );
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .pop_next_hourglass_action()
+                .is_some()
+        );
+        engine
+            .orders
+            .sequence_manager
+            .element_in_progress(route_id, 1);
+        engine
+            .orders
+            .sequence_manager
+            .element_terminated(route_id, 1);
+        engine.dispatch_condolations_for_owner_boundary(
+            &crate::sim_rng::test_context(),
+            owner,
+            &LevelAssets::new(),
+        );
+
+        let mut postponed =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        let SequenceElementData::Movement {
+            destination: stored_destination,
+            layer,
+            sector,
+            tolerance,
+            ..
+        } = &mut postponed.data
+        else {
+            unreachable!()
+        };
+        *stored_destination = destination;
+        *layer = 2;
+        *sector = crate::position_interface::SectorHandle::new(88);
+        *tolerance = 30.0;
+        let postponed_id = engine.orders.sequence_manager.launch_element(postponed);
+
+        assert!(has_deferred_post_door_route_continuation(
+            &engine.orders.sequence_manager,
+            owner,
+            source,
+            1,
+        ));
+        let outcome = engine.try_dispatch_move_path(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            owner,
+            postponed_id,
+            0,
+            destination,
+            OrderType::WalkingUpright,
+        );
+        assert!(matches!(outcome, MovePathOutcome::Success));
+        let postponed = engine
+            .orders
+            .sequence_manager
+            .get_element(postponed_id, 0)
+            .unwrap();
+        assert_eq!(postponed.command, Command::MoveOk);
+        assert!(engine.orders.pending_path_requests.waiting.is_empty());
+    }
+
+    #[test]
     fn every_non_direct_request_uses_the_source_extraction_gate() {
         assert!(path_request_needs_source_extraction(false, false));
         assert!(!path_request_needs_source_extraction(false, true));

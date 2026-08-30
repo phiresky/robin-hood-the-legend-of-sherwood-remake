@@ -2169,7 +2169,15 @@ impl EngineInner {
                         flight.goal_z,
                     );
                     entity.element_data_mut().set_layer(flight.goal_layer);
-                    entity.element_data_mut().set_sector(flight.goal_sector);
+                    // Original PerformFlight assigns the exact RHSector*
+                    // retained in mpSectorGoal. ActiveFlight carries that
+                    // pointer identity in its SectorHandle; a number-only
+                    // write would make the next falling-hit projection lookup
+                    // ambiguous (notably for public sector 0).
+                    entity.element_data_mut().set_sector_topology(
+                        flight.goal_sector,
+                        flight.goal_sector.and_then(|sector| sector.arena_index()),
+                    );
                     landings.push((entity_id.into(), flight.obstacle));
                     refresh_script_sectors = true;
                     entity.actor_data_mut().unwrap().active_flight = None;
@@ -2226,7 +2234,12 @@ impl EngineInner {
                     active.increment_z = 0.0;
                 } else {
                     entity.element_data_mut().set_layer(flight.goal_layer);
-                    entity.element_data_mut().set_sector(flight.goal_sector);
+                    // Match Original's SetSector(GetSectorGoal()) pointer
+                    // assignment for non-combat translations as well.
+                    entity.element_data_mut().set_sector_topology(
+                        flight.goal_sector,
+                        flight.goal_sector.and_then(|sector| sector.arena_index()),
+                    );
                     landings.push((entity_id.into(), flight.obstacle));
                     if flight.ladder_fall {
                         // Settle the landing like the original's
@@ -3986,6 +3999,17 @@ mod tests {
         let sim = &sim_context;
         let mut engine = EngineInner::new();
         let victim_id = engine.add_entity(falling_pushed_soldier(true));
+        let goal_sector_index = crate::fast_find_grid::SectorIndex::new(44).unwrap();
+        engine
+            .get_entity_mut(victim_id)
+            .unwrap()
+            .actor_data_mut()
+            .unwrap()
+            .active_flight
+            .as_mut()
+            .unwrap()
+            .goal_sector =
+            SectorHandle::new(4).map(|sector| sector.with_arena_index(goal_sector_index));
         install_falling_pushed_order(&mut engine, victim_id);
 
         engine.tick_push_flights(sim, &LevelAssets::default());
@@ -4023,6 +4047,14 @@ mod tests {
         let victim = engine.get_entity(victim_id).unwrap();
         assert_eq!(victim.element_data().layer(), 3);
         assert_eq!(victim.element_data().sector(), SectorHandle::new(4));
+        assert_eq!(
+            victim
+                .element_data()
+                .sector()
+                .and_then(|sector| sector.arena_index()),
+            Some(goal_sector_index),
+            "PerformFlight landing must retain the exact sector pointer carried by its goal"
+        );
         assert!(victim.actor_data().unwrap().active_flight.is_none());
     }
 

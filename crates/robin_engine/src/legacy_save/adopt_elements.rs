@@ -496,7 +496,7 @@ enum ConvertedLocalAi {
         fleeing_seen_enemy_counter: u16,
         beggar_dont_talk_counter: u16,
         wants_to_talk: bool,
-        last_talk_partner: u32,
+        last_talk_partner: Option<AiEntityHandle>,
         can_go_away: bool,
     },
     Enemy {
@@ -1625,7 +1625,7 @@ fn convert_local_ai(
                 fleeing_seen_enemy_counter: tail.fleeing_seen_enemy_counter,
                 beggar_dont_talk_counter: tail.beggar_dont_talk_counter,
                 wants_to_talk: tail.wants_to_talk,
-                last_talk_partner: ai_handle(
+                last_talk_partner: optional_ai_handle(
                     entities.resolve_ai_element(tail.last_talk_partner)?,
                     ReferenceKind::Npc,
                     creation_order,
@@ -4229,6 +4229,27 @@ mod tests {
             checked_reference(Some(scroll), ReferenceKind::Scroll, 31, "attached_scroll").unwrap(),
             Some(scroll)
         );
+    }
+
+    #[test]
+    fn nullable_last_talk_partner_preserves_original_null_pointer() {
+        assert_eq!(
+            optional_ai_handle(None, ReferenceKind::Npc, 31, "last_talk_partner").unwrap(),
+            None
+        );
+
+        let civilian = EntityId::new(17, crate::entity_id::EntityIdKind::Civilian);
+        assert_eq!(
+            optional_ai_handle(Some(civilian), ReferenceKind::Npc, 31, "last_talk_partner")
+                .unwrap(),
+            Some(AiEntityHandle::new(17))
+        );
+
+        let pc = EntityId::new(18, crate::entity_id::EntityIdKind::Pc);
+        assert!(matches!(
+            optional_ai_handle(Some(pc), ReferenceKind::Npc, 31, "last_talk_partner"),
+            Err(LegacyElementAdoptError::WrongReferenceKind { .. })
+        ));
     }
 
     #[test]

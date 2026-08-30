@@ -3478,17 +3478,22 @@ impl EngineInner {
     /// Awards `BOW_KILL_EXPERIENCE_POINTS` to the shooter's Bow skill
     /// via the campaign's `PcStatus`.
     pub(super) fn award_bow_kill_xp(&mut self, shooter_id: EntityId) {
-        let profile_idx = self.get_entity(shooter_id).and_then(|e| match e {
-            Entity::Pc(pc) => Some(pc.pc.profile_index),
-            _ => None,
-        });
-        let profile_idx = match profile_idx {
-            Some(idx) => idx,
-            None => return, // Only PCs get XP
+        let Some(entity) = self.get_entity(shooter_id) else {
+            return;
         };
+        let Entity::Pc(pc) = entity else {
+            return; // Only PCs get XP
+        };
+        let character_idx = self
+            .pc_description_index_for_pc_data(&pc.pc)
+            .unwrap_or_else(|| {
+                panic!(
+                    "bow-kill XP shooter {shooter_id:?} has no valid campaign character identity"
+                )
+            });
 
         let capacity_increased = self.mission_domain.campaign.add_pc_experience(
-            usize::from(profile_idx),
+            character_idx,
             crate::pc_status::SkillName::Bow,
             bow_shot::BOW_KILL_EXPERIENCE_POINTS,
         );

@@ -416,6 +416,45 @@ pub(crate) fn preflight_v48_sequence_manager(
     entities: &LegacyEntityFixups,
     topology: &LegacySequenceTopology,
 ) -> Result<LegacySequenceAdoptionPlan, LegacySequenceAdoptError> {
+    // RHSequenceManager restores RHOrder::mulNextID before it reads the
+    // manager-owned sequences.  Every order is then allocated with
+    // `new RHOrder`; its constructor increments mulNextID before Serialize
+    // overwrites that particular object's identity from the save
+    // (original-code/RHsequencemanager.cpp:452 and
+    // original-code/RHsequenceelement.cpp:324).  Preserve those otherwise
+    // invisible constructor side effects so the first order allocated after
+    // a load receives Original's identity.
+    let mut deserialized_order_count = 0u32;
+    let mut serialized_sequences = saved
+        .sequences
+        .iter()
+        .map(|sequence| &sequence.body)
+        .collect::<Vec<_>>();
+    while let Some(sequence) = serialized_sequences.pop() {
+        for element in &sequence.elements {
+            let element_order_count = u32::try_from(element.base().orders.len()).map_err(|_| {
+                invalid(
+                    "sequences.orders.count",
+                    element.base().orders.len(),
+                    "a u32 order count",
+                )
+            })?;
+            deserialized_order_count = deserialized_order_count
+                .checked_add(element_order_count)
+                .ok_or_else(|| {
+                    invalid(
+                        "sequences.orders.count",
+                        "overflow",
+                        "a combined u32 order count",
+                    )
+                })?;
+            if let LegacyInlineSequenceElement::Movement(movement) = element
+                && let Some(post_seek) = movement.post_seek_sequence.as_deref()
+            {
+                serialized_sequences.push(post_seek);
+            }
+        }
+    }
     let sequence_ids = saved
         .sequences
         .iter()
@@ -468,8 +507,15 @@ pub(crate) fn preflight_v48_sequence_manager(
         next_order_id: saved
             .static_ids
             .order_next_id
-            .checked_add(1)
-            .ok_or_else(|| invalid("order_static.next_id", u32::MAX, "at most 0xfffffffe"))?,
+            .checked_add(deserialized_order_count)
+            .and_then(|next| next.checked_add(1))
+            .ok_or_else(|| {
+                invalid(
+                    "order_static.next_id",
+                    saved.static_ids.order_next_id,
+                    "room for deserialized-order constructors and Rust's +1 identity shift",
+                )
+            })?,
     })
 }
 
@@ -1751,7 +1797,11 @@ mod tests {
             vec![(Field::Freeze, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])]
         );
 
-        assert_eq!(engine.orders.allocate_order_id().get(), 2);
+        assert_eq!(
+            engine.orders.allocate_order_id().get(),
+            5,
+            "three deserialized RHOrder constructors advance Original's restored static counter"
+        );
         let mut fresh = Sequence::new();
         fresh.append_element(SequenceElement::new(1, Command::Wait, Some(owner)));
         let fresh_id = engine.orders.sequence_manager.launch_sequence(fresh);

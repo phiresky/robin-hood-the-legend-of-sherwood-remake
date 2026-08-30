@@ -588,6 +588,17 @@ impl Engine {
         });
         let sprite = &entity.element_data().sprite;
         let position = sprite.position_iface.v48_serialized_state();
+        // Original's runtime frontier has the current mpointSprite projection
+        // for ordinary entities. In Rust a map move invalidates the derived
+        // cache without overwriting its raw serialized slot, which can still
+        // hold the previous top-left. Targets are intentionally different:
+        // their authored action point can differ from the visible sprite
+        // anchor, so preserve their exact cached value.
+        let current_sprite = if entity.is_fx_target() {
+            crate::coordinates::SpriteTopLeft::new(position.sprite.x, position.sprite.y)
+        } else {
+            entity.cxx_position_sprite()
+        };
         let float = |value: f32| json!({ "bits": value.to_bits(), "value": value });
         let point2 = |x: f32, y: f32| json!({ "x": float(x), "y": float(y) });
         let point3 =
@@ -683,7 +694,11 @@ impl Engine {
                 let index = assets.static_sight_obstacles[..handle]
                     .iter()
                     .filter(|candidate| candidate.is_projection_area())
-                    .count();
+                    .count()
+                    // Original inserts its synthetic default-ground
+                    // projection area at ordinal zero before authored
+                    // obstacles. Rust represents that ground implicitly.
+                    + 1;
                 if !obstacle.is_projection_area() {
                     panic!(
                         "parity position on layer {} references non-projection obstacle {handle}",
@@ -743,7 +758,7 @@ impl Engine {
                 json!({
                 "world": point3(position.position.x, position.position.y, position.position.z),
                 "map": point2(position.map.x, position.map.y),
-                "sprite": point2(position.sprite.x, position.sprite.y),
+                "sprite": point2(current_sprite.x, current_sprite.y),
                 "old_world": point3(position.old_position.x, position.old_position.y, position.old_position.z),
                 "old_map": point2(position.old_map.x, position.old_map.y),
                 "old_sprite": point2(position.old_sprite.x, position.old_sprite.y),
@@ -1141,7 +1156,7 @@ impl Engine {
 					"fleeing_seen_enemy_counter": friendly.fleeing_seen_enemy_counter,
 					"beggar_dont_talk_counter": friendly.beggar_dont_talk_counter,
 					"wants_to_talk": friendly.wants_to_talk,
-					"last_talk_partner": resolve_ai_handle(friendly.last_talk_partner),
+					"last_talk_partner": resolve_optional_ai_handle(friendly.last_talk_partner),
 					"can_go_away": friendly.can_go_away,
 				})),
 				crate::element::AiBrain::Enemy(enemy) => {
@@ -4058,6 +4073,156 @@ impl Engine {
 }
 
 impl ParityReplaySetup<'_> {
+    /// Cross Original's post-RecordFrame presentation boundary.
+    ///
+    /// `RHSprite::CreateTargetSprite` overwrites the serialized width/height
+    /// cache with the current bank frame while refreshing visible entities.
+    /// Rust rendering is read-only, so the parity runner applies that legacy
+    /// side effect explicitly after comparing each recorded frame.
+    pub fn refresh_sprite_dimension_cache(
+        &mut self,
+        assets: &LevelAssets,
+        legacy_missing_presentation_view: bool,
+    ) {
+        let Some(frames) = assets.pixel_opacity.as_ref() else {
+            return;
+        };
+        let camera = &self.engine.inner.feedback.cutscene_camera;
+        let screen = EngineInner::director_camera_view_size();
+        // Schema-16 parity traces serialize the simulation camera, but not
+        // Original's draw-time viewport/camera.  The latter can be one map
+        // unit past the reconstructed edge by the time Refresh calls
+        // RHSprite::IsOnScreen (interactive session 003 is an attested
+        // example).  Keep the compatibility envelope narrow: it admits only
+        // sprites touching that unrecorded one-unit presentation boundary,
+        // rather than guessing a capture resolution or refreshing every
+        // off-screen sprite.
+        // TODO: Remove this compatibility envelope once traces carry the
+        // capture viewport and per-Draw camera position.
+        let presentation_edge_slop = if legacy_missing_presentation_view {
+            1.0
+        } else {
+            0.0
+        };
+        let view = crate::sprite::BBox::from_coords(
+            camera.view_position.x - presentation_edge_slop,
+            camera.view_position.y - presentation_edge_slop,
+            camera.view_position.x + screen.x / camera.zoom_factor + presentation_edge_slop,
+            camera.view_position.y
+                + (screen.y - super::PANNEL_HEIGHT) / camera.zoom_factor
+                + presentation_edge_slop,
+        );
+        let updates = self
+            .engine
+            .inner
+            .world
+            .entities
+            .occupied()
+            .filter_map(|(id, entity)| {
+                let element = entity.element_data();
+                if !element.active || element.hidden_in_building {
+                    return None;
+                }
+                // RHElementScroll::Refresh only delegates to the ordinary object
+                // renderer in these two states. Invisible and taken scrolls keep
+                // their saved dimension cache even when their geometry intersects
+                // the camera view.
+                if matches!(entity, crate::element::Entity::Scroll(_))
+                    && !matches!(
+                        self.engine.inner.scroll_status(id),
+                        super::ScrollStatus::Visible | super::ScrollStatus::Opened
+                    )
+                {
+                    return None;
+                }
+                let sprite = entity.sprite();
+                let Some(row) = sprite
+                    .current_scripts_opt()
+                    .and_then(|scripts| scripts.get(usize::from(sprite.current_row)))
+                else {
+                    return None;
+                };
+                let Some(&bank_id) = row.frame_ids.get(usize::from(sprite.current_frame)) else {
+                    return None;
+                };
+                let Some((width, height)) = frames.sprite_dimensions(bank_id) else {
+                    return None;
+                };
+                // IsOnScreen asks FrameHolder for the current surface dimensions;
+                // the serialized cache is not consulted until CreateTargetSprite
+                // publishes those same dimensions. Using the stale cache here can
+                // incorrectly cull a frame sitting on the viewport boundary.
+                let sprite_position = entity.cxx_position_sprite();
+                let offset = sprite.current_offset();
+                let sprite_box = crate::sprite::BBox::from_coords(
+                    sprite_position.x + offset.x,
+                    sprite_position.y + offset.y,
+                    sprite_position.x + offset.x + f32::from(width),
+                    sprite_position.y + offset.y + f32::from(height),
+                );
+                if !sprite_box.is_intersecting(&view) {
+                    return None;
+                }
+
+                // CreateTargetSprite resets mbMasked before applying the current
+                // grid mask list. Keep this serialized presentation cache in step
+                // with the same mask query used by the renderer.
+                let kind = entity.kind();
+                let masked = if kind.has_valid_box_for_masking() {
+                    let world_box = crate::coordinates::MapBBox::from_coords(
+                        sprite_box.min.x,
+                        sprite_box.min.y,
+                        sprite_box.max.x,
+                        sprite_box.max.y,
+                    );
+                    let is_flying_human = element.posture == crate::element::Posture::Flying;
+                    if is_flying_human || kind.is_projectile() {
+                        !self
+                            .engine
+                            .inner
+                            .fast_grid()
+                            .get_masks_applied_to_projectile(
+                                self.engine.inner.fast_grid().level.special_layer,
+                                &world_box,
+                                element.position(),
+                                is_flying_human,
+                                self.engine.inner.sight_obstacles(assets),
+                            )
+                            .is_empty()
+                    } else {
+                        !self
+                            .engine
+                            .inner
+                            .fast_grid()
+                            .get_masks_applied_to_character(
+                                element.layer(),
+                                &world_box,
+                                element.position_map(),
+                            )
+                            .is_empty()
+                    }
+                } else {
+                    false
+                };
+                Some((id, width, height, masked))
+            })
+            .collect::<Vec<_>>();
+
+        for (id, width, height, masked) in updates {
+            let sprite = self
+                .engine
+                .inner
+                .world
+                .entities
+                .get_mut(id)
+                .expect("presentation refresh entity disappeared");
+            let sprite = sprite.sprite_mut();
+            sprite.current_width = width;
+            sprite.current_height = height;
+            sprite.masked = masked;
+        }
+    }
+
     /// Advance a frame whose commands were independently recorded by the
     /// Original parity tracer.
     ///
@@ -5284,6 +5449,277 @@ mod tests {
         assert_eq!(state.chorus_timer, 23);
         assert!(state.force_check);
         assert!(state.men_to_blazon_conversion);
+    }
+
+    fn parity_position_sprite(state: &serde_json::Value) -> (u32, u32) {
+        (
+            state["position"]["sprite"]["x"]["bits"]
+                .as_u64()
+                .expect("sprite x bits") as u32,
+            state["position"]["sprite"]["y"]["bits"]
+                .as_u64()
+                .expect("sprite y bits") as u32,
+        )
+    }
+
+    #[test]
+    fn parity_runtime_projects_current_sprite_top_left_for_ordinary_entities() {
+        let mut inner = EngineInner::new();
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::Fx,
+            ..Default::default()
+        };
+        element.sprite.center = crate::coordinates::SpriteAnchor::new(150.0, 150.0);
+        element
+            .sprite
+            .position_iface
+            .set_cached_sprite_position(crate::coordinates::MapPoint::new(1688.0, 150.0));
+        element.set_position_map(crate::coordinates::MapPoint::new(1836.2246, 301.3214));
+        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            element,
+            fx: Default::default(),
+        }));
+
+        let state = Engine { inner }.parity_entity_runtime_state(id, &LevelAssets::new());
+
+        assert_eq!(
+            parity_position_sprite(&state),
+            (1686.0_f32.to_bits(), 151.0_f32.to_bits())
+        );
+    }
+
+    #[test]
+    fn parity_runtime_preserves_target_cached_sprite_anchor() {
+        let mut inner = EngineInner::new();
+        let mut element = crate::element::ElementData {
+            kind: crate::element::ElementKind::Target,
+            ..Default::default()
+        };
+        element.sprite.center = crate::coordinates::SpriteAnchor::new(30.0, 140.0);
+        element
+            .sprite
+            .position_iface
+            .set_cached_sprite_position(crate::coordinates::MapPoint::new(2791.0, 171.0));
+        element.set_position_map_preserving_3d(crate::coordinates::MapPoint::new(2823.0, 312.0));
+        let id = inner.add_entity(crate::element::Entity::Target(
+            crate::element::ElementTarget {
+                element,
+                fx: Default::default(),
+                target: Default::default(),
+            },
+        ));
+
+        let state = Engine { inner }.parity_entity_runtime_state(id, &LevelAssets::new());
+
+        assert_eq!(
+            parity_position_sprite(&state),
+            (2791.0_f32.to_bits(), 171.0_f32.to_bits())
+        );
+    }
+
+    #[test]
+    fn parity_runtime_refreshes_bank_dimensions_only_after_recorded_boundary() {
+        struct Frames;
+        impl crate::engine::PixelOpacityLookup for Frames {
+            fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
+                (bank_id == 73).then_some((48, 19))
+            }
+
+            fn is_pixel_opaque(
+                &self,
+                _bank_id: u32,
+                _x: u16,
+                _y: u16,
+                _blue_pixels_are_in: bool,
+            ) -> bool {
+                false
+            }
+        }
+
+        let mut inner = EngineInner::new();
+        let mut sprite = crate::sprite::Sprite {
+            current_width: 44,
+            current_height: 20,
+            current_row: 0,
+            current_frame: 1,
+            masked: true,
+            ..Default::default()
+        };
+        // The stale 44-pixel cache ends before the viewport, while the
+        // current 48-pixel bank surface intersects it. Original IsOnScreen
+        // uses the latter before CreateTargetSprite publishes the cache.
+        sprite
+            .position_iface
+            .set_map_position(crate::coordinates::MapPoint::new(-47.0, 0.0));
+        sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            frame_ids: vec![72, 73],
+            offsets: vec![
+                crate::coordinates::SpriteFrameOffset::ZERO,
+                crate::coordinates::SpriteFrameOffset::ZERO,
+            ],
+            ..Default::default()
+        }]);
+        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                active: true,
+                sprite,
+                ..Default::default()
+            },
+            fx: Default::default(),
+        }));
+        let assets = LevelAssets {
+            pixel_opacity: Some(std::sync::Arc::new(Frames)),
+            ..LevelAssets::new()
+        };
+
+        let mut engine = Engine { inner };
+        let before_refresh = engine.parity_entity_runtime_state(id, &assets);
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, true);
+        let after_refresh = engine.parity_entity_runtime_state(id, &assets);
+
+        assert_eq!(before_refresh["sprite"]["width"], 44);
+        assert_eq!(before_refresh["sprite"]["height"], 20);
+        assert_eq!(before_refresh["sprite"]["masked"], true);
+        assert_eq!(after_refresh["sprite"]["width"], 48);
+        assert_eq!(after_refresh["sprite"]["height"], 19);
+        assert_eq!(after_refresh["sprite"]["masked"], false);
+    }
+
+    #[test]
+    fn schema16_presentation_refresh_admits_only_missing_draw_view_edge() {
+        struct Frames;
+        impl crate::engine::PixelOpacityLookup for Frames {
+            fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
+                (bank_id == 73).then_some((24, 55))
+            }
+
+            fn is_pixel_opaque(
+                &self,
+                _bank_id: u32,
+                _x: u16,
+                _y: u16,
+                _blue_pixels_are_in: bool,
+            ) -> bool {
+                false
+            }
+        }
+
+        let mut inner = EngineInner::new();
+        let mut sprite = crate::sprite::Sprite {
+            current_width: 20,
+            current_height: 53,
+            current_row: 0,
+            current_frame: 0,
+            ..Default::default()
+        };
+        // The reconstructed schema-16 view ends at x=1024. Original's
+        // unrecorded Draw-time view attests that a sprite beginning at x=1025
+        // was refreshed; anything farther away must remain culled.
+        sprite.center = crate::coordinates::SpriteAnchor::new(-1025.0, -20.0);
+        sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+            frame_ids: vec![73],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            ..Default::default()
+        }]);
+        let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+            element: crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                active: true,
+                sprite,
+                ..Default::default()
+            },
+            fx: Default::default(),
+        }));
+        let assets = LevelAssets {
+            pixel_opacity: Some(std::sync::Arc::new(Frames)),
+            ..LevelAssets::new()
+        };
+        let mut engine = Engine { inner };
+        let gameplay_position = engine.inner.world.entities[id]
+            .as_ref()
+            .expect("test entity must remain occupied")
+            .element_data()
+            .position_map();
+
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, false);
+        let without_legacy_edge = engine.parity_entity_runtime_state(id, &assets);
+        assert_eq!(without_legacy_edge["sprite"]["width"], 20);
+        assert_eq!(without_legacy_edge["sprite"]["height"], 53);
+
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, true);
+        let with_legacy_edge = engine.parity_entity_runtime_state(id, &assets);
+        assert_eq!(with_legacy_edge["sprite"]["width"], 24);
+        assert_eq!(with_legacy_edge["sprite"]["height"], 55);
+        assert_eq!(
+            engine.inner.world.entities[id]
+                .as_ref()
+                .expect("test entity must remain occupied")
+                .element_data()
+                .position_map(),
+            gameplay_position,
+            "presentation compatibility must not mutate gameplay position"
+        );
+
+        let sprite = engine.inner.world.entities[id]
+            .as_mut()
+            .expect("test entity must remain occupied")
+            .sprite_mut();
+        sprite.current_width = 20;
+        sprite.current_height = 53;
+        sprite.center = crate::coordinates::SpriteAnchor::new(-1026.0, -20.0);
+        engine
+            .parity_replay_setup()
+            .refresh_sprite_dimension_cache(&assets, true);
+        let beyond_legacy_edge = engine.parity_entity_runtime_state(id, &assets);
+        assert_eq!(beyond_legacy_edge["sprite"]["width"], 20);
+        assert_eq!(beyond_legacy_edge["sprite"]["height"], 53);
+    }
+
+    #[test]
+    fn parity_runtime_projection_ordinal_includes_original_default_ground_slot() {
+        use crate::sight_obstacle::{SIGHTOBSTACLE_PROJECTION_AREA, SightObstacle};
+
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = std::sync::Arc::new(vec![
+            SightObstacle::new_default(10),
+            SightObstacle::new(11, SIGHTOBSTACLE_PROJECTION_AREA),
+            SightObstacle::new_default(12),
+            SightObstacle::new(13, SIGHTOBSTACLE_PROJECTION_AREA),
+        ]);
+
+        for (handle, expected_ordinal) in [(1_u32, 1_u64), (3, 2)] {
+            let mut inner = EngineInner::new();
+            let mut element = crate::element::ElementData {
+                kind: crate::element::ElementKind::Fx,
+                ..Default::default()
+            };
+            element.set_layer(0);
+            element.set_obstacle_index(
+                crate::position_interface::ObstacleHandle::new(handle),
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 0.0,
+                    bz: 0.0,
+                    dz: 0.0,
+                }),
+            );
+            let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+                element,
+                fx: Default::default(),
+            }));
+
+            let state = Engine { inner }.parity_entity_runtime_state(id, &assets);
+            assert_eq!(
+                state["position"]["obstacle"],
+                serde_json::json!({ "kind": "projection", "index": expected_ordinal })
+            );
+        }
     }
 
     #[test]

@@ -821,7 +821,10 @@ impl Sprite {
         let layer = crate::position_interface::Layer::new(layer)
             .expect("layer must be < 0xFFFF; 0xFFFF is the 'no layer' sentinel");
         pi.set_layer(layer);
-        pi.set_sector(sector);
+        // Level placement may already have resolved an Original sparse
+        // `RHSector*` slot. Preserve that exact arena object instead of
+        // routing through the deliberately number-only `set_sector` API.
+        pi.set_sector_topology(sector, sector.and_then(|handle| handle.arena_index()));
         pi.set_direction_instantly(crate::position_interface::Direction::from_raw(
             direction as i32,
         ));

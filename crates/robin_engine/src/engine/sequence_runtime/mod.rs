@@ -1280,6 +1280,48 @@ impl WaitCommandContext<'_> {
             posture
         };
 
+        // RHElementActorHuman::Translate allocates its wait RHOrder before
+        // switching on posture/action state. A few arms then delegate to
+        // RHElementActor::Translate and return without inserting that order;
+        // the base translator allocates the real order separately. The
+        // leaked object still advances RHOrder::mulNextID
+        // (original-code/RHelementactorhuman.cpp:884-1031). Preserve that
+        // allocation side effect so every later runtime order retains
+        // Original's identity.
+        let soldier_handles_wait = is_soldier
+            && ((is_attentive
+                && posture == crate::element::Posture::Upright
+                && action_state == crate::element::ActionState::Waiting
+                && !is_dead
+                && !is_unconscious)
+                || posture == crate::element::Posture::LeaningOut);
+        let human_wait_discards_preallocated_order = pc_posture_animation.is_none()
+            && !soldier_handles_wait
+            && match switch_posture {
+                crate::element::Posture::Upright => {
+                    !is_swordfighting
+                        && !after_state.is_shield()
+                        && !after_state.is_sword()
+                        && !matches!(
+                            after_state,
+                            crate::element::ActionState::AimingWithBow
+                                | crate::element::ActionState::AimingWithBowUp
+                                | crate::element::ActionState::Menacing
+                                | crate::element::ActionState::Sleeping
+                        )
+                }
+                crate::element::Posture::DeadBack => {
+                    !after_state.is_sword()
+                        && !after_state.is_bow()
+                        && after_state != crate::element::ActionState::Menacing
+                }
+                crate::element::Posture::Crouched
+                | crate::element::Posture::OnWall
+                | crate::element::Posture::OnLadder
+                | crate::element::Posture::Sitting => true,
+                _ => false,
+            };
+
         let mut set_posture_stuck_under_net = false;
         let animation = if let Some(pc_animation) = pc_posture_animation {
             Some(pc_animation)
@@ -1450,6 +1492,10 @@ impl WaitCommandContext<'_> {
             let mut order = crate::order::Order::new(falling, 0.0, 0.0, id);
             order.compute_direction = false;
             self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+        }
+
+        if human_wait_discards_preallocated_order {
+            let _discarded_original_order_id = crate::order::alloc_order_id(self.next_order_id);
         }
 
         if let Some(animation) = animation {
@@ -3011,6 +3057,44 @@ mod sequence_phase_context_tests {
                 OrderType::WaitingUprightBored,
             ]
         );
+    }
+
+    #[test]
+    fn upright_bored_wait_preserves_human_translator_discarded_order_id() {
+        use crate::element::{ActionState, Posture};
+        use crate::order::OrderType;
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        let owner = engine.add_entity(shield_pc(ActionState::Bored));
+        let mut wait = SequenceElement::new(1, Command::Wait, Some(owner));
+        wait.posture_after_transition = Posture::Upright;
+        wait.action_state_after_transition = ActionState::Bored;
+        let sequence = engine.orders.sequence_manager.launch_element(wait);
+
+        WaitCommandContext {
+            entities: &mut engine.world.entities,
+            sequence_manager: &mut engine.orders.sequence_manager,
+            next_order_id: &mut engine.orders.next_order_id,
+            profiles: &crate::profiles::ProfileManager::default(),
+        }
+        .dispatch(owner, Command::Wait, sequence, 0);
+
+        let order = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .expect("upright bored wait remains live")
+            .orders
+            .back()
+            .expect("upright bored wait translates to a base order");
+        assert_eq!(order.order_type, OrderType::WaitingUprightBored);
+        assert_eq!(
+            order.order_id.get(),
+            2,
+            "Human allocates and discards ID 1 before base Wait allocates the live order"
+        );
+        assert_eq!(engine.orders.allocate_order_id().get(), 3);
     }
 
     #[test]

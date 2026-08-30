@@ -1625,15 +1625,19 @@ impl EngineInner {
         }
 
         // Apply XP through campaign
-        let profile_idx = self
+        let character_idx = self
             .get_entity(attacker_id)
             .and_then(|e| match e {
-                Entity::Pc(pc) => Some(pc.pc.profile_index),
+                Entity::Pc(pc) => self.pc_description_index_for_pc_data(&pc.pc),
                 _ => None,
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                panic!(
+                    "sword-kill XP attacker {attacker_id:?} has no valid campaign character identity"
+                )
+            });
         let capacity_increased = self.mission_domain.campaign.add_pc_experience(
-            usize::from(profile_idx),
+            character_idx,
             crate::pc_status::SkillName::HandToHand,
             xp,
         );
