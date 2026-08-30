@@ -60,7 +60,10 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
     {
         let entity = engine.get_entity_mut(owner).unwrap();
-        entity.element_data_mut().set_sector(SectorHandle::new(42));
+        entity.position_iface_mut().set_sector_topology(
+            SectorHandle::new(42),
+            crate::fast_find_grid::SectorIndex::new(0),
+        );
         entity.actor_data_mut().unwrap().continuation.motion_state = MotionState::Done;
     }
 
@@ -6103,7 +6106,7 @@ fn strangle_authorized_placement_failure_cleans_exact_owner_before_post_authoriz
     );
     assert_eq!(
         victim_ai.primary_target,
-        attacker.index(),
+        Some(crate::ai::AiEntityHandle::new(attacker.index())),
         "the victim's EventGotHit handler must observe the attacker at the owner boundary"
     );
 

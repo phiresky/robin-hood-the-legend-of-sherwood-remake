@@ -289,7 +289,6 @@ fn give_money_to_beggar(
     let coin = {
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &engine.world.fast_grid,
-            layer,
             sight_obstacles: engine.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
@@ -297,15 +296,22 @@ fn give_money_to_beggar(
             None,
             source_pos,
             target_pos,
-            layer,
-            0,
+            crate::position_interface::Layer::new(layer),
+            Some(crate::position_interface::Layer::ZERO),
             None,
             bow_shot::APEX_BEGGAR_COIN,
             Some(&obstacle_check),
         )
     };
     let coin_id = engine.with_simulation_context(|engine, sim| {
-        engine.publish_primed_coin(sim, assets, coin, npc_pos_2d, source_sector, layer)
+        engine.publish_primed_coin(
+            sim,
+            assets,
+            coin,
+            npc_pos_2d,
+            source_sector,
+            crate::position_interface::Layer::new(layer),
+        )
     });
     // Original SetBelongsToBeggar follows AddElement.
     let Some(Entity::Projectile(coin)) = engine.world.entities.get_mut(coin_id) else {

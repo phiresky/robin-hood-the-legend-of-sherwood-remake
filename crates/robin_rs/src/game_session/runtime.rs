@@ -11,9 +11,6 @@ use crate::host::Host;
 use crate::rewind::RewindBuffer;
 use crate::rollback_checker::RollbackChecker;
 use crate::save_file::{GameRuntimeSnapshot, ReplaySaveIdentity};
-use crate::sim_timeline::{
-    CheckpointPolicy, RECENT_TIMELINE_HISTORY_FRAMES, RetentionPolicy, SnapshotHistory,
-};
 use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::engine_manager::EngineManager;
 use robin_engine::game_operation::GameCode;
@@ -215,6 +212,12 @@ impl MissionWorld {
         robin_engine::engine::SimConfig,
     ) {
         self.manager.engine.into_campaign_and_simulation()
+    }
+
+    pub(super) fn preserve_multiplayer_session_for_next_mission(&mut self) {
+        if let Some(net) = self.host.transport.net.as_mut() {
+            net.preserve_session_for_next_mission();
+        }
     }
 
     pub(super) fn ingress(&mut self) -> MissionIngress<'_> {
@@ -631,6 +634,10 @@ impl MissionRuntime {
         self.world.into_campaign_and_simulation()
     }
 
+    pub(super) fn preserve_multiplayer_session_for_next_mission(&mut self) {
+        self.world.preserve_multiplayer_session_for_next_mission();
+    }
+
     /// Open one host frame at the deterministic pre-command boundary.
     ///
     /// Network ingress remains a driver concern and must run before this
@@ -942,7 +949,6 @@ pub(super) struct TimelineRuntime {
     pub(super) playback_pinned_saves: BTreeMap<u32, GameRuntimeSnapshot>,
 
     pub(super) peer_hashes: BTreeMap<u32, u64>,
-    pub(super) recent_timeline_history: SnapshotHistory,
     pub(super) mp_admission: MultiplayerAdmission,
     pub(super) mp_host_frame_schedule: Option<(u32, u32)>,
     pub(super) last_mp_rollback: Option<MultiplayerRollbackTelemetry>,
@@ -993,12 +999,6 @@ impl TimelineRuntime {
             recorded_save_frames_by_identity: BTreeMap::new(),
             playback_pinned_saves: BTreeMap::new(),
             peer_hashes: BTreeMap::new(),
-            recent_timeline_history: SnapshotHistory::new(
-                CheckpointPolicy::EveryFrame,
-                RetentionPolicy::Latest {
-                    capacity: RECENT_TIMELINE_HISTORY_FRAMES,
-                },
-            ),
             mp_admission: match (wait_for_multiplayer_start, local_is_host) {
                 (false, _) => MultiplayerAdmission::NotRequired,
                 (true, true) => MultiplayerAdmission::HostWaitingForBegin,
@@ -1068,7 +1068,7 @@ impl TimelineRuntime {
         if let Some(checker) = self.rollback_checker.as_mut() {
             checker.reset();
         }
-        self.recent_timeline_history.truncate_after(target.number());
+        self.rewind_buffer.truncate_recent_after(target.number());
         true
     }
 
@@ -1087,7 +1087,8 @@ impl TimelineRuntime {
     ) {
         self.adopt_frame(target);
         self.rewind_buffer = RewindBuffer::new();
-        self.recent_timeline_history.clear();
+        self.rewind_buffer
+            .seed_initial_anchor(target.number(), engine);
         if let Some(checker) = self.rollback_checker.as_mut() {
             checker.reset();
         }
@@ -1100,9 +1101,6 @@ impl TimelineRuntime {
         let current_frame = self.frame_number();
         self.rewind_buffer
             .begin_frame(current_frame, engine, assets);
-        if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.begin_frame(current_frame, engine);
-        }
     }
 
     pub(super) fn apply_multiplayer_admission_events(
@@ -1240,9 +1238,6 @@ impl TimelineRuntime {
         let current_frame = self.frame_number();
         self.rewind_buffer
             .begin_frame(current_frame, engine, assets);
-        if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.begin_frame(current_frame, engine);
-        }
 
         let recorder_hash = self.replay_recorder.as_ref().and_then(|_| {
             self.replay_ordinal
@@ -1309,12 +1304,12 @@ impl TimelineRuntime {
             ),
             "simulation commit requested outside bookkeeping/presentation phase"
         );
-        if let Some(checker) = self.rollback_checker.as_mut() {
-            checker.end_frame_input(host, frame.authoritative_input(), &manager.engine);
-        }
         if policy.store_rewind_commands {
             self.rewind_buffer
                 .end_frame_input(frame.authoritative_input());
+            if let Some(checker) = self.rollback_checker.as_mut() {
+                checker.check_after_commit(host, &self.rewind_buffer, &manager.engine);
+            }
         }
     }
 
@@ -1794,7 +1789,10 @@ mod tests {
             &game,
             1,
             "timeline".into(),
-        );
+            crate::save_file::SaveProvenance::new("Timeline Test".into(), 0, "Test Player".into())
+                .expect("valid test save provenance"),
+        )
+        .expect("capture timeline save");
         let identity = save.replay_identity().expect("save identity");
 
         // ── Live side: save at frame 0, diverge, load back at frame 5. ──

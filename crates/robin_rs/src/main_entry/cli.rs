@@ -237,6 +237,12 @@ pub struct CliArgs {
     #[serde(skip)]
     pub browser_join_redeemed: bool,
 
+    /// Internal outer-mission handoff. A replacement host consumes the exact
+    /// authenticated session/seat roster retained by the previous transport.
+    #[clap(skip)]
+    #[serde(skip)]
+    pub mp_continue_session: bool,
+
     /// Internal matchmaking handoff: keep the simulation paused until this
     /// wall-clock timestamp so host and joiners begin together.
     #[arg(long, hide = true)]
@@ -363,6 +369,7 @@ impl Default for CliArgs {
             connect: None,
             join: None,
             browser_join_redeemed: false,
+            mp_continue_session: false,
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,
             mp_mission_profile_id: None,

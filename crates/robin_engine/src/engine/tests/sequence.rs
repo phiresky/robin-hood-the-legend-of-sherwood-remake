@@ -4596,7 +4596,7 @@ fn parity_pass_door_snapshot_reads_selected_movement_without_runtime_latch() {
     else {
         unreachable!("new_movement must create movement data")
     };
-    *gate_id = Some(DoorIndex(51));
+    *gate_id = Some(DoorIndex::new(51).expect("valid door index"));
     *direction = -1;
     let sequence = engine.orders.sequence_manager.launch_element(pass);
     engine
@@ -4616,7 +4616,7 @@ fn parity_pass_door_snapshot_reads_selected_movement_without_runtime_latch() {
     );
     assert_eq!(
         engine.actor_selected_pass_door(owner),
-        Some((DoorIndex(51), -1))
+        Some((DoorIndex::new(51).expect("valid door index"), -1))
     );
 }
 
@@ -5866,7 +5866,7 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
         .get_or_insert(pc)
         .set_slot_titbit(
             slot as usize,
-            crate::titbit::TitbitId::new(titbit_id).unwrap(),
+            titbit_id.expect("titbit allocation succeeds"),
         );
 
     // Populated slot → drops the titbit and reports success.
@@ -5877,8 +5877,8 @@ fn remove_quick_action_titbits_for_matches_original_signature() {
             .titbit_manager
             .titbits()
             .iter()
-            .any(|t| t.id == titbit_id),
-        "titbit with id {titbit_id} should be gone"
+            .any(|t| Some(t.id) == titbit_id),
+        "titbit with id {titbit_id:?} should be gone"
     );
 
     // Second call after the list is empty: slot still holds the stale

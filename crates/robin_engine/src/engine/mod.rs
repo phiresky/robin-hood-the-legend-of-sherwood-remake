@@ -748,10 +748,10 @@ impl EngineInner {
         let special_layer = self.world.fast_grid.level.special_layer;
         for (_, entity) in self.world.entities.actors() {
             let elem = entity.element_data();
-            let layer = elem.layer();
-            if layer == 0xFFFF {
+            let Some(layer) = elem.optional_layer() else {
                 continue;
-            }
+            };
+            let layer = layer.get();
             let pos = elem.position_map();
             if layer > special_layer {
                 tracing::error!(
@@ -1276,11 +1276,11 @@ impl EngineInner {
         if let Entity::Pc(pc) = entity {
             let position = pc.element.position_map();
             pc.actor.produced_noise = Some(crate::ai::Noise {
-                origin: crate::ai::Position {
+                origin: crate::ai::NoiseOrigin {
                     x: position.x,
                     y: position.y,
                     sector: pc.element.sector(),
-                    level: pc.element.layer(),
+                    layer: pc.element.optional_layer(),
                 },
                 noise_type: crate::ai::NoiseType::Off,
                 volume: 0,
@@ -4584,7 +4584,7 @@ impl EngineInner {
         saved_pc.quick_action_special_counts[slot] = 0;
         saved_pc.quick_action_buttons[slot] = 0;
         saved_pc.quick_action_interactors[slot] = None;
-        saved_pc.titbits[slot] = u32::MAX;
+        saved_pc.titbits[slot] = None;
         true
     }
 
@@ -4618,7 +4618,7 @@ impl EngineInner {
             saved_pc.quick_action_types[last] = crate::element_kinds::QuickAction::None;
             saved_pc.quick_action_sequences[last] = None;
             saved_pc.quick_seek_sequences[last] = None;
-            saved_pc.titbits[last] = u32::MAX;
+            saved_pc.titbits[last] = None;
             saved_pc.quick_action_interactors[last] = None;
             saved_pc.quick_action_buttons[last] = 0;
         }
@@ -4843,7 +4843,7 @@ impl EngineInner {
                     panic!("recorded quick-action PC {pc_id:?} slot {slot} has no titbit")
                 });
                 crate::element::PcPortraitQuickIconState {
-                    titbit_id: u32::from(self.feedback.titbit_manager.get_phase(titbit)),
+                    titbit_id: Some(titbit),
                     running: self.feedback.titbit_manager.is_running_for_qa(titbit),
                 }
             } else {
@@ -6157,6 +6157,18 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     // their live state, and a fixture actor that starts dead, inactive or
     // unconscious still needs one the moment it revives or is scanned.
     for (_, pc) in engine.world.entities.pcs_mut() {
+        if pc
+            .element
+            .sprite
+            .position_iface
+            .get_pathfinder_index()
+            .is_none()
+        {
+            pc.element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+        }
         let profile_idx = usize::from(pc.pc.profile_index);
         profiles
             .characters
@@ -6191,6 +6203,19 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     }
 
     for (soldier_id, soldier) in engine.world.entities.soldiers_mut() {
+        if soldier
+            .element
+            .sprite
+            .position_iface
+            .get_pathfinder_index()
+            .is_none()
+        {
+            soldier
+                .element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+        }
         if soldier.npc.ai_brain.is_none() {
             soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(
                 crate::ai_enemy::EnemyAi::new(soldier_id.0),
@@ -6217,6 +6242,19 @@ pub(crate) fn complete_test_runtime_fixture(engine: &mut EngineInner, assets: &m
     }
 
     for (civilian_id, civilian) in engine.world.entities.civilians_mut() {
+        if civilian
+            .element
+            .sprite
+            .position_iface
+            .get_pathfinder_index()
+            .is_none()
+        {
+            civilian
+                .element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
+        }
         if civilian.npc.ai_brain.is_none() {
             civilian.npc.ai_brain = crate::element::AiBrain::Friendly(Box::new(
                 crate::ai_friendly::FriendlyAi::new(civilian_id.0),

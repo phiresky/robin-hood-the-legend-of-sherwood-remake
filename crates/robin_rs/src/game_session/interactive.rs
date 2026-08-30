@@ -5,13 +5,17 @@
 //! interactive process session; deterministic persistence remains in the
 //! engine snapshot owned by [`super::runtime::MissionWorld`].
 
+use super::debriefing::LostSherwoodGateState;
 use super::modal_state::ActiveModal;
 use super::render::RenderContext;
 use super::runtime::MissionRuntime;
 use super::setup::{
     LoadedInteractiveResources, MissionSprites, load_mission_sprites, setup_input_and_camera,
 };
+use super::sherwood_flow::SherwoodCampaignFlow;
+use super::terminal_debriefing::TerminalDebriefingState;
 use super::tick::tick_audio;
+use super::ui_task_state::ActiveUiTask;
 use crate::audio_backend::KiraAudioBackend;
 use crate::console_overlay::ConsoleOverlay;
 use crate::corner_hud::{CornerButtonSprites, CornerHudLayout, CornerTooltipTracker};
@@ -130,9 +134,13 @@ pub(super) struct MissionResources {
 /// Stateful menus and overlays which survive across interactive frames.
 pub(super) struct MissionUi {
     pub(super) pause_menu: Option<PauseMenu>,
+    pub(super) active_ui_task: Option<ActiveUiTask>,
     pub(super) active_modal: Option<ActiveModal>,
     pub(super) console_overlay: ConsoleOverlay,
     pub(super) campaign_map: CampaignMapState,
+    pub(super) sherwood_campaign_flow: Option<SherwoodCampaignFlow>,
+    pub(super) terminal_debriefing: Option<TerminalDebriefingState>,
+    pub(super) lost_sherwood_gate: LostSherwoodGateState,
     pub(super) restart_allowed: bool,
 }
 
@@ -140,12 +148,16 @@ impl MissionUi {
     pub(super) fn new(restart_allowed: bool) -> Self {
         Self {
             pause_menu: None,
+            active_ui_task: None,
             active_modal: None,
             console_overlay: ConsoleOverlay::new(),
             // The map model itself is populated lazily when the overlay is
             // first raised, so this empty state always reflects live campaign
             // data rather than mission-bootstrap data.
             campaign_map: CampaignMapState::new(),
+            sherwood_campaign_flow: None,
+            terminal_debriefing: None,
+            lost_sherwood_gate: LostSherwoodGateState::new(),
             restart_allowed,
         }
     }
@@ -608,7 +620,6 @@ impl InteractiveRendererAssembly {
             sprites,
             ambience_backgrounds: self.ambience_backgrounds,
             ambience_minimaps: self.ambience_minimaps,
-            is_sherwood: game.is_sherwood,
         }
     }
 }
@@ -630,7 +641,6 @@ pub(super) struct InteractiveFrontendAssembly {
         robin_engine::engine::Ambiance,
         robin_engine::engine::level_loading::PreDecodedMinimap,
     )>,
-    pub(super) is_sherwood: bool,
 }
 
 impl InteractiveFrontendAssembly {

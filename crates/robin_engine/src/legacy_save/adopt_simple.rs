@@ -36,6 +36,8 @@ pub enum LegacySimpleAdoptError {
     },
     #[error("saved titbit {index} has unknown RHtitbitKind value {value}")]
     UnknownTitbitKind { index: usize, value: i32 },
+    #[error("saved titbit {index} uses reserved id 0xffffffff")]
+    InvalidTitbitId { index: usize },
     #[error("saved minimap highlight {index} has a null element reference")]
     NullMinimapHighlight { index: usize },
     #[error("saved minimap field {field} contains non-finite value {value}")]
@@ -119,7 +121,8 @@ impl LegacySimpleAdoptionPlan {
                 // with the second value while loading.
                 display_order: saved.display_order_effective,
                 blinking: saved.blinking,
-                id: saved.id,
+                id: crate::titbit::TitbitId::new(saved.id)
+                    .ok_or(LegacySimpleAdoptError::InvalidTitbitId { index })?,
             });
         }
 
@@ -253,11 +256,10 @@ fn resolve_pc_selection(
 fn resolve_titbit_handle(
     entities: &LegacyEntityFixups,
     reference: super::payload_base::LegacyElementRef,
-) -> Result<ElementHandle, LegacySaveAdoptError> {
+) -> Result<Option<ElementHandle>, LegacySaveAdoptError> {
     Ok(entities
         .resolve_element(reference)?
-        .map(|entity| ElementHandle(entity.index()))
-        .unwrap_or(ElementHandle::INVALID))
+        .map(|entity| ElementHandle(entity.index())))
 }
 
 fn titbit_kind(value: i32) -> Option<TitbitKind> {

@@ -184,87 +184,121 @@ impl CampaignMapAssets {
     }
 }
 
-/// Display the campaign map with available missions and wait for selection.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn show_campaign_map(
-    application_context: &ApplicationContext,
-    window: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    game: &mut crate::game::Game,
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    campaign_map: &CampaignMapState,
-    menu_resources: Option<&mut IngameMenuResources>,
-    text_resources: &mut ResourceManager,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-    cursor: Option<ModalCursor<'_>>,
-    pseudo_debrief_pending: bool,
+/// Persistent campaign-map presentation state.
+///
+/// The mission driver owns this value and advances it once per outer frame.
+/// Keeping the event loop outside the modal lets network ingress, replay, and
+/// HTTP automation continue to run while the map is open.
+pub(crate) struct CampaignMapModalState {
+    items: Vec<CampaignMapItem>,
+    assets: CampaignMapAssets,
+    frame: FrameWnd,
+    graph: CampaignProgressGraph,
     presentation: CampaignPresentationMode,
+    exhibit_grid: ExhibitGridNavigator,
+    input: ModalInputState,
+    pseudo_debrief_at_ms: Option<u32>,
+    selected_classic: usize,
+    selected_progress: usize,
     show_achievement_badges: bool,
-    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
-) -> Result<CampaignMapChoice, String> {
-    let mut menu_resources = menu_resources;
-    if presentation != CampaignPresentationMode::ClassicMap {
-        let assets = CampaignMapAssets::load(renderer, menu_resources.as_deref_mut());
-        return show_campaign_progress(
+    lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
+    lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
+}
+
+impl CampaignMapModalState {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        application_context: &ApplicationContext,
+        renderer: &mut Renderer,
+        campaign: &Campaign,
+        profiles: &engine_profiles::ProfileManager,
+        campaign_map: &CampaignMapState,
+        menu_resources: Option<&mut IngameMenuResources>,
+        text_resources: &mut ResourceManager,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+        pseudo_debrief_pending: bool,
+        presentation: CampaignPresentationMode,
+        show_achievement_badges: bool,
+        lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
+    ) -> Self {
+        let items = campaign_map_items(
             application_context,
-            window,
-            renderer,
-            game,
             campaign,
             profiles,
-            &assets,
-            cursor.as_ref(),
-            pseudo_debrief_pending,
+            Some(lifetime_history),
+            campaign_map,
+            text_resources,
+            shipping,
+        );
+        if items.is_empty() {
+            tracing::warn!("No missions on campaign map — this shouldn't happen");
+        }
+
+        tracing::info!("Campaign map open ({} missions)", items.len());
+        for (i, item) in items.iter().enumerate() {
+            tracing::info!("  [{i}] {:?}: {}", item.location, item.name);
+        }
+
+        let assets = CampaignMapAssets::load(renderer, menu_resources);
+        let frame = build_campaign_frame(&items, campaign_map, &assets);
+        let mut graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
+        for node in &mut graph.nodes {
+            node.name = application_context.localized_mission_name(node.mission_id, &node.name);
+        }
+        if presentation != CampaignPresentationMode::ClassicMap && graph.nodes.is_empty() {
+            tracing::warn!("Campaign history presentation has no non-Sherwood missions");
+        }
+        let selected_progress = graph.first_selectable().unwrap_or(0);
+        let exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected_progress);
+        let pseudo_debrief_at_ms =
+            pseudo_debrief_pending.then(|| crate::window::process_uptime_ms().saturating_add(500));
+        Self {
+            items,
+            assets,
+            frame,
+            graph,
             presentation,
+            exhibit_grid,
+            input: ModalInputState::new(),
+            pseudo_debrief_at_ms,
+            selected_classic: 0,
+            selected_progress,
             show_achievement_badges,
-            lifetime_history,
-        )
-        .await;
-    }
-    let items = campaign_map_items(
-        application_context,
-        campaign,
-        profiles,
-        Some(lifetime_history),
-        campaign_map,
-        text_resources,
-        shipping,
-    );
-    if items.is_empty() {
-        tracing::warn!("No missions on campaign map — this shouldn't happen");
+            lifetime_totals: lifetime_history.totals(),
+            lifetime_achievements: lifetime_history.achievement_aggregation(),
+        }
     }
 
-    tracing::info!("Campaign map open ({} missions)", items.len());
-    for (i, item) in items.iter().enumerate() {
-        tracing::info!("  [{i}] {:?}: {}", item.location, item.name);
-    }
-
-    let assets = CampaignMapAssets::load(renderer, menu_resources.as_deref_mut());
-    let mut frame = build_campaign_frame(&items, campaign_map, &assets);
-    let mut input = ModalInputState::new();
-    let pseudo_debrief_at = pseudo_debrief_pending
-        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(500));
-    let mut selected = 0usize;
-    loop {
-        // If a reshow was queued during the previous frame (e.g. due
-        // to a resolution change), break out with `Redisplay` so the
-        // caller in `handle_sherwood_campaign_map_overlay` can re-enter
-        // `show_campaign_map` next frame at the new size.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn tick(
+        &mut self,
+        window: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        game: &mut crate::game::Game,
+        campaign: &Campaign,
+        profiles: &engine_profiles::ProfileManager,
+        campaign_map: &CampaignMapState,
+        menu_resources: Option<&IngameMenuResources>,
+        cursor: Option<ModalCursor<'_>>,
+    ) -> Option<CampaignMapChoice> {
         if game.take_campaign_map_redisplay() {
-            return Ok(CampaignMapChoice::Redisplay);
+            return Some(CampaignMapChoice::Redisplay);
+        }
+        if self.presentation != CampaignPresentationMode::ClassicMap && self.graph.nodes.is_empty()
+        {
+            return Some(CampaignMapChoice::Quit);
         }
 
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
         let mut final_choice = None;
-
-        let input_enabled = pseudo_debrief_at
-            .map(|at| std::time::Instant::now() >= at)
+        let input_enabled = self
+            .pseudo_debrief_at_ms
+            .map(|at| crate::window::process_uptime_ms() >= at)
             .unwrap_or(true);
 
         for event in events {
             if !input_enabled {
-                input.update_from_event(&event, transform);
+                self.input.update_from_event(&event, transform);
                 continue;
             }
             match event {
@@ -280,292 +314,218 @@ pub(crate) async fn show_campaign_map(
                     keycode: Keycode::Tab,
                     ..
                 } => {
-                    return show_campaign_progress(
-                        application_context,
-                        window,
-                        renderer,
-                        game,
-                        campaign,
-                        profiles,
-                        &assets,
-                        cursor.as_ref(),
-                        pseudo_debrief_pending,
-                        CampaignPresentationMode::ProgressTree,
-                        show_achievement_badges,
-                        lifetime_history,
-                    )
-                    .await;
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } if !items.is_empty() => selected = selected.saturating_sub(1),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } if selected + 1 < items.len() => selected += 1,
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Space,
-                    ..
-                } if !items.is_empty() => {
-                    final_choice = Some(CampaignMapChoice::SelectMission(
-                        items[selected].mission_idx,
-                    ));
-                    break;
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Space,
-                    ..
-                } if items.is_empty() => {
-                    final_choice = Some(CampaignMapChoice::Quit);
-                    break;
-                }
-                GameEvent::MouseMove { x, y, .. } => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    input.virt_x = vx as f32;
-                    input.virt_y = vy as f32;
-                }
-                GameEvent::MouseDown(x, y, 1, _) => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    input.virt_x = vx as f32;
-                    input.virt_y = vy as f32;
-                }
-                _ => {}
-            }
-            input.update_from_event(&event, transform);
-            let widget_input = input.as_widget_input();
-            let events = frame.process_input(&widget_input);
-            input.end_frame();
-
-            for (idx, item) in items.iter().enumerate() {
-                if frame
-                    .widget(item.loc_idx as u32)
-                    .is_some_and(|w| w.base().state != UiState::Default)
-                {
-                    selected = idx;
-                }
-            }
-
-            if let Some(id) = widget_bridge::find_activated(&events) {
-                if id == CLOSE_WIDGET_ID {
-                    final_choice = Some(CampaignMapChoice::Quit);
-                    break;
-                }
-                if let Some(item) = items.iter().find(|item| item.loc_idx as u32 == id) {
-                    final_choice = Some(CampaignMapChoice::SelectMission(item.mission_idx));
-                    break;
-                }
-            }
-        }
-
-        layout::enter_modal_gpu_phase(renderer);
-        render_campaign_map(
-            renderer,
-            transform,
-            campaign,
-            profiles,
-            campaign_map,
-            &items,
-            selected,
-            &assets,
-            menu_resources.as_deref(),
-            &input,
-            &frame,
-            show_achievement_badges,
-            campaign.achievement_aggregation(profiles),
-            lifetime_history.achievement_aggregation(),
-        );
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &input);
-        }
-        renderer.present();
-        crate::window::sleep_ui_frame().await;
-
-        if let Some(choice) = final_choice {
-            return Ok(choice);
-        }
-        if let Some(at) = pseudo_debrief_at
-            && std::time::Instant::now() >= at
-        {
-            return Ok(CampaignMapChoice::PseudoDebriefTimer);
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn show_campaign_progress(
-    application_context: &ApplicationContext,
-    window: &mut crate::window::GameWindow,
-    renderer: &mut Renderer,
-    game: &mut crate::game::Game,
-    campaign: &Campaign,
-    profiles: &engine_profiles::ProfileManager,
-    assets: &CampaignMapAssets,
-    cursor: Option<&ModalCursor<'_>>,
-    pseudo_debrief_pending: bool,
-    initial_presentation: CampaignPresentationMode,
-    show_achievement_badges: bool,
-    lifetime_history: &robin_engine::campaign_history::ProfileCampaignHistory,
-) -> Result<CampaignMapChoice, String> {
-    let mut graph = CampaignProgressGraph::build(campaign, profiles, Some(lifetime_history));
-    for node in &mut graph.nodes {
-        node.name = application_context.localized_mission_name(node.mission_id, &node.name);
-    }
-    if graph.nodes.is_empty() {
-        tracing::warn!("Campaign history presentation has no non-Sherwood missions");
-        return Ok(CampaignMapChoice::Quit);
-    }
-    let mut presentation = initial_presentation;
-    let mut selected = graph.first_selectable().unwrap_or(0);
-    let mut exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
-    let mut input = ModalInputState::new();
-    let pseudo_debrief_at = pseudo_debrief_pending
-        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(500));
-
-    loop {
-        if game.take_campaign_map_redisplay() {
-            return Ok(CampaignMapChoice::Redisplay);
-        }
-        let transform = MenuTransform::centered(
-            renderer.screen_width() as i32,
-            renderer.screen_height() as i32,
-        );
-        let input_enabled = pseudo_debrief_at
-            .map(|at| std::time::Instant::now() >= at)
-            .unwrap_or(true);
-        let mut final_choice = None;
-        for event in window.poll_events() {
-            if !input_enabled {
-                input.update_from_event(&event, transform);
-                continue;
-            }
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => final_choice = Some(CampaignMapChoice::Quit),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Tab,
-                    ..
-                } => {
-                    presentation = match presentation {
+                    self.presentation = match self.presentation {
+                        CampaignPresentationMode::ClassicMap => {
+                            CampaignPresentationMode::ProgressTree
+                        }
                         CampaignPresentationMode::ProgressTree => {
-                            exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
+                            self.exhibit_grid = ExhibitGridNavigator::new(
+                                self.graph.nodes.len(),
+                                self.selected_progress,
+                            );
                             CampaignPresentationMode::SherwoodMuseum
                         }
                         CampaignPresentationMode::SherwoodMuseum => {
                             CampaignPresentationMode::ProgressTree
                         }
-                        CampaignPresentationMode::ClassicMap => unreachable!(),
                     };
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
                     ..
-                } => match presentation {
-                    CampaignPresentationMode::ProgressTree => selected = selected.saturating_sub(1),
-                    CampaignPresentationMode::SherwoodMuseum => {
-                        exhibit_grid.navigate(0, -1);
-                        selected = exhibit_grid.selected;
-                    }
-                    CampaignPresentationMode::ClassicMap => unreachable!(),
-                },
+                } if self.presentation == CampaignPresentationMode::ClassicMap
+                    && !self.items.is_empty() =>
+                {
+                    self.selected_classic = self.selected_classic.saturating_sub(1)
+                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Down,
                     ..
-                } => match presentation {
-                    CampaignPresentationMode::ProgressTree => {
-                        selected = (selected + 1).min(graph.nodes.len() - 1)
+                } if self.presentation == CampaignPresentationMode::ClassicMap
+                    && self.selected_classic + 1 < self.items.len() =>
+                {
+                    self.selected_classic += 1
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Up,
+                    ..
+                } if self.presentation != CampaignPresentationMode::ClassicMap => {
+                    match self.presentation {
+                        CampaignPresentationMode::ProgressTree => {
+                            self.selected_progress = self.selected_progress.saturating_sub(1)
+                        }
+                        CampaignPresentationMode::SherwoodMuseum => {
+                            self.exhibit_grid.navigate(0, -1);
+                            self.selected_progress = self.exhibit_grid.selected;
+                        }
+                        CampaignPresentationMode::ClassicMap => unreachable!(),
                     }
-                    CampaignPresentationMode::SherwoodMuseum => {
-                        exhibit_grid.navigate(0, 1);
-                        selected = exhibit_grid.selected;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Down,
+                    ..
+                } if self.presentation != CampaignPresentationMode::ClassicMap => {
+                    match self.presentation {
+                        CampaignPresentationMode::ProgressTree => {
+                            self.selected_progress =
+                                (self.selected_progress + 1).min(self.graph.nodes.len() - 1)
+                        }
+                        CampaignPresentationMode::SherwoodMuseum => {
+                            self.exhibit_grid.navigate(0, 1);
+                            self.selected_progress = self.exhibit_grid.selected;
+                        }
+                        CampaignPresentationMode::ClassicMap => unreachable!(),
                     }
-                    CampaignPresentationMode::ClassicMap => unreachable!(),
-                },
+                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Left,
                     ..
-                } if presentation == CampaignPresentationMode::SherwoodMuseum => {
-                    exhibit_grid.navigate(-1, 0);
-                    selected = exhibit_grid.selected;
+                } if self.presentation == CampaignPresentationMode::SherwoodMuseum => {
+                    self.exhibit_grid.navigate(-1, 0);
+                    self.selected_progress = self.exhibit_grid.selected;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Right,
                     ..
-                } if presentation == CampaignPresentationMode::SherwoodMuseum => {
-                    exhibit_grid.navigate(1, 0);
-                    selected = exhibit_grid.selected;
+                } if self.presentation == CampaignPresentationMode::SherwoodMuseum => {
+                    self.exhibit_grid.navigate(1, 0);
+                    self.selected_progress = self.exhibit_grid.selected;
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
                     ..
-                } if graph.nodes[selected].selectable => {
+                } if self.presentation == CampaignPresentationMode::ClassicMap
+                    && !self.items.is_empty() =>
+                {
                     final_choice = Some(CampaignMapChoice::SelectMission(
-                        graph.nodes[selected].mission_idx,
+                        self.items[self.selected_classic].mission_idx,
                     ));
+                    break;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
+                    ..
+                } if self.presentation == CampaignPresentationMode::ClassicMap
+                    && self.items.is_empty() =>
+                {
+                    final_choice = Some(CampaignMapChoice::Quit);
+                    break;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
+                    ..
+                } if self.presentation != CampaignPresentationMode::ClassicMap
+                    && self.graph.nodes[self.selected_progress].selectable =>
+                {
+                    final_choice = Some(CampaignMapChoice::SelectMission(
+                        self.graph.nodes[self.selected_progress].mission_idx,
+                    ));
+                    break;
                 }
                 GameEvent::MouseMove { x, y, .. } => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    input.virt_x = vx as f32;
-                    input.virt_y = vy as f32;
+                    self.input.virt_x = vx as f32;
+                    self.input.virt_y = vy as f32;
                 }
                 GameEvent::MouseDown(x, y, 1, _) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    input.virt_x = vx as f32;
-                    input.virt_y = vy as f32;
-                    if let Some(index) = progress_hit_test(&graph, presentation, selected, vx, vy) {
-                        selected = index;
-                        exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected);
-                        if graph.nodes[index].selectable {
+                    self.input.virt_x = vx as f32;
+                    self.input.virt_y = vy as f32;
+                    if self.presentation != CampaignPresentationMode::ClassicMap
+                        && let Some(index) = progress_hit_test(
+                            &self.graph,
+                            self.presentation,
+                            self.selected_progress,
+                            vx,
+                            vy,
+                        )
+                    {
+                        self.selected_progress = index;
+                        self.exhibit_grid =
+                            ExhibitGridNavigator::new(self.graph.nodes.len(), index);
+                        if self.graph.nodes[index].selectable {
                             final_choice = Some(CampaignMapChoice::SelectMission(
-                                graph.nodes[index].mission_idx,
+                                self.graph.nodes[index].mission_idx,
                             ));
                         }
                     }
                 }
                 _ => {}
             }
-            input.update_from_event(&event, transform);
+            self.input.update_from_event(&event, transform);
+            if self.presentation == CampaignPresentationMode::ClassicMap {
+                let widget_input = self.input.as_widget_input();
+                let events = self.frame.process_input(&widget_input);
+                self.input.end_frame();
+
+                for (idx, item) in self.items.iter().enumerate() {
+                    if self
+                        .frame
+                        .widget(item.loc_idx as u32)
+                        .is_some_and(|w| w.base().state != UiState::Default)
+                    {
+                        self.selected_classic = idx;
+                    }
+                }
+
+                if let Some(id) = widget_bridge::find_activated(&events) {
+                    if id == CLOSE_WIDGET_ID {
+                        final_choice = Some(CampaignMapChoice::Quit);
+                        break;
+                    }
+                    if let Some(item) = self.items.iter().find(|item| item.loc_idx as u32 == id) {
+                        final_choice = Some(CampaignMapChoice::SelectMission(item.mission_idx));
+                        break;
+                    }
+                }
+            }
             if final_choice.is_some() {
                 break;
             }
         }
 
         layout::enter_modal_gpu_phase(renderer);
-        render_campaign_progress(
-            renderer,
-            transform,
-            &graph,
-            selected,
-            presentation,
-            assets,
-            show_achievement_badges,
-            lifetime_history.totals(),
-        );
-        if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &input);
+        match self.presentation {
+            CampaignPresentationMode::ClassicMap => render_campaign_map(
+                renderer,
+                transform,
+                campaign,
+                profiles,
+                campaign_map,
+                &self.items,
+                self.selected_classic,
+                &self.assets,
+                menu_resources,
+                &self.input,
+                &self.frame,
+                self.show_achievement_badges,
+                campaign.achievement_aggregation(profiles),
+                self.lifetime_achievements,
+            ),
+            CampaignPresentationMode::ProgressTree | CampaignPresentationMode::SherwoodMuseum => {
+                render_campaign_progress(
+                    renderer,
+                    transform,
+                    &self.graph,
+                    self.selected_progress,
+                    self.presentation,
+                    &self.assets,
+                    self.show_achievement_badges,
+                    self.lifetime_totals,
+                )
+            }
+        }
+        if let Some(cursor) = &cursor {
+            cursor.draw(renderer, transform, &self.input);
         }
         renderer.present();
-        crate::window::sleep_ms(16).await;
 
-        if let Some(choice) = final_choice {
-            return Ok(choice);
+        if final_choice.is_some() {
+            return final_choice;
         }
-        if let Some(at) = pseudo_debrief_at
-            && std::time::Instant::now() >= at
-        {
-            return Ok(CampaignMapChoice::PseudoDebriefTimer);
-        }
+        self.pseudo_debrief_at_ms
+            .is_some_and(|at| crate::window::process_uptime_ms() >= at)
+            .then_some(CampaignMapChoice::PseudoDebriefTimer)
     }
 }
 

@@ -13,10 +13,13 @@
 //! side opens the stream and sends `Hello`; the host answers
 //! `Welcome` on the same stream.
 
-use super::identity::{GAME_ALPN, bind_endpoint, game_secret_key, parse_connect_addr};
+use super::identity::{
+    GAME_ALPN, bind_endpoint, bind_endpoint_with_relay, game_secret_key, parse_connect_addr,
+};
 use super::{
-    FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot, NET_PROTOCOL_VERSION,
-    NetEvent, NetFrameClass, NetMsg, NetOutbound, decode_msg, encode_msg, net_frame_class,
+    FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot, MultiplayerSessionId,
+    NET_PROTOCOL_VERSION, NetEvent, NetFrameClass, NetMsg, NetOutbound, decode_msg, encode_msg,
+    net_frame_class,
 };
 use iroh::endpoint::{Connection, ReadExactError, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
@@ -25,8 +28,9 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use parking_lot::Mutex;
 use robin_engine::multiplayer::{BrowserPeerAuth, browser_seat_proof_message};
 use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
@@ -37,6 +41,72 @@ const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// QUIC close code used for orderly application shutdown.
 const CLOSE_GRACEFUL: u32 = 0;
+
+/// One-shot process-local handoff between the old and replacement mission
+/// transports. The outer campaign loop deliberately destroys each QUIC
+/// endpoint at a load/restart boundary, but the authenticated session and its
+/// seat ownership must survive that implementation detail.
+#[derive(Clone)]
+struct HostSessionContinuation {
+    host_endpoint_id: EndpointId,
+    session_id: MultiplayerSessionId,
+    expected_players: u32,
+    owner_seats: HashMap<PeerOwner, u8>,
+    relay_url: Option<iroh::RelayUrl>,
+}
+
+fn host_session_continuation() -> &'static Mutex<Option<HostSessionContinuation>> {
+    static SLOT: OnceLock<Mutex<Option<HostSessionContinuation>>> = OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+fn publish_host_session_continuation(continuation: HostSessionContinuation) {
+    let mut slot = host_session_continuation().lock();
+    if let Some(existing) = slot.as_mut()
+        && existing.host_endpoint_id == continuation.host_endpoint_id
+        && existing.session_id == continuation.session_id
+    {
+        existing.owner_seats.extend(continuation.owner_seats);
+        return;
+    }
+    assert!(
+        slot.is_none(),
+        "another multiplayer continuation is pending"
+    );
+    *slot = Some(continuation);
+}
+
+pub(super) fn discard_host_session_continuation() {
+    *host_session_continuation().lock() = None;
+}
+
+fn take_host_session_continuation(
+    host_endpoint_id: EndpointId,
+    expected_players: u32,
+) -> Result<Option<HostSessionContinuation>, String> {
+    let mut slot = host_session_continuation().lock();
+    let Some(continuation) = slot.as_ref() else {
+        return Ok(None);
+    };
+    if continuation.host_endpoint_id != host_endpoint_id {
+        return Err("pending multiplayer continuation belongs to another host identity".into());
+    }
+    if continuation.expected_players != expected_players {
+        return Err(format!(
+            "continued multiplayer session expects {} players, replacement requested {expected_players}",
+            continuation.expected_players
+        ));
+    }
+    Ok(slot.take())
+}
+
+/// Native reconnects within one process retain a transport identity across
+/// outer-mission rebuilds. Browser peers prove their durable IndexedDB owner;
+/// native peers use this process-held iroh key for the equivalent continuity.
+fn native_client_secret_key() -> SecretKey {
+    static KEY: OnceLock<SecretKey> = OnceLock::new();
+    KEY.get_or_init(SecretKey::generate).clone()
+}
 
 // ─── Framing ─────────────────────────────────────────────────────
 
@@ -144,17 +214,23 @@ pub struct ServerHandle {
     /// `(local_seat, mission_seed)` the server is operating with.
     pub local_seat: PlayerId,
     pub mission_seed: u64,
+    session_id: MultiplayerSessionId,
     endpoint_id: EndpointId,
     endpoint_addr: EndpointAddr,
     host_key: SecretKey,
-    session_id: [u8; 32],
     mission_id: String,
+    context: Arc<ServerContext>,
+    preserve_on_shutdown: bool,
     cancellation: Arc<AtomicBool>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     runtime_thread: Option<JoinHandle<()>>,
 }
 
 impl ServerHandle {
+    pub fn session_id(&self) -> MultiplayerSessionId {
+        self.session_id
+    }
+
     /// The stable public id peers dial to reach this server.
     pub fn endpoint_id(&self) -> EndpointId {
         self.endpoint_id
@@ -167,10 +243,6 @@ impl ServerHandle {
         serde_json::to_string(&self.endpoint_addr).expect("EndpointAddr serialization cannot fail")
     }
 
-    pub fn session_id(&self) -> [u8; 32] {
-        self.session_id
-    }
-
     pub fn browser_join_ticket(
         &self,
         content_edition: super::join_ticket::BrowserContentEdition,
@@ -181,7 +253,7 @@ impl ServerHandle {
         super::join_ticket::BrowserJoinTicket::issue(
             &self.host_key,
             &self.endpoint_addr,
-            self.session_id,
+            self.session_id.0,
             current_epoch_ms() / 1000,
             content_edition,
             content_identity_sha256,
@@ -192,6 +264,10 @@ impl ServerHandle {
     }
 
     pub fn shutdown(&mut self) {
+        if self.preserve_on_shutdown {
+            publish_context_continuation(&self.context);
+            self.preserve_on_shutdown = false;
+        }
         self.cancellation.store(true, Ordering::Release);
         let _ = self.shutdown_tx.send(true);
         if let Some(handle) = self.runtime_thread.take()
@@ -200,6 +276,23 @@ impl ServerHandle {
             tracing::error!("multiplayer server runtime panicked during shutdown");
         }
     }
+
+    pub(super) fn preserve_session_for_next_mission(&mut self) {
+        self.preserve_on_shutdown = true;
+    }
+}
+
+fn publish_context_continuation(context: &ServerContext) {
+    let peers = context.peers.lock();
+    let mut owner_seats = peers.disconnected_seats.clone();
+    owner_seats.extend(peers.owners.iter().map(|(&seat, &owner)| (owner, seat)));
+    publish_host_session_continuation(HostSessionContinuation {
+        host_endpoint_id: context.host_endpoint_id,
+        session_id: context.session_id,
+        expected_players: peers.expected_players,
+        owner_seats,
+        relay_url: context.relay_url.lock().clone(),
+    });
 }
 
 impl Drop for ServerHandle {
@@ -229,6 +322,13 @@ struct ServerPeers {
     host_ready_frame: Option<u32>,
     ready_seats: HashMap<u8, u32>,
     begin_sent: Option<(u32, u64)>,
+    snapshot_transition: Option<PendingSnapshotTransition>,
+}
+
+struct PendingSnapshotTransition {
+    id: robin_engine::multiplayer::SnapshotTransitionId,
+    payload: robin_engine::multiplayer::SnapshotTransitionPayload,
+    awaiting: HashSet<u8>,
 }
 
 impl ServerPeers {
@@ -245,6 +345,32 @@ impl ServerPeers {
             host_ready_frame: None,
             ready_seats: HashMap::new(),
             begin_sent: None,
+            snapshot_transition: None,
+        }
+    }
+
+    fn from_continuation(continuation: &HostSessionContinuation) -> Self {
+        let next_seat = continuation
+            .owner_seats
+            .values()
+            .copied()
+            .max()
+            .map_or(1, |seat| {
+                seat.checked_add(1).expect("multiplayer seat overflow")
+            });
+        Self {
+            next_seat,
+            senders: HashMap::new(),
+            nicknames: HashMap::new(),
+            owners: HashMap::new(),
+            disconnected_seats: continuation.owner_seats.clone(),
+            session_generations: HashMap::new(),
+            next_session_generation: 1,
+            expected_players: continuation.expected_players,
+            host_ready_frame: None,
+            ready_seats: HashMap::new(),
+            begin_sent: None,
+            snapshot_transition: None,
         }
     }
 
@@ -321,6 +447,62 @@ enum PeerOwner {
     Browser([u8; 32]),
 }
 
+fn take_committed_snapshot_transition(
+    peers: &mut ServerPeers,
+) -> Option<(
+    robin_engine::multiplayer::SnapshotTransitionId,
+    Vec<UnboundedSender<NetMsg>>,
+)> {
+    let transition = peers.snapshot_transition.as_ref()?;
+    if !transition.awaiting.is_empty() {
+        return None;
+    }
+    let id = peers
+        .snapshot_transition
+        .take()
+        .expect("checked transition exists")
+        .id;
+    let senders = std::mem::take(&mut peers.senders).into_values().collect();
+    Some((id, senders))
+}
+
+fn retain_transition_peer_for_reconnect(peers: &mut ServerPeers, seat: u8) {
+    if let Some(transition) = peers.snapshot_transition.as_mut() {
+        // A participant which loses its stream must validate again on the
+        // replacement stream, even if its prior acknowledgement raced the
+        // disconnect. Never shrink the barrier because of connectivity.
+        transition.awaiting.insert(seat);
+    }
+}
+
+fn commit_snapshot_transition(
+    context: &ServerContext,
+    committed: Option<(
+        robin_engine::multiplayer::SnapshotTransitionId,
+        Vec<UnboundedSender<NetMsg>>,
+    )>,
+) {
+    let Some((id, senders)) = committed else {
+        return;
+    };
+    publish_context_continuation(context);
+    for sender in &senders {
+        sender
+            .send(NetMsg::CommitSnapshotTransition { id })
+            .unwrap_or_else(|_| {
+                panic!("snapshot transition commit queue closed before peer delivery")
+            });
+    }
+    context
+        .incoming_tx
+        .send(NetEvent::CommitSnapshotTransition { id })
+        .unwrap_or_else(|_| panic!("snapshot transition host event channel is closed"));
+    // Dropping the last queue handles closes every old mission stream after
+    // the commit frame has drained. All participants rebuild the transport
+    // against the replacement mission and re-enter through its ready barrier.
+    drop(senders);
+}
+
 fn maybe_begin_sim_locked(
     peers: &mut ServerPeers,
 ) -> Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)> {
@@ -361,7 +543,9 @@ struct ServerContext {
     mission_seed: u64,
     sim_config: robin_engine::engine::SimConfig,
     host_endpoint_id: EndpointId,
-    session_id: [u8; 32],
+    session_id: MultiplayerSessionId,
+    continued_session: bool,
+    relay_url: Mutex<Option<iroh::RelayUrl>>,
     speech_timing_locale: Option<String>,
     frame_cursor: FrameCursor,
     initial_snapshot: InitialSnapshot,
@@ -467,7 +651,12 @@ fn start_server_inner(
         )));
     }
     let host_endpoint_id = key.public();
-    let session_id = SecretKey::generate().to_bytes();
+    let continuation = take_host_session_continuation(host_endpoint_id, expected_players)
+        .map_err(std::io::Error::other)?;
+    let session_id = continuation.as_ref().map_or_else(
+        || MultiplayerSessionId(SecretKey::generate().to_bytes()),
+        |continuation| continuation.session_id,
+    );
     let handle_key = key.clone();
     let handle_mission_id = mission_id.clone();
     let cancellation = Arc::new(AtomicBool::new(false));
@@ -479,7 +668,10 @@ fn start_server_inner(
     )?;
 
     let context = Arc::new(ServerContext {
-        peers: Mutex::new(ServerPeers::new(expected_players.max(1))),
+        peers: Mutex::new(continuation.as_ref().map_or_else(
+            || ServerPeers::new(expected_players.max(1)),
+            ServerPeers::from_continuation,
+        )),
         incoming_tx,
         host_nickname,
         mission_id,
@@ -487,6 +679,12 @@ fn start_server_inner(
         sim_config,
         host_endpoint_id,
         session_id,
+        continued_session: continuation.is_some(),
+        relay_url: Mutex::new(
+            continuation
+                .as_ref()
+                .and_then(|continuation| continuation.relay_url.clone()),
+        ),
         speech_timing_locale,
         frame_cursor,
         initial_snapshot,
@@ -548,11 +746,13 @@ fn start_server_inner(
     Ok(ServerHandle {
         local_seat: PlayerId::HOST,
         mission_seed,
+        session_id,
         endpoint_id,
         endpoint_addr,
         host_key: handle_key,
-        session_id,
         mission_id: handle_mission_id,
+        context,
+        preserve_on_shutdown: false,
         cancellation,
         shutdown_tx,
         runtime_thread: Some(runtime_thread),
@@ -567,7 +767,8 @@ async fn run_server(
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     browser_join_enabled: bool,
 ) {
-    let endpoint = match bind_endpoint(key, GAME_ALPN).await {
+    let retained_relay = context.relay_url.lock().clone();
+    let endpoint = match bind_endpoint_with_relay(key, GAME_ALPN, retained_relay).await {
         Ok(endpoint) => endpoint,
         Err(e) => {
             let _ = startup_tx.send(Err(e));
@@ -595,6 +796,7 @@ async fn run_server(
             return;
         }
     }
+    *context.relay_url.lock() = endpoint.addr().relay_urls().next().cloned();
     let _ = startup_tx.send(Ok((endpoint.id(), endpoint.addr())));
 
     let pump = tokio::spawn(run_server_outgoing_pump(
@@ -686,12 +888,117 @@ async fn run_server_outgoing_pump(
                 };
                 announce_begin_sim(&context, begin);
             }
-            NetOutbound::ModalDismiss { kind, result } => {
-                let _ = context.incoming_tx.send(NetEvent::ModalDismiss {
-                    kind: kind.clone(),
-                    result,
-                });
-                broadcast_msg(&context, NetMsg::ModalDismiss { kind, result });
+            NetOutbound::ModalProposal { .. } => {
+                tracing::error!("multiplayer host attempted to send a client-only modal proposal");
+            }
+            NetOutbound::ModalDecision {
+                instance,
+                kind,
+                result,
+                decision_frame,
+            } => {
+                if instance.session_id != context.session_id {
+                    tracing::error!(
+                        ?instance,
+                        "multiplayer host rejected a modal decision for another session"
+                    );
+                    continue;
+                }
+                if let Err(error) = broadcast_msg_required(
+                    &context,
+                    NetMsg::ModalDecision {
+                        instance,
+                        kind,
+                        result,
+                        decision_frame,
+                    },
+                ) {
+                    tracing::error!(%error, "authoritative modal broadcast failed");
+                    let _ = context.incoming_tx.send(NetEvent::Fatal(error));
+                }
+            }
+            NetOutbound::ReconnectForSnapshot { player_id, reason } => {
+                assert_ne!(
+                    player_id,
+                    PlayerId::HOST,
+                    "authoritative host cannot reconnect itself for a stale input"
+                );
+                let sender = context.peers.lock().senders.remove(&player_id.0);
+                if let Some(sender) = sender {
+                    tracing::warn!(
+                        ?player_id,
+                        %reason,
+                        "multiplayer: dropping peer for full-snapshot resynchronization"
+                    );
+                    // Tell the peer why this otherwise-graceful stream close
+                    // requires reconnecting. The queue drains this message
+                    // before observing that its last sender was dropped.
+                    let _ = sender.send(NetMsg::ReconnectRequired {
+                        reason: reason.clone(),
+                    });
+                    drop(sender);
+                } else {
+                    tracing::warn!(
+                        ?player_id,
+                        %reason,
+                        "multiplayer: stale-input peer was already disconnected"
+                    );
+                }
+            }
+            NetOutbound::ReconnectAllForSnapshot { reason } => {
+                let senders = {
+                    let mut peers = context.peers.lock();
+                    peers.host_ready_frame = None;
+                    peers.ready_seats.clear();
+                    peers.begin_sent = None;
+                    std::mem::take(&mut peers.senders)
+                };
+                tracing::warn!(
+                    peers = senders.len(),
+                    %reason,
+                    "multiplayer: dropping every peer for full-snapshot resynchronization"
+                );
+                for sender in senders.values() {
+                    let _ = sender.send(NetMsg::ReconnectRequired {
+                        reason: reason.clone(),
+                    });
+                }
+                drop(senders);
+            }
+            NetOutbound::BeginSnapshotTransition { id, payload } => {
+                assert_eq!(
+                    id.session_id, context.session_id,
+                    "host snapshot transition belongs to another multiplayer session"
+                );
+                let committed = {
+                    let mut peers = context.peers.lock();
+                    assert!(
+                        peers.snapshot_transition.is_none(),
+                        "another multiplayer snapshot transition is already pending"
+                    );
+                    let awaiting = peers.senders.keys().copied().collect::<HashSet<_>>();
+                    peers.snapshot_transition = Some(PendingSnapshotTransition {
+                        id,
+                        payload: payload.clone(),
+                        awaiting,
+                    });
+                    let prepare = NetMsg::PrepareSnapshotTransition { id, payload };
+                    // Keep the peer-state lock until every current writer has
+                    // queued Prepare. Otherwise its reader could disconnect,
+                    // empty the readiness set, and queue Commit first.
+                    for sender in peers.senders.values() {
+                        sender.send(prepare.clone()).unwrap_or_else(|_| {
+                            panic!("snapshot transition prepare queue closed before peer delivery")
+                        });
+                    }
+                    take_committed_snapshot_transition(&mut peers)
+                };
+                commit_snapshot_transition(&context, committed);
+            }
+            NetOutbound::SnapshotTransitionReady { .. } => {
+                tracing::error!(
+                    "multiplayer host attempted to acknowledge its own snapshot transition"
+                );
             }
         }
     }
@@ -730,6 +1037,25 @@ fn broadcast_msg(context: &ServerContext, msg: NetMsg) {
     for sender in to_send {
         let _ = sender.send(msg.clone());
     }
+}
+
+/// Queue an authoritative message for every currently connected peer. A
+/// closed writer queue is a fatal session split, not a best-effort diagnostic.
+fn broadcast_msg_required(context: &ServerContext, msg: NetMsg) -> Result<(), String> {
+    let to_send: Vec<(u8, UnboundedSender<NetMsg>)> = {
+        let peers = context.peers.lock();
+        peers
+            .senders
+            .iter()
+            .map(|(seat, sender)| (*seat, sender.clone()))
+            .collect()
+    };
+    for (seat, sender) in to_send {
+        sender.send(msg.clone()).map_err(|_| {
+            format!("authoritative multiplayer send queue for seat {seat} is closed")
+        })?;
+    }
+    Ok(())
 }
 
 /// Send a [`NetMsg::BroadcastInput`] to every peer plus echo it into
@@ -839,6 +1165,14 @@ async fn handle_incoming_peer(
     // is a returning peer.  Otherwise allocate the next fresh seat.
     let seat_claim = {
         let mut p = context.peers.lock();
+        let returning_seat = p.owner_seat(owner);
+        if let Some(transition) = p.snapshot_transition.as_ref()
+            && !returning_seat.is_some_and(|seat| transition.awaiting.contains(&seat))
+        {
+            return Err(
+                "host is changing missions; only pending participants may reconnect".to_string(),
+            );
+        }
         let (write_tx, write_rx) = unbounded_channel::<NetMsg>();
         p.claim_seat(owner, &nickname, write_tx)
             .map(|(seat, generation)| (seat, generation, write_rx))
@@ -863,31 +1197,28 @@ async fn handle_incoming_peer(
             sender
                 .send(NetMsg::Welcome {
                     your_seat: assigned_seat,
+                    session_id: context.session_id,
                     mission_id: context.mission_id.clone(),
                     mission_seed: context.mission_seed,
                     sim_config: context.sim_config,
                     speech_timing_locale: context.speech_timing_locale.clone(),
                     host_nickname: context.host_nickname.clone(),
-                    session_id: context.session_id,
                 })
                 .map_err(|_| "writer queue closed before Welcome")?;
             // `InitialSnapshot` is a plain std mutex shared with the
             // game loop; the snapshot value is only ever replaced
             // wholesale, so recover it if a prior holder panicked
             // instead of silently skipping the snapshot send.
-            let snapshot_frame = if let Some((frame, engine)) = context
+            let snapshot_frame = if let Some((frame, bytes)) = context
                 .initial_snapshot
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone()
             {
-                let encode_start = web_time::Instant::now();
-                let bytes = engine.encode_native_snapshot();
                 tracing::info!(
                     seat = assigned_seat_u8,
                     frame,
                     bytes = bytes.len(),
-                    encode_us = encode_start.elapsed().as_micros(),
                     "sending initial snapshot to peer"
                 );
                 let _ = sender.send(NetMsg::InitialSnapshot {
@@ -910,6 +1241,14 @@ async fn handle_incoming_peer(
                     frame: begin_frame,
                     start_epoch_ms: begin_start_epoch_ms,
                 });
+            }
+            if let Some(transition) = p.snapshot_transition.as_ref() {
+                sender
+                    .send(NetMsg::PrepareSnapshotTransition {
+                        id: transition.id,
+                        payload: transition.payload.clone(),
+                    })
+                    .map_err(|_| "writer queue closed before transition Prepare")?;
             }
         }
     }
@@ -963,7 +1302,11 @@ async fn handle_incoming_peer(
     // PCs they were controlling.
     let released = {
         let mut p = context.peers.lock();
-        p.release_seat_if_owner(assigned_seat_u8, owner, session_generation)
+        let released = p.release_seat_if_owner(assigned_seat_u8, owner, session_generation);
+        if released {
+            retain_transition_peer_for_reconnect(&mut p, assigned_seat_u8);
+        }
+        released
     };
     if released && !context.cancellation.load(Ordering::Acquire) {
         let now = context.frame_cursor.load(Ordering::Relaxed);
@@ -1002,13 +1345,15 @@ fn authenticate_peer(
     let ticket = super::join_ticket::BrowserJoinTicket::decode_authenticated(&auth.join_code)?;
     let payload = ticket.payload();
     if payload.host_endpoint_id != context.host_endpoint_id.to_string()
-        || ticket.session_id()? != context.session_id
-        || payload.mission_id != context.mission_id
+        || ticket.session_id()? != context.session_id.0
         || payload.expected_players != context.peers.lock().expected_players
     {
         return Err(
             "browser invitation does not belong to this exact hosted mission session".to_string(),
         );
+    }
+    if payload.mission_id != context.mission_id && !context.continued_session {
+        return Err("browser invitation belongs to another hosted mission".to_string());
     }
     let owner = PeerOwner::Browser(auth.durable_public_key);
     let use_kind = if context.peers.lock().owner_seat(owner).is_some() {
@@ -1026,7 +1371,7 @@ fn authenticate_peer(
         .map_err(|_| "browser seat proof signature must be 64 bytes".to_string())?;
     let signature = iroh::Signature::from_bytes(&signature_bytes);
     let message = browser_seat_proof_message(
-        context.session_id,
+        context.session_id.0,
         *context.host_endpoint_id.as_bytes(),
         *remote_id.as_bytes(),
     );
@@ -1047,6 +1392,7 @@ async fn run_server_peer_reader(
                 origin_frame,
                 command,
             }) => {
+                validate_peer_command_authority(seat, &command)?;
                 let now = context.frame_cursor.load(Ordering::Relaxed);
                 let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
                 let inp = PlayerInput::new(seat, command);
@@ -1055,12 +1401,32 @@ async fn run_server_peer_reader(
             Some(NetMsg::Note(s)) => {
                 tracing::info!(?seat, note = %s, "peer note");
             }
-            Some(NetMsg::ModalDismiss { kind, result }) => {
-                let _ = context.incoming_tx.send(NetEvent::ModalDismiss {
-                    kind: kind.clone(),
-                    result,
-                });
-                broadcast_msg(context, NetMsg::ModalDismiss { kind, result });
+            Some(NetMsg::ModalProposal {
+                instance,
+                kind,
+                result,
+                requested_frame,
+            }) => {
+                if instance.session_id != context.session_id {
+                    return Err(format!(
+                        "peer {seat:?} submitted a modal proposal for another session"
+                    ));
+                }
+                context
+                    .incoming_tx
+                    .send(NetEvent::ModalProposal {
+                        from: seat,
+                        instance,
+                        kind,
+                        result,
+                        requested_frame,
+                    })
+                    .map_err(|_| "host modal proposal channel is closed".to_string())?;
+            }
+            Some(NetMsg::ModalDecision { .. }) => {
+                return Err(format!(
+                    "peer {seat:?} attempted an authoritative modal decision"
+                ));
             }
             Some(NetMsg::ReadyToSim { frame }) => {
                 let begin = {
@@ -1070,12 +1436,57 @@ async fn run_server_peer_reader(
                 };
                 announce_begin_sim(context, begin);
             }
+            Some(NetMsg::SnapshotTransitionReady { id }) => {
+                if id.session_id != context.session_id {
+                    return Err(format!(
+                        "peer {seat:?} acknowledged a snapshot transition for another session"
+                    ));
+                }
+                let committed = {
+                    let mut peers = context.peers.lock();
+                    let transition = peers.snapshot_transition.as_mut().ok_or_else(|| {
+                        format!("peer {seat:?} acknowledged no active snapshot transition")
+                    })?;
+                    if transition.id != id {
+                        return Err(format!(
+                            "peer {seat:?} acknowledged snapshot transition {id:?}, active is {:?}",
+                            transition.id
+                        ));
+                    }
+                    if !transition.awaiting.remove(&seat.0) {
+                        return Err(format!(
+                            "peer {seat:?} duplicated or was not expected for snapshot transition {id:?}"
+                        ));
+                    }
+                    take_committed_snapshot_transition(&mut peers)
+                };
+                commit_snapshot_transition(context, committed);
+            }
+            Some(
+                NetMsg::PrepareSnapshotTransition { .. } | NetMsg::CommitSnapshotTransition { .. },
+            ) => {
+                return Err(format!(
+                    "peer {seat:?} attempted a host-only snapshot transition message"
+                ));
+            }
             Some(other) => {
                 tracing::debug!(?seat, ?other, "ignoring inbound message from peer");
             }
             None => return Ok(()),
         }
     }
+}
+
+fn validate_peer_command_authority(
+    seat: PlayerId,
+    command: &robin_engine::player_command::PlayerCommand,
+) -> Result<(), String> {
+    if command.requires_host_authority() {
+        return Err(format!(
+            "peer {seat:?} attempted host-authoritative command {command:?}"
+        ));
+    }
+    Ok(())
 }
 
 // ─── Client ──────────────────────────────────────────────────────
@@ -1085,6 +1496,7 @@ pub struct ClientHandle {
     /// Seat assigned by the server.  `None` until the handshake
     /// completes.  Game loop reads this to set `host.local_seat`.
     pub assigned_seat: Arc<Mutex<Option<PlayerId>>>,
+    session_id: MultiplayerSessionId,
     /// Mission RNG seed announced by the server in `Welcome`.  The
     /// client adopts this seed for its engine init so the local sim
     /// rolls match the host's.
@@ -1097,6 +1509,10 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub fn session_id(&self) -> Option<MultiplayerSessionId> {
+        Some(self.session_id)
+    }
+
     pub fn assigned_seat(&self) -> Option<PlayerId> {
         *self.assigned_seat.lock()
     }
@@ -1194,7 +1610,7 @@ pub fn connect_client(
             }
         })?;
 
-    let (your_seat, mission_id, mission_seed, sim_config, speech_timing_locale) =
+    let (your_seat, session_id, mission_id, mission_seed, sim_config, speech_timing_locale) =
         match handshake_rx.recv() {
             Ok(Ok(result)) => result,
             Ok(Err(err)) => {
@@ -1219,6 +1635,7 @@ pub fn connect_client(
 
     Ok(ClientHandle {
         assigned_seat,
+        session_id,
         mission_seed: Some(mission_seed),
         mission_sim_config: Some(sim_config),
         speech_timing_locale,
@@ -1240,11 +1657,11 @@ struct ClientSession {
 type Handshake = (
     ClientSession,
     PlayerId,
+    MultiplayerSessionId,
     String,
     u64,
     robin_engine::engine::SimConfig,
     Option<String>,
-    [u8; 32],
 );
 
 /// One round of (connect → open stream → Hello → Welcome).  Used both
@@ -1278,12 +1695,12 @@ async fn handshake_async(
     match read_frame(&mut recv, InboundFramePolicy::ServerToClient).await? {
         Some(NetMsg::Welcome {
             your_seat,
+            session_id,
             mission_id,
             mission_seed,
             sim_config,
             speech_timing_locale,
             host_nickname,
-            session_id,
         }) => {
             tracing::info!(
                 ?your_seat,
@@ -1298,11 +1715,11 @@ async fn handshake_async(
                     recv,
                 },
                 your_seat,
+                session_id,
                 mission_id,
                 mission_seed,
                 sim_config,
                 speech_timing_locale,
-                session_id,
             ))
         }
         Some(NetMsg::Reject { reason }) => Err(format!("host rejected connection: {reason}")),
@@ -1329,13 +1746,13 @@ fn validate_reconnect_state(
     expected_seed: u64,
     expected_config: robin_engine::engine::SimConfig,
     expected_speech_timing_locale: Option<&str>,
-    expected_session_id: [u8; 32],
+    expected_session_id: MultiplayerSessionId,
     seat: PlayerId,
     mission_id: &str,
     seed: u64,
     config: robin_engine::engine::SimConfig,
     speech_timing_locale: Option<&str>,
-    session_id: [u8; 32],
+    session_id: MultiplayerSessionId,
 ) -> Result<(), String> {
     if seat != expected_seat
         || mission_id != expected_mission_id
@@ -1346,6 +1763,18 @@ fn validate_reconnect_state(
     {
         return Err(format!(
             "reconnect joined incompatible seat {seat:?} mission `{mission_id}` seed {seed} config {config:?} speech timing {speech_timing_locale:?} session {session_id:?}; expected seat {expected_seat:?} mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} speech timing {expected_speech_timing_locale:?} session {expected_session_id:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_reconnect_session_id(
+    expected: MultiplayerSessionId,
+    actual: MultiplayerSessionId,
+) -> Result<(), String> {
+    if actual != expected {
+        return Err(format!(
+            "reconnect joined a different multiplayer session {actual:?}; expected {expected:?}"
         ));
     }
     Ok(())
@@ -1364,6 +1793,7 @@ async fn run_client_io_async(
         Result<
             (
                 PlayerId,
+                MultiplayerSessionId,
                 String,
                 u64,
                 robin_engine::engine::SimConfig,
@@ -1374,7 +1804,7 @@ async fn run_client_io_async(
     >,
     cancellation: Arc<AtomicBool>,
 ) {
-    let endpoint = match bind_endpoint(SecretKey::generate(), GAME_ALPN).await {
+    let endpoint = match bind_endpoint(native_client_secret_key(), GAME_ALPN).await {
         Ok(endpoint) => endpoint,
         Err(e) => {
             let _ = initial_handshake_tx.send(Err(e));
@@ -1409,6 +1839,7 @@ async fn run_client_io_inner(
         Result<
             (
                 PlayerId,
+                MultiplayerSessionId,
                 String,
                 u64,
                 robin_engine::engine::SimConfig,
@@ -1422,11 +1853,11 @@ async fn run_client_io_inner(
     let (
         mut session,
         your_seat,
+        session_id,
         mission_id,
         mission_seed,
         sim_config,
         speech_timing_locale,
-        session_id,
     ) = {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
         let mut backoff = std::time::Duration::from_millis(50);
@@ -1469,6 +1900,7 @@ async fn run_client_io_inner(
     });
     let _ = initial_handshake_tx.send(Ok((
         your_seat,
+        session_id,
         mission_id.clone(),
         mission_seed,
         sim_config,
@@ -1480,7 +1912,14 @@ async fn run_client_io_inner(
         match run_session_async(session, &incoming_tx, outgoing_async_rx, &cancellation).await {
             SessionEnd::Graceful => break,
             SessionEnd::Drop(reason) => {
+                let discarded = discard_session_outbound(outgoing_async_rx);
                 tracing::warn!("client session ended: {reason}; reconnecting...");
+                if discarded != 0 {
+                    tracing::warn!(
+                        discarded,
+                        "multiplayer: discarded outbound commands from abandoned prediction session"
+                    );
+                }
                 let _ = incoming_tx.send(NetEvent::Note(format!(
                     "disconnected: {reason}; reconnecting..."
                 )));
@@ -1507,12 +1946,17 @@ async fn run_client_io_inner(
                 Ok((
                     new_session,
                     new_seat,
+                    new_session_id,
                     new_mission_id,
                     new_seed,
                     new_config,
                     new_speech_timing_locale,
-                    new_session_id,
                 )) => {
+                    if let Err(message) = validate_reconnect_session_id(session_id, new_session_id)
+                    {
+                        let _ = incoming_tx.send(NetEvent::Fatal(message));
+                        return;
+                    }
                     if let Err(message) = validate_reconnect_state(
                         your_seat,
                         &mission_id,
@@ -1540,6 +1984,13 @@ async fn run_client_io_inner(
                         sim_config: new_config,
                         speech_timing_locale: new_speech_timing_locale,
                     });
+                    let discarded = discard_session_outbound(outgoing_async_rx);
+                    if discarded != 0 {
+                        tracing::warn!(
+                            discarded,
+                            "multiplayer: discarded commands queued while transport was reconnecting"
+                        );
+                    }
                     backoff = std::time::Duration::from_millis(500);
                     break new_session;
                 }
@@ -1568,6 +2019,18 @@ enum SessionEnd {
     OutgoingClosed,
 }
 
+/// Throw away commands queued for a transport session whose prediction
+/// future has been abandoned. Replaying them after the next handshake would
+/// apply pre-disconnect input on top of the authoritative replacement
+/// snapshot.
+fn discard_session_outbound(outgoing_rx: &mut UnboundedReceiver<NetOutbound>) -> usize {
+    let mut discarded = 0;
+    while outgoing_rx.try_recv().is_ok() {
+        discarded += 1;
+    }
+    discarded
+}
+
 /// Run one client session by racing a whole-session reader loop
 /// against a whole-session writer loop, so local inputs are sent as
 /// soon as the game loop queues them.  The reader and writer each own
@@ -1588,7 +2051,14 @@ async fn run_session_async(
     let reader = async {
         loop {
             match read_frame(&mut recv, InboundFramePolicy::ServerToClient).await {
-                Ok(Some(msg)) => handle_client_wire_msg(incoming_tx, msg),
+                Ok(Some(msg)) => {
+                    if let Err(error) = handle_client_wire_msg(incoming_tx, msg) {
+                        if !error.starts_with("host requires a full-snapshot reconnect:") {
+                            let _ = incoming_tx.send(NetEvent::Fatal(error.clone()));
+                        }
+                        return SessionEnd::Drop(error);
+                    }
+                }
                 Ok(None) => return SessionEnd::Graceful,
                 Err(e) => return SessionEnd::Drop(e),
             }
@@ -1625,7 +2095,7 @@ async fn sleep_or_cancel(duration: Duration, cancellation: &AtomicBool) -> bool 
     }
 }
 
-fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
+fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) -> Result<(), String> {
     match msg {
         NetMsg::BroadcastInput {
             server_frame,
@@ -1633,12 +2103,14 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
             target_frame,
             input,
         } => {
-            let _ = incoming_tx.send(NetEvent::Input {
-                server_frame,
-                origin_frame,
-                target_frame,
-                input,
-            });
+            incoming_tx
+                .send(NetEvent::Input {
+                    server_frame,
+                    origin_frame,
+                    target_frame,
+                    input,
+                })
+                .map_err(|_| "client network event channel is closed".to_string())?;
         }
         NetMsg::Note(s) => {
             let _ = incoming_tx.send(NetEvent::Note(s));
@@ -1674,13 +2146,45 @@ fn handle_client_wire_msg(incoming_tx: &Sender<NetEvent>, msg: NetMsg) {
                 start_epoch_ms,
             });
         }
-        NetMsg::ModalDismiss { kind, result } => {
-            let _ = incoming_tx.send(NetEvent::ModalDismiss { kind, result });
+        NetMsg::ModalDecision {
+            instance,
+            kind,
+            result,
+            decision_frame,
+        } => {
+            incoming_tx
+                .send(NetEvent::ModalDecision {
+                    instance,
+                    kind,
+                    result,
+                    decision_frame,
+                })
+                .map_err(|_| "client modal decision channel is closed".to_string())?;
+        }
+        NetMsg::ModalProposal { .. } => {
+            return Err("server sent a client-only modal proposal".to_string());
+        }
+        NetMsg::ReconnectRequired { reason } => {
+            return Err(format!("host requires a full-snapshot reconnect: {reason}"));
+        }
+        NetMsg::PrepareSnapshotTransition { id, payload } => {
+            incoming_tx
+                .send(NetEvent::PrepareSnapshotTransition { id, payload })
+                .map_err(|_| "client snapshot transition channel is closed".to_string())?;
+        }
+        NetMsg::CommitSnapshotTransition { id } => {
+            incoming_tx
+                .send(NetEvent::CommitSnapshotTransition { id })
+                .map_err(|_| "client snapshot transition channel is closed".to_string())?;
+        }
+        NetMsg::SnapshotTransitionReady { .. } => {
+            return Err("server sent a client-only snapshot transition acknowledgement".into());
         }
         other => {
             tracing::debug!(?other, "ignoring unexpected wire message");
         }
     }
+    Ok(())
 }
 
 async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> Result<(), String> {
@@ -1707,8 +2211,41 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
         NetOutbound::ReadyToSim { frame } => {
             write_frame(send, &NetMsg::ReadyToSim { frame }).await?;
         }
-        NetOutbound::ModalDismiss { kind, result } => {
-            write_frame(send, &NetMsg::ModalDismiss { kind, result }).await?;
+        NetOutbound::ModalProposal {
+            instance,
+            kind,
+            result,
+            requested_frame,
+        } => {
+            write_frame(
+                send,
+                &NetMsg::ModalProposal {
+                    instance,
+                    kind,
+                    result,
+                    requested_frame,
+                },
+            )
+            .await?;
+        }
+        NetOutbound::ModalDecision { .. } => {
+            return Err("client attempted an authoritative modal decision".to_string());
+        }
+        NetOutbound::ReconnectForSnapshot { reason, .. } => {
+            return Err(format!(
+                "full-snapshot resynchronization requested: {reason}"
+            ));
+        }
+        NetOutbound::ReconnectAllForSnapshot { reason } => {
+            return Err(format!(
+                "full-snapshot resynchronization requested: {reason}"
+            ));
+        }
+        NetOutbound::BeginSnapshotTransition { .. } => {
+            return Err("client attempted an authoritative snapshot transition".to_string());
+        }
+        NetOutbound::SnapshotTransitionReady { id } => {
+            write_frame(send, &NetMsg::SnapshotTransitionReady { id }).await?;
         }
     }
     Ok(())
@@ -1716,13 +2253,151 @@ async fn send_client_outgoing(send: &mut SendStream, outgoing: NetOutbound) -> R
 
 #[cfg(test)]
 mod tests {
-    use super::{PeerOwner, ServerPeers, validate_reconnect_state};
+    use super::{
+        HostSessionContinuation, PeerOwner, PendingSnapshotTransition, ServerPeers,
+        discard_session_outbound, handle_client_wire_msg, retain_transition_peer_for_reconnect,
+        take_committed_snapshot_transition, validate_peer_command_authority,
+        validate_reconnect_session_id, validate_reconnect_state,
+    };
     use robin_engine::player_command::PlayerId;
+    use std::collections::HashSet;
     use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
-    fn reconnect_rejects_wrong_mission_or_config() {
+    fn peer_inputs_reject_host_authoritative_commands_before_broadcast() {
+        let error = validate_peer_command_authority(
+            PlayerId(2),
+            &robin_engine::player_command::PlayerCommand::ConnectSeat {
+                player_id: PlayerId(7),
+                nickname: "forged".to_string(),
+            },
+        )
+        .expect_err("a peer must not author transport seat lifecycle");
+        assert!(error.contains("host-authoritative"));
+
+        validate_peer_command_authority(
+            PlayerId(2),
+            &robin_engine::player_command::PlayerCommand::CrouchDown,
+        )
+        .expect("ordinary seat input remains admissible");
+    }
+
+    #[test]
+    fn replacement_transport_seeds_exact_authenticated_seats() {
+        let browser = PeerOwner::Browser([7; 32]);
+        let native = PeerOwner::Native([8; 32]);
+        let continuation = HostSessionContinuation {
+            host_endpoint_id: iroh::SecretKey::from_bytes(&[3; 32]).public(),
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([4; 32]),
+            expected_players: 3,
+            owner_seats: std::collections::HashMap::from([(browser, 1), (native, 2)]),
+            relay_url: None,
+        };
+        let mut peers = ServerPeers::from_continuation(&continuation);
+
+        let (browser_tx, _browser_rx) = unbounded_channel();
+        let (browser_seat, _) = peers
+            .claim_seat(browser, "renamed browser", browser_tx)
+            .unwrap();
+        let (native_tx, _native_rx) = unbounded_channel();
+        let (native_seat, _) = peers
+            .claim_seat(native, "renamed native", native_tx)
+            .unwrap();
+
+        assert_eq!(browser_seat, 1);
+        assert_eq!(native_seat, 2);
+        let (intruder_tx, _intruder_rx) = unbounded_channel();
+        assert!(
+            peers
+                .claim_seat(PeerOwner::Browser([9; 32]), "same nickname", intruder_tx)
+                .is_err(),
+            "a replacement session may not allocate beyond its retained roster"
+        );
+    }
+
+    #[test]
+    fn snapshot_transition_waits_for_every_current_peer() {
+        let session_id = robin_engine::multiplayer::MultiplayerSessionId([4; 32]);
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id,
+            sequence: 2,
+        };
+        let mut peers = ServerPeers::new(0);
+        for seat in [1, 2] {
+            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+            peers.senders.insert(seat, sender);
+        }
+        peers.snapshot_transition = Some(PendingSnapshotTransition {
+            id,
+            payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id: 7,
+                save_bytes: vec![1, 2, 3],
+            },
+            awaiting: HashSet::from([1, 2]),
+        });
+
+        assert!(take_committed_snapshot_transition(&mut peers).is_none());
+        peers
+            .snapshot_transition
+            .as_mut()
+            .unwrap()
+            .awaiting
+            .remove(&1);
+        assert!(take_committed_snapshot_transition(&mut peers).is_none());
+        peers
+            .snapshot_transition
+            .as_mut()
+            .unwrap()
+            .awaiting
+            .remove(&2);
+        let (committed_id, senders) =
+            take_committed_snapshot_transition(&mut peers).expect("all peers acknowledged");
+        assert_eq!(committed_id, id);
+        assert_eq!(senders.len(), 2);
+        assert!(peers.senders.is_empty());
+        assert!(peers.snapshot_transition.is_none());
+    }
+
+    #[test]
+    fn disconnected_transition_peer_must_ack_again_after_reconnect() {
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([6; 32]),
+            sequence: 1,
+        };
+        let mut peers = ServerPeers::new(1);
+        peers.snapshot_transition = Some(PendingSnapshotTransition {
+            id,
+            payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id: 3,
+                save_bytes: vec![4, 5],
+            },
+            awaiting: HashSet::new(),
+        });
+
+        retain_transition_peer_for_reconnect(&mut peers, 1);
+        assert!(
+            peers
+                .snapshot_transition
+                .as_ref()
+                .unwrap()
+                .awaiting
+                .contains(&1)
+        );
+        assert!(take_committed_snapshot_transition(&mut peers).is_none());
+    }
+
+    #[test]
+    fn reconnect_rejects_wrong_session_mission_config_or_speech_locale() {
         let expected = robin_engine::engine::SimConfig::default();
+        let session_id = robin_engine::multiplayer::MultiplayerSessionId([21; 32]);
+        assert!(validate_reconnect_session_id(session_id, session_id).is_ok());
+        assert!(
+            validate_reconnect_session_id(
+                session_id,
+                robin_engine::multiplayer::MultiplayerSessionId([22; 32]),
+            )
+            .is_err()
+        );
         assert!(
             validate_reconnect_state(
                 PlayerId(1),
@@ -1730,13 +2405,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "MissionB",
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_err()
         );
@@ -1750,13 +2425,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "MissionA",
                 7,
                 changed,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_err()
         );
@@ -1767,13 +2442,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(2),
                 "MissionA",
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_err()
         );
@@ -1784,13 +2459,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "MissionA",
                 7,
                 expected,
                 Some("de-DE"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_err()
         );
@@ -1801,13 +2476,13 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "MissionA",
                 7,
                 expected,
                 Some("en-US"),
-                [2; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([2; 32]),
             )
             .is_err()
         );
@@ -1818,16 +2493,89 @@ mod tests {
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
                 PlayerId(1),
                 "MissionA",
                 7,
                 expected,
                 Some("en-US"),
-                [1; 32],
+                robin_engine::multiplayer::MultiplayerSessionId([1; 32]),
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn host_reconnect_directive_ends_the_complete_client_session() {
+        let (incoming_tx, _incoming_rx) = std::sync::mpsc::channel();
+        let error = handle_client_wire_msg(
+            &incoming_tx,
+            robin_engine::multiplayer::NetMsg::ReconnectRequired {
+                reason: "late input predates rollback horizon".to_string(),
+            },
+        )
+        .expect_err("directive must unwind the session into the reconnect loop");
+        assert!(error.contains("full-snapshot reconnect"));
+        assert!(error.contains("rollback horizon"));
+    }
+
+    #[test]
+    fn reconnect_discards_commands_queued_for_abandoned_session() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        sender
+            .send(robin_engine::multiplayer::NetOutbound::Input {
+                origin_frame: 41,
+                command: robin_engine::player_command::PlayerCommand::CrouchDown,
+            })
+            .expect("queue old-session command");
+        sender
+            .send(robin_engine::multiplayer::NetOutbound::ReadyToSim { frame: 40 })
+            .expect("queue old-session readiness");
+
+        assert_eq!(discard_session_outbound(&mut receiver), 2);
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn client_transition_events_preserve_exact_prepare_bytes_and_commit_id() {
+        let (incoming_tx, incoming_rx) = std::sync::mpsc::channel();
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([5; 32]),
+            sequence: 9,
+        };
+        let save_bytes = vec![0, 17, 34, 255];
+        handle_client_wire_msg(
+            &incoming_tx,
+            robin_engine::multiplayer::NetMsg::PrepareSnapshotTransition {
+                id,
+                payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                    mission_id: 71,
+                    save_bytes: save_bytes.clone(),
+                },
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            incoming_rx.recv().unwrap(),
+            robin_engine::multiplayer::NetEvent::PrepareSnapshotTransition {
+                id: decoded_id,
+                payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                    mission_id: 71,
+                    save_bytes: decoded_bytes,
+                },
+            } if decoded_id == id && decoded_bytes == save_bytes
+        ));
+
+        handle_client_wire_msg(
+            &incoming_tx,
+            robin_engine::multiplayer::NetMsg::CommitSnapshotTransition { id },
+        )
+        .unwrap();
+        assert!(matches!(
+            incoming_rx.recv().unwrap(),
+            robin_engine::multiplayer::NetEvent::CommitSnapshotTransition { id: decoded_id }
+                if decoded_id == id
+        ));
     }
 
     #[test]

@@ -352,12 +352,32 @@ pub struct AiController {
     pub macro_started_in_this_frame: bool,
 
     // -- Targets & relationships --
-    pub primary_target: HumanHandle,
-    pub friend_in_trouble: NpcHandle,
-    pub detected_body: HumanHandle,
-    pub interesting_object: ObjectHandle,
-    pub antagonist: NpcHandle,
-    pub last_stimulus_actor: Option<HumanHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub primary_target: Option<AiEntityHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub friend_in_trouble: Option<AiEntityHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub detected_body: Option<AiEntityHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub interesting_object: Option<AiEntityHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub antagonist: Option<AiEntityHandle>,
+    pub last_stimulus_actor: Option<AiEntityHandle>,
 
     // -- Timers --
     pub timer_is_running: bool,
@@ -375,7 +395,11 @@ pub struct AiController {
 
     // -- Group behaviour --
     pub is_master: bool,
-    pub master: NpcHandle,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub master: Option<AiEntityHandle>,
 
     // -- Seek & alert --
     pub seek_position: Position,
@@ -432,16 +456,28 @@ pub struct AiController {
     pub last_hint_subject: Question,
     /// Canonical Rust runtime door-table index corresponding to Original
     /// `mpMyDoor` through the retained mixed-gate topology.
-    pub my_door_index: Option<u32>,
+    pub my_door_index: Option<crate::gate::DoorIndex>,
     pub looking_for_help_because_enemy_seen: bool,
 
     // -- Objects --
     pub forgotten_objects: Vec<ObjectHandle>,
-    pub object_of_desire: ObjectHandle,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub object_of_desire: Option<AiEntityHandle>,
 
     // -- Charly (friend-check) --
-    pub checkpoint_charly: NpcHandle,
-    pub synchronize_charly: NpcHandle,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub checkpoint_charly: Option<AiEntityHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub synchronize_charly: Option<AiEntityHandle>,
     /// Synchronization waypoint index for the partner. Lives on
     /// `AiBase` because the macro VM (`InitializeFriendCheck`) needs to
     /// write it from `AiController`.
@@ -531,15 +567,7 @@ pub struct AiController {
     /// Last primary target reconciled into the entity-side focus state.
     /// This gates automatic focus synchronization across explicit outbox
     /// focus/unfocus effects.
-    pub last_synced_focus_target: Option<HumanHandle>,
-
-    // -- Stare target --
-    /// If set, the NPC should face toward this actor for `stare_remaining` frames.
-    pub stare_target_actor: Option<HumanHandle>,
-    /// If set, the NPC should face toward this position for `stare_remaining` frames.
-    pub stare_target_position: Option<Position>,
-    /// Frames remaining for the stare behaviour. 0 = inactive.
-    pub stare_remaining: u32,
+    pub last_synced_focus_target: Option<AiEntityHandle>,
 
     // -- Static entity context (set once at init/load) --
     /// Initial position (guard post / spawn point), set at level load.
@@ -594,11 +622,11 @@ impl Default for AiController {
             number_of_remaining_macro_bytes: 0,
             macro_in_progress: false,
             macro_started_in_this_frame: false,
-            primary_target: 0,
-            friend_in_trouble: 0,
-            detected_body: 0,
-            interesting_object: 0,
-            antagonist: 0,
+            primary_target: None,
+            friend_in_trouble: None,
+            detected_body: None,
+            interesting_object: None,
+            antagonist: None,
             last_stimulus_actor: None,
             timer_is_running: false,
             when_does_timer_ring: 0,
@@ -609,7 +637,7 @@ impl Default for AiController {
             last_stimulus: [StimulusType::NoEvent; 5],
             last_stimulus_multiplicity: [1; 5],
             is_master: false,
-            master: 0,
+            master: None,
             seek_position: Position::default(),
             alert_soldiers_point: Position::default(),
             first_try: false,
@@ -640,9 +668,9 @@ impl Default for AiController {
             my_door_index: None,
             looking_for_help_because_enemy_seen: false,
             forgotten_objects: Vec::new(),
-            object_of_desire: 0,
-            checkpoint_charly: 0,
-            synchronize_charly: 0,
+            object_of_desire: None,
+            checkpoint_charly: None,
+            synchronize_charly: None,
             synchronize_index: 0,
             delta_sorrow_level: 0,
             missed_in_action: Vec::new(),
@@ -678,9 +706,6 @@ impl Default for AiController {
             outbox: AiOutbox::default(),
             has_script_filter_override: false,
             last_synced_focus_target: None,
-            stare_target_actor: None,
-            stare_target_position: None,
-            stare_remaining: 0,
             initial_position: Position::default(),
             initial_view_direction: 0,
             max_visibility: 0,
@@ -1671,17 +1696,17 @@ impl AiController {
         // `sorrow_level` as side effects — route through
         // `set_checkpoint_charly` so the detectable queue + sorrow
         // reset stay consistent.
-        self.set_checkpoint_charly(0);
+        self.set_checkpoint_charly(None);
     }
 
     /// Overwrites the stashed checkpoint actor and applies the
     /// detectable/sorrow bookkeeping every call:
     ///
     /// * Unconditionally enqueue `DeleteAllDetectables(MissedFriend)`.
-    /// * When `target` is non-zero, enqueue an
+    /// * When `target` is present, enqueue an
     ///   `AddDetectable(target, MissedFriend)` so the target shows up
     ///   in the "missed friend" list.
-    /// * When `target` is zero, zero `sorrow_level` and enqueue a
+    /// * When `target` is absent, zero `sorrow_level` and enqueue a
     ///   second delete (belt-and-braces).
     ///
     /// Detectable effects are drained after the synchronous AI call returns.
@@ -1689,7 +1714,7 @@ impl AiController {
     /// Original executes each clear/add pair immediately, so consecutive calls
     /// have last-call-wins semantics (`A -> null` leaves none, `A -> B` leaves
     /// only B).
-    pub fn set_checkpoint_charly(&mut self, target: NpcHandle) {
+    pub fn set_checkpoint_charly(&mut self, target: Option<AiEntityHandle>) {
         use crate::element::DetectableType;
         self.outbox
             .actor
@@ -1700,9 +1725,9 @@ impl AiController {
             .delete_detectables
             .push(DetectableType::MissedFriend);
         self.checkpoint_charly = target;
-        if target != 0 {
+        if let Some(target) = target {
             self.outbox.actor.add_detectables.push((
-                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target)),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(target.get())),
                 DetectableType::MissedFriend,
             ));
         } else {
@@ -1820,12 +1845,16 @@ impl AiController {
 
         // Charly merge + AddDetectable(MISSED_FRIEND).
         if (flags & REPORT_UPDATE_CHARLY) != 0
-            && other.charly != 0
-            && self.my_reconnaissance_report.charly == 0
+            && other.charly.is_some()
+            && self.my_reconnaissance_report.charly.is_none()
         {
             self.my_reconnaissance_report.charly = other.charly;
+            let charly = other
+                .charly
+                .expect("checked reconnaissance report charly")
+                .get();
             self.outbox.actor.append_detectables.push((
-                EntityId::Soldier(crate::entity_id::SoldierId(other.charly)),
+                EntityId::Soldier(crate::entity_id::SoldierId(charly)),
                 DetectableType::MissedFriend,
             ));
         }
@@ -3145,7 +3174,7 @@ impl AiController {
                 friend_id,
                 number_of_all
             );
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             self.current_substate = Substate::DefaultInMacro;
             self.execute_next_macro_command(sim, ctx);
             return;
@@ -3160,7 +3189,7 @@ impl AiController {
                     ctx.position.y,
                     friend_id
                 );
-                self.set_checkpoint_charly(0);
+                self.set_checkpoint_charly(None);
                 self.current_substate = Substate::DefaultInMacro;
                 self.execute_next_macro_command(sim, ctx);
                 return;
@@ -3185,14 +3214,14 @@ impl AiController {
                     friend_id,
                     target
                 );
-                self.set_checkpoint_charly(0);
+                self.set_checkpoint_charly(None);
                 self.current_substate = Substate::DefaultInMacro;
                 self.execute_next_macro_command(sim, ctx);
                 return;
             }
         };
         // Store + warn if not self.
-        self.set_checkpoint_charly(target);
+        self.set_checkpoint_charly(Some(AiEntityHandle::new(target)));
         if target == self.me {
             tracing::warn!(
                 "NPC {}: CheckFor at ({:.0}, {:.0}) applied on yourself? Funny idea...",
@@ -3205,7 +3234,7 @@ impl AiController {
         // (b1) friend already on the missed list → skip the check,
         // resume the macro.
         if self.missed_in_action.contains(&target) {
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             self.current_substate = Substate::DefaultInMacro;
             self.execute_next_macro_command(sim, ctx);
             return;
@@ -3216,7 +3245,7 @@ impl AiController {
             && ctx.frame.wrapping_sub(self.frame_when_enemy_detected)
                 < crate::parameters_ai::NO_CHECK_FOR_AFTER_CHARLY_ALERT_TIME
         {
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             self.current_substate = Substate::DefaultInMacro;
             self.execute_next_macro_command(sim, ctx);
             return;
@@ -3235,9 +3264,9 @@ impl AiController {
         // (c) Pure synchronization branch.
         if frames == 0 && index != u16::MAX {
             let synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
-            self.synchronize_charly = target;
+            self.synchronize_charly = Some(AiEntityHandle::new(target));
             self.synchronize_index = synchronize_index;
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
             debug_assert!(
                 self.macro_in_progress,
                 "InitializeFriendCheck pure-sync branch requires a macro to be in progress"
@@ -3368,10 +3397,10 @@ impl AiController {
         }
         // (e) Maybe prepare for later sync.
         if index == u16::MAX {
-            self.synchronize_charly = 0;
+            self.synchronize_charly = None;
             self.synchronize_index = u16::MAX;
         } else {
-            self.synchronize_charly = target;
+            self.synchronize_charly = Some(AiEntityHandle::new(target));
             self.synchronize_index = resolve_synchronize_index(my_current_wp_index, index);
         }
 
@@ -3410,7 +3439,7 @@ impl AiController {
             Substate::DefaultLookingForCharly | Substate::DefaultLookingSidewardsForCharly
         );
         if in_charly_look {
-            self.set_checkpoint_charly(0);
+            self.set_checkpoint_charly(None);
         }
         // Actor calls preceding StopAll are synchronous in Original.  Close
         // that prefix before queuing Halt so a same-handler `GoTo();
@@ -4235,8 +4264,23 @@ impl AiController {
         elevation_delta: f32,
         fast: bool,
     ) {
-        let dx = pos.x - ctx.position.x;
-        let dy = (pos.y - ctx.position.y) + elevation_delta;
+        self.face_point_impl(pos.x, pos.y, ctx, elevation_delta, fast);
+    }
+
+    /// Coordinate-only facing tail for stimuli whose Original `RHposition`
+    /// deliberately has no sector/layer pointer. Keeping this separate avoids
+    /// manufacturing a ground-layer [`Position`] merely to reuse the vector
+    /// arithmetic.
+    fn face_point_impl(
+        &mut self,
+        x: f32,
+        y: f32,
+        ctx: &AiContext,
+        elevation_delta: f32,
+        fast: bool,
+    ) {
+        let dx = x - ctx.position.x;
+        let dy = (y - ctx.position.y) + elevation_delta;
         let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
         tracing::trace!(
             me = self.me,
@@ -4344,10 +4388,30 @@ impl AiController {
     /// (`RHartificialintelligence.cpp:3707-3755`). Projectile impact positions
     /// retain the `0xffff` layer sentinel when their sector really was null.
     pub fn face_noise_origin_with_ctx(&mut self, noise: &Noise, ctx: &AiContext) {
-        if noise.origin.sector.is_some() || noise.origin.level == u16::MAX {
-            self.face_position_3d_with_ctx(noise.origin, ctx);
+        if noise.origin.sector.is_some() {
+            self.face_position_3d_with_ctx(
+                noise.origin.position().unwrap_or_else(|| {
+                    panic!("sector-attached noise origin has no required layer")
+                }),
+                ctx,
+            );
+        } else if noise.origin.layer.is_none() {
+            // A genuinely null Original RHposition is projected onto the
+            // ground plane and measured from the actor's raw 3D body point.
+            // This is distinct from a replay-normalized sector-less position,
+            // whose separately recorded elevation remains authoritative.
+            let body = ctx.self_body_position_world;
+            let target_dir = crate::position_interface::vector_to_sector_0_to_15_iso(
+                noise.origin.x - body.x,
+                noise.origin.y - body.y,
+            );
+            self.face_to_sector(target_dir, ctx, false);
         } else {
-            self.face_position_at_elevation_with_ctx(noise.origin, f32::from(noise.elevation), ctx);
+            let elevation_delta = noise
+                .origin
+                .layer
+                .map_or(0.0, |_| f32::from(noise.elevation) - ctx.elevation);
+            self.face_point_impl(noise.origin.x, noise.origin.y, ctx, elevation_delta, false);
         }
     }
 
@@ -4356,7 +4420,7 @@ impl AiController {
     ///
     /// Silently drops if the handle is `0` or the entity is no longer
     /// present in the snapshot.
-    pub fn face_entity(&mut self, handle: NpcHandle, ctx: &AiContext) {
+    pub fn face_entity(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
@@ -4371,7 +4435,7 @@ impl AiController {
     }
 
     /// Turn quickly to face another entity (`Face(element, true)`).
-    pub fn face_entity_fast(&mut self, handle: NpcHandle, ctx: &AiContext) {
+    pub fn face_entity_fast(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
@@ -4382,7 +4446,11 @@ impl AiController {
     /// Match a direct Original `RHElement::SetDirection` toward an entity:
     /// update only the progressive direction goal and do not launch a Turn
     /// sequence. The currently selected animation may perform the turn itself.
-    pub fn set_direction_toward_entity(&mut self, handle: NpcHandle, ctx: &AiContext) {
+    pub fn set_direction_toward_entity(
+        &mut self,
+        handle: impl IntoOptionalAiHandle,
+        ctx: &AiContext,
+    ) {
         let Some(view) = ctx.entity_view(handle) else {
             return;
         };
@@ -4634,7 +4702,7 @@ impl AiController {
         // friend count rides in on `ctx` so we don't have to crack
         // open `NpcData` from inside the AI.
         if ctx.self_detectable_friend_count == 0 {
-            self.detected_body = 0;
+            self.detected_body = None;
         }
 
         // If this NPC has a live patrol chief that's able to fight
@@ -6063,13 +6131,13 @@ mod tests {
         use crate::entity_id::SoldierId;
 
         let mut cleared = AiController::new(17);
-        cleared.set_checkpoint_charly(10);
-        cleared.set_checkpoint_charly(0);
+        cleared.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
+        cleared.set_checkpoint_charly(None);
         assert!(cleared.outbox.actor.add_detectables.is_empty());
 
         let mut replaced = AiController::new(17);
-        replaced.set_checkpoint_charly(10);
-        replaced.set_checkpoint_charly(11);
+        replaced.set_checkpoint_charly(Some(AiEntityHandle::new(10)));
+        replaced.set_checkpoint_charly(Some(AiEntityHandle::new(11)));
         assert_eq!(
             replaced.outbox.actor.add_detectables,
             vec![(
@@ -6086,7 +6154,7 @@ mod tests {
 
         let mut ai = AiController::new(17);
         let report = ReconnaissanceReport {
-            charly: 91,
+            charly: Some(AiEntityHandle::new(91)),
             ..Default::default()
         };
 
@@ -6211,13 +6279,13 @@ mod tests {
         ai.outbox.reentrant.cross_npc_actions.extend([
             CrossNpcAction::UpdateLeftCombatNeighbour {
                 target: 17,
-                old_left: 0,
-                new_left: 23,
+                old_left: None,
+                new_left: Some(AiEntityHandle::new(23)),
             },
             CrossNpcAction::UpdateRightCombatNeighbour {
                 target: 17,
-                old_right: 0,
-                new_right: 29,
+                old_right: None,
+                new_right: Some(AiEntityHandle::new(29)),
             },
         ]);
 
@@ -6228,15 +6296,15 @@ mod tests {
             [
                 CrossNpcAction::UpdateLeftCombatNeighbour {
                     target: 17,
-                    old_left: 0,
-                    new_left: 23,
+                    old_left: None,
+                    new_left: Some(new_left),
                 },
                 CrossNpcAction::UpdateRightCombatNeighbour {
                     target: 17,
-                    old_right: 0,
-                    new_right: 29,
+                    old_right: None,
+                    new_right: Some(new_right),
                 }
-            ]
+            ] if new_left.get() == 23 && new_right.get() == 29
         ));
         assert!(ai.outbox.reentrant.cross_npc_actions.is_empty());
     }
@@ -6247,11 +6315,11 @@ mod tests {
         ai.outbox.reentrant.cross_npc_actions.extend([
             CrossNpcAction::SetLeftCombatNeighbour {
                 target: 23,
-                neighbour: 0,
+                neighbour: None,
             },
             CrossNpcAction::SetRightCombatNeighbour {
                 target: 29,
-                neighbour: 0,
+                neighbour: None,
             },
         ]);
 
@@ -6263,11 +6331,11 @@ mod tests {
             [
                 CrossNpcAction::SetLeftCombatNeighbour {
                     target: 23,
-                    neighbour: 0,
+                    neighbour: None,
                 },
                 CrossNpcAction::SetRightCombatNeighbour {
                     target: 29,
-                    neighbour: 0,
+                    neighbour: None,
                 }
             ]
         ));
@@ -6283,11 +6351,11 @@ mod tests {
         ai.outbox.reentrant.cross_npc_actions.extend([
             CrossNpcAction::SetShieldBearerBeforeMe {
                 target: 86,
-                shield_bearer: 0,
+                shield_bearer: None,
             },
             CrossNpcAction::SetArcherBehindMe {
                 target: 81,
-                archer: 0,
+                archer: None,
             },
         ]);
 
@@ -6299,11 +6367,11 @@ mod tests {
             [
                 CrossNpcAction::SetShieldBearerBeforeMe {
                     target: 86,
-                    shield_bearer: 0,
+                    shield_bearer: None,
                 },
                 CrossNpcAction::SetArcherBehindMe {
                     target: 81,
-                    archer: 0,
+                    archer: None,
                 }
             ]
         ));

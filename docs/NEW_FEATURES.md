@@ -14,7 +14,37 @@ A list of which additional features we have added, which ones we might still wan
   presentation/countdown controls are independently configurable. The hashed,
   serialized tick/cue/crossfade state is shared by saves, replay, rollback and
   multiplayer. `mods/timed-ambience-demo/` is a launchable example; authoring
-  rules are documented in `docs/TIMED_MISSIONS_AND_AMBIENCE.md`.
+  rules are documented in `docs/TIMED_MISSIONS_AND_AMBIENCE.md`. This state
+  advances the combined native save, replay, and network schemas to
+  **65 / 23 / 32** respectively.
+
+- **Cooperative pause side screens.** Options (including Graphics, Sounds,
+  Shortcuts, and Gameplay), Save/Load,
+  overwrite/delete prompts, and Quit confirmation now run as one-frame
+  `ActiveUiTask` states owned by the mission loop instead of nested blocking
+  async loops. Networking, HTTP control, replay bookkeeping, and frame
+  stepping therefore keep reaching their normal outer-loop boundaries.
+  Single-player retains the original paused-timeline behavior; a local menu
+  in multiplayer captures only local input/presentation and does not stop the
+  authoritative simulation. Window close propagates to mission exit, nested
+  confirmations retain the picker underneath, stable save filenames protect
+  selection across list mutations, and ordinary HTTP screenshots capture the
+  presented topmost pause UI. Settings rows carry typed actions, enabled state,
+  labels, and help text; large pages use bounded 12-row pagination, so the
+  integrated Gameplay page exposes all 34 current settings without index or
+  hit-box remapping. The native desktop data-folder chooser remains
+  a synchronous OS dialog launched from the cooperative Options state.
+- **Self-describing save metadata.** Every newly written manual, quick,
+  rotating-autosave, continue, restart, and Sherwood save freezes its
+  wall-clock timestamp, mission title, stable player-profile identity, and
+  player name into both the payload header and lightweight slot index. The save
+  picker shows mission/player provenance, honest relative age (including future
+  times after clock correction), exact local time, and expanded campaign
+  details. The per-profile **Detailed Save Metadata** option switches to a
+  compact presentation without discarding stored metadata. Native save schema
+  v64 requires provenance and the multiplayer diagnostic-authority marker and
+  rejects every older Rust schema; only the
+  separate Original C++ importer may produce incomplete historical detail.
 
 - **Per-mission achievements, debrief evidence, XP, and trackers.** Four
   deterministic achievements are evaluated independently for each successful
@@ -436,7 +466,7 @@ A list of which additional features we have added, which ones we might still wan
   linearly replayable.
 
 - **Original-game parity traces**
-  (`crates/robin_rs/examples/original_parity_replay.rs`). A diagnostic runner
+  (`crates/robin_parity/examples/original_parity_replay.rs`). A diagnostic runner
   streams the neutral JSONL trace emitted by the instrumented C++ game,
   applies its resolved player commands on the recorded frames, and compares
   typed entity state using exact floating-point bits. Unsupported legacy
@@ -450,14 +480,61 @@ A list of which additional features we have added, which ones we might still wan
   joiners, and client reconnect are implemented. Matchmaking is fully
   serverless: the multiplayer menu joins a well-known iroh-gossip topic
   bootstrapped through the BitTorrent Mainline DHT, so games are discovered
-  with no broker, master server, or configuration. The current design is
-  predictive rollback netcode rather than strict "wait for every peer before
-  ticking" lockstep.
+  with no broker, master server, or configuration. Matchmaking `/1` host
+  announcements are signed by the persistent game identity, expire after a
+  short validity window, bind the advertised endpoint to the signer, and use
+  per-host issuance watermarks so captured older lobby state cannot roll a
+  listing backward. The current design is predictive rollback netcode rather
+  than strict "wait for every peer before ticking" lockstep. Inputs older than
+  the retained correction horizon now force a complete transport reconnect
+  and fresh authoritative snapshot instead of being applied at the wrong
+  frame.
+
+- **Unified mission timeline and non-blocking multiplayer UI**. Rewind,
+  multiplayer correction, and rollback verification share one mission-owned
+  command journal with dense recent and exponentially retained checkpoint
+  tiers. Snapshot/load adoption seeds an explicit checkpoint at its exact
+  frame, including between normal sparse boundaries. Blocking gameplay modal
+  traffic uses client proposals and host-only decisions; remote peers cannot
+  choose the host's restart or load outcome. Campaign map/description and
+  launch confirmations, cross-mission QuickLoad confirmation, pseudo-mission
+  debrief, lost-Sherwood, and terminal mission-state/debrief/load flows retain
+  state across outer frames so networking and replay services keep draining
+  while simulation is paused. A player's pause menu is a local overlay in
+  multiplayer and does not stop the shared simulation. HTTP timeline stepping
+  accepts typed modal outcomes, defaults to automation-friendly auto-dismiss,
+  validates each result against its modal kind, and reports or blocks unresolved
+  UI explicitly. Ordinary keyboard/HTTP timeline movement is disabled during
+  multiplayer; explicit host automation must opt into synchronized stepping,
+  after which every peer reconnects from the resulting authoritative snapshot.
+  Local keyboard and HTTP pause changes are rejected in multiplayer so one peer
+  cannot stop only its own timeline.
+
+- **Host-authoritative multiplayer session transitions.** Load, Restart,
+  QuickLoad, and Sherwood campaign launch use a prepare/ready/commit barrier.
+  The host encodes authoritative save or campaign state once, every connected
+  peer validates and retains those identical bytes, and only then do all
+  participants tear down the old mission transport and enter the next ready
+  barrier. Load/Restart controls remain disabled for clients and throughout a
+  transition. Multiplayer Save and QuickSave create tagged local diagnostic
+  captures: connected load pickers hide them and the central transition path
+  rejects them even if UI filtering is bypassed. Sherwood campaign UI remains
+  non-pausing, but only host-authored campaign commands can mutate simulation
+  state. Client modal choices remain visible host proposals; only the host can
+  publish the decision that closes a shared modal. Replacement missions
+  consume a one-shot continuation containing the same session id,
+  authenticated owner/seat roster, expected player count, and pinned relay
+  route. Durable browser identities and process-held native client identities
+  therefore reclaim the same seats without nickname authority or a stale-relay
+  reconnect race. The native server rejects peer-authored deterministic
+  settings, campaign mutations, modal decisions, and seat-lifecycle commands
+  before broadcast; the engine repeats that check at deterministic command
+  admission so replay/rollback cannot bypass transport authority.
 
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the protocol-28 game wire,
+  relay-over-WebSocket transport with the protocol-32 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native
@@ -520,16 +597,6 @@ A list of which additional features we have added, which ones we might still wan
   - Keep flattening blocking modal flows so network events, replay commands,
     frame stepping, and modal dismissal all pass through the same outer loop.
 
-- **Pause side-menu task state**. The pause menu itself is already driven once
-  per frame from the mission loop, but its side screens still run blocking
-  async modal loops from `handle_pause_menu_events`: Options, Save/Load, save
-  overwrite/delete confirmations, and the quit confirmation. If we want HTTP
-  requests, replay commands, networking, frame stepping, and pause UI to keep
-  sharing the same outer loop, replace those `show_*().await` calls with one
-  small `ActiveUiTask` / `UiTaskOutcome` state machine. The gameplay modal stack
-  already does this with `ActiveModal`; this would apply the same pattern to
-  pause side screens.
-
 - **Level selection tree**
   - Show campaign progress: completed missions, stats, and other information
     currently lost after the level-end screen.
@@ -561,8 +628,6 @@ A list of which additional features we have added, which ones we might still wan
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
-- Every save should have a timestamp automatically, plus mission name and
-  player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Item reliability rebalances are implemented as independent Gameplay
   settings. Direct apples can interrupt active swordfights; wasps acquire
   valid initial targets within 75 instead of 50 units; Will Scarlet's stone

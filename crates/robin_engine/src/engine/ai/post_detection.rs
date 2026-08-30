@@ -550,14 +550,14 @@ impl EngineInner {
                 })
                 .unwrap_or_else(|| self.build_owner_context_scratch_without_forecast(assets));
             if let crate::ai::StimulusInfo::Human(handle) = stimulus.info
-                && !scratch.ai_entity_views.contains_key(&handle)
+                && !scratch.ai_entity_views.contains_key(&handle.get())
             {
                 // A preceding synchronous stimulus can kill/remove this
                 // target before the next queued detection stimulus runs.
                 // TODO: remove target-owned queued stimuli at deletion time.
                 tracing::warn!(
                     npc = npc_id.index(),
-                    target = handle,
+                    target = handle.get(),
                     stimulus_type = ?stimulus.stimulus_type,
                     "dropping queued detection stimulus after its target left the live world"
                 );
@@ -590,10 +590,10 @@ impl EngineInner {
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
-                    let Some(view) = ctx.entity_view(handle) else {
+                    let Some(view) = ctx.entity_view(handle.get()) else {
                         tracing::warn!(
                             npc = npc_id.index(),
-                            target = handle,
+                            target = handle.get(),
                             stimulus_type = ?stimulus.stimulus_type,
                             "dropping queued detection stimulus after its target left the typed live view"
                         );
@@ -618,7 +618,7 @@ impl EngineInner {
             let mut tick_data = if let Some(aggregate) = detection_aggregate {
                 let target_id = match stimulus.info {
                     crate::ai::StimulusInfo::Human(handle) => {
-                        self.entity_id_for_index(handle).unwrap_or_else(|| {
+                        self.entity_id_for_index(handle.get()).unwrap_or_else(|| {
                             panic!(
                                 "Enemy detection {:?} for NPC {} references missing entity {}",
                                 stimulus.stimulus_type,
@@ -660,7 +660,7 @@ impl EngineInner {
                                 | crate::ai::StimulusType::EventEnemyNear
                         ) =>
                     {
-                        Some(self.entity_id_for_index(handle).unwrap_or_else(|| {
+                        Some(self.entity_id_for_index(handle.get()).unwrap_or_else(|| {
                             panic!(
                                 "queued {:?} for NPC {} references missing entity {}",
                                 stimulus.stimulus_type,
@@ -901,7 +901,7 @@ impl EngineInner {
                 );
                 ctx.in_uninterruptible_command = in_uninterruptible_command;
                 if let crate::ai::StimulusInfo::Human(handle) = stimulus.info {
-                    let view = ctx.entity_view(handle).unwrap_or_else(|| {
+                    let view = ctx.entity_view(handle.get()).unwrap_or_else(|| {
                         panic!(
                             "retained {:?} for NPC {} references missing entity {}",
                             stimulus.stimulus_type,
@@ -931,7 +931,7 @@ impl EngineInner {
                             | crate::ai::StimulusType::EventEnemyNear
                     ) =>
                 {
-                    Some(self.entity_id_for_index(handle).unwrap_or_else(|| {
+                    Some(self.entity_id_for_index(handle.get()).unwrap_or_else(|| {
                         panic!(
                             "retained {:?} for NPC {} references missing entity {}",
                             stimulus.stimulus_type,

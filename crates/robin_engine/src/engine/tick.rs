@@ -7084,8 +7084,7 @@ impl EngineInner {
                         // have no Rust-only ActiveDoorPass mirror.  Until the
                         // first PassingDoor action consumes that pointer it is
                         // the authoritative door for transition completion.
-                        let door = entity.position_iface().get_door();
-                        (!door.is_null()).then(|| crate::gate::DoorIndex::from(door.0))
+                        entity.position_iface().get_door()
                     })
                     .map(|door_index| (door_index, entity.is_pc()))
             })
@@ -9034,7 +9033,7 @@ mod bow_command_body_parity_tests {
             gate_id, sector, ..
         } = &mut wait.data
         {
-            *gate_id = Some(crate::gate::DoorIndex(0));
+            *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
             *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -9102,7 +9101,7 @@ mod bow_command_body_parity_tests {
             gate_id, sector, ..
         } = &mut wait.data
         {
-            *gate_id = Some(crate::gate::DoorIndex(0));
+            *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
             *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -9145,7 +9144,7 @@ mod bow_command_body_parity_tests {
             gate_id, sector, ..
         } = &mut wait.data
         {
-            *gate_id = Some(crate::gate::DoorIndex(0));
+            *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
             *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -9244,7 +9243,7 @@ mod bow_command_body_parity_tests {
             gate_id, sector, ..
         } = &mut wait.data
         {
-            *gate_id = Some(crate::gate::DoorIndex(0));
+            *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
             *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);
@@ -9271,7 +9270,7 @@ mod bow_command_body_parity_tests {
             &crate::sim_rng::test_context(),
             &assets,
             owner,
-            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
             true,
             0,
         );
@@ -9280,7 +9279,7 @@ mod bow_command_body_parity_tests {
             &crate::sim_rng::test_context(),
             &assets,
             owner,
-            crate::gate::DoorIndex(0),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
             false,
             0,
         );
@@ -9330,7 +9329,7 @@ mod bow_command_body_parity_tests {
             gate_id, sector, ..
         } = &mut wait.data
         {
-            *gate_id = Some(crate::gate::DoorIndex(0));
+            *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
             *sector = crate::position_interface::SectorHandle::new(42);
         }
         let seq_id = engine.orders.sequence_manager.launch_element(wait);

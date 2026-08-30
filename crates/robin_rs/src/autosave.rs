@@ -8,7 +8,7 @@
 
 use crate::game::Game;
 use crate::host::Host;
-use crate::save_file::{GameSaveFile, Thumbnail};
+use crate::save_file::{GameSaveFile, SaveProvenance, Thumbnail};
 use crate::savegame::{SaveGame, SaveGameManager};
 use anyhow::{Context, Result, bail};
 use robin_engine::campaign::CampaignValue;
@@ -80,6 +80,7 @@ impl AutosaveManifest {
         }
         let mut filenames = std::collections::BTreeSet::new();
         for save in &self.saves {
+            save.validate_published_metadata()?;
             if !crate::savegame::is_generated_autosave_filename(&save.filename) {
                 bail!(
                     "autosave manifest contains non-autosave filename {:?}",
@@ -337,7 +338,20 @@ impl AutosaveCoordinator {
             .context("autosave enqueue did not match the current schedule decision")?;
         let filename = self.next_unique_filename(manager)?;
         let display_text = mission_display_name(engine, mission_id, profiles)?;
-        let payload = GameSaveFile::capture_with_game(engine, host, game, mission_id, display_text);
+        let player = host
+            .application_context
+            .active_profile_snapshot()
+            .map_err(anyhow::Error::msg)
+            .context("autosave requires an active player profile")?;
+        let provenance = SaveProvenance::new(display_text.clone(), player.id, player.name)?;
+        let payload = GameSaveFile::capture_with_game(
+            engine,
+            host,
+            game,
+            mission_id,
+            display_text,
+            provenance,
+        )?;
         if payload.header.timestamp_unix == 0 {
             bail!("autosave payload clock returned the invalid Unix timestamp zero");
         }
@@ -530,7 +544,8 @@ fn metadata_from_payload(
     profiles: &ProfileManager,
 ) -> Result<SaveGame> {
     let campaign = payload.engine.campaign();
-    let mission_name = mission_display_name(&payload.engine, payload.header.mission_id, profiles)?;
+    let provenance = &payload.header.provenance;
+    let mission_name = provenance.mission_name.clone();
     let mut metadata = SaveGame::new(
         filename.to_owned(),
         mission_name.clone(),
@@ -540,6 +555,8 @@ fn metadata_from_payload(
     metadata.version = payload.header.version;
     metadata.timestamp = payload.header.timestamp_unix.to_string();
     metadata.mission_name = mission_name;
+    metadata.player_profile_id = Some(provenance.player_profile_id);
+    metadata.player_name = provenance.player_name.clone();
     metadata.missions_done = Some(campaign.get_number_of_missions_done());
     metadata.missions_total = Some(campaign.missions.len());
     metadata.gang_size = Some(campaign.gang_indices.len());
@@ -1111,6 +1128,22 @@ fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) ->
 mod tests {
     use super::*;
 
+    fn published_autosave(filename: impl Into<String>, timestamp: u64) -> SaveGame {
+        let mut save = SaveGame::new(filename.into(), "Mission".into(), 1);
+        save.timestamp = timestamp.to_string();
+        save.mission_name = "Mission".into();
+        save.player_profile_id = Some(7);
+        save.player_name = "Alice".into();
+        save.campaign_progress = Some(0);
+        save.missions_done = Some(0);
+        save.missions_total = Some(0);
+        save.gang_size = Some(0);
+        save.ransom = Some(0);
+        save.blazons = Some(0);
+        save.amulets = Some(0);
+        save
+    }
+
     fn accept_schedule(
         schedule: &mut AutosaveSchedule,
         mission_id: u32,
@@ -1208,12 +1241,12 @@ mod tests {
     fn staged_manifest_evicts_oldest_generation_and_retains_three() {
         let mut manager = SaveGameManager::new("unused".into());
         for ordinal in 0..3 {
-            let mut save = SaveGame::new(format!("Autosave_100_{ordinal:04}"), "Mission".into(), 1);
-            save.timestamp = (100 + ordinal).to_string();
-            manager.saves.push(save);
+            manager.saves.push(published_autosave(
+                format!("Autosave_100_{ordinal:04}"),
+                100 + ordinal,
+            ));
         }
-        let mut newest = SaveGame::new("Autosave_200_0000".into(), "Mission".into(), 1);
-        newest.timestamp = "200".into();
+        let newest = published_autosave("Autosave_200_0000", 200);
         let existing = AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
             saves: manager.saves.clone(),
@@ -1228,8 +1261,7 @@ mod tests {
     #[test]
     fn native_manifest_commit_is_round_trippable() {
         let directory = tempfile::tempdir().unwrap();
-        let mut save = SaveGame::new("Autosave_1_0000".into(), "Mission".into(), 1);
-        save.timestamp = "1".into();
+        let save = published_autosave("Autosave_1_0000", 1);
         let manifest = AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
             saves: vec![save],
@@ -1255,7 +1287,7 @@ mod tests {
         for ordinal in 0..4 {
             let filename = format!("Autosave_1_{ordinal:04}");
             let payload = GameSaveFile::capture(&engine, &host, 1, "Mission".into());
-            let mut metadata = SaveGame::new(filename.clone(), "Mission".into(), 1);
+            let mut metadata = published_autosave(filename.clone(), ordinal + 1);
             metadata.version = payload.header.version;
             metadata.timestamp = payload.header.timestamp_unix.to_string();
             coordinator
@@ -1346,7 +1378,7 @@ mod tests {
         use std::rc::Rc;
 
         let existing = AutosaveManifest::default();
-        let metadata = SaveGame::new("Autosave_1_0000".into(), "Mission".into(), 1);
+        let metadata = published_autosave("Autosave_1_0000", 1);
         let calls = Rc::new(RefCell::new(Vec::new()));
         let payload_calls = calls.clone();
         let manifest_calls = calls.clone();
@@ -1376,7 +1408,7 @@ mod tests {
         let calls = std::cell::RefCell::new(Vec::new());
         commit_generation(
             AutosaveManifest::default(),
-            SaveGame::new("Autosave_1_0000".into(), "Mission".into(), 1),
+            published_autosave("Autosave_1_0000", 1),
             || {
                 calls.borrow_mut().push("payload");
                 bail!("simulated payload interruption")
@@ -1398,10 +1430,9 @@ mod tests {
     fn published_rotation_survives_cleanup_failure_and_retains_exactly_three() {
         let mut saves = Vec::new();
         for ordinal in 0..3 {
-            saves.push(SaveGame::new(
+            saves.push(published_autosave(
                 format!("Autosave_1_{ordinal:04}"),
-                "Mission".into(),
-                1,
+                ordinal + 1,
             ));
         }
         let calls = std::cell::RefCell::new(Vec::new());
@@ -1410,7 +1441,7 @@ mod tests {
                 version: AUTOSAVE_MANIFEST_VERSION,
                 saves,
             },
-            SaveGame::new("Autosave_2_0000".into(), "Mission".into(), 1),
+            published_autosave("Autosave_2_0000", 4),
             || {
                 calls.borrow_mut().push("payload");
                 Ok(())
@@ -1465,8 +1496,7 @@ mod tests {
     fn missing_published_payload_fails_closed_and_hides_stale_index_row() {
         let directory = tempfile::tempdir().unwrap();
         let save_directory = directory.path().to_str().unwrap();
-        let mut autosave = SaveGame::new("Autosave_1_0000".into(), "Mission".into(), 1);
-        autosave.timestamp = "1".into();
+        let autosave = published_autosave("Autosave_1_0000", 1);
         persist_manifest(
             save_directory,
             &AutosaveManifest {

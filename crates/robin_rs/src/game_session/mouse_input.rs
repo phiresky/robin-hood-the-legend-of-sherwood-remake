@@ -5,7 +5,8 @@
 //! dispatchers, and `choose_recording_place` (the empty-slot picker for
 //! the macro recorder).
 
-use super::interactive::MissionResources;
+use super::sherwood_flow::{SherwoodCampaignFlow, SherwoodConfirmationAction};
+use super::ui_task_state::{ActiveUiTask, OptionsTaskState, SaveLoadTaskState};
 use super::{
     HandlerAction, MissionFrame, center_on_reselected_allied_portrait,
     center_on_reselected_portrait_pc, dispatch_local_command, dispatch_local_commands,
@@ -21,21 +22,18 @@ use crate::gfx_types::GameEvent;
 use crate::host::{Host, TacticalTargetMode};
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
-    self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, SaveLoadOutcome,
-    mission_description, resources,
+    self, IngameMenuResources, PauseMenu, PauseMenuOutcome, SaveLoadMode, mission_description,
+    resources,
 };
 use crate::input::ThreadedInput;
-use crate::input_translator::{GameKey, InputTranslator};
+use crate::input_translator::InputTranslator;
 use crate::main_entry::{RustCallbacks, SaveLoadRequest, current_mission_id};
 use crate::menu::CampaignMapState;
 use crate::renderer::Renderer;
-use crate::sherwood_hud::{
-    SherwoodButton, SherwoodButtonEnable, SherwoodButtonSprites, SherwoodHudLayout,
-};
+use crate::sherwood_hud::{SherwoodButton, SherwoodButtonEnable, SherwoodHudLayout};
 use crate::ui_panel::{self, PortraitCache, PortraitHitArea, PortraitTarget};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
-use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout};
 use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
@@ -1421,28 +1419,26 @@ fn on_right_mouse_up(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_pause_menu_events(
+pub(super) fn handle_pause_menu_events(
     pause_menu: &mut Option<PauseMenu>,
+    active_ui_task: &mut Option<ActiveUiTask>,
     pause_closed_this_frame: &mut bool,
     host: &mut Host,
     manager: &mut engine_manager_api::EngineManager,
-    game: &mut Game,
     assets: &engine_api::LevelAssets,
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_renderer: &mut CursorRenderer,
-    mission_resources: &mut MissionResources,
+    menu_resources: &Option<IngameMenuResources>,
     audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
     input_translator: &mut InputTranslator,
-    sherwood_layout: &mut SherwoodHudLayout,
-    zoom_layout: &mut ZoomHudLayout,
-    zoom_sprites: &ZoomButtonSprites,
-    frame_cmds: &mut FrameCommands,
     events: &[GameEvent],
 ) -> HandlerAction {
+    if active_ui_task.is_some() {
+        return HandlerAction::Proceed;
+    }
     let engine = &mut manager.engine;
     // ── Pause menu event handling ──
     // The menu state machine owns all keyboard/mouse input while the
@@ -1450,6 +1446,9 @@ pub(super) async fn handle_pause_menu_events(
     // and react to its outcome.
     let mut pause_outcome: Option<PauseMenuOutcome> = None;
     if let Some(menu) = pause_menu.as_mut() {
+        let authoritative_transition_enabled =
+            host.transport.authoritative_transition_actions_enabled();
+        menu.set_authoritative_transition_actions_enabled(authoritative_transition_enabled);
         let screen_w = renderer.screen_width() as i32;
         let screen_h = renderer.screen_height() as i32;
         for event in events {
@@ -1482,6 +1481,9 @@ pub(super) async fn handle_pause_menu_events(
                 threaded_input.reset_input_state();
                 input_translator.reset_state();
                 callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                if host.transport.net.is_none() {
+                    callbacks.start_play_time();
+                }
                 // Forward a MSG_MOUSE_MOVED at the current cursor
                 // position so HUD hover state is re-evaluated on the
                 // first frame after the menu closes.
@@ -1510,282 +1512,42 @@ pub(super) async fn handle_pause_menu_events(
             }
             PauseMenuOutcome::OpenOptions => {
                 // RHMenuIngame::OnOptions → RHMenuOptions::Display
-                if mission_resources.menu.is_some() {
-                    // Snapshot profile-backed settings before entering the
-                    // async modal. No ApplicationContext lock crosses await.
-                    let profile = host
-                        .application_context
-                        .active_profile_snapshot()
-                        .unwrap_or_else(|error| {
-                            panic!("in-game Options requires an active profile: {error}")
-                        });
-                    let profile_settings = Some((
-                        profile.id,
-                        profile.graphic_config,
-                        profile.gameplay_config,
-                        profile.multiplayer_config,
-                        profile.sound_config,
-                    ));
-
-                    if let Some((
-                        profile_id,
-                        mut graphic_config,
-                        mut gameplay_config,
-                        mut multiplayer_config,
-                        mut sound_config,
-                    )) = profile_settings
-                    {
-                        // Replay headers and multiplayer snapshots own the
-                        // active simulation value. A local profile can differ,
-                        // so seed this deterministic option from the mission
-                        // rather than showing a stale local preference.
-                        gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
-                        gameplay_config.clean_hands_npc_kills_invalidate =
-                            engine.sim_config().clean_hands_npc_kills_invalidate;
-                        gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
-                        gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
-                        gameplay_config.noise_distraction_feedback =
-                            engine.sim_config().noise_distraction_feedback;
-                        gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
-                        gameplay_config.enable_timed_missions =
-                            engine.sim_config().enable_timed_missions;
-                        gameplay_config.enable_dynamic_ambience =
-                            engine.sim_config().enable_dynamic_ambience;
-                        let profile_amount_of_speaking = sound_config.amount_of_speaking;
-                        let profile_fix_hard_reaction_times =
-                            gameplay_config.fix_hard_reaction_times;
-                        let simulation_enable_unbinding = gameplay_config.enable_unbinding;
-                        let simulation_clean_hands_npc_kills_invalidate =
-                            gameplay_config.clean_hands_npc_kills_invalidate;
-                        let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
-                        let simulation_item_gameplay = gameplay_config.item_gameplay;
-                        let simulation_noise_feedback = gameplay_config.noise_distraction_feedback;
-                        let simulation_sherwood_trading = gameplay_config.sherwood_trading;
-                        let simulation_enable_timed_missions =
-                            gameplay_config.enable_timed_missions;
-                        let simulation_enable_dynamic_ambience =
-                            gameplay_config.enable_dynamic_ambience;
-                        let resources =
-                            required_menu_resources(&mission_resources.menu, "pause-menu options");
-                        let cursor = Some(default_modal_cursor(
-                            cursor_renderer,
-                            &mut mission_resources.cursor,
-                            renderer,
-                        ));
-                        let options_outcome = ingame_menu::show_options(
-                            &host.application_context,
-                            false,
-                            event_pump,
-                            renderer,
-                            resources,
-                            cursor,
-                            &mut graphic_config,
-                            &mut gameplay_config,
-                            &mut multiplayer_config,
-                            &mut sound_config,
-                            &mut host.frontend.key_config,
-                            &mut host.frontend.custom_key_config,
-                            host.transport.local_seat == engine_player_command::PlayerId::HOST,
-                            Some(&mut host.audio.sound),
-                            audio_backend
-                                .as_mut()
-                                .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                            Some(sample_loader),
-                        )
-                        .await;
-
-                        // Reacquire only after the await and write back to the
-                        // profile we opened with. Do not silently redirect
-                        // changes if active-profile state changed reentrantly.
-                        if options_outcome.changed {
-                            host.application_context
-                                .with_player_profiles_mut(|mgr| {
-                                    let profile = mgr
-                                        .profiles
-                                        .iter_mut()
-                                        .find(|profile| profile.id == profile_id)
-                                        .expect("Options profile disappeared while modal was open");
-                                    profile.graphic_config = graphic_config.clone();
-                                    profile.gameplay_config = gameplay_config;
-                                    profile.multiplayer_config = multiplayer_config;
-                                    profile.sound_config = sound_config;
-                                    if let Err(err) = mgr.save() {
-                                        tracing::error!(
-                                            "Options: failed to save profile manager: {err:#}"
-                                        );
-                                    }
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options profile update failed: {error}")
-                                });
-                        }
-
-                        host.control_tactical_units = gameplay_config.control_tactical_units;
-                        host.touch_camera_gestures = gameplay_config.touch_camera_gestures;
-                        host.gameplay_config = gameplay_config;
-                        host.native_refresh_presentation =
-                            graphic_config.native_refresh_presentation;
-                        event_pump.set_native_refresh_presentation(
-                            graphic_config.native_refresh_presentation,
-                        );
-                        renderer.configure_native_refresh_presentation(
-                            graphic_config.native_refresh_presentation,
-                            event_pump.surface_config.width,
-                            event_pump.surface_config.height,
-                        );
-                        if !host.control_tactical_units {
-                            dispatch_local_command(
-                                host,
-                                engine,
-                                frame_cmds,
-                                assets,
-                                &PlayerCommand::ReleaseTacticalControl,
-                            );
-                        }
-
-                        if sound_config.amount_of_speaking != profile_amount_of_speaking {
-                            let cmd = PlayerCommand::SetAmountOfSpeaking {
-                                amount: sound_config.amount_of_speaking,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.fix_hard_reaction_times
-                            != profile_fix_hard_reaction_times
-                        {
-                            let cmd = PlayerCommand::SetFixHardReactionTimes {
-                                enabled: gameplay_config.fix_hard_reaction_times,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.enable_unbinding != simulation_enable_unbinding {
-                            let cmd = PlayerCommand::SetUnbindingEnabled {
-                                enabled: gameplay_config.enable_unbinding,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.clean_hands_npc_kills_invalidate
-                            != simulation_clean_hands_npc_kills_invalidate
-                        {
-                            let cmd = PlayerCommand::SetCleanHandsNpcKillsInvalidate {
-                                enabled: gameplay_config.clean_hands_npc_kills_invalidate,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.reusable_cloaks != simulation_reusable_cloaks {
-                            let cmd = PlayerCommand::SetReusableCloaks {
-                                enabled: gameplay_config.reusable_cloaks,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.item_gameplay != simulation_item_gameplay {
-                            let cmd = PlayerCommand::SetItemGameplayConfig {
-                                config: gameplay_config.item_gameplay,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.noise_distraction_feedback != simulation_noise_feedback {
-                            let cmd = PlayerCommand::SetNoiseDistractionFeedback {
-                                enabled: gameplay_config.noise_distraction_feedback,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.sherwood_trading != simulation_sherwood_trading {
-                            let cmd = PlayerCommand::SetSherwoodTrading {
-                                enabled: gameplay_config.sherwood_trading,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.enable_timed_missions != simulation_enable_timed_missions
-                        {
-                            let cmd = PlayerCommand::SetTimedMissionsEnabled {
-                                enabled: gameplay_config.enable_timed_missions,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-                        if gameplay_config.enable_dynamic_ambience
-                            != simulation_enable_dynamic_ambience
-                        {
-                            let cmd = PlayerCommand::SetDynamicAmbienceEnabled {
-                                enabled: gameplay_config.enable_dynamic_ambience,
-                            };
-                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                        }
-
-                        let new_resolution = options_outcome.resolution_changed;
-
-                        // On resolution change, switch the draw surface,
-                        // update input clipping, and resize the engine.
-                        if new_resolution {
-                            event_pump.set_logical_resolution_policy(&graphic_config);
-                            renderer.sync_window_size(event_pump);
-                            let (logical_w, logical_h) = event_pump.logical_size();
-                            let w_u16 = logical_w as u16;
-                            let h_u16 = logical_h as u16;
-                            let w = logical_w as f32;
-                            let h = logical_h as f32;
-                            host.viewport.set_screen_size(w, h);
-                            game.set_resolution(w_u16, h_u16);
-                            threaded_input.set_clipping(
-                                robin_engine::coordinates::ScreenBBox::from_coords(0.0, 0.0, w, h),
-                            );
-                            *input_translator = InputTranslator::new(w, h);
-                            input_translator.load_bindings_from_keyconfig(&host.key_config);
-                            input_translator.install_hud_dead_zones();
-                            if host.minimap_corner_size.x > 0.0 {
-                                let cmd = PlayerCommand::MinimapResize {
-                                    base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
-                                    corner_size: host.minimap_corner_size,
-                                };
-                                dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
-                            }
-                            *sherwood_layout = SherwoodHudLayout::for_resolution(
-                                w_u16 as u32,
-                                h_u16 as u32,
-                                &SherwoodButtonSprites::default(),
-                            );
-                            *zoom_layout = ZoomHudLayout::for_resolution(
-                                w_u16 as u32,
-                                h_u16 as u32,
-                                zoom_sprites,
-                            );
-                            game.reshow_campaign_map();
-                        }
-
-                        if options_outcome.key_config_changed {
-                            host.application_context
-                                .with_key_configs_mut(|store| {
-                                    let entry = store.entry_or_default(profile_id);
-                                    entry.active = host.key_config.clone();
-                                    entry.custom = host.custom_key_config.clone();
-                                    if let Err(err) = store.save() {
-                                        tracing::error!(
-                                            "Options: failed to save key configs after change: {err:#}"
-                                        );
-                                    }
-                                })
-                                .unwrap_or_else(|error| {
-                                    panic!("Options key-config update failed: {error}")
-                                });
-                            input_translator.load_bindings_from_keyconfig(&host.key_config);
-                            host.minimap_fast_key =
-                                input_translator.get_binding(GameKey::DisplayMap);
-                        }
-                        if options_outcome.language_changed {
-                            *pause_menu = mission_resources
-                                .menu
-                                .as_ref()
-                                .map(|resources| PauseMenu::new(resources, !game.is_sherwood));
-                        }
-                    } else {
-                        tracing::error!("Options: cannot open without an active player profile");
-                    }
-                }
-                if let Some(menu) = pause_menu.as_mut() {
-                    menu.reset_after_side_menu();
-                    let sw = renderer.screen_width() as i32;
-                    let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_window(event_pump, sw, sh);
-                }
+                let resources = required_menu_resources(menu_resources, "pause-menu Options");
+                let profile = host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("in-game Options requires an active profile: {error}")
+                    });
+                // Replay headers and multiplayer snapshots own deterministic
+                // simulation toggles. Seed those rows from the active mission
+                // rather than a potentially stale local profile.
+                let mut gameplay_config = profile.gameplay_config;
+                gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
+                gameplay_config.clean_hands_npc_kills_invalidate =
+                    engine.sim_config().clean_hands_npc_kills_invalidate;
+                gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
+                gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
+                gameplay_config.noise_distraction_feedback =
+                    engine.sim_config().noise_distraction_feedback;
+                gameplay_config.sherwood_trading = engine.sim_config().sherwood_trading;
+                gameplay_config.enable_timed_missions = engine.sim_config().enable_timed_missions;
+                gameplay_config.enable_dynamic_ambience =
+                    engine.sim_config().enable_dynamic_ambience;
+                *active_ui_task = Some(ActiveUiTask::Options(OptionsTaskState::new(
+                    event_pump,
+                    renderer,
+                    resources,
+                    profile.id,
+                    profile.graphic_config,
+                    gameplay_config,
+                    profile.multiplayer_config,
+                    profile.sound_config,
+                    host.frontend.key_config.clone(),
+                    host.frontend.custom_key_config.clone(),
+                    host.audio.sound.can_3d_sound(),
+                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                )));
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
                 let mode = if outcome == PauseMenuOutcome::OpenLoad {
@@ -1793,94 +1555,56 @@ pub(super) async fn handle_pause_menu_events(
                 } else {
                     SaveLoadMode::Save
                 };
-                let mut close_pause_menu = false;
                 let resources =
-                    required_menu_resources(&mission_resources.menu, "pause-menu save/load picker");
+                    required_menu_resources(menu_resources, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
-                let cursor = Some(default_modal_cursor(
-                    cursor_renderer,
-                    &mut mission_resources.cursor,
-                    renderer,
-                ));
-                let picker_outcome = ingame_menu::show_save_load(
+                let detailed_metadata = host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("pause-menu save/load requires an active profile: {error}")
+                    })
+                    .gameplay_config
+                    .detailed_save_metadata;
+                *active_ui_task = Some(ActiveUiTask::SaveLoad(SaveLoadTaskState::new(
                     event_pump,
                     renderer,
                     resources,
-                    cursor,
                     &mut callbacks.save_manager,
                     mission_id,
-                    Some(&assets.profile_manager),
+                    detailed_metadata,
                     mode,
-                    Some(&mut host.audio.sound),
-                    audio_backend
-                        .as_mut()
-                        .map(|b| b as &mut dyn crate::sound::AudioBackend),
-                    Some(sample_loader),
-                )
-                .await;
-                if let SaveLoadOutcome::Slot(slot) = picker_outcome {
-                    callbacks.pending = Some(match mode {
-                        SaveLoadMode::Save => SaveLoadRequest::Save {
-                            slot: Some(slot),
-                            mission_id,
-                        },
-                        SaveLoadMode::Load => SaveLoadRequest::Load {
-                            slot: Some(slot),
-                            mission_id,
-                            save: None,
-                        },
-                    });
-                    // When the picker returns a slot, close the
-                    // pause-menu modal so the outer game loop
-                    // processes the save/load and resumes.  Only
-                    // the cancel branch falls through to restore
-                    // the menu.
-                    close_pause_menu = true;
-                }
-                if close_pause_menu {
+                    host.transport.net.is_some(),
+                )));
+            }
+            PauseMenuOutcome::Restart => {
+                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                if host.transport.net.is_some() {
+                    assert_eq!(
+                        host.transport.local_seat,
+                        robin_engine::player_command::PlayerId::HOST,
+                        "multiplayer client activated disabled Restart button"
+                    );
+                    callbacks.pending = Some(SaveLoadRequest::LoadRestart);
                     *pause_menu = None;
                     *pause_closed_this_frame = true;
                     renderer.clear_frozen_scene();
                     threaded_input.reset_input_state();
                     input_translator.reset_state();
-                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                } else if let Some(menu) = pause_menu.as_mut() {
-                    menu.reset_after_side_menu();
-                    let sw = renderer.screen_width() as i32;
-                    let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_window(event_pump, sw, sh);
+                    return HandlerAction::Proceed;
                 }
-            }
-            PauseMenuOutcome::Restart => {
-                // Reload the same mission.
-                callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
+                // Single-player reloads the same mission directly.
                 return HandlerAction::Exit(GameCode::LevelRestart);
             }
             PauseMenuOutcome::Quit => {
                 // Show the "really quit?" Yes/No prompt.
-                let resources = required_menu_resources(
-                    &mission_resources.menu,
-                    "pause-menu Quit confirmation",
-                );
+                let resources =
+                    required_menu_resources(menu_resources, "pause-menu Quit confirmation");
                 let msg = resources.menu_text.get(resources::MT_MSG_REALLY_QUIT);
-                let cursor = Some(default_modal_cursor(
-                    cursor_renderer,
-                    &mut mission_resources.cursor,
-                    renderer,
-                ));
-                let confirmed =
-                    ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await;
-                if confirmed {
-                    callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                    return HandlerAction::Exit(GameCode::Quit);
-                }
-                if let Some(menu) = pause_menu.as_mut() {
-                    menu.reset_after_side_menu();
-                    let sw = renderer.screen_width() as i32;
-                    let sh = renderer.screen_height() as i32;
-                    menu.seed_mouse_from_window(event_pump, sw, sh);
-                }
+                *active_ui_task = Some(ActiveUiTask::Quit(ingame_menu::YesNoModalState::new(
+                    event_pump, renderer, resources, msg,
+                )));
             }
         }
     }
@@ -1986,6 +1710,34 @@ pub(super) fn choose_recording_place(
     0
 }
 
+fn defer_multiplayer_campaign_exit(
+    host: &Host,
+    callbacks: &mut RustCallbacks,
+    mission_id: u32,
+) -> bool {
+    let Some(net) = host.transport.net.as_ref() else {
+        return false;
+    };
+    assert_eq!(
+        host.transport.local_seat,
+        robin_engine::player_command::PlayerId::HOST,
+        "only the multiplayer host can launch the selected campaign mission"
+    );
+    assert!(
+        callbacks.pending_multiplayer_campaign_exit.is_none(),
+        "a Sherwood campaign transition is already deferred"
+    );
+    let origin_frame = net.frame_cursor.load(std::sync::atomic::Ordering::Relaxed);
+    callbacks.pending_multiplayer_campaign_exit =
+        Some(crate::main_entry::PendingMultiplayerCampaignExit {
+            not_before_frame: origin_frame
+                .saturating_add(robin_engine::multiplayer::INPUT_DELAY_FRAMES)
+                .saturating_add(1),
+            mission_id,
+        });
+    true
+}
+
 /// Handle the Sherwood-only HUD buttons
 /// (DisplayCampaignMap / GoToExit / StartMission / QuitMission).
 ///
@@ -1995,7 +1747,7 @@ pub(super) fn choose_recording_place(
 /// (StartMission), or `Proceed` to continue with the rest of the
 /// frame.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_sherwood_hud_buttons(
+pub(super) fn handle_sherwood_hud_buttons(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
@@ -2004,13 +1756,19 @@ pub(super) async fn handle_sherwood_hud_buttons(
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    cursor_res: &mut ResourceManager,
-    cursor_renderer: &mut CursorRenderer,
     menu_resources: &Option<IngameMenuResources>,
+    sherwood_flow: &mut Option<SherwoodCampaignFlow>,
     events: &[GameEvent],
     sherwood_layout: &SherwoodHudLayout,
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
+    if host.transport.net.is_some()
+        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    {
+        // Sherwood campaign state is host-authored. Clients keep simulating
+        // and receive the eventual authoritative mission transition.
+        return HandlerAction::Proceed;
+    }
     let engine = &mut manager.engine;
     sherwood_enable.sherwood_trading = game.is_sherwood
         && sherwood_trading_access(host, engine, &assets.profile_manager)
@@ -2108,30 +1866,27 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     // QuitMission in Sherwood mode prompts
                     // REALLY_RETURN_TO_MAP, then on Yes re-raises the
                     // campaign map without leaving Sherwood.
-                    let confirmed = if let Some(resources) = menu_resources.as_ref() {
+                    if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources
                             .menu_text
                             .get(resources::MT_MSG_REALLY_RETURN_TO_MAP);
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
-                    } else {
-                        true
-                    };
-                    if confirmed {
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            frame_cmds,
-                            assets,
-                            &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
-                        // See the `ShowCampaignMap` note elsewhere: only
-                        // the active flag gets set here; the displayed
-                        // flag flips when the overlay opens.
-                        game.show_campaign_map();
+                        *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation {
+                            state: ingame_menu::YesNoModalState::new(
+                                event_pump, renderer, resources, msg,
+                            ),
+                            action: SherwoodConfirmationAction::ReturnToMap,
+                        });
+                        return HandlerAction::Continue;
                     }
+                    dispatch_local_command(
+                        host,
+                        engine,
+                        frame_cmds,
+                        assets,
+                        &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
+                    );
+                    *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                    game.show_campaign_map();
                     return HandlerAction::Continue;
                 }
                 SherwoodButton::StartMission => {
@@ -2144,15 +1899,16 @@ pub(super) async fn handle_sherwood_hud_buttons(
                     } else {
                         resources::MT_MSG_REALLY_START_MISSION
                     };
-                    let confirmed = if let Some(resources) = menu_resources.as_ref() {
+                    if let Some(resources) = menu_resources.as_ref() {
                         let msg = resources.menu_text.get(prompt_id);
-                        let cursor =
-                            Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                        ingame_menu::show_yesno(event_pump, renderer, resources, cursor, &msg).await
-                    } else {
-                        true
-                    };
-                    if !confirmed {
+                        *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation {
+                            state: ingame_menu::YesNoModalState::new(
+                                event_pump, renderer, resources, msg,
+                            ),
+                            action: SherwoodConfirmationAction::StartMission {
+                                men_to_blazon: game.is_men_to_blazon_conversion(),
+                            },
+                        });
                         return HandlerAction::Continue;
                     }
                     if game.is_men_to_blazon_conversion() {
@@ -2208,6 +1964,9 @@ pub(super) async fn handle_sherwood_hud_buttons(
                         assets,
                         &PlayerCommand::CampaignHarvestProductionSectorState,
                     );
+                    if defer_multiplayer_campaign_exit(host, callbacks, mission_id) {
+                        return HandlerAction::Proceed;
+                    }
                     callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
                     return HandlerAction::Exit(GameCode::LevelInterrupted);
                 }
@@ -2252,10 +2011,11 @@ pub(super) async fn handle_sherwood_hud_buttons(
 /// escapes out of the map (emergency quit-game path).  Returns
 /// `Proceed` otherwise.
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn handle_sherwood_campaign_map_overlay(
+pub(super) fn handle_sherwood_campaign_map_overlay(
     game: &mut Game,
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
+    callbacks: &mut RustCallbacks,
     frame: &mut MissionFrame,
     assets: &engine_api::LevelAssets,
     event_pump: &mut GameWindow,
@@ -2264,16 +2024,214 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
     cursor_renderer: &mut CursorRenderer,
     text_res: &mut ResourceManager,
     sherwood_campaign_map: &mut CampaignMapState,
+    sherwood_flow: &mut Option<SherwoodCampaignFlow>,
     menu_resources: &mut Option<IngameMenuResources>,
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> Result<HandlerAction, String> {
     let engine = &mut manager.engine;
+    if host.transport.net.is_some()
+        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+        && (game.persistent.campaign_map_active || sherwood_flow.is_some())
+    {
+        // Mission-description ticks can spend blazons through synchronous
+        // external actions, so clients must not even advance their local
+        // campaign modal state. They keep simulating until the host publishes
+        // the exact campaign-exit snapshot.
+        game.display_message(
+            "The multiplayer host is choosing the next campaign action.".to_string(),
+            100,
+        );
+        return Ok(HandlerAction::Proceed);
+    }
+    if let Some(active_flow) = sherwood_flow.take() {
+        match active_flow {
+            SherwoodCampaignFlow::Map(state) => {
+                *sherwood_flow = Some(SherwoodCampaignFlow::Map(state));
+            }
+            SherwoodCampaignFlow::PseudoDebrief { mut state } => {
+                let outcome = if let Some(resources) = menu_resources.as_ref() {
+                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                    state.tick(event_pump, renderer, resources, cursor)
+                } else {
+                    tracing::warn!(
+                        "Pseudo-mission debriefing resources disappeared — acknowledging it"
+                    );
+                    Some(ingame_menu::DebriefingOutcome::Ok {
+                        text_remaining: String::new(),
+                    })
+                };
+                if outcome.is_none() {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief { state });
+                    return Ok(HandlerAction::Proceed);
+                }
+
+                let action = engine_api::ExternalAction::AcknowledgePseudoMissionDebrief;
+                let result = mission_description::admit_paused_campaign_action(
+                    engine,
+                    assets,
+                    action.clone(),
+                );
+                assert!(matches!(
+                    result,
+                    engine_api::ExternalActionResult::AcknowledgePseudoMissionDebrief
+                ));
+                frame.record_applied_external_action(action);
+                if engine.campaign().get_ares() == 0 {
+                    return Ok(HandlerAction::Exit(GameCode::Quit));
+                }
+                game.show_campaign_map();
+                return Ok(HandlerAction::Proceed);
+            }
+            SherwoodCampaignFlow::MissionDescription {
+                mission_index,
+                mut state,
+                mut admitted_actions,
+            } => {
+                let Some(resources) = menu_resources.as_mut() else {
+                    panic!("mission-description resources disappeared while the modal was open")
+                };
+                let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
+                let mut frame_actions = Vec::new();
+                let outcome = state.tick(
+                    event_pump,
+                    renderer,
+                    resources,
+                    cursor,
+                    engine,
+                    assets,
+                    &mut frame_actions,
+                    &assets.profile_manager,
+                );
+                admitted_actions.extend(frame_actions);
+                let Some((choice, men_to_blazon)) = outcome else {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
+                        mission_index,
+                        state,
+                        admitted_actions,
+                    });
+                    return Ok(HandlerAction::Proceed);
+                };
+                for action in admitted_actions {
+                    frame.record_applied_external_action(action);
+                }
+                match choice {
+                    MissionChoice::StartMission => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignSelectNextMission {
+                                mission_idx: Some(mission_index),
+                            },
+                        );
+                        game.set_men_to_blazon_conversion(men_to_blazon);
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
+                        );
+                        *sherwood_enable = SherwoodButtonEnable::post_commit();
+                    }
+                    MissionChoice::ShowPendingMissions => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
+                        );
+                        game.show_campaign_map();
+                    }
+                    MissionChoice::None => game.show_campaign_map(),
+                }
+                game.persistent.campaign_map_displayed = false;
+                return Ok(HandlerAction::Proceed);
+            }
+            SherwoodCampaignFlow::Confirmation { mut state, action } => {
+                let resources =
+                    required_menu_resources(menu_resources, "Sherwood mission confirmation");
+                let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
+                let Some(confirmed) = state.tick(event_pump, renderer, resources, Some(&cursor))
+                else {
+                    *sherwood_flow = Some(SherwoodCampaignFlow::Confirmation { state, action });
+                    return Ok(HandlerAction::Proceed);
+                };
+                if !confirmed {
+                    return Ok(HandlerAction::Proceed);
+                }
+                match action {
+                    SherwoodConfirmationAction::ReturnToMap => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
+                        );
+                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                        game.show_campaign_map();
+                        return Ok(HandlerAction::Proceed);
+                    }
+                    SherwoodConfirmationAction::StartMission {
+                        men_to_blazon: true,
+                    } => {
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::UnselectAllPcs,
+                        );
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignConvertSelectedPeasantsToBlazons,
+                        );
+                        game.persistent.campaign_map_active = true;
+                        game.persistent.campaign_map_displayed = true;
+                        game.set_men_to_blazon_conversion(false);
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::SetMenToBlazonConversionMode { on: false },
+                        );
+                        *sherwood_enable = SherwoodButtonEnable::pre_commit();
+                        return Ok(HandlerAction::Proceed);
+                    }
+                    SherwoodConfirmationAction::StartMission {
+                        men_to_blazon: false,
+                    } => {
+                        let mission_id =
+                            current_mission_id(engine.campaign(), &assets.profile_manager);
+                        dispatch_local_command(
+                            host,
+                            engine,
+                            &mut frame.commands,
+                            assets,
+                            &PlayerCommand::CampaignHarvestProductionSectorState,
+                        );
+                        if defer_multiplayer_campaign_exit(host, callbacks, mission_id) {
+                            return Ok(HandlerAction::Proceed);
+                        }
+                        callbacks.pending = Some(SaveLoadRequest::Sherwood { mission_id });
+                        return Ok(HandlerAction::Exit(GameCode::LevelInterrupted));
+                    }
+                }
+            }
+        }
+    }
     // ── Sherwood campaign-map overlay ──
     // Open the campaign-map overlay whenever `campaign_map_active`
     // is set (player entered Sherwood, or the DisplayCampaignMap
-    // widget fired).  It's a blocking modal — `show_campaign_map`
-    // polls events inline until the player selects a mission or
-    // dismisses the map.
+    // widget fired). The persistent modal below advances exactly one
+    // presentation frame per outer mission iteration.
     if game.persistent.campaign_map_active {
         // The `campaign_map_displayed` flag flips here, once the
         // overlay is actually about to open — NOT
@@ -2281,56 +2239,66 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
         // The split keeps the save/load invariant: a save taken in the
         // "requested but not yet opened" window reloads without the
         // overlay flagged as displayed.
-        game.mark_campaign_map_displayed();
-
-        // Clear any prior `ReshowCampaignMap` request so a stale flag
-        // from a previous frame doesn't trick us into looping forever.
-        game.take_campaign_map_redisplay();
-
         // Pseudo-mission debriefing is triggered from inside the map
         // modal after its 500 ms timer.
         let pseudo_status = engine.campaign().get_last_pseudo_mission_status();
         let pseudo_debrief_pending = pseudo_status != engine_mission::MissionStatus::Available;
-        let campaign_profile = host
-            .application_context
-            .active_profile_snapshot()
-            .unwrap_or_else(|error| {
-                panic!("campaign presentation requires an active profile: {error}")
-            });
-        let campaign_view_config = campaign_profile.gameplay_config;
-
-        let campaign = engine.campaign();
-        sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
-        // `menu_resources` is `None` only if `DEFAULT.RES` failed to
-        // load — rare dev-only case.  Default `MenuText` returns an
-        // empty string for every id, so the status bar just shows
-        // the raw numbers.
-        let default_menu_text = resources::MenuText::default();
-        let menu_text: &dyn engine_sherwood_stat::MenuTextLookup = match menu_resources.as_ref() {
-            Some(r) => &r.menu_text,
-            None => &default_menu_text,
-        };
-        sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
+        if sherwood_flow.is_none() {
+            let campaign_profile = host
+                .application_context
+                .active_profile_snapshot()
+                .unwrap_or_else(|error| {
+                    panic!("campaign presentation requires an active profile: {error}")
+                });
+            let campaign_view_config = campaign_profile.gameplay_config;
+            game.mark_campaign_map_displayed();
+            game.take_campaign_map_redisplay();
+            let campaign = engine.campaign();
+            sherwood_campaign_map.update_all(campaign, &assets.profile_manager);
+            let default_menu_text = resources::MenuText::default();
+            let menu_text: &dyn engine_sherwood_stat::MenuTextLookup = match menu_resources.as_ref()
+            {
+                Some(resources) => &resources.menu_text,
+                None => &default_menu_text,
+            };
+            sherwood_campaign_map.update_war_crime_text(campaign, menu_text);
+            *sherwood_flow = Some(SherwoodCampaignFlow::Map(
+                campaign_map::CampaignMapModalState::new(
+                    &host.application_context,
+                    renderer,
+                    campaign,
+                    &assets.profile_manager,
+                    sherwood_campaign_map,
+                    menu_resources.as_mut(),
+                    text_res,
+                    host.shipping.as_deref(),
+                    pseudo_debrief_pending,
+                    campaign_view_config.campaign_presentation,
+                    campaign_view_config.show_achievement_badges,
+                    &campaign_profile.campaign_history,
+                ),
+            ));
+        }
 
         let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-        let choice = campaign_map::show_campaign_map(
-            &host.application_context,
-            event_pump,
-            renderer,
-            game,
-            campaign,
-            &assets.profile_manager,
-            sherwood_campaign_map,
-            menu_resources.as_mut(),
-            text_res,
-            host.shipping.as_deref(),
-            cursor,
-            pseudo_debrief_pending,
-            campaign_view_config.campaign_presentation,
-            campaign_view_config.show_achievement_badges,
-            &campaign_profile.campaign_history,
-        )
-        .await?;
+        let choice = match sherwood_flow.as_mut() {
+            Some(SherwoodCampaignFlow::Map(state)) => state.tick(
+                event_pump,
+                renderer,
+                game,
+                engine.campaign(),
+                &assets.profile_manager,
+                sherwood_campaign_map,
+                menu_resources.as_ref(),
+                cursor,
+            ),
+            Some(_) => unreachable!("non-map Sherwood flow reached campaign-map driver"),
+            None => unreachable!("campaign-map state was not initialized"),
+        };
+        let Some(choice) = choice else {
+            return Ok(HandlerAction::Proceed);
+        };
+        *sherwood_flow = None;
 
         // Handle the redisplay re-entry path before clearing
         // `campaign_map_active`.  `show_campaign_map` returns
@@ -2420,12 +2388,12 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                         };
                         resources.menu_text.get(id)
                     });
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let _outcome = ingame_menu::show_debriefing(
-                        event_pump, renderer, resources, cursor, &text, None, 0, won, false, None,
-                        false, false,
-                    )
-                    .await;
+                    *sherwood_flow = Some(SherwoodCampaignFlow::PseudoDebrief {
+                        state: ingame_menu::DebriefingModalState::new(
+                            resources, text, None, 0, won, false, None, false, false,
+                        ),
+                    });
+                    return Ok(HandlerAction::Proceed);
                 } else {
                     tracing::warn!(
                         "Pseudo-mission debriefing: menu resources unavailable — dropping dialog"
@@ -2457,7 +2425,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                 // `ShowPendingMissions` the accessible list is rebuilt
                 // from the pending list; otherwise the campaign map
                 // is re-shown.
-                let desc_outcome = if let Some(resources) = menu_resources.as_mut() {
+                if let Some(resources) = menu_resources.as_mut() {
                     let mission_descriptors = {
                         let campaign = engine.campaign();
                         let mission = &campaign.missions[idx];
@@ -2471,100 +2439,37 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
                                 assets_res_descr::load(&path).ok()
                             })
                     };
-                    let cursor = Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
-                    let mut admitted_campaign_actions = Vec::new();
-                    let (choice, men_to_blazon) = mission_description::show_mission_description(
-                        event_pump,
-                        renderer,
-                        resources,
-                        cursor,
-                        idx,
-                        engine,
-                        assets,
-                        &mut admitted_campaign_actions,
-                        &assets.profile_manager,
-                        mission_descriptors.as_ref(),
-                        text_res,
-                    )
-                    .await;
-                    for action in admitted_campaign_actions {
-                        frame.record_applied_external_action(action);
-                    }
-                    Some((choice, men_to_blazon))
-                } else {
-                    tracing::warn!(
-                        "menu_resources unavailable — skipping mission description dialog \
-                         and auto-committing mission {idx}"
-                    );
-                    None
-                };
-
-                match desc_outcome {
-                    // Menu resources missing (dev path without
-                    // DEFAULT.RES) — preserve the old direct-commit
-                    // behaviour so the game still progresses.
-                    None => {
-                        dispatch_local_command(
-                            host,
+                    *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
+                        mission_index: idx,
+                        state: mission_description::MissionDescriptionModalState::new(
+                            event_pump,
+                            renderer,
+                            resources,
+                            idx,
                             engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::CampaignSelectNextMission {
-                                mission_idx: Some(idx),
-                            },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::post_commit();
-                    }
-                    Some((MissionChoice::StartMission, men_to_blazon)) => {
-                        // Set the next mission + toggle the
-                        // men-to-blazon conversion flag, then close.
-                        // The HUD commit path (StartMission button)
-                        // runs afterwards.
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::CampaignSelectNextMission {
-                                mission_idx: Some(idx),
-                            },
-                        );
-                        game.set_men_to_blazon_conversion(men_to_blazon);
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
-                        );
-                        *sherwood_enable = SherwoodButtonEnable::post_commit();
-                    }
-                    Some((MissionChoice::ShowPendingMissions, _)) => {
-                        // Swap pending missions into the accessible
-                        // list and re-open the campaign map next
-                        // frame.
-                        dispatch_local_command(
-                            host,
-                            engine,
-                            &mut frame.commands,
-                            assets,
-                            &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
-                        );
-                        // See the `ShowCampaignMap` note elsewhere: only
-                        // the active flag gets set here; the displayed
-                        // flag flips when the overlay opens.
-                        game.show_campaign_map();
-                    }
-                    Some((MissionChoice::None, _)) => {
-                        // Cancel from the description dialog —
-                        // restore the campaign-map overlay so the
-                        // player can pick a different mission.
-                        // Only the active flag is set here; the
-                        // displayed flag flips when the overlay
-                        // opens.
-                        game.show_campaign_map();
-                    }
+                            &assets.profile_manager,
+                            mission_descriptors.as_ref(),
+                            text_res,
+                        ),
+                        admitted_actions: Vec::new(),
+                    });
+                    return Ok(HandlerAction::Proceed);
                 }
+
+                tracing::warn!(
+                    "menu_resources unavailable — skipping mission description dialog \
+                     and auto-committing mission {idx}"
+                );
+                dispatch_local_command(
+                    host,
+                    engine,
+                    &mut frame.commands,
+                    assets,
+                    &PlayerCommand::CampaignSelectNextMission {
+                        mission_idx: Some(idx),
+                    },
+                );
+                *sherwood_enable = SherwoodButtonEnable::post_commit();
             }
             CampaignMapChoice::Quit => {
                 // Escape / window close from the overlay with no

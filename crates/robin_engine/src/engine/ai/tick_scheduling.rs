@@ -414,7 +414,8 @@ impl EngineInner {
         // torn down before the engine-side ENTER_SWORDFIGHT sequence
         // runs.
         if let Some(target_handle) = effects.stop_target {
-            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI stop_target");
+            let target_id =
+                self.expect_human_id_for_ai_handle(target_handle.get(), "AI stop_target");
             // Original BeginSwordfight queries these members at this exact
             // point in the live entity walk. Do not use the AI tick snapshot:
             // an earlier-created target may have completed a movement-start
@@ -519,8 +520,10 @@ impl EngineInner {
                     self.launch_element(elem);
                 }
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
-                    let target_id = self
-                        .expect_human_id_for_ai_handle(target_handle, "AI enter_swordfight target");
+                    let target_id = self.expect_human_id_for_ai_handle(
+                        target_handle.get(),
+                        "AI enter_swordfight target",
+                    );
                     let mut elem = crate::sequence::SequenceElement::new_generic(
                         1,
                         crate::element::Command::EnterSwordfight,
@@ -554,14 +557,14 @@ impl EngineInner {
                 }
                 crate::ai::EnterSwordfightRequest::Direct(target_handle) => {
                     let target_id = self.expect_human_id_for_ai_handle(
-                        target_handle,
+                        target_handle.get(),
                         "AI direct swordfight target",
                     );
                     self.direct_enter_swordfight(sim, assets, npc_id, target_id);
                 }
                 crate::ai::EnterSwordfightRequest::Rebalance(target_handle) => {
                     let target_id = self.expect_human_id_for_ai_handle(
-                        target_handle,
+                        target_handle.get(),
                         "AI reconsider swordfight target",
                     );
                     if self.direct_enter_swordfight(sim, assets, npc_id, target_id) {
@@ -572,7 +575,7 @@ impl EngineInner {
                             .enemy_ai_mut()
                             .expect("successful AI swordfight rebalance owner lost enemy AI")
                             .base
-                            .primary_target = target_handle;
+                            .primary_target = Some(target_handle);
                     }
                 }
             }
@@ -581,7 +584,7 @@ impl EngineInner {
         // Process set_as_new_principal_opponent.
         if let Some(opponent_handle) = effects.set_principal {
             let opponent_id =
-                self.expect_human_id_for_ai_handle(opponent_handle, "AI principal opponent");
+                self.expect_human_id_for_ai_handle(opponent_handle.get(), "AI principal opponent");
             self.set_as_new_principal_opponent(assets, npc_id, opponent_id);
         }
 
@@ -620,20 +623,21 @@ impl EngineInner {
                 )
             {
                 eprintln!(
-                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={} new_target={}]",
+                    "[PRIMARY_SWAP frame={} owner={} phase=friend_swap_apply friend={:?} old_target={:?} new_target={}]",
                     self.control.frame_counter,
                     npc_id.index(),
                     friend_id,
                     friend_ai.primary_target,
-                    new_target,
+                    new_target.get(),
                 );
             }
-            friend_ai.primary_target = new_target;
+            friend_ai.primary_target = Some(new_target);
         }
 
         // Process pending bow shot.
         if let Some(target_handle) = effects.shoot_target {
-            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI bow target");
+            let target_id =
+                self.expect_human_id_for_ai_handle(target_handle.get(), "AI bow target");
             self.shoot_bow_at(assets, npc_id, target_id);
         }
 
@@ -653,7 +657,7 @@ impl EngineInner {
             // `RHElement*`. Object-handling AI legitimately focuses bonuses
             // such as ale bottles, so preserve the element kind while still
             // treating a missing raw slot as corrupted state.
-            let target_id = self.expect_entity_id_for_index(target_handle, "AI focus target");
+            let target_id = self.expect_entity_id_for_index(target_handle.get(), "AI focus target");
             let npc = self
                 .world
                 .entities
@@ -703,7 +707,7 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!("pending-drain owner {} lost AI after focus", npc_id.index())
                 });
-            ai.last_synced_focus_target = (ai.primary_target != 0).then_some(ai.primary_target);
+            ai.last_synced_focus_target = ai.primary_target;
         }
 
         // Process pending SlowlyOpenEyes — `slowly_open_eyes` sets
@@ -883,8 +887,10 @@ impl EngineInner {
             .map(|ai| std::mem::take(&mut ai.outbox.actor.set_reported_to_officer))
             .unwrap_or_else(|| panic!("report-update owner {} lost its AI", npc_id.index()));
         for (target_handle, value) in reported_updates {
-            let target_id =
-                self.expect_human_id_for_ai_handle(target_handle, "set-reported-to-officer target");
+            let target_id = self.expect_human_id_for_ai_handle(
+                target_handle.get(),
+                "set-reported-to-officer target",
+            );
             self.world
                 .entities
                 .get_mut(target_id)
@@ -993,7 +999,7 @@ impl EngineInner {
                 .unwrap_or(crate::profiles::ProfileRank::None);
             let charly_handle = match target_charly {
                 crate::ai::CharlySeekerTarget::SelfNpc => npc_id.index(),
-                crate::ai::CharlySeekerTarget::Npc(handle) => handle,
+                crate::ai::CharlySeekerTarget::Npc(handle) => handle.get(),
             };
             if self
                 .world
@@ -1013,7 +1019,8 @@ impl EngineInner {
                     // Rank/antagonist guard:
                     //   `rank == Officer || other != antagonist`.
                     if my_rank != crate::profiles::ProfileRank::Officer
-                        && other_id.index() == my_antagonist
+                        && my_antagonist
+                            .is_some_and(|antagonist| other_id.index() == antagonist.get())
                     {
                         continue;
                     }
@@ -1123,7 +1130,8 @@ impl EngineInner {
         // other_actor)` call as used by the enemy beggar-identify
         // cascade.
         for (target_handle, cmd) in effects.launch_on_target {
-            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI command target");
+            let target_id =
+                self.expect_human_id_for_ai_handle(target_handle.get(), "AI command target");
             let elem = crate::sequence::SequenceElement::new(1, cmd, Some(target_id));
             self.launch_element(elem);
         }
@@ -1134,7 +1142,8 @@ impl EngineInner {
         // target AI's ordinary owner-work path so all Say gates, sound
         // requests, and automatic forbids remain authoritative.
         for (target_handle, remark) in effects.say_on_target {
-            let target_id = self.expect_human_id_for_ai_handle(target_handle, "AI speech target");
+            let target_id =
+                self.expect_human_id_for_ai_handle(target_handle.get(), "AI speech target");
             let target = self.world.entities.get_mut(target_id).unwrap_or_else(|| {
                 panic!(
                     "AI speech target {} disappeared before Say",

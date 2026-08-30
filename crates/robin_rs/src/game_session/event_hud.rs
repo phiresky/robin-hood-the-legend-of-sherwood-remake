@@ -189,7 +189,7 @@ fn apply_frame_resizes(
 
 /// Poll process events and immediately dispatch HUD controls in the historical
 /// order. General keyboard/mouse actions are returned for the next phase.
-pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) -> EventHudOutcome {
+pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> EventHudOutcome {
     let EventHudContext {
         host,
         manager,
@@ -212,9 +212,13 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
 
     // Active graphical modals own the raw event queue. Do not drain it from
     // underneath them or allow global gameplay shortcuts to fire.
-    let modal_input_active = ui.active_modal.is_some() || modal_state_pending(host);
+    let scripted_modal_input_active = ui.active_modal.is_some() || modal_state_pending(host);
+    let modal_input_active = scripted_modal_input_active || ui.active_ui_task.is_some();
     let mut pause_closed_this_frame = false;
-    if modal_input_active && ui.close_pause(input, presentation) {
+    if scripted_modal_input_active && ui.close_pause(input, presentation) {
+        if let Some(mut task) = ui.active_ui_task.take() {
+            task.cleanup();
+        }
         pause_closed_this_frame = true;
         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
     }
@@ -265,15 +269,12 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
         callbacks,
         window,
         &mut presentation.renderer,
-        &mut resources.cursor,
-        &mut presentation.sprites.cursor_renderer,
         &resources.menu,
+        &mut ui.sherwood_campaign_flow,
         &events,
         &hud.sherwood_layout,
         &mut hud.sherwood_enable,
-    )
-    .await
-    {
+    ) {
         HandlerAction::Proceed => {}
         control => return EventHudOutcome::Control(control),
     }
@@ -381,7 +382,13 @@ pub(super) async fn collect_event_and_hud_input(context: EventHudContext<'_>) ->
         step_forward_repeat_at_ms,
         step_back_repeat_at_ms,
     );
-    if let Some(paused) = step_shortcuts.manual_pause {
+    // Keyboard stepping is a local debugger affordance. In multiplayer the
+    // authoritative clock must never be stopped by one participant merely
+    // pressing Period/Comma/Enter; synchronized host automation is routed
+    // through the HTTP step policy instead.
+    if host.transport.net.is_none()
+        && let Some(paused) = step_shortcuts.manual_pause
+    {
         *manual_pause = paused;
     }
 

@@ -3205,12 +3205,11 @@ fn trajectory_into_material_test_wall(
     // registered the way level loading registers real obstacles.
     grid.add_obstacle_index(
         crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
-        obstacles[0].layer,
+        obstacles[0].projection_area_ref().map(|area| area.layer),
         &obstacles[0].box_ground,
     );
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         water_zones: Some(water_zones),
     };
@@ -3269,7 +3268,7 @@ fn raised_dry_terminal_obstacle_ignores_projected_global_hole() {
     let (_, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
         trajectory_into_material_test_wall(vec![], &water_zones);
 
-    assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    assert_eq!(terminal_obstacle.map(|index| index.get()), Some(0));
     assert!(terminal_impact);
     assert!(
         !terminal_lands_in_hole,
@@ -3300,7 +3299,7 @@ fn terminal_obstacle_hole_extends_through_exact_local_polygon() {
     let (trajectory, terminal_obstacle, terminal_impact, terminal_lands_in_hole) =
         trajectory_into_material_test_wall(vec![local_hole.clone()], &water_zones);
 
-    assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    assert_eq!(terminal_obstacle.map(|index| index.get()), Some(0));
     assert!(terminal_impact);
     assert!(terminal_lands_in_hole);
     assert!(
@@ -3355,12 +3354,11 @@ fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
     // be registered there the way level loading registers real obstacles.
     grid.add_obstacle_index(
         crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
-        obstacles[0].layer,
+        obstacles[0].projection_area_ref().map(|area| area.layer),
         &obstacles[0].box_ground,
     );
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         water_zones: None,
     };
@@ -3382,7 +3380,7 @@ fn arrow_trajectory_retains_exact_terminal_obstacle_identity() {
     );
 
     assert!(!trajectory.is_empty());
-    assert_eq!(terminal_obstacle.map(u16::from), Some(0));
+    assert_eq!(terminal_obstacle.map(|index| index.get()), Some(0));
 }
 
 #[test]
@@ -3396,7 +3394,6 @@ fn arrow_trajectory_reports_exact_ground_impact_without_an_obstacle() {
     }
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: None,
     };
@@ -3451,7 +3448,6 @@ fn bare_ground_hole_is_propagated_from_terminal_trajectory_impact() {
     };
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: Some(&water_zones),
     };
@@ -3512,7 +3508,6 @@ fn bare_ground_water_is_retained_for_arrow_terminal_lifecycle() {
     };
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: Some(&water_zones),
     };
@@ -3558,7 +3553,6 @@ fn falling_arrow_trajectory_transfers_terminal_water_to_dive_state() {
     };
     let check = TrajectoryObstacleCheck {
         fast_find_grid: &grid,
-        layer: 0,
         sight_obstacles: crate::sight_obstacle::ObstacleList::empty(),
         water_zones: Some(&water_zones),
     };
@@ -4175,7 +4169,7 @@ fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
         assert_eq!(position.y.to_bits(), endpoint.y.to_bits());
         assert_eq!(position.z.to_bits(), 0.001_f32.to_bits());
         assert_eq!(arrow.element.sprite.position_iface.old_position(), endpoint);
-        assert_eq!(arrow.element.layer(), u16::MAX);
+        assert_eq!(arrow.element.optional_layer(), None);
         assert_eq!(arrow.element.sector(), None);
         assert!(!arrow.projectile.flying);
         assert_eq!(arrow.projectile.trajectory_frame_count, u16::MAX);
@@ -4510,7 +4504,16 @@ fn purse_and_coin_constructors_defer_their_virtual_primer_to_engine_owner() {
     let end = WorldPoint3D::new(200.0, 0.0, 0.0);
     for entity in [
         spawn_purse(thrower, start, end, 0, None),
-        spawn_coin(None, start, end, 0, 0, None, APEX_BEGGAR_COIN, None),
+        spawn_coin(
+            None,
+            start,
+            end,
+            crate::position_interface::Layer::new(0),
+            None,
+            None,
+            APEX_BEGGAR_COIN,
+            None,
+        ),
     ] {
         let Entity::Projectile(projectile) = entity else {
             unreachable!()

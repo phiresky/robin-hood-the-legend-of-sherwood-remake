@@ -632,13 +632,18 @@ fn view_cone_polys_for_render(
         };
         let mut slice_params = params.clone();
         slice_params.radius = radius;
+        let projection_attachment = projection_area
+            .projection_area_ref()
+            .expect("projection-area obstacle is missing its exact topology attachment");
         let occluding_projection_areas: Vec<&robin_engine::sight_obstacle::SightObstacle> =
             active_obstacles
                 .iter()
                 .filter_map(|(idx, o)| {
                     (*idx != projection_idx
                         && o.is_projection_area()
-                        && o.layer >= projection_area.layer
+                        && o.projection_area_ref().is_some_and(|attachment| {
+                            attachment.layer >= projection_attachment.layer
+                        })
                         && o.box_projection
                             .intersects_bbox(&projection_area.box_projection))
                     .then_some(*o)
@@ -1494,11 +1499,14 @@ fn transition_crenel_climb_up_mask_position(
     // offset lines up with frame 1, but the flying-human mask decision must
     // already use the far-side projection or the wall projectile masks erase
     // the whole frame.
+    let door_sector_index = door.sector_out_index?;
     let mut best_z: Option<f32> = None;
     for obs in engine.sight_obstacles(assets).iter() {
-        if !obs.is_projection_area()
-            || obs.layer != door.layer_out
-            || obs.sector != u16::from(door.sector_out)
+        let Some(attachment) = obs.projection_area_ref() else {
+            continue;
+        };
+        if attachment.layer.get() != door.layer_out
+            || attachment.sector != door_sector_index
             || !obs.contains_point_projection(point_out)
         {
             continue;

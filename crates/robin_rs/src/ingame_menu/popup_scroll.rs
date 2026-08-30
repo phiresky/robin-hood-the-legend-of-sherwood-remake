@@ -207,6 +207,7 @@ pub struct PopupScrollModalState {
     /// briefing OK button on the web backend, where per-frame voice
     /// starts don't phase-stack).
     noise_tracker: widget_bridge::NoisyTracker,
+    awaiting_authority: bool,
 }
 
 impl PopupScrollModalState {
@@ -279,6 +280,7 @@ impl PopupScrollModalState {
             page_body: body,
             text_remaining: String::new(),
             noise_tracker: widget_bridge::NoisyTracker::new(),
+            awaiting_authority: false,
         };
         state.rebuild_page_widgets();
         state
@@ -306,6 +308,9 @@ impl PopupScrollModalState {
         self.transform = transform;
         for event in events {
             self.input_state.update_from_event(&event, self.transform);
+            if self.awaiting_authority {
+                continue;
+            }
             match event {
                 GameEvent::Quit
                 | GameEvent::KeyDown {
@@ -325,7 +330,11 @@ impl PopupScrollModalState {
         }
 
         let widget_input = self.input_state.as_widget_input();
-        let events = self.frame.process_input(&widget_input);
+        let events = if self.awaiting_authority {
+            Vec::new()
+        } else {
+            self.frame.process_input(&widget_input)
+        };
         self.input_state.end_frame();
         if let Some(backend) = audio_backend {
             // Tracked variant: buttons re-emit WidgetFocused every hovered
@@ -357,7 +366,7 @@ impl PopupScrollModalState {
         renderer.present();
 
         if let Some(result) = remote_result {
-            return Some(self.finish(result, true, modal_net));
+            return Some(self.finish(result));
         }
         if dismissed {
             if !self.text_remaining.is_empty() && self.text_remaining != self.page_body {
@@ -365,7 +374,14 @@ impl PopupScrollModalState {
                 self.rebuild_page_widgets();
                 return None;
             }
-            return Some(self.finish(DialogResult::Completed, false, modal_net));
+            let result = DialogResult::Completed;
+            if let Some(net) = modal_net
+                && !net.publish(result)
+            {
+                self.awaiting_authority = true;
+                return None;
+            }
+            return Some(self.finish(result));
         }
         None
     }
@@ -406,16 +422,8 @@ impl PopupScrollModalState {
         self.text_remaining.clear();
     }
 
-    fn finish(
-        &self,
-        result: DialogResult,
-        remote: bool,
-        modal_net: Option<&super::ModalNet<'_>>,
-    ) -> DialogResult {
+    fn finish(&self, result: DialogResult) -> DialogResult {
         LAST_FRAME.store(self.universal_frame, Ordering::Relaxed);
-        if !remote && let Some(net) = modal_net {
-            net.publish(result);
-        }
         result
     }
 

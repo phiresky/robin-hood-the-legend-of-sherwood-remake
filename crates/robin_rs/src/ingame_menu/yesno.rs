@@ -194,17 +194,42 @@ impl YesNoModalState {
 
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         self.transform = transform;
+        self.handle_events(&events);
+        self.render_overlay(renderer, resources, cursor);
+        renderer.present();
+        self.result()
+    }
+
+    /// Advance the dialog from an event batch without drawing or presenting.
+    ///
+    /// Nested side screens use this split API so they can draw their picker
+    /// first and then place the confirmation over it in the same frame.
+    pub fn handle_events(&mut self, events: &[GameEvent]) -> Option<bool> {
+        if self.choice.is_some() {
+            return self.result();
+        }
         for event in events {
-            self.input_state.update_from_event(&event, self.transform);
+            self.input_state.update_from_event(event, self.transform);
             if matches!(event, GameEvent::Quit) {
                 self.resolve(YesNoChoice::No);
             }
         }
-
         self.process_widget_input();
+        self.result()
+    }
 
+    /// Draw the dialog over the caller's current framebuffer without
+    /// clearing or presenting it.
+    pub fn render_overlay(
+        &mut self,
+        renderer: &mut Renderer,
+        resources: &IngameMenuResources,
+        cursor: Option<&ModalCursor<'_>>,
+    ) {
         self.render(renderer, resources, cursor);
-        renderer.present();
+    }
+
+    pub fn result(&self) -> Option<bool> {
         self.choice.map(|choice| choice == YesNoChoice::Yes)
     }
 

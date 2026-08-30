@@ -88,7 +88,7 @@ pub(super) struct PcSnapshot {
     pub(super) melee_target: Option<EntityId>,
     /// Active swordfight principal opponent, i.e. first entry of the
     /// human opponent list.
-    pub(super) principal_opponent: u32,
+    pub(super) principal_opponent: Option<crate::ai::AiEntityHandle>,
     /// Active swordfight opponents in the same order as the live human
     /// opponent list.
     pub(super) opponent_handles: Vec<u32>,
@@ -166,10 +166,10 @@ pub(super) struct SoldierSnapshot {
     pub(super) rank: crate::profiles::ProfileRank,
     pub(super) company_number: u16,
     pub(super) pride: u16,
-    pub(super) primary_target: u32,
+    pub(super) primary_target: Option<crate::ai::AiEntityHandle>,
     /// Active swordfight principal opponent, i.e. first entry of the
     /// human opponent list.
-    pub(super) principal_opponent: u32,
+    pub(super) principal_opponent: Option<crate::ai::AiEntityHandle>,
     /// Active swordfight opponents in the same order as the live human
     /// opponent list.
     pub(super) opponent_handles: Vec<u32>,
@@ -201,8 +201,8 @@ pub(super) struct SoldierSnapshot {
     pub(super) has_formation: bool,
     pub(super) is_shield_bearer: bool,
     pub(super) is_archer_unit: bool,
-    pub(super) left_combat_neighbour: u32,
-    pub(super) right_combat_neighbour: u32,
+    pub(super) left_combat_neighbour: Option<crate::ai::AiEntityHandle>,
+    pub(super) right_combat_neighbour: Option<crate::ai::AiEntityHandle>,
     pub(super) in_recovery: bool,
     /// HtH weapon profile id, used to clone the full profile into
     /// a FighterSnapshot for damage estimation.
@@ -215,12 +215,12 @@ pub(super) struct SoldierSnapshot {
     /// `propose_good_combat_position` friend scoring.
     pub(super) seek_position: MapPoint,
     /// Handle of the shield bearer this archer is hiding behind (0 = none).
-    pub(super) shield_bearer_before_me: u32,
+    pub(super) shield_bearer_before_me: Option<crate::ai::AiEntityHandle>,
     /// Handle of the archer hiding behind this shield bearer (0 = none).
     /// Derived from a reverse scan of `shield_bearer_before_me` links
     /// after all snapshots are built so the filter in
     /// `get_nearest_free_shield_bearer` is always consistent.
-    pub(super) archer_behind_me: u32,
+    pub(super) archer_behind_me: Option<crate::ai::AiEntityHandle>,
     /// Shield bearer facing direction (stored when running to phalanx).
     pub(super) shield_bearer_direction: u16,
     /// Bow max range from the bow profile.
@@ -235,7 +235,7 @@ pub(super) struct SoldierSnapshot {
     /// Seen bodies from the soldier's reconnaissance report.
     pub(super) report_seen_bodies: Vec<u32>,
     /// Charly handle from the soldier's reconnaissance report.
-    pub(super) report_charly: u32,
+    pub(super) report_charly: Option<crate::ai::AiEntityHandle>,
     /// The soldier's alert_soldiers_point.
     pub(super) alert_soldiers_point: crate::ai::Position,
     /// Ground-plane elevation (`element.position.z`).
@@ -245,9 +245,9 @@ pub(super) struct SoldierSnapshot {
     /// Soldier's patrol chief, if any.
     pub(super) patrol_chief: Option<EntityId>,
     /// Soldier's current antagonist handle.
-    pub(super) antagonist: u32,
+    pub(super) antagonist: Option<crate::ai::AiEntityHandle>,
     /// Body currently selected by the soldier's AI brain.
-    pub(super) detected_body: u32,
+    pub(super) detected_body: Option<crate::ai::AiEntityHandle>,
     /// Current blood-alcohol debility used by alert eligibility.
     pub(super) blood_alcohol: u8,
     /// Soldier profile duty flag — part of the
@@ -663,7 +663,11 @@ impl EngineInner {
                 eye_z,
                 ground_z: pc_ground_z,
                 melee_target: pc.pc.melee_target,
-                principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                principal_opponent: pc
+                    .human
+                    .opponents
+                    .first()
+                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 opponent_handles: pc.human.opponents.iter().map(|id| id.index()).collect(),
                 unconscious: is_unconscious,
                 carried: is_carried,
@@ -701,9 +705,9 @@ impl EngineInner {
         let mut primary_target_multiplicity = std::collections::BTreeMap::new();
         for (_, soldier) in self.world.entities.soldiers() {
             if let Some(ai) = soldier.npc.ai_brain.base()
-                && ai.primary_target != 0
+                && let Some(primary_target) = ai.primary_target
                 && ai.current_substate.is_any_swordfight()
-                && let Some(target_id) = self.world.entities.id_at_legacy_slot(ai.primary_target)
+                && let Some(target_id) = self.world.entities.id_at_legacy_slot(primary_target.get())
             {
                 let count = primary_target_multiplicity
                     .entry(target_id)
@@ -725,13 +729,13 @@ impl EngineInner {
             std::collections::HashMap::with_capacity(self.world.entities.soldiers().count());
         for (npc_id, s) in self.world.entities.soldiers() {
             if let Some(ai) = s.npc.ai_brain.enemy()
-                && ai.base.primary_target != 0
+                && let Some(primary_target) = ai.base.primary_target
                 // Raw element slot — the occupant can be a soldier as well
                 // as a PC, so resolve it rather than assuming a PC index.
                 && let Some(target_id) = self
                     .world
                     .entities
-                    .id_at_legacy_slot(ai.base.primary_target)
+                    .id_at_legacy_slot(primary_target.get())
             {
                 let jl = crate::engine::melee::is_table_swordfight_needed(
                     &self.world.entities,
@@ -950,7 +954,11 @@ impl EngineInner {
                 company_number,
                 pride,
                 primary_target,
-                principal_opponent: s.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                principal_opponent: s
+                    .human
+                    .opponents
+                    .first()
+                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 opponent_handles: s.human.opponents.iter().map(|id| id.index()).collect(),
                 able_to_fight,
                 is_dead,
@@ -1023,21 +1031,20 @@ impl EngineInner {
         // Also propagate back to the stored EnemyAi field for consistency
         // with direct self-reads.
         {
-            let stored_archers: std::collections::HashMap<u32, u32> = soldier_snapshots
-                .iter()
-                .map(|snapshot| (snapshot.id.index(), snapshot.archer_behind_me))
-                .collect();
+            let stored_archers: std::collections::HashMap<u32, Option<crate::ai::AiEntityHandle>> =
+                soldier_snapshots
+                    .iter()
+                    .map(|snapshot| (snapshot.id.index(), snapshot.archer_behind_me))
+                    .collect();
             for snapshot in &mut soldier_snapshots {
-                snapshot.archer_behind_me = 0;
+                snapshot.archer_behind_me = None;
             }
             // Collect (archer_handle, shield_bearer_handle) pairs.
             let mut pairs: Vec<(u32, u32, bool)> = Vec::with_capacity(soldier_snapshots.len());
-            pairs.extend(
-                soldier_snapshots
-                    .iter()
-                    .filter(|s| s.shield_bearer_before_me != 0)
-                    .map(|s| (s.id.index(), s.shield_bearer_before_me, s.active)),
-            );
+            pairs.extend(soldier_snapshots.iter().filter_map(|s| {
+                s.shield_bearer_before_me
+                    .map(|shield| (s.id.index(), shield.get(), s.active))
+            }));
             for (archer_handle, sb_handle, archer_active) in &pairs {
                 if let Some(sb) = soldier_snapshots
                     .iter_mut()
@@ -1050,13 +1057,15 @@ impl EngineInner {
                                 sb_handle
                             )
                         });
-                    if *archer_active || stored_archer == *archer_handle {
-                        sb.archer_behind_me = *archer_handle;
+                    if *archer_active
+                        || stored_archer == Some(crate::ai::AiEntityHandle::new(*archer_handle))
+                    {
+                        sb.archer_behind_me = Some(crate::ai::AiEntityHandle::new(*archer_handle));
                     } else {
                         tracing::warn!(
                             archer = *archer_handle,
                             shield_bearer = *sb_handle,
-                            shield_archer = stored_archer,
+                            ?stored_archer,
                             "ignoring stale one-sided inactive archer relationship"
                         );
                     }

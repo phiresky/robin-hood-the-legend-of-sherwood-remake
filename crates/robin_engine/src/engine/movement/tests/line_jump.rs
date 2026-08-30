@@ -656,10 +656,15 @@ mod suite {
             line_center.x + travel.y * 2.0,
             line_center.y - travel.x * 2.0,
         );
-        let line_index = engine
-            .world
-            .fast_grid_mut()
-            .add_line(GridLine::new_elevation(line_a, line_b, None, Some(0)), 0);
+        let line_index = engine.world.fast_grid_mut().add_line(
+            GridLine::new_elevation(
+                line_a,
+                line_b,
+                None,
+                crate::sight_obstacle::SightObstacleIndex::new(0),
+            ),
+            0,
+        );
 
         let mut ramp = SightObstacle::new_default(1);
         // z = 0.5*x - 340: a real sloped plane whose 3D movement vector
@@ -717,8 +722,11 @@ mod suite {
 
         let entity = engine.get_entity(owner).unwrap();
         assert_eq!(
-            entity.element_data().obstacle_index().map(u16::from),
-            Some(0)
+            entity
+                .element_data()
+                .obstacle_index()
+                .map(crate::sight_obstacle::SightObstacleIndex::get),
+            Some(0_u32)
         );
         let pi = entity.position_iface();
         assert!(
@@ -1211,20 +1219,21 @@ mod suite {
 
     #[test]
     fn elevation_crossing_matches_null_obstacle_side() {
+        let index = |raw| crate::sight_obstacle::SightObstacleIndex::new(raw);
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(None, None, Some(50)),
-            Some(Some(50))
+            EngineInner::crossed_elevation_obstacle(None, None, index(50)),
+            Some(index(50))
         );
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(Some(50), None, Some(50)),
+            EngineInner::crossed_elevation_obstacle(index(50), None, index(50)),
             Some(None)
         );
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(Some(49), Some(49), Some(50)),
-            Some(Some(50))
+            EngineInner::crossed_elevation_obstacle(index(49), index(49), index(50)),
+            Some(index(50))
         );
         assert_eq!(
-            EngineInner::crossed_elevation_obstacle(Some(99), Some(49), Some(50)),
+            EngineInner::crossed_elevation_obstacle(index(99), index(49), index(50)),
             None
         );
     }
@@ -1277,6 +1286,9 @@ mod suite {
             .set_move_box(crate::coordinates::MoveBox::from_coords(
                 -10.0, -5.0, 10.0, 5.0,
             ));
+        owner_entity
+            .position_iface_mut()
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         owner_entity.position_iface_mut().set_map_position(start);
         let owner = engine.add_entity(owner_entity);
         {

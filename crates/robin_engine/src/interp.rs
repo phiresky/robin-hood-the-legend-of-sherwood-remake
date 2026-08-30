@@ -113,6 +113,20 @@ pub enum SynchronousScriptRequest {
         state: i32,
         native_return: i32,
     },
+    /// Persistently follow a script-visible element with the NPC view cone.
+    StareActor {
+        actor: i32,
+        target: crate::element::EntityId,
+        turn_sprite: bool,
+        native_return: i32,
+    },
+    /// Persistently stare at a fully resolved script point.
+    StareLocation {
+        actor: i32,
+        target: crate::ai::Position,
+        turn_sprite: bool,
+        native_return: i32,
+    },
     LockAi {
         actor: i32,
         remember_events: bool,
@@ -214,6 +228,8 @@ impl SynchronousScriptRequest {
             | Self::SetPersistentConcussion { native_return, .. }
             | Self::SetActorLocation { native_return, .. }
             | Self::SetActorActionState { native_return, .. }
+            | Self::StareActor { native_return, .. }
+            | Self::StareLocation { native_return, .. }
             | Self::LockAi { native_return, .. }
             | Self::UnlockAi { native_return, .. }
             | Self::AssignPath { native_return, .. }

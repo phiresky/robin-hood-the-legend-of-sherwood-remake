@@ -1,6 +1,5 @@
 //! Ordered construction of complete interactive and true-headless missions.
 
-use super::debriefing::run_lost_sherwood_gate;
 use super::flow::MissionServices;
 use super::headless::{HeadlessMission, HeadlessMissionOutcome, HeadlessPolicy};
 use super::interactive::{
@@ -244,15 +243,42 @@ impl MissionBootstrap {
         if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-            callbacks.save_manager.write_restart_save_background(
+            if let Err(error) = callbacks.save_manager.write_restart_save_background(
                 &mut self.host,
                 &self.game,
                 &self.loaded.engine,
                 mission_id,
                 Some(&self.loaded.assets.profile_manager),
                 None,
-            );
+            ) {
+                tracing::error!("Restart save could not start: {error:#}");
+            }
         }
+        self.lifecycle.advance(
+            MissionBootstrapPhase::CampaignClockStarted,
+            MissionBootstrapPhase::EntryPrepared,
+        );
+    }
+
+    /// Admit an already-lost Sherwood mission into the outer frame driver
+    /// without crossing either post-gate initialization boundary.
+    ///
+    /// The frame-owned lost-campaign debriefing needs a complete runtime so
+    /// network/HTTP/replay services keep draining. Advancing only the type-
+    /// state markers lets that runtime be constructed while deliberately not
+    /// starting play time and not creating restart/Sherwood entry state.
+    pub(super) fn defer_lost_sherwood_entry(&mut self) {
+        self.lifecycle.require(MissionBootstrapPhase::AudioPrepared);
+        assert!(self.game.is_sherwood, "only Sherwood entry can be deferred");
+        assert_eq!(
+            self.loaded.engine.campaign().get_ares(),
+            0,
+            "only an already-lost campaign can defer Sherwood entry"
+        );
+        self.lifecycle.advance(
+            MissionBootstrapPhase::AudioPrepared,
+            MissionBootstrapPhase::CampaignClockStarted,
+        );
         self.lifecycle.advance(
             MissionBootstrapPhase::CampaignClockStarted,
             MissionBootstrapPhase::EntryPrepared,
@@ -796,7 +822,12 @@ impl BuiltInteractiveMission {
         self.mission.run(&mut services).await
     }
 
-    pub(super) fn finish(self, result: Result<GameCode, String>) -> MissionOutcome {
+    pub(super) fn finish(mut self, result: Result<GameCode, String>) -> MissionOutcome {
+        if result.is_ok() {
+            self.mission
+                .runtime
+                .preserve_multiplayer_session_for_next_mission();
+        }
         let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
         MissionOutcome::from_engine(campaign, rng_seed, sim_config, result)
     }
@@ -1158,29 +1189,14 @@ impl InteractiveMissionBuilder {
         };
         timer.step("frontend assembly");
 
-        if let Some(code) = run_lost_sherwood_gate(
-            window,
-            &stage.bootstrap.host,
-            &stage.bootstrap.loaded.engine,
-            &mut frontend,
-        )
-        .await
-        {
-            let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
-            return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
-                campaign,
-                rng_seed,
-                sim_config,
-                Ok(code),
-            ));
+        let lost_sherwood = stage.bootstrap.game.is_sherwood
+            && stage.bootstrap.loaded.engine.campaign().get_ares() == 0;
+        if lost_sherwood {
+            stage.bootstrap.defer_lost_sherwood_entry();
+        } else {
+            stage.bootstrap.start_campaign_clock(callbacks);
+            stage.bootstrap.setup_restart_or_sherwood(callbacks, args);
         }
-
-        // The gate can await user input on a lost campaign; keep its time
-        // out of the restart-save step.
-        timer.step("lost-sherwood gate");
-        stage.bootstrap.start_campaign_clock(callbacks);
-        stage.bootstrap.setup_restart_or_sherwood(callbacks, args);
-        timer.step("restart save");
         let frontend = frontend.finish(window.width, window.height);
         timer.step("HUD sprite finish");
         let bootstrap = stage.bootstrap;

@@ -76,7 +76,7 @@ use robin_engine::engine as engine_api;
 use robin_engine::engine::PANNEL_HEIGHT;
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::natives as engine_natives;
-use robin_engine::player_command::{FrameCommands, PlayerCommand};
+use robin_engine::player_command::{DialogResult, FrameCommands, ModalKind, PlayerCommand};
 use robin_engine::position_interface as engine_position_interface;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::replay as engine_replay;
@@ -98,6 +98,57 @@ use robin_engine::engine::{Engine, LevelAssets};
 /// Default port. Reasonably uncommon and easy to remember; change with
 /// `--http-server <port>` or set 0 to disable.
 pub const DEFAULT_PORT: u16 = 17640;
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HttpModalDismissal {
+    pub kind: ModalKind,
+    pub result: DialogResult,
+}
+
+/// Modal behavior attached to an HTTP step. Automation keeps the historical
+/// auto-dismiss default, while deterministic drivers can set
+/// `auto_dismiss=false` and supply exact typed outcomes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StepModalPolicy {
+    #[serde(default = "default_true")]
+    pub auto_dismiss: bool,
+    pub dismissals: Vec<HttpModalDismissal>,
+    /// Required for timeline movement in a live multiplayer session. Only the
+    /// host accepts it and reconnects every peer from the resulting snapshot.
+    pub synchronized_multiplayer: bool,
+}
+
+impl Default for StepModalPolicy {
+    fn default() -> Self {
+        Self {
+            auto_dismiss: true,
+            dismissals: Vec::new(),
+            synchronized_multiplayer: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StepRequest {
+    pub n: u32,
+    #[serde(flatten)]
+    pub modal_policy: StepModalPolicy,
+}
+
+impl Default for StepRequest {
+    fn default() -> Self {
+        Self {
+            n: 1,
+            modal_policy: StepModalPolicy::default(),
+        }
+    }
+}
 
 /// One pending request waiting for the game tick.
 pub struct HttpRequest {
@@ -137,15 +188,19 @@ pub enum HttpPayload {
     /// `GET /screenshot` — PNG capture of the next rendered frame.
     Screenshot(ScreenshotRequest),
     /// `POST /step-forward` — run `n` engine ticks synchronously.
-    StepForward { n: u32 },
+    StepForward { request: StepRequest },
     /// `POST /step-back` — rewind `n` frames synchronously.
-    StepBack { n: u32 },
+    StepBack { request: StepRequest },
     /// `POST /go-to-frame` — absolute seek to `target` frame.
     /// Internally decomposes into a forward or backward step
     /// depending on the current frame.  Replay scrubbing uses this.
-    GoToFrame { target: u32 },
+    GoToFrame {
+        target: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// `POST /set-paused` / `robin.call("set-paused", {paused})` —
-    /// toggle the mission loop's manual pause flag.
+    /// toggle the single-player mission loop's manual pause flag. Live
+    /// multiplayer rejects local pause changes.
     SetPaused { paused: bool },
     /// `GET /get-replay` — snapshot the current recorder's byte
     /// stream.  Served from an in-memory mirror populated by the
@@ -185,7 +240,7 @@ pub struct ScreenshotRequest {
 /// Debug-overlay overrides for a single screenshot.  None of these
 /// mutate the live `DevState`; they're merged into a `Cow<DevState>`
 /// that exists only for the duration of one `render_frame` call.
-#[derive(Clone, Default, Debug, serde::Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(default)]
 pub struct ScreenshotFlags {
     pub view_cones: Option<bool>,
@@ -482,20 +537,28 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
                 Err(e) => (400, serde_json::json!({"error": e}).into()),
             },
             (Method::Post, "/step-forward") => match parse_step_body(&mut req) {
-                Ok(n) => relay(&queue, HttpPayload::StepForward { n }),
+                Ok(request) => relay(&queue, HttpPayload::StepForward { request }),
                 Err(e) => (400, serde_json::json!({"error": e}).into()),
             },
             (Method::Post, "/step-back") => match parse_step_body(&mut req) {
-                Ok(n) => relay(&queue, HttpPayload::StepBack { n }),
+                Ok(request) => relay(&queue, HttpPayload::StepBack { request }),
                 Err(e) => (400, serde_json::json!({"error": e}).into()),
             },
             (Method::Post, "/go-to-frame") => {
                 #[derive(serde::Deserialize)]
                 struct GoToBody {
                     frame: u32,
+                    #[serde(flatten)]
+                    modal_policy: StepModalPolicy,
                 }
                 match read_json::<GoToBody>(&mut req) {
-                    Ok(b) => relay(&queue, HttpPayload::GoToFrame { target: b.frame }),
+                    Ok(b) => relay(
+                        &queue,
+                        HttpPayload::GoToFrame {
+                            target: b.frame,
+                            modal_policy: b.modal_policy,
+                        },
+                    ),
                     Err(e) => (400, serde_json::json!({"error": e}).into()),
                 }
             }
@@ -555,26 +618,18 @@ fn run_listener(server: tiny_http::Server, queue: Queue) {
 /// Accepts either a JSON object `{"n": N}` or an empty body (defaults
 /// to `1`).  `N` must be a positive integer.
 #[cfg(not(target_arch = "wasm32"))]
-fn parse_step_body(req: &mut tiny_http::Request) -> Result<u32, String> {
+fn parse_step_body(req: &mut tiny_http::Request) -> Result<StepRequest, String> {
     let mut body = String::new();
     std::io::Read::read_to_string(req.as_reader(), &mut body)
         .map_err(|e| format!("body read: {e}"))?;
     if body.trim().is_empty() {
-        return Ok(1);
+        return Ok(StepRequest::default());
     }
-    #[derive(serde::Deserialize)]
-    struct StepBody {
-        #[serde(default = "default_one")]
-        n: u32,
-    }
-    fn default_one() -> u32 {
-        1
-    }
-    let body: StepBody = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
+    let body: StepRequest = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
     if body.n == 0 {
         return Err("n must be >= 1".into());
     }
-    Ok(body.n)
+    Ok(body)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -693,8 +748,9 @@ fn info_json() -> serde_json::Value {
             {"method": "POST", "path": "/console",            "desc": "run a debug-console command: {command: '...'}"},
             {"method": "POST", "path": "/command",            "desc": "apply a PlayerCommand (externally-tagged JSON enum)"},
             {"method": "GET",  "path": "/screenshot",         "desc": "PNG at the requested frame. Query: frame (absolute sim frame), full_map, w, h (aspect-preserving max bounds), hide_ui, view_cones, pc_sight, motion_graph, all_obstacles, elevation, noise, sound_source, actor_info, script_zones, door, projection_areas, railroad, probability, company_number, combat_energy, light_zones, animation_lines, seek_points, fps, sprite_masks, entity_ids (bool flags)"},
-            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N} (default 1). Any modal dialog / popup / debriefing / sherwood report / pause-all queued before or during the step is dismissed silently; the reply includes `modals_dismissed`."},
-            {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N} (default 1). Fails if target frame is older than the oldest retained snapshot."},
+            {"method": "POST", "path": "/step-forward",       "desc": "Run N engine ticks with --start-paused. Body {n: N, auto_dismiss: bool, dismissals: [{kind, result}], synchronized_multiplayer: bool}; live multiplayer requires explicit synchronized_multiplayer=true on the host and reconnects peers from the result."},
+            {"method": "POST", "path": "/step-back",          "desc": "Rewind N frames via the rewind buffer. Body {n: N, auto_dismiss, dismissals}; the modal policy matches step-forward. Fails if target frame is older than the oldest retained snapshot."},
+            {"method": "POST", "path": "/go-to-frame",        "desc": "Seek to an absolute frame. Body {frame: N, auto_dismiss, dismissals}; forward seeks tick and backward seeks restore canonical timeline history."},
         ],
     })
 }
@@ -820,31 +876,43 @@ pub fn drain_global(
                         request,
                     });
             }
-            HttpPayload::StepForward { n } => {
+            HttpPayload::StepForward { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Forward { n },
+                        kind: StepKind::Forward {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::StepBack { n } => {
+            HttpPayload::StepBack { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Back { n },
+                        kind: StepKind::Back {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::GoToFrame { target } => {
+            HttpPayload::GoToFrame {
+                target,
+                modal_policy,
+            } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame { target },
+                        kind: StepKind::GoToFrame {
+                            target,
+                            modal_policy,
+                        },
                     });
             }
             HttpPayload::SetPaused { paused } => {
@@ -904,31 +972,43 @@ pub fn drain_global_headless(
     };
     for req in pending {
         match req.payload {
-            HttpPayload::StepForward { n } => {
+            HttpPayload::StepForward { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Forward { n },
+                        kind: StepKind::Forward {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::StepBack { n } => {
+            HttpPayload::StepBack { request } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::Back { n },
+                        kind: StepKind::Back {
+                            n: request.n,
+                            modal_policy: request.modal_policy,
+                        },
                     });
             }
-            HttpPayload::GoToFrame { target } => {
+            HttpPayload::GoToFrame {
+                target,
+                modal_policy,
+            } => {
                 pending_steps()
                     .lock()
                     .expect("step queue poisoned")
                     .push(PendingStep {
                         response_tx: req.response_tx,
-                        kind: StepKind::GoToFrame { target },
+                        kind: StepKind::GoToFrame {
+                            target,
+                            modal_policy,
+                        },
                     });
             }
             HttpPayload::SetPaused { paused } => {
@@ -1864,17 +1944,27 @@ fn pending_screenshots() -> &'static Mutex<Vec<PendingScreenshot>> {
 // Step-forward / step-back pipeline
 // ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StepKind {
     /// Run `n` ticks forward from the current frame.
-    Forward { n: u32 },
+    Forward {
+        n: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// Rewind `n` frames from the current frame.
-    Back { n: u32 },
+    Back {
+        n: u32,
+        modal_policy: StepModalPolicy,
+    },
     /// Absolute seek — no-op if `target == sim_frame`, decomposes into
     /// a forward or back step otherwise.  Replay scrubbing uses this.
-    GoToFrame { target: u32 },
-    /// Toggle the mission loop's manual pause flag. Queued with
-    /// scrubbing so pause/play and seek requests apply in caller order.
+    GoToFrame {
+        target: u32,
+        modal_policy: StepModalPolicy,
+    },
+    /// Toggle the single-player mission loop's manual pause flag. Queued with
+    /// scrubbing so pause/play and seek requests apply in caller order; live
+    /// multiplayer rejects this instead of desynchronizing one peer.
     SetPaused { paused: bool },
 }
 
@@ -1917,6 +2007,17 @@ pub fn take_pending_steps() -> Vec<PendingStep> {
     std::mem::take(&mut *pending_steps().lock().expect("step queue poisoned"))
 }
 
+/// Whether the mission loop has an automation step waiting to run.
+///
+/// Cooperative local UI tasks use this non-consuming probe to cancel back to
+/// their owning pause surface before [`crate::game_session`] drains the step.
+pub fn has_pending_steps() -> bool {
+    !pending_steps()
+        .lock()
+        .expect("step queue poisoned")
+        .is_empty()
+}
+
 /// Drain every screenshot request queued since the last call.  Safe to
 /// call from the main render loop once per frame — returns an empty
 /// `Vec` when nothing is pending.
@@ -1930,6 +2031,38 @@ pub fn take_pending_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
         .partition(|pending| pending.request.frame.is_none_or(|frame| sim_frame >= frame));
     *queue = waiting;
     ready
+}
+
+/// Drain ready screenshots which can faithfully use the already-presented UI
+/// framebuffer. Requests that need a scene-only/full-map/debug override stay
+/// queued for the normal dedicated render path.
+pub fn take_pending_ui_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
+    take_pending_screenshots_matching(sim_frame, can_capture_presented_ui)
+}
+
+/// Drain ready screenshots that require a dedicated scene render while a
+/// cooperative UI surface owns normal presentation.
+pub fn take_pending_scene_screenshots(sim_frame: u32) -> Vec<PendingScreenshot> {
+    take_pending_screenshots_matching(sim_frame, |request| !can_capture_presented_ui(request))
+}
+
+fn take_pending_screenshots_matching(
+    sim_frame: u32,
+    predicate: impl Fn(&ScreenshotRequest) -> bool,
+) -> Vec<PendingScreenshot> {
+    let mut queue = pending_screenshots()
+        .lock()
+        .expect("screenshot queue poisoned");
+    let requests = std::mem::take(&mut *queue);
+    let (ready, waiting) = requests.into_iter().partition(|pending| {
+        pending.request.frame.is_none_or(|frame| sim_frame >= frame) && predicate(&pending.request)
+    });
+    *queue = waiting;
+    ready
+}
+
+fn can_capture_presented_ui(request: &ScreenshotRequest) -> bool {
+    !request.hide_ui && !request.full_map && request.flags == ScreenshotFlags::default()
 }
 
 /// Merge a request's `Some(x)` overrides onto `debug`, mutating in
@@ -2052,6 +2185,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn step_request_defaults_to_one_tick_and_auto_dismiss() {
+        let request: StepRequest = serde_json::from_value(serde_json::json!({}))
+            .expect("empty step request uses documented defaults");
+        assert_eq!(request, StepRequest::default());
+        assert_eq!(request.n, 1);
+        assert!(request.modal_policy.auto_dismiss);
+        assert!(!request.modal_policy.synchronized_multiplayer);
+    }
+
+    #[test]
+    fn step_request_requires_explicit_multiplayer_synchronization() {
+        let request: StepRequest = serde_json::from_value(serde_json::json!({
+            "n": 2,
+            "synchronized_multiplayer": true,
+        }))
+        .expect("explicit multiplayer step policy");
+        assert!(request.modal_policy.synchronized_multiplayer);
+    }
+
+    #[test]
+    fn step_request_decodes_typed_modal_outcomes() {
+        let dismissal = HttpModalDismissal {
+            kind: ModalKind::Dialog { dialog_id: 17 },
+            result: DialogResult::Aborted,
+        };
+        let request: StepRequest = serde_json::from_value(serde_json::json!({
+            "n": 4,
+            "auto_dismiss": false,
+            "dismissals": [serde_json::to_value(&dismissal).expect("dismissal JSON")],
+        }))
+        .expect("typed step request");
+        assert_eq!(request.n, 4);
+        assert!(!request.modal_policy.auto_dismiss);
+        assert_eq!(request.modal_policy.dismissals, vec![dismissal]);
+    }
+
+    #[test]
     fn browser_guard_rejects_any_origin_header() {
         assert!(
             browser_rejection_reason(
@@ -2145,6 +2315,33 @@ mod tests {
     fn screenshot_dimensions_reject_zero_bounds() {
         let req = screenshot_request(Some(0), Some(720));
         assert!(screenshot_target_dimensions(1024, 768, &req).is_err());
+    }
+
+    #[test]
+    fn only_plain_ui_screenshots_use_presented_modal_frame() {
+        let plain = ScreenshotRequest::default();
+        assert!(can_capture_presented_ui(&plain));
+
+        let hidden = ScreenshotRequest {
+            hide_ui: true,
+            ..plain.clone()
+        };
+        assert!(!can_capture_presented_ui(&hidden));
+
+        let full_map = ScreenshotRequest {
+            full_map: true,
+            ..plain.clone()
+        };
+        assert!(!can_capture_presented_ui(&full_map));
+
+        let overridden = ScreenshotRequest {
+            flags: ScreenshotFlags {
+                view_cones: Some(true),
+                ..ScreenshotFlags::default()
+            },
+            ..plain
+        };
+        assert!(!can_capture_presented_ui(&overridden));
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -2251,7 +2448,7 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
 pub mod wasm_rpc {
     use super::{
         GLOBAL, HttpPayload, HttpRequest, NativeCall, PlayerCommand, Reply, ReplyBody, Responder,
-        ScreenshotRequest,
+        ScreenshotRequest, StepModalPolicy, StepRequest,
     };
     use wasm_bindgen::JsValue;
 
@@ -2327,15 +2524,6 @@ pub mod wasm_rpc {
     }
 
     fn decode_request(method: &str, params: serde_json::Value) -> Result<HttpPayload, String> {
-        #[derive(serde::Deserialize, Default)]
-        struct StepBody {
-            #[serde(default = "one")]
-            n: u32,
-        }
-        fn one() -> u32 {
-            1
-        }
-
         match method {
             "script" => Ok(HttpPayload::Script),
             "state" => Ok(HttpPayload::State),
@@ -2395,8 +2583,8 @@ pub mod wasm_rpc {
                 Ok(HttpPayload::Screenshot(ss))
             }
             "step-forward" => {
-                let s: StepBody = if params.is_null() {
-                    StepBody::default()
+                let s: StepRequest = if params.is_null() {
+                    StepRequest::default()
                 } else {
                     serde_json::from_value(params)
                         .map_err(|e| format!("step-forward params: {e}"))?
@@ -2404,27 +2592,32 @@ pub mod wasm_rpc {
                 if s.n == 0 {
                     return Err("n must be >= 1".into());
                 }
-                Ok(HttpPayload::StepForward { n: s.n })
+                Ok(HttpPayload::StepForward { request: s })
             }
             "step-back" => {
-                let s: StepBody = if params.is_null() {
-                    StepBody::default()
+                let s: StepRequest = if params.is_null() {
+                    StepRequest::default()
                 } else {
                     serde_json::from_value(params).map_err(|e| format!("step-back params: {e}"))?
                 };
                 if s.n == 0 {
                     return Err("n must be >= 1".into());
                 }
-                Ok(HttpPayload::StepBack { n: s.n })
+                Ok(HttpPayload::StepBack { request: s })
             }
             "go-to-frame" => {
                 #[derive(serde::Deserialize)]
                 struct G {
                     frame: u32,
+                    #[serde(flatten)]
+                    modal_policy: StepModalPolicy,
                 }
                 let g: G = serde_json::from_value(params)
                     .map_err(|e| format!("go-to-frame params: {e}"))?;
-                Ok(HttpPayload::GoToFrame { target: g.frame })
+                Ok(HttpPayload::GoToFrame {
+                    target: g.frame,
+                    modal_policy: g.modal_policy,
+                })
             }
             "set-paused" => {
                 #[derive(serde::Deserialize)]

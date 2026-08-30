@@ -63,6 +63,10 @@ pub(super) trait ModalScreen: Sized {
     /// Warning logged (once per tick) when the menu resources vanish
     /// mid-batch; the batch is dropped in that case.
     const MISSING_RESOURCES_WARN: &'static str;
+    /// Dialogue and popup states already keep rendering while a client waits
+    /// for the host decision. Simpler screens delegate that waiting state to
+    /// the shared batch driver.
+    const HANDLES_NETWORK_AUTHORITY: bool = false;
 
     fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind;
     fn item_replay_result(item: &Self::Item) -> Option<engine_player_command::DialogResult>;
@@ -93,6 +97,7 @@ pub(super) trait ModalScreen: Sized {
 pub(super) struct ModalBatch<S: ModalScreen> {
     pending: VecDeque<S::Item>,
     current: Option<(engine_player_command::ModalKind, S)>,
+    awaiting_authority: bool,
 }
 
 pub(super) type ActiveDialogueBatch = ModalBatch<DialogueModalState>;
@@ -104,11 +109,19 @@ impl<S: ModalScreen> ModalBatch<S> {
         Self {
             pending,
             current: None,
+            awaiting_authority: false,
         }
     }
 
     fn is_empty(&self) -> bool {
         self.pending.is_empty() && self.current.is_none()
+    }
+
+    fn current_kind(&self) -> Option<engine_player_command::ModalKind> {
+        self.current
+            .as_ref()
+            .map(|(kind, _)| kind.clone())
+            .or_else(|| self.pending.front().map(S::item_kind))
     }
 
     fn apply_replay_result(
@@ -162,12 +175,49 @@ impl<S: ModalScreen> ModalBatch<S> {
             return;
         }
 
+        if !S::HANDLES_NETWORK_AUTHORITY
+            && let Some((kind, _)) = self.current.as_ref()
+            && let Some(net) = host.transport.net.as_ref()
+        {
+            let modal_net = ModalNet::new(
+                net,
+                kind.clone(),
+                host.transport.local_seat == engine_player_command::PlayerId::HOST,
+            );
+            if let Some(result) = modal_net.poll_remote_dismissal() {
+                let (kind, _) = self
+                    .current
+                    .take()
+                    .expect("active modal disappeared while applying host decision");
+                self.awaiting_authority = false;
+                self.apply_replay_result(kind, result, ctx);
+                return;
+            }
+            if self.awaiting_authority {
+                return;
+            }
+        }
+
         let Some((kind, screen)) = self.current.as_mut() else {
             return;
         };
 
         if let Some(outcome) = screen.step(kind, host, ctx) {
             let result = S::to_result(&outcome);
+            if !S::HANDLES_NETWORK_AUTHORITY
+                && let Some(net) = host.transport.net.as_ref()
+            {
+                let modal_net = ModalNet::new(
+                    net,
+                    kind.clone(),
+                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                );
+                modal_net.publish(result);
+                if !modal_net.is_authority() {
+                    self.awaiting_authority = true;
+                    return;
+                }
+            }
             ctx.modal_dismissals
                 .push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: kind.clone(),
@@ -190,6 +240,7 @@ impl ModalScreen for DialogueModalState {
     type Outcome = engine_player_command::DialogResult;
     const MISSING_RESOURCES_WARN: &'static str =
         "DisplayDialog: menu resources unavailable — dropping active dialogue";
+    const HANDLES_NETWORK_AUTHORITY: bool = true;
 
     fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind {
         item.kind.clone()
@@ -238,11 +289,13 @@ impl ModalScreen for DialogueModalState {
             .expect("ModalBatch::tick verified menu resources before step");
         let sound_cfg = SoundConfig::default();
         let sound_enabled = audio_backend.is_some();
-        let modal_net = host
-            .transport
-            .net
-            .as_ref()
-            .map(|net| ModalNet::new(net, kind.clone()));
+        let modal_net = host.transport.net.as_ref().map(|net| {
+            ModalNet::new(
+                net,
+                kind.clone(),
+                host.transport.local_seat == engine_player_command::PlayerId::HOST,
+            )
+        });
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
         self.tick(
             window,
@@ -269,6 +322,7 @@ impl ModalScreen for PopupScrollModalState {
     type Outcome = engine_player_command::DialogResult;
     const MISSING_RESOURCES_WARN: &'static str =
         "DisplayPopupText: menu resources unavailable — dropping active popup";
+    const HANDLES_NETWORK_AUTHORITY: bool = true;
 
     fn item_kind(item: &Self::Item) -> engine_player_command::ModalKind {
         item.kind.clone()
@@ -326,11 +380,13 @@ impl ModalScreen for PopupScrollModalState {
         let resources = menu_resources
             .as_mut()
             .expect("ModalBatch::tick verified menu resources before step");
-        let modal_net = host
-            .transport
-            .net
-            .as_ref()
-            .map(|net| ModalNet::new(net, kind.clone()));
+        let modal_net = host.transport.net.as_ref().map(|net| {
+            ModalNet::new(
+                net,
+                kind.clone(),
+                host.transport.local_seat == engine_player_command::PlayerId::HOST,
+            )
+        });
         let cursor = default_modal_cursor(cursor_renderer, cursor_res, renderer);
         self.tick(
             window,
@@ -433,6 +489,7 @@ pub(super) enum ActiveModal {
         kind: engine_player_command::ModalKind,
         state: MissionStatePopupState,
         replay_result: Option<engine_player_command::DialogResult>,
+        awaiting_authority: bool,
     },
     Trading(Box<TradingModalState>),
 }
@@ -455,6 +512,18 @@ impl ActiveModal {
         match self {
             ActiveModal::Trading(_) if multiplayer_connected => false,
             _ => !self.is_empty(),
+        }
+    }
+
+    pub(super) fn kind(&self) -> Option<engine_player_command::ModalKind> {
+        match self {
+            ActiveModal::Dialogue(batch) => batch.current_kind(),
+            ActiveModal::PopupScroll(batch) => batch.current_kind(),
+            ActiveModal::Debriefing(batch) => batch.current_kind(),
+            ActiveModal::MissionState { kind, .. } => Some(kind.clone()),
+            // Trading is a local non-pausing control panel rather than a
+            // deterministic dialogue outcome synchronized as ModalDismiss.
+            ActiveModal::Trading(_) => None,
         }
     }
 }
@@ -695,11 +764,13 @@ pub(super) async fn drain_pending_dialogues(
                         dialog_id: *dialog_id,
                     };
                     let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-                    let modal_net = host
-                        .transport
-                        .net
-                        .as_ref()
-                        .map(|net| ModalNet::new(net, kind.clone()));
+                    let modal_net = host.transport.net.as_ref().map(|net| {
+                        ModalNet::new(
+                            net,
+                            kind.clone(),
+                            host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                        )
+                    });
                     ingame_menu::BatchDialogue {
                         sentences: sentences.as_slice(),
                         replay_result,
@@ -1012,9 +1083,20 @@ pub(super) fn tick_active_modal(
             kind,
             state,
             replay_result,
+            awaiting_authority,
         } => {
             if replay_result.is_none() {
                 *replay_result = pop_matching_dismissal(replay_modal_dismissals, kind);
+            }
+            if replay_result.is_none()
+                && let Some(net) = host.transport.net.as_ref()
+            {
+                let modal_net = ModalNet::new(
+                    net,
+                    kind.clone(),
+                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                );
+                *replay_result = modal_net.poll_remote_dismissal();
             }
             if let Some(result) = replay_result.take() {
                 ctx.modal_dismissals
@@ -1038,6 +1120,9 @@ pub(super) fn tick_active_modal(
                     }
                 };
             }
+            if *awaiting_authority {
+                return ActiveModalOutcome::None;
+            }
             let ModalContext {
                 window,
                 renderer,
@@ -1059,6 +1144,18 @@ pub(super) fn tick_active_modal(
                 } else {
                     engine_player_command::DialogResult::Aborted
                 };
+                if let Some(net) = host.transport.net.as_ref() {
+                    let modal_net = ModalNet::new(
+                        net,
+                        kind.clone(),
+                        host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    );
+                    modal_net.publish(result);
+                    if !modal_net.is_authority() {
+                        *awaiting_authority = true;
+                        return ActiveModalOutcome::None;
+                    }
+                }
                 modal_dismissals.push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: kind.clone(),
                     result,
@@ -1202,11 +1299,13 @@ pub(super) async fn drain_pending_popup_scroll(
                 .picture_from(ctx.renderer, text_res, picture_id);
             let kind = engine_player_command::ModalKind::PopupText { text_id };
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-            let modal_net = host
-                .transport
-                .net
-                .as_ref()
-                .map(|net| ModalNet::new(net, kind.clone()));
+            let modal_net = host.transport.net.as_ref().map(|net| {
+                ModalNet::new(
+                    net,
+                    kind.clone(),
+                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                )
+            });
             let item = PopupScrollItem {
                 kind: kind.clone(),
                 title: None,
@@ -1263,11 +1362,13 @@ pub(super) async fn drain_pending_sherwood_stat(
             );
             let kind = engine_player_command::ModalKind::SherwoodReport;
             let replay_result = pop_matching_dismissal(replay_modal_dismissals, &kind);
-            let modal_net = host
-                .transport
-                .net
-                .as_ref()
-                .map(|net| ModalNet::new(net, kind.clone()));
+            let modal_net = host.transport.net.as_ref().map(|net| {
+                ModalNet::new(
+                    net,
+                    kind.clone(),
+                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                )
+            });
             // The Sherwood report uses the "Debrief" font and is
             // left-aligned (not the popup-scroll default).
             let item = PopupScrollItem {

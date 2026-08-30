@@ -328,6 +328,13 @@ pub struct GameplayConfig {
     /// ambience-filtered gameplay sound sources.
     #[serde(default = "enabled_by_default")]
     pub enable_dynamic_ambience: bool,
+
+    /// Show mission/player provenance, relative age, and the expanded
+    /// selected-save panel in save/load pickers. Disabling this is strictly a
+    /// presentation choice: every native save still stores full provenance.
+    #[serde(default = "enabled_by_default")]
+    #[state_hash(skip)]
+    pub detailed_save_metadata: bool,
 }
 
 const fn default_touch_camera_gestures() -> bool {
@@ -345,6 +352,7 @@ impl Default for GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            detailed_save_metadata: true,
             sherwood_trading: true,
             touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
@@ -379,6 +387,7 @@ impl GameplayConfig {
             control_tactical_units: false,
             enable_unbinding: true,
             autosave_enabled: true,
+            detailed_save_metadata: true,
             sherwood_trading: true,
             touch_camera_gestures: true,
             show_production_forecast: true,
@@ -471,6 +480,25 @@ mod tests {
         let decoded: GameplayConfig =
             serde_json::from_str(&json).expect("deserialize gameplay config");
         assert!(!decoded.autosave_enabled);
+    }
+
+    #[test]
+    fn detailed_save_metadata_is_independent_default_on_and_not_hashed() {
+        use robin_util::state_hash::compute;
+
+        let enabled = GameplayConfig::default();
+        let disabled = GameplayConfig {
+            detailed_save_metadata: false,
+            ..enabled
+        };
+        assert!(enabled.detailed_save_metadata);
+        assert!(!disabled.detailed_save_metadata);
+        assert_eq!(compute(&enabled), compute(&disabled));
+
+        let json = serde_json::to_string(&disabled).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.detailed_save_metadata);
     }
 
     #[test]

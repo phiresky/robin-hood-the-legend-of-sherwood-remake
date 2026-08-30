@@ -2066,6 +2066,11 @@ impl Renderer {
         readback::capture_frame_rgba(&self.gpu, &self.pipelines, &self.resources, &mut self.frame)
     }
 
+    /// Read the composited logical framebuffer left by the latest `present`.
+    pub fn capture_presented_frame_rgba(&self) -> Option<(u32, u32, Vec<u8>)> {
+        readback::capture_presented_frame_rgba(&self.gpu, &self.frame)
+    }
+
     /// No-op because wgpu has no target stack: `capture_frame_rgba` already
     /// clears the queue and the next `present()` re-clears the render target.
     pub fn reset_render_target(&mut self) {}

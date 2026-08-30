@@ -578,7 +578,7 @@ struct SoldierSightContext {
     /// Original enemy-memory handles which keep a revealed reusable cloak
     /// revealed until the ordinary AI forgets the target after LOS loss.
     remembered_targets: Vec<u32>,
-    primary_target: u32,
+    primary_target: Option<crate::ai::AiEntityHandle>,
 }
 
 fn lacklandist_visibility_refresh_always(
@@ -1808,7 +1808,7 @@ impl EngineInner {
             // Position(pEnemy), which is the AI planning position (including
             // committed door-side and carrier substitution), not the raw
             // produced-noise origin used by GetHearVolume above.
-            heard_noise.origin = source_position;
+            heard_noise.origin = crate::ai::NoiseOrigin::from_position(source_position);
             let in_uninterruptible_command = self.is_very_very_busy(npc_id);
             let building_sector = self
                 .world
@@ -2176,7 +2176,7 @@ impl EngineInner {
             .get(npc_id)
             .and_then(Entity::enemy_ai)
             .map(|ai| (ai.base.primary_target, ai.missed_pc))
-            .unwrap_or((0, 0));
+            .unwrap_or((None, None));
         tick_data.enemy_detectable_forecasts.clear();
         let enemy_handles = self
             .world
@@ -2206,8 +2206,10 @@ impl EngineInner {
                 .enemy_detectable_forecasts
                 .push((handle, forecast(target_id)));
         }
-        if tick_data.primary_target_is_pc && primary != 0 {
-            let target_id = self.entity_id_for_index(primary).unwrap_or_else(|| {
+        if tick_data.primary_target_is_pc
+            && let Some(primary) = primary
+        {
+            let target_id = self.entity_id_for_index(primary.get()).unwrap_or_else(|| {
                 panic!(
                     "NPC {} has missing primary-target actor {}",
                     npc_id.index(),
@@ -2216,8 +2218,10 @@ impl EngineInner {
             });
             tick_data.primary_target_forecast = Some(forecast(target_id));
         }
-        if tick_data.missed_pc_is_pc && missed != 0 {
-            let target_id = self.entity_id_for_index(missed).unwrap_or_else(|| {
+        if tick_data.missed_pc_is_pc
+            && let Some(missed) = missed
+        {
+            let target_id = self.entity_id_for_index(missed.get()).unwrap_or_else(|| {
                 panic!(
                     "NPC {} has missing missed-PC actor {}",
                     npc_id.index(),
@@ -2225,7 +2229,7 @@ impl EngineInner {
                 )
             });
             tick_data.missed_pc_forecast = Some(forecast(target_id));
-            tick_data.missed_pc_forecast_handle = missed;
+            tick_data.missed_pc_forecast_handle = Some(missed);
         }
         for soldier in &mut tick_data.camp_soldiers {
             // Only officers are ever selected as forecasted destinations by
@@ -2765,7 +2769,7 @@ impl EngineInner {
                             panic!(
                                 "Enemy visibility target {} requires missing obstacle {}",
                                 target_id.index(),
-                                u16::from(handle)
+                                handle
                             )
                         })
                     });
@@ -2807,7 +2811,8 @@ impl EngineInner {
                         cloak_deception_applies: target.posture == crate::element::Posture::Cloaked
                             && viewer.camp.is_hostile_to(target.camp),
                         cloak_remembers_target: det.seen_last_frame
-                            || viewer.primary_target == target_id.index()
+                            || viewer.primary_target
+                                == Some(crate::ai::AiEntityHandle::new(target_id.index()))
                             || viewer.remembered_targets.contains(&target_id.index()),
                         // TODO(cloak-authoring): connect this only when an
                         // explicit modded profile schema supplies detector data.
@@ -3070,10 +3075,10 @@ impl EngineInner {
                 // raw feet geometry for visibility and is not interchangeable.
                 let (primary_target_position, primary_target_posture, primary_target_animation) = {
                     let target_handle = enemy_ai.base.primary_target;
-                    if target_handle != 0
-                        && let Some(pc) = pc_snapshots
-                            .iter()
-                            .find(|p| p.id == EntityId::Pc(crate::entity_id::PcId(target_handle)))
+                    if let Some(target_handle) = target_handle
+                        && let Some(pc) = pc_snapshots.iter().find(|p| {
+                            p.id == EntityId::Pc(crate::entity_id::PcId(target_handle.get()))
+                        })
                     {
                         (
                             Some(fighter_ai_position(&world.ai_positions, pc.id)),
@@ -3092,13 +3097,14 @@ impl EngineInner {
                     // Prepared without RNG only after this scan produces an
                     // Enemy stimulus block.
                     primary_target_forecast: None,
-                    primary_target_is_pc: pc_snapshots
-                        .iter()
-                        .any(|pc| pc.id.index() == enemy_ai.base.primary_target),
+                    primary_target_is_pc: pc_snapshots.iter().any(|pc| {
+                        Some(crate::ai::AiEntityHandle::new(pc.id.index()))
+                            == enemy_ai.base.primary_target
+                    }),
                     missed_pc_forecast: None,
-                    missed_pc_is_pc: pc_snapshots
-                        .iter()
-                        .any(|pc| pc.id.index() == enemy_ai.missed_pc),
+                    missed_pc_is_pc: pc_snapshots.iter().any(|pc| {
+                        Some(crate::ai::AiEntityHandle::new(pc.id.index())) == enemy_ai.missed_pc
+                    }),
                     // Table swordfight jump-line for primary target.
                     primary_target_jump_line: npc_jump_lines.get(&npc_id).copied().flatten(),
                     primary_target_position,
@@ -3329,7 +3335,7 @@ impl EngineInner {
                     // primary target.  Otherwise, count the friend
                     // only if he is closer than us to our current
                     // primary target.
-                    if ss.ai_state == AiState::Attacking && ss.primary_target != 0 {
+                    if ss.ai_state == AiState::Attacking && ss.primary_target.is_some() {
                         if crate::ai_enemy::is_any_swordfight_substate(ss.ai_substate as u32) {
                             tick_data.friends_nearer_to_enemy += 1;
                         } else if let Some((best_target_id, _, _)) = best_target {
@@ -3393,7 +3399,8 @@ impl EngineInner {
                     if claimant.camp != my_camp || !claimant.able_to_fight {
                         continue;
                     }
-                    if target == enemy_ai.base.primary_target {
+                    if Some(crate::ai::AiEntityHandle::new(target)) == enemy_ai.base.primary_target
+                    {
                         tick_data.friends_nearer_to_enemy =
                             tick_data.friends_nearer_to_enemy.saturating_add(1);
                     }
@@ -3694,7 +3701,9 @@ impl EngineInner {
                             is_soldier: false,
                             rank: crate::profiles::ProfileRank::None,
                             // Pull the PC's melee target from PcData.
-                            primary_target: pc.melee_target.map(|id| id.index()).unwrap_or(0),
+                            primary_target: pc
+                                .melee_target
+                                .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                             principal_opponent: pc.principal_opponent,
                             number_of_opponents,
                             opponent_handles: pc.opponent_handles.clone(),
@@ -3712,8 +3721,8 @@ impl EngineInner {
                             // behaviour is user-driven).
                             is_shield_bearer: false,
                             is_archer_unit: false,
-                            left_combat_neighbour: 0,
-                            right_combat_neighbour: 0,
+                            left_combat_neighbour: None,
+                            right_combat_neighbour: None,
                             is_in_recovery_animation: pc.in_recovery,
                             in_sword_action_state: pc.action_state.is_sword(),
                             seek_position: crate::ai::Position {
@@ -3723,9 +3732,9 @@ impl EngineInner {
                                 level: pc.layer,
                             },
                             // PCs never participate in archer↔shield pairing.
-                            archer_behind_me: 0,
+                            archer_behind_me: None,
                             ai_state: AiState::default(),
-                            shield_bearer_before_me: 0,
+                            shield_bearer_before_me: None,
                             // PCs aren't AI-driven, so the substate
                             // concept doesn't apply — leave it 0.
                             current_substate: 0,
@@ -4314,7 +4323,7 @@ impl EngineInner {
                 panic!(
                     "Live detection target {} requires missing sight obstacle {}",
                     target_id.index(),
-                    u16::from(handle)
+                    handle
                 )
             })
         });
@@ -4344,7 +4353,8 @@ impl EngineInner {
             target_is_pc,
             cloak_deception_applies: target_posture == crate::element::Posture::Cloaked
                 && viewer.camp.is_hostile_to(target.camp()),
-            cloak_remembers_target: viewer.primary_target == target_id.index()
+            cloak_remembers_target: viewer.primary_target
+                == Some(crate::ai::AiEntityHandle::new(target_id.index()))
                 || viewer.remembered_targets.contains(&target_id.index()),
             // TODO(cloak-authoring): connect this only when an explicit
             // modded profile schema supplies detector data.
@@ -5032,7 +5042,7 @@ impl EngineInner {
                                 "{:?} visibility target {} requires missing obstacle {}",
                                 kind,
                                 target_id.index(),
-                                u16::from(handle)
+                                handle
                             )
                         })
                 });
@@ -5426,7 +5436,9 @@ impl EngineInner {
             for target_id in rising_dispatches {
                 let mut stimulus =
                     crate::ai::Stimulus::new(crate::ai::StimulusType::EventSeesObject);
-                stimulus.info = crate::ai::StimulusInfo::Object(target_id.index());
+                stimulus.info = crate::ai::StimulusInfo::Object(crate::ai::AiEntityHandle::new(
+                    target_id.index(),
+                ));
                 ai.outbox.detection.stimuli.push(stimulus);
                 tracing::trace!(
                     npc = ?npc_id,
@@ -5475,7 +5487,7 @@ impl OwnerViewRadiusCache {
             cache.values.borrow_mut().insert(None, radius);
         }
         for index in 0..persistent.obstacles.len() {
-            let Some(handle) = u16::try_from(index)
+            let Some(handle) = u32::try_from(index)
                 .ok()
                 .and_then(crate::position_interface::ObstacleHandle::new)
             else {

@@ -11,8 +11,8 @@ use robin_engine::multiplayer::NetChannels as EngineNetChannels;
 #[cfg(test)]
 use robin_engine::multiplayer::new_frame_cursor;
 pub(crate) use robin_engine::multiplayer::{
-    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, NET_PROTOCOL_VERSION, NetEvent, NetMsg,
-    NetOutbound, STATE_HASH_INTERVAL, decode_msg, encode_msg,
+    FrameCursor, INPUT_DELAY_FRAMES, InitialSnapshot, MultiplayerSessionId, NET_PROTOCOL_VERSION,
+    NetEvent, NetMsg, NetOutbound, STATE_HASH_INTERVAL, decode_msg, encode_msg,
 };
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
@@ -77,7 +77,9 @@ impl InboundFramePolicy {
 
 pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
     match message {
-        NetMsg::InitialSnapshot { .. } => NetFrameClass::Snapshot,
+        NetMsg::InitialSnapshot { .. } | NetMsg::PrepareSnapshotTransition { .. } => {
+            NetFrameClass::Snapshot
+        }
         NetMsg::Input { .. } | NetMsg::BroadcastInput { .. } => NetFrameClass::Input,
         NetMsg::Hello { .. }
         | NetMsg::Welcome { .. }
@@ -86,7 +88,11 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
         | NetMsg::StateHash { .. }
         | NetMsg::ReadyToSim { .. }
         | NetMsg::BeginSim { .. }
-        | NetMsg::ModalDismiss { .. } => NetFrameClass::Control,
+        | NetMsg::ModalProposal { .. }
+        | NetMsg::ModalDecision { .. }
+        | NetMsg::ReconnectRequired { .. }
+        | NetMsg::SnapshotTransitionReady { .. }
+        | NetMsg::CommitSnapshotTransition { .. } => NetFrameClass::Control,
     }
 }
 
@@ -103,6 +109,11 @@ mod native;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{ClientHandle, ServerHandle, connect_client, start_server};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn discard_host_session_continuation() {
+    native::discard_host_session_continuation();
+}
 
 #[cfg(target_arch = "wasm32")]
 mod wasm;
@@ -203,6 +214,19 @@ impl NetChannels {
     pub fn shutdown(&mut self) {
         if let Some(mut runtime) = self.runtime.take() {
             runtime.shutdown();
+        }
+    }
+
+    /// Retain the authenticated host session/seat roster when this mission's
+    /// transport shuts down. Clients require no explicit flag: their durable
+    /// browser owner or process-held native key reclaims the retained seat.
+    pub(crate) fn preserve_session_for_next_mission(&mut self) {
+        match self.runtime.as_mut() {
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(MultiplayerRuntime::Server(handle)) => {
+                handle.preserve_session_for_next_mission();
+            }
+            Some(MultiplayerRuntime::Client(_)) | None => {}
         }
     }
 }

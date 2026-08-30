@@ -636,6 +636,7 @@ async fn dispatch_click(
         ClickAction::Return(c) => Some(c),
         ClickAction::LoadGame => {
             save_load::run_main_menu_load(
+                application_context,
                 event_pump,
                 renderer,
                 menu_resources,

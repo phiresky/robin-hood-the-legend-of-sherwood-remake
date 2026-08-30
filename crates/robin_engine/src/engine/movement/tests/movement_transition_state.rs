@@ -257,7 +257,7 @@ mod suite {
                 action_state: ActionState::MovingSword,
                 execute_order_initialising: true,
                 active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
                     steps: Default::default(),
@@ -469,7 +469,7 @@ mod suite {
                 action_state: ActionState::MovingSword,
                 execute_order_initialising: true,
                 active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                     position_direct: true,
                     steps: Default::default(),
@@ -575,6 +575,10 @@ mod suite {
                 -4.0, -4.0, 4.0, 4.0,
             ));
         element.sprite.position_iface.set_anti_collision_on(false);
+        element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(start);
 
         let owner = engine.add_entity(Entity::Pc(ActorPc {
@@ -748,6 +752,10 @@ mod suite {
                 -4.0, -4.0, 4.0, 4.0,
             ));
         element.sprite.position_iface.set_anti_collision_on(false);
+        element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         element.set_position_map(MapPoint::new(300.0, 794.0));
         let npc = NpcData {
             ai: crate::element::AiActorData {
@@ -1630,6 +1638,10 @@ mod suite {
             .sprite
             .position_iface
             .set_anti_collision_on(false);
+        owner_element
+            .sprite
+            .position_iface
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
         owner_element.set_sector(Some(
             crate::position_interface::SectorHandle::new(1).unwrap(),
         ));

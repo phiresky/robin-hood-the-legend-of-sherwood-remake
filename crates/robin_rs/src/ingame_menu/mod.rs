@@ -62,9 +62,21 @@ pub use pause::{PauseMenu, PauseMenuOutcome};
 pub(crate) use popup_scroll::show_popup_scroll;
 pub use popup_scroll::{PopupScrollItem, PopupScrollModalState};
 pub use resources::{IngameMenuResources, MenuSurface};
-pub use save_load::{SaveLoadMode, SaveLoadOutcome, show_save_load};
+pub use save_load::{LoadPickerModalState, SaveLoadMode, SaveLoadOutcome, show_save_load};
 pub use trading::{TradingModalState, TradingOutcome};
 pub use yesno::{YesNoModalState, show_file_not_found, show_yesno};
+
+/// Terminal result from a one-frame menu state.
+///
+/// `ExitRequested` is deliberately distinct from cancellation: closing the
+/// native window must propagate out of nested pause-side screens instead of
+/// quietly returning to gameplay.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ModalScreenOutcome<T> {
+    Accepted(T),
+    Cancelled,
+    ExitRequested,
+}
 
 use robin_engine::game_operation::GameCode;
 

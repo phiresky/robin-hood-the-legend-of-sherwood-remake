@@ -3,7 +3,7 @@
 Updated 2026-08-30. Multiplayer uses a server-ordered input stream with a
 small scheduling delay, predictive simulation, rollback for late inputs,
 periodic state-hash verification, and authoritative snapshots for joins. The
-wire protocol is version 25; older protocol compatibility is unsupported.
+wire protocol is version 29; older protocol compatibility is unsupported.
 
 ## Seat model
 
@@ -15,7 +15,8 @@ wire protocol is version 25; older protocol compatibility is unsupported.
 - `SeatState` stores deterministic per-player selection, quick groups,
   connection/nickname state, follow target, locker state and alt-lock.
 - Disconnect preserves a seat's selection and quick groups. Reconnecting with
-  the same nickname reclaims the parked seat.
+  the same authenticated native endpoint or durable browser owner reclaims the
+  parked seat; nicknames are presentation only.
 
 Local input must use `PlayerInput::new(local_seat, command)`. The host-only
 constructor is for single-player and explicitly host-owned paths.
@@ -44,11 +45,16 @@ the same directional allocation limits as native before decoding a body.
   on by default and can be overridden per host launch. Disabling it leaves
   native iroh play available without requiring relay readiness.
 - A canonical `rhmp3` invitation is signed by the host endpoint key, valid for
-  first redemption for exactly 30 minutes, and binds protocol 29, the full
+  first redemption for exactly 30 minutes, and binds protocol 32, the full
   engine commit, mission/session, expected seats, one disclosed canonical
   HTTPS relay, Demo/Full edition, and the native host's exact content-closure
   SHA-256. The URL stores the public ticket in its fragment; the stable shell
   captures and erases it before its first request.
+- One authenticated multiplayer session spans its campaign's mission
+  transports. At load/restart/campaign boundaries the host retains the exact
+  session id, authenticated owner-to-seat roster, expected player count, and
+  disclosed relay route for the one replacement transport. The next host
+  endpoint consumes that state once; leaving the session discards it.
 - The browser's durable seat key is an IndexedDB-held, non-extractable Ed25519
   private key on the isolated `identity.robinhood.phiresky.xyz` origin. That
   origin exposes only typed status, redemption, and seat-proof operations.
@@ -101,7 +107,7 @@ world through that host viewport while HUD/input query the Engine selection for
 camera design: split-screen or replay-from-another-seat would need an explicit
 host viewport policy.
 
-## Protocol 25
+## Protocol 32
 
 Messages are bitcode-encoded binary frames, class-tagged and length-prefixed
 on a single bidirectional iroh stream per peer. The handshake rejects a
@@ -110,7 +116,7 @@ different protocol version.
 | Direction | Message | Purpose |
 | --- | --- | --- |
 | client → server | `Hello { protocol_version, nickname, browser_auth }` | open or resume a session; browser auth carries the signed ticket and durable seat proof |
-| server → client | `Welcome { your_seat, mission_id, mission_seed, sim_config, host_nickname, session_id }` | authoritative mission/session construction and seat assignment |
+| server → client | `Welcome { your_seat, session_id, mission_id, mission_seed, sim_config, speech_timing_locale, host_nickname }` | authoritative session identity, mission construction, speech timing, and seat assignment |
 | server → client | `Reject { reason }` | typed fail-loud admission rejection |
 | client → server | `Input { origin_frame, command }` | propose a local command |
 | server → peers | `BroadcastInput { server_frame, origin_frame, target_frame, input }` | globally ordered, scheduled input |
@@ -118,7 +124,17 @@ different protocol version.
 | server → joining peer | `InitialSnapshot { frame, engine_bytes }` | authoritative mid-mission state |
 | client → server | `ReadyToSim { frame }` | peer loaded and adopted the snapshot |
 | server → peers | `BeginSim { frame, start_epoch_ms }` | release the start barrier |
-| either direction | `ModalDismiss { kind, result }` | synchronize a blocking modal outside the normal frame drain |
+| client → server | `ModalProposal { instance, kind, result, requested_frame }` | present a non-authoritative client request to the host |
+| server → clients | `ModalDecision { instance, kind, result, decision_frame }` | commit the host's sole authoritative result for one exact modal occurrence |
+| server → client | `ReconnectRequired { reason }` | discard the prediction future and perform a complete handshake/snapshot admission |
+| server → clients | `PrepareSnapshotTransition { id, payload }` | distribute exact host-authored save or campaign-exit bytes for validation and retention |
+| client → server | `SnapshotTransitionReady { id }` | acknowledge the exact prepared transition bytes |
+| server → clients | `CommitSnapshotTransition { id }` | release the transition only after every current peer is ready |
+
+Client `Input` frames can contain only seat-authored gameplay commands. Shared
+settings, campaign mutations, modal decisions, and seat connect/disconnect
+events require host authority and are rejected before server broadcast; the
+engine enforces the same predicate again at deterministic command admission.
 
 `Welcome` is authoritative. A peer must not substitute a local mission, seed,
 or `SimConfig` after decode failure. The snapshot payload uses the current
@@ -128,6 +144,14 @@ voice pack on every peer. `None` is an explicit selection of the installation's
 base `Data/Sounds`, not a missing field or permission to auto-select a local
 presentation language. Browser connection state tracks "Welcome pending"
 separately from the received `None` value.
+
+The session id is stable across an authorized outer-mission rebuild. A native
+client reuses its process-held iroh owner key, while a browser re-proves its
+durable signer key. The replacement server seeds those authenticated owners as
+disconnected seats and accepts only their exact reclamation; nicknames carry
+no authority. The host pins the previously disclosed relay route for the
+replacement endpoint, so a redeemed browser invitation remains reachable
+without silently minting a new invitation lifetime.
 
 ## Input scheduling and rollback
 
@@ -180,12 +204,22 @@ must not be repaired by silently adopting a new default Engine.
   inputs, hashes, rewind anchors, and dense history before seeding the new
   exact timeline anchor. Ordinary stale snapshots remain ignored.
 
-## Blocking modals
+## Modal authority and mission transitions
 
-Blocking dialogs stop the ordinary per-frame command drain, so their dismissal
-uses `ModalDismiss` rather than a scheduled `PlayerCommand`. The normal replay
-record still captures the dismissal at the mission-frame boundary. New modal
-types must define their network/replay ordering explicitly.
+Pause-side screens and scripted modals are frame-owned states: they poll and
+render once, then return to the mission driver so transport, HTTP, replay, and
+the multiplayer simulation continue. A client may propose a result for a
+session-bound modal instance, but only the host's `ModalDecision` closes it.
+The normal replay record captures that decision at the mission-frame boundary.
+
+Host-only save, load, restart, QuickLoad, and campaign-exit operations use an
+exact `Prepare`/`Ready`/`Commit` barrier. Clients first decode, validate, and
+retain the exact host bytes. The host commits only after every currently
+connected peer acknowledges the same session-bound transition id; reconnecting
+peers must acknowledge again. Participants then leave the old mission and
+perform a complete handshake/readiness admission for the replacement state.
+Local multiplayer saves remain explicitly diagnostic and are never accepted as
+authoritative load input.
 
 ## CLI
 
