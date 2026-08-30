@@ -8235,12 +8235,6 @@ fn read_native_reblock_binding(path: &Path, native_path: &Path) -> NativeReblock
     binding
 }
 
-fn validate_native_reblock_source_binding(source_path: &Path, binding: &NativeReblockBinding) {
-    validate_native_reblock_source_file_identity(source_path, binding)
-        .unwrap_or_else(|error| panic!("{error}"));
-    validate_native_reblock_semantics(source_path, binding, "recovery source");
-}
-
 fn validate_native_reblock_source_file_identity(
     source_path: &Path,
     binding: &NativeReblockBinding,
@@ -8296,23 +8290,28 @@ fn validate_native_reblock_semantics(path: &Path, binding: &NativeReblockBinding
     );
 }
 
-fn upgrade_legacy_native_reblock_binding(
+fn refresh_native_reblock_binding(
     binding_path: &Path,
     source_path: &Path,
     mut binding: NativeReblockBinding,
 ) -> NativeReblockBinding {
-    if binding.version == TRACE_NATIVE_VERSION {
-        return binding;
+    validate_native_reblock_source_file_identity(source_path, &binding)
+        .unwrap_or_else(|error| panic!("{error}"));
+    if binding.version == TRACE_NATIVE_LEGACY_VERSION {
+        validate_native_reblock_semantics(source_path, &binding, "legacy recovery source");
     }
-    assert_eq!(binding.version, TRACE_NATIVE_LEGACY_VERSION);
     let (frame_count, final_frame, semantic_sha256) = native_reblock_semantic_identity(source_path);
     assert_eq!(frame_count, binding.frame_count);
     assert_eq!(final_frame, binding.final_frame);
+    if binding.version == TRACE_NATIVE_VERSION && binding.source_semantic_sha256 == semantic_sha256
+    {
+        return binding;
+    }
     binding.version = TRACE_NATIVE_VERSION;
     binding.source_semantic_sha256 = semantic_sha256;
     write_native_reblock_binding(binding_path, &binding);
     eprintln!(
-        "upgraded legacy native reblock binding {}",
+        "refreshed native reblock binding {} after exact source authentication",
         binding_path.display()
     );
     binding
@@ -8395,7 +8394,6 @@ fn prepare_native_reblock_source(
     if recovery_state == NativeReblockRecoveryState::BindingOnly {
         let (bytes, content_sha256, device, inode) = native_reblock_file_identity(native_path);
         if native_reblock_file_identity_matches(&binding, bytes, &content_sha256, device, inode) {
-            validate_native_reblock_semantics(native_path, &binding, "canonical source");
             std::fs::hard_link(native_path, source_path).unwrap_or_else(|error| {
                 panic!(
                     "resume authenticated reblock source publication {}: {error}",
@@ -8406,9 +8404,7 @@ fn prepare_native_reblock_source(
                 native_path.parent().unwrap(),
                 "resumed native parity trace reblock source publication",
             );
-            validate_native_reblock_source_file_identity(source_path, &binding)
-                .unwrap_or_else(|error| panic!("{error}"));
-            let binding = upgrade_legacy_native_reblock_binding(binding_path, source_path, binding);
+            let binding = refresh_native_reblock_binding(binding_path, source_path, binding);
             return NativeReblockPreparation::Ready(binding);
         }
 
@@ -8429,11 +8425,10 @@ fn prepare_native_reblock_source(
         return NativeReblockPreparation::AlreadyCommitted;
     }
 
-    validate_native_reblock_source_binding(source_path, &binding);
+    let binding = refresh_native_reblock_binding(binding_path, source_path, binding);
     if native_path.exists() {
         validate_native_reblock_semantics(native_path, &binding, "canonical trace");
     }
-    let binding = upgrade_legacy_native_reblock_binding(binding_path, source_path, binding);
     eprintln!(
         "resuming authenticated reblock of {} from {}",
         native_path.display(),
@@ -12889,6 +12884,28 @@ mod tests {
             #[cfg(unix)]
             source_inode,
         };
+        write_native_reblock_binding(&binding_path, &binding);
+        std::fs::hard_link(&native, &source).unwrap();
+
+        reblock_native_trace(&native);
+
+        assert_eq!(
+            read_binary_trace_footer(&native).unwrap().version,
+            TRACE_NATIVE_VERSION
+        );
+        assert!(!source.exists());
+        assert!(!binding_path.exists());
+    }
+
+    #[test]
+    fn reblock_refreshes_stale_semantic_digest_for_exact_bound_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let native = directory.path().join("stale-binding.parity.bitcode.zst");
+        write_synthetic_native_trace(&native, "stale-binding", false);
+        let source = native_reblock_source_path(&native);
+        let binding_path = native_reblock_binding_path(&native);
+        let mut binding = create_native_reblock_binding(&native);
+        binding.source_semantic_sha256 = "pre-projection-change-digest".to_owned();
         write_native_reblock_binding(&binding_path, &binding);
         std::fs::hard_link(&native, &source).unwrap();
 
