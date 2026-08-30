@@ -1589,6 +1589,12 @@ pub struct RefreshViewContext {
     pub is_active_and_outside_building: bool,
     /// Whether this NPC is mounted on a horse.
     pub is_rider: bool,
+    /// Deterministic difficulty scaling for hostile-soldier view distance.
+    /// Retail presets and non-hostile/non-soldier NPCs pass 100.
+    pub hostile_soldier_view_distance_percent: u16,
+    /// Deterministic difficulty scaling for hostile-soldier cone width.
+    /// Retail presets and non-hostile/non-soldier NPCs pass 100.
+    pub hostile_soldier_view_angle_percent: u16,
     /// Current blood-alcohol level (0-255), sourced from the AI brain
     /// each frame.  Drives the drunken vision-cone wobble.  Passed
     /// through the context (rather than read from `NpcData`) because
@@ -1786,6 +1792,20 @@ pub fn refresh_view(npc: &mut AiActorData, ctx: &RefreshViewContext) {
                 npc.real_half_aperture = 0.95;
             }
         }
+
+        // Post-port difficulty modifiers are applied after every authored
+        // posture, alert, rider and intoxication rule, so they strengthen the
+        // final live cone rather than replacing mission-authored behavior.
+        // Integer distance scaling is deterministic across platforms; angle
+        // scaling is capped just below a 180-degree cone to retain a blind
+        // rear hemisphere outside the Original forest exception.
+        npc.view_radius = (u32::from(npc.view_radius)
+            * u32::from(ctx.hostile_soldier_view_distance_percent)
+            / 100)
+            .min(u32::from(u16::MAX)) as u16;
+        npc.real_half_aperture =
+            (npc.real_half_aperture * ctx.hostile_soldier_view_angle_percent as f32 / 100.0)
+                .min(std::f32::consts::FRAC_PI_2 - 0.01);
 
         let (left_x, mut left_y) = rotate_unit(
             npc.view_direction[0],
@@ -2815,10 +2835,31 @@ mod tests {
             is_dead: false,
             is_active_and_outside_building: true,
             is_rider: false,
+            hostile_soldier_view_distance_percent: 100,
+            hostile_soldier_view_angle_percent: 100,
             blood_alcohol: 0,
             own_position: GroundPoint::new(0.0, 0.0),
             follow_target_position: None,
         }
+    }
+
+    #[test]
+    fn hostile_soldier_difficulty_scales_final_live_view_cone() {
+        let mut npc = default_npc();
+        npc.view_radius_base = 400;
+        npc.view_radius_goal = 400;
+        let mut c = ctx(None, Posture::Upright);
+        c.hostile_soldier_view_distance_percent = 135;
+        c.hostile_soldier_view_angle_percent = 125;
+
+        refresh_view(&mut npc, &c);
+
+        assert_eq!(npc.view_radius, 540);
+        assert!(
+            (npc.real_half_aperture - NORMAL_HALF_APERTURE * 1.25).abs() < 1e-5,
+            "unexpected half aperture {}",
+            npc.real_half_aperture
+        );
     }
 
     #[test]

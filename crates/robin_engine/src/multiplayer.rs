@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 26;
+pub const NET_PROTOCOL_VERSION: u32 = 27;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -346,8 +346,14 @@ pub fn encode_msg(msg: &NetMsg) -> Vec<u8> {
 }
 
 /// Decode a binary WebSocket payload into a [`NetMsg`].
-pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, bitcode::Error> {
-    bitcode::decode(bytes)
+pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
+    let message: NetMsg = bitcode::decode(bytes).map_err(|error| error.to_string())?;
+    if let NetMsg::Welcome { sim_config, .. } = &message {
+        sim_config
+            .validate()
+            .map_err(|error| format!("host sent invalid simulation configuration: {error}"))?;
+    }
+    Ok(message)
 }
 
 #[cfg(test)]
@@ -355,11 +361,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_achievements_and_authoritative_trading() {
-        // Version 26 adds deterministic Sherwood trading state, commands, and
-        // receipts on top of version 25's achievement tracker state. Older
-        // peers fail before decoding incompatible snapshot/input bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 26);
+    fn protocol_version_includes_achievements_trading_and_resolved_difficulty() {
+        // Version 27 adds resolved Legendary/Custom difficulty on top of
+        // deterministic achievements and authoritative Sherwood trading.
+        // Older peers fail before decoding incompatible snapshot/input bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 27);
     }
 
     #[test]
@@ -455,6 +461,52 @@ mod tests {
                 },
             }
         ));
+    }
+
+    #[test]
+    fn welcome_roundtrips_host_authoritative_custom_difficulty_rules() {
+        let mut rules = crate::player_profile::DifficultyRules::MEDIUM;
+        rules.enemy_fighting_percent = 175;
+        rules.reaction_time_percent = 65;
+        rules.legacy_level = crate::player_profile::LegacyDifficultyLevel::Hard;
+        let mut sim_config = crate::engine::SimConfig::default();
+        sim_config.difficulty = crate::player_profile::DifficultyLevel::custom(rules).unwrap();
+        let msg = NetMsg::Welcome {
+            your_seat: PlayerId(1),
+            mission_id: "custom".to_owned(),
+            mission_seed: 19,
+            sim_config,
+            host_nickname: "host".to_owned(),
+        };
+
+        let decoded = decode_msg(&encode_msg(&msg)).expect("decode custom Welcome");
+        assert!(matches!(
+            decoded,
+            NetMsg::Welcome {
+                sim_config: decoded_config,
+                ..
+            } if decoded_config == sim_config
+        ));
+    }
+
+    #[test]
+    fn welcome_rejects_invalid_host_difficulty_rules() {
+        let mut rules = crate::player_profile::DifficultyRules::MEDIUM;
+        rules.enemy_fighting_percent = 0;
+        let mut sim_config = crate::engine::SimConfig::default();
+        // Construct the malformed wire value directly to verify the network
+        // boundary; ordinary callers must use `DifficultyLevel::custom`.
+        sim_config.difficulty = crate::player_profile::DifficultyLevel::Custom(rules);
+        let message = NetMsg::Welcome {
+            your_seat: PlayerId(1),
+            mission_id: "invalid".to_owned(),
+            mission_seed: 1,
+            sim_config,
+            host_nickname: "host".to_owned(),
+        };
+
+        let error = decode_msg(&encode_msg(&message)).unwrap_err();
+        assert!(error.contains("enemy_fighting_percent"));
     }
 
     #[test]

@@ -2424,15 +2424,19 @@ impl EngineInner {
             },
         );
 
-        // Net on Easy difficulty: predict whether the net would
-        // crumple at its landing point and surface that as the arc
-        // colour. Outside Net/Easy, fall through to the generic
+        // When the resolved difficulty enables the Easy-style assist,
+        // predict whether the net would crumple at its landing point and
+        // surface that as the arc colour. Outside that assist, use the generic
         // "will-hit → HitNoArc, miss → crumpled arc" branch used by
         // arrows/stones/purses.
         if selected_action == crate::profiles::Action::Net {
-            let easy =
-                self.control.sim_config.difficulty == crate::player_profile::DifficultyLevel::Easy;
-            if easy {
+            if self
+                .control
+                .sim_config
+                .difficulty
+                .rules()
+                .accurate_net_preview
+            {
                 let landing = trajectory
                     .last()
                     .map(|p| p.position)
@@ -2445,8 +2449,8 @@ impl EngineInner {
                     layer,
                 };
             }
-            // Medium / Hard: net arc always renders cyan (no crumple
-            // affordance).
+            // The assist-disabled presets render cyan without a crumple
+            // affordance.
             return TrajectoryPreview::ShowArc {
                 points: trajectory,
                 start: source_point,
