@@ -7,7 +7,7 @@ use robin_engine::multiplayer_config::MultiplayerConfig;
 
 use super::layout::{
     MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
-    render_text_virt,
+    render_text_virt_font,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -109,9 +109,9 @@ pub async fn show_multiplayer_privacy(
         if let Some(bg) = resources.menu_bg[0] {
             draw_screen_background(renderer, &bg);
         }
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let title = "Multiplayer / Privacy";
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -120,7 +120,7 @@ pub async fn show_multiplayer_privacy(
                 20,
             );
         }
-        if let Some(font) = resources.label_font() {
+        if let Some(font) = resources.label_font_any() {
             for (line, y) in [
                 ("Applies to the next game you host.", 75),
                 (
@@ -131,7 +131,7 @@ pub async fn show_multiplayer_privacy(
                 ("The relay can observe IPs, timing, and byte counts.", 220),
                 ("Gameplay traffic remains end-to-end encrypted.", 240),
             ] {
-                render_text_virt(renderer, font, transform, line, 30, y);
+                render_text_virt_font(renderer, font, transform, line, 30, y);
             }
         }
         if let Some(widget) = frame.widget(ID_PUBLICATION) {
