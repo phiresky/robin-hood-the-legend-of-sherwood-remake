@@ -424,7 +424,7 @@ A list of which additional features we have added, which ones we might still wan
   linearly replayable.
 
 - **Original-game parity traces**
-  (`crates/robin_rs/examples/original_parity_replay.rs`). A diagnostic runner
+  (`crates/robin_parity/examples/original_parity_replay.rs`). A diagnostic runner
   streams the neutral JSONL trace emitted by the instrumented C++ game,
   applies its resolved player commands on the recorded frames, and compares
   typed entity state using exact floating-point bits. Unsupported legacy
