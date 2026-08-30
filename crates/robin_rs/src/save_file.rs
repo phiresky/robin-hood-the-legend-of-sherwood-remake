@@ -516,7 +516,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   feature state with Legendary or
 ///   validated Custom difficulty, including independent hostile-soldier
 ///   distance, cone-width, and hearing modifiers.
-pub const SAVE_FORMAT_VERSION: u32 = 61;
+/// - **v62** (2026-08-30, self-describing native saves): every Rust-authored
+///   save requires immutable mission and player provenance in its header.
+///   Earlier Rust schemas are rejected; the separate Original C++ importer is
+///   the only compatibility path.
+pub const SAVE_FORMAT_VERSION: u32 = 62;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -566,10 +570,9 @@ pub struct SaveHeader {
     pub timestamp_unix: u64,
     /// Human-readable label chosen by the player (empty for auto saves).
     pub display_text: String,
-    /// Mission and player identity frozen at save time. `None` is accepted
-    /// only for v55 saves written before provenance metadata was introduced.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<SaveProvenance>,
+    /// Mission and player identity frozen at save time. This is mandatory for
+    /// every native Rust save; Original C++ saves use a separate importer.
+    pub provenance: SaveProvenance,
 }
 
 impl SaveHeader {
@@ -582,7 +585,7 @@ impl SaveHeader {
             mission_id,
             timestamp_unix,
             display_text,
-            provenance: Some(provenance),
+            provenance,
         })
     }
 
@@ -602,9 +605,7 @@ impl SaveHeader {
         if self.mission_id == 0 {
             bail!("invalid save mission ID: zero is not a valid mission");
         }
-        if let Some(provenance) = &self.provenance {
-            provenance.validate()?;
-        }
+        self.provenance.validate()?;
         Ok(())
     }
 }
@@ -752,13 +753,26 @@ impl GameSaveFile {
             .with_context(|| format!("reading save file {}", path.display()))?;
         let document: serde_json::Value = serde_json::from_str(&json)
             .with_context(|| format!("parsing save file {}", path.display()))?;
-        let header: SaveHeader = serde_json::from_value(
-            document
-                .get("header")
+        let header_document = document
+            .get("header")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("save file has no header"))?;
+        // Reject an obsolete Rust schema before asking serde to decode its
+        // historical field layout. This keeps version errors precise while
+        // still making every field in the current header structurally
+        // mandatory.
+        let version: u32 = serde_json::from_value(
+            header_document
+                .get("version")
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("save file has no header"))?,
+                .ok_or_else(|| anyhow::anyhow!("save header has no version"))?,
         )
-        .with_context(|| format!("parsing save header {}", path.display()))?;
+        .with_context(|| format!("parsing save header version {}", path.display()))?;
+        if version != SAVE_FORMAT_VERSION {
+            bail!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got {version}");
+        }
+        let header: SaveHeader = serde_json::from_value(header_document)
+            .with_context(|| format!("parsing save header {}", path.display()))?;
         header.validate()?;
         let save: Self = serde_json::from_value(document)
             .with_context(|| format!("parsing save payload {}", path.display()))?;
@@ -836,8 +850,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_requires_items_trading_and_resolved_difficulty() {
-        assert_eq!(SAVE_FORMAT_VERSION, 61);
+    fn save_format_version_requires_full_provenance() {
+        assert_eq!(SAVE_FORMAT_VERSION, 62);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -855,14 +869,14 @@ mod tests {
         assert_eq!(header.version, SAVE_FORMAT_VERSION);
         assert_eq!(header.mission_id, 42);
         assert_eq!(header.display_text, "My Save");
-        assert_eq!(header.provenance, Some(test_provenance()));
+        assert_eq!(header.provenance, test_provenance());
         header.validate().unwrap();
     }
 
     #[test]
-    fn current_v55_header_without_provenance_remains_readable() {
+    fn current_native_header_without_provenance_is_rejected() {
         let mut value = serde_json::to_value(
-            SaveHeader::new(42, "Legacy v55".into(), test_provenance()).unwrap(),
+            SaveHeader::new(42, "Missing provenance".into(), test_provenance()).unwrap(),
         )
         .unwrap();
         value
@@ -870,10 +884,8 @@ mod tests {
             .expect("header JSON object")
             .remove("provenance");
 
-        let header: SaveHeader = serde_json::from_value(value).unwrap();
-        assert_eq!(header.version, SAVE_FORMAT_VERSION);
-        assert_eq!(header.provenance, None);
-        header.validate().unwrap();
+        let error = serde_json::from_value::<SaveHeader>(value).unwrap_err();
+        assert!(error.to_string().contains("missing field `provenance`"));
     }
 
     #[test]

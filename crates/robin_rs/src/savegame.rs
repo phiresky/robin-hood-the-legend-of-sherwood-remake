@@ -41,36 +41,26 @@ pub struct SaveGame {
     /// Whether this is a special slot (continue, quicksave, restart, sherwood).
     pub special: Option<SpecialSlot>,
     /// Localized/static mission name at time of save, when profile data was available.
-    #[serde(default)]
     pub mission_name: String,
-    /// Stable profile identity at save time. Missing only on pre-metadata v56
-    /// entries created before save provenance was added.
-    #[serde(default)]
+    /// Stable profile identity at save time. Temporary slots use `None` only
+    /// until their first payload is published.
     pub player_profile_id: Option<u32>,
     /// Player name frozen at save time, so later profile renames do not alter
     /// the meaning of existing saves.
-    #[serde(default)]
     pub player_name: String,
     /// Campaign progression percentage at time of save.
-    #[serde(default)]
     pub campaign_progress: Option<u32>,
     /// Number of completed missions at time of save.
-    #[serde(default)]
     pub missions_done: Option<usize>,
     /// Total missions known to the campaign at time of save.
-    #[serde(default)]
     pub missions_total: Option<usize>,
     /// Gang size at time of save.
-    #[serde(default)]
     pub gang_size: Option<usize>,
     /// Current ransom value at time of save.
-    #[serde(default)]
     pub ransom: Option<i32>,
     /// Current blazon value at time of save.
-    #[serde(default)]
     pub blazons: Option<i32>,
     /// Current amulet value at time of save.
-    #[serde(default)]
     pub amulets: Option<i32>,
 }
 
@@ -157,6 +147,61 @@ impl SaveGame {
     pub fn is_autosave(&self) -> bool {
         self.special == Some(SpecialSlot::Autosave)
             || is_generated_autosave_filename(&self.filename)
+    }
+
+    pub(crate) fn validate_published_metadata(&self) -> Result<()> {
+        if self.version != save_file::SAVE_FORMAT_VERSION {
+            anyhow::bail!(
+                "save index entry {:?} uses obsolete Rust schema {}; expected {}",
+                self.filename,
+                self.version,
+                save_file::SAVE_FORMAT_VERSION
+            );
+        }
+        if self.mission_id == 0 {
+            anyhow::bail!(
+                "save index entry {:?} has invalid mission ID zero",
+                self.filename
+            );
+        }
+        let timestamp = self.timestamp.parse::<u64>().with_context(|| {
+            format!(
+                "save index entry {:?} has an invalid timestamp",
+                self.filename
+            )
+        })?;
+        if timestamp == 0 {
+            anyhow::bail!(
+                "save index entry {:?} has Unix timestamp zero",
+                self.filename
+            );
+        }
+        if self.mission_name.trim().is_empty() {
+            anyhow::bail!("save index entry {:?} has no mission name", self.filename);
+        }
+        if self.player_profile_id.is_none() {
+            anyhow::bail!(
+                "save index entry {:?} has no player identity",
+                self.filename
+            );
+        }
+        if self.player_name.trim().is_empty() {
+            anyhow::bail!("save index entry {:?} has no player name", self.filename);
+        }
+        if self.campaign_progress.is_none()
+            || self.missions_done.is_none()
+            || self.missions_total.is_none()
+            || self.gang_size.is_none()
+            || self.ransom.is_none()
+            || self.blazons.is_none()
+            || self.amulets.is_none()
+        {
+            anyhow::bail!(
+                "save index entry {:?} is missing required campaign summary metadata",
+                self.filename
+            );
+        }
+        Ok(())
     }
 }
 
@@ -613,10 +658,10 @@ impl SaveGameManager {
                 header.timestamp_unix.to_string(),
             );
         }
-        if let Some(provenance) = &header.provenance
-            && (slot.mission_name != provenance.mission_name
-                || slot.player_profile_id != Some(provenance.player_profile_id)
-                || slot.player_name != provenance.player_name)
+        let provenance = &header.provenance;
+        if slot.mission_name != provenance.mission_name
+            || slot.player_profile_id != Some(provenance.player_profile_id)
+            || slot.player_name != provenance.player_name
         {
             anyhow::bail!(
                 "save slot {index} provenance does not match decoded payload: cached mission/player={:?}/{:?}/{:?}, decoded={:?}/{:?}/{:?}",
@@ -824,10 +869,7 @@ impl SaveGameManager {
     }
 
     fn sync_slot_metadata_from_header(slot: &mut SaveGame, header: &SaveHeader) -> Result<()> {
-        let provenance = header
-            .provenance
-            .as_ref()
-            .context("new save header is missing required provenance")?;
+        let provenance = &header.provenance;
         slot.mission_id = header.mission_id;
         slot.version = header.version;
         slot.timestamp = header.timestamp_unix.to_string();
@@ -940,7 +982,12 @@ impl SaveGameManager {
     pub fn load_index(save_directory: &str) -> Result<Self, String> {
         let path = Path::new(save_directory).join("saves.json");
         let data = std::fs::read_to_string(&path).map_err(|e| format!("read: {e}"))?;
-        serde_json::from_str(&data).map_err(|e| format!("parse: {e}"))
+        let manager: Self = serde_json::from_str(&data).map_err(|e| format!("parse: {e}"))?;
+        for save in &manager.saves {
+            save.validate_published_metadata()
+                .map_err(|error| format!("validate: {error:#}"))?;
+        }
+        Ok(manager)
     }
 
     fn next_filename(&mut self) -> String {
@@ -1162,22 +1209,14 @@ mod tests {
         mgr.validate_slot_identity(idx, &decoded).unwrap();
         assert_eq!(
             decoded.header.provenance,
-            Some(SaveProvenance::new("Mission 17".into(), 0, "Alice".into()).unwrap())
+            SaveProvenance::new("Mission 17".into(), 0, "Alice".into()).unwrap()
         );
         assert_eq!(mgr.saves[idx].mission_name, "Mission 17");
         assert_eq!(mgr.saves[idx].player_profile_id, Some(0));
         assert_eq!(mgr.saves[idx].player_name, "Alice");
         profiles.missions[2].mission_name = "Mission 17 (renamed)".into();
         assert_eq!(mgr.saves[idx].mission_name, "Mission 17");
-        assert_eq!(
-            decoded
-                .header
-                .provenance
-                .as_ref()
-                .expect("new save provenance")
-                .mission_name,
-            "Mission 17"
-        );
+        assert_eq!(decoded.header.provenance.mission_name, "Mission 17");
         mgr.saves[idx].mission_id = 99;
         assert!(
             mgr.validate_slot_identity(idx, &decoded)
@@ -1352,7 +1391,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_index_without_player_metadata_remains_readable() {
+    fn native_index_without_player_metadata_is_rejected() {
         let json = serde_json::json!({
             "saves": [{
                 "text": "Legacy",
@@ -1366,9 +1405,8 @@ mod tests {
             "save_directory": "/tmp/test_saves",
             "next_id": 1
         });
-        let manager: SaveGameManager = serde_json::from_value(json).unwrap();
-        assert_eq!(manager.saves[0].player_profile_id, None);
-        assert!(manager.saves[0].player_name.is_empty());
+        let error = serde_json::from_value::<SaveGameManager>(json).unwrap_err();
+        assert!(error.to_string().contains("missing field"));
     }
 
     #[test]

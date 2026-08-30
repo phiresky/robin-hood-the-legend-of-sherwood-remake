@@ -1658,7 +1658,12 @@ mod tests {
         ));
         assert!(collect_visible_slots(&manager, SaveLoadMode::Save).is_empty());
         assert_eq!(
-            row_label(ListRow::Existing(0), &manager, &load_visible),
+            row_label(
+                ListRow::Existing(0),
+                &manager,
+                &load_visible,
+                &EnglishSaveMetadataText,
+            ),
             "Autosave - The Silver Arrow"
         );
     }
@@ -1786,7 +1791,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_row_does_not_invent_missing_player_or_mission() {
+    fn incomplete_original_import_row_does_not_invent_player_or_mission() {
         let text = EnglishSaveMetadataText;
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
         manager.saves.push(saved_at("100"));
@@ -1806,7 +1811,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_mode_restores_the_pre_metadata_row() {
+    fn compact_mode_hides_expanded_provenance_without_discarding_it() {
         let text = EnglishSaveMetadataText;
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
         let mut save = saved_at("3600");

@@ -4,6 +4,17 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Self-describing save metadata.** Every newly written manual, quick,
+  rotating-autosave, continue, restart, and Sherwood save freezes its
+  wall-clock timestamp, mission title, stable player-profile identity, and
+  player name into both the payload header and lightweight slot index. The save
+  picker shows mission/player provenance, honest relative age (including future
+  times after clock correction), exact local time, and expanded campaign
+  details. The per-profile **Detailed Save Metadata** option switches to a
+  compact presentation without discarding stored metadata. Native save schema
+  v62 requires provenance and rejects every older Rust schema; only the
+  separate Original C++ importer may produce incomplete historical detail.
+
 - **Per-mission achievements, debrief evidence, XP, and trackers.** Four
   deterministic achievements are evaluated independently for each successful
   attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
@@ -549,8 +560,6 @@ A list of which additional features we have added, which ones we might still wan
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
-- Every save should have a timestamp automatically, plus mission name and
-  player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Item reliability rebalances are implemented as independent Gameplay
   settings. Direct apples can interrupt active swordfights; wasps acquire
   valid initial targets within 75 instead of 50 units; Will Scarlet's stone

@@ -456,6 +456,7 @@ mod tests {
                 "Preview Ale Effect",
                 "Preview Purse Effect",
                 "Preview Wasp Area",
+                "Detailed Save Metadata",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -473,6 +474,10 @@ mod tests {
         assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
         assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
         assert!(is_option_selected(&config, 32));
+        assert!(is_option_selected(
+            &config,
+            DETAILED_SAVE_METADATA_OPTION_INDEX
+        ));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -542,6 +547,11 @@ mod tests {
         assert_eq!(config.autosave_enabled, autosave_enabled);
         apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
         assert!(!config.sherwood_trading);
+
+        let autosave_enabled = config.autosave_enabled;
+        apply_option_toggle(&mut config, DETAILED_SAVE_METADATA_OPTION_INDEX);
+        assert!(!config.detailed_save_metadata);
+        assert_eq!(config.autosave_enabled, autosave_enabled);
     }
 
     #[test]

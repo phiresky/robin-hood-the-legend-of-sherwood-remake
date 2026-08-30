@@ -468,6 +468,25 @@ mod tests {
     }
 
     #[test]
+    fn detailed_save_metadata_is_independent_default_on_and_not_hashed() {
+        use robin_util::state_hash::compute;
+
+        let enabled = GameplayConfig::default();
+        let disabled = GameplayConfig {
+            detailed_save_metadata: false,
+            ..enabled
+        };
+        assert!(enabled.detailed_save_metadata);
+        assert!(!disabled.detailed_save_metadata);
+        assert_eq!(compute(&enabled), compute(&disabled));
+
+        let json = serde_json::to_string(&disabled).expect("serialize gameplay config");
+        let decoded: GameplayConfig =
+            serde_json::from_str(&json).expect("deserialize gameplay config");
+        assert!(!decoded.detailed_save_metadata);
+    }
+
+    #[test]
     fn production_forecast_toggle_round_trips_with_profile_config() {
         let config = GameplayConfig {
             show_production_forecast: false,
