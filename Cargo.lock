@@ -5490,6 +5490,7 @@ dependencies = [
  "gilrs",
  "gloo-render",
  "gloo-timers 0.4.0",
+ "hex",
  "iroh",
  "iroh-gossip",
  "iroh-mainline-address-lookup",
