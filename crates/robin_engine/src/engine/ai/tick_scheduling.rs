@@ -575,7 +575,7 @@ impl EngineInner {
                             .enemy_ai_mut()
                             .expect("successful AI swordfight rebalance owner lost enemy AI")
                             .base
-                            .primary_target = Some(crate::ai::AiEntityHandle::new(target_handle));
+                            .primary_target = Some(target_handle);
                     }
                 }
             }

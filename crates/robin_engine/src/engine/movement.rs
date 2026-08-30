@@ -5858,8 +5858,8 @@ impl EngineInner {
                 // is what keeps the fighter turned toward the melee.
                 entity
                     .ai_controller()
-                    .map(|c| c.primary_target)
-                    .filter(|slot| *slot != 0)
+                    .and_then(|c| c.primary_target)
+                    .map(crate::ai::AiEntityHandle::get)
                     .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
             } else {
                 None

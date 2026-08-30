@@ -1019,8 +1019,8 @@ impl EngineInner {
             let doors_slice = self.script_domains.interactables.doors.as_slice();
             let mut candidates: Vec<crate::ai::HumanHandle> = Vec::new();
             candidates.extend(enemy_ai.list_them.iter().copied());
-            if primary_target_handle != 0 {
-                candidates.push(primary_target_handle);
+            if let Some(primary_target_handle) = primary_target_handle {
+                candidates.push(primary_target_handle.get());
             }
             candidates.retain(|&h| h != 0);
             candidates.dedup();
@@ -1234,7 +1234,7 @@ impl EngineInner {
                 {
                     continue;
                 }
-                if target == primary_target_handle {
+                if Some(crate::ai::AiEntityHandle::new(target)) == primary_target_handle {
                     tick.friends_nearer_to_enemy = tick.friends_nearer_to_enemy.saturating_add(1);
                 }
             }

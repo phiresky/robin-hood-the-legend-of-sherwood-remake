@@ -350,7 +350,7 @@ impl EnemyAi {
                 .entity_view(self.base.primary_target)
                 .unwrap_or_else(|| {
                     panic!(
-                        "primary target {} missing from entity views while reacting",
+                        "primary target {:?} missing from entity views while reacting",
                         self.base.primary_target
                     )
                 });
@@ -410,7 +410,7 @@ impl EnemyAi {
                     .launch_commands
                     .push(crate::element::Command::EquipBowDown);
             } else {
-                self.i_am_in_trouble(self.base.primary_target);
+                self.i_am_in_trouble(self.required_primary_target("reacting to an enemy").get());
                 self.battle_decisions(sim, global, ctx, tick, grid);
             }
         }
@@ -430,7 +430,7 @@ impl EnemyAi {
             && super::super::decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
             eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=reactiontime_running_event stimulus={stimulus_type:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} owner_work_before={:?}",
+                "AIDECISION frame={} owner={} co={:?} stage=reactiontime_running_event stimulus={stimulus_type:?} state={:?}/{:?} primary={:?} rider={} couldnt={} already={} owner_work_before={:?}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order,
@@ -447,11 +447,14 @@ impl EnemyAi {
             || stimulus_type == StimulusType::EventReachPoint
         {
             self.base.stop_all();
-            self.i_am_in_trouble(self.base.primary_target);
+            self.i_am_in_trouble(
+                self.required_primary_target("finishing a running reaction")
+                    .get(),
+            );
             self.battle_decisions(sim, global, ctx, tick, grid);
             if debug_decision_path {
                 eprintln!(
-                    "AIDECISION frame={} owner={} stage=reactiontime_running_done state={:?}/{:?} primary={} couldnt={} already={} owner_work_after={:?}",
+                    "AIDECISION frame={} owner={} stage=reactiontime_running_done state={:?}/{:?} primary={:?} couldnt={} already={} owner_work_after={:?}",
                     ctx.frame,
                     self.base.me,
                     self.base.current_state,
@@ -760,26 +763,23 @@ impl EnemyAi {
                 // state or positions, it does not become stale when the
                 // per-tick fighter registry omits the owner.
                 .unwrap_or(self.sword_range);
-            let target = self
-                        .find_fighter(self.base.primary_target, tick)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "AttackingApproachingNewEnemy primary target {} is missing its required fighter snapshot",
-                                self.base.primary_target
-                            )
-                        });
-            if tick.primary_target_snapshot_handle != self.base.primary_target {
+            let target_handle = self.required_primary_target("approaching a newly selected enemy");
+            let target = self.find_fighter(target_handle, tick).unwrap_or_else(|| {
                 panic!(
-                    "AttackingApproachingNewEnemy primary target {} does not match tick snapshot handle {}",
-                    self.base.primary_target, tick.primary_target_snapshot_handle
+                    "AttackingApproachingNewEnemy primary target {target_handle} is missing its required fighter snapshot"
+                )
+            });
+            if tick.primary_target_snapshot_handle != Some(target_handle) {
+                panic!(
+                    "AttackingApproachingNewEnemy primary target {target_handle} does not match tick snapshot handle {:?}",
+                    tick.primary_target_snapshot_handle
                 );
             }
             let target_live_position = tick.primary_target_live_position.unwrap_or_else(|| {
-                        panic!(
-                            "AttackingApproachingNewEnemy primary target {} is missing its literal position",
-                            self.base.primary_target
-                        )
-                    });
+                panic!(
+                    "AttackingApproachingNewEnemy primary target {target_handle} is missing its literal position"
+                )
+            });
             let owner_live_position = tick.owner_live_position.unwrap_or_else(|| {
                 panic!(
                     "AttackingApproachingNewEnemy owner {} is missing its literal position",
@@ -797,7 +797,7 @@ impl EnemyAi {
             if close_enough {
                 self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                 self.base.launch_timer(20, ctx.frame);
-                self.base.outbox.actor.set_principal = Some(self.base.primary_target);
+                self.base.outbox.actor.set_principal = Some(target_handle);
             } else {
                 // Re-approach
                 self.base
@@ -806,7 +806,7 @@ impl EnemyAi {
                     self.base.already_on_point = false;
                     self.set_state(AiState::Attacking, Substate::AttackingSwordfight);
                     self.base.launch_timer(20, ctx.frame);
-                    self.base.outbox.actor.set_principal = Some(self.base.primary_target);
+                    self.base.outbox.actor.set_principal = Some(target_handle);
                 }
             }
         }
@@ -898,7 +898,7 @@ impl EnemyAi {
                             to_whole_patrol: false,
                             target,
                             stimulus_type: StimulusType::CallCoordinate,
-                            info: crate::ai::StimulusInfo::Human(me),
+                            info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(me)),
                         },
                     );
                 }
@@ -948,7 +948,7 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
-            if self.base.primary_target != 0 {
+            if self.base.primary_target.is_some() {
                 self.base
                     .set_direction_toward_entity(self.base.primary_target, ctx);
             }
@@ -1118,7 +1118,12 @@ impl EnemyAi {
                 );
             if safe_to_shoot {
                 self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
-                self.shoot_arrow_at(self.base.primary_target, ctx, tick);
+                self.shoot_arrow_at(
+                    self.required_primary_target("shooting an aimed arrow")
+                        .get(),
+                    ctx,
+                    tick,
+                );
             } else {
                 self.enemy_seen_below = false;
                 self.battle_decisions(sim, global, ctx, tick, grid);
@@ -1197,7 +1202,7 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::EventReachPoint => {
                 // Arrived behind shield bearer — turn to face target.
-                if self.base.primary_target != 0 {
+                if self.base.primary_target.is_some() {
                     // Original: `Face(mpPrimaryTarget)`. The element
                     // overload forwards both `Position(target)` and
                     // the target's truncated elevation; dropping the
@@ -1210,7 +1215,7 @@ impl EnemyAi {
                 // before re-evaluating: `launch_timer(5)` +
                 // `focus(primary_target)`.
                 self.base.launch_timer(5, ctx.frame);
-                if self.base.primary_target != 0 {
+                if self.base.primary_target.is_some() {
                     self.base.outbox.actor.set_focus(self.base.primary_target);
                 }
             }
@@ -1265,7 +1270,7 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            if self.base.primary_target == 0 {
+            if self.base.primary_target.is_none() {
                 self.set_state(AiState::Attacking, Substate::AttackingDoorFightWaiting);
                 self.base.launch_timer(150, ctx.frame);
             } else {
@@ -1327,7 +1332,7 @@ impl EnemyAi {
                 });
             if crate::ai_enemy::battle_decision_debug_enabled() {
                 eprintln!(
-                    "SHIELD_TIMER frame={} me={} action={:?} shield={} left={} right={} archer_behind={} target={} target_action={:?}",
+                    "SHIELD_TIMER frame={} me={} action={:?} shield={} left={:?} right={:?} archer_behind={:?} target={:?} target_action={:?}",
                     ctx.frame,
                     self.base.me,
                     my_action,
@@ -1352,13 +1357,14 @@ impl EnemyAi {
                     .map(|f| (f.raw_position, f.elevation))
                     .unwrap_or_else(|| {
                         panic!(
-                            "shield bearer {} requires primary target {} in the fighter registry",
+                            "shield bearer {} requires primary target {:?} in the fighter registry",
                             self.base.me, self.base.primary_target
                         )
                     });
                 self.base.raise_shield(target_pos, target_elevation);
                 self.base.launch_timer(20, ctx.frame);
-            } else if self.left_combat_neighbour != 0 || self.right_combat_neighbour != 0 {
+            } else if self.left_combat_neighbour.is_some() || self.right_combat_neighbour.is_some()
+            {
                 // You should be doing phalanx stuff
                 self.set_state(AiState::Attacking, Substate::AttackingPhalanx);
                 // Original calls `mpMe->Focus(mpPrimaryTarget)` here.
@@ -1366,13 +1372,13 @@ impl EnemyAi {
                 // actor Face/Turn command.
                 self.base.outbox.actor.set_focus(self.base.primary_target);
                 self.base.launch_timer(5, ctx.frame);
-            } else if self.archer_behind_me != 0 {
+            } else if self.archer_behind_me.is_some() {
                 // Protecting an archer — update direction and stay
-                if self.base.primary_target == 0 {
+                if self.base.primary_target.is_none() {
                     self.base.primary_target =
                         self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick);
                 }
-                if self.base.primary_target == 0 {
+                if self.base.primary_target.is_none() {
                     tracing::error!(
                         soldier = self.base.me,
                         "shield bearer protecting an archer has no primary target"
@@ -1385,7 +1391,7 @@ impl EnemyAi {
                     .map(|f| f.position)
                     .unwrap_or_else(|| {
                         panic!(
-                            "shield bearer {} requires primary target {} in the fighter registry",
+                            "shield bearer {} requires primary target {:?} in the fighter registry",
                             self.base.me, self.base.primary_target
                         )
                     });
@@ -1397,12 +1403,12 @@ impl EnemyAi {
                 self.base.launch_timer(30, ctx.frame);
             } else {
                 // Check if enemy is still dangerous
-                let target = if self.base.primary_target != 0 {
+                let target = if self.base.primary_target.is_some() {
                     self.base.primary_target
                 } else {
                     self.get_new_primary_target(PrimaryTargetFlags::VIPS_ALLOWED, ctx, tick)
                 };
-                if target != 0 {
+                if let Some(target) = target {
                     let target_is_bow = self
                         .find_fighter(target, tick)
                         .map(|f| f.action_state.is_bow())
@@ -1497,8 +1503,8 @@ impl EnemyAi {
                         self.get_new_primary_target(PrimaryTargetFlags::empty(), ctx, tick)
                     });
 
-                if target != 0 {
-                    self.base.primary_target = target;
+                if let Some(target) = target {
+                    self.base.primary_target = Some(target);
                     self.set_state(AiState::Attacking, Substate::AttackingPhalanx);
                     let (target_pos, target_elevation) = self
                         .find_fighter(target, tick)
@@ -1554,13 +1560,13 @@ impl EnemyAi {
                     me = self.base.me,
                     frame = ctx.frame,
                     ?my_action,
-                    primary = self.base.primary_target,
+                    primary = ?self.base.primary_target,
                     "phalanx timer"
                 );
                 let phalanx_debug = crate::ai_enemy::battle_decision_debug_enabled();
                 if phalanx_debug {
                     eprintln!(
-                        "PHALANX_TIMER frame={} me={} action={:?} left={} right={} target={} archer_behind={}",
+                        "PHALANX_TIMER frame={} me={} action={:?} left={:?} right={:?} target={:?} archer_behind={:?}",
                         ctx.frame,
                         self.base.me,
                         my_action,
@@ -1570,28 +1576,28 @@ impl EnemyAi {
                         self.archer_behind_me
                     );
                 }
-                if !my_action.is_shield() && self.base.primary_target != 0 {
+                if !my_action.is_shield() && self.base.primary_target.is_some() {
                     // Reestablish shield state
                     let (target_pos, target_elevation) = self
                         .find_fighter(self.base.primary_target, tick)
                         .map(|f| (f.raw_position, f.elevation))
                         .unwrap_or_else(|| {
                             panic!(
-                                "phalanx soldier {} requires primary target {} in the fighter registry",
+                                "phalanx soldier {} requires primary target {:?} in the fighter registry",
                                 self.base.me, self.base.primary_target
                             )
                         });
                     self.base.raise_shield(target_pos, target_elevation);
                     self.base.launch_timer(20, ctx.frame);
                 } else if !self.reconsider_phalanx(sim, global, ctx, tick, grid) {
-                    if self.base.primary_target != 0 {
+                    if self.base.primary_target.is_some() {
                         // No phalanx correction — maybe correct direction
                         let target_pos = self
                             .find_fighter(self.base.primary_target, tick)
                             .map(|f| f.position)
                             .unwrap_or_else(|| {
                                 panic!(
-                                    "phalanx soldier {} requires primary target {} in the fighter registry",
+                                    "phalanx soldier {} requires primary target {:?} in the fighter registry",
                                     self.base.me, self.base.primary_target
                                 )
                             });
@@ -1634,9 +1640,9 @@ impl EnemyAi {
 
                 // Notify archer behind us to re-evaluate, but
                 // only if they're actively shooting/loading/aiming.
-                if self.archer_behind_me != 0 {
+                if let Some(archer_behind_me) = self.archer_behind_me {
                     let archer_in_bow = self
-                        .find_fighter(self.archer_behind_me, tick)
+                        .find_fighter(archer_behind_me, tick)
                         .map(|f| {
                             let s = f.current_substate;
                             s == Substate::AttackingBowShooting as u32
@@ -1646,7 +1652,7 @@ impl EnemyAi {
                         .unwrap_or_else(|| {
                             panic!(
                                 "phalanx soldier {} requires protected archer {} in the fighter registry",
-                                self.base.me, self.archer_behind_me
+                                self.base.me, archer_behind_me
                             )
                         });
                     if archer_in_bow {
@@ -1654,7 +1660,7 @@ impl EnemyAi {
                             CrossNpcAction::SendStimulus {
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
-                                target: self.archer_behind_me,
+                                target: archer_behind_me.get(),
                                 stimulus_type: StimulusType::CallCoordinate,
                                 info: StimulusInfo::None,
                             },
@@ -1758,7 +1764,9 @@ impl EnemyAi {
                         // SetGuardedPC( pPC ) — assigns both the
                         // soldier's guarded_pc and the PC's reciprocal
                         // guard.
-                        self.set_guarded_pc(Some(crate::entity_id::PcId(self.base.primary_target)));
+                        self.set_guarded_pc(Some(crate::entity_id::PcId(
+                            self.required_primary_target("menacing a comatose PC").get(),
+                        )));
                     }
                     self.base.launch_timer(20, ctx.frame);
                 } else if target_is_pc && target_in_coma && target_guard.is_some() {
@@ -1767,14 +1775,14 @@ impl EnemyAi {
                 } else if let Some(p) = target_pos {
                     if tick.primary_target_snapshot_handle != self.base.primary_target {
                         panic!(
-                            "ApproachingSleepingEnemy primary target {} does not match tick snapshot handle {}",
+                            "ApproachingSleepingEnemy primary target {:?} does not match tick snapshot handle {:?}",
                             self.base.primary_target, tick.primary_target_snapshot_handle
                         );
                     }
                     let target_live_position =
                         tick.primary_target_live_position.unwrap_or_else(|| {
                             panic!(
-                                "ApproachingSleepingEnemy primary target {} is missing its literal position",
+                                "ApproachingSleepingEnemy primary target {:?} is missing its literal position",
                                 self.base.primary_target
                             )
                         });
@@ -1817,7 +1825,7 @@ impl EnemyAi {
                         let antagonist =
                             Some(ctx.entity_id(self.base.primary_target).unwrap_or_else(|| {
                                 panic!(
-                                    "sleeping-enemy target {} has no typed live entity view",
+                                    "sleeping-enemy target {:?} has no typed live entity view",
                                     self.base.primary_target
                                 )
                             }));
@@ -1871,7 +1879,7 @@ impl EnemyAi {
             // Cheat-face the primary target if still known, else the
             // stored seek position. Original passes `true` to both
             // Face overloads, selecting RHCOMMAND_TURN_FAST.
-            if self.base.primary_target != 0 {
+            if self.base.primary_target.is_some() {
                 self.base.face_entity_fast(self.base.primary_target, ctx);
             } else {
                 self.base
@@ -1895,16 +1903,18 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventDone {
             // IsDetecting180Degrees(primary_target)?
             //   BattleDecisions : GetBattleOverview.
-            if self.base.primary_target != 0
-                && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
+            if let Some(primary_target) = self
+                .base
+                .primary_target
+                .filter(|target| self.is_detecting_180_degrees(*target, ctx))
             {
                 // Original restores a still-visible primary target to
                 // the persistent Them list before making the next
                 // tactical decision.  The target can have fallen out
                 // of that list during the retreat; omitting this made
                 // BattleDecisions take its no-enemy SeekArea branch.
-                if !self.list_them.contains(&self.base.primary_target) {
-                    self.list_them.push(self.base.primary_target);
+                if !self.list_them.contains(&primary_target.get()) {
+                    self.list_them.push(primary_target.get());
                 }
                 self.battle_decisions(sim, global, ctx, tick, grid);
             } else {
@@ -1980,7 +1990,7 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventDone => {
-                if self.base.primary_target != 0 {
+                if self.base.primary_target.is_some() {
                     self.base.outbox.actor.set_focus(self.base.primary_target);
                 }
                 self.base.launch_timer(5, ctx.frame);
@@ -2058,8 +2068,10 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            if self.base.primary_target != 0
-                && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
+            if self
+                .base
+                .primary_target
+                .is_some_and(|target| self.is_detecting_180_degrees(target, ctx))
             {
                 self.battle_decisions(sim, global, ctx, tick, grid);
             } else {
@@ -2082,8 +2094,10 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
-            if self.base.primary_target != 0
-                && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
+            if self
+                .base
+                .primary_target
+                .is_some_and(|target| self.is_detecting_180_degrees(target, ctx))
             {
                 self.battle_decisions(sim, global, ctx, tick, grid);
             } else {
@@ -2270,7 +2284,10 @@ impl EnemyAi {
         grid: Option<&crate::fast_find_grid::FastFindGrid>,
     ) -> bool {
         if stimulus_type == StimulusType::EventDone {
-            self.i_am_in_trouble(self.base.primary_target);
+            self.i_am_in_trouble(
+                self.required_primary_target("finishing an archer bend reaction")
+                    .get(),
+            );
             self.battle_decisions(sim, global, ctx, tick, grid);
         }
         false
@@ -2359,7 +2376,7 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventReachPoint => {
-                if self.base.primary_target != 0 {
+                if self.base.primary_target.is_some() {
                     self.base.face_entity(self.base.primary_target, ctx);
                     self.base.outbox.actor.set_focus(self.base.primary_target);
                 }
@@ -2395,13 +2412,13 @@ impl EnemyAi {
             let target_on_lift = grid.is_some_and(|g| {
                 let position = tick.primary_target_live_position.unwrap_or_else(|| {
                     panic!(
-                        "ladder-waiting soldier {} requires live position for primary target {}",
+                        "ladder-waiting soldier {} requires live position for primary target {:?}",
                         self.base.me, self.base.primary_target
                     )
                 });
                 let sector = position.sector.unwrap_or_else(|| {
                     panic!(
-                        "ladder-waiting soldier {} requires a sector for primary target {}",
+                        "ladder-waiting soldier {} requires a sector for primary target {:?}",
                         self.base.me, self.base.primary_target
                     )
                 });
@@ -2449,8 +2466,10 @@ impl EnemyAi {
             // IsDetecting180Degrees(primary_target)? re-face +
             // 30-tick timer; else SeekArea(Position(mpMe),
             // AI_LOST_ENEMY_SEEK_RADIUS, 0).
-            if self.base.primary_target != 0
-                && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
+            if self
+                .base
+                .primary_target
+                .is_some_and(|target| self.is_detecting_180_degrees(target, ctx))
             {
                 let target_position = ctx
                     .expect_entity_view(

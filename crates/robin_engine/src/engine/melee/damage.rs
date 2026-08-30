@@ -2816,7 +2816,7 @@ impl EngineInner {
                 match *action {
                     crate::ai::CrossNpcAction::SetRightCombatNeighbour {
                         target,
-                        neighbour: 0,
+                        neighbour: None,
                     } => {
                         if target != 0 && !left_neighbours.contains(&target) {
                             left_neighbours.push(target);
@@ -2824,7 +2824,7 @@ impl EngineInner {
                     }
                     crate::ai::CrossNpcAction::SetLeftCombatNeighbour {
                         target,
-                        neighbour: 0,
+                        neighbour: None,
                     } if target != 0 && !right_neighbours.contains(&target) => {
                         right_neighbours.push(target);
                     }
@@ -2853,14 +2853,17 @@ impl EngineInner {
             }
             for action in &enemy.base.outbox.reentrant.cross_npc_actions {
                 match *action {
-                    crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer: 0 } => {
+                    crate::ai::CrossNpcAction::SetArcherBehindMe {
+                        target,
+                        archer: None,
+                    } => {
                         if target != 0 && !shield_bearers.contains(&target) {
                             shield_bearers.push(target);
                         }
                     }
                     crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
                         target,
-                        shield_bearer: 0,
+                        shield_bearer: None,
                     } if target != 0 && !archers.contains(&target) => {
                         archers.push(target);
                     }
@@ -2896,7 +2899,7 @@ impl EngineInner {
                         "dead AI owner {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi"
                     )
                 });
-            enemy.archer_behind_me = 0;
+            enemy.archer_behind_me = None;
         }
         for archer in archers {
             let archer_id = self.expect_human_id_for_ai_handle(archer, "dead AI owner's archer");
@@ -2908,7 +2911,7 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!("dead AI owner {victim_id:?}'s archer {archer} has no EnemyAi")
                 });
-            enemy.shield_bearer_before_me = 0;
+            enemy.shield_bearer_before_me = None;
         }
 
         for left_neighbour in left_neighbours {
@@ -2927,7 +2930,7 @@ impl EngineInner {
                          no EnemyAi"
                     )
                 });
-            enemy.right_combat_neighbour = 0;
+            enemy.right_combat_neighbour = None;
         }
         for right_neighbour in right_neighbours {
             let right_id = self.expect_human_id_for_ai_handle(
@@ -2945,7 +2948,7 @@ impl EngineInner {
                          no EnemyAi"
                     )
                 });
-            enemy.left_combat_neighbour = 0;
+            enemy.left_combat_neighbour = None;
         }
 
         for guarded_pc in guarded_pcs {

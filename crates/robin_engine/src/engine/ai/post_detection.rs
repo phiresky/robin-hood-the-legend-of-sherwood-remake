@@ -557,7 +557,7 @@ impl EngineInner {
                 // TODO: remove target-owned queued stimuli at deletion time.
                 tracing::warn!(
                     npc = npc_id.index(),
-                    target = handle,
+                    target = handle.get(),
                     stimulus_type = ?stimulus.stimulus_type,
                     "dropping queued detection stimulus after its target left the live world"
                 );
@@ -593,7 +593,7 @@ impl EngineInner {
                     let Some(view) = ctx.entity_view(handle.get()) else {
                         tracing::warn!(
                             npc = npc_id.index(),
-                            target = handle,
+                            target = handle.get(),
                             stimulus_type = ?stimulus.stimulus_type,
                             "dropping queued detection stimulus after its target left the typed live view"
                         );

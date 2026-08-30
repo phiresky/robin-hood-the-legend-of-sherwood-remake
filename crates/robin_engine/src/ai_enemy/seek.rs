@@ -217,7 +217,7 @@ impl EnemyAi {
             // SetCheckpointCharly(NULL) — route through the helper so
             // the `DETECTABLE_MISSED_FRIEND` list is cleared and
             // `sorrow_level` is zeroed alongside the field write.
-            self.base.set_checkpoint_charly(0);
+            self.base.set_checkpoint_charly(None);
         }
 
         self.current_task_priority = task_priority::SEEKING;
@@ -273,7 +273,7 @@ impl EnemyAi {
                     .into_iter()
                     .map(|(_, _, entity_id)| (entity_id, DetectableType::Beggar)),
             );
-            self.beggar_to_examine = 0;
+            self.beggar_to_examine = None;
         }
 
         // Store seek flags and center
@@ -840,8 +840,12 @@ impl EnemyAi {
         // not a guard on entry. The reset to 0 happens in the substate
         // exit path (mirroring the EVENT_DONE arm).
         if !self.beggars_to_control.is_empty() {
-            debug_assert!(!self.beggars_to_control.contains(&self.beggar_to_examine));
-            self.beggar_to_examine = self.beggars_to_control.pop().unwrap_or(0);
+            debug_assert!(
+                !self
+                    .beggar_to_examine
+                    .is_some_and(|handle| self.beggars_to_control.contains(&handle.get()))
+            );
+            self.beggar_to_examine = self.beggars_to_control.pop().map(AiEntityHandle::new);
             // The beggar list mixes civilian profession-beggars (real)
             // and PCs in `Posture::SimulatingBeggar` (disguised). The
             // identification phases at
@@ -1130,7 +1134,7 @@ impl EnemyAi {
                 // officer, and if none is found fall back to seeking
                 // the area.
                 if self.answer_question(Question::ShallISeekBeforeAlertingOfficer, ctx)
-                    && self.base.antagonist == 0
+                    && self.base.antagonist.is_none()
                 {
                     self.seek_area(
                         sim,
@@ -1331,8 +1335,8 @@ impl EnemyAi {
         };
 
         // Record both the victim and the chosen net.
-        self.base.detected_body = victim;
-        self.base.interesting_object = net.handle;
+        self.base.detected_body = Some(AiEntityHandle::new(victim));
+        self.base.interesting_object = Some(AiEntityHandle::new(net.handle));
 
         // If the victim → net segment is clear on the
         // victim's layer for my move-box, walk up to the net and stop
@@ -1410,7 +1414,7 @@ impl EnemyAi {
         self.seeking_charly = true;
 
         // No checkpoint → ReturnToDuty.
-        if self.base.checkpoint_charly == 0 {
+        if self.base.checkpoint_charly.is_none() {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
@@ -1592,7 +1596,7 @@ impl EnemyAi {
             return;
         }
 
-        self.base.detected_body = body;
+        self.base.detected_body = Some(AiEntityHandle::new(body));
         // seek_position = Position(body). Prefer the live entity view
         // (covers bodies that aren't in the fighter snapshot), then the
         // fighter snapshot. The original dereferences the body here, so a

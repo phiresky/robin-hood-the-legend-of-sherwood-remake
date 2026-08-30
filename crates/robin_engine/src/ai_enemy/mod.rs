@@ -1194,8 +1194,7 @@ impl EnemyAi {
         }
 
         // In-dialogue-with-someone-else gate.
-        !cs
-            .antagonist
+        !cs.antagonist
             .is_some_and(|antagonist| antagonist.get() != my_handle)
     }
 
@@ -2240,7 +2239,7 @@ impl EnemyAi {
             cloak_deception_applies: view.posture == crate::element::Posture::Cloaked
                 && ctx.camp.is_hostile_to(view.camp),
             cloak_remembers_target: self.list_them.contains(&target)
-                || self.base.primary_target == target,
+                || self.base.primary_target == Some(AiEntityHandle::new(target)),
             // TODO(cloak-authoring): connect this seam only when an explicit
             // modded profile schema supplies detector data.
             cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
@@ -2502,7 +2501,7 @@ impl EnemyAi {
                 info: StimulusInfo::Hint(Hint {
                     seek_point,
                     seek_flags: self.pending_group_instruction_seek_flags,
-                    who_tells_me: self.base.me,
+                    who_tells_me: AiEntityHandle::new(self.base.me),
                 }),
                 continuation: ThinkResultContinuation::OfficerInstructedGroupSoldier { last },
             });

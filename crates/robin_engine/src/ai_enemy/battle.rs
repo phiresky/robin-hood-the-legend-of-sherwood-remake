@@ -1255,7 +1255,7 @@ impl EnemyAi {
                             }
                         } else {
                             // Shield bearer lost or unreachable
-                            self.update_shield_bearer_before_me(0);
+                            self.update_shield_bearer_before_me(None);
                             decision = Decision::Shoot;
                         }
                     } else if self.my_shooting_point.is_some() {
@@ -2257,10 +2257,12 @@ impl EnemyAi {
 
                 Decision::CoverBehindShieldBearer => {
                     // Run to cover position behind shield bearer.
-                    self.update_shield_bearer_before_me(cover_shield_bearer);
+                    self.update_shield_bearer_before_me(Some(AiEntityHandle::new(
+                        cover_shield_bearer,
+                    )));
                     // Adopt the shield bearer's primary target.
                     let Some(sb_snap) = self.find_fighter(cover_shield_bearer, tick) else {
-                        self.update_shield_bearer_before_me(0);
+                        self.update_shield_bearer_before_me(None);
                         decision = Decision::Shoot;
                         continue;
                     };
@@ -2271,7 +2273,7 @@ impl EnemyAi {
                     // invent a target position here: the failed cover decision
                     // must flow through Shoot (and potentially ArcherObserve).
                     if self.base.primary_target.is_none() {
-                        self.update_shield_bearer_before_me(0);
+                        self.update_shield_bearer_before_me(None);
                         decision = Decision::Shoot;
                         continue;
                     }
@@ -2323,7 +2325,7 @@ impl EnemyAi {
                         }
                         if square_norm(d) >= ctx.sq_standard_view_radius {
                             // Cover point too far from target — fall back to shoot
-                            self.update_shield_bearer_before_me(0);
+                            self.update_shield_bearer_before_me(None);
                             decision = Decision::Shoot;
                             continue;
                         }
@@ -2371,7 +2373,7 @@ impl EnemyAi {
                             );
                         }
                         // Can't compute position — give up cover attempt.
-                        self.update_shield_bearer_before_me(0);
+                        self.update_shield_bearer_before_me(None);
                         decision = Decision::Shoot;
                         continue;
                     }

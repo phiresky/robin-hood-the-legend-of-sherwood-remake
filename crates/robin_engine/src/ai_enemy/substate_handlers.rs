@@ -1215,8 +1215,8 @@ impl EnemyAi {
                     // is take-money or fight-for-money with
                     // EventObjectAway carrying a StolenObject.
                     let stolen = crate::ai::StolenObject {
-                        object: obj.get(),
-                        thief: self.base.me,
+                        object: obj,
+                        thief: AiEntityHandle::new(self.base.me),
                     };
                     for cs in tick.camp_soldiers.iter() {
                         if cs.handle == self.base.me {
@@ -1522,18 +1522,13 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
             let body = self.required_detected_body("reacting to a body");
-            // A cleared body handle takes the too-far arm below;
-            // a live handle must resolve to a view.
-            let (body_pos, is_tied) = if let Some(body) = body {
-                let v = ctx.expect_entity_view(body, "loot-approach body");
-                (v.position, v.posture == crate::element::Posture::Tied)
-            } else {
-                (Position::default(), false)
-            };
+            let v = ctx.expect_entity_view(body, "loot-approach body");
+            let body_pos = v.position;
+            let is_tied = v.posture == crate::element::Posture::Tied;
             let dx = body_pos.x - ctx.position.x;
             let dy = body_pos.y - ctx.position.y;
             let dist = dx.abs().max(dy.abs());
-            if body.is_none() || dist > 100.0 {
+            if dist > 100.0 {
                 // Too far — let Looting handle re-entry.
                 self.set_state(AiState::Wondering, Substate::WonderingLooting);
                 // Kick the state machine via a 1-tick timer;
@@ -1546,9 +1541,7 @@ impl EnemyAi {
                 // Spot the tied body and transition to
                 // body-seek; emit the reconnaissance report
                 // update.
-                self.base
-                    .my_reconnaissance_report
-                    .add_seen_body(body.expect("checked loot body presence").get());
+                self.base.my_reconnaissance_report.add_seen_body(body.get());
                 self.base
                     .my_reconnaissance_report
                     .update(ReportType::Body, body_pos);
@@ -1573,9 +1566,7 @@ impl EnemyAi {
                 self.base.stop_all();
                 let owner = self.base.owner_entity_id;
                 let antagonist = Some(crate::element::EntityId::Soldier(
-                    crate::entity_id::SoldierId(
-                        body.expect("loot search requires a detected body").get(),
-                    ),
+                    crate::entity_id::SoldierId(body.get()),
                 ));
                 let mut seq = Sequence::new();
                 seq.append_element(SequenceElement::new_interaction(
@@ -2855,7 +2846,7 @@ impl EnemyAi {
             //             about this body (and stand by for instructions)
             //   OFFICER → if body is far enough, delegate; else examine
             //   KNIGHT  → examine themselves
-            let body = self.base.detected_body;
+            let body = self.required_detected_body("reacting to a body");
             let mut nearby_officer: Option<NpcHandle> = None;
             let mut look_for_soldiers = false;
 
@@ -3413,7 +3404,7 @@ impl EnemyAi {
                             AiState::Seeking,
                             Substate::SeekingGetAlertingReportFromCivilian,
                         );
-                        self.base.antagonist = Some(AiEntityHandle::new(hint.who_tells_me));
+                        self.base.antagonist = Some(hint.who_tells_me);
                         self.base.face_entity(hint.who_tells_me, ctx);
                         self.base.seek_position = civ_report.seek_position;
                         self.base
@@ -4650,7 +4641,7 @@ impl EnemyAi {
             self.officers_position = tick
                 .camp_soldiers
                 .iter()
-                .find(|cs| cs.handle == hint.who_tells_me)
+                .find(|cs| cs.handle == hint.who_tells_me.get())
                 .map(|cs| cs.position)
                 .unwrap_or_else(|| {
                     panic!(

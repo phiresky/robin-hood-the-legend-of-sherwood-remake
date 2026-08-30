@@ -17,7 +17,7 @@ pub(super) struct LiftLowEntry {
     pub point: crate::coordinates::MapPoint,
     pub z: f32,
     pub layer: u16,
-    pub sector: u16,
+    pub sector: crate::position_interface::SectorHandle,
     pub obstacle: Option<crate::sight_obstacle::SightObstacleIndex>,
 }
 
@@ -343,7 +343,10 @@ impl EngineInner {
             .get(door_idx as usize)?;
         let point = door.point_out;
         let layer = door.layer_out;
-        let sector = u16::from(door.sector_out);
+        let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                panic!("lift low-entry door {door_idx} lacks exact sector-out arena identity")
+            }));
         let obstacle = self.get_projection_area_index(assets, sector, layer, point);
         let z = obstacle
             .and_then(|idx| {
@@ -477,7 +480,7 @@ impl EngineInner {
                     // Ladder/wall fall: domino effect is not invoked.
                     antagonist: None,
                     goal_layer: entry.layer,
-                    goal_sector: crate::position_interface::SectorHandle::new(entry.sector),
+                    goal_sector: Some(entry.sector),
                     obstacle: entry.obstacle,
                     ladder_fall: true,
                 });

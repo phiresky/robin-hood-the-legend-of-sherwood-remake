@@ -2039,7 +2039,7 @@ impl EngineInner {
             let hint = crate::ai::Hint {
                 seek_point: position,
                 seek_flags: 0,
-                who_tells_me: caller,
+                who_tells_me: crate::ai::AiEntityHandle::new(caller),
             };
             self.world
                 .entities

@@ -2882,15 +2882,21 @@ impl EngineInner {
             };
 
             let weapon_id = ai.hth_weapon_id;
+            let target_handle = ai.base.primary_target.unwrap_or_else(|| {
+                panic!(
+                    "authorized sword-strike proposal owner {:?} has no principal opponent",
+                    npc_id
+                )
+            });
             let target_id = self
                 .world
                 .entities
-                .id_at_legacy_slot(ai.base.primary_target)
+                .id_at_legacy_slot(target_handle.get())
                 .unwrap_or_else(|| {
                     panic!(
                         "authorized sword-strike proposal owner {:?} requires missing principal opponent slot {}",
                         npc_id,
-                        ai.base.primary_target
+                        target_handle
                     )
                 });
             let target = self
