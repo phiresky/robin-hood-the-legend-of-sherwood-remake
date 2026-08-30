@@ -164,6 +164,7 @@ fn compose_env_filter(s: &str) -> String {
 // ──────────────────────────────────────────────────────────────────
 // Host-local modules (files in robin_rs/src/)
 // ──────────────────────────────────────────────────────────────────
+pub mod achievement_hud;
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod app_effect;

@@ -1743,6 +1743,14 @@ pub(super) fn render_frame(
         // with a drop-shadow background font.
         render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
 
+        crate::achievement_hud::render_trackers(
+            engine,
+            local_seat,
+            host.gameplay_config,
+            renderer,
+            fonts,
+        );
+
         // Dev-only EntityId overlay — draws each entity's ID under its
         // feet.  Driven by the `/screenshot?entity_ids` HTTP flag.
         if dev.debug.entity_ids {

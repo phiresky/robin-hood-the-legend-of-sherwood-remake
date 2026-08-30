@@ -4,6 +4,52 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Per-mission achievements, debrief evidence, XP, and trackers.** Four
+  deterministic achievements are evaluated independently for each successful
+  attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
+  Stashed**. Tracking establishes a post-initialization baseline of living and
+  already-dead NPCs, then records exact death causality, hostile sighting pairs,
+  and exact building-sector membership. Clean Hands fails only for deaths
+  caused by player-controlled units by default; `NPC Kills Break Clean Hands`
+  can additionally count NPC-on-NPC deaths. Ghost cares only whether a living
+  hostile actually observed a player character, so it remains independent of
+  killing. Pile-o-Bones latches after any ten NPC bodies occupy one building;
+  All Enemies Stashed requires every encountered hostile to be out of order in
+  the same building.
+
+  Results and metrics are frozen into the canonical attempt, and an exactly-once
+  host attestation decides whether the badges may enter campaign and lifetime
+  history. Custom, cheated, headless, and replay-playback runs remain auditable
+  but do not award icons. A normal history replay is an eligible campaign
+  practice attempt, so a player can return to one mission and earn a missed
+  badge after the fact. Campaign badges, detailed debrief conditions, exact
+  selected-character sword/bow XP, the speedrun clock, and each of the four
+  top-left achievement trackers have separate settings. Fresh profiles show
+  campaign badges and debrief details but leave the HUD trackers and detailed
+  XP off; settings documents that predate these presentation fields leave all
+  of those presentations off without discarding calculated history. The authoritative rules live in
+  `crates/robin_engine/src/achievement.rs`; presentation lives in
+  `crates/robin_rs/src/achievement_hud.rs`.
+
+  Mission badges remain four independent pieces of evidence. Campaign and
+  lifetime badges apply a separate typed aggregation policy: **Clean Hands**
+  and **Ghost** require the badge on every successful canonical mission in one
+  completed campaign path, while **Pile-o-Bones** and **All Enemies Stashed**
+  unlock permanently after any one eligible mission. The required path is
+  frozen by campaign run ID and terminal sequence when the Original campaign
+  completion boundary is crossed. Lost, failed, and interrupted attempts stay
+  in full history but never expand that won-mission set. A later practice
+  replay may fill evidence for a mission already in the envelope, but cannot
+  add a mission or combine evidence from another campaign. Completed envelopes
+  live in the profile's lifetime archive and survive campaign reset.
+  Incomplete Original C++ imports are shown as unverifiable until real eligible
+  evidence exists; import never fabricates an award.
+
+  Deterministic tracker fields and the NPC-death gameplay rule are part of the
+  native state contract. This feature therefore advances native saves to v58,
+  replays to v18, and multiplayer to protocol v25; obsolete Rust layouts fail
+  closed instead of being decoded as plausible achievement evidence.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries

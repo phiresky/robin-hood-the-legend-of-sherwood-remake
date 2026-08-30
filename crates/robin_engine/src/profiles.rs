@@ -530,6 +530,16 @@ impl MissionType {
             MissionType::End
         })
     }
+
+    /// Whether this profile launches a field mission with a deterministic
+    /// start-to-terminal achievement evidence interval. HQ, Pseudo, and End
+    /// profiles are campaign/navigation machinery rather than playable runs.
+    pub const fn supports_mission_achievements(self) -> bool {
+        matches!(
+            self,
+            Self::Historical | Self::Attack | Self::Rescue | Self::Ambush | Self::Tactical
+        )
+    }
 }
 
 #[repr(u32)]
