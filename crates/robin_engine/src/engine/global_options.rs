@@ -39,6 +39,9 @@ pub struct SimConfig {
     /// Enable the post-port player interaction for releasing tied NPCs.
     #[serde(default = "enabled_by_default")]
     pub enable_unbinding: bool,
+    /// Optional Clean Hands rule for deaths caused by non-player NPCs.
+    #[serde(default)]
+    pub clean_hands_npc_kills_invalidate: bool,
     /// Enable the deterministic reusable-cloak extension for this session.
     /// Missing state predates the extension and retains Original behavior.
     #[serde(default)]
@@ -64,6 +67,7 @@ impl SimConfig {
             difficulty,
             fix_hard_reaction_times: true,
             enable_unbinding: true,
+            clean_hands_npc_kills_invalidate: false,
             reusable_cloaks: true,
             script_enabled: options.script_enabled,
             highlander: options.highlander,

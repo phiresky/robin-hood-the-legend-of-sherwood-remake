@@ -112,6 +112,36 @@ pub struct GameplayConfig {
     /// modes.
     #[serde(default)]
     pub campaign_presentation: CampaignPresentationMode,
+
+    /// Treat hostile deaths caused by other NPCs as failures of Clean Hands.
+    /// Player/direct-control deaths always invalidate it; this optional rule
+    /// is deterministic simulation state and therefore travels in commands.
+    #[serde(default)]
+    pub clean_hands_npc_kills_invalidate: bool,
+
+    /// Independent achievement and detailed-XP presentation switches.
+    #[serde(default)]
+    pub show_detailed_xp: bool,
+    #[serde(default)]
+    pub show_speedrun_tracker: bool,
+    #[serde(default)]
+    pub show_clean_hands_tracker: bool,
+    #[serde(default)]
+    pub show_ghost_tracker: bool,
+    #[serde(default)]
+    pub show_pile_o_bones_tracker: bool,
+    #[serde(default)]
+    pub show_all_enemies_one_building_tracker: bool,
+
+    /// Show named per-mission and aggregate achievement badges in campaign
+    /// presentations. Calculation and storage remain active when hidden.
+    #[serde(default)]
+    pub show_achievement_badges: bool,
+
+    /// Append exact calculated achievement conditions to mission debriefs.
+    /// Calculation and storage remain active when hidden.
+    #[serde(default)]
+    pub show_achievement_debrief: bool,
 }
 
 const fn default_show_production_forecast() -> bool {
@@ -128,6 +158,15 @@ impl Default for GameplayConfig {
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
             campaign_presentation: CampaignPresentationMode::ProgressTree,
+            clean_hands_npc_kills_invalidate: false,
+            show_detailed_xp: false,
+            show_speedrun_tracker: false,
+            show_clean_hands_tracker: false,
+            show_ghost_tracker: false,
+            show_pile_o_bones_tracker: false,
+            show_all_enemies_one_building_tracker: false,
+            show_achievement_badges: true,
+            show_achievement_debrief: true,
         }
     }
 }
@@ -149,12 +188,23 @@ mod tests {
         assert!(!config.control_tactical_units);
         assert!(config.enable_unbinding);
         assert!(config.autosave_enabled);
+        assert!(!config.clean_hands_npc_kills_invalidate);
+        assert!(!config.show_detailed_xp);
+        assert!(!config.show_achievement_badges);
+        assert!(!config.show_achievement_debrief);
         assert!(config.show_production_forecast);
         assert!(!config.reusable_cloaks);
         assert_eq!(
             config.campaign_presentation,
             super::CampaignPresentationMode::ProgressTree
         );
+    }
+
+    #[test]
+    fn fresh_profiles_enable_achievement_presentations() {
+        let config = GameplayConfig::default();
+        assert!(config.show_achievement_badges);
+        assert!(config.show_achievement_debrief);
     }
 
     #[test]
