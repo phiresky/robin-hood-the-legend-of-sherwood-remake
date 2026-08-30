@@ -317,10 +317,13 @@ impl EngineInner {
                 (Some(source), Some(goal)) => source != goal,
                 _ => false,
             };
-            intent.source_target_sector_identity_differs = source_target_sector_identity_differs;
+            // A vector-derived phalanx slot can carry exact identity
+            // provenance which is no longer recoverable from its compact
+            // Position. Do not overwrite that stronger authored hint.
+            intent.source_target_sector_identity_differs |= source_target_sector_identity_differs;
             let crosses_raw_topology = goal_layer != raw_layer
                 || goal_sector != raw_sector
-                || source_target_sector_identity_differs;
+                || intent.source_target_sector_identity_differs;
             let adapted_source = crosses_raw_topology
                 .then(|| {
                     self.scripts.mission.as_ref().and_then(|_| {
@@ -360,6 +363,9 @@ impl EngineInner {
                     )
                 })
                 .unwrap_or((raw_source, raw_sector, raw_layer));
+            intent.raw_source_sector = raw_sector;
+            intent.raw_source_sector_index = raw_sector_index;
+            intent.raw_source_layer = Some(raw_layer);
             intent.source_position = Some(source);
             intent.source_sector = sector;
             intent.source_sector_index = sector.and_then(|sector| sector.arena_index());
@@ -494,14 +500,24 @@ impl EngineInner {
             crate::sequence::MoveFlags::from_bits_truncate(u32::from(intent.move_flags));
 
         let action = intent.order_type;
-        // A layer transition requires gate routing even when the numeric
-        // sector handle happens to remain the same.
-        let exact_identity_differs = match (source_sector_index, goal_sector_index) {
+        // GoTo selects AppendMoveToSequence from the actor's raw topology;
+        // that routine then adapts a live-door source before constructing its
+        // route. Keep those decisions separate: door adaptation can make the
+        // route endpoints equal even though the raw branch was cross-sector.
+        let raw_source_layer = intent
+            .raw_source_layer
+            .expect("validated queued AI move lost its raw source layer");
+        let raw_source_sector = intent.raw_source_sector;
+        let raw_source_sector_index = intent
+            .raw_source_sector_index
+            .or_else(|| raw_source_sector.and_then(|sector| sector.arena_index()));
+        let raw_identity_differs = match (raw_source_sector_index, goal_sector_index) {
             (Some(source), Some(goal)) => source != goal,
             _ => intent.source_target_sector_identity_differs,
-        };
-        let crosses_topology =
-            goal_layer != source_layer || goal_sector != source_sector || exact_identity_differs;
+        } || intent.source_target_sector_identity_differs;
+        let crosses_topology = goal_layer != raw_source_layer
+            || goal_sector != raw_source_sector
+            || raw_identity_differs;
         if crosses_topology {
             let Some(source_sector) = source_sector else {
                 tracing::warn!(?entity_id, "cross-sector AI GoTo has no source sector");
@@ -575,18 +591,22 @@ impl EngineInner {
                 self.set_ai_couldnt_reachpoint(entity_id);
                 return None;
             };
+            let route_identity_differs = match (source_sector_index, goal_sector_index) {
+                (Some(source), Some(goal)) => source != goal,
+                _ => source_sector != goal_sector,
+            };
             // Original FindPathGates can only authorize a cross-sector
             // AppendMoveToSequence with at least one gate. If our compact
             // sector handles compare equal while retained pointer provenance
             // says they differ, its empty same-number result is failure, not
             // a direct Move. In particular, do not replace the actor's
             // existing sequence in this case.
-            if gate_path.is_empty() && exact_identity_differs {
+            if gate_path.is_empty() && route_identity_differs {
                 tracing::warn!(
                     ?entity_id,
                     source_sector = u16::from(source_sector),
                     goal_sector = u16::from(goal_sector),
-                    identity_differs = exact_identity_differs,
+                    identity_differs = route_identity_differs,
                     "cross-sector AI GoTo resolved to an empty gate route"
                 );
                 self.set_ai_couldnt_reachpoint(entity_id);
@@ -843,7 +863,7 @@ impl EngineInner {
             .or_else(|| goal_sector.and_then(|sector| sector.arena_index()));
         let exact_identity_differs = match (source_sector_index, goal_sector_index) {
             (Some(source), Some(goal)) => source != goal,
-            _ => intent.source_target_sector_identity_differs,
+            _ => source_sector != goal_sector,
         };
         if goal_layer == source_layer && goal_sector == source_sector && !exact_identity_differs {
             return true;
@@ -1278,8 +1298,43 @@ mod exact_ai_goto_source_tests {
     use crate::element::{ActorSoldier, AiBrain, ElementData, ElementKind, Entity, Posture};
     use crate::fast_find_grid::{GridSector, SectorIndex};
     use crate::gate::{Door, GatePathStep};
-    use crate::position_interface::SectorHandle;
+    use crate::position_interface::{DoorHandle, SectorHandle};
     use crate::sector::{SectorNumber, SectorType};
+
+    fn minimal_mission() -> crate::engine::MissionScript {
+        use crate::scb::{ClassEntry, Function};
+        use crate::vm::{Opcode, Quad};
+
+        crate::engine::MissionScript::from_scb(crate::scb::ScbFile {
+            version: crate::scb::SCB_VERSION,
+            classes: vec![ClassEntry {
+                source_file: "queued_goto_door_test.scs".into(),
+                class_name: "StartUp".into(),
+                size_of_member_variables: 0,
+                member_variables: Vec::new(),
+                functions: vec![Function {
+                    name: "Initialize".into(),
+                    address: 0,
+                    num_parameters: 0,
+                    size_of_return_value: 0,
+                    size_of_parameters: 0,
+                    size_of_volatile: 0,
+                    size_of_temporary: 0,
+                }],
+                quads: vec![
+                    Quad {
+                        operation: Opcode::BeginFunction as u8,
+                        operands: [0; 8],
+                    },
+                    Quad {
+                        operation: Opcode::Return as u8,
+                        operands: [0; 8],
+                    },
+                ],
+            }],
+        })
+        .expect("minimal mission")
+    }
 
     fn square_sector(number: i16, layer: u16, min: MapPoint, max: MapPoint) -> GridSector {
         GridSector {
@@ -1305,6 +1360,96 @@ mod exact_ai_goto_source_tests {
             gate_indices: Vec::new(),
             underlying_sector: None,
         }
+    }
+
+    #[test]
+    fn door_transit_queue_keeps_raw_branch_and_adapted_route_identities_distinct() {
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(minimal_mission());
+
+        engine.world.fast_grid_mut().size_map(16, 16);
+        engine.world.fast_grid_mut().allocate_layers(3);
+        let raw_index = SectorIndex::new(engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                40,
+                2,
+                MapPoint::new(80.0, 180.0),
+                MapPoint::new(130.0, 220.0),
+            ),
+            2,
+        ))
+        .unwrap();
+        let endpoint_index = SectorIndex::new(engine.world.fast_grid_mut().add_sector(
+            square_sector(
+                41,
+                2,
+                MapPoint::new(130.0, 180.0),
+                MapPoint::new(200.0, 220.0),
+            ),
+            2,
+        ))
+        .unwrap();
+        let raw_sector = SectorHandle::new(40).unwrap().with_arena_index(raw_index);
+        let endpoint_sector = SectorHandle::new(41)
+            .unwrap()
+            .with_arena_index(endpoint_index);
+        engine.script_domains.interactables.doors.push(Door {
+            point_out: MapPoint::new(100.0, 200.0),
+            point_in: MapPoint::new(140.0, 200.0),
+            sector_out: SectorNumber::new(40),
+            sector_in: SectorNumber::new(41),
+            sector_out_index: Some(raw_index),
+            sector_in_index: Some(endpoint_index),
+            layer_out: 2,
+            layer_in: 2,
+            ..Door::default()
+        });
+
+        let mut soldier = ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.npc.ai_brain = AiBrain::Enemy(Box::default());
+        soldier
+            .element
+            .set_position_map(MapPoint::new(110.0, 200.0));
+        soldier.element.set_sector(Some(raw_sector));
+        soldier.element.set_layer(2);
+        let owner = engine.add_entity(Entity::Soldier(soldier));
+        let position = engine.get_entity_mut(owner).unwrap().position_iface_mut();
+        position.set_sector_topology(Some(raw_sector), Some(raw_index));
+        position.set_door(
+            DoorHandle::new(0).expect("zero is a valid door index"),
+            true,
+        );
+
+        let mut intent =
+            crate::order::AiOrderIntent::new(crate::order::OrderType::RunningUpright, 180.0, 200.0);
+        intent.target_layer = Some(2);
+        intent.target_sector = Some(endpoint_sector);
+        intent.target_sector_index = Some(endpoint_index);
+        engine.launch_ai_move(owner, &intent);
+
+        let [(_, captured)] = engine.orders.pending_move_requests.as_slice() else {
+            panic!("GoTo must enqueue exactly one movement")
+        };
+        assert_eq!(captured.raw_source_sector, Some(raw_sector));
+        assert_eq!(captured.raw_source_sector_index, Some(raw_index));
+        assert_eq!(captured.raw_source_layer, Some(2));
+        assert!(captured.source_target_sector_identity_differs);
+        assert_eq!(captured.source_position, Some(MapPoint::new(140.0, 200.0)));
+        assert_eq!(captured.source_sector, Some(endpoint_sector));
+        assert_eq!(captured.source_sector_index, Some(endpoint_index));
+        captured
+            .validate_queued_move_topology()
+            .expect("raw branch identity must not be validated against the adapted route source");
     }
 
     #[test]

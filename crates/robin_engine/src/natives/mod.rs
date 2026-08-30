@@ -373,8 +373,17 @@ impl NativeContext<'_, '_> {
     }
 
     fn pc_handles(&self) -> Vec<i32> {
-        self.occupied_entities()
-            .filter_map(|(id, entity)| entity.is_pc().then_some(Self::actor_handle(id)))
+        self.pc_registry
+            .expect("script native requires the live Original PC registry")
+            .iter()
+            .copied()
+            .map(|id| {
+                assert!(
+                    matches!(self.entities.get(id), Some(Entity::Pc(_))),
+                    "Original PC registry contains missing or non-PC entity {id}"
+                );
+                Self::actor_handle(id)
+            })
             .collect()
     }
 
@@ -383,9 +392,14 @@ impl NativeContext<'_, '_> {
     }
 
     fn robin_handle(&self) -> i32 {
-        self.occupied_entities()
-            .find_map(|(id, entity)| {
-                entity
+        self.pc_registry
+            .expect("script native requires the live Original PC registry")
+            .iter()
+            .copied()
+            .find_map(|id| {
+                self.entities
+                    .get(id)
+                    .unwrap_or_else(|| panic!("Original PC registry contains missing entity {id}"))
                     .pc_data()
                     .is_some_and(|pc| pc.robin)
                     .then_some(Self::actor_handle(id))
@@ -394,10 +408,12 @@ impl NativeContext<'_, '_> {
     }
 
     fn pc_authorisation_bit(&self, actor: i32) -> u16 {
-        self.occupied_entities()
-            .filter(|(_, entity)| entity.is_pc())
+        self.pc_registry
+            .expect("script native requires the live Original PC registry")
+            .iter()
+            .copied()
             .enumerate()
-            .find_map(|(index, (id, _))| {
+            .find_map(|(index, id)| {
                 (Self::actor_handle(id) == actor).then(|| {
                     1u16.checked_shl(index as u32).unwrap_or_else(|| {
                         panic!("PC authorization index {index} exceeds the 16-bit door mask")
@@ -565,11 +581,10 @@ impl NativeContext<'_, '_> {
     fn apply_script_selection(&mut self, actor: i32, select: bool) {
         if actor == 0 {
             let selected = if select {
-                let pc_ids: Vec<EntityId> = self
-                    .entities
-                    .pcs()
-                    .map(|(id, _)| EntityId::Pc(id))
-                    .collect();
+                let pc_ids = self
+                    .pc_registry
+                    .expect("script native requires the live Original PC registry")
+                    .to_vec();
                 let mut selected = Vec::new();
                 for id in pc_ids {
                     if !self.pc_is_selectable(id) {

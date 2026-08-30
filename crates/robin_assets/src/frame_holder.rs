@@ -1371,12 +1371,27 @@ impl FrameHolder {
 }
 
 impl robin_engine::engine::PixelOpacityLookup for FrameHolder {
+    fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
+        self.sprites
+            .get(bank_id as usize)
+            .map(|sprite| (sprite.width, sprite.height))
+    }
+
     fn is_pixel_opaque(&self, bank_id: u32, x: u16, y: u16, blue_pixels_are_in: bool) -> bool {
         FrameHolder::is_pixel_opaque(self, bank_id, x, y, blue_pixels_are_in)
     }
 }
 
 impl robin_engine::engine::PixelOpacityLookup for PublishedFrameHolder {
+    fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
+        self.current
+            .read()
+            .expect("published frame-holder read lock poisoned")
+            .sprites
+            .get(bank_id as usize)
+            .map(|sprite| (sprite.width, sprite.height))
+    }
+
     fn is_pixel_opaque(&self, bank_id: u32, x: u16, y: u16, blue_pixels_are_in: bool) -> bool {
         self.current
             .read()

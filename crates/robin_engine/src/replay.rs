@@ -81,10 +81,12 @@ pub struct ReplayHeader {
 /// deterministic authored-mission timers and runtime ambience scheduling to
 /// the simulation config and recorded engine state. Version 24 adds mission
 /// diplomacy state, player-coalition policy, faction statistics, and runtime
-/// relationship commands. There is deliberately
-/// no Rust-schema compatibility adapter; earlier incompatible layouts are
-/// rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 24;
+/// relationship commands. Version 25 adds the authoritative composite-gesture
+/// and quality-damage rules plus resolved technique and quality state across
+/// commands, quick actions, active sequences, and active sweeps. There is
+/// deliberately no Rust-schema compatibility adapter; earlier incompatible
+/// layouts are rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 25;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -790,8 +792,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_diplomacy_state() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 24);
+    fn replay_schema_version_includes_combat_gesture_state() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 25);
     }
 
     fn unique_replay_path(label: &str) -> String {

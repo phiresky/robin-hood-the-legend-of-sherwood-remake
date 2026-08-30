@@ -120,12 +120,20 @@ fn call_host_native_with_queries(
     queries: TestQueryViews<'_>,
 ) -> i32 {
     let sim = crate::sim_rng::test_context();
-    let capabilities = queries.attach_to(NativeSessionCapabilities::new(
-        &sim,
-        &mut host.entities,
-        &mut host.ai_global,
-        &mut host.fast_grid,
-    ));
+    let pc_registry = host
+        .entities
+        .pcs()
+        .map(|(id, _)| EntityId::Pc(id))
+        .collect::<Vec<_>>();
+    let capabilities = queries.attach_to(
+        NativeSessionCapabilities::new(
+            &sim,
+            &mut host.entities,
+            &mut host.ai_global,
+            &mut host.fast_grid,
+        )
+        .with_pc_registry(&pc_registry),
+    );
     let mut context = NativeContext::with_bindings(
         &mut host.host,
         &mut host.state,
@@ -144,12 +152,18 @@ fn call_bound_host_native(
     stack: &mut NativeStack,
 ) -> i32 {
     let sim = crate::sim_rng::test_context();
+    let pc_registry = host
+        .entities
+        .pcs()
+        .map(|(id, _)| EntityId::Pc(id))
+        .collect::<Vec<_>>();
     let capabilities = NativeSessionCapabilities::new(
         &sim,
         &mut host.entities,
         &mut host.ai_global,
         &mut host.fast_grid,
-    );
+    )
+    .with_pc_registry(&pc_registry);
     let mut context = NativeContext::with_bindings(
         &mut host.host,
         &mut host.state,
@@ -275,6 +289,7 @@ struct BoundScriptEffects {
     script_domains: crate::engine::ScriptDomains,
     bindings: AttachedScriptBindings,
     selected_pcs: Vec<EntityId>,
+    pc_registry_override: Option<Vec<EntityId>>,
     selected_action: crate::profiles::Action,
     sequence_manager: crate::sequence::SequenceManager,
     sound_sources: crate::sound_source::SoundSourceManager,
@@ -298,6 +313,7 @@ impl BoundScriptEffects {
             script_domains: crate::engine::ScriptDomains::default(),
             bindings: AttachedScriptBindings::default(),
             selected_pcs: Vec::new(),
+            pc_registry_override: None,
             selected_action: crate::profiles::Action::NoAction,
             sequence_manager: crate::sequence::SequenceManager::new(),
             sound_sources: crate::sound_source::SoundSourceManager::new(),
@@ -360,12 +376,19 @@ impl std::ops::DerefMut for BoundScriptEffects {
 
 impl HostFunctions for BoundScriptEffects {
     fn call(&mut self, index: u32, stack: &mut NativeStack) -> NativeCallOutcome {
+        let pc_registry = self.pc_registry_override.clone().unwrap_or_else(|| {
+            self.entities
+                .pcs()
+                .map(|(id, _)| EntityId::Pc(id))
+                .collect()
+        });
         let capabilities = NativeSessionCapabilities::new(
             &self.simulation,
             &mut self.entities,
             &mut self.ai_global,
             &mut self.fast_grid,
         )
+        .with_pc_registry(&pc_registry)
         .with_world_views(&[], &[], &[])
         .with_queries(
             &mut self.sequence_manager,
@@ -1926,6 +1949,28 @@ fn are_all_pcs_inside_not_all() {
 }
 
 #[test]
+fn are_all_pcs_inside_ignores_pc_retired_from_original_registry() {
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![
+        Some(native_test_pc(Vec::new(), Vec::new())),
+        Some(native_test_pc(Vec::new(), Vec::new())),
+    ]);
+    let active = host
+        .entities
+        .get_legacy_slot(1)
+        .expect("active replacement PC")
+        .0;
+    host.pc_registry_override = Some(vec![active]);
+
+    let active_handle = ScriptHandleCodec::actor_handle(active);
+    let loc = ScriptHandleCodec::location_handle_from_index(0);
+    seed_zone(&mut host, 0, &[active_handle]);
+    let prog = call_native_return(230, &[loc]);
+    let mut vm = Vm::new().with_host(Box::new(host));
+    assert_eq!(vm.run(&prog), StopReason::ReturnedValue(1));
+}
+
+#[test]
 fn register_production_sector() {
     let mut host = BoundScriptEffects::new();
     host.bindings.script_point_count = 1;
@@ -1985,6 +2030,42 @@ fn register_production_sector() {
     assert!(host.engine_commands().is_empty());
     assert!(host.sound_commands().is_empty());
     assert!(host.simulation_barriers().is_empty());
+}
+
+#[test]
+fn make_noise_preserves_the_script_points_exact_sector_identity() {
+    let mut host = BoundScriptEffects::new();
+    host.bindings.script_location_count = 1;
+    host.bindings.script_point_count = 1;
+    // H01_Lin_VL Node_15: DrawBridgeRoom passes this point to MakeNoise.
+    host.bindings.location_positions = std::sync::Arc::new(vec![(1135.0, 1843.0)]);
+    host.bindings.location_layers = std::sync::Arc::new(vec![0]);
+    host.bindings.location_sectors = std::sync::Arc::new(vec![24]);
+    // Deliberately use a sparse arena slot which differs from the public
+    // sector number: reducing this to `u16` would lose the identity that
+    // Original carries in `RHposition::pSector`.
+    let exact_sector = crate::position_interface::SectorHandle::new(24)
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(10_024).unwrap());
+    host.bindings.location_sector_handles = std::sync::Arc::new(vec![Some(exact_sector)]);
+
+    let mut stack = NativeStack::default();
+    stack.push_i32(ScriptHandleCodec::location_handle_from_index(0));
+    stack.push_i32(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::MakeNoise, &mut stack),
+        0
+    );
+    assert!(matches!(
+        host.engine_commands().as_slice(),
+        [EngineCommand::MakeNoise {
+            noise_type: crate::ai::NoiseType::Drawbridge,
+            x: 1135.0,
+            y: 1843.0,
+            layer: 0,
+            sector,
+        }] if *sector == exact_sector
+    ));
 }
 
 #[test]

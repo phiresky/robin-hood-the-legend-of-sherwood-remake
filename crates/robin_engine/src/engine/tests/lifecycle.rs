@@ -1047,7 +1047,7 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
         "active non-flying Projectile::Hourglass still calls NewMove"
     );
     engine.control.arrow_refresh_pending = true;
-    engine.apply_pending_arrow_refresh(&sim);
+    engine.apply_pending_presentation_refresh(&sim);
     let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
         unreachable!()
     };
@@ -1061,6 +1061,72 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
         engine.get_entity(arrow).is_some(),
         "inactive arrow must remain as a tombstone"
     );
+}
+
+#[test]
+fn frame_sound_refresh_waits_for_the_post_snapshot_presentation_boundary() {
+    use crate::coordinates::{SpriteFrameOffset, SpriteLocalPoint};
+    use crate::element::{ElementData, ElementFx, ElementKind, Entity, FxData};
+    use crate::sprite::Sprite;
+    use crate::sprite_script::SpriteScript;
+
+    let mut sprite = Sprite::new(
+        std::sync::Arc::new(vec![SpriteScript {
+            action_id: 0,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![1],
+            distances: vec![0],
+            offsets: vec![SpriteFrameOffset::ZERO],
+            sound_ids: vec![49],
+        }]),
+        std::sync::Arc::new(vec![0]),
+    );
+    sprite.current_frame = 0;
+    sprite.frame_count = 0;
+
+    let mut engine = EngineInner::new();
+    let fx_id = engine.add_entity(Entity::Fx(ElementFx {
+        element: ElementData {
+            kind: ElementKind::Fx,
+            sprite,
+            ..Default::default()
+        },
+        fx: FxData::default(),
+    }));
+    let sim = crate::sim_rng::test_context();
+
+    engine.apply_pending_presentation_refresh(&sim);
+    assert_eq!(
+        engine
+            .get_entity(fx_id)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_sound_id,
+        0,
+        "a restored frame has no pending Refresh before its first parity snapshot"
+    );
+    assert!(engine.feedback.pending_side_effects.sounds.is_empty());
+
+    engine.control.arrow_refresh_pending = true;
+    engine.apply_pending_presentation_refresh(&sim);
+    assert_eq!(
+        engine
+            .get_entity(fx_id)
+            .unwrap()
+            .element_data()
+            .sprite
+            .last_sound_id,
+        49
+    );
+    assert!(matches!(
+        engine.feedback.pending_side_effects.sounds.as_slice(),
+        [super::super::SoundCommand::Fx { fx_id: 49, .. }]
+    ));
 }
 
 #[test]
@@ -1102,7 +1168,7 @@ fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
     );
 
     engine.control.arrow_refresh_pending = true;
-    engine.apply_pending_arrow_refresh(&sim);
+    engine.apply_pending_presentation_refresh(&sim);
     let Entity::Projectile(projectile) = engine.get_entity(arrow).unwrap() else {
         unreachable!()
     };
@@ -1202,7 +1268,7 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
     assert_ne!(deeper_frame, shallower_frame);
 
     engine.control.arrow_refresh_pending = true;
-    engine.apply_pending_arrow_refresh(&SimulationContext::with_seed(seed));
+    engine.apply_pending_presentation_refresh(&SimulationContext::with_seed(seed));
     let Entity::Projectile(deeper_arrow) = engine.get_entity(deeper).unwrap() else {
         unreachable!()
     };

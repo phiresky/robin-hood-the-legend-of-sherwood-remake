@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, EntityId};
 use crate::element_kinds::QuickAction;
+use crate::player_command::{CompositeSwordTechnique, GestureQuality};
 use crate::profiles::Action;
 use crate::sequence::{Field, Sequence};
 
@@ -207,6 +208,8 @@ pub enum QaReplayCommand {
     SwordStrike {
         target: EntityId,
         command: Command,
+        composite: Option<CompositeSwordTechnique>,
+        gesture_quality: GestureQuality,
         with_seek: bool,
         /// Exact seek tolerance captured with the resolved player command.
         /// Explicitly null for a direct strike and required in every current
@@ -824,6 +827,8 @@ mod tests {
         let replay = QaReplayCommand::SwordStrike {
             target,
             command: Command::SwordstrikeThrustA,
+            composite: Some(CompositeSwordTechnique::RisingFeint),
+            gesture_quality: GestureQuality::GOOD,
             with_seek: true,
             seek_distance: Some(63.0),
         };
@@ -834,9 +839,23 @@ mod tests {
             decoded,
             QaReplayCommand::SwordStrike {
                 seek_distance: Some(63.0),
+                composite: Some(CompositeSwordTechnique::RisingFeint),
+                gesture_quality,
                 ..
-            }
+            } if gesture_quality == GestureQuality::GOOD
         ));
+
+        let mut pre_gesture = encoded.clone();
+        let payload = pre_gesture
+            .get_mut("SwordStrike")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged sword macro");
+        payload.remove("composite");
+        payload.remove("gesture_quality");
+        assert!(
+            serde_json::from_value::<QaReplayCommand>(pre_gesture).is_err(),
+            "a native sword macro without gesture fields must not enter current QA state"
+        );
 
         let mut legacy = encoded;
         legacy
@@ -852,6 +871,8 @@ mod tests {
         let direct = QaReplayCommand::SwordStrike {
             target,
             command: Command::SwordstrikeThrustF,
+            composite: None,
+            gesture_quality: GestureQuality::PERFECT,
             with_seek: false,
             seek_distance: None,
         };

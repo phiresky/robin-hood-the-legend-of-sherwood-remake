@@ -28,10 +28,12 @@ pub(crate) struct SimulationControl {
     pub(crate) mission_start_rng_seed: u64,
     pub(crate) mission_start_sim_config: SimConfig,
     pub(crate) fast_forward: bool,
-    /// A completed `PerformHourglass` is followed by the presentation-only
-    /// `RHElementArrow::Refresh` pass. Parity snapshots sit between those
-    /// calls, so Rust applies this pending pass immediately before the next
-    /// hourglass instead of mutating arrow sprites during their entity tick.
+    /// A completed `PerformHourglass` is followed by presentation-only entity
+    /// `Refresh` work. Parity snapshots sit between those calls, so Rust
+    /// applies the pending arrow and frame-sound work immediately before the
+    /// next hourglass instead of mutating sprite state during the entity tick.
+    ///
+    /// The field keeps its original name for native snapshot compatibility.
     #[serde(default)]
     pub(crate) arrow_refresh_pending: bool,
     /// Universal frame of the most recently displayed popup scroll.

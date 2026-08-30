@@ -848,6 +848,16 @@ impl FadeToBlack {
 /// path (transparent-color and dictionary-owned shadow rejection) without
 /// depending on `robin_assets`.
 pub trait PixelOpacityLookup: Send + Sync {
+    /// Return the native pixel dimensions of one sprite-bank frame.
+    ///
+    /// Original's render path writes the current frame's dimensions back to
+    /// the serialized `RHSprite` fields while creating its target surface.
+    /// The Rust renderer deliberately cannot mutate simulation state, so
+    /// parity diagnostics query the same immutable frame metadata here.
+    fn sprite_dimensions(&self, _bank_id: u32) -> Option<(u16, u16)> {
+        None
+    }
+
     /// Return `true` if the pixel at local `(x, y)` within the sprite
     /// frame identified by `bank_id` is opaque.
     ///

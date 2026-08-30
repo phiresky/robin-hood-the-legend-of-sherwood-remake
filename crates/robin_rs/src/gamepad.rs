@@ -545,6 +545,11 @@ impl GamePadState {
                     actor: pc_id,
                     target: target_id,
                     command: strike.to_command(),
+                    // TODO(combat-gesture-gamepad): add an input-specific
+                    // quality metric and bindings for composite techniques.
+                    // The accepted feature scope is mouse/touch only.
+                    composite: None,
+                    gesture_quality: robin_engine::player_command::GestureQuality::PERFECT,
                     with_seek: false,
                     seek_distance: None,
                 });

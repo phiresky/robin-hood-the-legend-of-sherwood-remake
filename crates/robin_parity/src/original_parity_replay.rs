@@ -33,9 +33,10 @@ use robin_engine::engine::{Engine, LegacyGridSectorAsset, LevelAssets};
 #[cfg(feature = "client")]
 use robin_engine::engine::{HostDisplayState, InputState};
 use robin_engine::fast_find_grid::LineIndex;
+use robin_engine::game_operation::GameCode;
 #[cfg(feature = "client")]
 use robin_engine::graphic_config::TextureScaleMode;
-use robin_engine::player_command::PlayerCommand;
+use robin_engine::player_command::{GestureQuality, PlayerCommand};
 use robin_engine::profiles::Action;
 use robin_engine::sector::SectorNumber;
 #[cfg(feature = "client")]
@@ -76,6 +77,14 @@ impl From<TraceDirectorCompletion> for robin_engine::engine::DirectorCompletion 
     }
 }
 
+/// JSON trace header and the embedded header layout of
+/// [`BinaryTraceHeaderV68`].
+///
+/// ON-DISK FORMAT INVARIANT: changing any field, field order, or field type
+/// changes bitcode's native trace layout. Such a change must bump
+/// `TRACE_NATIVE_VERSION`, freeze the old layout in a version-named struct,
+/// and add an explicit decoder branch for it. Never silently edit this type
+/// while retaining native trace version 68.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceHeader {
@@ -98,13 +107,92 @@ struct TraceHeader {
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
     /// Current session-boundary state omitted by Original's RHSG payload.
-    /// Early schema-16 interactive recordings predate this additive overlay.
-    /// An empty compatibility value leaves constructor/restored state intact;
-    /// a present nonempty overlay remains strictly validated below.
+    /// Early schema-16 interactive recordings predate this additive overlay;
+    /// `None` selects the narrowly-scoped legacy reconstruction below while a
+    /// present (including empty) list remains authoritative.
     #[serde(default)]
-    initial_npc_transients: Vec<TraceInitialNpcTransient>,
+    initial_npc_transients: Option<Vec<TraceInitialNpcTransient>>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
+}
+
+/// Header layout written by native trace version 67. Changing
+/// `initial_npc_transients` from `Vec<_>` to `Option<Vec<_>>` changes
+/// bitcode's struct layout and therefore requires native trace version 68.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct TraceHeaderV67 {
+    record_type: String,
+    mission: String,
+    proto_level: String,
+    rng_seed: u64,
+    schema: u32,
+    session_index: u32,
+    start_state: TraceStartState,
+    initial_frame: u64,
+    simulation_hz: u32,
+    synchronous_pathfinding: bool,
+    rng_stream: String,
+    visibility_queries: String,
+    random_input_seed: Option<u32>,
+    sim_config: TraceSimConfig,
+    campaign: TraceCampaign,
+    motion_grid: TraceMotionGrid,
+    initial_npc_transients: Vec<TraceInitialNpcTransient>,
+    initial_save: Option<TraceInitialSave>,
+}
+
+impl From<TraceHeaderV67> for TraceHeader {
+    fn from(header: TraceHeaderV67) -> Self {
+        Self {
+            record_type: header.record_type,
+            mission: header.mission,
+            proto_level: header.proto_level,
+            rng_seed: header.rng_seed,
+            schema: header.schema,
+            session_index: header.session_index,
+            start_state: header.start_state,
+            initial_frame: header.initial_frame,
+            simulation_hz: header.simulation_hz,
+            synchronous_pathfinding: header.synchronous_pathfinding,
+            rng_stream: header.rng_stream,
+            visibility_queries: header.visibility_queries,
+            random_input_seed: header.random_input_seed,
+            sim_config: header.sim_config,
+            campaign: header.campaign,
+            motion_grid: header.motion_grid,
+            // V67 could not distinguish an omitted JSON field from a present
+            // empty array. Its replay semantics treated both as legacy state.
+            initial_npc_transients: (!header.initial_npc_transients.is_empty())
+                .then_some(header.initial_npc_transients),
+            initial_save: header.initial_save,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<TraceHeader> for TraceHeaderV67 {
+    fn from(header: TraceHeader) -> Self {
+        Self {
+            record_type: header.record_type,
+            mission: header.mission,
+            proto_level: header.proto_level,
+            rng_seed: header.rng_seed,
+            schema: header.schema,
+            session_index: header.session_index,
+            start_state: header.start_state,
+            initial_frame: header.initial_frame,
+            simulation_hz: header.simulation_hz,
+            synchronous_pathfinding: header.synchronous_pathfinding,
+            rng_stream: header.rng_stream,
+            visibility_queries: header.visibility_queries,
+            random_input_seed: header.random_input_seed,
+            sim_config: header.sim_config,
+            campaign: header.campaign,
+            motion_grid: header.motion_grid,
+            initial_npc_transients: header.initial_npc_transients.unwrap_or_default(),
+            initial_save: header.initial_save,
+        }
+    }
 }
 
 #[derive(
@@ -418,6 +506,356 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
             .parity_replay_setup()
             .restore_npc_maximal_visibility(id, transient.maximal_visibility);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyBlockedBoxTuple {
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyBlockedBoxValidity {
+    Unknown,
+    Unset,
+    Set,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyBlockedBoxShadow {
+    tuple: LegacyBlockedBoxTuple,
+    validity: LegacyBlockedBoxValidity,
+    last_processed_order_id: u32,
+    direct_validity_observed: bool,
+}
+
+fn initial_legacy_blocked_box_shadows(
+    save: &robin_engine::legacy_save::body::LegacySaveBody,
+) -> BTreeMap<u32, LegacyBlockedBoxShadow> {
+    save.element_payloads
+        .records
+        .iter()
+        .filter_map(|record| {
+            let sprite = record.payload.actor_sprite()?;
+            let blocked = sprite.position.blocked_box;
+            Some((
+                record.header.creation_order,
+                LegacyBlockedBoxShadow {
+                    tuple: LegacyBlockedBoxTuple {
+                        min_x: blocked.top_left.x.to_bits(),
+                        min_y: blocked.top_left.y.to_bits(),
+                        max_x: blocked.bottom_right.x.to_bits(),
+                        max_y: blocked.bottom_right.y.to_bits(),
+                    },
+                    validity: if blocked.bounds_are_set {
+                        LegacyBlockedBoxValidity::Set
+                    } else {
+                        LegacyBlockedBoxValidity::Unset
+                    },
+                    last_processed_order_id: sprite.last_processed_order_id,
+                    direct_validity_observed: false,
+                },
+            ))
+        })
+        .collect()
+}
+
+fn legacy_blocked_box_tuple(runtime: &serde_json::Value) -> Option<LegacyBlockedBoxTuple> {
+    let blocked = runtime.pointer("/position/blocked_box")?;
+    if blocked.is_null() {
+        return None;
+    }
+    let bits = |pointer: &str| {
+        blocked
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+    };
+    Some(LegacyBlockedBoxTuple {
+        min_x: bits("/min/x/bits")?,
+        min_y: bits("/min/y/bits")?,
+        max_x: bits("/max/x/bits")?,
+        max_y: bits("/max/y/bits")?,
+    })
+}
+
+/// Old schema-16 runtime capture omitted `SBGeoBoundingBox2D::bounds_are_set`
+/// and printed its stale coordinate words unconditionally. Track Original's
+/// validity bit from transitions which prove it without touching Rust state.
+/// `RHSprite::PerformMotion` changes the processed movement-order id and then
+/// calls `ResetBoxBlocked`; `UpdateBoxBlocked` is the sole tuple mutator and
+/// makes the box valid again.
+///
+/// TODO(parity-recorder): have new Original captures emit null when
+/// `mboxBlocked.IsSomewhere()` is false. A legacy capture cannot distinguish
+/// an update which happens to recreate the exact same stale tuple; the shadow
+/// deliberately retains its last proven validity in that intrinsically
+/// ambiguous case.
+fn canonicalize_legacy_blocked_box(
+    runtime: &mut serde_json::Value,
+    creation_order: u32,
+    reset_by_new_movement_order: bool,
+    shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
+) -> bool {
+    let blocked_is_null = runtime
+        .pointer("/position/blocked_box")
+        .is_some_and(serde_json::Value::is_null);
+    let tuple = legacy_blocked_box_tuple(runtime);
+    if tuple.is_none() && !blocked_is_null {
+        return false;
+    }
+    let Some(last_processed_order_id) = runtime
+        .pointer("/sprite/last_processed_order_id")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+    else {
+        return false;
+    };
+
+    let Some(shadow) = shadows.get_mut(&creation_order) else {
+        // Runtime-created actors have no saved validity bit. Their first old
+        // capture is observationally ambiguous, so retain it until a later
+        // transition proves whether the cache is valid.
+        if let Some(tuple) = tuple {
+            shadows.insert(
+                creation_order,
+                LegacyBlockedBoxShadow {
+                    tuple,
+                    validity: LegacyBlockedBoxValidity::Unknown,
+                    last_processed_order_id,
+                    direct_validity_observed: false,
+                },
+            );
+        }
+        return blocked_is_null;
+    };
+
+    let tuple_changed = tuple.is_some_and(|tuple| tuple != shadow.tuple);
+    let order_changed = last_processed_order_id != shadow.last_processed_order_id;
+    if blocked_is_null {
+        // New recordings carry the validity bit directly by emitting null.
+        shadow.validity = LegacyBlockedBoxValidity::Unset;
+        shadow.direct_validity_observed = true;
+    } else if shadow.direct_validity_observed {
+        shadow.validity = LegacyBlockedBoxValidity::Set;
+    } else if reset_by_new_movement_order && order_changed {
+        shadow.validity = LegacyBlockedBoxValidity::Unset;
+    }
+    if let Some(tuple) = tuple {
+        // PerformMotion resets before any UpdateBoxBlocked in the same call,
+        // so a changed tuple proves that the later update revalidated it.
+        if tuple_changed {
+            shadow.validity = LegacyBlockedBoxValidity::Set;
+        }
+        shadow.tuple = tuple;
+    }
+    shadow.last_processed_order_id = last_processed_order_id;
+
+    if shadow.validity == LegacyBlockedBoxValidity::Unset {
+        if let Some(blocked) = runtime.pointer_mut("/position/blocked_box") {
+            *blocked = serde_json::Value::Null;
+        }
+        true
+    } else {
+        false
+    }
+}
+
+fn reconstruct_unrecorded_maximal_visibility(
+    leaning_out: bool,
+    visibilities: impl IntoIterator<Item = f32>,
+) -> u16 {
+    let view_speed = if leaning_out {
+        robin_engine::ai_vision::LOOK_DOWN_BASE_VIEW_SPEED
+    } else {
+        robin_engine::ai_vision::BASE_VIEW_SPEED
+    };
+    visibilities
+        .into_iter()
+        .map(|visibility| (view_speed as f32 * visibility) as u16)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Reconstruct the process-local maximum omitted by old interactive segments.
+///
+/// Original clears this value before an ordinary vision pass, but dead and
+/// unconscious actors return first and retain the preceding segment's value.
+/// Their serialized detectable buckets retain the visibility which supplied
+/// that maximum, making this exact reconstruction possible.
+fn apply_legacy_segment_visibility_fallback(engine: &mut Engine) -> usize {
+    let restorations = engine
+        .npc_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let entity = engine
+                .get_entity(id)
+                .unwrap_or_else(|| panic!("legacy parity fallback lost NPC {id:?}"));
+            let npc = entity
+                .npc_data()
+                .unwrap_or_else(|| panic!("legacy parity fallback found non-NPC {id:?}"));
+            let retains_maximum =
+                entity.is_dead() || entity.human_data().is_some_and(|human| human.unconscious);
+            retains_maximum.then(|| {
+                let value = reconstruct_unrecorded_maximal_visibility(
+                    npc.view_lean_out,
+                    npc.detectable_lists
+                        .iter()
+                        .flatten()
+                        .map(|detectable| detectable.last_visibility),
+                );
+                (id, value)
+            })
+        })
+        .collect::<Vec<_>>();
+    for &(id, value) in &restorations {
+        engine
+            .parity_replay_setup()
+            .restore_npc_maximal_visibility(id, value);
+    }
+    restorations.len()
+}
+
+/// An in-process load starts recording after save adoption and consequently
+/// has no setup RNG prefix. A nonempty prefix proves a fresh engine, whose
+/// constructor-zero process-local state is authoritative.
+fn legacy_loaded_save_retains_process_transients(prefix_draw_count: usize) -> bool {
+    prefix_draw_count == 0
+}
+
+fn preceding_interactive_session_path(path: &Path, session_index: u32) -> Option<PathBuf> {
+    if session_index <= 1 {
+        return None;
+    }
+    let previous = session_index.checked_sub(1)?;
+    let name = path.file_name()?.to_str()?;
+    let suffix = format!("-session-{session_index:04}.jsonl.zst");
+    let stem = name.strip_suffix(&suffix)?;
+    Some(path.with_file_name(format!("{stem}-session-{previous:04}.jsonl.zst")))
+}
+
+fn terminal_macro_waypoint(
+    element: &TraceElement,
+    paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(robin_engine::ai::PathId, u8, usize)> {
+    let ai = element.ai.as_ref()?;
+    terminal_macro_waypoint_at(
+        (element.position_map.x.bits, element.position_map.y.bits),
+        ai.macro_cursor,
+        ai.macro_in_progress,
+        paths,
+    )
+}
+
+fn terminal_macro_waypoint_at(
+    position_bits: (u32, u32),
+    cursor: Option<u16>,
+    macro_in_progress: bool,
+    paths: &[robin_engine::level_data::RawHikingPath],
+) -> Option<(robin_engine::ai::PathId, u8, usize)> {
+    if !macro_in_progress {
+        return None;
+    }
+    let offset = usize::from(cursor?);
+    let mut matches = paths.iter().enumerate().flat_map(|(path_index, path)| {
+        path.waypoints
+            .iter()
+            .enumerate()
+            .filter_map(move |(waypoint_index, waypoint)| {
+                let robin_engine::level_data::WaypointCommand::Macro(command) = &waypoint.command
+                else {
+                    return None;
+                };
+                (offset <= command.len()
+                    && position_bits.0 == f32::from(waypoint.x).to_bits()
+                    && position_bits.1 == f32::from(waypoint.y).to_bits())
+                .then_some((path_index, waypoint_index))
+            })
+    });
+    let (path_index, waypoint_index) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some((
+        robin_engine::ai::PathId::new(u16::try_from(path_index).ok()?)?,
+        u8::try_from(waypoint_index).ok()?,
+        offset,
+    ))
+}
+
+fn apply_legacy_interactive_chain_macro_fallback(
+    trace_path: &Path,
+    header: &TraceHeader,
+    prefix_draw_count: usize,
+    engine: &mut Engine,
+    assets: &LevelAssets,
+) -> usize {
+    if header.schema != TRACE_SCHEMA_VERSION
+        || header.start_state != TraceStartState::LoadedSave
+        || header.initial_npc_transients.is_some()
+        || !legacy_loaded_save_retains_process_transients(prefix_draw_count)
+    {
+        return 0;
+    }
+    let Some(previous_path) = preceding_interactive_session_path(trace_path, header.session_index)
+        .filter(|path| path.is_file() || native_binary_trace_path(path).is_file())
+    else {
+        return 0;
+    };
+    let previous_native = ensure_native_binary_trace(&previous_path);
+    let mut reader = BinaryTraceReader::open(&previous_native);
+    let previous_header = reader.read_header().trace;
+    if previous_header.schema != TRACE_SCHEMA_VERSION
+        || previous_header.session_index.checked_add(1) != Some(header.session_index)
+        || previous_header.mission != header.mission
+        || previous_header.proto_level != header.proto_level
+        || previous_header.rng_seed != header.rng_seed
+    {
+        return 0;
+    }
+    let mut final_frame = None;
+    loop {
+        match reader.read_record() {
+            BinaryTraceRecord::Frame(frame) => final_frame = Some(frame),
+            BinaryTraceRecord::End {
+                final_frame: end,
+                frame_count,
+                ..
+            } => {
+                reader
+                    .validate_terminator(frame_count.unwrap(), end.unwrap())
+                    .unwrap_or_else(|error| panic!("invalid preceding interactive trace: {error}"));
+                break;
+            }
+        }
+    }
+    let mut runtime = engine
+        .npc_ids()
+        .into_iter()
+        .map(|id| (engine.original_creation_order(id), id))
+        .collect::<BTreeMap<_, _>>();
+    let mut restored = 0;
+    for element in &final_frame
+        .expect("preceding interactive trace has no frames")
+        .elements
+    {
+        let Some((path_id, waypoint, offset)) =
+            terminal_macro_waypoint(element, &assets.hiking_paths)
+        else {
+            continue;
+        };
+        let Some(id) = runtime.remove(&element.creation_order) else {
+            continue;
+        };
+        restored += usize::from(
+            engine
+                .parity_replay_setup()
+                .restore_npc_dormant_macro_cursor(id, path_id, waypoint, offset, assets),
+        );
+    }
+    restored
 }
 
 fn validate_trace_start(start_state: TraceStartState, session_index: u32, initial_frame: u64) {
@@ -1308,6 +1746,8 @@ impl TraceCommand {
                 actor: entity_map.translate(actor),
                 target: entity_map.translate(target),
                 command: command_from_stable_name(&original_command_name),
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
                 with_seek,
                 seek_distance: trace_sword_seek_distance(with_seek, seek_distance),
             },
@@ -1527,6 +1967,11 @@ fn command_from_stable_name(name: &str) -> Command {
         .unwrap_or_else(|_| panic!("unsupported stable Original RHcommand name {name:?}"))
 }
 
+/// Element layout embedded in version-68 native frame records.
+///
+/// ON-DISK FORMAT INVARIANT: do not change fields, their order, or their
+/// types without bumping `TRACE_NATIVE_VERSION` and freezing this layout in a
+/// version-named compatibility type, as done by [`TraceElementV67`].
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 struct TraceElement {
     entity_id: TraceEntityId,
@@ -1544,10 +1989,10 @@ struct TraceElement {
     elevation: TraceFloat,
     old_elevation: TraceFloat,
     increment_map: TracePoint,
-    /// Missing in early schema-16 frames. The compatibility default is never
-    /// compared when the header identifies that legacy recorder generation.
+    /// Missing in early schema-16 frames. Presence, including an authoritative
+    /// `false`, must survive conversion to the native trace.
     #[serde(default)]
-    increment_map_valid: bool,
+    increment_map_valid: Option<bool>,
     movement_map: TracePoint,
     layer: u16,
     layer_goal: u16,
@@ -1574,6 +2019,86 @@ struct TraceElement {
     /// for "not recorded" and is excluded from logical comparison.
     #[serde(default = "missing_legacy_trace_json_value")]
     runtime: TraceJsonValue,
+}
+
+/// Element snapshot layout embedded in native trace version 67. Keep this
+/// frozen: even a field-order-only edit changes bitcode's on-disk shape.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct TraceElementV67 {
+    entity_id: TraceEntityId,
+    creation_order: u32,
+    class_id: u16,
+    kind: TraceEntityKind,
+    active: bool,
+    blipped: bool,
+    unreachable: bool,
+    surface_id: u32,
+    posture: u32,
+    position_map: TracePoint,
+    old_position_map: TracePoint,
+    position_goal_map: TracePoint,
+    elevation: TraceFloat,
+    old_elevation: TraceFloat,
+    increment_map: TracePoint,
+    increment_map_valid: bool,
+    movement_map: TracePoint,
+    layer: u16,
+    layer_goal: u16,
+    sector: u16,
+    direction: i16,
+    direction_goal: i16,
+    moving: bool,
+    moving_map: bool,
+    sprite_row: u16,
+    sprite_frame: u16,
+    sprite_frame_count: u16,
+    actor: Option<TraceActor>,
+    human: Option<TraceHuman>,
+    pc: Option<TraceElementPc>,
+    ai: Option<TraceAi>,
+    detection: Option<TraceDetection>,
+    runtime: TraceJsonValue,
+}
+
+impl TraceElementV67 {
+    fn into_current(self, increment_map_valid_was_recorded: bool) -> TraceElement {
+        TraceElement {
+            entity_id: self.entity_id,
+            creation_order: self.creation_order,
+            class_id: self.class_id,
+            kind: self.kind,
+            active: self.active,
+            blipped: self.blipped,
+            unreachable: self.unreachable,
+            surface_id: self.surface_id,
+            posture: self.posture,
+            position_map: self.position_map,
+            old_position_map: self.old_position_map,
+            position_goal_map: self.position_goal_map,
+            elevation: self.elevation,
+            old_elevation: self.old_elevation,
+            increment_map: self.increment_map,
+            increment_map_valid: increment_map_valid_was_recorded
+                .then_some(self.increment_map_valid),
+            movement_map: self.movement_map,
+            layer: self.layer,
+            layer_goal: self.layer_goal,
+            sector: self.sector,
+            direction: self.direction,
+            direction_goal: self.direction_goal,
+            moving: self.moving,
+            moving_map: self.moving_map,
+            sprite_row: self.sprite_row,
+            sprite_frame: self.sprite_frame,
+            sprite_frame_count: self.sprite_frame_count,
+            actor: self.actor,
+            human: self.human,
+            pc: self.pc,
+            ai: self.ai,
+            detection: self.detection,
+            runtime: self.runtime,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
@@ -2760,6 +3285,10 @@ struct TraceSequenceLifecycleEvent {
     accepted: Option<bool>,
 }
 
+/// Frame layout embedded in version-68 native records.
+///
+/// ON-DISK FORMAT INVARIANT: any bitcode-shape change requires a native
+/// version bump plus a frozen compatibility decoder for this layout.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 #[serde(deny_unknown_fields)]
 struct TraceFrame {
@@ -2797,6 +3326,71 @@ struct TraceFrame {
     movement_steps: Vec<TraceMovementStep>,
     #[serde(default)]
     flight_steps: Vec<TraceFlightStep>,
+}
+
+/// Frame layout embedded in native trace version 67. Its element type retains
+/// the original plain-`bool` `increment_map_valid` field.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct TraceFrameV67 {
+    record_type: String,
+    frame_before: u64,
+    frame_after: u64,
+    game_code: i32,
+    simulation_body_ran: bool,
+    commands: Vec<TraceCommand>,
+    director_completions: Vec<TraceDirectorCompletion>,
+    selected_pcs: Vec<TraceEntityId>,
+    elements: Vec<TraceElementV67>,
+    visibility_queries: Vec<TraceVisibilityQuery>,
+    rng_draws: TraceRngBatch,
+    motion_line_changes: Vec<TraceMotionLineChange>,
+    path_events: Vec<TracePathEvent>,
+    route_construction_events: Vec<TraceRouteConstructionEvent>,
+    popup_events: Vec<TracePopupEvent>,
+    ai_forecast_events: Vec<TraceAiForecastEvent>,
+    alert_formation_events: Vec<TraceAlertFormationEvent>,
+    goto_authorization_events: Vec<TraceGoToAuthorizationEvent>,
+    strike_proposal_events: Vec<TraceStrikeProposalEvent>,
+    sequence_lifecycle_events: Vec<TraceSequenceLifecycleEvent>,
+    target_lifecycle_events: Vec<TraceTargetLifecycleEvent>,
+    resolved_exclamations: Vec<TraceResolvedExclamation>,
+    movement_steps: Vec<TraceMovementStep>,
+    flight_steps: Vec<TraceFlightStep>,
+}
+
+impl TraceFrameV67 {
+    fn into_current(self, increment_map_valid_was_recorded: bool) -> TraceFrame {
+        TraceFrame {
+            record_type: self.record_type,
+            frame_before: self.frame_before,
+            frame_after: self.frame_after,
+            game_code: self.game_code,
+            simulation_body_ran: self.simulation_body_ran,
+            commands: self.commands,
+            director_completions: self.director_completions,
+            selected_pcs: self.selected_pcs,
+            elements: self
+                .elements
+                .into_iter()
+                .map(|element| element.into_current(increment_map_valid_was_recorded))
+                .collect(),
+            visibility_queries: self.visibility_queries,
+            rng_draws: self.rng_draws,
+            motion_line_changes: self.motion_line_changes,
+            path_events: self.path_events,
+            route_construction_events: self.route_construction_events,
+            popup_events: self.popup_events,
+            ai_forecast_events: self.ai_forecast_events,
+            alert_formation_events: self.alert_formation_events,
+            goto_authorization_events: self.goto_authorization_events,
+            strike_proposal_events: self.strike_proposal_events,
+            sequence_lifecycle_events: self.sequence_lifecycle_events,
+            target_lifecycle_events: self.target_lifecycle_events,
+            resolved_exclamations: self.resolved_exclamations,
+            movement_steps: self.movement_steps,
+            flight_steps: self.flight_steps,
+        }
+    }
 }
 
 /// Recursive JSON tree used for high-volume trace snapshots.
@@ -3081,7 +3675,8 @@ fn validate_trace_frame(frame: &TraceFrame) {
     validate_sequence_diagnostic_order(frame);
 }
 
-const TRACE_NATIVE_VERSION: u32 = 67;
+const TRACE_NATIVE_VERSION: u32 = 68;
+const TRACE_NATIVE_LEGACY_VERSION: u32 = 67;
 /// The native parity trace is the authoritative artifact once its JSONL
 /// source has been converted (and possibly deleted), so its name carries no
 /// version: compatibility is enforced through the versioned header/footer,
@@ -3102,34 +3697,71 @@ const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Keep the reader bounded at zstd's platform maximum while accepting those
 // valid trace frames.
 const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
-// Bitcode's dense output makes level 9 a good throughput/size tradeoff. A
-// representative min/median/max corpus benchmark made it 12-17x faster than
-// level 19 for only 16-19% larger native traces. Long-distance matching was
-// neutral at level 19 and made level 9 both slower and 5-8% larger, so the
-// native writer deliberately leaves it disabled.
-const TRACE_NATIVE_ZSTD_LEVEL: i32 = 9;
+// Prefer maximum archival density for parity recordings. A representative
+// min/median/max corpus benchmark made level 19 16-19% smaller than level 9,
+// at the cost of substantially slower conversion. Long-distance matching was
+// neutral at level 19, so the native writer deliberately leaves it disabled.
+const TRACE_NATIVE_ZSTD_LEVEL: i32 = 19;
 const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
 /// Frames per on-disk block. A current-schema frame contains a complete Original
-/// state envelope, so decoding 1024 at once expanded a roughly 100 MiB
-/// bitcode record into 2-3.6 GiB of live Rust allocations. Sixteen frames
-/// retain bitcode's columnar packing while bounding the decoded block to a
-/// small fraction of one replay engine. Readers accept any block size, so
+/// state envelope, so decoding roughly 1,000 at once can require 2-3.6 GiB of
+/// live Rust allocations. The larger block favors archival density. Readers
+/// accept any block size, so
 /// this storage-only change remains compatible within the current native version.
-const TRACE_NATIVE_BLOCK_RECORDS: usize = 16;
+const TRACE_NATIVE_BLOCK_RECORDS: usize = 1000;
 /// Bound the zstd history retained by every replay process. Cross-frame
-/// repetition is already captured inside the 16-frame bitcode blocks; a
-/// whole-trace 512 MiB-2 GiB window only traded resident memory for a small
-/// artifact-size win and prevented one replay lane per CPU core.
-const TRACE_NATIVE_WINDOW_LOG: u32 = 25;
+/// repetition is already captured inside the 1,000-frame bitcode blocks, while
+/// 512 MiB of cross-block history favors archival density without returning to
+/// the potentially multi-gigabyte windows of whole-trace compression.
+const TRACE_NATIVE_WINDOW_LOG: u32 = 29;
 
+/// Native trace header layout for version 68. Do not change its bitcode shape
+/// without bumping `TRACE_NATIVE_VERSION` and retaining this type as the v68
+/// compatibility decoder.
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
-struct BinaryTraceHeader {
+struct BinaryTraceHeaderV68 {
     version: u32,
     source_fingerprint: String,
     trace: TraceHeader,
     rng_prefix: TraceRngPrefix,
 }
 
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+struct BinaryTraceHeaderV67 {
+    version: u32,
+    source_fingerprint: String,
+    trace: TraceHeaderV67,
+    rng_prefix: TraceRngPrefix,
+}
+
+impl From<BinaryTraceHeaderV67> for BinaryTraceHeaderV68 {
+    fn from(header: BinaryTraceHeaderV67) -> Self {
+        Self {
+            version: header.version,
+            source_fingerprint: header.source_fingerprint,
+            trace: header.trace.into(),
+            rng_prefix: header.rng_prefix,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<BinaryTraceHeaderV68> for BinaryTraceHeaderV67 {
+    fn from(header: BinaryTraceHeaderV68) -> Self {
+        Self {
+            version: TRACE_NATIVE_LEGACY_VERSION,
+            source_fingerprint: header.source_fingerprint,
+            trace: header.trace.into(),
+            rng_prefix: header.rng_prefix,
+        }
+    }
+}
+
+/// Native record layout for version 68.
+///
+/// ON-DISK FORMAT INVARIANT: this enum and every transitively encoded child
+/// type are immutable for version 68. Shape changes require a version bump and
+/// an explicit legacy decoder such as [`BinaryTraceRecordV67`].
 #[derive(Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
 enum BinaryTraceRecord {
     Frame(TraceFrame),
@@ -3140,12 +3772,46 @@ enum BinaryTraceRecord {
     },
 }
 
+/// Record layout written by native trace version 67. Do not modify this type
+/// or any of its versioned children.
+#[derive(Debug, bitcode::Encode, bitcode::Decode)]
+enum BinaryTraceRecordV67 {
+    Frame(TraceFrameV67),
+    End {
+        rng_suffix: Option<TraceRngBatch>,
+        final_frame: Option<u64>,
+        frame_count: Option<u64>,
+    },
+}
+
+impl BinaryTraceRecordV67 {
+    fn into_current(self, increment_map_valid_was_recorded: bool) -> BinaryTraceRecord {
+        match self {
+            Self::Frame(frame) => {
+                BinaryTraceRecord::Frame(frame.into_current(increment_map_valid_was_recorded))
+            }
+            Self::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            } => BinaryTraceRecord::End {
+                rng_suffix,
+                final_frame,
+                frame_count,
+            },
+        }
+    }
+}
+
 struct BinaryTraceReader {
     path: PathBuf,
     reader: Box<dyn Read>,
     footer: BinaryTraceFooter,
     /// Records of the current block not yet handed out by [`Self::read_record`].
     pending: VecDeque<BinaryTraceRecord>,
+    /// V67 used an empty header transient vector to identify recorder builds
+    /// where `increment_map_valid` was absent and defaulted to false.
+    v67_increment_map_valid_was_recorded: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3232,7 +3898,108 @@ impl TraceTimeline {
     }
 }
 
+/// Recover the quit-mission message omitted by old schema-16 recorders.
+///
+/// `RHEngine::PerformHourglass` can report success without advancing only
+/// through its leading `mbQuitWon` branch. The UI message which set that flag
+/// was not captured, so this exact terminal envelope proves the omitted input.
+// TODO(parity-trace): record MSG_QUIT_MISSION in Original and remove this
+// compatibility inference after every surviving schema-16 trace includes it.
+fn is_legacy_retained_terminal_success(
+    schema: u32,
+    frame_before: u64,
+    frame_after: u64,
+    simulation_body_ran: bool,
+    game_code: i32,
+) -> bool {
+    schema == TRACE_SCHEMA_VERSION
+        && frame_before == frame_after
+        && !simulation_body_ran
+        && game_code == GameCode::LevelSucceeded as i32
+}
+
+/// Stable host identity for campaign attempts synthesized by this replay tool.
+///
+/// Original predates native attempt history, so an archived trace cannot carry
+/// the host nonce which current live sessions attach to terminal commands. Use
+/// the logical recording-family name: chained `-session-NNNN` files belong to
+/// one host run and therefore receive one identity, independent of their disk
+/// location. The domain separator keeps this namespace distinct from future
+/// deterministic tool identities.
+fn replay_campaign_run_id(trace_path: &Path, session_index: u32) -> u64 {
+    let file_name = trace_path.file_name().unwrap_or_else(|| {
+        panic!(
+            "parity trace path {} has no file name for campaign identity",
+            trace_path.display()
+        )
+    });
+    let file_name = file_name.to_string_lossy();
+    let session_suffix = format!("-session-{session_index:04}");
+    let logical_stem = file_name.strip_suffix(".jsonl.zst").unwrap_or(&file_name);
+    let recording_family = logical_stem
+        .strip_suffix(&session_suffix)
+        .unwrap_or(logical_stem);
+
+    let mut digest = Sha256::new();
+    digest.update(b"robin-original-parity-campaign-run-v1\0");
+    digest.update(recording_family.as_bytes());
+    let digest = digest.finalize();
+    let mut bytes = [0_u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    let identity = u64::from_le_bytes(bytes);
+    // Zero is reserved as an invalid durable campaign-history identity.
+    if identity == 0 { u64::MAX } else { identity }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_legacy_retained_terminal_success_repair(
+    commands_before_hourglass: &mut Vec<PlayerCommand>,
+    commands_after_hourglass: &mut Vec<PlayerCommand>,
+    difficulty: robin_engine::player_profile::DifficultyLevel,
+    campaign_run_id: u64,
+    schema: u32,
+    frame_before: u64,
+    frame_after: u64,
+    simulation_body_ran: bool,
+    game_code: i32,
+    already_applied: &mut bool,
+) -> bool {
+    if *already_applied
+        || !is_legacy_retained_terminal_success(
+            schema,
+            frame_before,
+            frame_after,
+            simulation_body_ran,
+            game_code,
+        )
+    {
+        return false;
+    }
+
+    // The omitted Original MSG_QUIT_MISSION both applies campaign/stat updates
+    // and arms mbQuitWon before the retained Hourglass boundary. Rust keeps
+    // terminal campaign updates in a post-hourglass command so achievement
+    // evidence is finalized only after that final engine boundary, matching the
+    // live Rust session transaction. Both phases still complete before parity
+    // compares the Original terminal snapshot.
+    *already_applied = true;
+    commands_before_hourglass.push(PlayerCommand::QuitMissionRequested);
+    commands_after_hourglass.push(PlayerCommand::ApplyQuitMissionUpdates {
+        exit_code: GameCode::LevelSucceeded,
+        difficulty,
+        completed_at_unix_seconds: None,
+        campaign_run_nonce: Some(campaign_run_id),
+    });
+    true
+}
+
 fn cross_post_initialize_frame(engine: &mut Engine, assets: &LevelAssets) {
+    engine
+        .parity_replay_setup()
+        // Schema 16 omits the capture viewport and per-Draw camera position.
+        // Keep its presentation-only edge compatibility isolated here; a
+        // future schema carrying that provenance must pass `false` instead.
+        .refresh_sprite_dimension_cache(assets, true);
     engine
         .advance_frame(
             assets,
@@ -3855,6 +4622,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let (mut engine, assets, mission_scb) =
         initialize_headless_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
+    let mut legacy_blocked_box_shadows = BTreeMap::new();
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
             initial_save,
@@ -3890,6 +4658,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 eprintln!("parity stage: saved failed path {index}: {request:?}");
             }
         }
+        legacy_blocked_box_shadows = initial_legacy_blocked_box_shadows(&save);
         loaded_save_host = Some(
             robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
                 &mut engine,
@@ -3900,15 +4669,35 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
         );
         eprintln!("atomically adopted current-schema Original Linux-v48 save");
     }
-    if header.initial_npc_transients.is_empty() {
+    let restored_dormant_macros = apply_legacy_interactive_chain_macro_fallback(
+        &trace_path,
+        &header,
+        prefix_end,
+        &mut engine,
+        &assets,
+    );
+    if restored_dormant_macros != 0 {
         eprintln!(
-            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retaining restored/constructor NPC transient state"
+            "restored {restored_dormant_macros} dormant waypoint-macro cursors from the authoritative preceding interactive-session terminal snapshot"
         );
-    } else {
-        apply_initial_npc_transients(&mut engine, &header.initial_npc_transients);
+    }
+    if let Some(transients) = header.initial_npc_transients.as_deref() {
+        apply_initial_npc_transients(&mut engine, transients);
         eprintln!(
             "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
-            header.initial_npc_transients.len()
+            transients.len()
+        );
+    } else if header.start_state == TraceStartState::LoadedSave
+        && header.session_index > 1
+        && legacy_loaded_save_retains_process_transients(prefix_end)
+    {
+        let restored = apply_legacy_segment_visibility_fallback(&mut engine);
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} segment lacks initial_npc_transients; reconstructed maximal_visibility for {restored} dead/unconscious NPCs"
+        );
+    } else {
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retained authoritative constructor/restored NPC transient state"
         );
     }
     if rewind_loaded_save_rng {
@@ -3978,6 +4767,8 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
     let automatic_dump_enabled = dump.is_none() && !scan_all && !no_auto_dump;
     let mut rolling_dump = VecDeque::<RollingDumpFrame>::new();
+    let mut legacy_terminal_success_repair_applied = false;
+    let campaign_run_id = replay_campaign_run_id(&trace_path, header.session_index);
 
     #[cfg(feature = "client")]
     if let Some(port) = http_server {
@@ -4249,7 +5040,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 commands_before_hourglass_resolved.push(command);
             }
         }
-        let commands_after_hourglass = commands_after_hourglass
+        let mut commands_after_hourglass = commands_after_hourglass
             .into_iter()
             .filter_map(|command| {
                 let drop_ale_resolution = resolve_current_drop_ale(
@@ -4281,6 +5072,18 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 )
             })
             .collect::<Vec<_>>();
+        append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass_resolved,
+            &mut commands_after_hourglass,
+            header.sim_config.difficulty.into(),
+            campaign_run_id,
+            header.schema,
+            frame.frame_before,
+            frame.frame_after,
+            frame.simulation_body_ran,
+            frame.game_code,
+            &mut legacy_terminal_success_repair_applied,
+        );
         let delayed_drop_ale_route_engine = match delayed_drop_ale_fact_preview.as_mut() {
             Some(preview) => preview,
             None => &mut engine,
@@ -4290,7 +5093,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             &mut consumed_drop_ale_route_ordinals,
             &consumed_group_move_route_ordinals,
             map,
-            header.initial_npc_transients.is_empty(),
+            header.initial_npc_transients.is_none(),
             delayed_drop_ale_route_engine,
         );
         if debug_stage_timing {
@@ -4476,7 +5279,8 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             &frame,
             tick_effects.code as i32,
             map,
-            header.initial_npc_transients.is_empty(),
+            header.initial_npc_transients.is_none(),
+            &mut legacy_blocked_box_shadows,
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -5823,10 +6627,8 @@ fn spawn_roundtrip_audit_workers<'scope, 'env>(
     sender
 }
 
-/// Panic unless the native trace at `native_path` carries the current format
-/// version in both its fixed footer and its decoded header. Used when there
-/// is no JSONL source to regenerate from, so the only correct responses to a
-/// mismatch are migration or restoring the recording — never regeneration.
+/// Validate a standalone native trace, including the legacy version whose
+/// JSONL source may intentionally have been deleted.
 fn validate_standalone_native_trace(native_path: &Path) {
     let footer = read_binary_trace_footer(native_path).unwrap_or_else(|error| {
         panic!(
@@ -5835,9 +6637,16 @@ fn validate_standalone_native_trace(native_path: &Path) {
         )
     });
     let header = read_binary_trace_header(native_path);
-    assert!(
-        footer.version == TRACE_NATIVE_VERSION && header.version == TRACE_NATIVE_VERSION,
-        "native parity trace {} is version {} (footer {}) but this runner expects          {TRACE_NATIVE_VERSION}; its JSONL source is gone, so it must be migrated          with a runner that still reads its version",
+    validate_binary_trace_footer(&footer).unwrap_or_else(|error| {
+        panic!(
+            "native parity trace {} has an unsupported fixed footer: {error}",
+            native_path.display()
+        )
+    });
+    assert_eq!(
+        footer.version,
+        header.version,
+        "native parity trace {} has header version {} but footer version {}",
         native_path.display(),
         header.version,
         footer.version,
@@ -6043,7 +6852,7 @@ fn verify_converted_native_trace(
         .expect("read recording RNG prefix during native readback");
     let source_prefix: TraceRngPrefix = serde_json::from_str(&source_prefix_line)
         .expect("reparse recording RNG prefix during native readback");
-    let expected_header = BinaryTraceHeader {
+    let expected_header = BinaryTraceHeaderV68 {
         version: TRACE_NATIVE_VERSION,
         source_fingerprint: source_fingerprint.clone(),
         trace: source_trace,
@@ -7011,7 +7820,10 @@ fn digest_and_validate_native_trace(path: &Path) -> (u64, sha2::digest::Output<S
     validate_binary_trace_footer(&reader.footer)
         .unwrap_or_else(|error| panic!("reblocked native trace footer is invalid: {error}"));
     let header = reader.read_header();
-    assert_eq!(header.version, TRACE_NATIVE_VERSION);
+    assert_eq!(
+        header.version, reader.footer.version,
+        "native parity trace header/footer versions differ"
+    );
     let mut digest = Sha256::new();
     update_native_semantic_digest(&mut digest, &header);
     let mut timeline = TraceTimeline::new(header.trace.initial_frame);
@@ -7140,7 +7952,7 @@ fn ensure_native_binary_trace_locked(
         "invalid RNG prefix record type"
     );
     rng_prefix.draws.validate();
-    let header = BinaryTraceHeader {
+    let header = BinaryTraceHeaderV68 {
         version: TRACE_NATIVE_VERSION,
         source_fingerprint: fingerprint,
         trace,
@@ -7321,31 +8133,39 @@ impl BinaryTraceReader {
             reader: Box::new(decoder),
             footer,
             pending: VecDeque::new(),
+            v67_increment_map_valid_was_recorded: false,
         }
     }
 
-    fn read_header(&mut self) -> BinaryTraceHeader {
-        read_binary_record(&mut self.reader, "native parity trace header").unwrap_or_else(|error| {
-            panic!(
-                "read native parity trace header {}: {error}",
-                self.path.display()
-            )
-        })
+    fn read_header(&mut self) -> BinaryTraceHeaderV68 {
+        let header = read_binary_trace_header_record(&mut self.reader, self.footer.version)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "read native parity trace header {}: {error}",
+                    self.path.display()
+                )
+            });
+        self.v67_increment_map_valid_was_recorded = self.footer.version
+            == TRACE_NATIVE_LEGACY_VERSION
+            && header.trace.initial_npc_transients.is_some();
+        header
     }
 
     fn read_record(&mut self) -> BinaryTraceRecord {
         if let Some(record) = self.pending.pop_front() {
             return record;
         }
-        let block: Vec<BinaryTraceRecord> =
-            read_binary_record(&mut self.reader, "native parity trace block").unwrap_or_else(
-                |error| {
-                    panic!(
-                        "read native parity trace block {}: {error}",
-                        self.path.display()
-                    )
-                },
-            );
+        let block = read_binary_trace_block_record(
+            &mut self.reader,
+            self.footer.version,
+            self.v67_increment_map_valid_was_recorded,
+        )
+        .unwrap_or_else(|error| {
+            panic!(
+                "read native parity trace block {}: {error}",
+                self.path.display()
+            )
+        });
         self.pending.extend(block);
         self.pending.pop_front().unwrap_or_else(|| {
             panic!(
@@ -7427,22 +8247,26 @@ fn read_binary_trace_footer(path: &Path) -> Result<BinaryTraceFooter, String> {
 }
 
 fn validate_binary_trace_footer(footer: &BinaryTraceFooter) -> Result<(), String> {
-    if footer.version != TRACE_NATIVE_VERSION {
+    if !matches!(
+        footer.version,
+        TRACE_NATIVE_LEGACY_VERSION | TRACE_NATIVE_VERSION
+    ) {
         return Err(format!(
-            "footer version {} does not match runner version {TRACE_NATIVE_VERSION}",
+            "footer version {} is unsupported; this runner supports versions {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}",
             footer.version
         ));
     }
     Ok(())
 }
 
-fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeader, String> {
+fn try_read_binary_trace_header(path: &std::path::Path) -> Result<BinaryTraceHeaderV68, String> {
+    let footer = read_binary_trace_footer(path)?;
     let file = File::open(path).map_err(|error| error.to_string())?;
     let mut decoder = zstd::stream::read::Decoder::new(file).map_err(|error| error.to_string())?;
     decoder
         .window_log_max(TRACE_ZSTD_WINDOW_LOG_MAX)
         .map_err(|error| error.to_string())?;
-    read_binary_record(&mut decoder, "native parity trace header")
+    read_binary_trace_header_record(&mut decoder, footer.version)
 }
 
 /// A compression window large enough for short encoded streams and otherwise
@@ -7522,7 +8346,7 @@ fn configure_cache_compression<W: Write>(
         .unwrap_or_else(|error| panic!("configure cache compression window: {error}"));
 }
 
-fn read_binary_trace_header(path: &std::path::Path) -> BinaryTraceHeader {
+fn read_binary_trace_header(path: &std::path::Path) -> BinaryTraceHeaderV68 {
     try_read_binary_trace_header(path).unwrap_or_else(|error| {
         panic!(
             "read native parity trace header {} after conversion: {error}",
@@ -7546,10 +8370,16 @@ fn write_binary_record<T: bitcode::Encode + ?Sized>(
         .unwrap_or_else(|error| panic!("write {label}: {error}"));
 }
 
+#[cfg(test)]
 fn read_binary_record<T: bitcode::DecodeOwned>(
     reader: &mut dyn Read,
     label: &str,
 ) -> Result<T, String> {
+    let encoded = read_binary_record_payload(reader, label)?;
+    bitcode::decode(&encoded).map_err(|error| format!("decode {label}: {error}"))
+}
+
+fn read_binary_record_payload(reader: &mut dyn Read, label: &str) -> Result<Vec<u8>, String> {
     const MAX_RECORD_BYTES: u64 = 1024 * 1024 * 1024;
     let mut length_bytes = [0_u8; 8];
     reader
@@ -7567,16 +8397,75 @@ fn read_binary_record<T: bitcode::DecodeOwned>(
     reader
         .read_exact(&mut encoded)
         .map_err(|error| format!("read {label} payload: {error}"))?;
-    bitcode::decode(&encoded).map_err(|error| format!("decode {label}: {error}"))
+    Ok(encoded)
+}
+
+fn read_binary_trace_header_record(
+    reader: &mut dyn Read,
+    version: u32,
+) -> Result<BinaryTraceHeaderV68, String> {
+    let label = "native parity trace header";
+    let encoded = read_binary_record_payload(reader, label)?;
+    match version {
+        TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<BinaryTraceHeaderV67>(&encoded)
+            .map(Into::into)
+            .map_err(|error| format!("decode version-67 {label}: {error}")),
+        TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
+            .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
+        _ => Err(format!(
+            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}"
+        )),
+    }
+}
+
+fn read_binary_trace_block_record(
+    reader: &mut dyn Read,
+    version: u32,
+    v67_increment_map_valid_was_recorded: bool,
+) -> Result<Vec<BinaryTraceRecord>, String> {
+    let label = "native parity trace block";
+    let encoded = read_binary_record_payload(reader, label)?;
+    match version {
+        TRACE_NATIVE_LEGACY_VERSION => bitcode::decode::<Vec<BinaryTraceRecordV67>>(&encoded)
+            .map(|records| {
+                records
+                    .into_iter()
+                    .map(|record| record.into_current(v67_increment_map_valid_was_recorded))
+                    .collect()
+            })
+            .map_err(|error| format!("decode version-67 {label}: {error}")),
+        TRACE_NATIVE_VERSION => bitcode::decode(&encoded)
+            .map_err(|error| format!("decode version-{TRACE_NATIVE_VERSION} {label}: {error}")),
+        _ => Err(format!(
+            "cannot decode {label} version {version}; supported versions are {TRACE_NATIVE_LEGACY_VERSION} and {TRACE_NATIVE_VERSION}"
+        )),
+    }
 }
 
 /// Storage experiment for the canonical trace layout: re-encode the cached
 /// records of one trace with bitcode in several layouts and report raw and
-/// zstd-compressed sizes.
+/// zstd-compressed sizes. Each candidate is streamed independently so the
+/// benchmark retains at most one block of decoded frames.
 ///
 /// `PARITY_BENCH_ZSTD_LEVELS` (default `3,19`) and `PARITY_BENCH_BLOCKS`
 /// (default `16,64,256`) tune the sweep.
 fn bench_trace_encodings(trace_path: &Path) {
+    #[derive(Default)]
+    struct CountingWriter {
+        bytes: usize,
+    }
+
+    impl Write for CountingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes += bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     fn env_list(name: &str, default: &str) -> Vec<usize> {
         std::env::var(name)
             .unwrap_or_else(|_| default.to_owned())
@@ -7589,24 +8478,62 @@ fn bench_trace_encodings(trace_path: &Path) {
             .collect()
     }
 
-    fn zstd_size(bytes: &[u8], level: i32) -> (usize, Duration) {
-        let started = Instant::now();
-        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), level)
-            .unwrap_or_else(|error| panic!("start zstd level {level}: {error}"));
-        configure_cache_compression(&mut encoder, Some(bytes.len() as u64));
-        encoder
-            .write_all(bytes)
-            .unwrap_or_else(|error| panic!("zstd level {level}: {error}"));
-        let compressed = encoder
-            .finish()
-            .unwrap_or_else(|error| panic!("finish zstd level {level}: {error}"));
-        (compressed.len(), started.elapsed())
+    fn measured_record<T: bitcode::Encode + ?Sized>(
+        encoder: &mut zstd::stream::write::Encoder<'_, CountingWriter>,
+        raw_bytes: &mut usize,
+        value: &T,
+    ) {
+        let encoded = bitcode::encode(value);
+        let length = (encoded.len() as u64).to_le_bytes();
+        *raw_bytes += length.len() + encoded.len();
+        encoder.write_all(&length).expect("write benchmark length");
+        encoder.write_all(&encoded).expect("write benchmark record");
     }
 
-    fn bitcode_record<T: bitcode::Encode + ?Sized>(out: &mut Vec<u8>, value: &T) {
-        let encoded = bitcode::encode(value);
-        out.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-        out.extend_from_slice(&encoded);
+    fn measure_layout(
+        native_path: &Path,
+        records_per_block: usize,
+        level: i32,
+    ) -> (u64, usize, usize, Duration) {
+        assert_ne!(records_per_block, 0, "benchmark block size must be nonzero");
+        let started = Instant::now();
+        let mut reader = BinaryTraceReader::open(native_path);
+        let header = reader.read_header();
+        let mut encoder = zstd::stream::write::Encoder::new(CountingWriter::default(), level)
+            .unwrap_or_else(|error| panic!("start benchmark zstd level {level}: {error}"));
+        // Real traces of this scale use the production 32 MiB window. Using
+        // the same fixed bound also avoids a raw-size pre-pass per candidate.
+        configure_cache_compression(&mut encoder, None);
+        let mut raw_bytes = 0_usize;
+        measured_record(&mut encoder, &mut raw_bytes, &header);
+
+        let mut frame_count = 0_u64;
+        let mut block = Vec::with_capacity(records_per_block);
+        loop {
+            let record = reader.read_record();
+            let is_end = matches!(record, BinaryTraceRecord::End { .. });
+            if matches!(record, BinaryTraceRecord::Frame(_)) {
+                frame_count += 1;
+            }
+            block.push(record);
+            if block.len() == records_per_block || is_end {
+                if records_per_block == 1 {
+                    measured_record(&mut encoder, &mut raw_bytes, &block[0]);
+                } else {
+                    measured_record(&mut encoder, &mut raw_bytes, block.as_slice());
+                }
+                block.clear();
+            }
+            if is_end {
+                break;
+            }
+        }
+
+        let compressed_bytes = encoder
+            .finish()
+            .unwrap_or_else(|error| panic!("finish benchmark zstd level {level}: {error}"))
+            .bytes;
+        (frame_count, raw_bytes, compressed_bytes, started.elapsed())
     }
 
     let zstd_levels: Vec<i32> = env_list("PARITY_BENCH_ZSTD_LEVELS", "3,19")
@@ -7623,111 +8550,48 @@ fn bench_trace_encodings(trace_path: &Path) {
         .expect("stat trace cache")
         .len();
 
-    let started = Instant::now();
-    let mut reader = BinaryTraceReader::open(&native_path);
-    let header = reader.read_header();
-    let mut records = Vec::new();
-    loop {
-        let record = reader.read_record();
-        let is_end = matches!(record, BinaryTraceRecord::End { .. });
-        records.push(record);
-        if is_end {
-            break;
-        }
-    }
-    let frame_count = records.len() - 1;
-    eprintln!(
-        "loaded {frame_count} frames from {} in {:.1}s",
-        native_path.display(),
-        started.elapsed().as_secs_f64()
-    );
-
-    // Viability probe. bitcode's *serde* backend panics ("type changed") on
-    // `TraceJsonValue`, because `#[serde(untagged)]` values of differing
-    // shapes share one sequence/map slot. The native derives handle enums
-    // properly, so that is what a real switch would use; confirm the native
-    // derives round-trip a frame and time a whole-trace decode.
-    if let Some(first_frame) = records.first() {
-        let encoded = bitcode::encode(first_frame);
-        bitcode::decode::<BinaryTraceRecord>(&encoded)
-            .expect("bitcode native round-trip of a frame");
-        eprintln!("bitcode native round-trip of a frame: ok");
-    }
-
-    let mut rows: Vec<(String, Vec<u8>, Duration)> = Vec::new();
-
-    let started = Instant::now();
-    let mut out = Vec::new();
-    bitcode_record(&mut out, &header);
-    for record in &records {
-        bitcode_record(&mut out, record);
-    }
-    rows.push(("bitcode per-record".into(), out, started.elapsed()));
-
-    for &block in &block_sizes {
-        let started = Instant::now();
-        let mut out = Vec::new();
-        bitcode_record(&mut out, &header);
-        for chunk in records.chunks(block) {
-            bitcode_record(&mut out, chunk);
-        }
-        let marker = if block == TRACE_NATIVE_BLOCK_RECORDS {
-            " (current cache)"
-        } else {
-            ""
-        };
-        rows.push((
-            format!("bitcode blocks of {block}{marker}"),
-            out,
-            started.elapsed(),
-        ));
-    }
-
-    // bitcode has no `Encode` for references, so the whole-trace layout
-    // encodes an owned tuple and its decode is timed for the "one block"
-    // discussion (it must materialize every frame).
-    let whole = (header, records);
-
-    let started = Instant::now();
-    let out = bitcode::encode(&whole);
-    let encode_time = started.elapsed();
-    let started = Instant::now();
-    let decoded: (BinaryTraceHeader, Vec<BinaryTraceRecord>) =
-        bitcode::decode(&out).expect("bitcode decode whole trace");
-    eprintln!(
-        "bitcode whole-trace decode: {} records in {:.2}s",
-        decoded.1.len(),
-        started.elapsed().as_secs_f64()
-    );
-    drop(decoded);
-    rows.push(("bitcode whole-trace".into(), out, encode_time));
-
-    let baseline_raw = rows[0].1.len();
-    let mut results: Vec<(String, Duration, usize, Vec<(i32, usize, Duration)>)> = Vec::new();
-    for (name, bytes, encode_time) in &rows {
+    let mut results: Vec<(String, usize, Vec<(i32, usize, Duration)>)> = Vec::new();
+    let mut frame_count = None;
+    for (name, block) in std::iter::once(("bitcode per-record".to_owned(), 1_usize)).chain(
+        block_sizes.iter().map(|&block| {
+            let marker = if block == TRACE_NATIVE_BLOCK_RECORDS {
+                " (current cache)"
+            } else {
+                ""
+            };
+            (format!("bitcode blocks of {block}{marker}"), block)
+        }),
+    ) {
+        let mut raw_bytes = None;
         let mut compressed = Vec::new();
         for &level in &zstd_levels {
-            let (size, time) = zstd_size(bytes, level);
+            let (measured_frames, measured_raw, size, time) =
+                measure_layout(&native_path, block, level);
+            assert_eq!(*frame_count.get_or_insert(measured_frames), measured_frames);
+            assert_eq!(*raw_bytes.get_or_insert(measured_raw), measured_raw);
             compressed.push((level, size, time));
         }
         eprintln!("measured {name}");
-        results.push((name.clone(), *encode_time, bytes.len(), compressed));
+        results.push((
+            name,
+            raw_bytes.expect("benchmark has a zstd level"),
+            compressed,
+        ));
     }
+    let frame_count = frame_count.expect("benchmark has a layout");
+    let baseline_raw = results[0].1;
 
     let mib = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
     println!();
     println!("trace: {} ({} frames)", trace_path.display(), frame_count);
     println!(
-        "source jsonl.zst: {:.2} MiB; existing cache (bitcode + zstd {TRACE_NATIVE_ZSTD_LEVEL}): {:.2} MiB",
+        "source artifact: {:.2} MiB; existing native artifact: {:.2} MiB",
         mib(source_bytes as usize),
         mib(cache_bytes as usize)
     );
     println!();
-    let mut head = format!(
-        "| {:<36} | {:>10} | {:>8} |",
-        "encoding", "raw MiB", "enc s"
-    );
-    let mut sep = format!("|{:-<38}|{:->12}|{:->10}|", "", "", "");
+    let mut head = format!("| {:<36} | {:>10} |", "encoding", "raw MiB");
+    let mut sep = format!("|{:-<38}|{:->12}|", "", "");
     for level in &zstd_levels {
         head.push_str(&format!(
             " {:>13} | {:>8} |",
@@ -7738,16 +8602,15 @@ fn bench_trace_encodings(trace_path: &Path) {
     }
     println!("{head}");
     println!("{sep}");
-    for (name, encode_time, raw, compressed) in &results {
+    for (name, raw, compressed) in &results {
         let mut line = format!(
-            "| {:<36} | {:>5.2} {:>4.0}% | {:>8.2} |",
+            "| {:<36} | {:>5.2} {:>4.0}% |",
             name,
             mib(*raw),
-            100.0 * *raw as f64 / baseline_raw as f64,
-            encode_time.as_secs_f64()
+            100.0 * *raw as f64 / baseline_raw as f64
         );
         for (index, (_, size, time)) in compressed.iter().enumerate() {
-            let baseline = results[0].3[index].1;
+            let baseline = results[0].2[index].1;
             line.push_str(&format!(
                 " {:>6.2} {:>5.0}% | {:>8.2} |",
                 mib(*size),
@@ -7759,7 +8622,7 @@ fn bench_trace_encodings(trace_path: &Path) {
     }
     println!();
     println!(
-        "percentages are relative to the authoritative per-record bitcode layout at the same zstd level"
+        "percentages are relative to the authoritative per-record bitcode layout at the same zstd level; timings include native decode, bitcode encode, and zstd"
     );
 }
 
@@ -8225,6 +9088,7 @@ fn initialize_headless_engine(
     .expect("initialize engine");
     crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
         .expect("load deterministic sound duration tables");
+    assets.pixel_opacity = Some(Arc::new(frame_holder));
     (engine, assets, scb)
 }
 
@@ -8350,6 +9214,11 @@ fn initialize_engine(
         &profiles,
         "Data/Sounds",
     );
+    // Original's CreateTargetSprite writes the active bank frame's native
+    // dimensions into the serialized RHSprite frontier. The parity engine is
+    // intentionally headless, so publish the immutable frame metadata used
+    // to project that post-render state without mutating the simulation.
+    assets.pixel_opacity = Some(host.publish_frame_holder_opacity());
     (engine, assets, host, background, scb, menu_text)
 }
 
@@ -9506,6 +10375,7 @@ fn compare_frame(
     actual_game_code: i32,
     entity_map: &EntityMap,
     legacy_additive_omissions: bool,
+    legacy_blocked_box_shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
@@ -9686,12 +10556,12 @@ fn compare_frame(
             expected.increment_map,
             MapPoint::new(increment_map.x, increment_map.y),
         );
-        if !legacy_additive_omissions {
+        if let Some(expected_increment_map_valid) = expected.increment_map_valid {
             compare(
                 &mut differences,
                 id,
                 "increment_map_valid",
-                expected.increment_map_valid,
+                expected_increment_map_valid,
                 pi.is_increment_map_computed(),
             );
         }
@@ -9713,14 +10583,17 @@ fn compare_frame(
             id,
             "layer",
             expected.layer,
-            element.layer(),
+            element
+                .optional_layer()
+                .map_or(u16::MAX, robin_engine::position_interface::Layer::get),
         );
         compare(
             &mut differences,
             id,
             "layer_goal",
             expected.layer_goal,
-            pi.layer_goal().get(),
+            pi.optional_layer_goal()
+                .map_or(u16::MAX, robin_engine::position_interface::Layer::get),
         );
         if !mapped_building_sector {
             compare(
@@ -9784,6 +10657,19 @@ fn compare_frame(
         );
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
+            let reset_by_new_movement_order = expected.actor.as_ref().is_some_and(|actor| {
+                actor.motion_state == robin_engine::sprite::MotionState::Start as u32
+                    && actor
+                        .sequence_element
+                        .as_ref()
+                        .is_some_and(|sequence| sequence.movement.is_some())
+            });
+            canonicalize_legacy_blocked_box(
+                &mut expected_runtime,
+                expected.creation_order,
+                reset_by_new_movement_order,
+                legacy_blocked_box_shadows,
+            );
             canonicalize_original_runtime_representation(&mut expected_runtime);
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
@@ -10616,6 +11502,169 @@ mod tests {
     use super::*;
     use bitcode_parity as bitcode;
 
+    fn blocked_box_json(
+        last_processed_order_id: u32,
+        min_x: u32,
+        min_y: u32,
+        max_x: u32,
+        max_y: u32,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "sprite": {"last_processed_order_id": last_processed_order_id},
+            "position": {
+                "blocked_box": {
+                    "min": {"x": {"bits": min_x}, "y": {"bits": min_y}},
+                    "max": {"x": {"bits": max_x}, "y": {"bits": max_y}}
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_tracks_resets_and_revalidation() {
+        let tuple = LegacyBlockedBoxTuple {
+            min_x: 1,
+            min_y: 2,
+            max_x: 3,
+            max_y: 4,
+        };
+        let mut shadows = BTreeMap::from([(
+            10,
+            LegacyBlockedBoxShadow {
+                tuple,
+                validity: LegacyBlockedBoxValidity::Set,
+                last_processed_order_id: 20,
+                direct_validity_observed: false,
+            },
+        )]);
+
+        let mut active = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut active,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert!(!active.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut continuing_motion = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut continuing_motion,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "MotionState::Start alone is insufficient without a new raw order id"
+        );
+
+        let mut action_order = blocked_box_json(21, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut action_order,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "PerformAction also changes the raw order id but does not reset the box"
+        );
+
+        let mut reset = blocked_box_json(22, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut reset,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert!(reset.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut still_unset = blocked_box_json(22, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut still_unset,
+            10,
+            false,
+            &mut shadows,
+        ));
+
+        let mut revalidated = blocked_box_json(23, 1, 2, 3, 5);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut revalidated,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "a post-reset tuple update revalidates the box"
+        );
+
+        let mut revisited_old_tuple = blocked_box_json(23, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut revisited_old_tuple,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert!(
+            !revisited_old_tuple
+                .pointer("/position/blocked_box")
+                .unwrap()
+                .is_null()
+        );
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_does_not_guess_for_runtime_actor() {
+        let mut shadows = BTreeMap::new();
+        let mut first = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut first,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert_eq!(shadows[&10].validity, LegacyBlockedBoxValidity::Unknown);
+
+        let mut reset = blocked_box_json(21, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut reset,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert!(reset.pointer("/position/blocked_box").unwrap().is_null());
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_preserves_save_proven_inactive_box() {
+        let mut shadows = BTreeMap::from([(
+            10,
+            LegacyBlockedBoxShadow {
+                tuple: LegacyBlockedBoxTuple {
+                    min_x: 1,
+                    min_y: 2,
+                    max_x: 3,
+                    max_y: 4,
+                },
+                validity: LegacyBlockedBoxValidity::Unset,
+                last_processed_order_id: 20,
+                direct_validity_observed: false,
+            },
+        )]);
+        let mut runtime = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut runtime,
+            10,
+            false,
+            &mut shadows,
+        ));
+    }
+
     #[test]
     fn native_suffix_appends_to_the_recording_identity() {
         // The `.jsonl.zst` path is the stable trace identity; the native
@@ -10671,7 +11720,36 @@ mod tests {
             .remove("initial_npc_transients");
         let legacy = serde_json::from_value::<TraceHeader>(header)
             .expect("legacy schema-16 headers default the additive NPC transient boundary");
-        assert!(legacy.initial_npc_transients.is_empty());
+        assert!(legacy.initial_npc_transients.is_none());
+
+        let present_empty = minimal_test_native_header("test").trace;
+        assert_eq!(present_empty.initial_npc_transients, Some(Vec::new()));
+    }
+
+    #[test]
+    fn legacy_segment_visibility_fallback_matches_original_uword_conversion() {
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [0.0, 1.599_999_9, 0.25]),
+            31
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, [2.399_999_9]),
+            47
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(true, [1.599_999_9]),
+            319
+        );
+        assert_eq!(
+            reconstruct_unrecorded_maximal_visibility(false, std::iter::empty()),
+            0
+        );
+    }
+
+    #[test]
+    fn legacy_visibility_fallback_only_applies_to_in_process_reload_envelopes() {
+        assert!(legacy_loaded_save_retains_process_transients(0));
+        assert!(!legacy_loaded_save_retains_process_transients(76));
     }
 
     fn write_test_native_records(
@@ -10686,8 +11764,8 @@ mod tests {
         )
     }
 
-    fn minimal_test_native_header(source_fingerprint: &str) -> BinaryTraceHeader {
-        BinaryTraceHeader {
+    fn minimal_test_native_header(source_fingerprint: &str) -> BinaryTraceHeaderV68 {
+        BinaryTraceHeaderV68 {
             version: TRACE_NATIVE_VERSION,
             source_fingerprint: source_fingerprint.to_owned(),
             trace: TraceHeader {
@@ -10738,7 +11816,7 @@ mod tests {
                     production_sectors: Vec::new(),
                 },
                 motion_grid: TraceMotionGrid { layers: Vec::new() },
-                initial_npc_transients: Vec::new(),
+                initial_npc_transients: Some(Vec::new()),
                 initial_save: None,
             },
             rng_prefix: TraceRngPrefix {
@@ -10830,12 +11908,30 @@ mod tests {
     }
 
     #[test]
-    fn native_level_nine_policy_round_trips_records_and_footer() {
-        assert_eq!(TRACE_NATIVE_VERSION, 67);
-        assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 9);
+    fn version_67_header_uses_legacy_vec_layout() {
+        let legacy: BinaryTraceHeaderV67 = minimal_test_native_header("legacy-v67").into();
+        let mut encoded_record = Vec::new();
+        write_binary_record(&mut encoded_record, &legacy, "test version-67 header");
+
+        let decoded = read_binary_trace_header_record(
+            &mut std::io::Cursor::new(encoded_record),
+            TRACE_NATIVE_LEGACY_VERSION,
+        )
+        .expect("decode version-67 header through its original bitcode layout");
+
+        assert_eq!(decoded.version, TRACE_NATIVE_LEGACY_VERSION);
+        assert_eq!(decoded.source_fingerprint, "legacy-v67");
+        assert!(decoded.trace.initial_npc_transients.is_none());
+    }
+
+    #[test]
+    fn native_level_nineteen_policy_round_trips_records_and_footer() {
+        assert_eq!(TRACE_NATIVE_LEGACY_VERSION, 67);
+        assert_eq!(TRACE_NATIVE_VERSION, 68);
+        assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
         assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
-        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
-        assert_eq!(TRACE_NATIVE_WINDOW_LOG, 25);
+        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 1000);
+        assert_eq!(TRACE_NATIVE_WINDOW_LOG, 29);
 
         let footer = BinaryTraceFooter {
             version: TRACE_NATIVE_VERSION,
@@ -11351,6 +12447,104 @@ mod tests {
     }
 
     #[test]
+    fn retained_terminal_success_selects_the_omitted_quit_repair_only() {
+        assert!(is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_601,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            true,
+            GameCode::LevelSucceeded as i32,
+        ));
+        assert!(!is_legacy_retained_terminal_success(
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelFailed as i32,
+        ));
+    }
+
+    #[test]
+    fn retained_terminal_success_repair_is_emitted_exactly_once() {
+        let mut commands_before_hourglass = Vec::new();
+        let mut commands_after_hourglass = Vec::new();
+        let mut applied = false;
+        let campaign_run_id = 0x1234_5678_9abc_def0;
+        assert!(append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass,
+            &mut commands_after_hourglass,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+            campaign_run_id,
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+            &mut applied,
+        ));
+        assert!(!append_legacy_retained_terminal_success_repair(
+            &mut commands_before_hourglass,
+            &mut commands_after_hourglass,
+            robin_engine::player_profile::DifficultyLevel::Medium,
+            campaign_run_id,
+            TRACE_SCHEMA_VERSION,
+            9_602,
+            9_602,
+            false,
+            GameCode::LevelSucceeded as i32,
+            &mut applied,
+        ));
+        assert_eq!(commands_before_hourglass.len(), 1);
+        assert_eq!(commands_after_hourglass.len(), 1);
+        assert!(matches!(
+            commands_before_hourglass[0],
+            PlayerCommand::QuitMissionRequested
+        ));
+        assert!(matches!(
+            commands_after_hourglass[0],
+            PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: GameCode::LevelSucceeded,
+                campaign_run_nonce: Some(actual),
+                ..
+            } if actual == campaign_run_id
+        ));
+    }
+
+    #[test]
+    fn replay_campaign_identity_is_stable_across_recording_family_sessions() {
+        let first = replay_campaign_run_id(
+            Path::new("interactive-session-002-session-0001.jsonl.zst"),
+            1,
+        );
+        let ninth = replay_campaign_run_id(
+            Path::new("interactive-session-002-session-0009.jsonl.zst"),
+            9,
+        );
+        let other = replay_campaign_run_id(
+            Path::new("interactive-session-003-session-0001.jsonl.zst"),
+            1,
+        );
+
+        assert_ne!(first, 0);
+        assert_eq!(first, ninth);
+        assert_ne!(first, other);
+    }
+
+    #[test]
     fn fixed_native_footer_rejects_early_end_and_trailing_records() {
         let footer = BinaryTraceFooter {
             version: TRACE_NATIVE_VERSION,
@@ -11695,7 +12889,7 @@ mod tests {
             native_stream_window_log(Some(u64::MAX)),
             TRACE_NATIVE_WINDOW_LOG
         );
-        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
+        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 1000);
     }
 
     #[test]
@@ -12681,6 +13875,70 @@ mod tests {
     }
 
     #[test]
+    fn interactive_chain_requires_the_exact_adjacent_session_name() {
+        assert_eq!(
+            preceding_interactive_session_path(Path::new("chain-session-0007.jsonl.zst"), 7),
+            Some(PathBuf::from("chain-session-0006.jsonl.zst"))
+        );
+        assert!(
+            preceding_interactive_session_path(Path::new("chain-session-0001.jsonl.zst"), 1)
+                .is_none()
+        );
+        assert!(preceding_interactive_session_path(Path::new("unrelated.jsonl.zst"), 7).is_none());
+    }
+
+    #[test]
+    fn terminal_macro_identity_requires_active_cursor_and_unique_position() {
+        use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+        let waypoint = |x| RawWaypoint {
+            x,
+            y: 1050,
+            sector: 0,
+            level: 0,
+            command: WaypointCommand::Macro(vec![0; 19]),
+        };
+        let unique = vec![RawHikingPath {
+            waypoints: vec![waypoint(353)],
+        }];
+        assert_eq!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                true,
+                &unique,
+            )
+            .map(|(path, waypoint, offset)| (path.get(), waypoint, offset)),
+            Some((0, 0, 18))
+        );
+        assert!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                false,
+                &unique,
+            )
+            .is_none()
+        );
+        let ambiguous = vec![
+            RawHikingPath {
+                waypoints: vec![waypoint(353)],
+            },
+            RawHikingPath {
+                waypoints: vec![waypoint(353)],
+            },
+        ];
+        assert!(
+            terminal_macro_waypoint_at(
+                (353_f32.to_bits(), 1050_f32.to_bits()),
+                Some(18),
+                true,
+                &ambiguous,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
     fn windows_i386_save_preserves_and_accepts_gshr_magic() {
         let save = valid_initial_save_with_profile(TraceSaveSourceProfile::WindowsI386GshrV48);
         let decoded = save
@@ -12805,6 +14063,49 @@ mod tests {
                 "domains": []
             }
         })
+    }
+
+    fn minimal_element_json() -> serde_json::Value {
+        serde_json::json!({
+            "entity_id": {"kind": "pc", "index": 1},
+            "creation_order": 1,
+            "class_id": 0,
+            "kind": "pc",
+            "active": true,
+            "blipped": false,
+            "unreachable": false,
+            "surface_id": 0,
+            "posture": 0,
+            "position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "old_position_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "position_goal_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "elevation": {"bits": 0},
+            "old_elevation": {"bits": 0},
+            "increment_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "movement_map": {"x": {"bits": 0}, "y": {"bits": 0}},
+            "layer": 0,
+            "layer_goal": 0,
+            "sector": 0,
+            "direction": 0,
+            "direction_goal": 0,
+            "moving": false,
+            "moving_map": false,
+            "sprite_row": 0,
+            "sprite_frame": 0,
+            "sprite_frame_count": 0,
+            "runtime": {}
+        })
+    }
+
+    #[test]
+    fn increment_map_valid_preserves_absent_and_explicit_false() {
+        let absent: TraceElement = serde_json::from_value(minimal_element_json()).unwrap();
+        assert_eq!(absent.increment_map_valid, None);
+
+        let mut present = minimal_element_json();
+        present["increment_map_valid"] = serde_json::json!(false);
+        let present: TraceElement = serde_json::from_value(present).unwrap();
+        assert_eq!(present.increment_map_valid, Some(false));
     }
 
     #[test]

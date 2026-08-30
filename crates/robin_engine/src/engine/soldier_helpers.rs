@@ -109,6 +109,8 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
     static OWNER_BOUNDARY_RESUME_TRACE: std::cell::RefCell<Option<Vec<EntityId>>> =
         const { std::cell::RefCell::new(None) };
+    static OWNER_BOUNDARY_REENTRANT_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
+        const { std::cell::RefCell::new(None) };
     static STRANGLE_CONDOLATION_TRACE: std::cell::RefCell<Option<Vec<&'static str>>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -219,6 +221,32 @@ pub(super) fn capture_owner_boundary_resumes<T>(f: impl FnOnce() -> T) -> (T, Ve
             .expect("owner-boundary resume trace remains installed")
     });
     (result, observed)
+}
+
+#[cfg(test)]
+pub(super) fn capture_owner_boundary_reentrant_order<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<&'static str>) {
+    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
+        assert!(trace.borrow_mut().replace(Vec::new()).is_none());
+    });
+    let result = f();
+    let observed = OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("owner-boundary reentrant trace remains installed")
+    });
+    (result, observed)
+}
+
+#[cfg(test)]
+fn observe_owner_boundary_reentrant_step(step: &'static str) {
+    OWNER_BOUNDARY_REENTRANT_TRACE.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push(step);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -603,11 +631,21 @@ impl EngineInner {
             // continuations, so do not let its empty callback steal
             // replacement work which the Halt caller queued beforehand.
             if !from_halt {
+                // ExecuteWaypointScript is part of the route-arrival Think
+                // call itself. Its ReachPoint script must finish before a
+                // completion stimulus recursively continues that Think. A
+                // script-side StareActor may Halt here; running the recursive
+                // EventReturnToDuty first would let that Halt cancel the new
+                // patrol Move (interactive session 001, Soldier 87).
+                #[cfg(test)]
+                observe_owner_boundary_reentrant_step("waypoint");
+                self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
                 // SendCondolationCard re-enters Think for this owner directly.
                 // Do not resolve unrelated actors' prepared movement forecasts
                 // while closing that native owner-local call stack.
+                #[cfg(test)]
+                observe_owner_boundary_reentrant_step("self_stimuli");
                 self.drain_self_stimuli_for_npc_without_forecast(sim, owner, assets);
-                self.dispatch_pending_waypoint_script_for_owner(sim, owner, assets);
                 self.dispatch_synchronous_owner_moves(sim, assets, owner, active_scripts)?;
             }
             self.orders
@@ -694,8 +732,15 @@ impl EngineInner {
         }
         self.send_condolation_card(sim, dispatch.card, assets);
         if !from_halt {
-            self.drain_self_stimuli_for_npc_without_forecast(sim, card_owner, assets);
+            // ReachPoint remains inside the route-arrival Think which produced
+            // this card, so its script-side Halt precedes recursively surfaced
+            // completion work such as EventReturnToDuty.
+            #[cfg(test)]
+            observe_owner_boundary_reentrant_step("waypoint");
             self.dispatch_pending_waypoint_script_for_owner(sim, card_owner, assets);
+            #[cfg(test)]
+            observe_owner_boundary_reentrant_step("self_stimuli");
+            self.drain_self_stimuli_for_npc_without_forecast(sim, card_owner, assets);
         }
 
         // A condolence Think can issue GoTo for the next patrol leg. C++
