@@ -911,7 +911,8 @@ impl NativeContext<'_, '_> {
                     cloak_deception_applies: tgt_posture == Posture::Cloaked
                         && npc_entity.camp().is_hostile_to(target_entity.camp()),
                     cloak_remembers_target: npc_entity.enemy_ai().is_some_and(|enemy| {
-                        enemy.base.primary_target == target_memory_handle
+                        enemy.base.primary_target
+                            == Some(crate::ai::AiEntityHandle::new(target_memory_handle))
                             || enemy.list_them.contains(&target_memory_handle)
                     }),
                     // TODO(cloak-authoring): connect this only when an explicit

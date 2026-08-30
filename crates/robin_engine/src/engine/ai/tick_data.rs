@@ -15,7 +15,7 @@ impl EngineInner {
         let (target_handle, target_creation_order) = match stimulus.info {
             crate::ai::StimulusInfo::Human(handle) => (
                 Some(handle),
-                self.entity_id_for_index(handle)
+                self.entity_id_for_index(handle.get())
                     .map(|target| self.world.original_creation_order(target)),
             ),
             _ => (None, None),
@@ -528,12 +528,10 @@ impl EngineInner {
             return AiPerTickData::stub();
         };
         let primary_target_handle = target_override
-            .map(|id| id.index())
-            .unwrap_or(ai.primary_target);
+            .map(|id| crate::ai::AiEntityHandle::new(id.index()))
+            .or(ai.primary_target);
         let target_id = target_override.or_else(|| {
-            (primary_target_handle != 0)
-                .then(|| self.entity_id_for_index(primary_target_handle))
-                .flatten()
+            primary_target_handle.and_then(|handle| self.entity_id_for_index(handle.get()))
         });
         let my_camp = entity.camp();
         let me_handle = ai.me;
@@ -797,8 +795,8 @@ impl EngineInner {
             .collect();
         tick.alert_soldier_candidates = self.build_alert_soldier_candidates(npc_id);
         if build_forecasts
-            && enemy_ai.missed_pc != 0
-            && let Some(missed_id) = self.entity_id_for_index(enemy_ai.missed_pc)
+            && let Some(missed_handle) = enemy_ai.missed_pc
+            && let Some(missed_id) = self.entity_id_for_index(missed_handle.get())
             && let Some(missed_entity) = self.world.entities.get(missed_id)
             && let Some(input) = extract_exact_forecast_input(
                 self,
@@ -1021,8 +1019,8 @@ impl EngineInner {
             let doors_slice = self.script_domains.interactables.doors.as_slice();
             let mut candidates: Vec<crate::ai::HumanHandle> = Vec::new();
             candidates.extend(enemy_ai.list_them.iter().copied());
-            if primary_target_handle != 0 {
-                candidates.push(primary_target_handle);
+            if let Some(primary_target_handle) = primary_target_handle {
+                candidates.push(primary_target_handle.get());
             }
             candidates.retain(|&h| h != 0);
             candidates.dedup();
@@ -1196,7 +1194,9 @@ impl EngineInner {
                     tick.has_officer_nearby = true;
                 }
 
-                if friend.ai_state == crate::ai::AiState::Attacking && friend.primary_target != 0 {
+                if friend.ai_state == crate::ai::AiState::Attacking
+                    && friend.primary_target.is_some()
+                {
                     if crate::ai_enemy::is_any_swordfight_substate(friend.current_substate) {
                         tick.friends_nearer_to_enemy =
                             tick.friends_nearer_to_enemy.saturating_add(1);
@@ -1234,7 +1234,7 @@ impl EngineInner {
                 {
                     continue;
                 }
-                if target == primary_target_handle {
+                if Some(crate::ai::AiEntityHandle::new(target)) == primary_target_handle {
                     tick.friends_nearer_to_enemy = tick.friends_nearer_to_enemy.saturating_add(1);
                 }
             }
@@ -1363,14 +1363,13 @@ impl EngineInner {
                     .unwrap_or(&[]);
                 let pos_now = s.element.position_map();
                 let live_door = s.element.sprite.position_iface.get_door();
-                let door_pass = (selected_actor_is_passing_door(
+                let door_pass = selected_actor_is_passing_door(
                     &self.orders.sequence_manager,
                     EntityId::Soldier(other_id),
-                ) && !live_door.is_null())
-                .then_some((
-                    crate::gate::DoorIndex(live_door.0),
-                    s.actor.passing_door_directly,
-                ));
+                )
+                .then_some(live_door)
+                .flatten()
+                .map(|door| (door, s.actor.passing_door_directly));
                 let input = crate::ai::ForecastInput {
                     position_map_x: pos_now.x,
                     position_map_y: pos_now.y,
@@ -1680,7 +1679,11 @@ impl EngineInner {
                 is_soldier: true,
                 rank: enemy_ai_other.soldier_profile_rank,
                 primary_target: enemy_ai_other.base.primary_target,
-                principal_opponent: s.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                principal_opponent: s
+                    .human
+                    .opponents
+                    .first()
+                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 number_of_opponents,
                 opponent_handles,
                 sword_range_default,
@@ -1795,9 +1798,17 @@ impl EngineInner {
                     .ai
                     .as_deref()
                     .and_then(|ai| ai.ai_brain.enemy())
-                    .map(|ai| ai.base.primary_target)
-                    .unwrap_or_else(|| pc.pc.melee_target.map(|id| id.index()).unwrap_or(0)),
-                principal_opponent: pc.human.opponents.first().map(|id| id.index()).unwrap_or(0),
+                    .and_then(|ai| ai.base.primary_target)
+                    .or_else(|| {
+                        pc.pc
+                            .melee_target
+                            .map(|id| crate::ai::AiEntityHandle::new(id.index()))
+                    }),
+                principal_opponent: pc
+                    .human
+                    .opponents
+                    .first()
+                    .map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 number_of_opponents,
                 opponent_handles,
                 sword_range_default,
@@ -1811,8 +1822,8 @@ impl EngineInner {
                 is_vip: character.vip,
                 soldier_profile_pride: 0,
                 is_robin: pc.pc.robin,
-                left_combat_neighbour: 0,
-                right_combat_neighbour: 0,
+                left_combat_neighbour: None,
+                right_combat_neighbour: None,
                 is_in_recovery_animation: in_recovery,
                 in_sword_action_state: pc.actor.action_state.is_sword(),
                 elevation: pc.element.sprite.position_iface.get_elevation(),
@@ -1823,14 +1834,14 @@ impl EngineInner {
                     .as_deref()
                     .map(|ai| ai.ai_substate() as u32)
                     .unwrap_or(0),
-                archer_behind_me: 0,
+                archer_behind_me: None,
                 ai_state: pc
                     .pc
                     .ai
                     .as_deref()
                     .map(crate::element::AiActorData::ai_state)
                     .unwrap_or_default(),
-                shield_bearer_before_me: 0,
+                shield_bearer_before_me: None,
                 hth_weapon_id: hth_id,
                 action_state: pc.actor.action_state,
                 shield_bearer_direction: 0,
@@ -2094,10 +2105,13 @@ impl EngineInner {
                 sq_view_radius: (ai_actor.view_radius as f32) * (ai_actor.view_radius as f32),
             });
             let next = neighbour_ai.right_combat_neighbour;
-            if next == 0 || next == current {
+            let Some(next) = next else {
+                break;
+            };
+            if next.get() == current {
                 break;
             }
-            current = next;
+            current = next.get();
         }
         out
     }

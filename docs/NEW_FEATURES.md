@@ -12,7 +12,7 @@ A list of which additional features we have added, which ones we might still wan
   times after clock correction), exact local time, and expanded campaign
   details. The per-profile **Detailed Save Metadata** option switches to a
   compact presentation without discarding stored metadata. Native save schema
-  v62 requires provenance and rejects every older Rust schema; only the
+  v63 requires provenance and rejects every older Rust schema; only the
   separate Original C++ importer may produce incomplete historical detail.
 
 - **Per-mission achievements, debrief evidence, XP, and trackers.** Four

@@ -408,7 +408,7 @@ mod group_move_authorization_tests {
         .expect("Pc137-style exact GroupMove must traverse the indexed gate graph");
         assert_eq!(
             path.iter()
-                .map(|step| (step.door_index.0, step.direct))
+                .map(|step| (step.door_index.get(), step.direct))
                 .collect::<Vec<_>>(),
             vec![(114, true), (111, false), (60, true)]
         );
@@ -495,9 +495,10 @@ mod group_move_authorization_tests {
             human: Default::default(),
             pc: Default::default(),
         });
-        entity
-            .position_iface_mut()
-            .set_door(crate::position_interface::DoorHandle(0), true);
+        entity.position_iface_mut().set_door(
+            crate::position_interface::DoorHandle::new(0).expect("valid door index"),
+            true,
+        );
 
         let (point, sector, layer) = group_move_route_source(
             &engine,
@@ -796,7 +797,7 @@ mod group_move_authorization_tests {
         };
         let adapted = adapt_source_to_current_door_with_identity(
             std::slice::from_ref(&exact_door),
-            crate::position_interface::DoorHandle(0),
+            crate::position_interface::DoorHandle::new(0).expect("valid door index"),
             true,
         )
         .expect("current-door route source must resolve its canonical inside endpoint");
@@ -919,9 +920,15 @@ mod group_move_authorization_tests {
             )
             .expect("path-waiter preflight must accept the authored gate chain");
             assert_eq!(path.len(), 2);
-            assert_eq!(path[0].door_index, crate::gate::DoorIndex(73));
+            assert_eq!(
+                path[0].door_index,
+                crate::gate::DoorIndex::new(73).expect("valid door index")
+            );
             assert!(!path[0].direct);
-            assert_eq!(path[1].door_index, crate::gate::DoorIndex(18));
+            assert_eq!(
+                path[1].door_index,
+                crate::gate::DoorIndex::new(18).expect("valid door index")
+            );
             assert!(path[1].direct);
         }
     }
@@ -1044,7 +1051,7 @@ mod group_move_authorization_tests {
     #[test]
     fn exhausted_transition_discards_zero_destination_door_tail() {
         let mut pass = ActiveDoorPass {
-            door_index: crate::gate::DoorIndex(67),
+            door_index: crate::gate::DoorIndex::new(67).expect("valid door index"),
             direct: false,
             position_direct: false,
             steps: [crate::element::DoorPassStep::PassingDoor].into(),
@@ -1061,13 +1068,28 @@ mod group_move_authorization_tests {
             "Original deletes the trailing zero-destination PassingDoor order"
         );
         assert_eq!(
-            completed_door_pass_to_commit(true, Some((crate::gate::DoorIndex(67), false))),
+            completed_door_pass_to_commit(
+                true,
+                Some((
+                    crate::gate::DoorIndex::new(67).expect("valid door index"),
+                    false
+                ))
+            ),
             None,
             "a deleted final PassingDoor cannot snap the actor to the authored door endpoint"
         );
         assert_eq!(
-            completed_door_pass_to_commit(false, Some((crate::gate::DoorIndex(67), false))),
-            Some((crate::gate::DoorIndex(67), false)),
+            completed_door_pass_to_commit(
+                false,
+                Some((
+                    crate::gate::DoorIndex::new(67).expect("valid door index"),
+                    false
+                ))
+            ),
+            Some((
+                crate::gate::DoorIndex::new(67).expect("valid door index"),
+                false
+            )),
             "an ordinarily completed door pass still performs its final position commit"
         );
     }
@@ -2015,7 +2037,7 @@ mod door_pass_posture_tests {
     #[test]
     fn materialized_door_action_points_precede_copied_walk() {
         let mut pass = ActiveDoorPass {
-            door_index: crate::gate::DoorIndex(43),
+            door_index: crate::gate::DoorIndex::new(43).expect("valid door index"),
             direct: true,
             position_direct: true,
             steps: [
@@ -2744,7 +2766,7 @@ fn ai_move_goal_door(
     route_sector_by_exact_handle(engine, exact_goal_sector)
         .filter(|sector| sector.sector_type.is_door())
         .and_then(|sector| sector.door_index)
-        .map(crate::gate::DoorIndex)
+        .and_then(crate::gate::DoorIndex::new)
 }
 
 /// Timeout queue entry for a Move/Seek element whose pathfind failed.
@@ -3507,10 +3529,7 @@ pub(crate) fn adapt_source_to_current_door_with_identity(
     door_handle: crate::position_interface::DoorHandle,
     door_direction: bool,
 ) -> Option<(MapPoint, crate::position_interface::SectorHandle, u16)> {
-    if door_handle.is_null() {
-        return None;
-    }
-    let door = doors.get(door_handle.0 as usize)?;
+    let door = doors.get(usize::from(door_handle))?;
     // door_direction true → use the "in" side of the door as the
     // source; false → use the "out" side.
     if door_direction {
@@ -3560,7 +3579,7 @@ pub(crate) fn adapt_source_to_current_door_with_identity(
 /// which only `RHArtificialIntelligence::Position` consumes.
 pub(crate) fn current_door_for_route_source(
     entity: &crate::element::Entity,
-) -> (crate::position_interface::DoorHandle, bool) {
+) -> Option<(crate::position_interface::DoorHandle, bool)> {
     entity
         .actor_data()
         .and_then(|actor| {
@@ -3571,15 +3590,12 @@ pub(crate) fn current_door_for_route_source(
                         .is_some_and(|order| order.order_type == pass.current_action)
             })
         })
-        .map(|pass| {
-            (
-                crate::position_interface::DoorHandle(pass.door_index.0),
-                pass.direct,
-            )
-        })
-        .unwrap_or_else(|| {
+        .map(|pass| (pass.door_index, pass.direct))
+        .or_else(|| {
             let position = entity.position_iface();
-            (position.get_door(), position.get_door_direction())
+            position
+                .get_door()
+                .map(|door| (door, position.get_door_direction()))
         })
 }
 
@@ -3636,7 +3652,7 @@ mod route_source_tests {
             element: ElementData::default(),
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex(53),
+                    door_index: DoorIndex::new(53).expect("valid door index"),
                     direct,
                     position_direct,
                     steps: Default::default(),
@@ -3660,17 +3676,17 @@ mod route_source_tests {
     fn route_source_uses_active_door_before_pass_callback() {
         let pc = pc_with_door_pass(0);
 
-        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(53), true));
+        assert_eq!(
+            current_door_for_route_source(&pc),
+            Some((DoorHandle::new(53).expect("valid door index"), true))
+        );
     }
 
     #[test]
     fn route_source_drops_active_door_after_pass_callback() {
         let pc = pc_with_door_pass(1);
 
-        assert_eq!(
-            current_door_for_route_source(&pc),
-            (DoorHandle::NULL, false)
-        );
+        assert_eq!(current_door_for_route_source(&pc), None);
     }
 
     #[test]
@@ -3683,7 +3699,7 @@ mod route_source_tests {
 
         assert_eq!(
             current_door_for_route_source(&pc),
-            (DoorHandle::NULL, false),
+            None,
             "Rust's dormant pass mirror must not replace Original's null PositionInterface door pointer"
         );
     }
@@ -3698,15 +3714,22 @@ mod route_source_tests {
         // `RHArtificialIntelligence::Position`, not to route sourcing.
         let pc = pc_with_door_pass_directions(0, true, false);
 
-        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(53), true));
+        assert_eq!(
+            current_door_for_route_source(&pc),
+            Some((DoorHandle::new(53).expect("valid door index"), true))
+        );
     }
 
     #[test]
     fn route_source_uses_position_door_during_pass_callback_queue_window() {
         let mut pc = pc_with_door_pass(1);
-        pc.position_iface_mut().set_door(DoorHandle(17), false);
+        pc.position_iface_mut()
+            .set_door(DoorHandle::new(17).expect("valid door index"), false);
 
-        assert_eq!(current_door_for_route_source(&pc), (DoorHandle(17), false));
+        assert_eq!(
+            current_door_for_route_source(&pc),
+            Some((DoorHandle::new(17).expect("valid door index"), false))
+        );
     }
 
     #[test]
@@ -4015,17 +4038,18 @@ fn group_move_route_source(
     entity: &crate::element::Entity,
     doors: &[crate::gate::Door],
 ) -> (MapPoint, crate::position_interface::SectorHandle, u16) {
-    let (door_handle, door_direction) = current_door_for_route_source(entity);
-    adapt_source_to_current_door_with_identity(doors, door_handle, door_direction).unwrap_or_else(
-        || {
+    current_door_for_route_source(entity)
+        .and_then(|(door_handle, door_direction)| {
+            adapt_source_to_current_door_with_identity(doors, door_handle, door_direction)
+        })
+        .unwrap_or_else(|| {
             let element = entity.element_data();
             (
                 element.position_map(),
                 group_move_source_sector(engine, actor, element),
                 element.layer(),
             )
-        },
-    )
+        })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5834,8 +5858,8 @@ impl EngineInner {
                 // is what keeps the fighter turned toward the melee.
                 entity
                     .ai_controller()
-                    .map(|c| c.primary_target)
-                    .filter(|slot| *slot != 0)
+                    .and_then(|c| c.primary_target)
+                    .map(crate::ai::AiEntityHandle::get)
                     .and_then(|slot| self.world.entities.id_at_legacy_slot(slot))
             } else {
                 None
@@ -7589,17 +7613,12 @@ impl EngineInner {
                 // a later one sees NULL and merely restores
                 // anti-collision.
                 let door = entity.position_iface().get_door();
-                if door.is_null() {
-                    entity.position_iface_mut().set_anti_collision_on(true);
-                } else {
+                if let Some(door) = door {
                     let direct = entity.position_iface().get_door_direction();
-                    deferred.door_triggers.push((
-                        eid,
-                        crate::gate::DoorIndex::from(door.0),
-                        direct,
-                        0,
-                    ));
+                    deferred.door_triggers.push((eid, door, direct, 0));
                     entity.position_iface_mut().clear_door();
+                } else {
+                    entity.position_iface_mut().set_anti_collision_on(true);
                 }
                 self.orders.messenger.send(crate::messenger::Message::new(
                     crate::messenger::MessageType::Simple(crate::messenger::SimpleMessage::Stature),
@@ -11510,10 +11529,9 @@ impl EngineInner {
             };
             let elem = entity.element_data();
             let pi = entity.position_iface();
-            let pf_idx = {
-                let i = pi.get_pathfinder_index();
-                if i == u16::MAX { 0 } else { i }
-            };
+            let pf_idx = u16::from(pi.get_pathfinder_index().unwrap_or_else(|| {
+                panic!("movement owner {owner:?} has no configured pathfinder index")
+            }));
             (
                 elem.position_map(),
                 elem.layer(),

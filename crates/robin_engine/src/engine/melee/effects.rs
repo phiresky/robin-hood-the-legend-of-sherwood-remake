@@ -17,8 +17,8 @@ pub(super) struct LiftLowEntry {
     pub point: crate::coordinates::MapPoint,
     pub z: f32,
     pub layer: u16,
-    pub sector: u16,
-    pub obstacle: Option<u16>,
+    pub sector: crate::position_interface::SectorHandle,
+    pub obstacle: Option<crate::sight_obstacle::SightObstacleIndex>,
 }
 
 /// Compute the non-charge flight vector used by a falling-pushed order.
@@ -343,12 +343,15 @@ impl EngineInner {
             .get(door_idx as usize)?;
         let point = door.point_out;
         let layer = door.layer_out;
-        let sector = u16::from(door.sector_out);
+        let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                panic!("lift low-entry door {door_idx} lacks exact sector-out arena identity")
+            }));
         let obstacle = self.get_projection_area_index(assets, sector, layer, point);
         let z = obstacle
             .and_then(|idx| {
                 self.sight_obstacles(assets)
-                    .get(idx as usize)
+                    .get(usize::from(idx))
                     .map(|obs| obs.compute_top_z_from_projection(point.x, point.y))
             })
             .unwrap_or(0.0);
@@ -477,10 +480,8 @@ impl EngineInner {
                     // Ladder/wall fall: domino effect is not invoked.
                     antagonist: None,
                     goal_layer: entry.layer,
-                    goal_sector: crate::position_interface::SectorHandle::new(entry.sector),
-                    obstacle: entry
-                        .obstacle
-                        .and_then(crate::position_interface::ObstacleHandle::new),
+                    goal_sector: Some(entry.sector),
+                    obstacle: entry.obstacle,
                     ladder_fall: true,
                 });
             }
@@ -1153,12 +1154,12 @@ impl EngineInner {
             })
             .unwrap_or(victim_pos);
         let (obstacle, goal_z) = sector
-            .and_then(|sector| self.get_projection_area_index(assets, sector.get(), layer, goal))
+            .and_then(|sector| self.get_projection_area_index(assets, sector, layer, goal))
             .map(|index| {
-                let obstacle = crate::position_interface::ObstacleHandle::new(index);
+                let obstacle = Some(index);
                 let z = self
                     .sight_obstacles(assets)
-                    .get(index as usize)
+                    .get(usize::from(index))
                     .unwrap_or_else(|| panic!("push goal obstacle {index} is missing"))
                     .compute_top_z_from_projection(goal.x, goal.y);
                 (obstacle, z)

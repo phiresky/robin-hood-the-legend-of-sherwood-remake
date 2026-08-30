@@ -144,7 +144,7 @@ pub const TACTICAL_HORSE_PARKING: u8 = 7;
 )]
 pub struct LevelRepulsivePoint {
     pub position: MapPoint,
-    pub layer: u16,
+    pub layer: Option<crate::position_interface::Layer>,
     /// Outward normal of the incoming-edge vector.
     pub limit_left: MapVec,
     /// Outward normal of the outgoing-edge vector.
@@ -272,10 +272,10 @@ pub struct GridLine {
     pub is_elevation: bool,
     /// For elevation lines: sight obstacle index on the left side of the
     /// oriented segment (from `a` to `b`). `None` for non-elevation lines.
-    pub left_obstacle_index: Option<u16>,
+    pub left_obstacle_index: Option<crate::sight_obstacle::SightObstacleIndex>,
     /// For elevation lines: sight obstacle index on the right side of the
     /// oriented segment. `None` for non-elevation lines.
-    pub right_obstacle_index: Option<u16>,
+    pub right_obstacle_index: Option<crate::sight_obstacle::SightObstacleIndex>,
     /// Whether this is a patch-boundary line (`LINE_PATCH` | `LINE_CROSS`),
     /// constructed for `SECTOR_CROSS | SECTOR_PATCH` sectors (i.e. the
     /// apply / no-apply polygons carried on a patch). When a PC crosses
@@ -446,8 +446,8 @@ impl GridLine {
     pub fn new_elevation(
         a: MapPoint,
         b: MapPoint,
-        left_obstacle_index: Option<u16>,
-        right_obstacle_index: Option<u16>,
+        left_obstacle_index: Option<crate::sight_obstacle::SightObstacleIndex>,
+        right_obstacle_index: Option<crate::sight_obstacle::SightObstacleIndex>,
     ) -> Self {
         let mut line = Self::new(a, b, false);
         line.type_mask |= Self::LINE_CROSS | Self::LINE_ELEVATION;
@@ -784,7 +784,7 @@ pub struct SectorScreenResult {
 pub struct ProjectileLandingResolution {
     pub obstacle_index: Option<crate::position_interface::ObstacleHandle>,
     pub obstacle_plane: Option<crate::position_interface::PlaneZCoeffs>,
-    pub layer: u16,
+    pub layer: Option<crate::position_interface::Layer>,
     pub sector: Option<crate::position_interface::SectorHandle>,
     pub blocked_by_motion_obstacle: bool,
 }
@@ -1739,31 +1739,31 @@ impl FastFindGrid {
     /// Sight obstacles are owned by `EngineInner::sight_obstacles`; the
     /// grid only stores their index so spatial queries can jump straight
     /// to the right slice of obstacles without scanning the whole list.
-    /// `layer == u16::MAX` is the convention for obstacles that apply to
-    /// every layer (non-projection-area obstacles) — those are added only
-    /// to the per-block lists.
+    /// `None` means that the obstacle applies to every layer (ordinary
+    /// non-projection obstacles); those are added only to the shared
+    /// per-block list.
     pub fn add_obstacle_index(
         &mut self,
         obstacle_idx: crate::sight_obstacle::SightObstacleIndex,
-        layer: u16,
+        layer: Option<crate::position_interface::Layer>,
         bbox: &GroundBBox,
     ) {
         let level = self.level_mut();
-        if (layer as usize) < level.layers.len() {
-            level.layers[layer as usize]
+        if let Some(layer) = layer
+            && usize::from(layer) < level.layers.len()
+        {
+            level.layers[usize::from(layer)]
                 .obstacle_indices
                 .push(obstacle_idx);
         }
-        let effective_layer = if (layer as usize) < level.layers.len() {
-            layer
-        } else {
+        let effective_layer = layer
+            .filter(|layer| usize::from(*layer) < level.layers.len())
+            .map_or(0, |layer| layer.get());
+        if layer.is_none() {
             // Non-projection-area obstacles participate in every block
             // regardless of layer; pick layer 0 for the per-block entry
-            // since our grid is layer-indexed and we can't replicate
-            // across all layers cheaply.  The consumer-side type filter
-            // compensates by treating layer==u16::MAX as "any".
-            0
-        };
+            // since queries explicitly include that shared layer.
+        }
         if let Some(rect) = bbox.0 {
             let (x_min, y_min, x_max, y_max) =
                 rect_to_cell_range(&rect, level.grid_width, level.grid_height);
@@ -2197,7 +2197,7 @@ impl FastFindGrid {
 
         let mut obstacle_index = None;
         let mut obstacle_plane = None;
-        let mut layer = 0;
+        let mut layer = crate::position_interface::Layer::ZERO;
 
         // ComputeTrajectory retains the exact obstacle returned by the 3D
         // impact query. Original assigns that pointer before checking whether
@@ -2205,7 +2205,7 @@ impl FastFindGrid {
         // solid obstacle. Do not replace such an impact with an unrelated
         // overlapping projection polygon selected from the landing footprint.
         if let Some(handle) = exact_obstacle_index {
-            let index = usize::from(u16::from(handle));
+            let index = usize::from(handle);
             let obstacle = sight_obstacles.get(index).unwrap_or_else(|| {
                 panic!("projectile terminal obstacle {index} is absent from its source list")
             });
@@ -2221,7 +2221,7 @@ impl FastFindGrid {
                             &obstacle.top_plane_points,
                         ),
                     ),
-                    layer: 0,
+                    layer: None,
                     sector: None,
                     blocked_by_motion_obstacle: true,
                 };
@@ -2231,12 +2231,12 @@ impl FastFindGrid {
         let mut projection_iter: Box<
             dyn Iterator<Item = (u32, &crate::sight_obstacle::SightObstacle)> + '_,
         > = if let Some(handle) = exact_obstacle_index {
-            let raw = u16::from(handle);
+            let raw = u32::from(handle);
             Box::new(
                 sight_obstacles
                     .get(raw as usize)
                     .into_iter()
-                    .map(move |obstacle| (u32::from(raw), obstacle)),
+                    .map(move |obstacle| (raw, obstacle)),
             )
         } else if allow_projection_fallback {
             Box::new(sight_obstacles.iter_indexed())
@@ -2252,26 +2252,20 @@ impl FastFindGrid {
             {
                 continue;
             }
-            if obstacle.layer == u16::MAX {
-                tracing::warn!(
-                    obstacle = idx,
-                    "projection-area obstacle has no landing layer"
-                );
-                continue;
-            }
-            obstacle_index = u16::try_from(idx)
-                .ok()
-                .and_then(crate::position_interface::ObstacleHandle::new);
+            let projection = obstacle.projection_area_ref().unwrap_or_else(|| {
+                panic!("projection-area obstacle {idx} has no exact topology attachment")
+            });
+            obstacle_index = crate::position_interface::ObstacleHandle::new(idx);
             obstacle_plane = Some(crate::position_interface::PlaneZCoeffs::from_plane_points(
                 &obstacle.top_plane_points,
             ));
-            layer = obstacle.layer;
+            layer = projection.layer;
             break;
         }
 
         let mut sector = None;
         if self.is_inside_grid_point(landing_map) {
-            let block_idx = self.get_block_index(landing_map, layer);
+            let block_idx = self.get_block_index(landing_map, layer.get());
             for (_, motion_sector) in self.get_sectors_at_block(block_idx, SectorType::MOTION) {
                 if motion_sector.sector_type.is_area() {
                     if motion_sector.contains_point(landing_map) {
@@ -2283,7 +2277,7 @@ impl FastFindGrid {
                     return ProjectileLandingResolution {
                         obstacle_index,
                         obstacle_plane,
-                        layer,
+                        layer: Some(layer),
                         sector: None,
                         blocked_by_motion_obstacle: true,
                     };
@@ -2294,7 +2288,7 @@ impl FastFindGrid {
         ProjectileLandingResolution {
             obstacle_index,
             obstacle_plane,
-            layer,
+            layer: Some(layer),
             sector,
             blocked_by_motion_obstacle: false,
         }
@@ -2697,7 +2691,10 @@ impl FastFindGrid {
         self.level
             .level_repulsive_points
             .iter()
-            .filter(|p| p.layer == layer && bbox.contains_point(p.position))
+            .filter(|p| {
+                p.layer == crate::position_interface::Layer::new(layer)
+                    && bbox.contains_point(p.position)
+            })
             .collect()
     }
 
@@ -4351,8 +4348,8 @@ mod tests {
         let line = GridLine::new_elevation(
             MapPoint::new(1832.0, 1233.0),
             MapPoint::new(1845.0, 1230.0),
-            Some(224),
-            Some(188),
+            crate::sight_obstacle::SightObstacleIndex::new(224),
+            crate::sight_obstacle::SightObstacleIndex::new(188),
         );
         let line_index = grid.add_line(line, 2);
 
@@ -4711,7 +4708,15 @@ mod tests {
         let a = MapPoint::new(64.0, 32.0);
         let b = MapPoint::new(64.0, 96.0);
         let first = grid.add_line(GridLine::new_elevation(a, b, None, None), 0);
-        grid.add_line(GridLine::new_elevation(b, a, Some(1), Some(2)), 0);
+        grid.add_line(
+            GridLine::new_elevation(
+                b,
+                a,
+                crate::sight_obstacle::SightObstacleIndex::new(1),
+                crate::sight_obstacle::SightObstacleIndex::new(2),
+            ),
+            0,
+        );
 
         let mut different_type = GridLine::new_elevation(a, b, None, None);
         different_type.is_sound = true;
@@ -4942,8 +4947,11 @@ mod tests {
                 z_top: 10.0,
             },
         ];
-        obs.layer = layer;
-        obs.sector = sector;
+        obs.set_projection_area_ref(
+            crate::position_interface::Layer::new(layer).expect("valid projection layer"),
+            crate::fast_find_grid::SectorIndex::new(u32::from(sector))
+                .expect("valid projection sector index"),
+        );
         obs.rebuild_geometry();
         obs
     }
@@ -4975,8 +4983,11 @@ mod tests {
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
 
-        assert_eq!(resolution.layer, 1);
-        assert_eq!(resolution.obstacle_index.map(u16::from), Some(0));
+        assert_eq!(resolution.layer, crate::position_interface::Layer::new(1));
+        assert_eq!(
+            resolution.obstacle_index,
+            crate::sight_obstacle::SightObstacleIndex::new(0)
+        );
         assert_eq!(resolution.sector.map(u16::from), Some(12));
         assert!(!resolution.blocked_by_motion_obstacle);
     }
@@ -5008,8 +5019,11 @@ mod tests {
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
 
-        assert_eq!(resolution.obstacle_index.map(u16::from), Some(1));
-        assert_eq!(resolution.layer, 2);
+        assert_eq!(
+            resolution.obstacle_index,
+            crate::sight_obstacle::SightObstacleIndex::new(1)
+        );
+        assert_eq!(resolution.layer, crate::position_interface::Layer::new(2));
         assert_eq!(resolution.sector.map(u16::from), Some(22));
     }
 
@@ -5043,8 +5057,11 @@ mod tests {
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&obstacles),
         );
 
-        assert_eq!(resolution.obstacle_index.map(u16::from), Some(0));
-        assert_eq!(resolution.layer, 0);
+        assert_eq!(
+            resolution.obstacle_index,
+            crate::sight_obstacle::SightObstacleIndex::new(0)
+        );
+        assert_eq!(resolution.layer, None);
         assert_eq!(resolution.sector, None);
         assert!(resolution.blocked_by_motion_obstacle);
     }
@@ -5071,11 +5088,17 @@ mod tests {
             MapPoint::new(64.0, 64.0),
             crate::sight_obstacle::ObstacleList::from_slice_all_active(&[projection]),
         );
-        assert_eq!(legacy_unknown.layer, 2);
+        assert_eq!(
+            legacy_unknown.layer,
+            crate::position_interface::Layer::new(2)
+        );
         assert_eq!(legacy_unknown.sector.map(u16::from), Some(22));
 
         let exact_ground = grid.resolve_projectile_ground_landing(MapPoint::new(64.0, 64.0));
-        assert_eq!(exact_ground.layer, 0);
+        assert_eq!(
+            exact_ground.layer,
+            Some(crate::position_interface::Layer::ZERO)
+        );
         assert_eq!(exact_ground.sector, None);
         assert_eq!(exact_ground.obstacle_index, None);
     }
@@ -5111,7 +5134,10 @@ mod tests {
             crate::sight_obstacle::ObstacleList::empty(),
         );
 
-        assert_eq!(resolution.layer, 0);
+        assert_eq!(
+            resolution.layer,
+            Some(crate::position_interface::Layer::ZERO)
+        );
         assert_eq!(resolution.sector, None);
         assert!(resolution.blocked_by_motion_obstacle);
     }
@@ -5232,7 +5258,7 @@ mod tests {
         let mut grid = make_empty_grid(1);
         let bbox = GroundBBox::from_coords(64.0, 64.0, 127.0, 127.0);
         let idx_42 = crate::sight_obstacle::SightObstacleIndex::new(42).unwrap();
-        grid.add_obstacle_index(idx_42, 0, &bbox);
+        grid.add_obstacle_index(idx_42, Some(crate::position_interface::Layer::ZERO), &bbox);
 
         // The per-layer list must contain the obstacle index.
         assert_eq!(grid.level.layers[0].obstacle_indices, vec![idx_42]);
@@ -5290,7 +5316,7 @@ mod tests {
         // wall must be registered there the way level loading registers one.
         grid.add_obstacle_index(
             crate::sight_obstacle::SightObstacleIndex::new(0).expect("obstacle index 0"),
-            obs.layer,
+            obs.projection_area_ref().map(|area| area.layer),
             &obs.box_ground,
         );
         let obstacles = vec![obs];

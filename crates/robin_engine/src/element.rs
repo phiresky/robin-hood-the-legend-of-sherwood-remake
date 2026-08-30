@@ -35,6 +35,14 @@ use std::hash::Hasher;
 
 use serde::{Deserialize, Serialize};
 
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
 use crate::ai::{AiController, AiState as AiTopState, Substate as AiSubstate};
 use crate::ai_enemy::EnemyAi;
 use crate::ai_friendly::FriendlyAi;
@@ -275,6 +283,11 @@ impl ElementData {
         self.sprite.position_iface.get_layer().into()
     }
     #[inline]
+    #[must_use]
+    pub fn optional_layer(&self) -> Option<crate::position_interface::Layer> {
+        self.sprite.position_iface.optional_layer()
+    }
+    #[inline]
     pub fn set_layer(&mut self, l: u16) {
         let layer = crate::position_interface::Layer::new(l)
             .expect("layer must be < 0xFFFF; 0xFFFF is the 'no layer' sentinel");
@@ -282,9 +295,7 @@ impl ElementData {
     }
     #[inline]
     pub fn clear_layer(&mut self) {
-        self.sprite
-            .position_iface
-            .set_layer(crate::position_interface::Layer::from_saved_raw(u16::MAX));
+        self.sprite.position_iface.clear_layer();
     }
 
     #[inline]
@@ -302,7 +313,7 @@ impl ElementData {
     /// sector pointer has been swapped to the inside-building sector.
     #[inline]
     pub fn is_in_door_transit(&self) -> bool {
-        !self.sprite.position_iface.get_door().is_null()
+        self.sprite.position_iface.get_door().is_some()
     }
 
     #[inline]
@@ -1893,14 +1904,15 @@ impl PcAmmoData {
     bitcode::Decode,
 )]
 pub struct PcPortraitQuickIconState {
-    pub titbit_id: u32,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub titbit_id: Option<crate::titbit::TitbitId>,
     pub running: bool,
 }
 
 impl Default for PcPortraitQuickIconState {
     fn default() -> Self {
         Self {
-            titbit_id: u32::MAX,
+            titbit_id: None,
             running: false,
         }
     }
@@ -2017,7 +2029,7 @@ pub struct PcData {
     pub quick_action_special_counts: Vec<u16>,
     pub quick_action_buttons: Vec<u16>,
     pub quick_action_interactors: Vec<Option<EntityId>>,
-    pub titbits: Vec<u32>,
+    pub titbits: Vec<Option<crate::titbit::TitbitId>>,
     pub portrait: PcPortraitState,
 
     // Detection
@@ -2146,7 +2158,7 @@ impl Default for PcData {
             quick_action_special_counts: vec![0; 3],
             quick_action_buttons: vec![0; 3],
             quick_action_interactors: vec![None; 3],
-            titbits: vec![u32::MAX; 3],
+            titbits: vec![None; 3],
             portrait: PcPortraitState::default(),
             head_seen: false,
             belt_seen: false,
@@ -3222,16 +3234,16 @@ pub struct ProjectileData {
     /// pre-publication virtual Hourglass can determine its material.
     #[serde(default)]
     pub terminal_material_impact_index: Option<u16>,
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub trajectory_origin_sector: Option<u16>,
     /// Exact arena half of Original's `mposStartOfTrajectory.pSector`.
     /// The public number above remains for backward-compatible serialized
     /// state, but AI projectile-hit callbacks must copy the complete sector
     /// pointer identity into their stimulus position.
-    #[serde(default)]
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub trajectory_origin_sector_index: Option<crate::fast_find_grid::SectorIndex>,
-    #[serde(default)]
-    pub trajectory_origin_layer: u16,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub trajectory_origin_layer: Option<crate::position_interface::Layer>,
     /// Per-frame position delta for the current trajectory segment.
     /// Recomputed each time a new waypoint is popped.
     pub velocity_increment: WorldVec3D,
@@ -3305,7 +3317,7 @@ impl Default for ProjectileData {
             terminal_material_impact_index: None,
             trajectory_origin_sector: None,
             trajectory_origin_sector_index: None,
-            trajectory_origin_layer: 0,
+            trajectory_origin_layer: None,
             velocity_increment: WorldVec3D::default(),
             flight_direction: 0,
             launch_segment_start: None,
@@ -3391,11 +3403,13 @@ pub struct PurseData {
     pub burst: bool,
     /// On a coin: layer the coin should snap to on landing.  Stored
     /// at spawn so `HitObstacle` can re-key the coin onto its goal
-    /// layer.  On a purse: always 0.
-    pub layer_goal: u16,
+    /// layer. On a purse: `None` because the field is not applicable.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub layer_goal: Option<crate::position_interface::Layer>,
     /// On a coin: sector the coin should snap to on landing (None
     /// when the scatter target wasn't resolved against a known
     /// sector).
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub sector_goal: Option<crate::position_interface::SectorHandle>,
 }
 
@@ -4387,7 +4401,7 @@ impl Entity {
     /// actor is in the middle of a pass-door animation, before its
     /// sector pointer has been swapped to the inside-building sector.
     pub fn is_in_door_transit(&self) -> bool {
-        !self.position_iface().get_door().is_null()
+        self.position_iface().get_door().is_some()
     }
 
     /// `IsInMotion` folded onto `Entity` so `&Entity` callers (e.g.

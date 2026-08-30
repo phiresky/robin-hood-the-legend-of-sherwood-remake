@@ -1595,7 +1595,10 @@ impl MissionLevelBuilder {
                 if doors.is_empty() {
                     return Err(MissionLevelBuildError::BuildingWithoutDoor { building_index });
                 }
-                Some(crate::gate::DoorIndex(authored_door_index as u32))
+                Some(
+                    crate::gate::DoorIndex::new(authored_door_index as u32)
+                        .expect("valid door index"),
+                )
             };
             for &element_index in &tenants.tenant_element_indices {
                 let Some(entity_id) = engine
@@ -1981,7 +1984,7 @@ mod mission_level_builder_tests {
         assert_eq!(engine.ai.global.reinforcement_doors.len(), 1);
         assert_eq!(
             engine.ai.global.reinforcement_doors[0].door_index,
-            crate::gate::DoorIndex(1)
+            crate::gate::DoorIndex::new(1).expect("valid door index")
         );
 
         for sector_number in [0_i16, 1_i16] {
@@ -2012,11 +2015,17 @@ mod mission_level_builder_tests {
         engine.populate_sector_gates_from_doors();
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
-            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)]
+            vec![
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                crate::gate::DoorIndex::new(1).expect("valid door index")
+            ]
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[1].gate_indices,
-            vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)]
+            vec![
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                crate::gate::DoorIndex::new(1).expect("valid door index")
+            ]
         );
     }
 
@@ -2070,11 +2079,11 @@ mod mission_level_builder_tests {
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
-            vec![crate::gate::DoorIndex(0)]
+            vec![crate::gate::DoorIndex::new(0).expect("valid door index")]
         );
         assert_eq!(
             engine.world.fast_grid.level.sectors[1].gate_indices,
-            vec![crate::gate::DoorIndex(0)]
+            vec![crate::gate::DoorIndex::new(0).expect("valid door index")]
         );
     }
 
@@ -2330,7 +2339,7 @@ mod mission_level_builder_tests {
             .expect("valid trap tenant plan");
         assert_eq!(
             plan.buildings.attachments[0].first_door_index,
-            Some(crate::gate::DoorIndex(1))
+            Some(crate::gate::DoorIndex::new(1).expect("valid door index"))
         );
         engine
             .build_mission_level_stages(&assets, &loaded, &plan)
@@ -3566,12 +3575,11 @@ impl EngineInner {
         // Shadow-sector fallback: revert Fog/Night → Day when the entity
         // stands in a `SECTOR_SHADOW` (light-at-night) polygon.
         let elem = entity.element_data();
-        if elem.layer() != 0xFFFF
-            && self
-                .world
+        if elem.optional_layer().is_some_and(|layer| {
+            self.world
                 .fast_grid
-                .is_in_shadow_sector(elem.position_map(), elem.layer())
-        {
+                .is_in_shadow_sector(elem.position_map(), layer.get())
+        }) {
             SpriteVariant::Day
         } else {
             default
@@ -3695,10 +3703,20 @@ impl EngineInner {
         // Snapshot (idx, layer, box_ground) before mutating fast_grid —
         // `self.sight_obstacles(assets)` borrows engine immutably while
         // `add_obstacle_index` needs `&mut self.world.fast_grid`.
-        let obstacle_metadata: Vec<(u32, u16, crate::coordinates::GroundBBox)> = self
+        let obstacle_metadata: Vec<(
+            u32,
+            Option<crate::position_interface::Layer>,
+            crate::coordinates::GroundBBox,
+        )> = self
             .sight_obstacles(assets)
             .iter_indexed()
-            .map(|(idx, obs)| (idx, obs.layer, obs.box_ground))
+            .map(|(idx, obs)| {
+                (
+                    idx,
+                    obs.projection_area_ref().map(|area| area.layer),
+                    obs.box_ground,
+                )
+            })
             .collect();
         for (obs_idx, layer, box_ground) in obstacle_metadata {
             if let Some(idx) = crate::sight_obstacle::SightObstacleIndex::new(obs_idx) {
@@ -3742,14 +3760,14 @@ impl EngineInner {
         let mut elev_added = 0usize;
         let mut elev_skipped_layer = 0usize;
         for raw in &elev_raw {
-            let to_idx = |i: u16| -> Option<u16> {
+            let to_idx = |i: u16| -> Option<crate::sight_obstacle::SightObstacleIndex> {
                 // 0xFFFF is the sentinel for "no obstacle" in the proto.
                 if i == 0xFFFF {
                     None
                 } else if (i as usize) < num_obstacles {
-                    Some(i)
+                    crate::sight_obstacle::SightObstacleIndex::new(u32::from(i))
                 } else {
-                    None
+                    panic!("elevation line references obstacle {i}, but only {num_obstacles} exist")
                 }
             };
             let left = to_idx(raw.left_obstacle_index);
@@ -3853,7 +3871,12 @@ impl EngineInner {
                                 .level_repulsive_points
                                 .push(crate::fast_find_grid::LevelRepulsivePoint {
                                     position: MapPoint::new(bx as f32, by as f32),
-                                    layer: layer_idx as u16,
+                                    layer: Some(
+                                        crate::position_interface::Layer::new(layer_idx as u16)
+                                            .expect(
+                                                "level layer index collides with null sentinel",
+                                            ),
+                                    ),
                                     limit_left,
                                     limit_right,
                                     is_concave,
@@ -3941,7 +3964,12 @@ impl EngineInner {
                                     .level_repulsive_points
                                     .push(crate::fast_find_grid::LevelRepulsivePoint {
                                         position: MapPoint::new(ox as f32, oy as f32),
-                                        layer: layer_idx as u16,
+                                        layer: Some(
+                                            crate::position_interface::Layer::new(layer_idx as u16)
+                                                .expect(
+                                                    "level layer index collides with null sentinel",
+                                                ),
+                                        ),
                                         limit_left,
                                         limit_right,
                                         is_concave,
@@ -5007,7 +5035,7 @@ impl EngineInner {
                     panic!("canonical door {idx} exterior sector has no exact arena identity")
                 });
                 crate::ai::DoorSeekInfo {
-                    door_index: crate::gate::DoorIndex(idx as u32),
+                    door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
                     door_type: door.door_type,
                     point_out: door.point_out,
                     position_in: crate::ai::Position {
@@ -5057,7 +5085,7 @@ impl EngineInner {
                         .map(|handle| handle.with_arena_index(sector_in_index)),
                         level: door.layer_in,
                     },
-                    door_index: crate::gate::DoorIndex(idx as u32),
+                    door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
                     point_out: door.point_out,
                     point_in: door.point_in,
                     point_mid: door.point_mid,
@@ -5935,7 +5963,7 @@ impl EngineInner {
                 .get(usize::from(first_door_index))
                 .ok_or(MissionLevelBuildError::MissingCanonicalBuildingDoor {
                     building_index: building.building_index,
-                    door_index: first_door_index.0,
+                    door_index: first_door_index.get(),
                 })?;
             // `RHSectorBuilding::InitOccupant` resolves GetGate(0) after
             // RHDoor::AdaptPoints, so attachment must use this canonical
@@ -6117,7 +6145,7 @@ impl EngineInner {
                     );
                 };
 
-                let obstacle = pc.element.obstacle_index().map(u16::from).unwrap_or(0xFFFF);
+                let obstacle = pc.element.obstacle_index();
 
                 captured.push(crate::sector_production::Occupant {
                     pc_description_idx,
@@ -6400,9 +6428,9 @@ impl EngineInner {
                         crate::position_interface::SectorHandle::new(point.sector),
                         0,
                         crate::element::GameMaterial::default(),
-                        crate::position_interface::ObstacleHandle::new(point.obstacle),
+                        point.obstacle,
                         crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                            crate::position_interface::ObstacleHandle::new(point.obstacle),
+                            point.obstacle,
                             assets.static_sight_obstacles.as_slice(),
                         ),
                     );
@@ -6466,9 +6494,9 @@ impl EngineInner {
                         crate::position_interface::SectorHandle::new(point.sector),
                         0,
                         crate::element::GameMaterial::default(),
-                        crate::position_interface::ObstacleHandle::new(point.obstacle),
+                        point.obstacle,
                         crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
-                            crate::position_interface::ObstacleHandle::new(point.obstacle),
+                            point.obstacle,
                             assets.static_sight_obstacles.as_slice(),
                         ),
                     );
@@ -6548,12 +6576,7 @@ impl EngineInner {
                 }
                 // Release the `entities` borrow before calling helpers
                 // that take `&mut self`.
-                let occupant_obstacle_opt = if occupant.obstacle == 0xFFFF {
-                    None
-                } else {
-                    Some(occupant.obstacle)
-                };
-                self.set_obstacle_and_material(assets, entity_id, occupant_obstacle_opt);
+                self.set_obstacle_and_material(assets, entity_id, occupant.obstacle);
                 if let Some(crate::element::Entity::Pc(pc)) = self.world.entities.get_mut(entity_id)
                 {
                     pc.element.update_grid_cell();

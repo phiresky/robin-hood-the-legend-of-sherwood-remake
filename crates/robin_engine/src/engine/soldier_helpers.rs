@@ -1768,7 +1768,7 @@ impl EngineInner {
                     delay,
                     goal,
                     direction,
-                    adversary: adversary.map(|id| id.index()).unwrap_or(0),
+                    adversary: adversary.map(|id| crate::ai::AiEntityHandle::new(id.index())),
                 };
                 // Original Soldier::SendBeforeDoorToFight calls
                 // Think(EVENT_DOOR_COMBAT) directly. The state/target/timer
@@ -1851,24 +1851,17 @@ impl EngineInner {
 
         let source = self.get_entity(pc_id).map(|e| {
             let elem = e.element_data();
-            let (door_handle, door_direction) = current_door_for_route_source(e);
+            let door_source = current_door_for_route_source(e);
             (
                 elem.position_map(),
                 elem.sector(),
                 elem.layer(),
                 e.actor_auth_info(),
-                door_handle,
-                door_direction,
+                door_source,
             )
         });
-        if let Some((
-            raw_source_pos,
-            Some(raw_source_sector),
-            raw_source_layer,
-            auth,
-            door_handle,
-            door_direction,
-        )) = source
+        if let Some((raw_source_pos, Some(raw_source_sector), raw_source_layer, auth, door_source)) =
+            source
             && let Some(goal_sector) = goal.sector
         {
             // Original `RHSequence::AppendMoveToSequence` adapts an actor
@@ -1876,12 +1869,14 @@ impl EngineInner {
             // before it compares source and goal sectors. In particular, a
             // PC already leaving this building for the door-fight goal must
             // not construct (and draw the random wait for) a second exit.
-            let (source_pos, source_sector, _source_layer) =
-                adapt_source_to_current_door_with_identity(
-                    &self.script_domains.interactables.doors,
-                    door_handle,
-                    door_direction,
-                )
+            let (source_pos, source_sector, _source_layer) = door_source
+                .and_then(|(door_handle, door_direction)| {
+                    adapt_source_to_current_door_with_identity(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
+                })
                 .unwrap_or((raw_source_pos, raw_source_sector, raw_source_layer));
 
             let same_sector = match (source_sector.arena_index(), goal_sector.arena_index()) {
@@ -2126,7 +2121,7 @@ mod tests {
             element,
             actor: ActorData {
                 active_door_pass: Some(ActiveDoorPass {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: false,
                     position_direct: false,
                     steps: Default::default(),

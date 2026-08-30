@@ -286,7 +286,7 @@ pub struct AiEntityView {
     /// to in its current Wondering substate.  `0` when not set.  Used
     /// by `IsBeerStillAvailable` to detect friends racing for the
     /// same bottle.
-    pub interesting_object: u32,
+    pub interesting_object: Option<crate::ai::AiEntityHandle>,
 
     /// AI brain's reconnaissance report classification (Nothing /
     /// MissedCharly / Body / Enemy).  Used by `GetReportFromCivilian`
@@ -299,7 +299,7 @@ pub struct AiEntityView {
     pub report_seen_bodies: Vec<crate::ai::HumanHandle>,
     /// Handle of the missing-friend (charly) the actor is tracking,
     /// or `0` when none is set.
-    pub report_charly: crate::ai::NpcHandle,
+    pub report_charly: Option<crate::ai::AiEntityHandle>,
 }
 
 /// Per-net info carried on [`AiEntityView::covering_nets`] for humans
@@ -841,14 +841,14 @@ pub fn entity_view_from_entity(
             .ai_brain
             .base()
             .map(|b| b.interesting_object)
-            .unwrap_or(0),
+            .unwrap_or(None),
         Entity::Civilian(c) => c
             .npc
             .ai_brain
             .base()
             .map(|b| b.interesting_object)
-            .unwrap_or(0),
-        _ => 0,
+            .unwrap_or(None),
+        _ => None,
     };
 
     // Read `my_reconnaissance_report` off `AiBase` for any NPC
@@ -872,7 +872,7 @@ pub fn entity_view_from_entity(
                 crate::ai::ReportType::Nothing,
                 Position::default(),
                 Vec::new(),
-                0,
+                None,
             )),
         Entity::Civilian(c) => c
             .npc
@@ -890,13 +890,13 @@ pub fn entity_view_from_entity(
                 crate::ai::ReportType::Nothing,
                 Position::default(),
                 Vec::new(),
-                0,
+                None,
             )),
         _ => (
             crate::ai::ReportType::Nothing,
             Position::default(),
             Vec::new(),
-            0,
+            None,
         ),
     };
 

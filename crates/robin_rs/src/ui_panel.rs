@@ -2407,8 +2407,7 @@ pub fn draw_panel(
                             .macro_store()
                             .get(pc_id)
                             .and_then(|m| m.get_slot_titbit(slot_idx as usize))
-                            .map(|id| engine.titbit_manager().get_phase(id))
-                            .filter(|&p| p != 0xFFFF)
+                            .and_then(|id| engine.titbit_manager().get_phase(id))
                     };
                     // The titbit phase is target/command-specific (Take,
                     // BowOk, lever, pay, ...), while the recorded Action is

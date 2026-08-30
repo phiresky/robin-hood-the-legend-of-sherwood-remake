@@ -516,11 +516,15 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   feature state with Legendary or
 ///   validated Custom difficulty, including independent hostile-soldier
 ///   distance, cone-width, and hearing modifiers.
-/// - **v62** (2026-08-30, self-describing native saves): every Rust-authored
+/// - **v62** (2026-08-30, typed runtime sentinel boundaries): combines all
+///   preceding feature state with nullable AI entity handles and exact spatial
+///   provenance, preserving live arena slot zero without conflating it with
+///   absence. The native snapshot layout changed.
+/// - **v63** (2026-08-30, self-describing native saves): every Rust-authored
 ///   save requires immutable mission and player provenance in its header.
 ///   Earlier Rust schemas are rejected; the separate Original C++ importer is
 ///   the only compatibility path.
-pub const SAVE_FORMAT_VERSION: u32 = 62;
+pub const SAVE_FORMAT_VERSION: u32 = 63;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -850,8 +854,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_requires_full_provenance() {
-        assert_eq!(SAVE_FORMAT_VERSION, 62);
+    fn save_format_version_requires_typed_state_and_full_provenance() {
+        assert_eq!(SAVE_FORMAT_VERSION, 63);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -954,6 +958,51 @@ mod tests {
         engine2.test_assert_level_assets_attached(&assets2);
         assert_eq!(engine2.frame_counter(), 12345);
         assert!(engine2.mission().mission_won);
+    }
+
+    #[test]
+    fn save_apply_round_trips_live_ai_slot_zero_without_null_collapse() {
+        let (mut engine, assets) = fresh_engine();
+        let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(robin_engine::ai::AiEntityHandle::new(0));
+        let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
+            robin_engine::element::ActorSoldier {
+                element: robin_engine::element::ElementData {
+                    kind: robin_engine::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = robin_engine::element::NpcData::default();
+                    npc.ai_brain = robin_engine::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(owner.index(), 0, "fixture must occupy live arena slot zero");
+        let host = Host::scratch(800.0, 600.0);
+        let save = GameSaveFile::capture(&engine, &host, 7, "typed slot zero".into());
+
+        let json = serde_json::to_string(&save).expect("serialize current save schema");
+        assert!(json.contains(r#""primary_target":{"entity":0}"#));
+        let decoded: GameSaveFile =
+            serde_json::from_str(&json).expect("decode current save schema");
+        assert_eq!(
+            decoded.engine.parity_entity_runtime_state(owner, &assets)["npc_ai"]["targets"]["primary"],
+            serde_json::json!({"kind": "soldier", "index": 0})
+        );
+
+        let (mut restored, restored_assets) = fresh_engine();
+        let mut restored_host = Host::scratch(800.0, 600.0);
+        decoded
+            .apply_to(&mut restored, &mut restored_host, &restored_assets)
+            .expect("apply typed slot-zero save");
+        assert_eq!(
+            restored.parity_entity_runtime_state(owner, &restored_assets)["npc_ai"]["targets"]["primary"],
+            serde_json::json!({"kind": "soldier", "index": 0})
+        );
     }
 
     #[test]

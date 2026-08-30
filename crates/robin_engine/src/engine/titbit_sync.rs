@@ -91,7 +91,7 @@ impl EngineInner {
             Some(pos.y),
             Some(layer),
         );
-        if titbit_id != INVALID_ID
+        if let Some(titbit_id) = titbit_id
             && let Some(titbit) = self
                 .feedback
                 .titbit_manager
@@ -270,7 +270,7 @@ impl EngineInner {
     /// sprite_row=0 (star texture) because the row was never set.
     fn refresh_titbit_positions(&mut self) {
         for t in self.feedback.titbit_manager.titbits_mut().iter_mut() {
-            if !t.element_supplier.is_valid() {
+            let Some(supplier) = t.element_supplier else {
                 // "Teleport stars" — UnconsciousStar without a supplier
                 // uses its creation position and picks star count from
                 // phase>>2.
@@ -278,9 +278,8 @@ impl EngineInner {
                     t.sprite_row = 1 + (t.phase >> 2).min(4);
                 }
                 continue; // Particle effects (smoke, dust) with no supplier
-            }
-            let Some(entity_id) = self.world.entities.id_at_legacy_slot(t.element_supplier.0)
-            else {
+            };
+            let Some(entity_id) = self.world.entities.id_at_legacy_slot(supplier.0) else {
                 continue;
             };
             let Some(entity) = self.world.entities.get(entity_id) else {
@@ -692,7 +691,7 @@ impl EngineInner {
                 // to pick the animation section at render time.
                 // Position is updated by refresh_titbit_positions() below.
                 for t in self.feedback.titbit_manager.titbits_mut().iter_mut() {
-                    if t.kind == TitbitKind::Emoticon && t.element_supplier == handle {
+                    if t.kind == TitbitKind::Emoticon && t.element_supplier == Some(handle) {
                         if t.sprite_row != target_row {
                             t.sprite_row = target_row;
                             t.sprite_frame = 0;

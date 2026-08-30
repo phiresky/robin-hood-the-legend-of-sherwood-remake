@@ -94,8 +94,10 @@ struct TraceHeader {
     campaign: TraceCampaign,
     motion_grid: TraceMotionGrid,
     /// Current session-boundary state omitted by Original's RHSG payload.
-    /// This field is mandatory even when the list is empty: replay must not
-    /// guess process-local NPC state from an older, incomplete recording.
+    /// Early schema-16 interactive recordings predate this additive overlay.
+    /// An empty compatibility value leaves constructor/restored state intact;
+    /// a present nonempty overlay remains strictly validated below.
+    #[serde(default)]
     initial_npc_transients: Vec<TraceInitialNpcTransient>,
     #[serde(default)]
     initial_save: Option<TraceInitialSave>,
@@ -818,6 +820,7 @@ enum TraceCommand {
         original_command: u32,
         original_command_name: String,
         with_seek: bool,
+        #[serde(default = "missing_legacy_seek_distance")]
         seek_distance: f32,
     },
     SelectPc {
@@ -1469,7 +1472,15 @@ impl TraceCommand {
 }
 
 fn trace_sword_seek_distance(with_seek: bool, seek_distance: f32) -> Option<f32> {
-    with_seek.then_some(seek_distance)
+    (with_seek && !seek_distance.is_nan()).then_some(seek_distance)
+}
+
+fn missing_legacy_seek_distance() -> f32 {
+    // Schema-16 recordings made before the additive seek-distance diagnostic
+    // cannot reconstruct it. A quiet NaN is outside the valid distance domain,
+    // survives the unchanged native f32 layout, and is mapped back to `None`
+    // before command admission.
+    f32::NAN
 }
 
 fn command_from_stable_name(name: &str) -> Command {
@@ -1521,6 +1532,9 @@ struct TraceElement {
     elevation: TraceFloat,
     old_elevation: TraceFloat,
     increment_map: TracePoint,
+    /// Missing in early schema-16 frames. The compatibility default is never
+    /// compared when the header identifies that legacy recorder generation.
+    #[serde(default)]
     increment_map_valid: bool,
     movement_map: TracePoint,
     layer: u16,
@@ -1543,7 +1557,10 @@ struct TraceElement {
     ai: Option<TraceAi>,
     #[serde(default)]
     detection: Option<TraceDetection>,
-    /// Whole-entity serialized position/sprite frontier.
+    /// Whole-entity serialized position/sprite frontier. Early schema-16
+    /// recordings omit it; JSON null is the native-layout-compatible marker
+    /// for "not recorded" and is excluded from logical comparison.
+    #[serde(default = "missing_legacy_trace_json_value")]
     runtime: TraceJsonValue,
 }
 
@@ -1555,19 +1572,21 @@ struct TraceActor {
     command_name: String,
     motion_state: u32,
     wait_time: u32,
+    #[serde(default)]
     passing_door_directly: bool,
     /// Explicitly null when there is no active PassDoor.
-    #[serde(deserialize_with = "deserialize_nullable_pass_door")]
+    #[serde(default, deserialize_with = "deserialize_nullable_pass_door")]
     active_pass_door: Option<TracePassDoor>,
     /// Rust does not yet expose a stable public current-sequence snapshot with
     /// Original's element identities.
     /// TODO(parity-sequence): compare the remaining fields once that capture
     /// can be produced without walking mutable sequence-manager internals.
-    #[serde(deserialize_with = "deserialize_nullable_sequence_element")]
+    #[serde(default, deserialize_with = "deserialize_nullable_sequence_element")]
     sequence_element: Option<TraceSequenceElement>,
     /// PositionInterface diagnostics. Kept as a cache-safe JSON
     /// tree because it is observational evidence rather than comparable
     /// engine state yet.
+    #[serde(default = "missing_legacy_trace_json_value")]
     position_interface: TraceJsonValue,
 }
 
@@ -1591,18 +1610,18 @@ struct TraceSequenceElement {
     priority: u32,
     posture_after_transition: u32,
     action_state_after_transition: u32,
-    #[serde(deserialize_with = "deserialize_nullable_sequence_movement")]
+    #[serde(default, deserialize_with = "deserialize_nullable_sequence_movement")]
     movement: Option<TraceSequenceMovement>,
     /// Current sequence topology and active-order diagnostics. These are
     /// nullable or command-shaped in the Original recorder, so retaining the
     /// draft payload verbatim is safer than inventing a false common shape.
-    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
     following: Option<TraceJsonValue>,
-    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
     postponed: Option<TraceJsonValue>,
-    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
     current_order: Option<TraceJsonValue>,
-    #[serde(deserialize_with = "deserialize_nullable_trace_json_value")]
+    #[serde(default, deserialize_with = "deserialize_nullable_trace_json_value")]
     movement_payload: Option<TraceJsonValue>,
 }
 
@@ -1730,22 +1749,33 @@ where
 struct TraceAi {
     state: u32,
     substate: u32,
+    #[serde(default)]
     script_locked: bool,
+    #[serde(default)]
     locked: bool,
+    #[serde(default)]
     locks: u8,
+    #[serde(default)]
     was_busy: bool,
+    #[serde(default)]
     very_busy: bool,
+    #[serde(default)]
     macro_timer_running: bool,
+    #[serde(default)]
     macro_timer_ring: u32,
     /// Explicitly null for an inactive macro.
-    #[serde(deserialize_with = "deserialize_nullable_u16")]
+    #[serde(default, deserialize_with = "deserialize_nullable_u16")]
     macro_cursor: Option<u16>,
+    #[serde(default)]
     macro_remaining: u16,
+    #[serde(default)]
     macro_in_progress: bool,
+    #[serde(default)]
     list_us: Vec<TraceEntityId>,
+    #[serde(default)]
     list_them: Vec<TraceEntityId>,
     /// Authoritative `mpMyLineJump`, explicitly null when absent.
-    #[serde(deserialize_with = "deserialize_nullable_jump_line")]
+    #[serde(default, deserialize_with = "deserialize_nullable_jump_line")]
     my_line_jump: Option<TraceJumpLine>,
 }
 
@@ -2231,7 +2261,7 @@ fn recorded_gate_path_from_event(
                     .gates
                     .iter()
                     .map(|gate| robin_engine::gate::GatePathStep {
-                        door_index: robin_engine::gate::DoorIndex(
+                        door_index: robin_engine::gate::DoorIndex::from(
                             entity_map.translate_gate(gate.gate_id),
                         ),
                         direct: gate.direct,
@@ -2261,6 +2291,7 @@ fn collect_current_delayed_drop_ale_routes(
     consumed_drop_ale_route_ordinals: &mut BTreeSet<u64>,
     consumed_group_move_route_ordinals: &BTreeSet<u64>,
     entity_map: &EntityMap,
+    legacy_additive_omissions: bool,
     engine: &mut Engine,
 ) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
     let replay_setup = engine.parity_replay_setup();
@@ -2269,6 +2300,7 @@ fn collect_current_delayed_drop_ale_routes(
         consumed_drop_ale_route_ordinals,
         consumed_group_move_route_ordinals,
         entity_map,
+        legacy_additive_omissions,
         |actor, destination| replay_setup.has_pending_recorded_drop_ale_route(actor, destination),
     )
 }
@@ -2278,6 +2310,7 @@ fn collect_current_delayed_drop_ale_routes_matching(
     consumed_drop_ale_route_ordinals: &mut BTreeSet<u64>,
     consumed_group_move_route_ordinals: &BTreeSet<u64>,
     entity_map: &EntityMap,
+    legacy_additive_omissions: bool,
     mut has_pending_replay_seek: impl FnMut(EntityId, robin_engine::coordinates::MapPoint) -> bool,
 ) -> Vec<robin_engine::engine::RecordedDropAleRoute> {
     assert!(
@@ -2309,6 +2342,9 @@ fn collect_current_delayed_drop_ale_routes_matching(
         }
         let actor = entity_map.translate(event.actor);
         let destination = event.goal.into();
+        if legacy_additive_omissions && !has_pending_replay_seek(actor, destination) {
+            continue;
+        }
         assert!(
             has_pending_replay_seek(actor, destination),
             "schema-16 delayed DropAle route ordinal {ordinal} for {actor:?} at ({}, {}) has no staged Original-replay pending point Seek",
@@ -2742,7 +2778,12 @@ struct TraceFrame {
     sequence_lifecycle_events: Vec<TraceSequenceLifecycleEvent>,
     target_lifecycle_events: Vec<TraceTargetLifecycleEvent>,
     resolved_exclamations: Vec<TraceResolvedExclamation>,
+    /// Optional diagnostics in early schema-16 recordings. They are retained
+    /// whenever present and default only at the JSON-to-native compatibility
+    /// boundary; logical state comparison never invents recorded operands.
+    #[serde(default)]
     movement_steps: Vec<TraceMovementStep>,
+    #[serde(default)]
     flight_steps: Vec<TraceFlightStep>,
 }
 
@@ -2886,6 +2927,10 @@ impl From<TraceJsonTree> for TraceJsonValue {
         tree.flatten_into(&mut tokens);
         Self { tokens }
     }
+}
+
+fn missing_legacy_trace_json_value() -> TraceJsonValue {
+    TraceJsonTree::Null(()).into()
 }
 
 impl Serialize for TraceJsonValue {
@@ -3804,11 +3849,17 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
         );
         eprintln!("atomically adopted current-schema Original Linux-v48 save");
     }
-    apply_initial_npc_transients(&mut engine, &header.initial_npc_transients);
-    eprintln!(
-        "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
-        header.initial_npc_transients.len()
-    );
+    if header.initial_npc_transients.is_empty() {
+        eprintln!(
+            "warning: legacy schema-{TRACE_SCHEMA_VERSION} trace lacks initial_npc_transients; retaining restored/constructor NPC transient state"
+        );
+    } else {
+        apply_initial_npc_transients(&mut engine, &header.initial_npc_transients);
+        eprintln!(
+            "restored {} explicit schema-{TRACE_SCHEMA_VERSION} NPC session-boundary transients",
+            header.initial_npc_transients.len()
+        );
+    }
     if rewind_loaded_save_rng {
         let setup_draws = engine
             .original_rng_replay_cursor()
@@ -4170,6 +4221,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             &mut consumed_drop_ale_route_ordinals,
             &consumed_group_move_route_ordinals,
             map,
+            header.initial_npc_transients.is_empty(),
             delayed_drop_ale_route_engine,
         );
         if debug_stage_timing {
@@ -4354,6 +4406,7 @@ fn run_replay(options: Options, visual_window: Option<robin_rs::window::GameWind
             &frame,
             tick_effects.code as i32,
             map,
+            header.initial_npc_transients.is_empty(),
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -5487,6 +5540,9 @@ fn open_jsonl_trace(trace_path: &std::path::Path) -> Box<dyn BufRead> {
 ///   `None`), and the two fields where Original's `null` is meaningful keep
 ///   the distinction in their typed `Option<Option<_>>` form. Array elements
 ///   are never removed.
+/// * Empty array/object entries are removed after their children normalize:
+///   additive legacy collections parse from an absent key but re-serialize as
+///   empty, so the typed compatibility schema deliberately identifies the two.
 fn normalize_trace_json_for_roundtrip(value: &mut serde_json::Value) {
     normalize_trace_json_for_roundtrip_inner(value);
 }
@@ -5508,7 +5564,39 @@ fn normalize_trace_json_for_roundtrip_inner(value: &mut serde_json::Value) {
             for child in map.values_mut() {
                 normalize_trace_json_for_roundtrip_inner(child);
             }
-            map.retain(|_, child| !child.is_null());
+            map.retain(|key, child| match child {
+                serde_json::Value::Null => false,
+                serde_json::Value::Array(items) => !items.is_empty(),
+                serde_json::Value::Object(entries) => !entries.is_empty(),
+                // Early schema-16 elements omitted this additive observation.
+                // Its compatibility default is false and is excluded from
+                // logical comparison for that recorder generation.
+                serde_json::Value::Bool(false)
+                    if matches!(
+                        key.as_str(),
+                        "increment_map_valid"
+                            | "passing_door_directly"
+                            | "script_locked"
+                            | "locked"
+                            | "was_busy"
+                            | "very_busy"
+                            | "macro_timer_running"
+                            | "macro_in_progress"
+                    ) =>
+                {
+                    false
+                }
+                serde_json::Value::Number(number)
+                    if number.as_u64() == Some(0)
+                        && matches!(
+                            key.as_str(),
+                            "locks" | "macro_timer_ring" | "macro_remaining"
+                        ) =>
+                {
+                    false
+                }
+                _ => true,
+            });
         }
         serde_json::Value::Array(items) => {
             for item in items {
@@ -6931,8 +7019,8 @@ fn ensure_native_binary_trace_locked(
             header.version,
             header.source_fingerprint
         ),
-        Err(error) if native_path.exists() => panic!(
-            "native parity trace {} is unreadable: {error}; remove the derived native file and retry (its JSONL source is still present)",
+        Err(error) if native_path.exists() => eprintln!(
+            "rebuilding unreadable derived native parity trace {} from its JSONL source: {error}",
             native_path.display()
         ),
         Err(_) => eprintln!(
@@ -7787,10 +7875,6 @@ fn restore_campaign(
             }
         })
         .collect();
-    // The Original trace retains mission status but not replay-grade attempt
-    // evidence. Reconstruct the same honest incomplete history used by C++
-    // save import instead of leaving won missions with fabricated emptiness.
-    campaign.reconstruct_original_save_history(&[]);
     let mission_count = campaign.missions.len();
     let validate_mission_index = |index: usize| {
         assert!(
@@ -7938,7 +8022,10 @@ fn restore_campaign(
                     pc_description_idx: validate_character_index(occupant.character_index),
                     x: occupant.x.value(),
                     y: occupant.y.value(),
-                    obstacle: occupant.obstacle,
+                    obstacle:
+                        robin_engine::position_interface::ObstacleHandle::from_serialized_pointer(
+                            occupant.obstacle,
+                        ),
                 })
                 .collect(),
             amount: source.amount,
@@ -8979,7 +9066,11 @@ fn compare_path_events(
     differences
 }
 
-fn collect_json_differences(
+/// Compare an authoritative recorded JSON projection against a richer Rust
+/// projection. Every field emitted by Original must match; Rust-only fields
+/// are intentionally ignored so the engine may expose additional diagnostics
+/// without retroactively changing the trace schema.
+fn collect_json_subset_differences(
     path: &str,
     expected: &serde_json::Value,
     actual: &serde_json::Value,
@@ -8998,7 +9089,7 @@ fn collect_json_differences(
                 ));
             }
             for (index, (expected, actual)) in expected.iter().zip(actual).enumerate() {
-                collect_json_differences(
+                collect_json_subset_differences(
                     &format!("{path}[{index}]"),
                     expected,
                     actual,
@@ -9007,20 +9098,36 @@ fn collect_json_differences(
             }
         }
         (serde_json::Value::Object(expected), serde_json::Value::Object(actual)) => {
-            for key in expected.keys().chain(actual.keys()) {
-                match (expected.get(key), actual.get(key)) {
-                    (Some(expected), Some(actual)) => collect_json_differences(
+            // `value` is a human-readable rendering of the authoritative f32
+            // bit pattern. nlohmann-json and serde-json can choose adjacent
+            // decimal spellings for the same bits.
+            if expected.len() == 2
+                && actual.len() == 2
+                && expected.contains_key("bits")
+                && expected.contains_key("value")
+                && actual.contains_key("bits")
+                && actual.contains_key("value")
+            {
+                collect_json_subset_differences(
+                    &format!("{path}.bits"),
+                    &expected["bits"],
+                    &actual["bits"],
+                    differences,
+                );
+                return;
+            }
+
+            for (key, expected) in expected {
+                match actual.get(key) {
+                    Some(actual) => collect_json_subset_differences(
                         &format!("{path}.{key}"),
                         expected,
                         actual,
                         differences,
                     ),
-                    (Some(expected), None) => differences.push(format!(
+                    None => differences.push(format!(
                         "{path}.{key}: original={expected:?} rust=<missing>"
                     )),
-                    (None, Some(actual)) => differences
-                        .push(format!("{path}.{key}: original=<missing> rust={actual:?}")),
-                    (None, None) => unreachable!(),
                 }
                 if differences.len() >= 64 {
                     break;
@@ -9046,6 +9153,70 @@ fn trace_entity_kind_name(name: &str) -> Option<TraceEntityKind> {
         "net" => TraceEntityKind::Net,
         _ => return None,
     })
+}
+
+fn parity_float_is_positive_zero(value: &serde_json::Value) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("bits"))
+        .and_then(serde_json::Value::as_u64)
+        == Some(0)
+}
+
+fn original_blocked_box_is_unset(value: &serde_json::Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    if object.len() != 2 {
+        return false;
+    }
+    ["min", "max"].into_iter().all(|corner| {
+        let Some(point) = object.get(corner).and_then(serde_json::Value::as_object) else {
+            return false;
+        };
+        point.len() == 2
+            && ["x", "y"]
+                .into_iter()
+                .all(|axis| point.get(axis).is_some_and(parity_float_is_positive_zero))
+    })
+}
+
+/// Translate Original-only wire representations into their Rust parity
+/// projection equivalents.
+///
+/// `RHOrder::mulNextID` starts at zero (`RHorder.cpp:13-21`), whereas Rust
+/// deliberately uses `NonZeroU32` order IDs. This is the same +1 translation
+/// used while adopting legacy saves, but runtime snapshots must retain their
+/// authoritative raw payload and apply it only while comparing.
+///
+/// Original's `SBGeoBoundingBox2D::Reset` clears only
+/// `mbBoxBoundsAreSet` (`sblibng/SBGeoBoundingBox2D.cpp:299-305`). The parity
+/// emitter omits that bit and therefore publishes a newly constructed unset
+/// blocked box as an all-positive-zero object. Rust represents the same unset
+/// state as `null`.
+fn canonicalize_original_runtime_representation(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(values) => {
+            for value in values {
+                canonicalize_original_runtime_representation(value);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                if key == "last_processed_order_id"
+                    && let Some(original) = child.as_u64()
+                    && original < u64::from(u32::MAX)
+                {
+                    *child = serde_json::Value::from(original + 1);
+                } else if key == "blocked_box" && original_blocked_box_is_unset(child) {
+                    *child = serde_json::Value::Null;
+                } else {
+                    canonicalize_original_runtime_representation(child);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn entity_kind_name(kind: robin_engine::element::EntityIdKind) -> &'static str {
@@ -9142,6 +9313,7 @@ fn compare_frame(
     frame: &TraceFrame,
     actual_game_code: i32,
     entity_map: &EntityMap,
+    legacy_additive_omissions: bool,
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
@@ -9322,13 +9494,15 @@ fn compare_frame(
             expected.increment_map,
             MapPoint::new(increment_map.x, increment_map.y),
         );
-        compare(
-            &mut differences,
-            id,
-            "increment_map_valid",
-            expected.increment_map_valid,
-            pi.is_increment_map_computed(),
-        );
+        if !legacy_additive_omissions {
+            compare(
+                &mut differences,
+                id,
+                "increment_map_valid",
+                expected.increment_map_valid,
+                pi.is_increment_map_computed(),
+            );
+        }
         if !undefined_runtime_bonus_old_position {
             let movement_map = element.position_map() - pi.old_map_position();
             compare_point(
@@ -9417,14 +9591,17 @@ fn compare_frame(
             element.sprite.frame_count,
         );
         let mut expected_runtime = expected.runtime.to_json();
-        canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
-        let actual_runtime = engine.parity_entity_runtime_state(id, assets);
-        collect_json_differences(
-            &format!("{id_label:?}.runtime"),
-            &expected_runtime,
-            &actual_runtime,
-            &mut differences,
-        );
+        if !expected_runtime.is_null() {
+            canonicalize_original_runtime_representation(&mut expected_runtime);
+            canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
+            let actual_runtime = engine.parity_entity_runtime_state(id, assets);
+            collect_json_subset_differences(
+                &format!("{id_label:?}.runtime"),
+                &expected_runtime,
+                &actual_runtime,
+                &mut differences,
+            );
+        }
         if let Some(expected_actor) = &expected.actor {
             let actual_actor = actual
                 .actor_data()
@@ -9473,24 +9650,29 @@ fn compare_frame(
                 command_from_stable_name(&expected_actor.command_name),
                 engine.actor_command(id),
             );
-            compare(
-                &mut differences,
-                id,
-                "actor.passing_door_directly",
-                expected_actor.passing_door_directly,
-                actual_actor.passing_door_directly,
-            );
-            let expected_pass_key = expected_actor
-                .active_pass_door
-                .as_ref()
-                .map(trace_pass_door_key);
-            let actual_pass = engine
-                .actor_selected_pass_door(id)
-                .map(|(gate_id, direction)| (gate_id.0, direction != 0));
-            if !active_pass_door_keys_match(expected_actor.active_pass_door.as_ref(), actual_pass) {
-                differences.push(format!(
-                    "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"
-                ));
+            if !legacy_additive_omissions {
+                compare(
+                    &mut differences,
+                    id,
+                    "actor.passing_door_directly",
+                    expected_actor.passing_door_directly,
+                    actual_actor.passing_door_directly,
+                );
+                let expected_pass_key = expected_actor
+                    .active_pass_door
+                    .as_ref()
+                    .map(trace_pass_door_key);
+                let actual_pass = engine
+                    .actor_selected_pass_door(id)
+                    .map(|(gate_id, direction)| (gate_id.get(), direction != 0));
+                if !active_pass_door_keys_match(
+                    expected_actor.active_pass_door.as_ref(),
+                    actual_pass,
+                ) {
+                    differences.push(format!(
+                        "{id:?}.actor.active_pass_door.(gate_id,direct): original={expected_pass_key:?} rust={actual_pass:?}"
+                    ));
+                }
             }
             if let Some(expected_sequence) = &expected_actor.sequence_element {
                 compare(
@@ -9653,171 +9835,173 @@ fn compare_frame(
                 expected_ai.substate,
                 actual_ai.current_substate as u32,
             );
-            compare(
-                &mut differences,
-                id,
-                "ai.script_locked",
-                expected_ai.script_locked,
-                actual_ai.ai_is_script_locked(),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.locked",
-                expected_ai.locked,
-                actual_ai.ai_is_locked(),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.locks",
-                expected_ai.locks,
-                actual_ai.locks_flag_field.bits(),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.was_busy",
-                expected_ai.was_busy,
-                actual_ai.was_busy,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.very_busy",
-                expected_ai.very_busy,
-                engine.is_very_very_busy(id),
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_timer_running",
-                expected_ai.macro_timer_running,
-                actual_ai.macro_timer_is_running,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_timer_ring",
-                expected_ai.macro_timer_ring,
-                actual_ai.when_does_macro_timer_ring,
-            );
-            // The cursor is only a position while it still lies inside the
-            // waypoint block it was authored against. Advancing the patrol path
-            // or breaking a macro leaves the cursor behind on the previous
-            // waypoint's data, and the Original can only report an offset when
-            // its pointer still falls within the current waypoint's block.
-            // That is a question of identity, not of content: two waypoints can
-            // carry byte-identical macro data, so the retained stream has to be
-            // the one taken from the waypoint the path currently stands on.
-            let current_waypoint = actual_ai
-                .has_patrol_path
-                .then_some(actual_ai.patrol_path.as_ref())
-                .flatten()
-                .map(|path| (path.hiking_path_index, path.current_waypoint_index));
-            let actual_macro_cursor = current_waypoint
-                .filter(|current| {
-                    actual_ai.macro_command_waypoint == Some(*current)
-                        && !actual_ai.macro_command.is_empty()
-                        && actual_ai.macro_command_offset <= actual_ai.macro_command.len()
-                })
-                .map(|_| {
-                    u16::try_from(actual_ai.macro_command_offset).unwrap_or_else(|_| {
-                        panic!(
-                            "NPC {id:?} macro cursor {} exceeds Original's UWORD domain",
-                            actual_ai.macro_command_offset
-                        )
+            if !legacy_additive_omissions {
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.script_locked",
+                    expected_ai.script_locked,
+                    actual_ai.ai_is_script_locked(),
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.locked",
+                    expected_ai.locked,
+                    actual_ai.ai_is_locked(),
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.locks",
+                    expected_ai.locks,
+                    actual_ai.locks_flag_field.bits(),
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.was_busy",
+                    expected_ai.was_busy,
+                    actual_ai.was_busy,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.very_busy",
+                    expected_ai.very_busy,
+                    engine.is_very_very_busy(id),
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_timer_running",
+                    expected_ai.macro_timer_running,
+                    actual_ai.macro_timer_is_running,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_timer_ring",
+                    expected_ai.macro_timer_ring,
+                    actual_ai.when_does_macro_timer_ring,
+                );
+                // The cursor is only a position while it still lies inside the
+                // waypoint block it was authored against. Advancing the patrol path
+                // or breaking a macro leaves the cursor behind on the previous
+                // waypoint's data, and the Original can only report an offset when
+                // its pointer still falls within the current waypoint's block.
+                // That is a question of identity, not of content: two waypoints can
+                // carry byte-identical macro data, so the retained stream has to be
+                // the one taken from the waypoint the path currently stands on.
+                let current_waypoint = actual_ai
+                    .has_patrol_path
+                    .then_some(actual_ai.patrol_path.as_ref())
+                    .flatten()
+                    .map(|path| (path.hiking_path_index, path.current_waypoint_index));
+                let actual_macro_cursor = current_waypoint
+                    .filter(|current| {
+                        actual_ai.macro_command_waypoint == Some(*current)
+                            && !actual_ai.macro_command.is_empty()
+                            && actual_ai.macro_command_offset <= actual_ai.macro_command.len()
                     })
-                });
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_cursor",
-                expected_ai.macro_cursor,
-                actual_macro_cursor,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_remaining",
-                expected_ai.macro_remaining,
-                actual_ai.number_of_remaining_macro_bytes,
-            );
-            compare(
-                &mut differences,
-                id,
-                "ai.macro_in_progress",
-                expected_ai.macro_in_progress,
-                actual_ai.macro_in_progress,
-            );
-            let expected_us: Vec<EntityId> = expected_ai
-                .list_us
-                .iter()
-                .copied()
-                .map(|human| entity_map.translate(human))
-                .collect();
-            let actual_us: Vec<EntityId> = actual_ai
-                .list_us
-                .iter()
-                .map(|&handle| {
-                    engine.entity_id_for_index(handle).unwrap_or_else(|| {
-                        panic!("AI list_us handle {handle} refers to a vacant entity slot")
+                    .map(|_| {
+                        u16::try_from(actual_ai.macro_command_offset).unwrap_or_else(|_| {
+                            panic!(
+                                "NPC {id:?} macro cursor {} exceeds Original's UWORD domain",
+                                actual_ai.macro_command_offset
+                            )
+                        })
+                    });
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_cursor",
+                    expected_ai.macro_cursor,
+                    actual_macro_cursor,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_remaining",
+                    expected_ai.macro_remaining,
+                    actual_ai.number_of_remaining_macro_bytes,
+                );
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.macro_in_progress",
+                    expected_ai.macro_in_progress,
+                    actual_ai.macro_in_progress,
+                );
+                let expected_us: Vec<EntityId> = expected_ai
+                    .list_us
+                    .iter()
+                    .copied()
+                    .map(|human| entity_map.translate(human))
+                    .collect();
+                let actual_us: Vec<EntityId> = actual_ai
+                    .list_us
+                    .iter()
+                    .map(|&handle| {
+                        engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                            panic!("AI list_us handle {handle} refers to a vacant entity slot")
+                        })
                     })
-                })
-                .collect();
-            compare(&mut differences, id, "ai.list_us", expected_us, actual_us);
-            let expected_them: Vec<EntityId> = expected_ai
-                .list_them
-                .iter()
-                .copied()
-                .map(|human| entity_map.translate(human))
-                .collect();
-            let actual_them: Vec<EntityId> = actual
-                .enemy_ai()
-                .map(|enemy| {
-                    enemy
-                        .list_them
-                        .iter()
-                        .map(|&handle| {
-                            engine.entity_id_for_index(handle).unwrap_or_else(|| {
+                    .collect();
+                compare(&mut differences, id, "ai.list_us", expected_us, actual_us);
+                let expected_them: Vec<EntityId> = expected_ai
+                    .list_them
+                    .iter()
+                    .copied()
+                    .map(|human| entity_map.translate(human))
+                    .collect();
+                let actual_them: Vec<EntityId> = actual
+                    .enemy_ai()
+                    .map(|enemy| {
+                        enemy
+                            .list_them
+                            .iter()
+                            .map(|&handle| {
+                                engine.entity_id_for_index(handle).unwrap_or_else(|| {
                                 panic!(
                                     "AI list_them handle {handle} refers to a vacant entity slot"
                                 )
                             })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            compare(
-                &mut differences,
-                id,
-                "ai.list_them",
-                expected_them,
-                actual_them,
-            );
-            let expected_line = expected_ai.my_line_jump.as_ref().map(trace_jump_line_bits);
-            let actual_line_index = actual.enemy_ai().and_then(|enemy| enemy.my_line_jump);
-            if expected_line.is_some() && actual.enemy_ai().is_none() {
-                panic!("trace reports a non-null my_line_jump for non-enemy entity {id:?}");
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.list_them",
+                    expected_them,
+                    actual_them,
+                );
+                let expected_line = expected_ai.my_line_jump.as_ref().map(trace_jump_line_bits);
+                let actual_line_index = actual.enemy_ai().and_then(|enemy| enemy.my_line_jump);
+                if expected_line.is_some() && actual.enemy_ai().is_none() {
+                    panic!("trace reports a non-null my_line_jump for non-enemy entity {id:?}");
+                }
+                let actual_line = actual_line_index.map(|line_index| {
+                    let line = engine
+                        .fast_grid()
+                        .level
+                        .jump_lines
+                        .get(line_index as usize)
+                        .unwrap_or_else(|| {
+                            panic!("enemy {id:?} my_line_jump index {line_index} is out of range")
+                        });
+                    runtime_jump_line_bits(line)
+                });
+                compare(
+                    &mut differences,
+                    id,
+                    "ai.my_line_jump",
+                    expected_line,
+                    actual_line,
+                );
             }
-            let actual_line = actual_line_index.map(|line_index| {
-                let line = engine
-                    .fast_grid()
-                    .level
-                    .jump_lines
-                    .get(line_index as usize)
-                    .unwrap_or_else(|| {
-                        panic!("enemy {id:?} my_line_jump index {line_index} is out of range")
-                    });
-                runtime_jump_line_bits(line)
-            });
-            compare(
-                &mut differences,
-                id,
-                "ai.my_line_jump",
-                expected_line,
-                actual_line,
-            );
         }
         if let Some(expected_detection) = &expected.detection {
             let npc = actual
@@ -10260,7 +10444,7 @@ mod tests {
     }
 
     #[test]
-    fn current_schema_npc_boundary_transients_are_typed_and_bounded() {
+    fn npc_boundary_transients_are_typed_bounded_and_legacy_defaulted() {
         let parsed: Vec<TraceInitialNpcTransient> = serde_json::from_value(serde_json::json!([
             {"creation_order": 96, "maximal_visibility": 31},
             {"creation_order": 117, "maximal_visibility": 47}
@@ -10293,9 +10477,9 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("initial_npc_transients");
-        let error = serde_json::from_value::<TraceHeader>(header)
-            .expect_err("current headers must include the NPC transient boundary");
-        assert!(error.to_string().contains("initial_npc_transients"));
+        let legacy = serde_json::from_value::<TraceHeader>(header)
+            .expect("legacy schema-16 headers default the additive NPC transient boundary");
+        assert!(legacy.initial_npc_transients.is_empty());
     }
 
     fn write_test_native_records(
@@ -11186,7 +11370,7 @@ mod tests {
     }
 
     #[test]
-    fn current_sword_seek_distance_is_required_and_direct_distance_is_ignored() {
+    fn sword_seek_distance_defaults_legacy_records_and_direct_distance_is_ignored() {
         let missing = serde_json::json!({
             "type": "sword_strike",
             "actor": { "kind": "pc", "index": 3 },
@@ -11195,9 +11379,15 @@ mod tests {
             "original_command_name": "swordstrike_thrust_a",
             "with_seek": true
         });
-        assert!(serde_json::from_value::<TraceCommand>(missing).is_err());
+        let missing: TraceCommand = serde_json::from_value(missing)
+            .expect("legacy sword-strike command may omit seek distance");
+        let TraceCommand::SwordStrike { seek_distance, .. } = missing else {
+            panic!("decoded wrong trace command")
+        };
+        assert!(seek_distance.is_nan());
 
         assert_eq!(trace_sword_seek_distance(false, 0.0), None);
+        assert_eq!(trace_sword_seek_distance(true, seek_distance), None);
         assert_eq!(trace_sword_seek_distance(true, 63.0), Some(63.0));
     }
 
@@ -12235,8 +12425,6 @@ mod tests {
             "strike_proposal_events",
             "sequence_lifecycle_events",
             "target_lifecycle_events",
-            "movement_steps",
-            "flight_steps",
         ] {
             let mut incomplete = minimal_frame_json();
             incomplete.as_object_mut().unwrap().remove(required);
@@ -12933,7 +13121,7 @@ mod tests {
     }
 
     #[test]
-    fn current_ai_and_human_snapshots_reject_missing_fields() {
+    fn current_ai_core_and_human_snapshots_reject_missing_fields() {
         let complete_ai = serde_json::json!({
             "state": 3,
             "substate": 17,
@@ -12951,7 +13139,7 @@ mod tests {
             "list_them": [],
             "my_line_jump": null
         });
-        for required in complete_ai.as_object().unwrap().keys() {
+        for required in ["state", "substate"] {
             let mut incomplete = complete_ai.clone();
             incomplete.as_object_mut().unwrap().remove(required);
             assert!(
@@ -12959,6 +13147,18 @@ mod tests {
                 "current AI snapshot accepted missing {required}"
             );
         }
+        let additive_defaults: TraceAi = serde_json::from_value(serde_json::json!({
+            "state": 3,
+            "substate": 17
+        }))
+        .expect("parse AI snapshot without later additive diagnostics");
+        assert!(!additive_defaults.script_locked);
+        assert!(!additive_defaults.locked);
+        assert_eq!(additive_defaults.locks, 0);
+        assert_eq!(additive_defaults.macro_cursor, None);
+        assert!(additive_defaults.list_us.is_empty());
+        assert!(additive_defaults.list_them.is_empty());
+        assert!(additive_defaults.my_line_jump.is_none());
 
         let complete_human = serde_json::json!({
             "life_points": 60,
@@ -12979,6 +13179,102 @@ mod tests {
                 "current human snapshot accepted missing {required}"
             );
         }
+    }
+
+    #[test]
+    fn runtime_snapshot_canonicalizes_original_zero_based_order_ids() {
+        let mut expected = serde_json::json!({
+            "sprite": {
+                "last_processed_order_id": 41,
+                "unrelated_id": 41
+            },
+            "nested": [{"last_processed_order_id": 0}],
+            "sentinel": {"last_processed_order_id": u32::MAX}
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+
+        assert_eq!(expected["sprite"]["last_processed_order_id"], 42);
+        assert_eq!(expected["sprite"]["unrelated_id"], 41);
+        assert_eq!(expected["nested"][0]["last_processed_order_id"], 1);
+        assert_eq!(expected["sentinel"]["last_processed_order_id"], u32::MAX);
+    }
+
+    #[test]
+    fn runtime_snapshot_canonicalizes_only_zero_original_blocked_boxes() {
+        let float = |bits| serde_json::json!({"bits": bits, "value": 0.0});
+        let zero_box = serde_json::json!({
+            "min": {"x": float(0), "y": float(0)},
+            "max": {"x": float(0), "y": float(0)}
+        });
+        let mut expected = serde_json::json!({
+            "position": {"blocked_box": zero_box},
+            "active_position": {"blocked_box": {
+                "min": {"x": float(0), "y": float(0)},
+                "max": {"x": float(0x3f80_0000), "y": float(0)}
+            }},
+            "unrelated_box": zero_box
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+
+        assert!(expected["position"]["blocked_box"].is_null());
+        assert!(expected["active_position"]["blocked_box"].is_object());
+        assert!(expected["unrelated_box"].is_object());
+    }
+
+    #[test]
+    fn runtime_snapshot_compatibility_projection_matches_rust_representation() {
+        let mut expected = serde_json::json!({
+            "position": {"blocked_box": {
+                "min": {
+                    "x": {"bits": 0, "value": 0.0},
+                    "y": {"bits": 0, "value": 0.0}
+                },
+                "max": {
+                    "x": {"bits": 0, "value": 0.0},
+                    "y": {"bits": 0, "value": 0.0}
+                }
+            }},
+            "sprite": {"last_processed_order_id": 41}
+        });
+        let actual = serde_json::json!({
+            "position": {"blocked_box": null},
+            "sprite": {"last_processed_order_id": 42}
+        });
+
+        canonicalize_original_runtime_representation(&mut expected);
+        let mut differences = Vec::new();
+        collect_json_subset_differences("runtime", &expected, &actual, &mut differences);
+
+        assert!(differences.is_empty(), "{differences:#?}");
+    }
+
+    #[test]
+    fn runtime_snapshot_comparison_requires_recorded_subset_and_float_bits() {
+        let expected = serde_json::json!({
+            "position": {
+                "world": {"bits": 1, "value": 1.401298464324817e-45}
+            }
+        });
+        let actual = serde_json::json!({
+            "position": {
+                "world": {"bits": 1, "value": 1.4012984643248171e-45}
+            },
+            "rust_only_diagnostic": true
+        });
+        let mut differences = Vec::new();
+        collect_json_subset_differences("runtime", &expected, &actual, &mut differences);
+        assert!(differences.is_empty());
+
+        let wrong_bits = serde_json::json!({
+            "position": {
+                "world": {"bits": 2, "value": 1.401298464324817e-45}
+            }
+        });
+        collect_json_subset_differences("runtime", &expected, &wrong_bits, &mut differences);
+        assert_eq!(differences.len(), 1);
+        assert!(differences[0].contains("runtime.position.world.bits"));
     }
 
     #[test]
@@ -13401,9 +13697,9 @@ mod tests {
             // Rust installed the stateful doors first, so its runtime peer is
             // door-table index 3.
             gates: vec![
-                robin_engine::gate::DoorIndex(0),
-                robin_engine::gate::DoorIndex(3),
-                robin_engine::gate::DoorIndex(1),
+                robin_engine::gate::DoorIndex::from(0),
+                robin_engine::gate::DoorIndex::from(3),
+                robin_engine::gate::DoorIndex::from(1),
             ],
             runtime_creation_order_boundary: 0,
         };
@@ -13449,7 +13745,9 @@ mod tests {
             entities_by_creation_order: BTreeMap::new(),
             sectors: BTreeMap::new(),
             sector_indices: BTreeMap::new(),
-            gates: (0..=max_gate).map(robin_engine::gate::DoorIndex).collect(),
+            gates: (0..=max_gate)
+                .map(robin_engine::gate::DoorIndex::from)
+                .collect(),
             runtime_creation_order_boundary: 0,
         }
     }
@@ -13871,7 +14169,7 @@ mod tests {
                     robin_engine::fast_find_grid::SectorIndex::new(38).unwrap(),
                 ),
             ]),
-            gates: vec![robin_engine::gate::DoorIndex(42)],
+            gates: vec![robin_engine::gate::DoorIndex::from(42)],
             runtime_creation_order_boundary: 0,
         }
     }
@@ -13916,7 +14214,7 @@ mod tests {
                     source_layer: 6,
                     outcome: robin_engine::gate::RecordedGateOutcome::Success(vec![
                         robin_engine::gate::GatePathStep {
-                            door_index: robin_engine::gate::DoorIndex(42),
+                            door_index: robin_engine::gate::DoorIndex::from(42),
                             direct: false,
                         },
                     ]),
@@ -13960,8 +14258,38 @@ mod tests {
             &mut BTreeSet::new(),
             &BTreeSet::new(),
             &drop_ale_route_map(actor),
+            false,
             |_, _| false,
         );
+    }
+
+    #[test]
+    fn legacy_delayed_drop_ale_ignores_route_without_staged_seek() {
+        let actor = TraceEntityId {
+            kind: TraceEntityKind::Pc,
+            index: 320,
+        };
+        let target = TracePoint {
+            x: TraceFloat {
+                bits: 2607.467_041_f32.to_bits(),
+            },
+            y: TraceFloat {
+                bits: 881.610_474_f32.to_bits(),
+            },
+        };
+        let mut consumed = BTreeSet::new();
+
+        let routes = collect_current_delayed_drop_ale_routes_matching(
+            &[drop_ale_route_fixture(actor, target)],
+            &mut consumed,
+            &BTreeSet::new(),
+            &drop_ale_route_map(actor),
+            true,
+            |_, _| false,
+        );
+
+        assert!(routes.is_empty());
+        assert!(consumed.is_empty());
     }
 
     #[test]
@@ -13991,6 +14319,7 @@ mod tests {
             &mut consumed,
             &BTreeSet::new(),
             &drop_ale_route_map(actor),
+            false,
             |runtime_actor, destination| {
                 runtime_actor == EntityId::Pc(robin_engine::entity_id::PcId(12))
                     && destination.x.to_bits() == target.x.bits

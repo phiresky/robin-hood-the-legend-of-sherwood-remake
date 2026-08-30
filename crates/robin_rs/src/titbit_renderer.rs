@@ -447,7 +447,9 @@ impl TitbitRenderer {
                 TitbitKind::QuickAction | TitbitKind::QuickActionRun
             ) && !titbit.blinking
             {
-                let mgr = titbit.element_manager.0;
+                let Some(mgr) = titbit.element_manager.map(|manager| manager.0) else {
+                    continue;
+                };
                 if !engine
                     .hero_selection(host.transport.local_seat)
                     .iter()
@@ -459,7 +461,9 @@ impl TitbitRenderer {
 
             // DangerPoint: only show when the managing PC is selected.
             if titbit.kind == TitbitKind::DangerPoint {
-                let mgr = titbit.element_manager.0;
+                let Some(mgr) = titbit.element_manager.map(|manager| manager.0) else {
+                    continue;
+                };
                 if !engine
                     .hero_selection(host.transport.local_seat)
                     .iter()
@@ -476,8 +480,8 @@ impl TitbitRenderer {
             // blipped / in-building skip so the inspector can see AI
             // reactions through walls — active+alive guard stays.
             if titbit.kind == TitbitKind::Emoticon
-                && titbit.element_supplier.is_valid()
-                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(supplier) = titbit.element_supplier
+                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
                 && let Some(entity) = engine.get_entity(entity_id)
             {
                 let elem = entity.element_data();
@@ -492,8 +496,8 @@ impl TitbitRenderer {
             // WeakStunned/Speak: skip if entity is out of order or
             // inactive.
             if matches!(titbit.kind, TitbitKind::WeakStunned | TitbitKind::Speak)
-                && titbit.element_supplier.is_valid()
-                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(supplier) = titbit.element_supplier
+                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
                 && let Some(entity) = engine.get_entity(entity_id)
                 && !entity.is_active()
             {
@@ -504,8 +508,8 @@ impl TitbitRenderer {
             // inside a building — the speak titbit only renders when
             // the entity is neither blipped nor inside a building.
             if titbit.kind == TitbitKind::Speak
-                && titbit.element_supplier.is_valid()
-                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(supplier) = titbit.element_supplier
+                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
                 && let Some(entity) = engine.get_entity(entity_id)
             {
                 let elem = entity.element_data();
@@ -516,8 +520,8 @@ impl TitbitRenderer {
 
             // WorkIcon: skip if entity is inactive.
             if titbit.kind == TitbitKind::WorkIcon
-                && titbit.element_supplier.is_valid()
-                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(supplier) = titbit.element_supplier
+                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
                 && let Some(entity) = engine.get_entity(entity_id)
                 && !entity.is_active()
             {
@@ -537,8 +541,8 @@ impl TitbitRenderer {
             // is set to BowTraining.
             if titbit.kind == TitbitKind::WorkIcon
                 && titbit.sprite_row == SpriteRow::WorkIconBowTraining as u16
-                && titbit.element_supplier.is_valid()
-                && let Some(entity_id) = engine.entity_id_for_index(titbit.element_supplier.0)
+                && let Some(supplier) = titbit.element_supplier
+                && let Some(entity_id) = engine.entity_id_for_index(supplier.0)
                 && let Some(entity) = engine.get_entity(entity_id)
             {
                 let has_bow = entity.pc_data().is_some_and(|pc| {
@@ -567,9 +571,9 @@ impl TitbitRenderer {
             // transition frames between knockout and the idle-unconscious
             // animation the titbit exists but is not drawn.
             if titbit.kind == TitbitKind::UnconsciousStar
-                && titbit.element_supplier.is_valid()
+                && let Some(supplier) = titbit.element_supplier
                 && !engine
-                    .entity_id_for_index(titbit.element_supplier.0)
+                    .entity_id_for_index(supplier.0)
                     .is_some_and(|id| engine.can_have_unconscious_stars(id))
             {
                 continue;
@@ -633,7 +637,7 @@ impl TitbitRenderer {
                 titbit.kind,
                 TitbitKind::QuickAction | TitbitKind::QuickActionRun
             ) {
-                let supplier_attached = titbit.element_supplier.is_valid();
+                let supplier_attached = titbit.element_supplier.is_some();
                 let (mut dst_x, dst_y) = quick_action_screen_origin(
                     screen_pt.x,
                     screen_pt.y,
@@ -689,7 +693,7 @@ impl TitbitRenderer {
                     };
                     (x, y)
                 }
-                TitbitKind::UnconsciousStar if titbit.element_supplier.is_valid() => (
+                TitbitKind::UnconsciousStar if titbit.element_supplier.is_some() => (
                     floor_centered(screen_pt.x, row_mw.unwrap_or(w)) + ox as i32,
                     floor_centered(screen_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
                 ),

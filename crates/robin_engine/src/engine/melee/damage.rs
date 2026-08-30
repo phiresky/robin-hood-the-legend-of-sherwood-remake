@@ -2294,21 +2294,18 @@ impl EngineInner {
         let goal_y = goal.y;
         let (goal_obstacle, goal_z) = match victim_sector {
             Some(sector) => {
-                match self.get_projection_area_index(assets, sector.get(), victim_layer, goal) {
+                match self.get_projection_area_index(assets, sector, victim_layer, goal) {
                     Some(obstacle_index) => {
                         let z = self
                             .sight_obstacles(assets)
-                            .get(obstacle_index as usize)
+                            .get(usize::from(obstacle_index))
                             .unwrap_or_else(|| {
                                 panic!(
                                     "falling-hit goal references missing obstacle {obstacle_index}"
                                 )
                             })
                             .compute_top_z_from_projection(goal_x, goal_y);
-                        (
-                            crate::position_interface::ObstacleHandle::new(obstacle_index),
-                            z,
-                        )
+                        (Some(obstacle_index), z)
                     }
                     None => (None, 0.0),
                 }
@@ -2324,11 +2321,7 @@ impl EngineInner {
             .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
             .position_iface()
             .get_position();
-        self.set_obstacle_and_material(
-            assets,
-            victim_id,
-            goal_obstacle.map(|obstacle| obstacle.get()),
-        );
+        self.set_obstacle_and_material(assets, victim_id, goal_obstacle);
         self.get_entity_mut(victim_id)
             .unwrap_or_else(|| panic!("falling-hit victim {victim_id:?} vanished"))
             .position_iface_mut()
@@ -2809,12 +2802,12 @@ impl EngineInner {
             let mut left_neighbours = Vec::new();
             let mut right_neighbours = Vec::new();
             let left_neighbour = std::mem::take(&mut enemy.left_combat_neighbour);
-            if left_neighbour != 0 {
-                left_neighbours.push(left_neighbour);
+            if let Some(left_neighbour) = left_neighbour {
+                left_neighbours.push(left_neighbour.get());
             }
             let right_neighbour = std::mem::take(&mut enemy.right_combat_neighbour);
-            if right_neighbour != 0 {
-                right_neighbours.push(right_neighbour);
+            if let Some(right_neighbour) = right_neighbour {
+                right_neighbours.push(right_neighbour.get());
             }
             // `EnemyAi::set_state` zeroes the victim's local fields eagerly,
             // but queues the reciprocal zero writes. Death clears that queue
@@ -2823,7 +2816,7 @@ impl EngineInner {
                 match *action {
                     crate::ai::CrossNpcAction::SetRightCombatNeighbour {
                         target,
-                        neighbour: 0,
+                        neighbour: None,
                     } => {
                         if target != 0 && !left_neighbours.contains(&target) {
                             left_neighbours.push(target);
@@ -2831,7 +2824,7 @@ impl EngineInner {
                     }
                     crate::ai::CrossNpcAction::SetLeftCombatNeighbour {
                         target,
-                        neighbour: 0,
+                        neighbour: None,
                     } if target != 0 && !right_neighbours.contains(&target) => {
                         right_neighbours.push(target);
                     }
@@ -2851,23 +2844,26 @@ impl EngineInner {
             let mut shield_bearers = Vec::new();
             let mut archers = Vec::new();
             let shield_bearer = std::mem::take(&mut enemy.shield_bearer_before_me);
-            if shield_bearer != 0 {
-                shield_bearers.push(shield_bearer);
+            if let Some(shield_bearer) = shield_bearer {
+                shield_bearers.push(shield_bearer.get());
             }
             let archer = std::mem::take(&mut enemy.archer_behind_me);
-            if archer != 0 {
-                archers.push(archer);
+            if let Some(archer) = archer {
+                archers.push(archer.get());
             }
             for action in &enemy.base.outbox.reentrant.cross_npc_actions {
                 match *action {
-                    crate::ai::CrossNpcAction::SetArcherBehindMe { target, archer: 0 } => {
+                    crate::ai::CrossNpcAction::SetArcherBehindMe {
+                        target,
+                        archer: None,
+                    } => {
                         if target != 0 && !shield_bearers.contains(&target) {
                             shield_bearers.push(target);
                         }
                     }
                     crate::ai::CrossNpcAction::SetShieldBearerBeforeMe {
                         target,
-                        shield_bearer: 0,
+                        shield_bearer: None,
                     } if target != 0 && !archers.contains(&target) => {
                         archers.push(target);
                     }
@@ -2903,7 +2899,7 @@ impl EngineInner {
                         "dead AI owner {victim_id:?}'s shield bearer {shield_bearer} has no EnemyAi"
                     )
                 });
-            enemy.archer_behind_me = 0;
+            enemy.archer_behind_me = None;
         }
         for archer in archers {
             let archer_id = self.expect_human_id_for_ai_handle(archer, "dead AI owner's archer");
@@ -2915,7 +2911,7 @@ impl EngineInner {
                 .unwrap_or_else(|| {
                     panic!("dead AI owner {victim_id:?}'s archer {archer} has no EnemyAi")
                 });
-            enemy.shield_bearer_before_me = 0;
+            enemy.shield_bearer_before_me = None;
         }
 
         for left_neighbour in left_neighbours {
@@ -2934,7 +2930,7 @@ impl EngineInner {
                          no EnemyAi"
                     )
                 });
-            enemy.right_combat_neighbour = 0;
+            enemy.right_combat_neighbour = None;
         }
         for right_neighbour in right_neighbours {
             let right_id = self.expect_human_id_for_ai_handle(
@@ -2952,7 +2948,7 @@ impl EngineInner {
                          no EnemyAi"
                     )
                 });
-            enemy.left_combat_neighbour = 0;
+            enemy.left_combat_neighbour = None;
         }
 
         for guarded_pc in guarded_pcs {

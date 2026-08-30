@@ -38,9 +38,12 @@ impl EnemyAi {
     /// substitution authored by `Position`.
     pub(super) fn archer_enemy_position(
         &self,
-        enemy_handle: HumanHandle,
+        enemy_handle: impl IntoOptionalAiHandle,
         ctx: &AiContext,
     ) -> Position {
+        let enemy_handle = enemy_handle
+            .into_optional_ai_handle()
+            .expect("archer position lookup requires an enemy");
         ctx.entity_view(enemy_handle)
             .unwrap_or_else(|| {
                 panic!(
@@ -71,7 +74,7 @@ impl EnemyAi {
 
         // Set pending flag — the engine drains this after think() and
         // calls EngineInner::shoot_bow_at to launch the sequence element.
-        self.base.outbox.actor.shoot_target = Some(enemy);
+        self.base.outbox.actor.shoot_target = Some(AiEntityHandle::new(enemy));
     }
 
     /// ProposeShotTarget.
@@ -88,7 +91,7 @@ impl EnemyAi {
         sim: &crate::sim_rng::SimulationContext,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) -> HumanHandle {
+    ) -> Option<AiEntityHandle> {
         let my_pos = &ctx.position;
         // Nose direction vector (not Y-stretched).
         let nose = sector_to_vector(ctx.direction);
@@ -154,8 +157,8 @@ impl EnemyAi {
                 || sub == Substate::AttackingBowLoading as u32
                 || sub == Substate::AttackingBowAiming as u32
             {
-                let target = f.primary_target;
-                if target != 0 {
+                if let Some(target) = f.primary_target {
+                    let target = target.get();
                     if let Some(entry) = bow_multiplicity.iter_mut().find(|e| e.0 == target) {
                         entry.1 += 1;
                     } else {
@@ -168,13 +171,10 @@ impl EnemyAi {
         let is_forest = self.is_merry_man_forest(ctx);
 
         // Scan all enemies, pick nearest valid target.
-        let mut best: HumanHandle = 0;
+        let mut best = None;
         let mut min_sq_distance = f32::INFINITY;
 
         for &enemy_handle in &self.list_them {
-            if enemy_handle == 0 {
-                continue;
-            }
             if !self.is_allowed_to_attack(enemy_handle, ctx, tick) {
                 continue;
             }
@@ -240,7 +240,7 @@ impl EnemyAi {
             });
 
             if !friend_in_the_way {
-                best = enemy_handle;
+                best = Some(AiEntityHandle::new(enemy_handle));
                 min_sq_distance = sq_distance;
             }
         }
@@ -263,13 +263,13 @@ impl EnemyAi {
     pub fn archer_is_too_near_to_enemy(
         &self,
         pos_me: &Position,
-        enemy_handle: HumanHandle,
+        enemy_handle: impl IntoOptionalAiHandle,
         ctx: &AiContext,
         tick: &AiPerTickData,
     ) -> bool {
         // Shield bearer in front of us — he will
         // protect us, don't flinch.
-        if self.shield_bearer_before_me != 0 {
+        if self.shield_bearer_before_me.is_some() {
             return false;
         }
 
@@ -279,6 +279,10 @@ impl EnemyAi {
             return false;
         }
 
+        let enemy_handle = enemy_handle
+            .into_optional_ai_handle()
+            .expect("archer proximity requires a primary target")
+            .get();
         let enemy = self.find_fighter(enemy_handle, tick).unwrap_or_else(|| {
             panic!(
                 "archer {} requires missing primary-target fighter {}",
@@ -353,7 +357,7 @@ impl EnemyAi {
 
 #[cfg(test)]
 mod tests {
-    use crate::ai::{AiContext, Position};
+    use crate::ai::{AiContext, AiEntityHandle, Position};
     use crate::ai_enemy::{EnemyAi, FighterSnapshot, archer};
     use crate::ai_entity_view::{AiEntityViewMap, entity_view_from_entity, shared_entity_views};
     use crate::element::{ActionState, ActorPc, Entity};
@@ -449,7 +453,9 @@ mod tests {
         // interpolated feet are still just outside it. Original scans
         // Point(pEnemy), i.e. AI Position(), in ProposeShotTarget.
         let owner = 127;
-        let target = 172;
+        // Entity arena slot zero is live (normally Robin) and must not be
+        // mistaken for ProposeShotTarget's no-candidate result.
+        let target = 0;
         let committed = Position {
             x: 399.0,
             ..Position::default()
@@ -489,7 +495,7 @@ mod tests {
 
         assert_eq!(
             ai.propose_shot_target(&SimulationContext::with_seed(0), &ctx, &tick),
-            target
+            Some(AiEntityHandle::new(target))
         );
     }
 }

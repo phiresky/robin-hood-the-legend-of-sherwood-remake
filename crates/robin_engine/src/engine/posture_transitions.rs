@@ -1117,6 +1117,8 @@ impl EngineInner {
                 .position_iface()
                 .get_pathfinder_index()
         })
+        .flatten()
+        .map(u16::from)
     }
 
     /// Cumulative pixel distance of a given animation on the actor's
@@ -1353,7 +1355,7 @@ mod tests {
                 order_type: OrderType::RunningUpright,
             });
             actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex(0),
+                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct: false,
                 position_direct: false,
                 steps: Default::default(),
@@ -1472,7 +1474,7 @@ mod tests {
             let actor = entity.actor_data_mut().expect("test actor");
             actor.action_state = ActionState::Waiting;
             actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex(0),
+                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct: false,
                 position_direct: false,
                 steps: VecDeque::from([DoorPassStep::Walk {
@@ -1556,7 +1558,7 @@ mod tests {
                 .expect("test actor");
             actor.action_state = ActionState::MovingSword;
             actor.active_door_pass = Some(ActiveDoorPass {
-                door_index: crate::gate::DoorIndex(0),
+                door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                 direct: false,
                 position_direct: false,
                 steps: VecDeque::from([DoorPassStep::Walk {

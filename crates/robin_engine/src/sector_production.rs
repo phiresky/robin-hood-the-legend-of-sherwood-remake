@@ -89,7 +89,7 @@ pub struct Point {
     pub y: f32,
     pub layer: u16,
     pub sector: u16,
-    pub obstacle: u16,
+    pub obstacle: Option<crate::sight_obstacle::SightObstacleIndex>,
 }
 
 /// A PC captured in a production sector when the player exits Sherwood,
@@ -110,8 +110,7 @@ pub struct Occupant {
     pub pc_description_idx: usize,
     pub x: f32,
     pub y: f32,
-    /// `0xFFFF` means "no obstacle recorded".
-    pub obstacle: u16,
+    pub obstacle: Option<crate::sight_obstacle::SightObstacleIndex>,
 }
 
 #[derive(
@@ -338,7 +337,7 @@ mod tests {
             y,
             layer: 0,
             sector: 0,
-            obstacle: 0xFFFF,
+            obstacle: None,
         }
     }
 
@@ -404,13 +403,13 @@ mod tests {
                 pc_description_idx: 0,
                 x: 0.0,
                 y: 0.0,
-                obstacle: 0xFFFF,
+                obstacle: None,
             },
             Occupant {
                 pc_description_idx: 1,
                 x: 0.0,
                 y: 0.0,
-                obstacle: 0xFFFF,
+                obstacle: None,
             },
         ];
         sector.update_amount(60, false);
@@ -423,13 +422,13 @@ mod tests {
                 pc_description_idx: 0,
                 x: 0.0,
                 y: 0.0,
-                obstacle: 0xFFFF,
+                obstacle: None,
             },
             Occupant {
                 pc_description_idx: 1,
                 x: 0.0,
                 y: 0.0,
-                obstacle: 0xFFFF,
+                obstacle: None,
             },
         ];
         sector.update_amount(60, true);

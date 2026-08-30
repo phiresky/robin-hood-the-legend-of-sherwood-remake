@@ -47,7 +47,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 29;
+pub const NET_PROTOCOL_VERSION: u32 = 30;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -488,12 +488,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_browser_auth_items_and_resolved_difficulty() {
-        // Version 29 combines authenticated browser seat/opening messages with
-        // the rebalanced item rules, deterministic achievements, authoritative
+    fn protocol_version_includes_typed_runtime_and_current_feature_state() {
+        // Version 30 combines typed nullable runtime handles and exact spatial
+        // provenance with authenticated browser seat/opening messages,
+        // rebalanced item rules, deterministic achievements, authoritative
         // Sherwood trading, and resolved Legendary/Custom difficulty. Older
         // peers fail before decoding incompatible wire or snapshot bytes.
-        assert_eq!(NET_PROTOCOL_VERSION, 29);
+        assert_eq!(NET_PROTOCOL_VERSION, 30);
     }
 
     #[test]
@@ -685,7 +686,7 @@ mod tests {
             source_sector_index: crate::fast_find_grid::SectorIndex::new(57),
             source_layer: 11,
             outcome: crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                door_index: crate::gate::DoorIndex(7),
+                door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
                 direct: false,
             }]),
         };

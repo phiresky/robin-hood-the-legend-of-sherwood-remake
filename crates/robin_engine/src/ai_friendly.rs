@@ -556,7 +556,11 @@ impl FriendlyAi {
                 .push(StimulusType::EventReachPoint.into()),
             AlertContinuation::CivilianSawSoldier => {
                 self.base.say(Remark::CivCallsSoldier);
-                let target = self.base.antagonist;
+                let target = self
+                    .base
+                    .antagonist
+                    .expect("accepted civilian alert requires a target soldier")
+                    .get();
                 let target_pos = ctx
                     .entity_view(target)
                     .unwrap_or_else(|| {
@@ -1020,7 +1024,11 @@ impl FriendlyAi {
             // -------- civilian alerts soldier: running to soldier --------
             Substate::SeekingCivilianRunningToSoldier => {
                 if stimulus_type == StimulusType::EventReachPoint {
-                    let antagonist_handle = self.base.antagonist;
+                    let antagonist_handle = self
+                        .base
+                        .antagonist
+                        .expect("running-to-soldier state requires an antagonist")
+                        .get();
                     let antagonist_view = ctx.entity_view(antagonist_handle).unwrap_or_else(|| {
                         panic!(
                             "civilian {} running to required antagonist {} has no entity view",
@@ -1139,12 +1147,16 @@ impl FriendlyAi {
                     // ignored — it's fire-and-forget.
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
-                            target: self.base.antagonist,
+                            target: self
+                                .base
+                                .antagonist
+                                .expect("civilian report requires its target soldier")
+                                .get(),
                             stimulus_type: StimulusType::CallReport,
                             info: StimulusInfo::Hint(Hint {
                                 seek_point: self.base.seek_position,
                                 seek_flags: 0,
-                                who_tells_me: self.base.me,
+                                who_tells_me: AiEntityHandle::new(self.base.me),
                             }),
                             fallback_to_sender: None,
                             to_whole_patrol: false,
@@ -1336,7 +1348,7 @@ impl FriendlyAi {
                 if self.base.current_substate == Substate::SeekingCivilianRunningToSoldier =>
             {
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = soldier_handle;
+                    self.base.antagonist = Some(soldier_handle);
                     // The original deletes friend detectables before the
                     // direct CALL_ALERT, including when the soldier refuses.
                     self.base
@@ -1346,7 +1358,7 @@ impl FriendlyAi {
                         .push(crate::element::DetectableType::Friend);
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::RequestAlert {
-                            target: soldier_handle,
+                            target: soldier_handle.get(),
                             caller: self.base.me,
                             continuation: crate::ai::AlertContinuation::CivilianSawSoldier,
                         },
@@ -1393,7 +1405,7 @@ impl FriendlyAi {
                         // reused unchanged for a retained EVENT_VIEW.
                         let mut nested_ctx = ctx.clone();
                         if let StimulusInfo::Human(handle) = q.info {
-                            let view = nested_ctx.entity_view(handle).unwrap_or_else(|| {
+                            let view = nested_ctx.entity_view(handle.get()).unwrap_or_else(|| {
                                 panic!(
                                     "retained {:?} for civilian {} references missing human {}",
                                     q.stimulus_type, self.base.me, handle
@@ -1478,7 +1490,7 @@ impl FriendlyAi {
             StimulusType::CallYouJustWait => {
                 // Soldier tells child to wait (apple chase begins)
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = soldier_handle;
+                    self.base.antagonist = Some(soldier_handle);
 
                     if let Some(pos_goal) =
                         self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
@@ -1491,7 +1503,7 @@ impl FriendlyAi {
                             ctx,
                         );
                     } else {
-                        let antag = ctx.entity_view(soldier_handle).unwrap_or_else(|| {
+                        let antag = ctx.entity_view(soldier_handle.get()).unwrap_or_else(|| {
                             panic!(
                                 "CALL_YOU_JUST_WAIT civilian {} requires chaser {} entity view",
                                 self.base.me, soldier_handle
@@ -1505,7 +1517,7 @@ impl FriendlyAi {
             StimulusType::EventAppleChaseNear => {
                 // Nearby apple chase — friend flees too
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = soldier_handle;
+                    self.base.antagonist = Some(soldier_handle);
 
                     if let Some(pos_goal) =
                         self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
@@ -1521,7 +1533,7 @@ impl FriendlyAi {
                         // Directed panic from the chaser's live
                         // position, same as the CallYouJustWait
                         // fallback above.
-                        let antag = ctx.entity_view(soldier_handle).unwrap_or_else(|| {
+                        let antag = ctx.entity_view(soldier_handle.get()).unwrap_or_else(|| {
                             panic!(
                                 "EVENT_APPLE_CHASE_NEAR civilian {} requires chaser {} entity view",
                                 self.base.me, soldier_handle
@@ -1617,7 +1629,7 @@ impl FriendlyAi {
                 if let StimulusInfo::Human(human_handle) = stimulus.info {
                     match self.base.current_state {
                         AiState::Default | AiState::Wondering => {
-                            self.event_view_standard_procedure(human_handle, ctx);
+                            self.event_view_standard_procedure(human_handle.get(), ctx);
                         }
                         AiState::Seeking => {
                             // Only update the recon report when the
@@ -1630,7 +1642,7 @@ impl FriendlyAi {
                             // encounter's last-seen point — so the
                             // report update uses the currently-
                             // spotted human's position instead.
-                            if let Some(view) = ctx.entity_view(human_handle)
+                            if let Some(view) = ctx.entity_view(human_handle.get())
                                 && view.camp != ctx.camp
                             {
                                 self.base
@@ -1643,7 +1655,7 @@ impl FriendlyAi {
                             // spotted human currently swordfighting.
                             // Look up both flags via the per-tick
                             // view map.
-                            let Some(v) = ctx.entity_view(human_handle) else {
+                            let Some(v) = ctx.entity_view(human_handle.get()) else {
                                 return false;
                             };
                             let different_camp = v.camp != ctx.camp;
@@ -1681,7 +1693,7 @@ impl FriendlyAi {
                 if let StimulusInfo::Human(body_handle) = stimulus.info {
                     match self.base.current_state {
                         AiState::Default | AiState::Wondering => {
-                            self.event_sees_body_standard_procedure(body_handle, ctx);
+                            self.event_sees_body_standard_procedure(body_handle.get(), ctx);
                         }
                         _ => {
                             // Other states: ignore bodies
@@ -1829,7 +1841,7 @@ impl FriendlyAi {
                 self.panic_undirected(AI_STANDARD_PANIC_RUNS as u8, ctx);
             } else {
                 // Outside — reaction time before alerting.
-                self.base.primary_target = good_guy;
+                self.base.primary_target = Some(AiEntityHandle::new(good_guy));
                 self.base.seek_position = antagonist.position;
                 self.set_state(
                     AiState::Wondering,
@@ -1860,17 +1872,22 @@ impl FriendlyAi {
             NoiseType::Pfiiit if ctx.self_is_child => {
                 self.base.set_emoticon(EmoticonType::QuestionMark);
                 self.set_state(AiState::Wondering, Substate::WonderingWatchingWhistling);
-                self.base.seek_position = noise.origin;
-                self.base.face_position_at_elevation_with_ctx(
-                    noise.origin,
-                    noise.elevation as f32,
-                    ctx,
-                );
+                let origin = noise
+                    .origin
+                    .position()
+                    .expect("delivered whistle noise has no spatial layer");
+                self.base.seek_position = origin;
+                self.base
+                    .face_position_at_elevation_with_ctx(origin, noise.elevation as f32, ctx);
                 self.base.launch_timer(70, ctx.frame);
             }
             NoiseType::Aaargh => {
                 // Scream — try to alert a soldier
-                self.base.seek_position = noise.origin;
+                let origin = noise
+                    .origin
+                    .position()
+                    .expect("delivered scream noise has no spatial layer");
+                self.base.seek_position = origin;
 
                 // On a Royalist civilian's scream, the civilian
                 // panics directly instead of alerting a (nearby,
@@ -1880,7 +1897,7 @@ impl FriendlyAi {
                 if is_royalist
                     || !self.alert_soldier(
                         sim,
-                        noise.origin,
+                        origin,
                         0,
                         AlertSoldierFailureContinuation::Panic,
                         ctx,
@@ -2166,7 +2183,7 @@ impl FriendlyAi {
             return false;
         };
 
-        self.base.antagonist = target_handle;
+        self.base.antagonist = Some(AiEntityHandle::new(target_handle));
         self.base.seek_position = center;
         self.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
         // Run toward the picked soldier's forecasted destination
@@ -2757,7 +2774,7 @@ mod tests {
     fn review_running_to_soldier_requires_the_live_antagonist_view() {
         let sim = crate::sim_rng::test_context();
         let mut ai = FriendlyAi::new(1);
-        ai.base.antagonist = 42;
+        ai.base.antagonist = Some(AiEntityHandle::new(42));
         ai.set_state(AiState::Seeking, Substate::SeekingCivilianRunningToSoldier);
         ai.think_expected_event(
             &sim,
@@ -3188,11 +3205,11 @@ mod tests {
                 path_last_waypoint_index: 0,
                 path_forward_movement: true,
                 patrol_hiking_path_index: None,
-                interesting_object: 0,
+                interesting_object: None,
                 report_type: crate::ai::ReportType::Nothing,
                 report_seek_position: enemy_pos,
                 report_seen_bodies: Vec::new(),
-                report_charly: 0,
+                report_charly: None,
             },
         );
         let ctx = AiContext {
@@ -3539,11 +3556,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: crate::ai::ReportType::Nothing,
             report_seek_position: pos,
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -3711,7 +3728,7 @@ mod tests {
             );
             assert!(ok, "alert_soldier must succeed when at least one candidate");
             // Antagonist must be the same-layer one despite being farther.
-            assert_eq!(ai.base.antagonist, 20);
+            assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(20)));
         });
     }
 
@@ -3777,7 +3794,7 @@ mod tests {
             None,
             None,
         ));
-        assert_eq!(ai.base.antagonist, 130);
+        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(130)));
     }
 
     #[test]
@@ -3855,7 +3872,7 @@ mod tests {
         // owner from the gate-snapped planning position would choose 20;
         // dropping the nonzero Z component while retaining raw X would choose
         // 30. Original's literal raw 3D operation must instead choose 10.
-        assert_eq!(ai.base.antagonist, 10);
+        assert_eq!(ai.base.antagonist, Some(AiEntityHandle::new(10)));
     }
 
     #[test]
@@ -4137,7 +4154,7 @@ mod tests {
         use crate::ai_entity_view::AiEntityViewMap;
         use crate::element::Camp;
         let mut ai = FriendlyAi::new(1);
-        ai.base.antagonist = 42;
+        ai.base.antagonist = Some(AiEntityHandle::new(42));
 
         let mut views = AiEntityViewMap::new();
         views.insert(

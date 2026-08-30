@@ -158,7 +158,12 @@ pub struct EnemyAi {
     pub pending_combat_insult_after_strike_consideration: bool,
 
     // -- Private fields --
-    pub missed_pc: ElementHandle,
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub missed_pc: Option<AiEntityHandle>,
     pub pc_missed: bool,
     pub pc_gone_away_in_this_direction: u16,
     /// Frame when Charly was last observed missing.
@@ -175,7 +180,12 @@ pub struct EnemyAi {
     pub investigating_distraction: bool,
     /// Cursor into the directions of the currently examined seek point.
     pub last_seek_direction_index: u8,
-    pub beggar_to_examine: HumanHandle,
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub beggar_to_examine: Option<AiEntityHandle>,
     /// Whether the current `beggar_to_examine` is a real NPC beggar or a
     /// PC in disguise. Set by the engine when populating `beggars_to_control`.
     /// Checked during IdentifyingBeggar1.
@@ -244,8 +254,18 @@ pub struct EnemyAi {
     pub money_fight_victims: Vec<NpcHandle>,
 
     // Archer / shield bearer (serialized by semantic entity reference)
-    pub archer_behind_me: NpcHandle,
-    pub shield_bearer_before_me: NpcHandle,
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub archer_behind_me: Option<AiEntityHandle>,
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub shield_bearer_before_me: Option<AiEntityHandle>,
 
     pub shield_bearer_direction: u16,
     pub phalanx_aborted: bool,
@@ -389,8 +409,18 @@ pub struct EnemyAi {
     pub next_sword_strike_frame: u32,
 
     pub company_number: u16,
-    pub left_combat_neighbour: HumanHandle,
-    pub right_combat_neighbour: HumanHandle,
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub left_combat_neighbour: Option<AiEntityHandle>,
+    #[serde(
+        default,
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub right_combat_neighbour: Option<AiEntityHandle>,
 
     pub attentive: bool,
     pub will_be_attentive: bool,
@@ -414,7 +444,7 @@ impl Default for EnemyAi {
         Self {
             base: AiController::default(),
             pending_special_strike: false,
-            missed_pc: 0,
+            missed_pc: None,
             pc_missed: false,
             pc_gone_away_in_this_direction: 0,
             frame_when_missed_charly: 0,
@@ -422,7 +452,7 @@ impl Default for EnemyAi {
             detected_something_there: Position::default(),
             investigating_distraction: false,
             last_seek_direction_index: 0,
-            beggar_to_examine: 0,
+            beggar_to_examine: None,
             beggar_is_npc: false,
             current_task_priority: task_priority::NONE,
             minimal_task_priority: task_priority::NONE,
@@ -457,8 +487,8 @@ impl Default for EnemyAi {
             other_seen_ale: Vec::new(),
             money_fight_enemies: Vec::new(),
             money_fight_victims: Vec::new(),
-            archer_behind_me: 0,
-            shield_bearer_before_me: 0,
+            archer_behind_me: None,
+            shield_bearer_before_me: None,
             shield_bearer_direction: 0,
             phalanx_aborted: false,
             changed_to_alert_path: false,
@@ -513,8 +543,8 @@ impl Default for EnemyAi {
             soldier_profile_endurance: 0,
             is_vip: false,
             company_number: 0,
-            left_combat_neighbour: 0,
-            right_combat_neighbour: 0,
+            left_combat_neighbour: None,
+            right_combat_neighbour: None,
             attentive: false,
             will_be_attentive: false,
             forced_attentive: false,
@@ -528,6 +558,46 @@ impl Default for EnemyAi {
 }
 
 impl EnemyAi {
+    #[track_caller]
+    fn required_primary_target(&self, context: &'static str) -> AiEntityHandle {
+        self.base.primary_target.unwrap_or_else(|| {
+            panic!(
+                "enemy AI {} requires a primary target while {context}",
+                self.base.me
+            )
+        })
+    }
+
+    #[track_caller]
+    fn required_antagonist(&self, context: &'static str) -> AiEntityHandle {
+        self.base.antagonist.unwrap_or_else(|| {
+            panic!(
+                "enemy AI {} requires an antagonist while {context}",
+                self.base.me
+            )
+        })
+    }
+
+    #[track_caller]
+    fn required_beggar_to_examine(&self, context: &'static str) -> AiEntityHandle {
+        self.beggar_to_examine.unwrap_or_else(|| {
+            panic!(
+                "enemy AI {} requires a beggar-to-examine while {context}",
+                self.base.me
+            )
+        })
+    }
+
+    #[track_caller]
+    fn required_detected_body(&self, context: &'static str) -> AiEntityHandle {
+        self.base.detected_body.unwrap_or_else(|| {
+            panic!(
+                "enemy AI {} requires a detected body while {context}",
+                self.base.me
+            )
+        })
+    }
+
     /// Clear both combat-neighbour links and synchronously request the two
     /// reciprocal clears performed by `RHElementActorSoldier::
     /// UpdateLeftCombatNeighbour(NULL)` / `UpdateRightCombatNeighbour(NULL)`.
@@ -536,24 +606,24 @@ impl EnemyAi {
     /// consumed by a later phalanx insertion and detach an otherwise valid
     /// formation chain.
     pub(crate) fn clear_combat_neighbours(&mut self) {
-        if self.left_combat_neighbour != 0 {
+        if let Some(left) = self.left_combat_neighbour {
             self.base.outbox.reentrant.cross_npc_actions.push(
                 CrossNpcAction::SetRightCombatNeighbour {
-                    target: self.left_combat_neighbour,
-                    neighbour: 0,
+                    target: left.get(),
+                    neighbour: None,
                 },
             );
         }
-        if self.right_combat_neighbour != 0 {
+        if let Some(right) = self.right_combat_neighbour {
             self.base.outbox.reentrant.cross_npc_actions.push(
                 CrossNpcAction::SetLeftCombatNeighbour {
-                    target: self.right_combat_neighbour,
-                    neighbour: 0,
+                    target: right.get(),
+                    neighbour: None,
                 },
             );
         }
-        self.left_combat_neighbour = 0;
-        self.right_combat_neighbour = 0;
+        self.left_combat_neighbour = None;
+        self.right_combat_neighbour = None;
     }
 
     pub fn new(owner: NpcHandle) -> Self {
@@ -673,18 +743,18 @@ impl EnemyAi {
             target_multiplicity,
         );
         self.base.primary_target = new_target;
-        if new_target == 0 {
+        let Some(new_target) = new_target else {
             return false;
-        }
+        };
 
         // Distance-vs-sword-range early-out.  When the target is
         // standing still within our sword reach we attack regardless
         // of pride.
         let target_swordfighting = self
-            .find_fighter(new_target, tick)
+            .find_fighter(new_target.get(), tick)
             .map(|f| f.is_swordfighting)
             .unwrap_or(false);
-        if !target_swordfighting && let Some(target) = self.find_fighter(new_target, tick) {
+        if !target_swordfighting && let Some(target) = self.find_fighter(new_target.get(), tick) {
             // Original calls RHArtificialIntelligence::MaxNormDistance:
             // subtract raw element world positions, stretch Y for the
             // isometric projection, then take the 3D max norm. AI Position()
@@ -761,7 +831,7 @@ impl EnemyAi {
                 Substate::AttackingObserveAndMove,
             ];
             if observe_substates.contains(&f.ai_substate)
-                && self.is_detecting_180_degrees_from(friend, self.base.primary_target, ctx, tick)
+                && self.is_detecting_180_degrees_from(friend, new_target.get(), ctx, tick)
             {
                 return true;
             }
@@ -830,7 +900,7 @@ impl EnemyAi {
         // `my_door_index` semantics — a global door-table index — is
         // shared between merry-man flee, RunAndAlertSoldiers, and the
         // AlertSoldiers indoor formation flow.
-        self.base.my_door_index = Some(door.door_index.0);
+        self.base.my_door_index = Some(door.door_index);
 
         // SetState + GoTo + LaunchTimer first.  The `couldnt_reachpoint`
         // check is deliberately *after* the GoTo so that any prior-tick
@@ -891,10 +961,10 @@ impl EnemyAi {
         self.other_seen_money
             .retain(|handle| ctx.entity_position(*handle).is_some());
 
-        if self.base.interesting_object != 0
+        if self.base.interesting_object.is_some()
             && ctx.entity_position(self.base.interesting_object).is_none()
         {
-            self.base.interesting_object = 0;
+            self.base.interesting_object = None;
         }
     }
 
@@ -909,13 +979,12 @@ impl EnemyAi {
     /// already drinking it.  `lost_pos` is the position the caller
     /// should `Face()` before transitioning to `WonderingAleAway`.
     fn is_beer_still_available(&self, ctx: &AiContext) -> Option<Position> {
-        let interesting = self.base.interesting_object;
-        if interesting == 0 {
+        let Some(interesting) = self.base.interesting_object else {
             // No beer assigned: nothing to check against.  Fall back
             // to the soldier's own position so downstream `Face()` is
             // a no-op rather than pointing at the origin.
             return Some(ctx.position);
-        }
+        };
 
         // Object inactive → gone.  An inactive entity is absent from
         // the view map, so we fall back to the soldier's last known
@@ -935,12 +1004,12 @@ impl EnemyAi {
         // closer (for approach substates) or already drinking it
         // (for the drinking substate).
         for (&handle, view) in ctx.entity_views.iter() {
-            if handle == 0 || handle == self.base.me {
+            if handle == self.base.me {
                 continue;
             }
             let beer_away = match view.ai_substate {
                 Substate::WonderingApproachingAle | Substate::WonderingAleReactiontime => {
-                    if view.interesting_object != interesting {
+                    if view.interesting_object != Some(interesting) {
                         continue;
                     }
                     if !self.is_detecting_180_degrees(handle, ctx) {
@@ -951,7 +1020,7 @@ impl EnemyAi {
                     fx * fx + fy * fy < my_sq_distance
                 }
                 Substate::WonderingDrinkingAle => {
-                    view.interesting_object == interesting
+                    view.interesting_object == Some(interesting)
                         && self.is_detecting_180_degrees(handle, ctx)
                 }
                 _ => continue,
@@ -1004,7 +1073,7 @@ impl EnemyAi {
     fn finish_brawl(&mut self, ctx: &AiContext, tick: &AiPerTickData) {
         debug_assert_eq!(self.get_rank(), ProfileRank::Officer);
         self.base.list_us.clear();
-        self.base.antagonist = 0;
+        self.base.antagonist = None;
 
         // Each `CALL_FINISH_BRAWL` send is gated on 360-degree
         // detection (radius + opaque LOS), computed lazily here only
@@ -1025,8 +1094,8 @@ impl EnemyAi {
 
         for h in targets {
             self.base.list_us.push(h);
-            if self.base.antagonist == 0 {
-                self.base.antagonist = h;
+            if self.base.antagonist.is_none() {
+                self.base.antagonist = Some(AiEntityHandle::new(h));
             }
             self.base
                 .outbox
@@ -1037,7 +1106,7 @@ impl EnemyAi {
                     stimulus_type: StimulusType::CallFinishBrawl,
                     // Send the officer (`me`); receiver reads it as
                     // `stimulus_info.human` for Face/antagonist.
-                    info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                    info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                     fallback_to_sender: None,
                     to_whole_patrol: false,
                 });
@@ -1049,7 +1118,7 @@ impl EnemyAi {
         // and spurious `OfficerEndsBrawl` remarks against a cached
         // friend.
 
-        if self.base.antagonist != 0 {
+        if self.base.antagonist.is_some() {
             // Face(antagonist); Say(OfficerEndsBrawl, MyTalk1)
             self.base.face_entity(self.base.antagonist, ctx);
             self.base.say(Remark::OfficerEndsBrawl);
@@ -1125,7 +1194,8 @@ impl EnemyAi {
         }
 
         // In-dialogue-with-someone-else gate.
-        !(cs.antagonist != 0 && cs.antagonist != my_handle)
+        !cs.antagonist
+            .is_some_and(|antagonist| antagonist.get() != my_handle)
     }
 
     /// Pops the next queued money-fight victim and approaches it;
@@ -1142,7 +1212,7 @@ impl EnemyAi {
             return;
         }
         let next = self.money_fight_victims.remove(0);
-        self.base.detected_body = next as HumanHandle;
+        self.base.detected_body = Some(AiEntityHandle::new(next));
         // SetState(Wondering, ApproachingBrawlVictim).
         self.set_state(
             AiState::Wondering,
@@ -1165,7 +1235,7 @@ impl EnemyAi {
         // CleanUpListOfSeenMoney + GetNearestSeenMoneyAndRemoveItFromList.
         if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
             // interesting_object = nearest coin.
-            self.base.interesting_object = coin;
+            self.base.interesting_object = Some(AiEntityHandle::new(coin));
             if let Some(coin_pos) = ctx.entity_position(coin) {
                 // SetState(Wondering, RunningForMoney) +
                 // GoNear(coin, AI_STOP_BEFORE_MONEY_DISTANCE,
@@ -1305,7 +1375,7 @@ impl EnemyAi {
     /// This is the `Face(RHElement*)` overload: it includes the target's
     /// elevation and preserves `FaceTo`'s already-facing Waiting/Bored
     /// short-circuit.
-    fn face_npc(&mut self, handle: HumanHandle, ctx: &AiContext) {
+    fn face_npc(&mut self, handle: impl IntoOptionalAiHandle, ctx: &AiContext) {
         self.base.face_entity(handle, ctx);
     }
 
@@ -1711,7 +1781,7 @@ impl EnemyAi {
                     .push(CrossNpcAction::SendStimulus {
                         target: officer.handle,
                         stimulus_type: StimulusType::EventSeesBrawl,
-                        info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                        info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                         fallback_to_sender: None,
                         to_whole_patrol: false,
                     });
@@ -1757,7 +1827,7 @@ impl EnemyAi {
             self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
             self.money_fight_enemies.push(thief);
             self.react(parameters_ai::AI_MAX_ENEMY_REACTIONTIME as u16, ctx, tick);
-            self.base.friend_in_trouble = thief;
+            self.base.friend_in_trouble = Some(AiEntityHandle::new(thief));
         } else if self.base.current_substate.is_fight_for_money() {
             // Already brawling; queue this guy.
             self.money_fight_enemies.push(thief);
@@ -2097,7 +2167,11 @@ impl EnemyAi {
     /// Normal `RHElementActorNPC::IsDetecting(human)` check used by
     /// synchronous AI state-machine gates. Unlike the 360-degree helper,
     /// this uses the live post-`RefreshView` cone and opaque line of sight.
-    fn is_detecting(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+    fn is_detecting(&self, target: impl IntoOptionalAiHandle, ctx: &AiContext) -> bool {
+        let target = target
+            .into_optional_ai_handle()
+            .expect("is_detecting requires a non-null target")
+            .get();
         let view = ctx.entity_view(target).unwrap_or_else(|| {
             panic!(
                 "is_detecting: NPC {} requires missing target entity view {target}",
@@ -2165,7 +2239,7 @@ impl EnemyAi {
             cloak_deception_applies: view.posture == crate::element::Posture::Cloaked
                 && ctx.camp.is_hostile_to(view.camp),
             cloak_remembers_target: self.list_them.contains(&target)
-                || self.base.primary_target == target,
+                || self.base.primary_target == Some(AiEntityHandle::new(target)),
             // TODO(cloak-authoring): connect this seam only when an explicit
             // modded profile schema supplies detector data.
             cloak_authored_detector: crate::cloak::SHIPPED_AUTHORED_DETECTOR,
@@ -2230,7 +2304,12 @@ impl EnemyAi {
         self.set_state(AiState::Seeking, Substate::SeekingRunningToOfficerSeen);
         self.base
             .say_with_flags(Remark::CallsOfficer, SpeechFlags::MYTALK_0);
-        let target = self.base.antagonist;
+        let target = self.base.antagonist.unwrap_or_else(|| {
+            panic!(
+                "accepted soldier alert from {} requires a target officer",
+                self.base.me
+            )
+        });
         let officer_target_pos = ctx
             .entity_view(target)
             .unwrap_or_else(|| {
@@ -2341,7 +2420,7 @@ impl EnemyAi {
                             target: next,
                             caller: self.base.me,
                             stimulus_type: StimulusType::CallAlert,
-                            info: StimulusInfo::Human(self.base.me),
+                            info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                             continuation: ThinkResultContinuation::OfficerAlertedSoldier {
                                 last: next_is_last,
                                 use_formation,
@@ -2422,7 +2501,7 @@ impl EnemyAi {
                 info: StimulusInfo::Hint(Hint {
                     seek_point,
                     seek_flags: self.pending_group_instruction_seek_flags,
-                    who_tells_me: self.base.me,
+                    who_tells_me: AiEntityHandle::new(self.base.me),
                 }),
                 continuation: ThinkResultContinuation::OfficerInstructedGroupSoldier { last },
             });
@@ -2534,7 +2613,15 @@ impl EnemyAi {
     /// radius samples the surrounding shadow-light sectors, and the
     /// results land in the shared per-surface radius cache, so it has
     /// to run for exactly the targets that reach it.
-    pub(crate) fn is_detecting_180_degrees(&self, target: HumanHandle, ctx: &AiContext) -> bool {
+    pub(crate) fn is_detecting_180_degrees(
+        &self,
+        target: impl IntoOptionalAiHandle,
+        ctx: &AiContext,
+    ) -> bool {
+        let target = target
+            .into_optional_ai_handle()
+            .expect("is_detecting_180_degrees requires a non-null target")
+            .get();
         tracing::trace!(
             target,
             viewer_x = ctx.position.x,
@@ -2796,7 +2883,7 @@ impl EnemyAi {
         // `is_able_to_fight` fields on the view.
         let mut suspects: Vec<(NpcHandle, Position)> = Vec::new();
         let mut best_distance = f32::INFINITY;
-        let mut best_handle: NpcHandle = 0;
+        let mut best_handle = None;
         for (handle, view) in ctx.entity_views.iter() {
             if !view.is_civilian() || !view.is_child {
                 continue;
@@ -2821,19 +2908,20 @@ impl EnemyAi {
             let dist = dx.max(dy);
             if dist < best_distance {
                 best_distance = dist;
-                best_handle = *handle as NpcHandle;
+                best_handle = Some(AiEntityHandle::new(*handle));
             }
         }
 
         if suspects.is_empty() {
             return false;
         }
-        debug_assert_ne!(best_handle, 0);
-        self.base.antagonist = best_handle;
+        let best_handle = best_handle
+            .expect("non-empty child chase candidate list must have a nearest antagonist");
+        self.base.antagonist = Some(best_handle);
 
         // Inform all suspects.
         for (handle, _pos) in &suspects {
-            let stim = if *handle == best_handle {
+            let stim = if *handle == best_handle.get() {
                 StimulusType::CallYouJustWait
             } else {
                 StimulusType::EventAppleChaseNear
@@ -2845,7 +2933,7 @@ impl EnemyAi {
                 .push(CrossNpcAction::SendStimulus {
                     target: *handle,
                     stimulus_type: stim,
-                    info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                    info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                     fallback_to_sender: None,
                     to_whole_patrol: false,
                 });
@@ -2957,7 +3045,7 @@ impl EnemyAi {
                 // falling-edge human from the live detectable list, but the
                 // target-specific snapshot still contains the authoritative
                 // ForecastDestinationForIA input for this OUTOFVIEW call.
-                (enemy == tick.primary_target_snapshot_handle)
+                (Some(AiEntityHandle::new(enemy)) == tick.primary_target_snapshot_handle)
                     .then_some(tick.primary_target_forecast.as_ref())
                     .flatten()
             })
@@ -2972,7 +3060,7 @@ impl EnemyAi {
         self.base.seek_position = forecast.position;
         self.pc_gone_away_in_this_direction = forecast.direction;
 
-        self.missed_pc = enemy;
+        self.missed_pc = Some(AiEntityHandle::new(enemy));
         self.pc_missed = true;
         self.reinitialize_them_list(ctx, tick);
 
@@ -3289,7 +3377,7 @@ impl EnemyAi {
         // reconciles the reverse link, but this pre-emptive clear
         // matches the paired-teardown semantics on state
         // transitions.
-        if self.archer_behind_me != 0
+        if self.archer_behind_me.is_some()
             && !matches!(
                 substate,
                 Substate::AttackingProtectingWithShield
@@ -3297,19 +3385,21 @@ impl EnemyAi {
                     | Substate::AttackingRunningToPhalanx
             )
         {
-            let old_archer = self.archer_behind_me;
-            self.archer_behind_me = 0;
+            let old_archer = self
+                .archer_behind_me
+                .take()
+                .expect("checked archer-behind-me presence");
             self.base.outbox.reentrant.cross_npc_actions.push(
                 CrossNpcAction::SetShieldBearerBeforeMe {
-                    target: old_archer,
-                    shield_bearer: 0,
+                    target: old_archer.get(),
+                    shield_bearer: None,
                 },
             );
         }
 
         // If we had a shield-bearer pairing and are leaving a
         // bow-related substate, break the pairing.
-        if self.shield_bearer_before_me != 0 {
+        if self.shield_bearer_before_me.is_some() {
             match substate {
                 Substate::AttackingBowShooting
                 | Substate::AttackingBowLoading
@@ -3322,7 +3412,7 @@ impl EnemyAi {
                 }
                 _ => {
                     // Leaving bow substates — clear the pairing.
-                    self.update_shield_bearer_before_me(0);
+                    self.update_shield_bearer_before_me(None);
                 }
             }
         }
@@ -3332,7 +3422,7 @@ impl EnemyAi {
         // parameter (rather than mCurrentSubstate for the first switch), so
         // their modes can never differ. Preserve that quirk: links assigned
         // immediately before SetState(...RunningToPhalanx) must survive.
-        if self.left_combat_neighbour != 0 || self.right_combat_neighbour != 0 {
+        if self.left_combat_neighbour.is_some() || self.right_combat_neighbour.is_some() {
             let line_mode_for = |s: Substate| -> u8 {
                 match s {
                     Substate::AttackingPhalanx
@@ -3409,7 +3499,7 @@ impl EnemyAi {
                 .actor
                 .delete_detectables
                 .push(crate::element::DetectableType::Beggar);
-            self.beggar_to_examine = 0;
+            self.beggar_to_examine = None;
         }
 
         // Fire `filter_ai_event(source, AI_STATE_CHANGE_TO_*)`
@@ -3825,7 +3915,7 @@ impl EnemyAi {
             decision_path_debug_enabled() && decision_path_debug_matches(ctx.frame, self.base.me);
         if debug_decision_path {
             eprintln!(
-                "AIDECISION frame={} owner={} co={:?} stage=think_enter depth={}/open={} stimulus={:?} state={:?}/{:?} primary={} rider={} couldnt={} already={} list_them={:?} owner_work={:?}",
+                "AIDECISION frame={} owner={} co={:?} stage=think_enter depth={}/open={} stimulus={:?} state={:?}/{:?} primary={:?} rider={} couldnt={} already={} list_them={:?} owner_work={:?}",
                 ctx.frame,
                 self.base.me,
                 ctx.original_creation_order,
@@ -4408,7 +4498,7 @@ impl EnemyAi {
             .actor
             .delete_detectables
             .push(crate::element::DetectableType::Beggar);
-        self.beggar_to_examine = 0;
+        self.beggar_to_examine = None;
         self.beggar_is_npc = false;
         self.clear_swordstrike_experiences();
         // Focus(NULL) — release any stare/follow target before the
@@ -4419,7 +4509,7 @@ impl EnemyAi {
 
         // Report to officer after seeking?
         if self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
-            && self.base.antagonist != 0
+            && self.base.antagonist.is_some()
             && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
         {
             self.set_state(AiState::Seeking, Substate::SeekingSoldierReturnToOfficer);
@@ -4451,7 +4541,7 @@ impl EnemyAi {
         self.seek_flags = SeekFlags::empty();
         self.base.sorrow_level = 0;
         self.phalanx_aborted = false;
-        self.base.antagonist = 0;
+        self.base.antagonist = None;
         self.current_task_priority = self.minimal_task_priority;
 
         // "If you were searching charly, forget him." When the NPC has any
@@ -4460,9 +4550,11 @@ impl EnemyAi {
         // in `missed_in_action` and clear the checkpoint pointer so
         // subsequent mission scripts querying the list see the right
         // entries.
-        if ctx.self_detectable_missed_friend_count > 0 && self.base.checkpoint_charly != 0 {
-            self.base.missed_in_action.push(self.base.checkpoint_charly);
-            self.base.set_checkpoint_charly(0);
+        if ctx.self_detectable_missed_friend_count > 0
+            && let Some(checkpoint_charly) = self.base.checkpoint_charly
+        {
+            self.base.missed_in_action.push(checkpoint_charly.get());
+            self.base.set_checkpoint_charly(None);
         }
 
         // Did you forget some money?
@@ -4472,7 +4564,7 @@ impl EnemyAi {
         // coin and an officer is sermoning a finished brawl right next to
         // it, back off (the angry officer will discipline anyone who
         // re-engages).
-        let angry_officer_near_coin = self.base.interesting_object != 0
+        let angry_officer_near_coin = self.base.interesting_object.is_some()
             && ctx
                 .entity_position(self.base.interesting_object)
                 .is_some_and(|p| self.is_any_angry_officer_near(p, tick));
@@ -4483,13 +4575,13 @@ impl EnemyAi {
             && !self.other_seen_money.is_empty()
             && !angry_officer_near_coin
         {
-            if self.base.interesting_object == 0 {
+            if self.base.interesting_object.is_none() {
                 // GetNearestSeenMoneyAndRemoveItFromList: picks the
                 // closest live coin (MaxNorm, +300 layer malus) after
                 // sweeping inactive entries, rather than popping by
                 // insertion order.
                 if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
-                    self.base.interesting_object = coin;
+                    self.base.interesting_object = Some(AiEntityHandle::new(coin));
                 }
             }
             // GoNear the interesting-object position. Look up the freshly
@@ -4510,7 +4602,7 @@ impl EnemyAi {
                 return;
             }
             // Stale handle — drop it so we don't re-attempt forever.
-            self.base.interesting_object = 0;
+            self.base.interesting_object = None;
         }
 
         // Return to patrol point?
@@ -4528,7 +4620,7 @@ impl EnemyAi {
         // Remember ale?
         if !self.other_seen_ale.is_empty() && !flags.contains(DutyFlags::BECAUSE_COULDNT_REACHPOINT)
         {
-            self.base.interesting_object = self.other_seen_ale.remove(0);
+            self.base.interesting_object = Some(AiEntityHandle::new(self.other_seen_ale.remove(0)));
             self.base.object_of_desire = self.base.interesting_object;
             // Same rationale as the money branch above — if the ale
             // bottle was removed before the snapshot, skip this
@@ -4549,8 +4641,8 @@ impl EnemyAi {
                 self.base.launch_timer(1, ctx.frame);
                 return;
             }
-            self.base.interesting_object = 0;
-            self.base.object_of_desire = 0;
+            self.base.interesting_object = None;
+            self.base.object_of_desire = None;
         }
 
         // Original calls InitializePatrol synchronously, then immediately
@@ -4630,7 +4722,7 @@ impl EnemyAi {
         // shield-bearer half of that virtual override too: leaving the three
         // protection substates clears both mpArcherBehindMe and the archer's
         // reciprocal mpShieldBearerBeforeMe before the next NPC owner runs.
-        if self.archer_behind_me != 0
+        if self.archer_behind_me.is_some()
             && !matches!(
                 incoming_substate,
                 Substate::AttackingProtectingWithShield
@@ -4638,12 +4730,14 @@ impl EnemyAi {
                     | Substate::AttackingRunningToPhalanx
             )
         {
-            let old_archer = self.archer_behind_me;
-            self.archer_behind_me = 0;
+            let old_archer = self
+                .archer_behind_me
+                .take()
+                .expect("checked archer-behind-me presence");
             self.base.outbox.reentrant.cross_npc_actions.push(
                 CrossNpcAction::SetShieldBearerBeforeMe {
-                    target: old_archer,
-                    shield_bearer: 0,
+                    target: old_archer.get(),
+                    shield_bearer: None,
                 },
             );
         }
@@ -4655,7 +4749,7 @@ impl EnemyAi {
         // (`RHartificialmalignity.cpp:9296-9314`). The shared Rust base assigns
         // the destination state directly, so restore that omitted virtual tail
         // here at the same owner boundary.
-        if self.shield_bearer_before_me != 0
+        if self.shield_bearer_before_me.is_some()
             && !matches!(
                 incoming_substate,
                 Substate::AttackingBowShooting
@@ -4667,7 +4761,7 @@ impl EnemyAi {
                     | Substate::AttackingBowCorrectingPosition
             )
         {
-            self.update_shield_bearer_before_me(0);
+            self.update_shield_bearer_before_me(None);
         }
 
         // `ReturnToDutyCommonStuff` reaches its destination state through the
@@ -4793,7 +4887,7 @@ impl EnemyAi {
         flags: PrimaryTargetFlags,
         ctx: &AiContext,
         tick: &AiPerTickData,
-    ) -> HumanHandle {
+    ) -> Option<AiEntityHandle> {
         self.get_new_primary_target_with_mult_override(flags, ctx, tick, None)
     }
 
@@ -4809,12 +4903,12 @@ impl EnemyAi {
         ctx: &AiContext,
         tick: &AiPerTickData,
         mult_override: Option<&std::collections::BTreeMap<HumanHandle, u32>>,
-    ) -> HumanHandle {
+    ) -> Option<AiEntityHandle> {
         if self.list_them.is_empty() {
-            return 0;
+            return None;
         }
 
-        let mut nearest: HumanHandle = 0;
+        let mut nearest = None;
         let mut min_distance: u16 = 65432; // Original `oo` sentinel
         let Some(owner_view) = ctx.entity_view(self.base.me) else {
             // Dense fights can deactivate/delete this owner earlier in the
@@ -4826,15 +4920,11 @@ impl EnemyAi {
                 me = self.base.me,
                 "GetNewPrimaryTarget owner left the live entity view earlier in this frame"
             );
-            return 0;
+            return None;
         };
         let owner_world = owner_view.detection_position_world;
 
         for &enemy in &self.list_them {
-            if enemy == 0 {
-                continue;
-            }
-
             // Gate on `VIPS_ALLOWED || is_allowed_to_attack(enemy)`.
             // Without VIPS_ALLOWED, VIP-protection rules drop the
             // candidate (e.g. VIP soldier may only engage Robin).
@@ -4895,7 +4985,7 @@ impl EnemyAi {
 
             if distance < min_distance {
                 min_distance = distance;
-                nearest = enemy;
+                nearest = Some(AiEntityHandle::new(enemy));
             }
         }
 
@@ -5227,11 +5317,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: ReportType::Nothing,
             report_seek_position: pos,
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -5248,7 +5338,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -5257,11 +5347,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -5455,7 +5545,7 @@ mod tests {
 
     fn charly_heading_to_officer() -> EnemyAi {
         let mut ai = EnemyAi::new(1);
-        ai.base.antagonist = 2;
+        ai.base.antagonist = Some(AiEntityHandle::new(2));
         ai.set_state(AiState::Seeking, Substate::SeekingCharlyGoToOfficer);
         ai
     }
@@ -5744,7 +5834,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: false,
             script_locked: false,
@@ -5753,11 +5843,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -5966,7 +6056,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Default);
         assert_eq!(ai.base.current_substate, Substate::DefaultGotoPost);
-        assert_eq!(ai.base.antagonist, 0);
+        assert_eq!(ai.base.antagonist, None);
     }
 
     #[test]
@@ -6175,7 +6265,7 @@ mod tests {
 
         let mut global = AiGlobalState::default();
         global.door_seek_infos.push(DoorSeekInfo {
-            door_index: DoorIndex(0),
+            door_index: DoorIndex::new(0).expect("valid door index"),
             door_type,
             point_out,
             position_in,
@@ -6373,13 +6463,13 @@ mod tests {
     #[test]
     fn reinitialize_them_list_does_not_preserve_unseen_primary_target() {
         let mut ai = EnemyAi::new(1);
-        ai.base.primary_target = 2;
+        ai.base.primary_target = Some(AiEntityHandle::new(2));
         ai.list_them = vec![2, 3];
 
         ai.reinitialize_them_list(&AiContext::default(), &AiPerTickData::stub());
 
         assert!(ai.list_them.is_empty());
-        assert_eq!(ai.base.primary_target, 2);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(2)));
     }
 
     #[test]
@@ -7002,7 +7092,7 @@ mod tests {
 
         assert_eq!(ai.base.current_state, AiState::Wondering);
         assert_eq!(ai.base.current_substate, Substate::WonderingApproachingAle);
-        assert_eq!(ai.base.interesting_object, ale);
+        assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(ale)));
         assert_eq!(ai.return_to_patrol_point, here);
         assert_eq!(ai.base.last_goto_destination, ale_position);
     }
@@ -7114,8 +7204,8 @@ mod tests {
         let mut ai = EnemyAi::new(223);
         ai.base.current_state = AiState::Wondering;
         ai.base.current_substate = Substate::WonderingWatching;
-        ai.left_combat_neighbour = 225;
-        ai.right_combat_neighbour = 227;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(225));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(227));
 
         ai.resume_return_to_duty_after_patrol_init(
             &sim,
@@ -7125,19 +7215,19 @@ mod tests {
         );
 
         assert_eq!(ai.base.current_state, AiState::Default);
-        assert_eq!(ai.left_combat_neighbour, 0);
-        assert_eq!(ai.right_combat_neighbour, 0);
+        assert_eq!(ai.left_combat_neighbour, None);
+        assert_eq!(ai.right_combat_neighbour, None);
         assert!(
             matches!(
                 ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
                 [
                     CrossNpcAction::SetRightCombatNeighbour {
                         target: 225,
-                        neighbour: 0,
+                        neighbour: None,
                     },
                     CrossNpcAction::SetLeftCombatNeighbour {
                         target: 227,
-                        neighbour: 0,
+                        neighbour: None,
                     },
                 ]
             ),
@@ -7152,7 +7242,7 @@ mod tests {
         archer.is_archer_unit = true;
         archer.base.current_state = AiState::Attacking;
         archer.base.current_substate = Substate::AttackingBowShooting;
-        archer.shield_bearer_before_me = 58;
+        archer.shield_bearer_before_me = Some(AiEntityHandle::new(58));
 
         archer.resume_return_to_duty_after_patrol_init(
             &sim,
@@ -7162,13 +7252,13 @@ mod tests {
         );
 
         assert_eq!(archer.base.current_state, AiState::Default);
-        assert_eq!(archer.shield_bearer_before_me, 0);
+        assert_eq!(archer.shield_bearer_before_me, None);
         let reciprocal = std::mem::take(&mut archer.base.outbox.reentrant.cross_npc_actions);
         assert!(matches!(
             reciprocal.as_slice(),
             [CrossNpcAction::SetArcherBehindMe {
                 target: 58,
-                archer: 0
+                archer: None
             }]
         ));
 
@@ -7178,15 +7268,15 @@ mod tests {
         let mut bearer = EnemyAi::new(58);
         bearer.base.current_state = AiState::Attacking;
         bearer.base.current_substate = Substate::AttackingProtectingWithShield;
-        bearer.base.primary_target = 101;
-        bearer.archer_behind_me = 64;
+        bearer.base.primary_target = Some(AiEntityHandle::new(101));
+        bearer.archer_behind_me = Some(AiEntityHandle::new(64));
         for action in reciprocal {
             if let CrossNpcAction::SetArcherBehindMe { target, archer } = action {
                 assert_eq!(target, bearer.base.me);
                 bearer.archer_behind_me = archer;
             }
         }
-        assert_eq!(bearer.archer_behind_me, 0);
+        assert_eq!(bearer.archer_behind_me, None);
 
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
@@ -7224,7 +7314,7 @@ mod tests {
         let mut bearer = EnemyAi::new(58);
         bearer.base.current_state = AiState::Attacking;
         bearer.base.current_substate = Substate::AttackingProtectingWithShield;
-        bearer.archer_behind_me = 64;
+        bearer.archer_behind_me = Some(AiEntityHandle::new(64));
 
         bearer.resume_return_to_duty_after_patrol_init(
             &sim,
@@ -7234,12 +7324,12 @@ mod tests {
         );
 
         assert_eq!(bearer.base.current_state, AiState::Default);
-        assert_eq!(bearer.archer_behind_me, 0);
+        assert_eq!(bearer.archer_behind_me, None);
         assert!(matches!(
             bearer.base.outbox.reentrant.cross_npc_actions.as_slice(),
             [CrossNpcAction::SetShieldBearerBeforeMe {
                 target: 64,
-                shield_bearer: 0,
+                shield_bearer: None,
             }]
         ));
     }
@@ -7334,7 +7424,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -7343,11 +7433,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -7415,7 +7505,7 @@ mod tests {
 
         let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
 
-        assert_eq!(ai.base.primary_target, 2);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(2)));
         assert_eq!(ai.base.current_state, AiState::Attacking);
         assert_eq!(ai.base.current_substate, Substate::AttackingSwordfight);
         assert_eq!(ai.base.outbox.actor.enter_swordfight, None);
@@ -8018,7 +8108,7 @@ mod tests {
         let stimulus = Stimulus::new(StimulusType::EventDone);
         let _ = ai.think(sim, &stimulus, &mut global, &ctx, &tick, None);
 
-        assert_eq!(ai.base.detected_body, 3);
+        assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(3)));
         assert_eq!(
             ai.base.current_substate,
             Substate::WonderingApproachingToLoot
@@ -8064,8 +8154,8 @@ mod tests {
 
         ai.run_to_examine_body(2, &ctx, &AiPerTickData::stub(), None);
 
-        assert_eq!(ai.base.detected_body, 2);
-        assert_eq!(ai.base.interesting_object, 77);
+        assert_eq!(ai.base.detected_body, Some(AiEntityHandle::new(2)));
+        assert_eq!(ai.base.interesting_object, Some(AiEntityHandle::new(77)));
         assert_eq!(ai.base.current_state, AiState::Seeking);
         assert_eq!(ai.base.current_substate, Substate::SeekingNet);
     }
@@ -8165,7 +8255,7 @@ mod tests {
         let tick = AiPerTickData::stub();
         assert_eq!(
             ai.get_new_primary_target(PrimaryTargetFlags::empty(), &ctx, &tick),
-            0
+            None
         );
     }
 
@@ -8174,23 +8264,23 @@ mod tests {
         let mut ai = EnemyAi::new(74);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingPhalanx;
-        ai.left_combat_neighbour = 75;
-        ai.right_combat_neighbour = 72;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(75));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(72));
 
         ai.set_state(AiState::Attacking, Substate::AttackingOverviewLookLeft);
 
-        assert_eq!(ai.left_combat_neighbour, 0);
-        assert_eq!(ai.right_combat_neighbour, 0);
+        assert_eq!(ai.left_combat_neighbour, None);
+        assert_eq!(ai.right_combat_neighbour, None);
         assert!(matches!(
             ai.base.outbox.reentrant.cross_npc_actions.as_slice(),
             [
                 CrossNpcAction::SetRightCombatNeighbour {
                     target: 75,
-                    neighbour: 0
+                    neighbour: None
                 },
                 CrossNpcAction::SetLeftCombatNeighbour {
                     target: 72,
-                    neighbour: 0
+                    neighbour: None
                 }
             ]
         ));
@@ -8201,26 +8291,26 @@ mod tests {
         let mut ai = EnemyAi::new(73);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingOverviewLookLeft;
-        ai.left_combat_neighbour = 72;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(72));
 
         ai.set_state(AiState::Attacking, Substate::AttackingRunningToPhalanx);
 
-        assert_eq!(ai.left_combat_neighbour, 72);
-        assert_eq!(ai.right_combat_neighbour, 0);
+        assert_eq!(ai.left_combat_neighbour, Some(AiEntityHandle::new(72)));
+        assert_eq!(ai.right_combat_neighbour, None);
         assert!(ai.base.outbox.reentrant.cross_npc_actions.is_empty());
     }
 
     #[test]
     fn running_to_phalanx_preserves_existing_neighbours_null_primary_target() {
         let mut ai = EnemyAi::new(78);
-        ai.right_combat_neighbour = 70;
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(70));
         ai.list_them = vec![170];
 
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
             handle: 70,
             is_soldier: true,
-            primary_target: 0,
+            primary_target: None,
             ..FighterSnapshot::default()
         });
         tick.fighter_registry.push(FighterSnapshot {
@@ -8230,14 +8320,14 @@ mod tests {
             ..FighterSnapshot::default()
         });
 
-        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(0));
+        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(None));
     }
 
     #[test]
     fn running_to_phalanx_uses_right_soldier_after_non_soldier_left_neighbour() {
         let mut ai = EnemyAi::new(78);
-        ai.left_combat_neighbour = 169;
-        ai.right_combat_neighbour = 70;
+        ai.left_combat_neighbour = Some(AiEntityHandle::new(169));
+        ai.right_combat_neighbour = Some(AiEntityHandle::new(70));
 
         let mut tick = AiPerTickData::stub();
         tick.fighter_registry.push(FighterSnapshot {
@@ -8248,11 +8338,14 @@ mod tests {
         tick.fighter_registry.push(FighterSnapshot {
             handle: 70,
             is_soldier: true,
-            primary_target: 170,
+            primary_target: Some(AiEntityHandle::new(170)),
             ..FighterSnapshot::default()
         });
 
-        assert_eq!(ai.phalanx_neighbour_primary_target(&tick), Some(170));
+        assert_eq!(
+            ai.phalanx_neighbour_primary_target(&tick),
+            Some(Some(AiEntityHandle::new(170)))
+        );
     }
 
     #[test]
@@ -8284,7 +8377,7 @@ mod tests {
             &tick,
         );
 
-        assert_eq!(target, 199);
+        assert_eq!(target, Some(AiEntityHandle::new(199)));
     }
 
     #[test]
@@ -8320,7 +8413,7 @@ mod tests {
                 &ctx,
                 &tick,
             ),
-            169
+            Some(AiEntityHandle::new(169))
         );
     }
 
@@ -8377,7 +8470,7 @@ mod tests {
         ];
 
         assert!(ai.is_too_proud_to_attack(&ctx, &tick, None));
-        assert_eq!(ai.base.primary_target, 107);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(107)));
     }
 
     #[test]
@@ -8438,7 +8531,7 @@ mod tests {
         ];
 
         assert!(!ai.is_too_proud_to_attack(&ctx, &tick, None));
-        assert_eq!(ai.base.primary_target, 320);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(320)));
     }
 
     #[test]
@@ -8501,7 +8594,7 @@ mod tests {
         let live_decision_multiplicity = std::collections::BTreeMap::from([(171, 1), (174, 0)]);
         let _ = ai.is_too_proud_to_attack(&ctx, &tick, Some(&live_decision_multiplicity));
 
-        assert_eq!(ai.base.primary_target, 174);
+        assert_eq!(ai.base.primary_target, Some(AiEntityHandle::new(174)));
     }
 
     fn perpendicular_out_of_view_context(stare_y: f32) -> AiContext {
@@ -8547,7 +8640,7 @@ mod tests {
         let mut ai = EnemyAi::new(111);
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
-        ai.base.primary_target = 84;
+        ai.base.primary_target = Some(AiEntityHandle::new(84));
         ai.list_them = vec![84, 171];
 
         let mut primary = soldier_view(test_position(1_519.443_7, 309.084_5));
@@ -8579,7 +8672,7 @@ mod tests {
         );
 
         assert_eq!(ai.list_them, vec![84]);
-        assert_eq!(ai.missed_pc, 171);
+        assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(171)));
     }
 
     #[test]
@@ -8590,7 +8683,7 @@ mod tests {
         ai.base.current_substate = Substate::AttackingObserve;
         // A preceding queued Think selected another primary target before
         // this falling-edge OUTOFVIEW was delivered.
-        ai.base.primary_target = 84;
+        ai.base.primary_target = Some(AiEntityHandle::new(84));
         ai.list_them = vec![171];
 
         let forecast_position = test_position(1_226.175_4, 315.871_6);
@@ -8605,7 +8698,7 @@ mod tests {
         };
 
         let mut tick = AiPerTickData::stub();
-        tick.primary_target_snapshot_handle = 171;
+        tick.primary_target_snapshot_handle = Some(AiEntityHandle::new(171));
         tick.primary_target_forecast = Some(crate::ai::PreparedForecastDestination::fixed(
             forecast_position,
             4,
@@ -8622,7 +8715,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(ai.missed_pc, 171);
+        assert_eq!(ai.missed_pc, Some(AiEntityHandle::new(171)));
         assert_eq!(ai.base.seek_position, forecast_position);
     }
 }

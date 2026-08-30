@@ -28,16 +28,25 @@ impl EngineInner {
     pub fn get_projection_area_index(
         &self,
         assets: &LevelAssets,
-        sector: u16,
+        sector: crate::position_interface::SectorHandle,
         layer: u16,
         point: crate::coordinates::MapPoint,
-    ) -> Option<u16> {
-        let mut best: Option<(u16, f32)> = None;
+    ) -> Option<crate::sight_obstacle::SightObstacleIndex> {
+        let sector_index = sector.arena_index().unwrap_or_else(|| {
+            panic!(
+                "projection-area lookup for sector {} lacks exact arena identity",
+                sector.get()
+            )
+        });
+        let layer = crate::position_interface::Layer::new(layer)
+            .expect("projection-area lookup cannot use the absent-layer sentinel");
+        let topology = crate::sight_obstacle::ProjectionAreaRef {
+            layer,
+            sector: sector_index,
+        };
+        let mut best: Option<(crate::sight_obstacle::SightObstacleIndex, f32)> = None;
         for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
-            if !obs.is_projection_area() {
-                continue;
-            }
-            if obs.sector != sector || obs.layer != layer {
+            if obs.projection_area_ref() != Some(topology) {
                 continue;
             }
             if !obs.box_projection.contains_point(point) {
@@ -47,7 +56,8 @@ impl EngineInner {
                 continue;
             }
             let z_max = obs.box_3d_max[2];
-            let oi = oi as u16;
+            let oi = crate::sight_obstacle::SightObstacleIndex::new(oi)
+                .expect("runtime obstacle index uses reserved value");
             match best {
                 None => best = Some((oi, z_max)),
                 Some((_, prev_z)) if z_max > prev_z => best = Some((oi, z_max)),
@@ -113,7 +123,7 @@ impl EngineInner {
                                     .fast_grid
                                     .level
                                     .door_projection_infos
-                                    .get(index.0 as usize)
+                                    .get(usize::from(*index))
                             })
                             .find(|door| {
                                 (door.point_in.x - x)
@@ -127,9 +137,16 @@ impl EngineInner {
                                     handle.get()
                                 )
                             });
-                    (u16::from(door.sector_out), door.layer_out, door.point_out)
+                    (
+                        crate::position_interface::SectorHandle::from_number(door.sector_out)
+                            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                                panic!("building exit door has no exact outside sector identity")
+                            })),
+                        door.layer_out,
+                        door.point_out,
+                    )
                 } else {
-                    (handle.get(), layer, crate::coordinates::MapPoint::new(x, y))
+                    (handle, layer, crate::coordinates::MapPoint::new(x, y))
                 };
                 match self.get_projection_area_index(
                     assets,
@@ -139,7 +156,7 @@ impl EngineInner {
                 ) {
                     Some(obs_idx) => self
                         .sight_obstacles(assets)
-                        .get(obs_idx as usize)
+                        .get(usize::from(obs_idx))
                         .map(|obs| {
                             obs.compute_top_z_from_projection(
                                 projection_point.x,

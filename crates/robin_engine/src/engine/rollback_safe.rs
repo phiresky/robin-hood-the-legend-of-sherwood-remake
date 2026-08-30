@@ -618,25 +618,35 @@ impl Engine {
         };
         let sector = |handle: Option<crate::position_interface::SectorHandle>| {
             handle.map_or(Value::Null, |handle| {
-                let sector = self
-                    .inner
-                    .world
-                    .fast_grid
-                    .level
-                    .sectors
-                    .get(handle.get() as usize)
-                    .unwrap_or_else(|| {
-                        panic!("parity position references missing sector {handle}")
-                    });
+                let level = &self.inner.world.fast_grid.level;
+                let arena_index = handle.arena_index().map_or_else(
+                    || {
+                        let public = crate::sector::SectorNumber::new(i16::from(handle));
+                        level.sector_number_map.get(&public).copied().unwrap_or_else(|| {
+                            panic!(
+                                "parity position for {id:?} references missing public sector {handle}"
+                            )
+                        })
+                    },
+                    usize::from,
+                );
+                let sector = level.sectors.get(arena_index).unwrap_or_else(|| {
+                    panic!(
+                        "parity position for {id:?} references missing sector arena index {arena_index} (public {handle})"
+                    )
+                });
+                assert_eq!(
+                    u16::from(sector.sector_number),
+                    handle.get(),
+                    "parity position for {id:?} sector arena index {arena_index} has public number {}, expected {handle}",
+                    sector.sector_number.get(),
+                );
                 json!(sector.sector_number.get())
             })
         };
         let target = position.target_element.map_or(Value::Null, entity_ref);
-        let door = if position.door.is_null() {
-            Value::Null
-        } else {
-            let index = usize::try_from(position.door.0)
-                .unwrap_or_else(|_| panic!("parity position door index exceeds usize"));
+        let door = position.door.map_or(Value::Null, |door_handle| {
+            let index = usize::from(door_handle);
             let door = self
                 .inner
                 .script_domains
@@ -658,7 +668,7 @@ impl Engine {
                 "point_out": point2(door.point_out.x, door.point_out.y),
                 "point_in": point2(door.point_in.x, door.point_in.y),
             })
-        };
+        });
         let obstacle = position.obstacle.map_or(Value::Null, |handle| {
             let handle = usize::from(handle);
             let obstacle = assets
@@ -667,7 +677,7 @@ impl Engine {
                 .unwrap_or_else(|| {
                     panic!("parity position references missing static obstacle {handle}")
                 });
-            if position.layer.get() == u16::MAX {
+            if position.layer.is_none() {
                 json!({ "kind": "sight", "index": obstacle.id })
             } else {
                 let index = assets.static_sight_obstacles[..handle]
@@ -677,7 +687,7 @@ impl Engine {
                 if !obstacle.is_projection_area() {
                     panic!(
                         "parity position on layer {} references non-projection obstacle {handle}",
-                        position.layer.get()
+                        position.layer.expect("checked position layer").get()
                     );
                 }
                 json!({ "kind": "projection", "index": index })
@@ -710,7 +720,8 @@ impl Engine {
                 "direction_goal": i16::from(position.direction_goal),
                 "slow_turn_count": position.slow_turn_count,
                 "direction_count": position.direction_count,
-                "layer": position.layer.get(), "layer_goal": position.layer_goal.get(),
+                "layer": position.layer.map(crate::position_interface::Layer::get),
+                "layer_goal": position.layer_goal.map(crate::position_interface::Layer::get),
                 "tolerance": float(position.tolerance),
                 "directional_tolerance": position.directional_tolerance,
                 "accumulate_movement_map": position.accumulate_movement_map,
@@ -791,7 +802,9 @@ impl Engine {
                 "trajectory_origin": {
                     "map": point2(projectile.start_of_trajectory_x, projectile.start_of_trajectory_y),
                     "sector": projectile.trajectory_origin_sector,
-                    "layer": projectile.trajectory_origin_layer,
+                    "layer": projectile
+                        .trajectory_origin_layer
+                        .map(crate::position_interface::Layer::get),
                 },
                 "flight_direction": projectile.flight_direction,
                 "start": point3(projectile.start.x, projectile.start.y, projectile.start.z),
@@ -801,9 +814,6 @@ impl Engine {
             })
         };
         let resolve_ai_handle = |handle: u32| -> Value {
-            if handle == 0 {
-                return Value::Null;
-            }
             let resolved = self
                 .inner
                 .world
@@ -812,6 +822,9 @@ impl Engine {
                 .find_map(|(candidate, _)| (candidate.index() == handle).then_some(candidate))
                 .unwrap_or_else(|| panic!("parity local AI references missing handle {handle}"));
             entity_ref(resolved)
+        };
+        let resolve_optional_ai_handle = |handle: Option<crate::ai::AiEntityHandle>| -> Value {
+            handle.map_or(Value::Null, |handle| resolve_ai_handle(handle.get()))
         };
         let ai_position = |position: crate::ai::Position| {
             json!({
@@ -859,7 +872,12 @@ impl Engine {
                 StimulusInfo::Noise(noise) => (
                     1,
                     json!({
-                        "kind": "noise", "origin": ai_position(noise.origin),
+                        "kind": "noise",
+                        "origin": {
+                            "map": point2(noise.origin.x, noise.origin.y),
+                            "sector": sector(noise.origin.sector),
+                            "layer": noise.origin.layer.map(crate::position_interface::Layer::get),
+                        },
                         "noise_type": noise.noise_type as u32,
                         "volume": noise.volume, "elevation": noise.elevation,
                     }),
@@ -873,33 +891,33 @@ impl Engine {
                 StimulusInfo::Human(entity) => (
                     3,
                     json!({
-                        "kind": "human", "entity": resolve_ai_handle(entity),
+                        "kind": "human", "entity": resolve_ai_handle(entity.get()),
                     }),
                 ),
                 StimulusInfo::Hint(hint) => (
                     4,
                     json!({
                         "kind": "hint", "position": ai_position(hint.seek_point),
-                        "teller": resolve_ai_handle(hint.who_tells_me), "seek_flags": hint.seek_flags,
+                        "teller": resolve_ai_handle(hint.who_tells_me.get()), "seek_flags": hint.seek_flags,
                     }),
                 ),
                 StimulusInfo::Object(entity) => (
                     5,
                     json!({
-                        "kind": "object", "entity": resolve_ai_handle(entity),
+                        "kind": "object", "entity": resolve_ai_handle(entity.get()),
                     }),
                 ),
                 StimulusInfo::Stolen(stolen) => (
                     6,
                     json!({
-                        "kind": "stolen", "object": resolve_ai_handle(stolen.object),
-                        "thief": resolve_ai_handle(stolen.thief),
+                        "kind": "stolen", "object": resolve_ai_handle(stolen.object.get()),
+                        "thief": resolve_ai_handle(stolen.thief.get()),
                     }),
                 ),
                 StimulusInfo::Combat(combat) => (
                     7,
                     json!({
-                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc),
+                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc.get()),
                         "enemy_position": ai_position(combat.enemy_position),
                     }),
                 ),
@@ -908,7 +926,7 @@ impl Engine {
                     json!({
                         "kind": "door_combat", "delay": combat.delay, "direction": combat.direction,
                         "goal": ai_position(combat.goal),
-                        "adversary": resolve_ai_handle(combat.adversary),
+                        "adversary": resolve_optional_ai_handle(combat.adversary),
                     }),
                 ),
                 StimulusInfo::Index(value) => (9, json!({ "kind": "index", "value": value })),
@@ -919,7 +937,7 @@ impl Engine {
             json!({
                 "stimulus_type": stimulus.stimulus_type as u32,
                 "info_type": info_type,
-                "owner": resolve_ai_handle(stimulus.owner),
+                "owner": resolve_optional_ai_handle(stimulus.owner),
                 "to_whole_patrol": stimulus.to_whole_patrol,
                 "info": info,
             })
@@ -934,7 +952,7 @@ impl Engine {
                     stimulus.info,
                     StimulusInfo::None | StimulusInfo::LegacyInvalidType(_)
                 )
-                && stimulus.owner == 0
+                && stimulus.owner.is_none()
                 && !stimulus.to_whole_patrol;
             if is_default {
                 Value::Null
@@ -944,14 +962,14 @@ impl Engine {
         };
         let npc_ai = entity.npc_data().and_then(|npc| {
 			let ai = npc.ai_brain.base()?;
-			let ai_door = |index: Option<u32>| -> Value {
+			let ai_door = |index: Option<crate::gate::DoorIndex>| -> Value {
 				let Some(index) = index else { return Value::Null };
 				let door = self
 					.inner
 					.script_domains
 					.interactables
 					.doors
-					.get(usize::try_from(index).expect("parity AI door index exceeds usize"))
+					.get(usize::from(index))
 					.unwrap_or_else(|| panic!("parity AI references missing door {index}"));
 				let kind = match door.gate_type {
 					crate::gate::GateType::Door => "door",
@@ -1030,12 +1048,12 @@ impl Engine {
 					"next_rand_forecasted": ai.next_macro_rand_forecasted,
 				},
 				"targets": {
-					"primary": resolve_ai_handle(ai.primary_target),
-					"friend_in_trouble": resolve_ai_handle(ai.friend_in_trouble),
-					"detected_body": resolve_ai_handle(ai.detected_body),
-					"interesting_object": resolve_ai_handle(ai.interesting_object),
-					"antagonist": resolve_ai_handle(ai.antagonist),
-					"last_stimulus_actor": ai.last_stimulus_actor.map_or(Value::Null, resolve_ai_handle),
+					"primary": resolve_optional_ai_handle(ai.primary_target),
+					"friend_in_trouble": resolve_optional_ai_handle(ai.friend_in_trouble),
+					"detected_body": resolve_optional_ai_handle(ai.detected_body),
+					"interesting_object": resolve_optional_ai_handle(ai.interesting_object),
+					"antagonist": resolve_optional_ai_handle(ai.antagonist),
+					"last_stimulus_actor": resolve_optional_ai_handle(ai.last_stimulus_actor),
 				},
 				"timers": {
 					"running": ai.timer_is_running, "ring": ai.when_does_timer_ring,
@@ -1052,7 +1070,7 @@ impl Engine {
 				"last_stimuli": ai.last_stimulus.map(|stimulus| stimulus as u32),
 				"last_stimulus_multiplicities": ai.last_stimulus_multiplicity,
 				"group": {
-					"is_master": ai.is_master, "master": resolve_ai_handle(ai.master),
+					"is_master": ai.is_master, "master": resolve_optional_ai_handle(ai.master),
 					"us": handles(&ai.list_us), "alerted_us": handles(&ai.list_alerted_us),
 					"staying_us": handles(&ai.list_staying_us),
 				},
@@ -1082,9 +1100,9 @@ impl Engine {
 				},
 				"object_memory": {
 					"forgotten": handles(&ai.forgotten_objects),
-					"desire": resolve_ai_handle(ai.object_of_desire),
-					"checkpoint_charly": resolve_ai_handle(ai.checkpoint_charly),
-					"synchronize_charly": resolve_ai_handle(ai.synchronize_charly),
+					"desire": resolve_optional_ai_handle(ai.object_of_desire),
+					"checkpoint_charly": resolve_optional_ai_handle(ai.checkpoint_charly),
+					"synchronize_charly": resolve_optional_ai_handle(ai.synchronize_charly),
 				},
 				"inside_halt": ai.inside_halt_method,
 				"synchronizing_actors": handles(&ai.synchronizing_actors),
@@ -1106,7 +1124,7 @@ impl Engine {
 					"report_type": ai.my_reconnaissance_report.report_type as u32,
 					"seek_position": ai_position(ai.my_reconnaissance_report.seek_position),
 					"seen_bodies": handles(&ai.my_reconnaissance_report.seen_bodies),
-					"charly": resolve_ai_handle(ai.my_reconnaissance_report.charly),
+					"charly": resolve_optional_ai_handle(ai.my_reconnaissance_report.charly),
 					"charly_seen": ai.my_reconnaissance_report.charly_seen,
 				},
 				"patrol": {
@@ -1134,9 +1152,9 @@ impl Engine {
 					"fleeing_seen_enemy_counter": enemy.fleeing_seen_enemy_counter,
 					"pc_gone_direction": enemy.pc_gone_away_in_this_direction,
 					"detected_something_there": ai_position(enemy.detected_something_there),
-					"missed_pc": resolve_ai_handle(enemy.missed_pc),
+					"missed_pc": resolve_optional_ai_handle(enemy.missed_pc),
 					"last_seek_direction_index": enemy.last_seek_direction_index,
-					"beggar_to_examine": resolve_ai_handle(enemy.beggar_to_examine),
+					"beggar_to_examine": resolve_optional_ai_handle(enemy.beggar_to_examine),
 					"pc_missed": enemy.pc_missed,
 					"task_priorities": {
 						"current": enemy.current_task_priority,
@@ -1179,8 +1197,8 @@ impl Engine {
 					"synchronize_index": enemy.base.synchronize_index,
 					"initial_view_cone": enemy.base.initial_view_cone as u32,
 					"company_number": enemy.company_number,
-					"left_combat_neighbour": resolve_ai_handle(enemy.left_combat_neighbour),
-					"right_combat_neighbour": resolve_ai_handle(enemy.right_combat_neighbour),
+					"left_combat_neighbour": resolve_optional_ai_handle(enemy.left_combat_neighbour),
+					"right_combat_neighbour": resolve_optional_ai_handle(enemy.right_combat_neighbour),
 					"attentive": enemy.attentive,
 					"will_be_attentive": enemy.will_be_attentive,
 					"forced_attentive": enemy.forced_attentive,
@@ -1199,8 +1217,8 @@ impl Engine {
 					"other_seen_money": handles(&enemy.other_seen_money),
 					"money_fight_enemies": handles(&enemy.money_fight_enemies),
 					"money_fight_victims": handles(&enemy.money_fight_victims),
-					"archer_behind_me": resolve_ai_handle(enemy.archer_behind_me),
-					"shield_bearer_before_me": resolve_ai_handle(enemy.shield_bearer_before_me),
+					"archer_behind_me": resolve_optional_ai_handle(enemy.archer_behind_me),
+					"shield_bearer_before_me": resolve_optional_ai_handle(enemy.shield_bearer_before_me),
 					"already_seen_bodies": handles(&enemy.already_seen_bodies),
 					"my_line_jump": jump_line(enemy.my_line_jump),
 					"shield_bearer_direction": enemy.shield_bearer_direction,
@@ -1407,7 +1425,7 @@ impl Engine {
                     json!({
                         "special_count": pc.quick_action_special_counts[slot],
                         "quickito": pc.quick_action_types[slot] as u32,
-                        "titbit": pc.titbits[slot],
+                        "titbit": pc.titbits[slot].map(crate::titbit::TitbitId::get),
                         "button": pc.quick_action_buttons[slot],
                         "interactor": pc.quick_action_interactors[slot].map_or(Value::Null, entity_ref),
                         "action_size": pc.quick_action_sequences[slot].as_ref().map(|sequence| sequence.len()),
@@ -1448,7 +1466,8 @@ impl Engine {
                 "life_level": float(f32::from(pc.life_points)),
                 "trumpet_enabled": pc.trumpet_enabled,
                 "quick_icons": pc.portrait.quick_icons.iter().map(|icon| json!({
-                    "titbit": icon.titbit_id, "running": icon.running,
+                    "titbit": icon.titbit_id.map(crate::titbit::TitbitId::get),
+                    "running": icon.running,
                 })).collect::<Vec<_>>(),
             })
         });
@@ -2608,10 +2627,10 @@ impl Engine {
     pub fn parity_titbit_manager_state(&self) -> serde_json::Value {
         use serde_json::{Value, json};
 
-        let entity = |handle: crate::titbit::ElementHandle| {
-            if !handle.is_valid() {
+        let entity = |handle: Option<crate::titbit::ElementHandle>| {
+            let Some(handle) = handle else {
                 return Value::Null;
-            }
+            };
             let id = self
                 .inner
                 .entity_id_for_index(handle.0)
@@ -2642,7 +2661,7 @@ impl Engine {
                 "display_order": float(titbit.display_order),
                 "layer": titbit.layer,
                 "blinking": titbit.blinking,
-                "id": titbit.id,
+                "id": titbit.id.get(),
                 "element_supplier": entity(titbit.element_supplier),
                 "element_manager": entity(titbit.element_manager),
                 "position": {
@@ -4177,6 +4196,78 @@ mod tests {
         (engine, assets)
     }
 
+    fn typed_sentinel_snapshot_fixture() -> (Engine, EntityId) {
+        let mut inner = EngineInner::new();
+        let mut ai = crate::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
+        ai.base.seek_position.sector = Some(crate::position_interface::SectorHandle::from_number(
+            crate::sector::SectorNumber::new(-1),
+        ));
+        ai.base.initial_position.sector = Some(
+            crate::position_interface::SectorHandle::new(23)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap()),
+        );
+        ai.base.detached_patrol_path_status = crate::ai::DetachedPatrolPathStatus {
+            hiking_path_index: crate::ai::PathId::new(3),
+            current_waypoint_index: 5,
+            last_waypoint_index: 7,
+            forward: false,
+            history: vec![crate::ai::PathHistoryEntry {
+                position: crate::ai::Position::default(),
+                direction: 9,
+                distance: 11,
+            }],
+        };
+        let id = inner.add_entity(crate::element::Entity::Soldier(
+            crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = crate::element::NpcData::default();
+                    npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(id.index(), 0, "fixture must occupy live arena slot zero");
+        (Engine { inner }, id)
+    }
+
+    fn assert_typed_sentinel_snapshot(engine: &Engine, id: EntityId) {
+        let ai = engine
+            .inner
+            .get_entity(id)
+            .and_then(crate::element::Entity::enemy_ai)
+            .expect("typed sentinel fixture retains EnemyAi");
+        assert_eq!(
+            ai.base.primary_target,
+            Some(crate::ai::AiEntityHandle::new(0))
+        );
+        let signed_sector = ai.base.seek_position.sector.unwrap();
+        assert_eq!(signed_sector.number().get(), -1);
+        assert_eq!(signed_sector.arena_index(), None);
+        let exact_sector = ai.base.initial_position.sector.unwrap();
+        assert_eq!(exact_sector.number().get(), 23);
+        assert_eq!(
+            exact_sector.arena_index(),
+            crate::fast_find_grid::SectorIndex::new(0)
+        );
+        let detached = &ai.base.detached_patrol_path_status;
+        assert_eq!(detached.hiking_path_index, crate::ai::PathId::new(3));
+        assert_eq!(detached.current_waypoint_index, 5);
+        assert_eq!(detached.last_waypoint_index, 7);
+        assert!(!detached.forward);
+        assert_eq!(detached.history.len(), 1);
+        assert_eq!(detached.history[0].direction, 9);
+        assert_eq!(detached.history[0].distance, 11);
+    }
+
     fn sherwood_trading_frame_fixture() -> (Engine, LevelAssets) {
         use crate::element::{ElementBonus, ElementData, ElementKind, Entity, ObjectData};
         use crate::mission::Mission;
@@ -4350,6 +4441,78 @@ mod tests {
             decoded.inner.feedback.cutscene_camera.old_zoom_factor, 1.0,
             "bitcode-skipped presentation zoom must restore its canonical default"
         );
+    }
+
+    #[test]
+    fn rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance() {
+        std::thread::Builder::new()
+            .name("typed-sentinel-rollback-snapshot".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(
+                rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner,
+            )
+            .expect("spawn large-stack rollback snapshot test")
+            .join()
+            .expect("rollback snapshot test panicked");
+    }
+
+    fn rollback_native_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner() {
+        let (engine, id) = typed_sentinel_snapshot_fixture();
+        let bytes = engine.encode_native_snapshot();
+
+        let decoded = Engine::decode_native_snapshot(&bytes).expect("decode rollback snapshot");
+
+        assert_typed_sentinel_snapshot(&decoded, id);
+        let present_hash = crate::replay::state_hash(&decoded);
+        let mut absent = decoded;
+        absent
+            .inner
+            .get_entity_mut(id)
+            .and_then(crate::element::Entity::enemy_ai_mut)
+            .unwrap()
+            .base
+            .primary_target = None;
+        assert_ne!(
+            present_hash,
+            crate::replay::state_hash(&absent),
+            "rollback hashing must distinguish live slot zero from absence"
+        );
+    }
+
+    #[test]
+    fn network_initial_snapshot_round_trips_typed_slot_zero_and_spatial_provenance() {
+        std::thread::Builder::new()
+            .name("typed-sentinel-network-snapshot".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(
+                network_initial_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner,
+            )
+            .expect("spawn large-stack network snapshot test")
+            .join()
+            .expect("network snapshot test panicked");
+    }
+
+    fn network_initial_snapshot_round_trips_typed_slot_zero_and_spatial_provenance_inner() {
+        let (engine, id) = typed_sentinel_snapshot_fixture();
+        let message = crate::multiplayer::NetMsg::InitialSnapshot {
+            frame: 37,
+            engine_bytes: engine.encode_native_snapshot(),
+        };
+
+        let decoded_message =
+            crate::multiplayer::decode_msg(&crate::multiplayer::encode_msg(&message))
+                .expect("decode network message");
+        let crate::multiplayer::NetMsg::InitialSnapshot {
+            frame,
+            engine_bytes,
+        } = decoded_message
+        else {
+            panic!("network message changed variant")
+        };
+        assert_eq!(frame, 37);
+        let decoded = Engine::decode_native_snapshot(&engine_bytes)
+            .expect("decode network-carried engine snapshot");
+        assert_typed_sentinel_snapshot(&decoded, id);
     }
 
     fn pending_drop_ale_seek(
@@ -5675,7 +5838,10 @@ mod tests {
         );
         assert_eq!(state["titbits"][0]["layer"], 4);
         assert_eq!(state["titbits"][0]["blinking"], true);
-        assert_eq!(state["titbits"][0]["id"], id);
+        assert_eq!(
+            state["titbits"][0]["id"],
+            id.expect("titbit allocation succeeds").get()
+        );
         assert!(state["titbits"][0]["element_supplier"].is_null());
         assert!(state["titbits"][0]["element_manager"].is_null());
         assert_eq!(

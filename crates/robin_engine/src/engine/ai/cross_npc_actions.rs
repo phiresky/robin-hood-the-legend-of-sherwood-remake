@@ -167,12 +167,12 @@ impl EngineInner {
         &self,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
-        origin_layer: u16,
+        origin_layer: Option<crate::position_interface::Layer>,
         volume: u16,
         elevation: u16,
         source_entity: Option<EntityId>,
     ) -> crate::ai::Noise {
-        use crate::ai::{Noise, NoiseType, Position};
+        use crate::ai::{Noise, NoiseType};
 
         let element_id = match noise_type {
             NoiseType::TapTapTap | NoiseType::ZingZing | NoiseType::Aaargh | NoiseType::Heeelp => {
@@ -190,16 +190,16 @@ impl EngineInner {
             .and_then(|id| self.world.entities.get(id))
             .filter(|entity| {
                 entity.element_data().position_map() == origin
-                    && entity.element_data().layer() == origin_layer
+                    && entity.element_data().optional_layer() == origin_layer
             })
             .and_then(|entity| entity.element_data().sector());
 
         Noise {
-            origin: Position {
+            origin: crate::ai::NoiseOrigin {
                 x: origin.x,
                 y: origin.y,
                 sector: origin_sector,
-                level: origin_layer,
+                layer: origin_layer,
             },
             noise_type,
             volume,
@@ -320,7 +320,7 @@ impl EngineInner {
         assets: &LevelAssets,
         noise_type: crate::ai::NoiseType,
         origin: crate::coordinates::MapPoint,
-        origin_layer: u16,
+        origin_layer: Option<crate::position_interface::Layer>,
         volume: u16,
         elevation: u16,
         source_entity: Option<EntityId>,
@@ -387,49 +387,59 @@ impl EngineInner {
     // - SendStimulus (e.g. CALL_COORDINATE to archers)
     // - SetLeft/RightCombatNeighbour for phalanx linking
 
-    fn apply_update_left_combat_neighbour(&mut self, target: u32, old_left: u32, new_left: u32) {
-        if old_left != 0 {
-            self.required_cross_npc_enemy_mut(old_left, "unlink-old-left-neighbour")
-                .right_combat_neighbour = 0;
+    fn apply_update_left_combat_neighbour(
+        &mut self,
+        target: u32,
+        old_left: Option<crate::ai::AiEntityHandle>,
+        new_left: Option<crate::ai::AiEntityHandle>,
+    ) {
+        if let Some(old_left) = old_left {
+            self.required_cross_npc_enemy_mut(old_left.get(), "unlink-old-left-neighbour")
+                .right_combat_neighbour = None;
         }
         self.required_cross_npc_enemy_mut(target, "update-left-combat-neighbour")
             .left_combat_neighbour = new_left;
-        if new_left != 0 {
+        if let Some(new_left) = new_left {
             let new_lefts_old_right = self
-                .required_cross_npc_enemy_mut(new_left, "inspect-new-left-neighbour")
+                .required_cross_npc_enemy_mut(new_left.get(), "inspect-new-left-neighbour")
                 .right_combat_neighbour;
-            if new_lefts_old_right != 0 {
+            if let Some(new_lefts_old_right) = new_lefts_old_right {
                 self.required_cross_npc_enemy_mut(
-                    new_lefts_old_right,
+                    new_lefts_old_right.get(),
                     "unlink-new-left-old-right-neighbour",
                 )
-                .left_combat_neighbour = 0;
+                .left_combat_neighbour = None;
             }
-            self.required_cross_npc_enemy_mut(new_left, "link-new-left-neighbour")
-                .right_combat_neighbour = target;
+            self.required_cross_npc_enemy_mut(new_left.get(), "link-new-left-neighbour")
+                .right_combat_neighbour = Some(crate::ai::AiEntityHandle::new(target));
         }
     }
 
-    fn apply_update_right_combat_neighbour(&mut self, target: u32, old_right: u32, new_right: u32) {
-        if old_right != 0 {
-            self.required_cross_npc_enemy_mut(old_right, "unlink-old-right-neighbour")
-                .left_combat_neighbour = 0;
+    fn apply_update_right_combat_neighbour(
+        &mut self,
+        target: u32,
+        old_right: Option<crate::ai::AiEntityHandle>,
+        new_right: Option<crate::ai::AiEntityHandle>,
+    ) {
+        if let Some(old_right) = old_right {
+            self.required_cross_npc_enemy_mut(old_right.get(), "unlink-old-right-neighbour")
+                .left_combat_neighbour = None;
         }
         self.required_cross_npc_enemy_mut(target, "update-right-combat-neighbour")
             .right_combat_neighbour = new_right;
-        if new_right != 0 {
+        if let Some(new_right) = new_right {
             let new_rights_old_left = self
-                .required_cross_npc_enemy_mut(new_right, "inspect-new-right-neighbour")
+                .required_cross_npc_enemy_mut(new_right.get(), "inspect-new-right-neighbour")
                 .left_combat_neighbour;
-            if new_rights_old_left != 0 {
+            if let Some(new_rights_old_left) = new_rights_old_left {
                 self.required_cross_npc_enemy_mut(
-                    new_rights_old_left,
+                    new_rights_old_left.get(),
                     "unlink-new-right-old-left-neighbour",
                 )
-                .right_combat_neighbour = 0;
+                .right_combat_neighbour = None;
             }
-            self.required_cross_npc_enemy_mut(new_right, "link-new-right-neighbour")
-                .left_combat_neighbour = target;
+            self.required_cross_npc_enemy_mut(new_right.get(), "link-new-right-neighbour")
+                .left_combat_neighbour = Some(crate::ai::AiEntityHandle::new(target));
         }
     }
 
@@ -1640,14 +1650,14 @@ impl EngineInner {
         &mut self,
         target: u32,
         them: Vec<crate::ai::HumanHandle>,
-        primary_target: crate::ai::HumanHandle,
+        primary_target: Option<crate::ai::AiEntityHandle>,
     ) {
         let enemy_ai = self.required_cross_npc_enemy_mut(target, "install-phalanx-them-list");
         tracing::trace!(
             target: "robin_engine::ai_enemy::phalanx",
             member = target,
             ?them,
-            primary_target,
+            ?primary_target,
             "phalanx them-list: installing on member"
         );
         enemy_ai.list_them = them;
@@ -2029,7 +2039,7 @@ impl EngineInner {
             let hint = crate::ai::Hint {
                 seek_point: position,
                 seek_flags: 0,
-                who_tells_me: caller,
+                who_tells_me: crate::ai::AiEntityHandle::new(caller),
             };
             self.world
                 .entities

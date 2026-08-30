@@ -252,7 +252,7 @@ struct ConvertedPc {
     quick_action_special_counts: Vec<u16>,
     quick_action_buttons: Vec<u16>,
     quick_action_interactors: Vec<Option<EntityId>>,
-    titbits: Vec<u32>,
+    titbits: Vec<Option<crate::titbit::TitbitId>>,
     portrait: PcPortraitState,
     carried: Option<EntityId>,
     carried_posture: u32,
@@ -376,11 +376,7 @@ impl LegacyPcHumanAdoptionPlan {
                 // the campaign stream read immediately beforehand.
                 campaign_character.status = saved.status;
                 for slot in 0..saved.quick_action_sequences.len() {
-                    let titbit = saved
-                        .titbits
-                        .get(slot)
-                        .copied()
-                        .and_then(crate::titbit::TitbitId::new);
+                    let titbit = saved.titbits.get(slot).copied().flatten();
                     if let Some(action) = saved.quick_action_sequences[slot].clone() {
                         engine.players.macro_store.adopt_legacy_sequence_slot(
                             record.entity_id,
@@ -710,7 +706,7 @@ fn convert_pc(
         quick_action_special_counts.push(action.metadata.number_of_special_quick_actions);
         quick_action_buttons.push(action.metadata.button);
         quick_action_interactors.push(interactor);
-        titbits.push(action.metadata.titbit);
+        titbits.push(crate::titbit::TitbitId::new(action.metadata.titbit));
     }
     let carried = checked_ref(
         entities.resolve_element(saved.post_human.carried)?,
@@ -788,7 +784,7 @@ fn convert_pc(
                 .portrait
                 .quick_icons
                 .map(|icon| PcPortraitQuickIconState {
-                    titbit_id: icon.titbit_id,
+                    titbit_id: crate::titbit::TitbitId::new(icon.titbit_id),
                     running: icon.running,
                 }),
         },

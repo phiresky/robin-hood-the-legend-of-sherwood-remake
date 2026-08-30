@@ -17,7 +17,7 @@ impl EngineInner {
         assets: &LevelAssets,
         layer: u16,
         pos: MapPoint,
-    ) -> Option<u16> {
+    ) -> Option<crate::sight_obstacle::SightObstacleIndex> {
         self.find_plane_obstacle_split(assets, layer, pos, pos)
     }
 
@@ -35,7 +35,7 @@ impl EngineInner {
         layer: u16,
         bbox_at: MapPoint,
         polygon_at: MapPoint,
-    ) -> Option<u16> {
+    ) -> Option<crate::sight_obstacle::SightObstacleIndex> {
         let grid_width = i32::from(self.world.fast_grid.level.grid_width);
         let grid_height = i32::from(self.world.fast_grid.level.grid_height);
         assert!(
@@ -84,8 +84,8 @@ impl EngineInner {
                         y: point.y - point.z_top,
                     })
                     .collect::<Vec<_>>();
-                obs.is_projection_area()
-                    && obs.layer == layer
+                obs.projection_area_ref()
+                    .is_some_and(|area| area.layer.get() == layer)
                     // Mirror AddSector's polygon-vs-block registration gate
                     // before applying CrossElevationLine's point predicates.
                     && crate::geo2d::polygon_vertices_intersect_bbox(
@@ -96,18 +96,17 @@ impl EngineInner {
                     && obs.contains_point_projection(polygon_at)
             })
             .map(|(index, _)| {
-                u16::try_from(index).unwrap_or_else(|_| {
-                    panic!("projection-area obstacle index {index} does not fit in u16")
-                })
+                crate::sight_obstacle::SightObstacleIndex::new(index as u32)
+                    .expect("runtime obstacle index uses reserved value")
             })
             .next_back()
     }
 
     pub(in crate::engine) fn crossed_elevation_obstacle(
-        current: Option<u16>,
-        left: Option<u16>,
-        right: Option<u16>,
-    ) -> Option<Option<u16>> {
+        current: Option<crate::sight_obstacle::SightObstacleIndex>,
+        left: Option<crate::sight_obstacle::SightObstacleIndex>,
+        right: Option<crate::sight_obstacle::SightObstacleIndex>,
+    ) -> Option<Option<crate::sight_obstacle::SightObstacleIndex>> {
         if current == left {
             Some(right)
         } else if current == right {
@@ -229,10 +228,9 @@ impl EngineInner {
                     panic!("RHCOMMAND_MOVE extraction owner {owner:?} disappeared")
                 });
             let pi = entity.position_iface();
-            let pf_idx = {
-                let index = pi.get_pathfinder_index();
-                if index == u16::MAX { 0 } else { index }
-            };
+            let pf_idx = u16::from(pi.get_pathfinder_index().unwrap_or_else(|| {
+                panic!("RHCOMMAND_MOVE extraction owner {owner:?} has no pathfinder index")
+            }));
             (
                 entity.element_data().layer(),
                 pf_idx,
@@ -363,14 +361,11 @@ impl EngineInner {
         let right = line.right_obstacle_index;
 
         let (current, layer) = match self.world.entities.get(entity_id) {
-            Some(e) => (
-                e.element_data().obstacle_index().map(u16::from),
-                e.element_data().layer(),
-            ),
+            Some(e) => (e.element_data().obstacle_index(), e.element_data().layer()),
             None => return,
         };
 
-        let mut next: Option<u16>;
+        let mut next: Option<crate::sight_obstacle::SightObstacleIndex>;
         let mut found = true;
 
         if let Some(crossed) = Self::crossed_elevation_obstacle(current, left, right) {
@@ -519,7 +514,7 @@ impl EngineInner {
         // Read the actor's current obstacle — used as the seed for the
         // sort when multiple lines are crossed.
         let mut current_obstacle = match self.world.entities.get(entity_id) {
-            Some(e) => e.element_data().obstacle_index().map(u16::from),
+            Some(e) => e.element_data().obstacle_index(),
             None => return false,
         };
 
@@ -972,8 +967,10 @@ mod tests {
             id,
             crate::sight_obstacle::SIGHTOBSTACLE_PROJECTION_AREA,
         );
-        obstacle.layer = 0;
-        obstacle.sector = 0;
+        obstacle.set_projection_area_ref(
+            crate::position_interface::Layer::ZERO,
+            crate::fast_find_grid::SectorIndex::new(0).unwrap(),
+        );
         obstacle.obstacle_points = vec![
             crate::sight_obstacle::ObstaclePoint {
                 x: 0.0,
@@ -1024,7 +1021,7 @@ mod tests {
 
         assert_eq!(
             engine.find_plane_obstacle_at(&assets, 0, MapPoint::new(50.0, 50.0)),
-            Some(1),
+            crate::sight_obstacle::SightObstacleIndex::new(1),
             "Original visits every containing plane sector and leaves the last authored one selected"
         );
         assert_eq!(
@@ -1034,7 +1031,7 @@ mod tests {
                 MapPoint::new(60.0, 60.0),
                 MapPoint::new(50.0, 50.0),
             ),
-            Some(1),
+            crate::sight_obstacle::SightObstacleIndex::new(1),
             "the asymmetric second emergency uses the same authored-sector ordering"
         );
     }
@@ -1081,7 +1078,7 @@ mod tests {
                 MapPoint::new(70.0, 10.0),
                 MapPoint::new(10.0, 10.0),
             ),
-            Some(0),
+            crate::sight_obstacle::SightObstacleIndex::new(0),
         );
     }
 

@@ -79,14 +79,14 @@ fn beam_door_waypoints_into_houses(
                 let inside_sector = door.position_in.sector.unwrap_or_else(|| {
                     panic!(
                         "building door {} has no required interior sector",
-                        door.door_index.0
+                        door.door_index.get()
                     )
                 });
                 if waypoint_sectors.is_some() {
                     assert!(
                         inside_sector.arena_index().is_some(),
                         "building door {} interior sector has no exact arena identity",
-                        door.door_index.0
+                        door.door_index.get()
                     );
                 }
                 waypoint.x = door.position_in.x as i16;
@@ -160,7 +160,7 @@ mod building_door_membership_tests {
         }];
         let mut sectors = vec![vec![outside]];
         let doors = vec![DoorSeekInfo {
-            door_index: DoorIndex(5),
+            door_index: DoorIndex::new(5).expect("valid door index"),
             door_type: DoorType::Building,
             point_out: MapPoint::new(1955.0, 1992.0),
             position_in: Position {
@@ -2406,7 +2406,9 @@ mod parity_tests {
                 .filter(|(_, door)| {
                     door.sector_in == sector_number || door.sector_out == sector_number
                 })
-                .map(|(index, _)| crate::gate::DoorIndex(index as u32))
+                .map(|(index, _)| {
+                    crate::gate::DoorIndex::new(index as u32).expect("valid door index")
+                })
                 .collect(),
             underlying_sector: None,
         });
@@ -2490,9 +2492,15 @@ mod parity_tests {
 
         let mut grid = lift_grid(crate::sector::LiftType::Ladder, &doors);
         let level = std::sync::Arc::make_mut(&mut grid.level);
-        level.sectors[0].gate_indices = vec![crate::gate::DoorIndex(0), crate::gate::DoorIndex(1)];
+        level.sectors[0].gate_indices = vec![
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
+            crate::gate::DoorIndex::new(1).expect("valid door index"),
+        ];
         let mut duplicate = level.sectors[0].clone();
-        duplicate.gate_indices = vec![crate::gate::DoorIndex(2), crate::gate::DoorIndex(3)];
+        duplicate.gate_indices = vec![
+            crate::gate::DoorIndex::new(2).expect("valid door index"),
+            crate::gate::DoorIndex::new(3).expect("valid door index"),
+        ];
         level.sectors.push(duplicate);
         level
             .sector_number_map
@@ -2833,10 +2841,10 @@ pub(super) fn extract_forecast_input(
     // element and both serialized actor fields even though Rust's runtime-only
     // ActiveDoorPass choreography is not reconstructed.
     let live_door = entity.position_iface().get_door();
-    let door_pass = (is_passing_door && !live_door.is_null()).then_some((
-        crate::gate::DoorIndex(live_door.0),
-        actor.passing_door_directly,
-    ));
+    let door_pass = is_passing_door
+        .then_some(live_door)
+        .flatten()
+        .map(|door| (door, actor.passing_door_directly));
     let forecasted_z = entity.position_iface().get_forecasted_movement().z;
     Some(crate::ai::ForecastInput {
         position_map_x: elem.position_map().x,
@@ -2940,7 +2948,10 @@ mod seek_area_friend_position_tests {
         assert!(distance_squared(raw_friend) < 500.0 * 500.0);
         let indirect = seek_area_friend_position_map(
             raw_friend,
-            Some((crate::gate::DoorIndex(0), false)),
+            Some((
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                false,
+            )),
             &doors,
         );
         assert_eq!(indirect, doors[0].point_out);
@@ -2948,7 +2959,10 @@ mod seek_area_friend_position_tests {
 
         let direct = seek_area_friend_position_map(
             raw_friend,
-            Some((crate::gate::DoorIndex(0), true)),
+            Some((
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                true,
+            )),
             &doors,
         );
         assert_eq!(direct, doors[0].point_in);
@@ -2982,7 +2996,7 @@ mod seek_area_friend_position_tests {
         else {
             panic!("PassDoor test element changed kind")
         };
-        *gate_id = Some(crate::gate::DoorIndex(0));
+        *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *direction = 0;
         let sequence_id = sequences.launch_element(pass);
         sequences.element_in_progress(sequence_id, 0);
@@ -3075,7 +3089,7 @@ mod seek_area_friend_position_tests {
         else {
             panic!("PassDoor test element changed kind")
         };
-        *gate_id = Some(crate::gate::DoorIndex(0));
+        *gate_id = Some(crate::gate::DoorIndex::new(0).expect("valid door index"));
         *direction = 1;
         let sequence_id = sequences.launch_element(pass);
         sequences.element_in_progress(sequence_id, 0);
@@ -3428,7 +3442,7 @@ type PrimaryTargetMetadata = (
     crate::element::Posture,
     Option<crate::order::OrderType>,
     Option<crate::ai::Position>,
-    Option<crate::ai::HumanHandle>,
+    Option<crate::ai::AiEntityHandle>,
 );
 
 pub(super) struct AiPositionResolution {
@@ -3438,7 +3452,7 @@ pub(super) struct AiPositionResolution {
     /// Final `RHArtificialIntelligence::Position(entity)` result.
     pub(super) effective: crate::ai::Position,
     pub(super) carrier: Option<crate::ai::Position>,
-    pub(super) carrier_handle: Option<crate::ai::HumanHandle>,
+    pub(super) carrier_handle: Option<crate::ai::AiEntityHandle>,
 }
 
 pub(super) fn resolve_ai_position_with(
@@ -3468,10 +3482,10 @@ fn resolve_ai_position_with_selected(
     if target.actor_data().is_some()
         && let Some((gate_id, direction)) = selected_door
     {
-        let door = doors.get(gate_id.0 as usize).unwrap_or_else(|| {
+        let door = doors.get(usize::from(gate_id)).unwrap_or_else(|| {
             panic!(
                 "AI position target {target_id:?} references missing door {}",
-                gate_id.0
+                gate_id
             )
         });
         let position = if direction != 0 {
@@ -3527,7 +3541,7 @@ fn resolve_ai_position_with_selected(
         target: target_position,
         effective: carrier.unwrap_or(target_position),
         carrier,
-        carrier_handle: carrier_id.map(crate::element::EntityId::index),
+        carrier_handle: carrier_id.map(|id| crate::ai::AiEntityHandle::new(id.index())),
     }
 }
 
@@ -3612,17 +3626,11 @@ pub(super) fn build_friend_swap_candidates(
         ) {
             continue;
         }
-        let friend_target_handle = match s
-            .npc
-            .ai_brain
-            .base()
-            .map(|ai| ai.primary_target)
-            .unwrap_or(0)
-        {
-            0 => continue,
-            h => h,
+        let Some(friend_target_handle) = s.npc.ai_brain.base().and_then(|ai| ai.primary_target)
+        else {
+            continue;
         };
-        let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle) else {
+        let Some(friend_target_id) = entities.id_at_legacy_slot(friend_target_handle.get()) else {
             continue;
         };
         let Some(_friend_target_entity) = entities.get(friend_target_id) else {
@@ -3664,7 +3672,7 @@ pub(super) fn build_friend_swap_candidates(
         out.push(crate::ai::FriendSwapCandidate {
             friend_id: friend_id.into(),
             friend_position: friend_pos,
-            friend_primary_target: friend_target_handle,
+            friend_primary_target: Some(friend_target_handle),
             friend_primary_target_position: friend_target_pos,
         });
     }
@@ -3768,12 +3776,12 @@ pub(super) fn precompute_avenger_on_roof_wait_position(
 /// directly-invoked indoor AlertSoldiers without an upstream stash
 /// refuses to project gather slots.
 pub(super) fn build_my_exit_door_info(
-    stashed_index: Option<u32>,
+    stashed_index: Option<crate::gate::DoorIndex>,
     doors: &[crate::gate::Door],
 ) -> Option<crate::ai::MyExitDoorInfo> {
     use crate::ai::MyExitDoorInfo;
     let idx = stashed_index?;
-    let door = doors.get(idx as usize)?;
+    let door = doors.get(usize::from(idx))?;
     let sector_out = crate::position_interface::SectorHandle::new(u16::from(door.sector_out));
     let position_out = crate::ai::Position {
         x: door.point_out.x,
@@ -5352,7 +5360,7 @@ impl EngineInner {
                         self.building_sector_is_authorized(door.sector_in),
                         false,
                     ))
-                .then_some(crate::gate::DoorIndex(index as u32))
+                .then_some(crate::gate::DoorIndex::new(index as u32).expect("valid door index"))
             })
             .collect();
 

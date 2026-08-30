@@ -217,7 +217,7 @@ impl EnemyAi {
             // SetCheckpointCharly(NULL) — route through the helper so
             // the `DETECTABLE_MISSED_FRIEND` list is cleared and
             // `sorrow_level` is zeroed alongside the field write.
-            self.base.set_checkpoint_charly(0);
+            self.base.set_checkpoint_charly(None);
         }
 
         self.current_task_priority = task_priority::SEEKING;
@@ -273,7 +273,7 @@ impl EnemyAi {
                     .into_iter()
                     .map(|(_, _, entity_id)| (entity_id, DetectableType::Beggar)),
             );
-            self.beggar_to_examine = 0;
+            self.beggar_to_examine = None;
         }
 
         // Store seek flags and center
@@ -840,8 +840,12 @@ impl EnemyAi {
         // not a guard on entry. The reset to 0 happens in the substate
         // exit path (mirroring the EVENT_DONE arm).
         if !self.beggars_to_control.is_empty() {
-            debug_assert!(!self.beggars_to_control.contains(&self.beggar_to_examine));
-            self.beggar_to_examine = self.beggars_to_control.pop().unwrap_or(0);
+            debug_assert!(
+                !self
+                    .beggar_to_examine
+                    .is_some_and(|handle| self.beggars_to_control.contains(&handle.get()))
+            );
+            self.beggar_to_examine = self.beggars_to_control.pop().map(AiEntityHandle::new);
             // The beggar list mixes civilian profession-beggars (real)
             // and PCs in `Posture::SimulatingBeggar` (disguised). The
             // identification phases at
@@ -1130,7 +1134,7 @@ impl EnemyAi {
                 // officer, and if none is found fall back to seeking
                 // the area.
                 if self.answer_question(Question::ShallISeekBeforeAlertingOfficer, ctx)
-                    && self.base.antagonist == 0
+                    && self.base.antagonist.is_none()
                 {
                     self.seek_area(
                         sim,
@@ -1331,8 +1335,8 @@ impl EnemyAi {
         };
 
         // Record both the victim and the chosen net.
-        self.base.detected_body = victim;
-        self.base.interesting_object = net.handle;
+        self.base.detected_body = Some(AiEntityHandle::new(victim));
+        self.base.interesting_object = Some(AiEntityHandle::new(net.handle));
 
         // If the victim → net segment is clear on the
         // victim's layer for my move-box, walk up to the net and stop
@@ -1410,7 +1414,7 @@ impl EnemyAi {
         self.seeking_charly = true;
 
         // No checkpoint → ReturnToDuty.
-        if self.base.checkpoint_charly == 0 {
+        if self.base.checkpoint_charly.is_none() {
             self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             return;
         }
@@ -1524,12 +1528,12 @@ impl EnemyAi {
             .update(ReportType::MissedCharly, my_pos);
         self.base.my_reconnaissance_report.charly = self.base.checkpoint_charly;
         self.base.frame_when_enemy_detected = ctx.frame;
-        if self.base.checkpoint_charly != 0 {
+        if let Some(checkpoint_charly) = self.base.checkpoint_charly {
             self.base
                 .outbox
                 .actor
                 .set_reported_to_officer
-                .push((self.base.checkpoint_charly as NpcHandle, false));
+                .push((checkpoint_charly, false));
         }
 
         let alert_handled = match self.get_rank() {
@@ -1592,7 +1596,7 @@ impl EnemyAi {
             return;
         }
 
-        self.base.detected_body = body;
+        self.base.detected_body = Some(AiEntityHandle::new(body));
         // seek_position = Position(body). Prefer the live entity view
         // (covers bodies that aren't in the fighter snapshot), then the
         // fighter snapshot. The original dereferences the body here, so a
@@ -1677,7 +1681,7 @@ mod tests {
         sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
     ) -> DoorSeekInfo {
         DoorSeekInfo {
-            door_index: crate::gate::DoorIndex(door_index),
+            door_index: crate::gate::DoorIndex::new(door_index).expect("valid door index"),
             door_type: crate::gate::DoorType::Building,
             point_out,
             position_in,
@@ -1966,11 +1970,11 @@ mod tests {
             path_last_waypoint_index: 0,
             path_forward_movement: true,
             patrol_hiking_path_index: None,
-            interesting_object: 0,
+            interesting_object: None,
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
         }
     }
 
@@ -1992,7 +1996,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -2001,11 +2005,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,
@@ -2033,7 +2037,7 @@ mod tests {
         ai.base.macro_in_progress = true;
         ai.base.macro_command_offset = 23;
         ai.base.number_of_remaining_macro_bytes = 0;
-        ai.base.checkpoint_charly = 96;
+        ai.base.checkpoint_charly = Some(AiEntityHandle::new(96));
 
         let mut views = crate::ai_entity_view::AiEntityViewMap::new();
         views.insert(96, charly_view());
@@ -2071,7 +2075,7 @@ mod tests {
         ai.soldier_profile_rank = ProfileRank::Soldier;
         ai.base.current_state = AiState::Default;
         ai.base.current_substate = Substate::DefaultLookingForCharly;
-        ai.base.checkpoint_charly = 96;
+        ai.base.checkpoint_charly = Some(AiEntityHandle::new(96));
 
         let mut charly = charly_view();
         charly.has_patrol_path = true;
@@ -2128,7 +2132,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(40);
         ai.company_number = 0;
-        ai.base.antagonist = 99;
+        ai.base.antagonist = Some(AiEntityHandle::new(99));
         let center = Position {
             x: 10.0,
             y: 20.0,
@@ -2197,7 +2201,7 @@ mod tests {
         let sim = crate::sim_rng::test_context();
         let mut ai = EnemyAi::new(44);
         ai.company_number = 0;
-        ai.base.antagonist = 7;
+        ai.base.antagonist = Some(AiEntityHandle::new(7));
         ai.seek_flags = SeekFlags::REPORT_OFFICER_AFTER;
         let ctx = AiContext {
             camp: crate::element::Camp::Lacklandists,
@@ -2318,7 +2322,7 @@ mod tests {
         let mut ai = EnemyAi::new(43);
         ai.company_number = 0;
         // Force the AlertOfficer arm independently of the random answer.
-        ai.base.antagonist = 99;
+        ai.base.antagonist = Some(AiEntityHandle::new(99));
         let center = Position {
             x: 60.0,
             y: 90.0,
@@ -2641,7 +2645,7 @@ mod tests {
         // away identifying the beggar. Original's retained pointer makes the
         // resumed SeekNextPoint clear that intervening lock again.
         global.seek_points[0].locked = true;
-        ai.beggar_to_examine = 0;
+        ai.beggar_to_examine = None;
         ai.my_seek_points.push(1);
 
         ai.seek_next_point(&sim, &mut global, &ctx, &AiPerTickData::stub());
