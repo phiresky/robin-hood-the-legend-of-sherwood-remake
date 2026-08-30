@@ -1556,12 +1556,6 @@ impl ShippingDatadir {
         })
     }
 
-    /// Iterate every catalog key (normalized logical Opus path). Used by the
-    /// browser's background audio prefetch to enumerate what exists.
-    pub fn audio_catalog_keys(&self) -> impl Iterator<Item = &str> {
-        self.audio_assets.keys().map(String::as_str)
-    }
-
     /// Catalog keys required before any mission is selected (menu effects
     /// and menu music). Browser startup decodes this deliberately small set;
     /// it must not infer boot membership by scanning the whole catalog.
@@ -1574,7 +1568,7 @@ impl ShippingDatadir {
     }
 
     /// Catalog keys the ACTIVE mission's payloads reference (its dialogue,
-    /// required actor voices, music, ambience): the prefetch-first set.
+    /// required actor voices, music, ambience): the exact mission warmup set.
     pub fn active_audio_keys(&self) -> Vec<String> {
         let Some(mission) = self.active_mission_name() else {
             return Vec::new();

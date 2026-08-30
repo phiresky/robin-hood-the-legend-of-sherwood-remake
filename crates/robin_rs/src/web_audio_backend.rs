@@ -10,7 +10,7 @@ use futures::{FutureExt as _, StreamExt as _, future::LocalBoxFuture, future::Sh
 use robin_assets::shipping_datadir::RemoteAudioAsset;
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
 };
@@ -460,7 +460,7 @@ pub async fn preload_boot_catalog() -> Result<(), String> {
     let datadir = robin_assets::shipping_datadir::global()
         .ok_or("preload browser boot audio: shipping catalog unavailable")?;
     let plan = build_warm_plan(datadir.boot_audio_keys(), true)?;
-    if plan.is_empty() && datadir.audio_catalog_keys().next().is_some() {
+    if plan.is_empty() && !datadir.audio_assets.is_empty() {
         tracing::warn!(
             "browser audio catalog has no boot membership index; regenerate the shipping datadir"
         );
@@ -482,24 +482,21 @@ where
         .active_mission_name()
         .ok_or("preload active mission audio: no active mission")?;
     let plan = build_warm_plan(datadir.active_audio_keys(), false)?;
-    if plan.is_empty() && datadir.audio_catalog_keys().next().is_some() {
+    if plan.is_empty() && !datadir.audio_assets.is_empty() {
         tracing::warn!(
             mission,
             "browser audio catalog has no active-mission membership index; regenerate the shipping datadir"
         );
     }
-    let active_urls = warm_plan_urls(&plan);
-    exclude_catalog_prefetch(&active_urls);
+    // Deliberately scope warmup to the ACTIVE mission. Fetching the whole
+    // catalog would pull every other mission's dialogue and unrelated actor
+    // voice banks; anything outside this exact set remains lazy on playback.
     tracing::info!(
         mission,
         items = plan.len(),
         "warming active mission browser audio"
     );
-    run_warm_plan(plan, progress).await?;
-    // Only after the active set is ready may low-priority future-mission
-    // traffic use the audio workers.
-    start_catalog_prefetch(&active_urls);
-    Ok(())
+    run_warm_plan(plan, progress).await
 }
 
 /// Compatibility entry point for old host-preload callers. Encoded bytes no
@@ -535,81 +532,6 @@ pub async fn replace_mission(entries: Vec<(String, &[u8])>) -> Result<(), String
     clear_mission()?;
     let keys = entries.into_iter().map(|(path, _)| path).collect();
     run_warm_plan(build_warm_plan(keys, false)?, |_| {}).await
-}
-
-thread_local! {
-    static PREFETCH_STARTED: Cell<bool> = const { Cell::new(false) };
-    static PREFETCH_QUEUE: RefCell<VecDeque<(String, bool)>> =
-        const { RefCell::new(VecDeque::new()) };
-}
-
-/// Low-priority encoded-only catalog prefetch. It starts after the first
-/// active mission's blocking critical warmup, never as a side effect of the
-/// first requested sound.
-fn start_catalog_prefetch(exclude: &HashSet<String>) {
-    if PREFETCH_STARTED.with(|started| started.replace(true)) {
-        return;
-    }
-    let Some(datadir) = robin_assets::shipping_datadir::global() else {
-        return;
-    };
-    let mut seen = HashSet::new();
-    let mut ordered = Vec::new();
-    for key in datadir.audio_catalog_keys() {
-        let Some(asset) = datadir.remote_audio_asset(Path::new(key)) else {
-            continue;
-        };
-        if !exclude.contains(&asset.url) && seen.insert(asset.url.clone()) {
-            ordered.push((asset.url, asset.bundle_offset.is_some()));
-        }
-    }
-    tracing::info!(
-        files = ordered.len(),
-        workers = AUDIO_IO_CONCURRENCY,
-        "background encoded-audio prefetch started"
-    );
-    PREFETCH_QUEUE.with(|queue| queue.borrow_mut().extend(ordered));
-    for _ in 0..AUDIO_IO_CONCURRENCY {
-        wasm_bindgen_futures::spawn_local(async {
-            loop {
-                let Some((url, retain_bundle)) =
-                    PREFETCH_QUEUE.with(|queue| queue.borrow_mut().pop_front())
-                else {
-                    break;
-                };
-                if let Err(error) = request_encoded(&url, retain_bundle).await {
-                    tracing::debug!(
-                        url,
-                        error,
-                        "background audio prefetch miss; lazy playback may retry"
-                    );
-                }
-            }
-        });
-    }
-}
-
-fn warm_plan_urls(plan: &[WarmItem]) -> HashSet<String> {
-    plan.iter()
-        .map(|item| match &item.work {
-            WarmWork::Encoded { url, .. } => url.clone(),
-            WarmWork::Decoded(asset) => asset.url.clone(),
-        })
-        .collect()
-}
-
-/// Active warmup owns these URLs at mission priority. Remove not-yet-started
-/// background duplicates; already in-flight requests are joined by the
-/// content-keyed shared futures.
-fn exclude_catalog_prefetch(urls: &HashSet<String>) {
-    if urls.is_empty() {
-        return;
-    }
-    PREFETCH_QUEUE.with(|queue| {
-        queue
-            .borrow_mut()
-            .retain(|(url, _)| !urls.contains(url.as_str()));
-    });
 }
 
 struct Voice {
