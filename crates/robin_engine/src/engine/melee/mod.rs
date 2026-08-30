@@ -540,12 +540,8 @@ fn compute_special_strike_preparation_time(
     difficulty: crate::player_profile::DifficultyLevel,
     fighting_ability: u16,
 ) -> u32 {
-    use crate::player_profile::DifficultyLevel;
-    match difficulty {
-        DifficultyLevel::Easy => 13u32.saturating_sub(fighting_ability as u32 / 10),
-        DifficultyLevel::Medium => 10u32.saturating_sub(fighting_ability as u32 / 10),
-        DifficultyLevel::Hard => 0,
-    }
+    u32::from(difficulty.rules().special_strike_base_frames)
+        .saturating_sub(fighting_ability as u32 / 10)
 }
 
 // ─── Hero expression IDs ────────────────────────────────────────────
@@ -1290,12 +1286,7 @@ fn fighting_ability_from_profile(
                 .cached_camp
                 .is_hostile_to(crate::element::Camp::Royalists)
             {
-                difficulty.modify_capacity(
-                    base,
-                    crate::player_profile::difficulty_params::EASY_ENEMY_FIGHTING,
-                    crate::player_profile::difficulty_params::HARD_ENEMY_FIGHTING,
-                    100,
-                )
+                difficulty.rules().enemy_fighting(base, 100)
             } else {
                 base
             }

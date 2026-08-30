@@ -23,7 +23,6 @@ use crate::campaign_history::{
 use crate::mission::{Mission, MissionStatus};
 use crate::pc_status::{LIFEPOINTS_PC, PcStatus, SkillName};
 use crate::player_profile::DifficultyLevel;
-use crate::player_profile::difficulty_params;
 use crate::profiles::{CharacterProfileIdx, MissionType, ProfileManager};
 
 // ─── Reservist reintegration coefficients ────────────────────────
@@ -604,17 +603,12 @@ pub fn calculate_warcrime_recruitment(
         0.0f64
     };
 
-    match difficulty {
-        DifficultyLevel::Easy => {
-            warcrime = 1.0 - difficulty_params::EASY_CARNAGE as f64 * (1.0 - warcrime);
+    let carnage = difficulty.rules().carnage_percent as f64 / 100.0;
+    if carnage != 1.0 {
+        warcrime = 1.0 - carnage * (1.0 - warcrime);
+        if warcrime < 0.0 {
+            warcrime = 0.0;
         }
-        DifficultyLevel::Hard => {
-            warcrime = 1.0 - difficulty_params::HARD_CARNAGE as f64 * (1.0 - warcrime);
-            if warcrime < 0.0 {
-                warcrime = 0.0;
-            }
-        }
-        DifficultyLevel::Medium => {}
     }
 
     let range = max_new_team_members.saturating_sub(min_new_team_members);

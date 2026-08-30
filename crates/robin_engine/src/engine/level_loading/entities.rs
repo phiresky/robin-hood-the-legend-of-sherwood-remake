@@ -774,12 +774,7 @@ impl EngineInner {
             // value.
             if cached_camp.is_hostile_to(crate::element::Camp::Royalists) && !soldier_profile.vip {
                 let diff = config.difficulty;
-                cached_max_lp = diff.modify_capacity(
-                    cached_max_lp as u16,
-                    crate::player_profile::difficulty_params::EASY_ENEMY_LIFEPOINTS,
-                    crate::player_profile::difficulty_params::HARD_ENEMY_LIFEPOINTS,
-                    10000,
-                ) as i16;
+                cached_max_lp = diff.rules().enemy_life_points(cached_max_lp as u16, 10000) as i16;
             }
 
             // drunk_level must fit in u8.
@@ -1337,9 +1332,10 @@ impl EngineInner {
             // was cleared, which the render / focus paths would then
             // happily expose.
             let difficulty = config.difficulty;
-            let difficulty_idx = difficulty as usize;
-            let is_to_be_replaced_by_amulet =
-                difficulty == crate::player_profile::DifficultyLevel::Easy && !raw.presence[0];
+            let difficulty_idx = difficulty.to_u32() as usize;
+            let is_to_be_replaced_by_amulet = difficulty.rules().legacy_level
+                == crate::player_profile::LegacyDifficultyLevel::Easy
+                && !raw.presence[0];
             let scroll_active = if is_to_be_replaced_by_amulet {
                 true
             } else {

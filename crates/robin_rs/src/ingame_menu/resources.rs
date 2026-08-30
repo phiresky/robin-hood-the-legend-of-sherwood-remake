@@ -109,6 +109,32 @@ pub const MT_MSG_REALLY_RETURN_TO_MAP: usize = 255;
 pub const MT_STR_DIFFICULTY_EASY: usize = 34;
 pub const MT_STR_DIFFICULTY_MEDIUM: usize = 35;
 pub const MT_STR_DIFFICULTY_HARD: usize = 36;
+// Rust-port strings live above the retail table's 343 entries. Keeping them
+// in the same lookup path gives the language-pack work one stable seam for
+// supplying translated replacements without changing difficulty UI code.
+pub const MT_PORT_BTN_DIFFICULTY: usize = 1000;
+pub const MT_PORT_STR_DIFFICULTY_LEGENDARY: usize = 1001;
+pub const MT_PORT_STR_DIFFICULTY_CUSTOM: usize = 1002;
+pub const MT_PORT_TTL_ADVANCED_DIFFICULTY: usize = 1003;
+pub const MT_PORT_STR_DIFFICULTY_HELP: usize = 1004;
+pub const MT_PORT_DIFF_LEGACY_SCRIPT: usize = 1010;
+pub const MT_PORT_DIFF_ENEMY_FIGHTING: usize = 1011;
+pub const MT_PORT_DIFF_ENEMY_SHOOTING: usize = 1012;
+pub const MT_PORT_DIFF_ENEMY_IQ: usize = 1013;
+pub const MT_PORT_DIFF_ENEMY_HEALTH: usize = 1014;
+pub const MT_PORT_DIFF_REACTION_TIME: usize = 1015;
+pub const MT_PORT_DIFF_BLIP_RANGE: usize = 1016;
+pub const MT_PORT_DIFF_CARNAGE: usize = 1017;
+pub const MT_PORT_DIFF_SMALL_CAPACITY: usize = 1018;
+pub const MT_PORT_DIFF_LARGE_CAPACITY: usize = 1019;
+pub const MT_PORT_DIFF_AUTO_HEAL: usize = 1020;
+pub const MT_PORT_DIFF_NET_PREVIEW: usize = 1021;
+pub const MT_PORT_DIFF_FRIENDLY_FIRE: usize = 1022;
+pub const MT_PORT_DIFF_SPECIAL_DELAY: usize = 1023;
+pub const MT_PORT_DIFF_PUNCH: usize = 1024;
+pub const MT_PORT_DIFF_GUARD_VIEW_DISTANCE: usize = 1025;
+pub const MT_PORT_DIFF_GUARD_VIEW_ANGLE: usize = 1026;
+pub const MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY: usize = 1027;
 pub const MT_STR_ANONYMOUS: usize = 62;
 pub const MT_STR_MONEY: usize = 63;
 pub const MT_STR_CARNAGE_FACTOR: usize = 65;
@@ -524,6 +550,35 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
     m.insert(MT_STR_DIFFICULTY_EASY, "Easy");
     m.insert(MT_STR_DIFFICULTY_MEDIUM, "Medium");
     m.insert(MT_STR_DIFFICULTY_HARD, "Hard");
+    m.insert(MT_PORT_BTN_DIFFICULTY, "Difficulty");
+    m.insert(MT_PORT_STR_DIFFICULTY_LEGENDARY, "Legendary");
+    m.insert(MT_PORT_STR_DIFFICULTY_CUSTOM, "Custom");
+    m.insert(MT_PORT_TTL_ADVANCED_DIFFICULTY, "Advanced difficulty");
+    m.insert(
+        MT_PORT_STR_DIFFICULTY_HELP,
+        "Up/Down selects a rule. Left/Right changes it.",
+    );
+    m.insert(MT_PORT_DIFF_LEGACY_SCRIPT, "Script compatibility");
+    m.insert(MT_PORT_DIFF_ENEMY_FIGHTING, "Enemy fighting");
+    m.insert(MT_PORT_DIFF_ENEMY_SHOOTING, "Enemy shooting");
+    m.insert(MT_PORT_DIFF_ENEMY_IQ, "Enemy intelligence");
+    m.insert(MT_PORT_DIFF_ENEMY_HEALTH, "Enemy health");
+    m.insert(MT_PORT_DIFF_REACTION_TIME, "Reaction time");
+    m.insert(MT_PORT_DIFF_BLIP_RANGE, "Minimap detection range");
+    m.insert(MT_PORT_DIFF_CARNAGE, "Recruitment carnage");
+    m.insert(MT_PORT_DIFF_SMALL_CAPACITY, "Small item capacity");
+    m.insert(MT_PORT_DIFF_LARGE_CAPACITY, "Large item capacity");
+    m.insert(MT_PORT_DIFF_AUTO_HEAL, "Auto-heal interval");
+    m.insert(MT_PORT_DIFF_NET_PREVIEW, "Accurate net preview");
+    m.insert(MT_PORT_DIFF_FRIENDLY_FIRE, "Protect allies from arrows");
+    m.insert(MT_PORT_DIFF_SPECIAL_DELAY, "Special-strike delay");
+    m.insert(MT_PORT_DIFF_PUNCH, "Punch concussion");
+    m.insert(MT_PORT_DIFF_GUARD_VIEW_DISTANCE, "Guard view distance");
+    m.insert(MT_PORT_DIFF_GUARD_VIEW_ANGLE, "Guard view angle");
+    m.insert(
+        MT_PORT_DIFF_GUARD_NOISE_SENSITIVITY,
+        "Guard noise sensitivity",
+    );
     // `MT_STR_MONEY` in the stock table is a format string
     // ("Money: £%i") — the profile-info widget plugs the ransom into it
     // via `printf`-style substitution.  Keep the `%i` placeholder so

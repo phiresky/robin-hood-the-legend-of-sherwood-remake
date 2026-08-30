@@ -19,43 +19,522 @@ use crate::sound_config::SoundConfig;
 
 // ─── Types ──────────────────────────────────────────────────────
 
-/// Difficulty levels.
+/// The three difficulty values understood by retail scripts and resources.
+///
+/// New presets deliberately map onto one of these values at the legacy
+/// boundary.  This keeps `GetDifficultyLevel` and the three-entry scroll
+/// presence table ABI-compatible without constraining the Rust simulation to
+/// three presets.
 #[derive(
     Debug,
     Clone,
     Copy,
     PartialEq,
     Eq,
-    Default,
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
 )]
-pub enum DifficultyLevel {
+pub enum LegacyDifficultyLevel {
     Easy,
-    #[default]
     Medium,
     Hard,
 }
 
-impl DifficultyLevel {
-    pub fn from_u32(v: u32) -> Self {
-        match v {
-            0 => Self::Easy,
-            1 => Self::Medium,
-            2 => Self::Hard,
-            _ => Self::Medium,
-        }
-    }
-
-    pub fn to_u32(self) -> u32 {
+impl LegacyDifficultyLevel {
+    pub const fn to_u32(self) -> u32 {
         match self {
             Self::Easy => 0,
             Self::Medium => 1,
             Self::Hard => 2,
         }
+    }
+}
+
+/// Fully resolved, deterministic rules for one difficulty.
+///
+/// Percentages are integers on purpose: custom settings are serialized into
+/// saves/replays and synchronized by the host, so no locale parsing or
+/// platform-dependent float state enters the authoritative configuration.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct DifficultyRules {
+    pub legacy_level: LegacyDifficultyLevel,
+    pub enemy_fighting_percent: u16,
+    pub enemy_shooting_percent: u16,
+    pub enemy_iq_percent: u16,
+    pub enemy_life_points_percent: u16,
+    pub reaction_time_percent: u16,
+    /// Hostile soldiers' optical radius after the authored live view is built.
+    pub hostile_soldier_view_distance_percent: u16,
+    /// Hostile soldiers' optical half-aperture after authored posture modifiers.
+    pub hostile_soldier_view_angle_percent: u16,
+    /// Hostile soldiers' effective range for PC-produced noises.
+    pub hostile_soldier_noise_sensitivity_percent: u16,
+    pub blip_detection_range_percent: u16,
+    pub carnage_percent: u16,
+    pub six_capacity: u16,
+    pub twelve_capacity: u16,
+    /// Zero disables automatic PC healing; otherwise this is its frame cadence.
+    pub pc_auto_heal_interval_frames: u16,
+    pub accurate_net_preview: bool,
+    pub protect_allies_from_pc_arrows: bool,
+    pub special_strike_base_frames: u16,
+    pub pc_punch_concussion_percent: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DifficultyRuleField {
+    EnemyFightingPercent,
+    EnemyShootingPercent,
+    EnemyIqPercent,
+    EnemyLifePointsPercent,
+    ReactionTimePercent,
+    HostileSoldierViewDistancePercent,
+    HostileSoldierViewAnglePercent,
+    HostileSoldierNoiseSensitivityPercent,
+    BlipDetectionRangePercent,
+    CarnagePercent,
+    SixCapacity,
+    TwelveCapacity,
+    PcAutoHealIntervalFrames,
+    SpecialStrikeBaseFrames,
+    PcPunchConcussionPercent,
+}
+
+impl DifficultyRuleField {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::EnemyFightingPercent => "enemy_fighting_percent",
+            Self::EnemyShootingPercent => "enemy_shooting_percent",
+            Self::EnemyIqPercent => "enemy_iq_percent",
+            Self::EnemyLifePointsPercent => "enemy_life_points_percent",
+            Self::ReactionTimePercent => "reaction_time_percent",
+            Self::HostileSoldierViewDistancePercent => "hostile_soldier_view_distance_percent",
+            Self::HostileSoldierViewAnglePercent => "hostile_soldier_view_angle_percent",
+            Self::HostileSoldierNoiseSensitivityPercent => {
+                "hostile_soldier_noise_sensitivity_percent"
+            }
+            Self::BlipDetectionRangePercent => "blip_detection_range_percent",
+            Self::CarnagePercent => "carnage_percent",
+            Self::SixCapacity => "six_capacity",
+            Self::TwelveCapacity => "twelve_capacity",
+            Self::PcAutoHealIntervalFrames => "pc_auto_heal_interval_frames",
+            Self::SpecialStrikeBaseFrames => "special_strike_base_frames",
+            Self::PcPunchConcussionPercent => "pc_punch_concussion_percent",
+        }
+    }
+}
+
+/// Why a custom difficulty rule set was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidDifficultyRules {
+    pub field: DifficultyRuleField,
+    pub value: u16,
+    pub min: u16,
+    pub max: u16,
+}
+
+impl std::fmt::Display for InvalidDifficultyRules {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "difficulty field '{}' is {}, expected {}..={}",
+            self.field.name(),
+            self.value,
+            self.min,
+            self.max
+        )
+    }
+}
+
+impl std::error::Error for InvalidDifficultyRules {}
+
+impl DifficultyRules {
+    pub const EASY: Self = Self {
+        legacy_level: LegacyDifficultyLevel::Easy,
+        enemy_fighting_percent: 50,
+        enemy_shooting_percent: 50,
+        enemy_iq_percent: 50,
+        enemy_life_points_percent: 50,
+        reaction_time_percent: 200,
+        hostile_soldier_view_distance_percent: 100,
+        hostile_soldier_view_angle_percent: 100,
+        hostile_soldier_noise_sensitivity_percent: 100,
+        blip_detection_range_percent: 130,
+        carnage_percent: 50,
+        six_capacity: 8,
+        twelve_capacity: 15,
+        pc_auto_heal_interval_frames: 100,
+        accurate_net_preview: true,
+        protect_allies_from_pc_arrows: true,
+        special_strike_base_frames: 13,
+        pc_punch_concussion_percent: 100,
+    };
+
+    pub const MEDIUM: Self = Self {
+        legacy_level: LegacyDifficultyLevel::Medium,
+        enemy_fighting_percent: 100,
+        enemy_shooting_percent: 100,
+        enemy_iq_percent: 100,
+        enemy_life_points_percent: 100,
+        reaction_time_percent: 100,
+        hostile_soldier_view_distance_percent: 100,
+        hostile_soldier_view_angle_percent: 100,
+        hostile_soldier_noise_sensitivity_percent: 100,
+        blip_detection_range_percent: 100,
+        carnage_percent: 100,
+        six_capacity: 6,
+        twelve_capacity: 12,
+        pc_auto_heal_interval_frames: 0,
+        accurate_net_preview: false,
+        protect_allies_from_pc_arrows: true,
+        special_strike_base_frames: 10,
+        pc_punch_concussion_percent: 100,
+    };
+
+    pub const HARD: Self = Self {
+        legacy_level: LegacyDifficultyLevel::Hard,
+        enemy_fighting_percent: 200,
+        enemy_shooting_percent: 200,
+        enemy_iq_percent: 200,
+        enemy_life_points_percent: 150,
+        reaction_time_percent: 50,
+        hostile_soldier_view_distance_percent: 100,
+        hostile_soldier_view_angle_percent: 100,
+        hostile_soldier_noise_sensitivity_percent: 100,
+        blip_detection_range_percent: 70,
+        carnage_percent: 200,
+        six_capacity: 4,
+        twelve_capacity: 9,
+        pc_auto_heal_interval_frames: 0,
+        accurate_net_preview: false,
+        protect_allies_from_pc_arrows: false,
+        special_strike_base_frames: 0,
+        pc_punch_concussion_percent: 150,
+    };
+
+    /// Initial systematic balance for Legendary. Values continue the same
+    /// progression as the retail presets instead of adding unrelated rules.
+    pub const LEGENDARY: Self = Self {
+        legacy_level: LegacyDifficultyLevel::Hard,
+        enemy_fighting_percent: 400,
+        enemy_shooting_percent: 400,
+        enemy_iq_percent: 400,
+        enemy_life_points_percent: 200,
+        reaction_time_percent: 25,
+        // These three post-port rules make stealth materially less forgiving
+        // without granting guards omnidirectional or map-wide perception.
+        // A stock 400-unit, ~57-degree cone becomes 540 units and ~72 degrees;
+        // hearing range grows linearly by half. Easy/Medium/Hard stay exact.
+        hostile_soldier_view_distance_percent: 135,
+        hostile_soldier_view_angle_percent: 125,
+        hostile_soldier_noise_sensitivity_percent: 150,
+        blip_detection_range_percent: 40,
+        carnage_percent: 400,
+        six_capacity: 2,
+        twelve_capacity: 6,
+        pc_auto_heal_interval_frames: 0,
+        accurate_net_preview: false,
+        protect_allies_from_pc_arrows: false,
+        special_strike_base_frames: 0,
+        pc_punch_concussion_percent: 200,
+    };
+
+    /// Validate all user-editable fields. Invalid persisted values are an
+    /// error rather than being silently clamped into a different ruleset.
+    pub fn validate(self) -> Result<Self, InvalidDifficultyRules> {
+        fn range(
+            field: DifficultyRuleField,
+            value: u16,
+            min: u16,
+            max: u16,
+        ) -> Result<(), InvalidDifficultyRules> {
+            if (min..=max).contains(&value) {
+                Ok(())
+            } else {
+                Err(InvalidDifficultyRules {
+                    field,
+                    value,
+                    min,
+                    max,
+                })
+            }
+        }
+
+        range(
+            DifficultyRuleField::EnemyFightingPercent,
+            self.enemy_fighting_percent,
+            25,
+            400,
+        )?;
+        range(
+            DifficultyRuleField::EnemyShootingPercent,
+            self.enemy_shooting_percent,
+            25,
+            400,
+        )?;
+        range(
+            DifficultyRuleField::EnemyIqPercent,
+            self.enemy_iq_percent,
+            25,
+            400,
+        )?;
+        range(
+            DifficultyRuleField::EnemyLifePointsPercent,
+            self.enemy_life_points_percent,
+            25,
+            400,
+        )?;
+        range(
+            DifficultyRuleField::ReactionTimePercent,
+            self.reaction_time_percent,
+            10,
+            400,
+        )?;
+        range(
+            DifficultyRuleField::HostileSoldierViewDistancePercent,
+            self.hostile_soldier_view_distance_percent,
+            25,
+            200,
+        )?;
+        range(
+            DifficultyRuleField::HostileSoldierViewAnglePercent,
+            self.hostile_soldier_view_angle_percent,
+            25,
+            200,
+        )?;
+        range(
+            DifficultyRuleField::HostileSoldierNoiseSensitivityPercent,
+            self.hostile_soldier_noise_sensitivity_percent,
+            25,
+            200,
+        )?;
+        range(
+            DifficultyRuleField::BlipDetectionRangePercent,
+            self.blip_detection_range_percent,
+            10,
+            200,
+        )?;
+        range(
+            DifficultyRuleField::CarnagePercent,
+            self.carnage_percent,
+            25,
+            400,
+        )?;
+        range(DifficultyRuleField::SixCapacity, self.six_capacity, 0, 99)?;
+        range(
+            DifficultyRuleField::TwelveCapacity,
+            self.twelve_capacity,
+            0,
+            99,
+        )?;
+        range(
+            DifficultyRuleField::PcAutoHealIntervalFrames,
+            self.pc_auto_heal_interval_frames,
+            0,
+            3600,
+        )?;
+        range(
+            DifficultyRuleField::SpecialStrikeBaseFrames,
+            self.special_strike_base_frames,
+            0,
+            60,
+        )?;
+        range(
+            DifficultyRuleField::PcPunchConcussionPercent,
+            self.pc_punch_concussion_percent,
+            25,
+            400,
+        )?;
+        Ok(self)
+    }
+
+    pub fn scale_capacity(self, base: u16, percent: u16, max_allowed: u16) -> u16 {
+        let scaled = u32::from(base) * u32::from(percent) / 100;
+        scaled.min(u32::from(max_allowed)) as u16
+    }
+
+    pub fn enemy_fighting(self, base: u16, max_allowed: u16) -> u16 {
+        self.scale_capacity(base, self.enemy_fighting_percent, max_allowed)
+    }
+
+    pub fn enemy_shooting(self, base: u16, max_allowed: u16) -> u16 {
+        self.scale_capacity(base, self.enemy_shooting_percent, max_allowed)
+    }
+
+    pub fn enemy_iq(self, base: u16, max_allowed: u16) -> u16 {
+        self.scale_capacity(base, self.enemy_iq_percent, max_allowed)
+    }
+
+    pub fn enemy_life_points(self, base: u16, max_allowed: u16) -> u16 {
+        self.scale_capacity(base, self.enemy_life_points_percent, max_allowed)
+    }
+
+    pub fn ammo_capacity(self, base: u16) -> u16 {
+        match base {
+            6 => self.six_capacity,
+            12 => self.twelve_capacity,
+            other => other,
+        }
+    }
+
+    pub fn percent_as_f32(percent: u16) -> f32 {
+        percent as f32 / 100.0
+    }
+
+    pub fn scale_hostile_soldier_view_radius(self, radius: u16) -> u16 {
+        self.scale_capacity(radius, self.hostile_soldier_view_distance_percent, u16::MAX)
+    }
+
+    pub fn hostile_soldier_view_angle_factor(self) -> f32 {
+        Self::percent_as_f32(self.hostile_soldier_view_angle_percent)
+    }
+
+    pub fn hostile_soldier_noise_factor(self) -> f32 {
+        Self::percent_as_f32(self.hostile_soldier_noise_sensitivity_percent)
+    }
+}
+
+/// Application difficulty preset. `Custom` contains the resolved rules so the
+/// simulation, save, replay and multiplayer state are self-contained.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum DifficultyLevel {
+    Easy,
+    Medium,
+    Hard,
+    Legendary,
+    Custom(DifficultyRules),
+}
+
+#[derive(Serialize, Deserialize)]
+enum DifficultyLevelWire {
+    Easy,
+    Medium,
+    Hard,
+    Legendary,
+    Custom(DifficultyRules),
+}
+
+impl Serialize for DifficultyLevel {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let wire = match *self {
+            Self::Easy => DifficultyLevelWire::Easy,
+            Self::Medium => DifficultyLevelWire::Medium,
+            Self::Hard => DifficultyLevelWire::Hard,
+            Self::Legendary => DifficultyLevelWire::Legendary,
+            Self::Custom(rules) => DifficultyLevelWire::Custom(rules),
+        };
+        wire.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for DifficultyLevel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match DifficultyLevelWire::deserialize(deserializer)? {
+            DifficultyLevelWire::Easy => Ok(Self::Easy),
+            DifficultyLevelWire::Medium => Ok(Self::Medium),
+            DifficultyLevelWire::Hard => Ok(Self::Hard),
+            DifficultyLevelWire::Legendary => Ok(Self::Legendary),
+            DifficultyLevelWire::Custom(rules) => {
+                Self::custom(rules).map_err(serde::de::Error::custom)
+            }
+        }
+    }
+}
+
+impl Default for DifficultyLevel {
+    fn default() -> Self {
+        Self::Medium
+    }
+}
+
+/// Invalid conversion from the retail numeric difficulty ABI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidDifficultyLevel(pub u32);
+
+impl std::fmt::Display for InvalidDifficultyLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown legacy difficulty level {}", self.0)
+    }
+}
+
+impl std::error::Error for InvalidDifficultyLevel {}
+
+impl DifficultyLevel {
+    pub fn from_u32(v: u32) -> Result<Self, InvalidDifficultyLevel> {
+        match v {
+            0 => Ok(Self::Easy),
+            1 => Ok(Self::Medium),
+            2 => Ok(Self::Hard),
+            _ => Err(InvalidDifficultyLevel(v)),
+        }
+    }
+
+    pub const fn rules(self) -> DifficultyRules {
+        match self {
+            Self::Easy => DifficultyRules::EASY,
+            Self::Medium => DifficultyRules::MEDIUM,
+            Self::Hard => DifficultyRules::HARD,
+            Self::Legendary => DifficultyRules::LEGENDARY,
+            Self::Custom(rules) => rules,
+        }
+    }
+
+    pub fn custom(rules: DifficultyRules) -> Result<Self, InvalidDifficultyRules> {
+        Ok(Self::Custom(rules.validate()?))
+    }
+
+    pub fn validate(self) -> Result<Self, InvalidDifficultyRules> {
+        self.rules().validate()?;
+        Ok(self)
+    }
+
+    pub const fn to_u32(self) -> u32 {
+        self.rules().legacy_level.to_u32()
+    }
+
+    /// Resolve extensions to one of the three retail presets for the
+    /// Original-RNG parity harness. No custom or Legendary rule is allowed to
+    /// leak into a trace that claims original behavior.
+    pub const fn original_parity_preset(self) -> Self {
+        match self.rules().legacy_level {
+            LegacyDifficultyLevel::Easy => Self::Easy,
+            LegacyDifficultyLevel::Medium => Self::Medium,
+            LegacyDifficultyLevel::Hard => Self::Hard,
+        }
+    }
+
+    /// V1 leaderboard identities exist only for the immutable retail presets.
+    pub const fn is_ranked_v1_eligible(self) -> bool {
+        matches!(self, Self::Easy | Self::Medium | Self::Hard)
     }
 
     /// Apply difficulty scaling to a base capacity value.
@@ -74,17 +553,13 @@ impl DifficultyLevel {
         hard_factor: f32,
         max_allowed: u16,
     ) -> u16 {
-        match self {
-            Self::Easy => {
-                let scaled = (base as f32 * easy_factor) as u16;
-                scaled.min(max_allowed)
-            }
-            Self::Medium => base,
-            Self::Hard => {
-                let scaled = (base as f32 * hard_factor) as u16;
-                scaled.min(max_allowed)
-            }
-        }
+        let factor = match self.rules().legacy_level {
+            LegacyDifficultyLevel::Easy => easy_factor,
+            LegacyDifficultyLevel::Medium => 1.0,
+            LegacyDifficultyLevel::Hard => hard_factor,
+        };
+        let scaled = (base as f32 * factor) as u16;
+        scaled.min(max_allowed)
     }
 }
 
@@ -175,6 +650,9 @@ impl PlayerProfile {
     /// Create a new profile with the given name and difficulty, using default
     /// configs.
     pub fn new(id: u32, name: String, difficulty: DifficultyLevel) -> Self {
+        difficulty
+            .validate()
+            .expect("cannot create a player profile with invalid difficulty rules");
         Self {
             name,
             id,
@@ -273,6 +751,12 @@ impl PlayerProfileManager {
                         format!(
                             "player profile {index} has invalid or unsupported campaign-history schema {version}"
                         ),
+                    )
+                })?;
+                profile.difficulty.rules().validate().map_err(|error| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("profile '{}' has invalid {error}", profile.name),
                     )
                 })?;
             }
@@ -789,13 +1273,102 @@ mod tests {
 
     #[test]
     fn difficulty_level_roundtrip() {
-        assert_eq!(DifficultyLevel::from_u32(0), DifficultyLevel::Easy);
-        assert_eq!(DifficultyLevel::from_u32(1), DifficultyLevel::Medium);
-        assert_eq!(DifficultyLevel::from_u32(2), DifficultyLevel::Hard);
-        assert_eq!(DifficultyLevel::from_u32(99), DifficultyLevel::Medium);
+        assert_eq!(DifficultyLevel::from_u32(0), Ok(DifficultyLevel::Easy));
+        assert_eq!(DifficultyLevel::from_u32(1), Ok(DifficultyLevel::Medium));
+        assert_eq!(DifficultyLevel::from_u32(2), Ok(DifficultyLevel::Hard));
+        assert_eq!(
+            DifficultyLevel::from_u32(99),
+            Err(InvalidDifficultyLevel(99))
+        );
 
         assert_eq!(DifficultyLevel::Easy.to_u32(), 0);
         assert_eq!(DifficultyLevel::Medium.to_u32(), 1);
         assert_eq!(DifficultyLevel::Hard.to_u32(), 2);
+        assert_eq!(DifficultyLevel::Legendary.to_u32(), 2);
+    }
+
+    #[test]
+    fn legendary_rules_continue_the_hard_progression() {
+        let rules = DifficultyLevel::Legendary.rules();
+        assert_eq!(rules.enemy_fighting(40, 100), 100);
+        assert_eq!(rules.enemy_life_points(100, 10_000), 200);
+        assert_eq!(rules.ammo_capacity(6), 2);
+        assert_eq!(rules.ammo_capacity(12), 6);
+        assert_eq!(rules.reaction_time_percent, 25);
+        assert_eq!(rules.scale_hostile_soldier_view_radius(400), 540);
+        assert_eq!(rules.hostile_soldier_view_angle_percent, 125);
+        assert_eq!(rules.hostile_soldier_noise_sensitivity_percent, 150);
+        assert_eq!(rules.legacy_level, LegacyDifficultyLevel::Hard);
+    }
+
+    #[test]
+    fn retail_presets_preserve_original_soldier_perception() {
+        for difficulty in [
+            DifficultyLevel::Easy,
+            DifficultyLevel::Medium,
+            DifficultyLevel::Hard,
+        ] {
+            let rules = difficulty.rules();
+            assert_eq!(rules.scale_hostile_soldier_view_radius(400), 400);
+            assert_eq!(rules.hostile_soldier_view_angle_percent, 100);
+            assert_eq!(rules.hostile_soldier_noise_sensitivity_percent, 100);
+        }
+    }
+
+    #[test]
+    fn original_parity_and_ranked_v1_reject_extension_identities() {
+        let mut custom = DifficultyRules::MEDIUM;
+        custom.legacy_level = LegacyDifficultyLevel::Easy;
+        custom.hostile_soldier_view_distance_percent = 175;
+        let custom = DifficultyLevel::custom(custom).unwrap();
+
+        assert_eq!(
+            DifficultyLevel::Legendary.original_parity_preset(),
+            DifficultyLevel::Hard
+        );
+        assert_eq!(custom.original_parity_preset(), DifficultyLevel::Easy);
+        assert!(!DifficultyLevel::Legendary.is_ranked_v1_eligible());
+        assert!(!custom.is_ranked_v1_eligible());
+        assert!(DifficultyLevel::Hard.is_ranked_v1_eligible());
+    }
+
+    #[test]
+    fn invalid_custom_rules_are_rejected() {
+        let mut rules = DifficultyRules::MEDIUM;
+        rules.reaction_time_percent = 0;
+        let error = DifficultyLevel::custom(rules).unwrap_err();
+        assert_eq!(error.field, DifficultyRuleField::ReactionTimePercent);
+    }
+
+    #[test]
+    fn custom_rules_serialize_with_the_profile() {
+        let mut rules = DifficultyRules::MEDIUM;
+        rules.enemy_life_points_percent = 175;
+        let difficulty = DifficultyLevel::custom(rules).unwrap();
+        let json = serde_json::to_string(&difficulty).unwrap();
+        let restored: DifficultyLevel = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored, difficulty);
+    }
+
+    #[test]
+    fn classic_profile_json_remains_backward_compatible() {
+        assert_eq!(
+            serde_json::from_str::<DifficultyLevel>(r#""Hard""#).unwrap(),
+            DifficultyLevel::Hard
+        );
+        assert_eq!(
+            serde_json::to_string(&DifficultyLevel::Medium).unwrap(),
+            r#""Medium""#
+        );
+    }
+
+    #[test]
+    fn invalid_custom_json_is_rejected_during_deserialization() {
+        let mut rules = DifficultyRules::MEDIUM;
+        rules.enemy_iq_percent = 0;
+        let unchecked = DifficultyLevelWire::Custom(rules);
+        let json = serde_json::to_string(&unchecked).unwrap();
+        let error = serde_json::from_str::<DifficultyLevel>(&json).unwrap_err();
+        assert!(error.to_string().contains("enemy_iq_percent"));
     }
 }

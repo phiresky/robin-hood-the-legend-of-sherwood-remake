@@ -536,6 +536,17 @@ fn listen_distance_squared(
     dx * dx + dy * dy + dz * dz
 }
 
+fn difficulty_hearing_factor(
+    hostile_soldier: bool,
+    difficulty: crate::player_profile::DifficultyLevel,
+) -> f32 {
+    if hostile_soldier {
+        difficulty.rules().hostile_soldier_noise_factor()
+    } else {
+        1.0
+    }
+}
+
 struct SoldierSightContext {
     /// Literal owner position, before the AI `Position(actor)` door-side
     /// forecast used by shared entity views.
@@ -1320,15 +1331,9 @@ impl EngineInner {
         } else {
             ai_vision::DEFAULT_VIEW_RADIUS as f32
         };
-        let difficulty_factor = match sim.config().difficulty {
-            crate::player_profile::DifficultyLevel::Easy => {
-                crate::player_profile::difficulty_params::EASY_BLIP_DETECTION_RANGE
-            }
-            crate::player_profile::DifficultyLevel::Medium => 1.0,
-            crate::player_profile::DifficultyLevel::Hard => {
-                crate::player_profile::difficulty_params::HARD_BLIP_DETECTION_RANGE
-            }
-        };
+        let difficulty_factor = crate::player_profile::DifficultyRules::percent_as_f32(
+            sim.config().difficulty.rules().blip_detection_range_percent,
+        );
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
             static_obstacles: assets.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
@@ -1421,16 +1426,13 @@ impl EngineInner {
     ) {
         use crate::ai::AiState;
 
-        // Constant 1.0 hearing factor — the static default, never
-        // written by shipped code.
-        const HEARING_FACTOR: f32 = 1.0;
         const DETECTION_FREQUENCY_SOUNDS: u32 = 3;
 
         let universal_frame = self.control.frame_counter;
         // Read NPC state. The state gate is sampled once before the enemy-list
         // loop, as in the original outer
         // `if (mCurrentState != STATE_ATTACKING)`.
-        let (position_map, position_world, current_state) = {
+        let (position_map, position_world, current_state, hearing_factor) = {
             let Some(entity) = self.world.entities.get(npc_id) else {
                 return;
             };
@@ -1460,10 +1462,15 @@ impl EngineInner {
             let Some(npc) = entity.ai_actor_data() else {
                 return;
             };
+            let hostile_soldier = matches!(entity, Entity::Soldier(_))
+                && entity.camp().is_hostile_to(Camp::Royalists);
+            let hearing_factor =
+                difficulty_hearing_factor(hostile_soldier, sim.config().difficulty);
             (
                 entity.element_data().position_map(),
                 entity.element_data().position(),
                 npc.ai_state(),
+                hearing_factor,
             )
         };
         let hearing_debug_config = hearing_gate_debug_config();
@@ -1589,7 +1596,13 @@ impl EngineInner {
                     // and volume; outside the stale box UpdateHearing is not
                     // called and the edge latch remains untouched.
                     let noise = pc.produced_noise;
-                    let inside_hear_box = pc.hear_noise_box.contains_point(position_map);
+                    // The authored box is sized for a 100% listener. A
+                    // difficulty-enhanced guard may legitimately hear beyond
+                    // it, so let the exact 3D max-norm/range checks below make
+                    // that decision. Reduced sensitivity still uses the box
+                    // as a cheap outer bound.
+                    let inside_hear_box =
+                        pc.hear_noise_box.contains_point(position_map) || hearing_factor > 1.0;
                     if !inside_hear_box {
                         if hearing_debug {
                             let (det_heard, det_seen) = npc.detectable_lists[enemy_idx]
@@ -1649,7 +1662,7 @@ impl EngineInner {
                             * crate::position_interface::INVERSE_ASPECT_RATIO;
                         let dx_3d = position_world.x - noise.origin.x;
                         let dz = position_world.z - source_elevation;
-                        let modified_volume = pc_volume as f32 * HEARING_FACTOR;
+                        let modified_volume = pc_volume as f32 * hearing_factor;
                         let max_norm = dx_3d.abs().max(dy_stretched.abs()).max(dz.abs());
                         let distance =
                             (dx_3d * dx_3d + dy_stretched * dy_stretched + dz * dz).sqrt();
@@ -6098,6 +6111,21 @@ mod tests {
         assert!(forest_180_degree_view_enabled(true, Camp::Royalists));
         assert!(!forest_180_degree_view_enabled(false, Camp::Royalists));
         assert!(!forest_180_degree_view_enabled(true, Camp::Lacklandists));
+    }
+
+    #[test]
+    fn legendary_noise_sensitivity_applies_only_to_hostile_soldiers() {
+        use crate::player_profile::DifficultyLevel;
+
+        assert_eq!(
+            difficulty_hearing_factor(true, DifficultyLevel::Legendary),
+            1.5
+        );
+        assert_eq!(difficulty_hearing_factor(true, DifficultyLevel::Hard), 1.0);
+        assert_eq!(
+            difficulty_hearing_factor(false, DifficultyLevel::Legendary),
+            1.0
+        );
     }
 
     #[test]
