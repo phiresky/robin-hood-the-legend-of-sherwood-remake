@@ -598,6 +598,66 @@ fn make_pc(pos: WorldPoint3D, sector: Option<crate::position_interface::SectorHa
 }
 
 #[test]
+fn autonomous_vip_combatant_death_does_not_latch_party_failure() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = make_engine();
+    let victim = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 0.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+    let Entity::Pc(pc) = engine.get_entity_mut(victim).unwrap() else {
+        unreachable!()
+    };
+    pc.pc.mission_role = crate::human_control::MissionRole::Combatant;
+
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        vip: true,
+        ..Default::default()
+    });
+    let assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+
+    engine.apply_pc_kill_cascade(&sim, &assets, victim);
+
+    assert!(engine.mission_domain.dead_pc.is_none());
+}
+
+#[test]
+fn player_party_vip_death_still_latches_party_failure() {
+    let sim = crate::sim_rng::test_context();
+    let mut engine = make_engine();
+    let victim = engine.add_entity(make_pc(
+        WorldPoint3D {
+            x: 0.0,
+            y: 100.0,
+            z: 0.0,
+        },
+        None,
+    ));
+
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(crate::profiles::CharacterProfile {
+        vip: true,
+        ..Default::default()
+    });
+    let assets = LevelAssets {
+        profile_manager: std::sync::Arc::new(profiles),
+        ..LevelAssets::new()
+    };
+
+    engine.apply_pc_kill_cascade(&sim, &assets, victim);
+
+    assert_eq!(engine.mission_domain.dead_pc, Some(victim));
+}
+
+#[test]
 fn damage_dispatcher_disables_direction_on_live_reaction_orders() {
     for (command, expected) in [
         (Command::ReceiveDamage, OrderType::FallingBackUpright),
