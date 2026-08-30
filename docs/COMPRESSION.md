@@ -2138,3 +2138,177 @@ team are deferrable, coding bases named by critical chunks are promoted
 transitively (including `base2` star-2 hubs), level-start characters are
 pulled back into the critical set along with their hub chains, and
 Sherwood/saved-world launches defer nothing at all.
+
+## Shipped: lossy-JXL RLE sprite atlases, web only (schema v14, 2026-08-30)
+
+Productionizes the 2026-08-29 "the RLE/patch bucket — lossy JXL WINS here"
+follow-up as `convert_datadir --rle-sprite-format {exact,jxl-q70,jxl-q80}`,
+wired into `scripts/build_web_shipping_datadir.sh`. Default is `exact`:
+native shipping stays byte-preserving, because these sprites composite into
+RGB565 framebuffers that parity traces screenshot.
+
+Two things about the shipped format differ from the research prototype, and
+both made it smaller and simpler.
+
+### The class map is the alpha channel, not a sidecar
+
+The probe carried a zstd'd 2-bit class map beside each image to keep run
+extents and the keyed pixels exact. Shipping instead puts the class in the
+JXL's own alpha channel — 0 transparent, 128 shadow, 255 opaque — coded
+losslessly with `cjxl --alpha_distance=0` while the color channels stay
+lossy VarDCT. One RGBA image per atlas, no sidecar, no second entropy stage.
+
+Alpha is a class MARKER, never a blend factor. Nothing composites the stored
+RGB at partial opacity: materialization turns the decoded image straight into
+the RGB565 canvas with raw `SHADOW_KEY` in the shadow pixels, so the
+ambience-dependent shadow substitution still happens per draw exactly where it
+always did (`decompress_rle_arno_law`'s mapping), and hit-testing still keys
+off `SHADOW_KEY` / `TRANSPARENT_COLOR_16`.
+
+Exactness is enforced twice, and loudly: the converter decodes every encode it
+produces and fails the conversion if any pixel changed class, and
+`--verify-shipping` re-checks per sprite against the source bank. A stray
+alpha value that is not one of the three markers is a hard decode error
+rather than a nearest-match guess. Requantized visible pixels are also
+key-dodged (low green bit flipped) so a lossy color can never land on a key
+value and silently become transparent.
+
+### Invisible pixels are edge-extended, not black-filled
+
+The key colors must never be coded literally — the transparent key `0x07C0`
+is bright green and the shadow key `0x001F` blue, so VarDCT ringing would
+bleed them into neighbouring visible pixels. But the obvious fix, writing
+`(0,0,0,0)` (what `Picture::to_rgba8888` does for the interface path), still
+drags edge pixels dark. Every invisible pixel now takes the color of its
+nearest opaque neighbour (4-connected BFS, radius 8, alpha untouched), which
+gives the DCT a smooth continuation across the sprite boundary and across
+atlas cell gutters. The same smear was applied to the interface/pak keyed
+JXL path, which had the black-fill bleed too.
+
+### No repacking: the decoded atlas IS the sprite
+
+The prototype rebuilt packed RLE run/literal words at load time. That is pure
+busywork: nothing downstream draws from runs — all four `frame_holder`
+consumers (the ArnoLaw blit, both shadow-extraction blits, and the
+`is_pixel_opaque` hit test) decompress to a full RGB565 canvas anyway. So one
+atlas decodes into one shared canvas and each sprite keeps a window into it
+(`SpriteRaster { atlas, stride, x, y }`); the consumers gained a raster branch
+that is a strided copy with the identical per-pixel mapping.
+
+Dropping the run format also dropped a class: the prototype's fourth
+"in-run literal carrying the transparent key" class exists only to reproduce
+run bytes. Its canvas value is `TRANSPARENT_COLOR_16`, which is precisely what
+all four consumers already produce for it, so three classes suffice.
+
+### Demo numbers (demo_leicester_ecoste, full web recipe)
+
+`rhs/` bucket, same binary and schema, only the flag differs:
+
+```
+--rle-sprite-format exact      17,966,211 B
+--rle-sprite-format jxl-q70    17,305,957 B   (-660,254 B, -3.7% of the bucket)
+  prototype mask design        17,367,733 B   (alpha is 61,776 B smaller)
+```
+
+The bucket total is dominated by VQ character chunks (16.1 MB of blobs); the
+RLE part itself goes 1.30 MB (zstd'd exact words) -> 637,057 B of JXL, i.e.
+**0.49x**, for 288 lossy sprites. Verify is green: 64,770 sprites bit-identical
+to the source bank, 288 RLE sprites lossy with structure and keys bit-exact,
+28.1 dB opaque-pixel PSNR, worst chunk 24.2 dB, dependency closure covered.
+
+### Quality gating
+
+q70's worst cases are small dithered pickup/effect sprites, exactly as the
+research predicted — the first demo verify failed on `RELIC_Ampulla` at
+21.8 dB. The converter now scores every encode and keeps exact words below a
+24 dB per-sprite floor: a member under the floor is ejected from its atlas and
+the group re-packed (it retries individually first), which also guarantees the
+per-chunk floor `--verify-shipping` enforces. On the demo that demotes 105
+sprites; 250 more are skipped for being under 20x20 px, and 1 loses on size.
+
+### Resident memory: the honest cost
+
+A canvas is 2 B/px whether or not it is mostly transparent, while packed RLE
+words cost nothing for transparent runs. Demo, all chunks materialized:
+
+```
+decoded atlases (288 sprites, 29 atlases)   11,162,802 B
+  of which sprite pixels                     9,571,256 B
+  of which atlas gutter waste                1,591,546 B  (14%)
+packed RLE words they replace                 4,720,222 B
+```
+
+So the shipped bytes shrink ~2x while resident bytes grow ~2.4x. That is the
+trade to watch on wasm; it is bounded per mission (chunks are mission-scoped),
+and the gutter share is small because animation groups pack same-size frames.
+Uniform-grid cells are why any gutter exists at all — a shelf packer would
+recover most of that 14% if it ever matters.
+
+### Fullgame numbers (fullgame_linux, full web recipe)
+
+Same binary and schema on both sides; only `--rle-sprite-format` differs.
+
+```
+                                exact            jxl-q70          delta
+rhs/ bucket                96,287,605 B     87,951,100 B    -8,336,505 B  (-8.7%)
+whole Data/               156,931,728 B    148,594,453 B    -8,337,275 B
+H01_Lin_VL blocking set    24,699,643 B     24,192,060 B      -507,583 B  (-2.1%)
+```
+
+The bucket saving lands where the research said it would (~8 MiB); the
+per-mission blocking saving is much smaller because one mission touches only a
+few animation chunks. 5,682 sprites ship lossy across the corpus: 6,144,079 B
+of JXL replacing 59,398,464 B of raw RLE words (zstd'd to ~14.5 MB in the
+exact tree), in 904 images across 60 chunks.
+
+Verify green on the whole tree: 402,303 sprites, 396,621 bit-identical to the
+source bank, 5,682 lossy with structure and keys bit-exact, 29.8 dB
+opaque-pixel PSNR, 17.9% of visible pixels still exactly 565-equal, worst
+chunk 24.1 dB, all 50 dependency lists closure-covered. The quality floor
+demotes 1,546 sprites to exact words and 1,755 more are under 20x20 px.
+
+Native H01 install decode (`--decode-bench`, all 68 blocking files):
+
+```
+                        exact tree      jxl-q70 tree
+VQ blobs (45)              2.50 s          2.80 s
+RLE-JXL chunks (3)            —            0.32 s
+resident RLE rasters          —          3,862,642 B (88 sprites, 21 atlases,
+                                          13% of it gutter)
+```
+
+### Browser install (headless Chrome, threaded wasm, `H01_Lin_VL`)
+
+`node scripts/wasm_mission_install_chrome.mjs <tree>`, the two trees run
+interleaved on a noisy box (load 4.5-8.8), so minimums are the honest
+statistic:
+
+```
+                    runs (s)                  min
+exact       9.0, 11.9, 8.3                    8.3 s
+jxl-q70     11.2, 9.1, 8.7, 8.5               8.5 s
+```
+
+Install time is unchanged within noise: the extra JXL decode (0.32 s native
+for H01's 3 chunks; on the pool it overlaps the fetches) is roughly offset by
+the 507,583 fewer bytes to download. Both trees report the same 72 blocking
+files and reach `activated shipping mission` cleanly.
+
+### Verdict and what is still open
+
+Ship it for web: -8.3 MB off the rhs bucket for no measurable install-time
+cost, at 29.8 dB on visible pixels with keys and structure bit-exact. Native
+keeps `exact` and stays parity-safe.
+
+Open items, in the order they would pay:
+
+- **Resident memory** is the real trade (+2.4x on the sprites it touches;
+  3.86 MB for H01). If wasm heap ever becomes the constraint, the levers are a
+  shelf packer (recovers the ~13% gutter share) and dropping the raster to
+  RGB565-with-holes only for sprites that are actually drawn.
+- **The 24 dB floor is conservative.** It demotes 1,546 fullgame sprites back
+  to exact words; several are the `Z_*` ambient character animations, which are
+  large. A per-sprite quality-vs-size search (encode at q80 when q70 misses the
+  floor, instead of falling all the way back) would recover part of that.
+- **Interface/pak art now gets the same edge extension** but was not measured
+  separately here; the earlier `--pak` numbers predate the smear.
