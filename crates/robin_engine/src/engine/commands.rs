@@ -6086,9 +6086,9 @@ mod tests {
     fn deterministic_settings_and_seat_lifecycle_are_host_authoritative() {
         let (mut engine, assets, _pc) = setup_pc_engine(&[]);
         let sim = crate::sim_rng::test_context();
-        let classic_items = crate::gameplay_config::ItemGameplayConfig::classic();
-        assert_ne!(engine.sim_config().item_gameplay, classic_items);
-        assert!(engine.sim_config().noise_distraction_feedback);
+        let rebalanced_items = crate::gameplay_config::ItemGameplayConfig::default();
+        assert_ne!(engine.control.sim_config.item_gameplay, rebalanced_items);
+        assert!(engine.control.sim_config.noise_distraction_feedback);
 
         engine.apply_frame_commands_with_mode(
             &sim,
@@ -6097,7 +6097,7 @@ mod tests {
                 PlayerInput::new(
                     crate::player_command::PlayerId(1),
                     PlayerCommand::SetItemGameplayConfig {
-                        config: classic_items,
+                        config: rebalanced_items,
                     },
                 ),
                 PlayerInput::new(
@@ -6114,8 +6114,8 @@ mod tests {
             ],
             SelectionCommandBatchMode::InferNestedSelection,
         );
-        assert_ne!(engine.sim_config().item_gameplay, classic_items);
-        assert!(engine.sim_config().noise_distraction_feedback);
+        assert_ne!(engine.control.sim_config.item_gameplay, rebalanced_items);
+        assert!(engine.control.sim_config.noise_distraction_feedback);
         assert!(engine.players.seats.get(7).is_none());
 
         engine.apply_frame_commands_with_mode(
@@ -6123,7 +6123,7 @@ mod tests {
             &assets,
             &[
                 PlayerInput::host(PlayerCommand::SetItemGameplayConfig {
-                    config: classic_items,
+                    config: rebalanced_items,
                 }),
                 PlayerInput::host(PlayerCommand::SetNoiseDistractionFeedback { enabled: false }),
                 PlayerInput::host(PlayerCommand::ConnectSeat {
@@ -6133,8 +6133,8 @@ mod tests {
             ],
             SelectionCommandBatchMode::InferNestedSelection,
         );
-        assert_eq!(engine.sim_config().item_gameplay, classic_items);
-        assert!(!engine.sim_config().noise_distraction_feedback);
+        assert_eq!(engine.control.sim_config.item_gameplay, rebalanced_items);
+        assert!(!engine.control.sim_config.noise_distraction_feedback);
         assert_eq!(engine.players.seats[7].nickname, "authenticated");
     }
 

@@ -1392,6 +1392,7 @@ async fn run_server_peer_reader(
                 origin_frame,
                 command,
             }) => {
+                validate_peer_command_authority(seat, &command)?;
                 let now = context.frame_cursor.load(Ordering::Relaxed);
                 let target = now.max(origin_frame).saturating_add(INPUT_DELAY_FRAMES);
                 let inp = PlayerInput::new(seat, command);
@@ -1474,6 +1475,18 @@ async fn run_server_peer_reader(
             None => return Ok(()),
         }
     }
+}
+
+fn validate_peer_command_authority(
+    seat: PlayerId,
+    command: &robin_engine::player_command::PlayerCommand,
+) -> Result<(), String> {
+    if command.requires_host_authority() {
+        return Err(format!(
+            "peer {seat:?} attempted host-authoritative command {command:?}"
+        ));
+    }
+    Ok(())
 }
 
 // ─── Client ──────────────────────────────────────────────────────
@@ -2243,12 +2256,31 @@ mod tests {
     use super::{
         HostSessionContinuation, PeerOwner, PendingSnapshotTransition, ServerPeers,
         discard_session_outbound, handle_client_wire_msg, retain_transition_peer_for_reconnect,
-        take_committed_snapshot_transition, validate_reconnect_session_id,
-        validate_reconnect_state,
+        take_committed_snapshot_transition, validate_peer_command_authority,
+        validate_reconnect_session_id, validate_reconnect_state,
     };
     use robin_engine::player_command::PlayerId;
     use std::collections::HashSet;
     use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn peer_inputs_reject_host_authoritative_commands_before_broadcast() {
+        let error = validate_peer_command_authority(
+            PlayerId(2),
+            &robin_engine::player_command::PlayerCommand::ConnectSeat {
+                player_id: PlayerId(7),
+                nickname: "forged".to_string(),
+            },
+        )
+        .expect_err("a peer must not author transport seat lifecycle");
+        assert!(error.contains("host-authoritative"));
+
+        validate_peer_command_authority(
+            PlayerId(2),
+            &robin_engine::player_command::PlayerCommand::CrouchDown,
+        )
+        .expect("ordinary seat input remains admissible");
+    }
 
     #[test]
     fn replacement_transport_seeds_exact_authenticated_seats() {

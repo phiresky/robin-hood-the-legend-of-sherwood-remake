@@ -15,7 +15,10 @@ A list of which additional features we have added, which ones we might still wan
   authoritative simulation. Window close propagates to mission exit, nested
   confirmations retain the picker underneath, stable save filenames protect
   selection across list mutations, and ordinary HTTP screenshots capture the
-  presented topmost pause UI. The native desktop data-folder chooser remains
+  presented topmost pause UI. Settings rows carry typed actions, enabled state,
+  labels, and help text; large pages use bounded 12-row pagination, so the
+  integrated Gameplay page exposes all 33 current settings without index or
+  hit-box remapping. The native desktop data-folder chooser remains
   a synchronous OS dialog launched from the cooperative Options state.
 - **Per-mission achievements, debrief evidence, XP, and trackers.** Four
   deterministic achievements are evaluated independently for each successful
@@ -497,7 +500,10 @@ A list of which additional features we have added, which ones we might still wan
   authenticated owner/seat roster, expected player count, and pinned relay
   route. Durable browser identities and process-held native client identities
   therefore reclaim the same seats without nickname authority or a stale-relay
-  reconnect race.
+  reconnect race. The native server rejects peer-authored deterministic
+  settings, campaign mutations, modal decisions, and seat-lifecycle commands
+  before broadcast; the engine repeats that check at deterministic command
+  admission so replay/rollback cannot bypass transport authority.
 
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for

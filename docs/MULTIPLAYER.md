@@ -131,6 +131,11 @@ different protocol version.
 | client → server | `SnapshotTransitionReady { id }` | acknowledge the exact prepared transition bytes |
 | server → clients | `CommitSnapshotTransition { id }` | release the transition only after every current peer is ready |
 
+Client `Input` frames can contain only seat-authored gameplay commands. Shared
+settings, campaign mutations, modal decisions, and seat connect/disconnect
+events require host authority and are rejected before server broadcast; the
+engine enforces the same predicate again at deterministic command admission.
+
 `Welcome` is authoritative. A peer must not substitute a local mission, seed,
 or `SimConfig` after decode failure. The snapshot payload uses the current
 Engine schema and is rejected rather than migrated when incompatible.

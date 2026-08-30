@@ -1843,6 +1843,17 @@ mod tests {
     }
 
     #[test]
+    fn options_pager_covers_every_integrated_gameplay_setting() {
+        let total = crate::ingame_menu::gameplay::OPTION_LABELS.len();
+        assert_eq!(total, 33, "update this contract when settings are added");
+        assert_eq!(OptionsPager::page_count(total), 3);
+        let covered = (0..OptionsPager::page_count(total))
+            .flat_map(|page| OptionsPager { page }.visible_range(total))
+            .collect::<Vec<_>>();
+        assert_eq!(covered, (0..total).collect::<Vec<_>>());
+    }
+
+    #[test]
     fn options_pager_stops_at_navigation_boundaries() {
         let mut pager = OptionsPager::default();
         assert!(!pager.can_move_previous());
