@@ -415,6 +415,65 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyInactiveBlockedBox {
+    min_x: u32,
+    min_y: u32,
+    max_x: u32,
+    max_y: u32,
+}
+
+fn legacy_inactive_blocked_boxes(
+    save: &robin_engine::legacy_save::body::LegacySaveBody,
+) -> BTreeMap<u32, LegacyInactiveBlockedBox> {
+    save.element_payloads
+        .records
+        .iter()
+        .filter_map(|record| {
+            let blocked = record.payload.actor_position()?.blocked_box;
+            (!blocked.bounds_are_set).then_some((
+                record.header.creation_order,
+                LegacyInactiveBlockedBox {
+                    min_x: blocked.top_left.x.to_bits(),
+                    min_y: blocked.top_left.y.to_bits(),
+                    max_x: blocked.bottom_right.x.to_bits(),
+                    max_y: blocked.bottom_right.y.to_bits(),
+                },
+            ))
+        })
+        .collect()
+}
+
+/// Old schema-16 runtime capture omitted `SBGeoBoundingBox2D::bounds_are_set`
+/// and printed its stale coordinate words unconditionally. Null only the
+/// exact tuple whose inactive status is proven by the embedded RHSG; any
+/// changed tuple remains an active box and is compared normally.
+fn canonicalize_legacy_inactive_blocked_box(
+    runtime: &mut serde_json::Value,
+    saved: Option<&LegacyInactiveBlockedBox>,
+) -> bool {
+    let Some(saved) = saved else { return false };
+    let Some(blocked) = runtime.pointer_mut("/position/blocked_box") else {
+        return false;
+    };
+    let bits = |pointer: &str| {
+        blocked
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+    };
+    if bits("/min/x/bits") == Some(saved.min_x)
+        && bits("/min/y/bits") == Some(saved.min_y)
+        && bits("/max/x/bits") == Some(saved.max_x)
+        && bits("/max/y/bits") == Some(saved.max_y)
+    {
+        *blocked = serde_json::Value::Null;
+        true
+    } else {
+        false
+    }
+}
+
 fn reconstruct_unrecorded_maximal_visibility(
     leaning_out: bool,
     visibilities: impl IntoIterator<Item = f32>,
@@ -4135,6 +4194,10 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let (mut engine, assets, mission_scb) =
         initialize_headless_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
+    // Candidates are retired permanently as soon as a recorded tuple changes:
+    // a later box can then be genuinely active even if an actor eventually
+    // revisits the save's stale coordinates.
+    let mut inactive_saved_blocked_boxes = BTreeMap::new();
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
             initial_save,
@@ -4170,6 +4233,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 eprintln!("parity stage: saved failed path {index}: {request:?}");
             }
         }
+        inactive_saved_blocked_boxes = legacy_inactive_blocked_boxes(&save);
         loaded_save_host = Some(
             robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
                 &mut engine,
@@ -4790,6 +4854,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             tick_effects.code as i32,
             map,
             header.initial_npc_transients.is_none(),
+            &mut inactive_saved_blocked_boxes,
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -9819,6 +9884,7 @@ fn compare_frame(
     actual_game_code: i32,
     entity_map: &EntityMap,
     legacy_additive_omissions: bool,
+    inactive_saved_blocked_boxes: &mut BTreeMap<u32, LegacyInactiveBlockedBox>,
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
@@ -10097,6 +10163,17 @@ fn compare_frame(
         );
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
+            let saved_inactive_box = inactive_saved_blocked_boxes
+                .get(&expected.creation_order)
+                .copied();
+            if saved_inactive_box.is_some()
+                && !canonicalize_legacy_inactive_blocked_box(
+                    &mut expected_runtime,
+                    saved_inactive_box.as_ref(),
+                )
+            {
+                inactive_saved_blocked_boxes.remove(&expected.creation_order);
+            }
             canonicalize_original_runtime_representation(&mut expected_runtime);
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
@@ -10928,6 +11005,52 @@ fn compare_float_indexed(
 mod tests {
     use super::*;
     use bitcode_parity as bitcode;
+
+    fn blocked_box_json(min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> serde_json::Value {
+        serde_json::json!({
+            "position": {
+                "blocked_box": {
+                    "min": {"x": {"bits": min_x}, "y": {"bits": min_y}},
+                    "max": {"x": {"bits": max_x}, "y": {"bits": max_y}}
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn legacy_inactive_blocked_box_requires_exact_saved_stale_tuple() {
+        let saved = LegacyInactiveBlockedBox {
+            min_x: 1,
+            min_y: 2,
+            max_x: 3,
+            max_y: 4,
+        };
+        let mut exact = blocked_box_json(1, 2, 3, 4);
+        assert!(canonicalize_legacy_inactive_blocked_box(
+            &mut exact,
+            Some(&saved)
+        ));
+        assert!(exact.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut changed = blocked_box_json(1, 2, 3, 5);
+        let unchanged = changed.clone();
+        assert!(!canonicalize_legacy_inactive_blocked_box(
+            &mut changed,
+            Some(&saved)
+        ));
+        assert_eq!(
+            changed, unchanged,
+            "changed coordinates may be an active box"
+        );
+
+        let mut unproven = blocked_box_json(1, 2, 3, 4);
+        let unchanged = unproven.clone();
+        assert!(!canonicalize_legacy_inactive_blocked_box(
+            &mut unproven,
+            None
+        ));
+        assert_eq!(unproven, unchanged, "no save evidence means no rewrite");
+    }
 
     #[test]
     fn native_suffix_appends_to_the_recording_identity() {
