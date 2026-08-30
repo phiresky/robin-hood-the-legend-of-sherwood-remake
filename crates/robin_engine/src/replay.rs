@@ -69,11 +69,12 @@ pub struct ReplayHeader {
 /// every admitted [`SimulationFrameInput`] and host control is explicit,
 /// serialized command chains are non-recursive, stored movement actions carry
 /// exact routes, and point-Seek state carries explicit route provenance.
-/// Version 17 requires the full-fidelity campaign history and practice-return
-/// snapshot. Version 18 adds expanded item rules, cached ale eligibility, and
-/// ground-stone command/projectile state. There is deliberately no Rust-schema compatibility adapter:
+/// Version 17 requires full-fidelity campaign history. Version 18 adds
+/// achievement tracker state, and version 19 combines that with expanded item
+/// rules, cached ale eligibility, and ground-stone state. There is deliberately
+/// no Rust-schema compatibility adapter:
 /// earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 18;
+pub const REPLAY_SCHEMA_VERSION: u32 = 19;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -779,8 +780,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_expanded_item_and_ground_stone_codec() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 18);
+    fn replay_schema_version_identifies_achievements_and_item_rebalance_codec() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 19);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -880,7 +881,7 @@ mod tests {
 
     #[test]
     fn every_obsolete_rust_jsonl_schema_is_rejected() {
-        for version in [10, 12, 13, 14, 16, 17] {
+        for version in [10, 12, 13, 14, 16, 17, 18] {
             let input = format!(
                 "{{\"mission_id\":\"old\",\"rng_seed\":7,\"version\":{version},\"total_frames\":0,\"campaign\":null}}\n"
             );

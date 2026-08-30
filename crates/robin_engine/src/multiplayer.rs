@@ -48,7 +48,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 25;
+pub const NET_PROTOCOL_VERSION: u32 = 26;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -355,10 +355,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_expanded_item_and_ground_stone_state() {
-        // Version 25 adds item rules, cached ale eligibility, and ground-stone
-        // command/projectile state on top of the full-history snapshot.
-        assert_eq!(NET_PROTOCOL_VERSION, 25);
+    fn protocol_version_includes_achievements_and_item_rebalance_state() {
+        // Version 26 combines achievement tracker/rule state with item rules,
+        // cached ale eligibility, and ground-stone command/projectile state.
+        assert_eq!(NET_PROTOCOL_VERSION, 26);
     }
 
     #[test]

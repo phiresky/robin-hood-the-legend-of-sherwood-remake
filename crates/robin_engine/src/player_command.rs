@@ -971,15 +971,6 @@ pub enum PlayerCommand {
     SetUnbindingEnabled {
         enabled: bool,
     },
-    /// Replace the complete deterministic item-rule set on this frame.
-    SetItemGameplayConfig {
-        config: crate::gameplay_config::ItemGameplayConfig,
-    },
-    /// Toggle the optional distraction-impact cue independently.
-    SetNoiseDistractionFeedback {
-        enabled: bool,
-    },
-
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
     /// handlers that need to emit a UX-feedback voice line when a
@@ -1037,6 +1028,19 @@ pub enum PlayerCommand {
     /// Toggle reusable-cloak mechanics in the authoritative simulation.
     /// Appended for bitcode compatibility with every pre-cloak command.
     SetReusableCloaks {
+        enabled: bool,
+    },
+    /// Toggle deterministic NPC-on-NPC Clean Hands invalidation. Appended to
+    /// preserve every current-main bitcode variant index.
+    SetCleanHandsNpcKillsInvalidate {
+        enabled: bool,
+    },
+    /// Replace the complete deterministic item-rule set on this frame.
+    SetItemGameplayConfig {
+        config: crate::gameplay_config::ItemGameplayConfig,
+    },
+    /// Toggle the optional distraction-impact cue independently.
+    SetNoiseDistractionFeedback {
         enabled: bool,
     },
 }

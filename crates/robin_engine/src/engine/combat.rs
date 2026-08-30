@@ -2341,6 +2341,16 @@ mod tests {
 
     #[test]
     fn distraction_projectile_latch_survives_serialization_and_emits_once() {
+        std::thread::Builder::new()
+            .name("distraction-projectile-latch-roundtrip".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(distraction_projectile_latch_survives_serialization_and_emits_once_inner)
+            .expect("spawn large-stack projectile round-trip regression")
+            .join()
+            .expect("large-stack projectile round-trip regression panicked");
+    }
+
+    fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
         let mut engine = EngineInner::new();
         let mut projectile = Entity::Projectile(ElementProjectile {
             element: ElementData {

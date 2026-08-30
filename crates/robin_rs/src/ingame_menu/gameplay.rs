@@ -16,8 +16,8 @@ use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
 use super::layout::{
-    MenuTransform, TooltipState, align_bottom_right, align_on_first_widget, dim_screen,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt,
+    MenuTransform, TooltipState, align_bottom_right, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_text_virt,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -34,6 +34,15 @@ const OPTION_LABELS: &[&str] = &[
     "Sherwood Production Forecast",
     "Reusable Cloaks",
     "Campaign Presentation",
+    "NPC Kills Break Clean Hands",
+    "Detailed Sword/Bow XP",
+    "Speedrun Clock",
+    "Clean Hands Tracker",
+    "Ghost Tracker",
+    "Pile-o-Bones Tracker",
+    "All Enemies Stashed Tracker",
+    "Campaign Achievement Badges",
+    "Achievement Debrief Details",
     "Apple Combat Interrupt",
     "Reliable Wasp Acquisition",
     "Stone Ground Distraction",
@@ -58,6 +67,15 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Show live item-production forecasts in Sherwood.",
     "Allow heroes with shipped cape art to put their cloaks back on.",
     "Cycle the campaign-map presentation.",
+    "Count hostile deaths caused by other NPCs against Clean Hands.",
+    "Show detailed sword and bow experience progress.",
+    "Show the current mission speedrun clock.",
+    "Show live Clean Hands achievement progress.",
+    "Show live Ghost achievement progress.",
+    "Show live Pile-o-Bones achievement progress.",
+    "Show live All Enemies Stashed achievement progress.",
+    "Show achievement badges in campaign presentations.",
+    "Include achievement details in mission debriefs.",
     "Let direct apple hits interrupt active swordfights.",
     "Increase initial wasp acquisition from 50 to 75 world units.",
     "Allow ground-thrown stones to attract eligible hostiles within 240 world units.",
@@ -98,21 +116,23 @@ pub async fn show_gameplay(
     let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
     let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
 
-    // ── Option toggle buttons stacked from (30,100) ───────────────
+    // Two columns keep every independent feature visible at 640x480 and up.
     let (field_w, field_h) = resources.input_field_dimensions();
-    let mut opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
+    let rows_per_column = OPTION_LABELS.len().div_ceil(2);
+    let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
         .iter()
         .enumerate()
         .map(|(i, label)| super::layout::MenuButton {
             label: label.to_string(),
             enabled: true,
-            x: 30,
-            y: if i == 0 { 100 } else { 0 },
+            x: if i < rows_per_column { 30 } else { 320 },
+            y: 100
+                + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
+                    * (field_h + 2),
             w: field_w,
             h: field_h,
         })
         .collect();
-    align_on_first_widget(&mut opt_layout, 2);
 
     let mut frame = FrameWnd::default();
     frame.enabled = true;
@@ -234,7 +254,7 @@ pub async fn show_gameplay(
                 font,
                 transform,
                 working.campaign_presentation.label(),
-                315,
+                235,
                 opt_layout[5].y + 7,
             );
         }
@@ -277,42 +297,54 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         3 => config.show_production_forecast = !config.show_production_forecast,
         4 => config.reusable_cloaks = !config.reusable_cloaks,
         5 => config.campaign_presentation = config.campaign_presentation.next(),
-        6 => {
+        6 => config.clean_hands_npc_kills_invalidate = !config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp = !config.show_detailed_xp,
+        8 => config.show_speedrun_tracker = !config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker = !config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker = !config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker = !config.show_pile_o_bones_tracker,
+        12 => {
+            config.show_all_enemies_one_building_tracker =
+                !config.show_all_enemies_one_building_tracker
+        }
+        13 => config.show_achievement_badges = !config.show_achievement_badges,
+        14 => config.show_achievement_debrief = !config.show_achievement_debrief,
+        15 => {
             config.item_gameplay.apple_combat_interrupt =
                 !config.item_gameplay.apple_combat_interrupt
         }
-        7 => {
+        16 => {
             config.item_gameplay.wasp_reliable_acquisition =
                 !config.item_gameplay.wasp_reliable_acquisition
         }
-        8 => {
+        17 => {
             config.item_gameplay.stone_ground_distraction =
                 !config.item_gameplay.stone_ground_distraction
         }
-        9 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
-        10 => {
+        18 => config.item_gameplay.stone_longer_range = !config.item_gameplay.stone_longer_range,
+        19 => {
             config.item_gameplay.net_selective_immunity =
                 !config.item_gameplay.net_selective_immunity
         }
-        11 => {
+        20 => {
             config.item_gameplay.ale_reliable_distraction =
                 !config.item_gameplay.ale_reliable_distraction
         }
-        12 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
-        13 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
-        14 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
-        15 => {
+        21 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
+        22 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
+        23 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
+        24 => {
             config.item_previews.stone_distraction_area =
                 !config.item_previews.stone_distraction_area
         }
-        16 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
-        17 => {
+        25 => config.item_previews.net_capture_area = !config.item_previews.net_capture_area,
+        26 => {
             config.item_previews.net_crumple_prediction =
                 !config.item_previews.net_crumple_prediction
         }
-        18 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
-        19 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
-        20 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        27 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
+        28 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
+        29 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
         _ => {}
     }
 }
@@ -328,21 +360,30 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
             config.campaign_presentation
                 != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
         }
-        6 => config.item_gameplay.apple_combat_interrupt,
-        7 => config.item_gameplay.wasp_reliable_acquisition,
-        8 => config.item_gameplay.stone_ground_distraction,
-        9 => config.item_gameplay.stone_longer_range,
-        10 => config.item_gameplay.net_selective_immunity,
-        11 => config.item_gameplay.ale_reliable_distraction,
-        12 => config.noise_distraction_feedback,
-        13 => config.item_previews.apple_effect,
-        14 => config.item_previews.stone_direct_effect,
-        15 => config.item_previews.stone_distraction_area,
-        16 => config.item_previews.net_capture_area,
-        17 => config.item_previews.net_crumple_prediction,
-        18 => config.item_previews.ale_effect,
-        19 => config.item_previews.purse_effect,
-        20 => config.item_previews.wasp_area,
+        6 => config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp,
+        8 => config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker,
+        12 => config.show_all_enemies_one_building_tracker,
+        13 => config.show_achievement_badges,
+        14 => config.show_achievement_debrief,
+        15 => config.item_gameplay.apple_combat_interrupt,
+        16 => config.item_gameplay.wasp_reliable_acquisition,
+        17 => config.item_gameplay.stone_ground_distraction,
+        18 => config.item_gameplay.stone_longer_range,
+        19 => config.item_gameplay.net_selective_immunity,
+        20 => config.item_gameplay.ale_reliable_distraction,
+        21 => config.noise_distraction_feedback,
+        22 => config.item_previews.apple_effect,
+        23 => config.item_previews.stone_direct_effect,
+        24 => config.item_previews.stone_distraction_area,
+        25 => config.item_previews.net_capture_area,
+        26 => config.item_previews.net_crumple_prediction,
+        27 => config.item_previews.ale_effect,
+        28 => config.item_previews.purse_effect,
+        29 => config.item_previews.wasp_area,
         _ => false,
     }
 }
@@ -362,6 +403,15 @@ mod tests {
                 "Sherwood Production Forecast",
                 "Reusable Cloaks",
                 "Campaign Presentation",
+                "NPC Kills Break Clean Hands",
+                "Detailed Sword/Bow XP",
+                "Speedrun Clock",
+                "Clean Hands Tracker",
+                "Ghost Tracker",
+                "Pile-o-Bones Tracker",
+                "All Enemies Stashed Tracker",
+                "Campaign Achievement Badges",
+                "Achievement Debrief Details",
                 "Apple Combat Interrupt",
                 "Reliable Wasp Acquisition",
                 "Stone Ground Distraction",
@@ -387,8 +437,10 @@ mod tests {
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
         assert!(is_option_selected(&config, 5));
-        assert!(is_option_selected(&config, 6));
-        assert!(is_option_selected(&config, 20));
+        assert!(is_option_selected(&config, 13));
+        assert!(is_option_selected(&config, 14));
+        assert!(is_option_selected(&config, 15));
+        assert!(is_option_selected(&config, 29));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -414,10 +466,10 @@ mod tests {
             robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
         );
 
-        apply_option_toggle(&mut config, 9);
+        apply_option_toggle(&mut config, 18);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(config.item_gameplay.net_selective_immunity);
-        apply_option_toggle(&mut config, 10);
+        apply_option_toggle(&mut config, 19);
         assert!(!config.item_gameplay.stone_longer_range);
         assert!(!config.item_gameplay.net_selective_immunity);
         assert!(config.item_gameplay.ale_reliable_distraction);

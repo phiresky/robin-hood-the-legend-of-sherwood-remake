@@ -1658,9 +1658,11 @@ pub(super) fn render_frame(
                                 crate::ui_panel::item_action_tooltip_extension(
                                     action,
                                     engine.sim_config().item_gameplay,
-                                    host.item_previews.effective_for_original_parity(
-                                        engine.original_rng_replay_cursor().is_some(),
-                                    ),
+                                    host.gameplay_config
+                                        .item_previews
+                                        .effective_for_original_parity(
+                                            engine.original_rng_replay_cursor().is_some(),
+                                        ),
                                 )
                             {
                                 if !text.is_empty() {
@@ -1706,6 +1708,14 @@ pub(super) fn render_frame(
         // Renders ransom and amulet values in the top-left corner
         // with a drop-shadow background font.
         render_ransom_amulet_overlay(engine, renderer, fonts, menu_resources);
+
+        crate::achievement_hud::render_trackers(
+            engine,
+            local_seat,
+            host.gameplay_config,
+            renderer,
+            fonts,
+        );
 
         // Dev-only EntityId overlay — draws each entity's ID under its
         // feet.  Driven by the `/screenshot?entity_ids` HTTP flag.

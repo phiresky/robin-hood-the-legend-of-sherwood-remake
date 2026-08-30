@@ -1478,6 +1478,8 @@ pub(super) async fn handle_pause_menu_events(
                         // so seed this deterministic option from the mission
                         // rather than showing a stale local preference.
                         gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
+                        gameplay_config.clean_hands_npc_kills_invalidate =
+                            engine.sim_config().clean_hands_npc_kills_invalidate;
                         gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
                         gameplay_config.item_gameplay = engine.sim_config().item_gameplay;
                         gameplay_config.noise_distraction_feedback =
@@ -1486,6 +1488,8 @@ pub(super) async fn handle_pause_menu_events(
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
                         let simulation_enable_unbinding = gameplay_config.enable_unbinding;
+                        let simulation_clean_hands_npc_kills_invalidate =
+                            gameplay_config.clean_hands_npc_kills_invalidate;
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let simulation_item_gameplay = gameplay_config.item_gameplay;
                         let simulation_noise_feedback = gameplay_config.noise_distraction_feedback;
@@ -1535,7 +1539,7 @@ pub(super) async fn handle_pause_menu_events(
                         }
 
                         host.control_tactical_units = gameplay_config.control_tactical_units;
-                        host.item_previews = gameplay_config.item_previews;
+                        host.gameplay_config = gameplay_config;
                         if !host.control_tactical_units {
                             dispatch_local_command(
                                 host,
@@ -1563,6 +1567,14 @@ pub(super) async fn handle_pause_menu_events(
                         if gameplay_config.enable_unbinding != simulation_enable_unbinding {
                             let cmd = PlayerCommand::SetUnbindingEnabled {
                                 enabled: gameplay_config.enable_unbinding,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.clean_hands_npc_kills_invalidate
+                            != simulation_clean_hands_npc_kills_invalidate
+                        {
+                            let cmd = PlayerCommand::SetCleanHandsNpcKillsInvalidate {
+                                enabled: gameplay_config.clean_hands_npc_kills_invalidate,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
@@ -2172,6 +2184,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             cursor,
             pseudo_debrief_pending,
             campaign_view_config.campaign_presentation,
+            campaign_view_config.show_achievement_badges,
             &campaign_profile.campaign_history,
         )
         .await?;

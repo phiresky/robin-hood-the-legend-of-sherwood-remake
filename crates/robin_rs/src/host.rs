@@ -81,7 +81,7 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
-    item_previews: robin_engine::gameplay_config::ItemPreviewConfig,
+    gameplay_config: robin_engine::gameplay_config::GameplayConfig,
 }
 
 impl ApplicationContext {
@@ -127,6 +127,8 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
         sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate =
+            gameplay_config.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
         sim_config.item_gameplay = gameplay_config.item_gameplay;
         sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
@@ -147,6 +149,7 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = existing.amount_of_speaking;
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
         sim_config.item_gameplay = existing.item_gameplay;
         sim_config.noise_distraction_feedback = existing.noise_distraction_feedback;
@@ -367,7 +370,7 @@ impl ApplicationContext {
             key_config,
             custom_key_config,
             control_tactical_units: gameplay_config.control_tactical_units,
-            item_previews: gameplay_config.item_previews,
+            gameplay_config,
         })
     }
 
@@ -387,6 +390,8 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = gameplay_config.fix_hard_reaction_times;
         sim_config.enable_unbinding = gameplay_config.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate =
+            gameplay_config.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
         sim_config.item_gameplay = gameplay_config.item_gameplay;
         sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
@@ -628,8 +633,15 @@ pub struct HostFrontend {
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
 
-    /// Active profile's host-only item targeting explanations.
-    pub item_previews: robin_engine::gameplay_config::ItemPreviewConfig,
+    /// Host-local presentation settings copied from the active profile.
+    /// Deterministic settings are separately mirrored into `SimConfig`.
+    pub gameplay_config: robin_engine::gameplay_config::GameplayConfig,
+
+    /// Host-only eligibility facts consulted only after deterministic mission
+    /// results have been frozen.
+    pub achievement_run_kind: robin_engine::achievement::AchievementRunKind,
+    pub achievement_replay_playback: bool,
+    pub achievement_headless: bool,
 
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_target_mode: Option<TacticalTargetMode>,
@@ -1044,7 +1056,7 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
-                item_previews: snapshot.item_previews,
+                gameplay_config: snapshot.gameplay_config,
                 ..Default::default()
             },
             ..Default::default()

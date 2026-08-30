@@ -193,7 +193,11 @@ impl PlayerProfile {
     }
 
     pub fn earned_achievements(&self) -> crate::achievement::AchievementSet {
-        self.campaign_history.eligible_badges()
+        self.achievement_aggregation().earned()
+    }
+
+    pub fn achievement_aggregation(&self) -> crate::achievement::AchievementAggregationSummary {
+        self.campaign_history.achievement_aggregation()
     }
 
     pub fn promote_campaign_history(
@@ -681,7 +685,7 @@ mod tests {
         let mut tracker = crate::achievement::MissionAchievementState::from_mission_start();
         tracker
             .record_evaluation(
-                crate::achievement::AchievementId::Ghost,
+                crate::achievement::AchievementId::PileOBones,
                 crate::achievement::AchievementEvaluation::Earned,
             )
             .unwrap();
@@ -701,6 +705,7 @@ mod tests {
                 campaign.latest_mission_attempt_key().unwrap(),
                 crate::achievement::AchievementUnlockPolicy::default(),
                 crate::achievement::AchievementRunContext::default(),
+                &profiles,
             )
             .unwrap();
 
@@ -720,7 +725,7 @@ mod tests {
         assert!(
             profile
                 .earned_achievements()
-                .contains(crate::achievement::AchievementId::Ghost)
+                .contains(crate::achievement::AchievementId::PileOBones)
         );
     }
 

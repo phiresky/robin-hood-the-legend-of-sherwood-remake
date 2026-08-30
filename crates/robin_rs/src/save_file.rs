@@ -466,9 +466,11 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v57** (2026-08-29, full-fidelity campaign history): requires the native
 ///   append-only attempt schema and exact practice-return snapshot. Earlier
 ///   Rust save layouts are rejected rather than migrated.
-/// - **v58** (2026-08-30, item rebalance): records expanded item rules, cached
-///   ale eligibility, and ground-stone command/projectile state.
-pub const SAVE_FORMAT_VERSION: u32 = 58;
+/// - **v58** (2026-08-30, achievements): records deterministic achievement
+///   tracker state and the NPC-on-NPC Clean Hands rule.
+/// - **v59** (2026-08-30, item rebalance): combines that state with expanded
+///   item rules, cached ale eligibility, and ground-stone command/projectiles.
+pub const SAVE_FORMAT_VERSION: u32 = 59;
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -728,8 +730,8 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn save_format_version_requires_expanded_item_and_ground_stone_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 58);
+    fn save_format_version_identifies_achievements_and_item_rebalance_state() {
+        assert_eq!(SAVE_FORMAT_VERSION, 59);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -973,13 +975,13 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_previous_rust_item_schema_at_header() {
+    fn read_rejects_previous_rust_achievement_schema_at_header() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("previous_rust_save.json");
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 57,
+                "version": 58,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Previous Rust Save"
@@ -990,10 +992,10 @@ mod tests {
 
         let error = GameSaveFile::read_from(&path)
             .err()
-            .expect("previous Rust item schema must be rejected");
+            .expect("previous Rust achievement schema must be rejected");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 57")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 58")
         );
     }
 

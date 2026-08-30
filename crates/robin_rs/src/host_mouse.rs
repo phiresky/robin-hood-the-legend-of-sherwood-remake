@@ -86,7 +86,10 @@ fn item_preview_enabled(engine: &Engine, profile_setting: bool) -> bool {
 #[allow(dead_code)]
 pub(crate) fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, center: MapPoint) {
     if engine.sim_config().item_gameplay.stone_ground_distraction
-        && item_preview_enabled(engine, host.item_previews.stone_distraction_area)
+        && item_preview_enabled(
+            engine,
+            host.gameplay_config.item_previews.stone_distraction_area,
+        )
     {
         set_item_effect_preview(
             host,
@@ -1204,7 +1207,7 @@ fn cursor_for_apple(
                         };
                         apply_trajectory_preview(host, preview);
                     }
-                    if item_preview_enabled(engine, host.item_previews.apple_effect)
+                    if item_preview_enabled(engine, host.gameplay_config.item_previews.apple_effect)
                         && let Some(center) = target_pos
                     {
                         let (key, text) = if engine
@@ -1311,8 +1314,10 @@ fn cursor_for_stone(
                         };
                         apply_trajectory_preview(host, preview);
                     }
-                    if item_preview_enabled(engine, host.item_previews.stone_direct_effect)
-                        && let Some(center) = target_pos
+                    if item_preview_enabled(
+                        engine,
+                        host.gameplay_config.item_previews.stone_direct_effect,
+                    ) && let Some(center) = target_pos
                     {
                         let text = if engine.sim_config().item_gameplay.stone_longer_range {
                             "Stone hit: 10 damage, strong concussion; base range 300"
@@ -1419,7 +1424,7 @@ fn cursor_for_purse(
                     };
                     apply_trajectory_preview(host, preview);
                 }
-                if item_preview_enabled(engine, host.item_previews.purse_effect)
+                if item_preview_enabled(engine, host.gameplay_config.item_previews.purse_effect)
                     && host.valid_trajectory
                 {
                     set_item_effect_preview(
@@ -1510,7 +1515,7 @@ fn cursor_for_wasp_nest(
                     };
                     apply_trajectory_preview(host, preview);
                 }
-                if item_preview_enabled(engine, host.item_previews.wasp_area)
+                if item_preview_enabled(engine, host.gameplay_config.item_previews.wasp_area)
                     && host.valid_trajectory
                 {
                     let radius = if engine.sim_config().item_gameplay.wasp_reliable_acquisition {
@@ -1663,10 +1668,14 @@ fn cursor_for_net(
                     };
                     apply_trajectory_preview(host, preview);
                 }
-                let preview_capture =
-                    item_preview_enabled(engine, host.item_previews.net_capture_area);
-                let preview_crumple =
-                    item_preview_enabled(engine, host.item_previews.net_crumple_prediction);
+                let preview_capture = item_preview_enabled(
+                    engine,
+                    host.gameplay_config.item_previews.net_capture_area,
+                );
+                let preview_crumple = item_preview_enabled(
+                    engine,
+                    host.gameplay_config.item_previews.net_crumple_prediction,
+                );
                 if (preview_capture || preview_crumple) && host.valid_trajectory {
                     let landing = host
                         .trajectory_preview_points
@@ -1776,7 +1785,7 @@ fn cursor_for_ale(
     {
         // Validate mouse sector (no door, no wall/ladder).
         if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
-            if item_preview_enabled(engine, host.item_previews.ale_effect) {
+            if item_preview_enabled(engine, host.gameplay_config.item_previews.ale_effect) {
                 let text = if engine.sim_config().item_gameplay.ale_reliable_distraction {
                     "Ale: zero-interest outdoor non-VIPs also accept at potency 20; authored/drunk behavior unchanged"
                 } else {
