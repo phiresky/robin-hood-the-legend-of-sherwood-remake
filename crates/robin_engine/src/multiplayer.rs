@@ -1248,7 +1248,6 @@ mod tests {
             sim_config,
             speech_timing_locale: Some("en-US".to_owned()),
             host_nickname: "host".to_owned(),
-            session_id: [19; 32],
         };
 
         let decoded = decode_msg(&encode_msg(&msg)).expect("decode custom Welcome");
@@ -1277,7 +1276,6 @@ mod tests {
             sim_config,
             speech_timing_locale: None,
             host_nickname: "host".to_owned(),
-            session_id: [1; 32],
         };
 
         let error = decode_msg(&encode_msg(&message)).unwrap_err();
