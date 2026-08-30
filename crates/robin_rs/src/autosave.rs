@@ -27,6 +27,7 @@ pub const AUTOSAVE_INTERVAL_FRAMES: u64 = AUTOSAVE_INTERVAL_ACTIVE_SECONDS as u6
 /// Number of independently loadable autosave generations retained per profile.
 pub const AUTOSAVE_SLOT_COUNT: usize = 3;
 const AUTOSAVE_MANIFEST_VERSION: u32 = 1;
+#[cfg(not(target_arch = "wasm32"))]
 const AUTOSAVE_MANIFEST_FILE: &str = "autosaves.json";
 
 pub(crate) const fn session_allows_autosave(
@@ -867,6 +868,7 @@ fn generated_filename_from_storage_name(name: &str) -> Option<&str> {
     crate::savegame::is_generated_autosave_filename(filename).then_some(filename)
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
 fn browser_autosave_filename_from_key<'a>(namespace: &str, key: &'a str) -> Option<&'a str> {
     let payload_prefix = format!("{namespace}.payload.");
     let thumbnail_prefix = format!("{namespace}.thumbnail.");
@@ -882,6 +884,7 @@ fn browser_autosave_filename_from_key<'a>(namespace: &str, key: &'a str) -> Opti
 #[cfg(target_arch = "wasm32")]
 const BROWSER_STORAGE_PREFIX: &str = "robinhood.autosave.v1";
 
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Debug, Serialize, Deserialize)]
 struct BrowserBlob {
     version: u32,
@@ -914,6 +917,7 @@ fn browser_key(save_directory: &str, suffix: &str) -> String {
     format!("{}.{}", browser_namespace(save_directory), suffix)
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
 fn encode_browser_blob<T: Serialize>(value: &T) -> Result<String> {
     use base64::Engine as _;
     use sha2::{Digest, Sha256};
@@ -928,6 +932,7 @@ fn encode_browser_blob<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(&blob).context("serializing browser autosave envelope")
 }
 
+#[cfg(any(test, target_arch = "wasm32"))]
 fn decode_browser_blob<T: for<'de> Deserialize<'de>>(encoded: &str) -> Result<T> {
     use base64::Engine as _;
     use sha2::{Digest, Sha256};
@@ -1239,7 +1244,6 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn shutdown_drains_accepted_jobs_and_cleans_the_rotated_payload() {
-        use crate::game::Game;
         use robin_engine::campaign::Campaign;
 
         let directory = tempfile::tempdir().unwrap();
@@ -1247,7 +1251,6 @@ mod tests {
         let mut assets = robin_engine::engine::LevelAssets::new();
         let engine = Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).unwrap();
         let host = Host::scratch(800.0, 600.0);
-        let game = Game::default();
         let mut coordinator = AutosaveCoordinator::default();
         for ordinal in 0..4 {
             let filename = format!("Autosave_1_{ordinal:04}");
