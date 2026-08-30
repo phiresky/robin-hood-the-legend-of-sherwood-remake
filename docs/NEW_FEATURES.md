@@ -93,6 +93,16 @@ A list of which additional features we have added, which ones we might still wan
   raw-material consumption. Forecasting and campaign production call the same
   pure calculation, with boundary tests guarding truncation and saturation.
 
+- **Authoritative Sherwood item trading.** Hosts can sell any stored production
+  item for a fixed, documented ransom value through an independently toggleable
+  Sherwood panel. The built-in **T** action and the touch/mouse-accessible pause
+  menu row share one fail-closed modal request; both require Sherwood, the host
+  seat, and the enabled gameplay rule. Explicit **Sell 1** and **Sell 5**
+  actions require a second matching activation, then exact stock removal and
+  ransom mutation occur only in the deterministic command frame. Replays,
+  rollback, multiplayer, saves, and Original-parity policy carry or reject the
+  same typed command and configuration.
+
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
   the legacy Royalist and Lacklandist camps; any `u16` ID is accepted, and
@@ -515,7 +525,6 @@ A list of which additional features we have added, which ones we might still wan
 - More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
-- trading: if you over produce an item, maybe you can sell it for money?
 - throw something skill that makes a noise somewhere else so guards run there
 - Cloaking (implemented, optional): selected heroes whose sprite profile has
   the shipped cape rows can put the cloak back on with a rebindable key. The

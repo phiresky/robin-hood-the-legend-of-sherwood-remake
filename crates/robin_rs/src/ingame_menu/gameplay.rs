@@ -25,6 +25,8 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
+const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
+const AUTOSAVE_OPTION_INDEX: usize = 17;
 
 /// Toggle rows shown on the screen, in display order.
 const OPTION_LABELS: &[&str] = &[
@@ -44,6 +46,7 @@ const OPTION_LABELS: &[&str] = &[
     "Campaign Achievement Badges",
     "Achievement Debrief Details",
     "Touch Camera Gestures",
+    "Sherwood Item Trading",
     "Rotating Autosaves",
 ];
 
@@ -55,6 +58,7 @@ pub async fn show_gameplay(
     resources: &IngameMenuResources,
     cursor: Option<ModalCursor<'_>>,
     config: &mut GameplayConfig,
+    sherwood_trading_editable: bool,
 ) -> bool {
     let sw = renderer.screen_width() as i32;
     let sh = renderer.screen_height() as i32;
@@ -93,9 +97,10 @@ pub async fn show_gameplay(
     frame.input_enabled = true;
 
     for (i, mb) in opt_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
+        frame.add_widget_absolute(widget_bridge::make_button_enabled(
             ID_OPT_BASE + i as u32,
             &mb.label,
+            i != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
             mb.x,
             mb.y,
             mb.w,
@@ -163,8 +168,11 @@ pub async fn show_gameplay(
                 }
                 ID_CANCEL => done = true,
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
-                    apply_option_toggle(&mut working, (id - ID_OPT_BASE) as usize);
-                    dirty = true;
+                    let index = (id - ID_OPT_BASE) as usize;
+                    if index != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable {
+                        apply_option_toggle(&mut working, index);
+                        dirty = true;
+                    }
                 }
                 _ => {}
             }
@@ -251,7 +259,8 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         13 => config.show_achievement_badges = !config.show_achievement_badges,
         14 => config.show_achievement_debrief = !config.show_achievement_debrief,
         15 => config.touch_camera_gestures = !config.touch_camera_gestures,
-        16 => config.autosave_enabled = !config.autosave_enabled,
+        SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading = !config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled = !config.autosave_enabled,
         _ => {}
     }
 }
@@ -277,7 +286,8 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         13 => config.show_achievement_badges,
         14 => config.show_achievement_debrief,
         15 => config.touch_camera_gestures,
-        16 => config.autosave_enabled,
+        SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled,
         _ => false,
     }
 }
@@ -307,6 +317,7 @@ mod tests {
                 "Campaign Achievement Badges",
                 "Achievement Debrief Details",
                 "Touch Camera Gestures",
+                "Sherwood Item Trading",
                 "Rotating Autosaves",
             ]
         );
@@ -321,6 +332,7 @@ mod tests {
         assert!(is_option_selected(&config, 13));
         assert!(is_option_selected(&config, 14));
         assert!(is_option_selected(&config, 15));
+        assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -378,16 +390,19 @@ mod tests {
             )
         );
         assert!(!is_option_selected(&config, 15));
+
+        apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
+        assert!(!config.sherwood_trading);
     }
 
     #[test]
     fn autosave_has_an_independent_gameplay_toggle() {
         let mut config = GameplayConfig::default();
         let before = config;
-        assert_eq!(OPTION_LABELS[16], "Rotating Autosaves");
-        assert!(is_option_selected(&config, 16));
-        apply_option_toggle(&mut config, 16);
-        assert!(!is_option_selected(&config, 16));
+        assert_eq!(OPTION_LABELS[AUTOSAVE_OPTION_INDEX], "Rotating Autosaves");
+        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        apply_option_toggle(&mut config, AUTOSAVE_OPTION_INDEX);
+        assert!(!is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
         assert_eq!(
             config.fix_hard_reaction_times,
             before.fix_hard_reaction_times

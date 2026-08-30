@@ -271,6 +271,26 @@ pub const MT_STR_AMULETS: usize = 245;
 pub const MT_STR_PLAYING_TIME: usize = 258;
 pub const MT_WORD_NOTHING: usize = 329;
 
+// Sherwood trading extension strings.  These ids intentionally sit outside
+// the legacy table and can be supplied by extended locale packs; the English
+// entries below remain the complete fallback.
+pub const MT_TTL_SHERWOOD_TRADING: usize = 1_010;
+pub const MT_STR_TRADING_HINT: usize = 1_011;
+pub const MT_BTN_SELL_ONE: usize = 1_012;
+pub const MT_BTN_SELL_FIVE: usize = 1_013;
+pub const MT_STR_TRADE_RANSOM: usize = 1_014;
+pub const MT_STR_TRADE_ROW: usize = 1_015;
+pub const MT_STR_TRADE_CONFIRM: usize = 1_016;
+pub const MT_STR_TRADE_WAITING: usize = 1_017;
+pub const MT_STR_TRADE_SOLD: usize = 1_018;
+pub const MT_STR_TRADE_REJECTED: usize = 1_019;
+pub const MT_STR_TRADE_DISABLED: usize = 1_020;
+pub const MT_STR_TRADE_REASON_HOST: usize = 1_021;
+pub const MT_STR_TRADE_REASON_LOCATION: usize = 1_022;
+pub const MT_STR_TRADE_REASON_ITEM: usize = 1_023;
+pub const MT_STR_TRADE_REASON_STOCK: usize = 1_024;
+pub const MT_STR_TRADE_REASON_OVERFLOW: usize = 1_025;
+
 // Per-button tooltip menu-text ids.
 pub const MT_INFOBULLE_BUTTON_PLAY_MISSION: usize = 323;
 pub const MT_INFOBULLE_BUTTON_FARMERS_TO_BLAZON: usize = 325;
@@ -575,6 +595,46 @@ fn default_fallbacks() -> HashMap<usize, &'static str> {
         "%s: stock %u/%u; +%u; overflow %u; input %u workers%s at speed %u; raw materials %u.",
     );
     m.insert(MT_STR_PRODUCTION_FORECAST_SPECIALIST, " + specialist");
+    m.insert(
+        MT_STR_TRADING_HINT,
+        "Trading available: press T or use Sherwood trading in the pause menu.",
+    );
+    m.insert(MT_TTL_SHERWOOD_TRADING, "Sherwood trading");
+    m.insert(MT_BTN_SELL_ONE, "Sell 1");
+    m.insert(MT_BTN_SELL_FIVE, "Sell 5");
+    m.insert(MT_STR_TRADE_RANSOM, "Ransom: %d");
+    m.insert(MT_STR_TRADE_ROW, "%s — stock %u — £%u each");
+    m.insert(
+        MT_STR_TRADE_CONFIRM,
+        "Confirm: sell %u %s for £%u? Press the same Sell button again.",
+    );
+    m.insert(
+        MT_STR_TRADE_WAITING,
+        "Waiting for the host to confirm the sale…",
+    );
+    m.insert(
+        MT_STR_TRADE_SOLD,
+        "Sold %u %s for £%u. Remaining stock: %u.",
+    );
+    m.insert(MT_STR_TRADE_REJECTED, "Sale rejected: %s.");
+    m.insert(
+        MT_STR_TRADE_DISABLED,
+        "Trading is disabled in Gameplay settings.",
+    );
+    m.insert(MT_STR_TRADE_REASON_HOST, "only the host may trade");
+    m.insert(
+        MT_STR_TRADE_REASON_LOCATION,
+        "trading is only available in Sherwood",
+    );
+    m.insert(
+        MT_STR_TRADE_REASON_ITEM,
+        "that production sector is not a sellable item",
+    );
+    m.insert(MT_STR_TRADE_REASON_STOCK, "only %u items remain");
+    m.insert(
+        MT_STR_TRADE_REASON_OVERFLOW,
+        "the ransom total cannot hold the proceeds",
+    );
     m.insert(MT_STR_DB_S06, "You collected %u gold pieces.");
     m.insert(MT_STR_DB_S07, "%u of %u enemy soldiers still alive.");
     m.insert(MT_STR_DB_S08, "%u new gang members.");

@@ -104,6 +104,7 @@ pub(crate) async fn show_main_menu_options(
         &mut sound_cfg,
         &mut key_cfg.active,
         &mut key_cfg.custom,
+        true,
         Some(&mut sound_mgr),
         backend_opt,
         Some(&*sample_loader),
