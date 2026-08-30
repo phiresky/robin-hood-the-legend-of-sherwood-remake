@@ -16,8 +16,8 @@ use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
 
 use super::layout::{
-    MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt,
+    MenuTransform, TooltipState, align_bottom_right, align_on_first_widget, dim_screen,
+    draw_screen_background, enter_modal_gpu_phase, render_text_virt,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -49,6 +49,30 @@ const OPTION_LABELS: &[&str] = &[
     "Preview Ale Effect",
     "Preview Purse Effect",
     "Preview Wasp Area",
+];
+
+const OPTION_TOOLTIPS: &[&str] = &[
+    "Use the intended Hard reaction-time multiplier.",
+    "Allow high-level commands for actors authored with the tactical command interface.",
+    "Allow a hero with Tie to release a tied NPC.",
+    "Show live item-production forecasts in Sherwood.",
+    "Allow heroes with shipped cape art to put their cloaks back on.",
+    "Cycle the campaign-map presentation.",
+    "Let direct apple hits interrupt active swordfights.",
+    "Increase initial wasp acquisition from 50 to 75 world units.",
+    "Allow ground-thrown stones to attract eligible hostiles within 240 world units.",
+    "Use base range 300 for stones instead of the shipped 200.",
+    "Skip VIPs, riders, and Stuteley while catching other people in the net circle.",
+    "Let outdoor non-VIP soldiers with no beer interest accept ale at potency 20.",
+    "Play the optional impact cue for a ground-thrown stone distraction.",
+    "Explain apple daze, scent, and combat-interrupt eligibility while aiming.",
+    "Explain stone direct-hit damage and concussion while aiming.",
+    "Show the 240-unit ground-stone distraction area.",
+    "Show the original 40-unit net capture area and friendly-capture behavior.",
+    "Predict victim and terrain conditions that crumple a net.",
+    "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
+    "Explain purse value and money-interest conditions.",
+    "Show wasp acquisition range and target eligibility.",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -103,6 +127,11 @@ pub async fn show_gameplay(
             mb.w,
             mb.h,
         ));
+        frame
+            .widget_mut(ID_OPT_BASE + i as u32)
+            .expect("new gameplay option widget")
+            .base_mut()
+            .set_tooltip_text(OPTION_TOOLTIPS[i]);
     }
     frame.add_widget_absolute(widget_bridge::make_button(
         ID_OK,
@@ -126,6 +155,7 @@ pub async fn show_gameplay(
     let mut done = false;
     let mut accepted = false;
     let mut input_state = ModalInputState::new();
+    let mut tooltip = TooltipState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
 
     while !done {
@@ -209,6 +239,13 @@ pub async fn show_gameplay(
             );
         }
 
+        let mouse_point =
+            robin_engine::coordinates::ScreenPoint::new(input_state.virt_x, input_state.virt_y);
+        tooltip.update(&frame, mouse_point);
+        if let Some(font) = resources.popup_font() {
+            tooltip.draw(renderer, font, transform, &frame, mouse_point);
+        }
+
         if let Some(w) = frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
         }
@@ -263,9 +300,7 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         }
         12 => config.noise_distraction_feedback = !config.noise_distraction_feedback,
         13 => config.item_previews.apple_effect = !config.item_previews.apple_effect,
-        14 => {
-            config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect
-        }
+        14 => config.item_previews.stone_direct_effect = !config.item_previews.stone_direct_effect,
         15 => {
             config.item_previews.stone_distraction_area =
                 !config.item_previews.stone_distraction_area
@@ -344,6 +379,7 @@ mod tests {
                 "Preview Wasp Area",
             ]
         );
+        assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
 
         let mut config = GameplayConfig::default();
         assert!(!is_option_selected(&config, 1));

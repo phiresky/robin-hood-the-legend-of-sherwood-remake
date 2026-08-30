@@ -304,12 +304,7 @@ impl ApplicationContext {
             }
             // TODO: Persist browser profiles and key configurations in
             // IndexedDB instead of keeping first-launch changes session-only.
-            (
-                profile_id,
-                difficulty,
-                amount_of_speaking,
-                gameplay_config,
-            )
+            (profile_id, difficulty, amount_of_speaking, gameplay_config)
         };
 
         self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
@@ -684,6 +679,8 @@ pub struct HostFrontend {
     /// (Easy-mode nets).  Read by the trajectory-preview renderer to
     /// swap the arc colour from cyan (default) to pink (crumpled).
     pub net_crumpled: bool,
+    /// Host-only explanation rendered at the current item target.
+    pub item_effect_preview: Option<ItemEffectPreview>,
     pub time_no_mouse_move: u32,
     pub mouse_map_prev: MapPoint,
     /// Rolling counter for the once-every-10-frames ground-mark drop
@@ -808,6 +805,15 @@ pub struct HostFrontend {
     /// Stable draw order for [`Self::background_decals`], preserving the
     /// order in which patch effects became permanent.
     pub background_decal_order: Vec<EntityId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemEffectPreview {
+    pub center: MapPoint,
+    pub radius: Option<u16>,
+    pub localization_key: &'static str,
+    pub fallback_text: &'static str,
+    pub blocked: bool,
 }
 
 #[derive(Default)]

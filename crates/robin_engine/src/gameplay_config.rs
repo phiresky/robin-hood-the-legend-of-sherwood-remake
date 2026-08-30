@@ -69,7 +69,11 @@ impl ItemGameplayConfig {
     }
 
     pub const fn effective_for_original_parity(self, original_parity: bool) -> Self {
-        if original_parity { Self::classic() } else { self }
+        if original_parity {
+            Self::classic()
+        } else {
+            self
+        }
     }
 }
 
@@ -133,7 +137,11 @@ impl ItemPreviewConfig {
     }
 
     pub const fn effective_for_original_parity(self, original_parity: bool) -> Self {
-        if original_parity { Self::classic() } else { self }
+        if original_parity {
+            Self::classic()
+        } else {
+            self
+        }
     }
 }
 
@@ -285,6 +293,26 @@ impl Default for GameplayConfig {
     }
 }
 
+impl GameplayConfig {
+    /// Settings used when a profile predates the gameplay-config object.
+    /// Existing extension-specific migration behavior is preserved, while
+    /// Feature 16's gameplay and presentation additions remain opt-in for that
+    /// migrated profile. Fresh profiles continue to use [`Default`].
+    pub const fn migrated() -> Self {
+        Self {
+            fix_hard_reaction_times: false,
+            control_tactical_units: false,
+            enable_unbinding: true,
+            show_production_forecast: true,
+            reusable_cloaks: false,
+            item_gameplay: ItemGameplayConfig::classic(),
+            item_previews: ItemPreviewConfig::classic(),
+            noise_distraction_feedback: false,
+            campaign_presentation: CampaignPresentationMode::ProgressTree,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{GameplayConfig, ItemGameplayConfig, ItemPreviewConfig};
@@ -373,12 +401,30 @@ mod tests {
     fn every_item_mechanic_can_be_disabled_without_disabling_a_sibling() {
         let enabled = ItemGameplayConfig::default();
         let variants = [
-            ItemGameplayConfig { apple_combat_interrupt: false, ..enabled },
-            ItemGameplayConfig { wasp_reliable_acquisition: false, ..enabled },
-            ItemGameplayConfig { stone_ground_distraction: false, ..enabled },
-            ItemGameplayConfig { stone_longer_range: false, ..enabled },
-            ItemGameplayConfig { net_selective_immunity: false, ..enabled },
-            ItemGameplayConfig { ale_reliable_distraction: false, ..enabled },
+            ItemGameplayConfig {
+                apple_combat_interrupt: false,
+                ..enabled
+            },
+            ItemGameplayConfig {
+                wasp_reliable_acquisition: false,
+                ..enabled
+            },
+            ItemGameplayConfig {
+                stone_ground_distraction: false,
+                ..enabled
+            },
+            ItemGameplayConfig {
+                stone_longer_range: false,
+                ..enabled
+            },
+            ItemGameplayConfig {
+                net_selective_immunity: false,
+                ..enabled
+            },
+            ItemGameplayConfig {
+                ale_reliable_distraction: false,
+                ..enabled
+            },
         ];
         for variant in variants {
             assert_eq!(
@@ -402,14 +448,38 @@ mod tests {
     fn every_item_preview_can_be_disabled_without_disabling_a_sibling() {
         let enabled = ItemPreviewConfig::default();
         let variants = [
-            ItemPreviewConfig { apple_effect: false, ..enabled },
-            ItemPreviewConfig { stone_direct_effect: false, ..enabled },
-            ItemPreviewConfig { stone_distraction_area: false, ..enabled },
-            ItemPreviewConfig { net_capture_area: false, ..enabled },
-            ItemPreviewConfig { net_crumple_prediction: false, ..enabled },
-            ItemPreviewConfig { ale_effect: false, ..enabled },
-            ItemPreviewConfig { purse_effect: false, ..enabled },
-            ItemPreviewConfig { wasp_area: false, ..enabled },
+            ItemPreviewConfig {
+                apple_effect: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                stone_direct_effect: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                stone_distraction_area: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                net_capture_area: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                net_crumple_prediction: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                ale_effect: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                purse_effect: false,
+                ..enabled
+            },
+            ItemPreviewConfig {
+                wasp_area: false,
+                ..enabled
+            },
         ];
         for variant in variants {
             assert_eq!(

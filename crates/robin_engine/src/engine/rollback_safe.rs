@@ -3970,6 +3970,42 @@ mod tests {
     }
 
     #[test]
+    fn installing_original_parity_replay_forces_classic_item_rules() {
+        let (mut engine, assets) = frame_api_fixture();
+        engine.inner.control.sim_config.item_gameplay =
+            crate::gameplay_config::ItemGameplayConfig::default();
+        engine.inner.control.sim_config.noise_distraction_feedback = true;
+        engine
+            .parity_replay_setup()
+            .replace_rng_draws(vec![0x1234_5678]);
+
+        assert_eq!(
+            engine.sim_config().item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!engine.sim_config().noise_distraction_feedback);
+
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetItemGameplayConfig {
+                        config: crate::gameplay_config::ItemGameplayConfig::default(),
+                    }
+                    .into(),
+                    PlayerCommand::SetNoiseDistractionFeedback { enabled: true }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .expect("Original-parity settings command frame");
+        assert_eq!(
+            engine.sim_config().item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert!(!engine.sim_config().noise_distraction_feedback);
+    }
+
+    #[test]
     fn native_snapshot_decodes_through_the_engine_facade() {
         let (mut engine, _) = frame_api_fixture();
         engine.inner.feedback.cutscene_camera.old_view_position =

@@ -1488,8 +1488,7 @@ pub(super) async fn handle_pause_menu_events(
                         let simulation_enable_unbinding = gameplay_config.enable_unbinding;
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let simulation_item_gameplay = gameplay_config.item_gameplay;
-                        let simulation_noise_feedback =
-                            gameplay_config.noise_distraction_feedback;
+                        let simulation_noise_feedback = gameplay_config.noise_distraction_feedback;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
                         let options_outcome = ingame_menu::show_options(

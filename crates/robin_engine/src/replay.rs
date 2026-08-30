@@ -880,7 +880,7 @@ mod tests {
 
     #[test]
     fn every_obsolete_rust_jsonl_schema_is_rejected() {
-        for version in [10, 12, 13, 14, 16] {
+        for version in [10, 12, 13, 14, 16, 17] {
             let input = format!(
                 "{{\"mission_id\":\"old\",\"rng_seed\":7,\"version\":{version},\"total_frames\":0,\"campaign\":null}}\n"
             );

@@ -973,13 +973,13 @@ mod tests {
     }
 
     #[test]
-    fn read_rejects_previous_rust_campaign_schema_at_header() {
+    fn read_rejects_previous_rust_item_schema_at_header() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("previous_rust_save.json");
         let old_save = serde_json::json!({
             "header": {
                 "magic": SAVE_MAGIC,
-                "version": 56,
+                "version": 57,
                 "mission_id": 1,
                 "timestamp_unix": 0,
                 "display_text": "Previous Rust Save"
@@ -990,10 +990,10 @@ mod tests {
 
         let error = GameSaveFile::read_from(&path)
             .err()
-            .expect("previous Rust campaign schema must be rejected");
+            .expect("previous Rust item schema must be rejected");
         assert_eq!(
             format!("{error:#}"),
-            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 56")
+            format!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got 57")
         );
     }
 

@@ -1454,9 +1454,7 @@ impl EngineInner {
             }
             SetItemGameplayConfig { config } => {
                 if self.control.rng.original_replay_cursor().is_some() {
-                    tracing::warn!(
-                        "ignoring item-rebalance command during Original-parity replay"
-                    );
+                    tracing::warn!("ignoring item-rebalance command during Original-parity replay");
                     self.control.sim_config.item_gameplay =
                         crate::gameplay_config::ItemGameplayConfig::classic();
                 } else {
@@ -6079,7 +6077,6 @@ mod tests {
             actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData {
-                autonomous: true,
                 ai: Some(Box::new(crate::element::AiActorData {
                     ai_brain: crate::element::AiBrain::Enemy(Box::new(
                         crate::ai_enemy::EnemyAi::default(),

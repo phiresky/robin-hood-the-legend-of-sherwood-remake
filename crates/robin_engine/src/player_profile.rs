@@ -159,7 +159,7 @@ pub struct PlayerProfile {
     pub minimap_x: f32,
     pub minimap_y: f32,
     pub graphic_config: GraphicConfig,
-    #[serde(default)]
+    #[serde(default = "GameplayConfig::migrated")]
     pub gameplay_config: GameplayConfig,
     pub sound_config: SoundConfig,
     // KeyConfig moved to host (robin_rs) — it's input binding config,
@@ -625,6 +625,29 @@ mod tests {
         assert_eq!(restored.profiles[1].sound_config.music_volume, 5);
         assert!(restored.profiles[1].active);
         assert!(!restored.profiles[0].active);
+    }
+
+    #[test]
+    fn profile_without_gameplay_object_migrates_item_features_off() {
+        let profile = PlayerProfile::new(7, "Legacy".into(), DifficultyLevel::Medium);
+        let mut value = serde_json::to_value(profile).expect("serialize profile");
+        value
+            .as_object_mut()
+            .expect("profile object")
+            .remove("gameplay_config");
+
+        let restored: PlayerProfile = serde_json::from_value(value).expect("legacy profile");
+        assert_eq!(
+            restored.gameplay_config.item_gameplay,
+            crate::gameplay_config::ItemGameplayConfig::classic()
+        );
+        assert_eq!(
+            restored.gameplay_config.item_previews,
+            crate::gameplay_config::ItemPreviewConfig::classic()
+        );
+        assert!(!restored.gameplay_config.noise_distraction_feedback);
+        assert!(restored.gameplay_config.enable_unbinding);
+        assert!(!restored.gameplay_config.reusable_cloaks);
     }
 
     #[test]

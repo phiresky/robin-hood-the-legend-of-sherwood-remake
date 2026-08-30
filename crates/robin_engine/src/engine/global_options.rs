@@ -212,7 +212,10 @@ mod tests {
     fn hard_reaction_time_fix_is_the_fresh_simulation_default() {
         assert!(SimConfig::default().fix_hard_reaction_times);
         assert!(SimConfig::default().enable_unbinding);
-        assert_eq!(SimConfig::default().item_gameplay, ItemGameplayConfig::classic());
+        assert_eq!(
+            SimConfig::default().item_gameplay,
+            ItemGameplayConfig::classic()
+        );
         assert!(SimConfig::default().noise_distraction_feedback);
     }
 
