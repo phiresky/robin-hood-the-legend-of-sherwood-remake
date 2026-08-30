@@ -144,6 +144,7 @@ mod tests {
             crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
         intent.source_position = Some(crate::coordinates::MapPoint::new(1.0, 2.0));
         intent.source_layer = Some(0);
+        intent.raw_source_layer = Some(0);
 
         orders.pending_move_requests.push((owner, intent.clone()));
         orders.pending_move_requests.push((owner, intent));
@@ -173,6 +174,7 @@ mod tests {
             crate::order::AiOrderIntent::new(crate::order::OrderType::WalkingUpright, 10.0, 20.0);
         intent.source_position = Some(crate::coordinates::MapPoint::new(1.0, 2.0));
         intent.source_layer = Some(0);
+        intent.raw_source_layer = Some(0);
         intent.source_sector = crate::position_interface::SectorHandle::new(3).map(|sector| {
             sector.with_arena_index(crate::fast_find_grid::SectorIndex::new(3).unwrap())
         });

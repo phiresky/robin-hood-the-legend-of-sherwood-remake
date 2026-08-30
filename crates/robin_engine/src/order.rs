@@ -757,10 +757,23 @@ pub struct AiOrderIntent {
     pub target_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     #[serde(deserialize_with = "deserialize_required_option")]
     pub target_layer: Option<u16>,
+    /// Actor sector before `AppendMoveToSequence` applies the live-door
+    /// source adaptation. Original chooses the simple-Move versus
+    /// AppendMoveToSequence branch from this identity.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub raw_source_sector: Option<crate::position_interface::SectorHandle>,
+    /// Exact live arena companion for [`Self::raw_source_sector`].
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub raw_source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
+    /// Actor layer before live-door source adaptation.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub raw_source_layer: Option<u16>,
     /// Actor topology captured when the AI's synchronous `GoTo` call reaches
-    /// the engine boundary. Sequence construction may be deferred until a
+    /// the engine boundary, after `AppendMoveToSequence`'s live-door source
+    /// adaptation. Sequence construction may be deferred until a
     /// non-interruptible element yields, but Original constructs the route
-    /// against this call-time source rather than the actor's later position.
+    /// against this adapted call-time source rather than the actor's later
+    /// position.
     #[serde(deserialize_with = "deserialize_required_option")]
     pub source_position: Option<crate::coordinates::MapPoint>,
     #[serde(deserialize_with = "deserialize_required_option")]
@@ -770,10 +783,12 @@ pub struct AiOrderIntent {
     pub source_sector_index: Option<crate::fast_find_grid::SectorIndex>,
     #[serde(deserialize_with = "deserialize_required_option")]
     pub source_layer: Option<u16>,
-    /// Original compares `RHSector*` identity, not the public sector number,
-    /// when deciding whether GoTo must use AppendMoveToSequence. Distinct
-    /// motion sectors can share one number; this call-time bit preserves that
-    /// distinction after the AI intent is deferred.
+    /// Original compares the raw actor `RHSector*` identity, not the public
+    /// sector number, when deciding whether GoTo must use
+    /// AppendMoveToSequence. Distinct motion sectors can share one number;
+    /// this call-time bit also carries identity provenance inherited by
+    /// vector-derived phalanx slots when the compact position alone cannot
+    /// express it.
     pub source_target_sector_identity_differs: bool,
     #[serde(deserialize_with = "deserialize_required_option")]
     pub target_actor: Option<u32>,
@@ -875,6 +890,9 @@ impl AiOrderIntent {
             target_sector: None,
             target_sector_index: None,
             target_layer: None,
+            raw_source_sector: None,
+            raw_source_sector_index: None,
+            raw_source_layer: None,
             source_position: None,
             source_sector: None,
             source_sector_index: None,
@@ -932,6 +950,22 @@ impl AiOrderIntent {
         if self.source_layer.is_none() {
             return Err("queued AI move is missing its call-time source layer".into());
         }
+        if self.raw_source_layer.is_none() {
+            return Err("queued AI move is missing its raw call-time source layer".into());
+        }
+
+        let raw_source_handle_index = self
+            .raw_source_sector
+            .and_then(|sector| sector.arena_index());
+        if self.raw_source_sector.is_none() && self.raw_source_sector_index.is_some()
+            || raw_source_handle_index.is_some()
+                && self.raw_source_sector_index != raw_source_handle_index
+        {
+            return Err(format!(
+                "queued AI move has inconsistent raw source sector identity: sector={:?}, handle={raw_source_handle_index:?}, companion={:?}",
+                self.raw_source_sector, self.raw_source_sector_index
+            ));
+        }
 
         let source_handle_index = self.source_sector.and_then(|sector| sector.arena_index());
         if self.source_sector.is_none() && self.source_sector_index.is_some()
@@ -959,13 +993,17 @@ impl AiOrderIntent {
             ));
         }
 
-        let identity_differs = matches!(
-            (self.source_sector_index, self.target_sector_index),
+        let raw_identity_differs = matches!(
+            (self.raw_source_sector_index, self.target_sector_index),
             (Some(source), Some(target)) if source != target
         );
-        if self.source_target_sector_identity_differs != identity_differs {
+        // A true value may be an inherited identity hint (notably a phalanx
+        // slot derived from another actor's RHposition), so it is stronger
+        // than identities recoverable from the compact handles. A derived
+        // difference must never be lost, however.
+        if raw_identity_differs && !self.source_target_sector_identity_differs {
             return Err(format!(
-                "queued AI move has inconsistent source/target identity bit: stored={}, derived={identity_differs}",
+                "queued AI move lost its raw source/target identity difference: stored={}, derived={raw_identity_differs}",
                 self.source_target_sector_identity_differs
             ));
         }
@@ -1135,6 +1173,9 @@ mod tests {
 
         for required in [
             "target_sector_index",
+            "raw_source_sector",
+            "raw_source_sector_index",
+            "raw_source_layer",
             "source_position",
             "source_sector",
             "source_sector_index",
