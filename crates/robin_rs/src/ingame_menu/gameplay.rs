@@ -17,8 +17,8 @@ use robin_engine::gameplay_config::GameplayConfig;
 
 use super::ModalScreenOutcome;
 use super::layout::{
-    MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_screen_background,
-    enter_modal_gpu_phase, render_text_virt,
+    MenuTransform, align_bottom_right, dim_screen, draw_screen_background, enter_modal_gpu_phase,
+    render_text_virt,
 };
 use super::resources::{IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
@@ -26,15 +26,29 @@ use super::widget_bridge::{self, ModalCursor, ModalInputState};
 const ID_OPT_BASE: u32 = 200;
 const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
+pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
+pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
 
 /// Toggle rows shown on the screen, in display order.
-const OPTION_LABELS: &[&str] = &[
+pub(crate) const OPTION_LABELS: &[&str] = &[
     "Fix Hard Reaction Times",
     "Control Tactical Units",
     "Allow Untying NPCs",
     "Sherwood Production Forecast",
     "Reusable Cloaks",
     "Campaign Presentation",
+    "NPC Kills Break Clean Hands",
+    "Detailed Sword/Bow XP",
+    "Speedrun Clock",
+    "Clean Hands Tracker",
+    "Ghost Tracker",
+    "Pile-o-Bones Tracker",
+    "All Enemies Stashed Tracker",
+    "Campaign Achievement Badges",
+    "Achievement Debrief Details",
+    "Touch Camera Gestures",
+    "Sherwood Item Trading",
+    "Rotating Autosaves",
 ];
 
 /// Display the gameplay sub-screen.  Returns `true` when the player
@@ -45,8 +59,15 @@ pub async fn show_gameplay(
     resources: &IngameMenuResources,
     cursor: Option<ModalCursor<'_>>,
     config: &mut GameplayConfig,
+    sherwood_trading_editable: bool,
 ) -> bool {
-    let mut state = GameplayScreenState::new(event_pump, renderer, resources, config);
+    let mut state = GameplayScreenState::new(
+        event_pump,
+        renderer,
+        resources,
+        config,
+        sherwood_trading_editable,
+    );
     loop {
         if let Some(outcome) = state.tick(event_pump, renderer, resources, cursor.as_ref()) {
             if let ModalScreenOutcome::Accepted(next) = outcome {
@@ -67,6 +88,7 @@ pub struct GameplayScreenState {
     frame: FrameWnd,
     input_state: ModalInputState,
     transform: MenuTransform,
+    sherwood_trading_editable: bool,
 }
 
 impl GameplayScreenState {
@@ -75,6 +97,7 @@ impl GameplayScreenState {
         renderer: &Renderer,
         resources: &IngameMenuResources,
         config: &GameplayConfig,
+        sherwood_trading_editable: bool,
     ) -> Self {
         let sw = renderer.screen_width() as i32;
         let sh = renderer.screen_height() as i32;
@@ -91,28 +114,31 @@ impl GameplayScreenState {
 
         // ── Option toggle buttons stacked from (30,100) ───────────────
         let (field_w, field_h) = resources.input_field_dimensions();
-        let mut opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
+        let rows_per_column = OPTION_LABELS.len().div_ceil(2);
+        let opt_layout: Vec<super::layout::MenuButton> = OPTION_LABELS
             .iter()
             .enumerate()
             .map(|(i, label)| super::layout::MenuButton {
                 label: label.to_string(),
                 enabled: true,
-                x: 30,
-                y: if i == 0 { 100 } else { 0 },
+                x: if i < rows_per_column { 30 } else { 320 },
+                y: 100
+                    + i32::try_from(i % rows_per_column).expect("gameplay option row fits i32")
+                        * (field_h + 2),
                 w: field_w,
                 h: field_h,
             })
             .collect();
-        align_on_first_widget(&mut opt_layout, 2);
 
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
 
         for (i, mb) in opt_layout.iter().enumerate() {
-            frame.add_widget_absolute(widget_bridge::make_button(
+            frame.add_widget_absolute(widget_bridge::make_button_enabled(
                 ID_OPT_BASE + i as u32,
                 &mb.label,
+                i != SHERWOOD_TRADING_OPTION_INDEX || sherwood_trading_editable,
                 mb.x,
                 mb.y,
                 mb.w,
@@ -145,6 +171,7 @@ impl GameplayScreenState {
             frame,
             input_state,
             transform,
+            sherwood_trading_editable,
         }
     }
 
@@ -189,7 +216,10 @@ impl GameplayScreenState {
                 }
                 ID_CANCEL => outcome = Some(ModalScreenOutcome::Cancelled),
                 id if (ID_OPT_BASE..ID_OPT_BASE + OPTION_LABELS.len() as u32).contains(&id) => {
-                    apply_option_toggle(&mut self.working, (id - ID_OPT_BASE) as usize);
+                    let index = (id - ID_OPT_BASE) as usize;
+                    if index != SHERWOOD_TRADING_OPTION_INDEX || self.sherwood_trading_editable {
+                        apply_option_toggle(&mut self.working, index);
+                    }
                 }
                 _ => {}
             }
@@ -234,8 +264,8 @@ impl GameplayScreenState {
                 font,
                 self.transform,
                 self.working.campaign_presentation.label(),
-                315,
-                100 + 5 * (resources.input_field_dimensions().1 + 2) + 7,
+                30,
+                335,
             );
         }
 
@@ -259,7 +289,7 @@ impl GameplayScreenState {
     }
 }
 
-fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
+pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
     match idx {
         0 => config.fix_hard_reaction_times = !config.fix_hard_reaction_times,
         1 => config.control_tactical_units = !config.control_tactical_units,
@@ -267,11 +297,26 @@ fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         3 => config.show_production_forecast = !config.show_production_forecast,
         4 => config.reusable_cloaks = !config.reusable_cloaks,
         5 => config.campaign_presentation = config.campaign_presentation.next(),
+        6 => config.clean_hands_npc_kills_invalidate = !config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp = !config.show_detailed_xp,
+        8 => config.show_speedrun_tracker = !config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker = !config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker = !config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker = !config.show_pile_o_bones_tracker,
+        12 => {
+            config.show_all_enemies_one_building_tracker =
+                !config.show_all_enemies_one_building_tracker
+        }
+        13 => config.show_achievement_badges = !config.show_achievement_badges,
+        14 => config.show_achievement_debrief = !config.show_achievement_debrief,
+        15 => config.touch_camera_gestures = !config.touch_camera_gestures,
+        SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading = !config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled = !config.autosave_enabled,
         _ => {}
     }
 }
 
-fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
+pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
     match idx {
         0 => config.fix_hard_reaction_times,
         1 => config.control_tactical_units,
@@ -282,6 +327,18 @@ fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
             config.campaign_presentation
                 != robin_engine::gameplay_config::CampaignPresentationMode::ClassicMap
         }
+        6 => config.clean_hands_npc_kills_invalidate,
+        7 => config.show_detailed_xp,
+        8 => config.show_speedrun_tracker,
+        9 => config.show_clean_hands_tracker,
+        10 => config.show_ghost_tracker,
+        11 => config.show_pile_o_bones_tracker,
+        12 => config.show_all_enemies_one_building_tracker,
+        13 => config.show_achievement_badges,
+        14 => config.show_achievement_debrief,
+        15 => config.touch_camera_gestures,
+        SHERWOOD_TRADING_OPTION_INDEX => config.sherwood_trading,
+        AUTOSAVE_OPTION_INDEX => config.autosave_enabled,
         _ => false,
     }
 }
@@ -301,6 +358,18 @@ mod tests {
                 "Sherwood Production Forecast",
                 "Reusable Cloaks",
                 "Campaign Presentation",
+                "NPC Kills Break Clean Hands",
+                "Detailed Sword/Bow XP",
+                "Speedrun Clock",
+                "Clean Hands Tracker",
+                "Ghost Tracker",
+                "Pile-o-Bones Tracker",
+                "All Enemies Stashed Tracker",
+                "Campaign Achievement Badges",
+                "Achievement Debrief Details",
+                "Touch Camera Gestures",
+                "Sherwood Item Trading",
+                "Rotating Autosaves",
             ]
         );
 
@@ -310,6 +379,11 @@ mod tests {
         assert!(is_option_selected(&config, 3));
         assert!(is_option_selected(&config, 4));
         assert!(is_option_selected(&config, 5));
+        assert!(!is_option_selected(&config, 6));
+        assert!(is_option_selected(&config, 13));
+        assert!(is_option_selected(&config, 14));
+        assert!(is_option_selected(&config, 15));
+        assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -334,5 +408,64 @@ mod tests {
             config.campaign_presentation,
             robin_engine::gameplay_config::CampaignPresentationMode::SherwoodMuseum
         );
+
+        let achievement_settings = (
+            config.clean_hands_npc_kills_invalidate,
+            config.show_detailed_xp,
+            config.show_speedrun_tracker,
+            config.show_clean_hands_tracker,
+            config.show_ghost_tracker,
+            config.show_pile_o_bones_tracker,
+            config.show_all_enemies_one_building_tracker,
+            config.show_achievement_badges,
+            config.show_achievement_debrief,
+        );
+        apply_option_toggle(&mut config, 15);
+        assert!(!config.touch_camera_gestures);
+        assert!(config.control_tactical_units);
+        assert!(config.enable_unbinding);
+        assert!(!config.show_production_forecast);
+        assert!(!config.reusable_cloaks);
+        assert_eq!(
+            achievement_settings,
+            (
+                config.clean_hands_npc_kills_invalidate,
+                config.show_detailed_xp,
+                config.show_speedrun_tracker,
+                config.show_clean_hands_tracker,
+                config.show_ghost_tracker,
+                config.show_pile_o_bones_tracker,
+                config.show_all_enemies_one_building_tracker,
+                config.show_achievement_badges,
+                config.show_achievement_debrief,
+            )
+        );
+        assert!(!is_option_selected(&config, 15));
+
+        apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
+        assert!(!config.sherwood_trading);
+    }
+
+    #[test]
+    fn autosave_has_an_independent_gameplay_toggle() {
+        let mut config = GameplayConfig::default();
+        let before = config;
+        assert_eq!(OPTION_LABELS[AUTOSAVE_OPTION_INDEX], "Rotating Autosaves");
+        assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        apply_option_toggle(&mut config, AUTOSAVE_OPTION_INDEX);
+        assert!(!is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
+        assert_eq!(
+            config.fix_hard_reaction_times,
+            before.fix_hard_reaction_times
+        );
+        assert_eq!(config.control_tactical_units, before.control_tactical_units);
+        assert_eq!(config.enable_unbinding, before.enable_unbinding);
+        assert_eq!(
+            config.show_production_forecast,
+            before.show_production_forecast
+        );
+        assert_eq!(config.reusable_cloaks, before.reusable_cloaks);
+        assert_eq!(config.campaign_presentation, before.campaign_presentation);
+        assert_eq!(config.touch_camera_gestures, before.touch_camera_gestures);
     }
 }

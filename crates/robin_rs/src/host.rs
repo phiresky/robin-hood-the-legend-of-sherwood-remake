@@ -81,6 +81,9 @@ struct HostContextSnapshot {
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
     control_tactical_units: bool,
+    touch_camera_gestures: bool,
+    native_refresh_presentation: bool,
+    gameplay_config: robin_engine::gameplay_config::GameplayConfig,
 }
 
 impl ApplicationContext {
@@ -112,7 +115,10 @@ impl ApplicationContext {
         let amount_of_speaking = active.sound_config.amount_of_speaking;
         let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
         let enable_unbinding = active.gameplay_config.enable_unbinding;
+        let clean_hands_npc_kills_invalidate =
+            active.gameplay_config.clean_hands_npc_kills_invalidate;
         let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+        let sherwood_trading = active.gameplay_config.sherwood_trading;
 
         // Original provenance: `original-code/RHPlayerProfile.h:44-45` stores
         // active and custom key configs on each player profile, and
@@ -128,7 +134,9 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.sherwood_trading = sherwood_trading;
         Ok(Self {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
@@ -146,7 +154,9 @@ impl ApplicationContext {
         sim_config.amount_of_speaking = existing.amount_of_speaking;
         sim_config.fix_hard_reaction_times = existing.fix_hard_reaction_times;
         sim_config.enable_unbinding = existing.enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = existing.clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = existing.reusable_cloaks;
+        sim_config.sherwood_trading = existing.sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -205,7 +215,9 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         ) = {
             let mut profiles = self
                 .required_services()?
@@ -222,7 +234,9 @@ impl ApplicationContext {
                 active.sound_config.amount_of_speaking,
                 active.gameplay_config.fix_hard_reaction_times,
                 active.gameplay_config.enable_unbinding,
+                active.gameplay_config.clean_hands_npc_kills_invalidate,
                 active.gameplay_config.reusable_cloaks,
+                active.gameplay_config.sherwood_trading,
             )
         };
         self.refresh_profile_derived_state(
@@ -230,7 +244,9 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         )?;
         Ok(result)
     }
@@ -251,7 +267,9 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         ) = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
@@ -301,7 +319,10 @@ impl ApplicationContext {
             let amount_of_speaking = active.sound_config.amount_of_speaking;
             let fix_hard_reaction_times = active.gameplay_config.fix_hard_reaction_times;
             let enable_unbinding = active.gameplay_config.enable_unbinding;
+            let clean_hands_npc_kills_invalidate =
+                active.gameplay_config.clean_hands_npc_kills_invalidate;
             let reusable_cloaks = active.gameplay_config.reusable_cloaks;
+            let sherwood_trading = active.gameplay_config.sherwood_trading;
 
             if let Err(error) = profiles.save() {
                 #[cfg(not(target_arch = "wasm32"))]
@@ -331,7 +352,9 @@ impl ApplicationContext {
                 amount_of_speaking,
                 fix_hard_reaction_times,
                 enable_unbinding,
+                clean_hands_npc_kills_invalidate,
                 reusable_cloaks,
+                sherwood_trading,
             )
         };
 
@@ -340,7 +363,9 @@ impl ApplicationContext {
             amount_of_speaking,
             fix_hard_reaction_times,
             enable_unbinding,
+            clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            sherwood_trading,
         )?;
         Ok(profile_id)
     }
@@ -395,14 +420,15 @@ impl ApplicationContext {
     fn host_snapshot(&self) -> Result<HostContextSnapshot, String> {
         let services = self.required_services()?;
         let (key_config, custom_key_config) = self.active_key_configs()?;
+        let active_profile = self.active_profile_snapshot()?;
         Ok(HostContextSnapshot {
             shipping: services.shipping.clone(),
             key_config,
             custom_key_config,
-            control_tactical_units: self
-                .active_profile_snapshot()?
-                .gameplay_config
-                .control_tactical_units,
+            control_tactical_units: active_profile.gameplay_config.control_tactical_units,
+            touch_camera_gestures: active_profile.gameplay_config.touch_camera_gestures,
+            native_refresh_presentation: active_profile.graphic_config.native_refresh_presentation,
+            gameplay_config: active_profile.gameplay_config,
         })
     }
 
@@ -418,13 +444,17 @@ impl ApplicationContext {
         amount_of_speaking: u16,
         fix_hard_reaction_times: bool,
         enable_unbinding: bool,
+        clean_hands_npc_kills_invalidate: bool,
         reusable_cloaks: bool,
+        sherwood_trading: bool,
     ) -> Result<(), String> {
         let mut sim_config = engine_api::SimConfig::from_options(&self.options, difficulty);
         sim_config.amount_of_speaking = amount_of_speaking;
         sim_config.fix_hard_reaction_times = fix_hard_reaction_times;
         sim_config.enable_unbinding = enable_unbinding;
+        sim_config.clean_hands_npc_kills_invalidate = clean_hands_npc_kills_invalidate;
         sim_config.reusable_cloaks = reusable_cloaks;
+        sim_config.sherwood_trading = sherwood_trading;
         *self
             .sim_config
             .lock()
@@ -492,6 +522,17 @@ pub struct ViewportState {
     pub old_zoom_factor: f32,
     pub screen_size: ScreenSize,
     pub level_size: MapSize,
+    touch_motion: TouchCameraMotion,
+}
+
+/// Host-only touch-camera state. Velocities are expressed in screen pixels
+/// per second so momentum feels consistent at every zoom level.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+struct TouchCameraMotion {
+    transform_active: bool,
+    velocity_x: f32,
+    velocity_y: f32,
+    last_inertia_ms: u32,
 }
 
 impl ViewportState {
@@ -503,6 +544,7 @@ impl ViewportState {
             old_zoom_factor: 1.0,
             screen_size: ScreenSize::new(screen_width, screen_height),
             level_size: MapSize::ZERO,
+            touch_motion: TouchCameraMotion::default(),
         }
     }
 
@@ -567,6 +609,125 @@ impl ViewportState {
             before.y - anchor.y / self.zoom_factor,
         );
         self.clip_view();
+    }
+
+    /// Begin a two-finger camera transform after the gameplay layer has
+    /// decided whether both fingers originated in the world viewport.
+    pub fn begin_touch_transform(&mut self, accepted: bool) {
+        self.touch_motion = TouchCameraMotion {
+            transform_active: accepted,
+            ..TouchCameraMotion::default()
+        };
+    }
+
+    /// Atomically apply centroid translation and pinch scaling. The map point
+    /// beneath the previous centroid remains beneath the current centroid,
+    /// avoiding the order-dependent wobble caused by separate pan/zoom calls.
+    pub fn apply_touch_transform(
+        &mut self,
+        centroid: ScreenPoint,
+        pan: ScreenVec,
+        scale: f32,
+    ) -> bool {
+        if !self.touch_motion.transform_active {
+            return false;
+        }
+        if !scale.is_finite()
+            || scale <= 0.0
+            || !centroid.x.is_finite()
+            || !centroid.y.is_finite()
+            || !pan.x.is_finite()
+            || !pan.y.is_finite()
+        {
+            tracing::warn!(?centroid, ?pan, scale, "ignored non-finite touch transform");
+            return false;
+        }
+
+        let previous_centroid = ScreenPoint::new(centroid.x - pan.x, centroid.y - pan.y);
+        let anchor = self.screen_to_map_unchecked(previous_centroid);
+        self.old_view_position = self.view_position;
+        self.old_zoom_factor = self.zoom_factor;
+        self.zoom_factor = (self.zoom_factor * scale).clamp(0.5, 2.0);
+        self.view_position = MapPoint::new(
+            anchor.x - centroid.x / self.zoom_factor,
+            anchor.y - centroid.y / self.zoom_factor,
+        );
+        self.clip_view();
+        true
+    }
+
+    pub fn end_touch_transform(&mut self, velocity: ScreenVec, cancelled: bool, now_ms: u32) {
+        const MAX_INERTIA_SPEED: f32 = 5_000.0;
+
+        if !self.touch_motion.transform_active {
+            self.touch_motion = TouchCameraMotion::default();
+            return;
+        }
+        self.touch_motion.transform_active = false;
+        if cancelled || !velocity.x.is_finite() || !velocity.y.is_finite() {
+            self.touch_motion.velocity_x = 0.0;
+            self.touch_motion.velocity_y = 0.0;
+        } else {
+            self.touch_motion.velocity_x = velocity.x;
+            self.touch_motion.velocity_y = velocity.y;
+            let speed = velocity.x.hypot(velocity.y);
+            if speed > MAX_INERTIA_SPEED {
+                let scale = MAX_INERTIA_SPEED / speed;
+                self.touch_motion.velocity_x *= scale;
+                self.touch_motion.velocity_y *= scale;
+            }
+        }
+        self.touch_motion.last_inertia_ms = now_ms;
+    }
+
+    pub fn cancel_touch_motion(&mut self) {
+        self.touch_motion = TouchCameraMotion::default();
+    }
+
+    /// Advance hard-clamped pan inertia using wall time. Returns whether the
+    /// camera moved, allowing future display-rate render loops to skip static
+    /// recomposition without coupling momentum to the 25 Hz simulation.
+    pub fn advance_touch_inertia(&mut self, now_ms: u32) -> bool {
+        const DECAY_PER_SECOND: f32 = 6.5;
+        const STOP_SPEED: f32 = 18.0;
+        const MAX_STEP_SECONDS: f32 = 0.050;
+
+        if self.touch_motion.transform_active {
+            self.touch_motion.last_inertia_ms = now_ms;
+            return false;
+        }
+        let speed = self
+            .touch_motion
+            .velocity_x
+            .hypot(self.touch_motion.velocity_y);
+        if speed < STOP_SPEED {
+            self.touch_motion.velocity_x = 0.0;
+            self.touch_motion.velocity_y = 0.0;
+            self.touch_motion.last_inertia_ms = now_ms;
+            return false;
+        }
+        let elapsed = now_ms.wrapping_sub(self.touch_motion.last_inertia_ms) as f32 / 1000.0;
+        let dt = elapsed.min(MAX_STEP_SECONDS);
+        self.touch_motion.last_inertia_ms = now_ms;
+        if dt <= 0.0 {
+            return false;
+        }
+
+        let before = self.view_position;
+        self.scroll_by(ScreenVec::new(
+            -self.touch_motion.velocity_x * dt,
+            -self.touch_motion.velocity_y * dt,
+        ));
+        if (self.view_position.x - before.x).abs() < f32::EPSILON {
+            self.touch_motion.velocity_x = 0.0;
+        }
+        if (self.view_position.y - before.y).abs() < f32::EPSILON {
+            self.touch_motion.velocity_y = 0.0;
+        }
+        let decay = (-DECAY_PER_SECOND * dt).exp();
+        self.touch_motion.velocity_x *= decay;
+        self.touch_motion.velocity_y *= decay;
+        self.view_position != before
     }
 
     pub fn screen_to_map(&self, screen_pt: ScreenPoint) -> Option<MapPoint> {
@@ -663,8 +824,32 @@ pub struct HostFrontend {
     /// replay and multiplayer boundaries.
     pub control_tactical_units: bool,
 
+    /// Host-local presentation settings copied from the active profile.
+    /// Deterministic settings are separately mirrored into `SimConfig`.
+    pub gameplay_config: robin_engine::gameplay_config::GameplayConfig,
+
+    /// Host-only eligibility facts consulted only after deterministic mission
+    /// results have been frozen.
+    pub achievement_run_kind: robin_engine::achievement::AchievementRunKind,
+    pub achievement_replay_playback: bool,
+    pub achievement_headless: bool,
+
     /// Host-local targeting prompt armed by the tactical patrol portrait button.
     pub tactical_target_mode: Option<TacticalTargetMode>,
+
+    /// Active profile's touch-camera gesture setting. Host-local because
+    /// camera pan/zoom/inertia never enters deterministic simulation state.
+    pub touch_camera_gestures: bool,
+
+    /// Opt-in display-rate re-presentation. Host-local and intentionally
+    /// absent from deterministic save/replay state.
+    pub native_refresh_presentation: bool,
+
+    /// Last positive duration of a display-rate presentation sample, in
+    /// microseconds. The fixed-step presentation scheduler uses this host-only
+    /// observation to avoid beginning a vsync wait that would cross the
+    /// simulation deadline. Zero means no blocking sample has been observed.
+    pub native_refresh_present_cost_us: u64,
 
     /// Back-to-front entity draw order.  Host-cached derived state —
     /// recomputed from [`Engine::compute_display_order`] once per frame
@@ -922,6 +1107,36 @@ pub enum HostSignal {
     MissionStatePopup,
     ResetInput,
     PromoteFpsCheat,
+    SherwoodTrading,
+}
+
+/// Live presentation facts required to admit a Sherwood trading-panel request.
+///
+/// These checks intentionally mirror the authoritative sale-command ordering:
+/// host ownership, feature rule, then mission location. The engine repeats the
+/// same checks when a sale reaches the deterministic command frame, so a stale
+/// or forged presentation request cannot mutate campaign state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct SherwoodTradingAccess {
+    pub(crate) local_is_host: bool,
+    pub(crate) enabled: bool,
+    pub(crate) in_sherwood: bool,
+}
+
+impl SherwoodTradingAccess {
+    pub(crate) fn validate(self) -> Result<(), robin_engine::trading::TradeRejectReason> {
+        use robin_engine::trading::TradeRejectReason;
+        if !self.local_is_host {
+            return Err(TradeRejectReason::HostOnly);
+        }
+        if !self.enabled {
+            return Err(TradeRejectReason::TradingDisabled);
+        }
+        if !self.in_sherwood {
+            return Err(TradeRejectReason::NotInSherwood);
+        }
+        Ok(())
+    }
 }
 
 /// Ordered, typed work emitted at the post-tick boundary. Variant-specific
@@ -930,6 +1145,8 @@ pub enum HostSignal {
 pub struct HostEffectBatches {
     modals: Vec<HostModalRequest>,
     signals: Vec<HostSignal>,
+    trade_receipts: Vec<robin_engine::trading::TradeReceipt>,
+    next_trade_request_id: u64,
     pub background_blits: Vec<PendingBgBlit>,
 }
 
@@ -994,6 +1211,28 @@ impl HostEffectBatches {
         true
     }
 
+    pub fn extend_trade_receipts(
+        &mut self,
+        receipts: impl IntoIterator<Item = robin_engine::trading::TradeReceipt>,
+    ) {
+        self.trade_receipts.extend(receipts);
+    }
+
+    pub fn take_trade_receipts(&mut self) -> Vec<robin_engine::trading::TradeReceipt> {
+        std::mem::take(&mut self.trade_receipts)
+    }
+
+    /// Allocate a process-session correlation id for one authoritative sale.
+    /// This counter deliberately survives panel close/reopen and effect-queue
+    /// clears so a delayed network receipt cannot alias a newer request.
+    pub(crate) fn allocate_trade_request_id(&mut self) -> u64 {
+        self.next_trade_request_id = self
+            .next_trade_request_id
+            .checked_add(1)
+            .expect("Sherwood trade request id exhausted");
+        self.next_trade_request_id
+    }
+
     pub fn dialogue_count(&self) -> usize {
         self.modals
             .iter()
@@ -1042,6 +1281,31 @@ impl HostEffectBatches {
         }
     }
 
+    /// Queue a player-facing trading-panel request only after all live access
+    /// checks pass. This is the single producer used by keyboard and menu UI.
+    pub(crate) fn request_sherwood_trading(
+        &mut self,
+        access: SherwoodTradingAccess,
+    ) -> Result<(), robin_engine::trading::TradeRejectReason> {
+        access.validate()?;
+        self.request_signal(HostSignal::SherwoodTrading);
+        Ok(())
+    }
+
+    /// Consume and revalidate a queued request immediately before modal
+    /// construction. A settings/location/seat transition between input and
+    /// presentation therefore fails closed, while an empty queue is ordinary.
+    pub(crate) fn take_sherwood_trading(
+        &mut self,
+        access: SherwoodTradingAccess,
+    ) -> Result<bool, robin_engine::trading::TradeRejectReason> {
+        if !self.take_signal(HostSignal::SherwoodTrading) {
+            return Ok(false);
+        }
+        access.validate()?;
+        Ok(true)
+    }
+
     pub fn has_signal(&self, signal: HostSignal) -> bool {
         self.signals.contains(&signal)
     }
@@ -1057,6 +1321,7 @@ impl HostEffectBatches {
     pub fn clear(&mut self) {
         self.modals.clear();
         self.signals.clear();
+        self.trade_receipts.clear();
         self.background_blits.clear();
     }
 }
@@ -1129,6 +1394,9 @@ impl Host {
                 key_config: snapshot.key_config,
                 custom_key_config: snapshot.custom_key_config,
                 control_tactical_units: snapshot.control_tactical_units,
+                touch_camera_gestures: snapshot.touch_camera_gestures,
+                native_refresh_presentation: snapshot.native_refresh_presentation,
+                gameplay_config: snapshot.gameplay_config,
                 ..Default::default()
             },
             ..Default::default()
@@ -1440,6 +1708,14 @@ impl Host {
         if fx.pending_sherwood_report {
             self.effects.request_sherwood_report();
         }
+        if self.transport.local_seat == engine_player_command::PlayerId::HOST {
+            self.effects.extend_trade_receipts(fx.trade_receipts);
+        } else if !fx.trade_receipts.is_empty() {
+            tracing::trace!(
+                count = fx.trade_receipts.len(),
+                "discarding host-only Sherwood trade receipts on a client"
+            );
+        }
         if fx.pending_show_console {
             self.effects.request_signal(HostSignal::ShowConsole);
         }
@@ -1480,6 +1756,97 @@ impl Host {
             data.frame_sizes.clone(),
             data.per_frame_offsets.clone(),
         );
+    }
+}
+
+#[cfg(test)]
+mod viewport_touch_tests {
+    use super::*;
+
+    fn close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.001,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn combined_touch_transform_preserves_anchor() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(500.0, 400.0);
+        let previous_centroid = ScreenPoint::new(300.0, 250.0);
+        let anchor = viewport.screen_to_map_unchecked(previous_centroid);
+
+        viewport.begin_touch_transform(true);
+        viewport.apply_touch_transform(
+            ScreenPoint::new(340.0, 270.0),
+            ScreenVec::new(40.0, 20.0),
+            1.5,
+        );
+
+        close(viewport.zoom_factor, 1.5);
+        let transformed_anchor = viewport.screen_to_map_unchecked(ScreenPoint::new(340.0, 270.0));
+        close(transformed_anchor.x, anchor.x);
+        close(transformed_anchor.y, anchor.y);
+    }
+
+    #[test]
+    fn rejected_touch_transform_does_not_move_camera() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(500.0, 400.0);
+        viewport.begin_touch_transform(false);
+        viewport.apply_touch_transform(
+            ScreenPoint::new(400.0, 300.0),
+            ScreenVec::new(50.0, 20.0),
+            1.2,
+        );
+        assert_eq!(viewport.view_position, MapPoint::new(500.0, 400.0));
+        assert_eq!(viewport.zoom_factor, 1.0);
+    }
+
+    #[test]
+    fn touch_zoom_and_inertia_hard_clamp_to_map() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(1200.0, 900.0);
+        viewport.begin_touch_transform(true);
+        viewport.apply_touch_transform(
+            ScreenPoint::new(0.0, 0.0),
+            ScreenVec::new(1000.0, 1000.0),
+            0.01,
+        );
+        assert_eq!(viewport.zoom_factor, 0.5);
+        assert_eq!(viewport.view_position, MapPoint::ZERO);
+
+        viewport.end_touch_transform(ScreenVec::new(2000.0, 1200.0), false, 100);
+        assert!(!viewport.advance_touch_inertia(116));
+        assert_eq!(viewport.view_position, MapPoint::ZERO);
+        assert!(!viewport.advance_touch_inertia(132));
+    }
+
+    #[test]
+    fn cancelling_transform_disables_momentum() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(1000.0, 1000.0);
+        viewport.begin_touch_transform(true);
+        viewport.end_touch_transform(ScreenVec::new(1000.0, 0.0), true, 100);
+        assert!(!viewport.advance_touch_inertia(150));
+        assert_eq!(viewport.view_position, MapPoint::new(1000.0, 1000.0));
+    }
+
+    #[test]
+    fn touch_inertia_clamps_implausible_release_velocity() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(1000.0, 1000.0);
+        viewport.begin_touch_transform(true);
+        viewport.end_touch_transform(ScreenVec::new(1_000_000.0, 0.0), false, 100);
+
+        assert!(viewport.advance_touch_inertia(116));
+        close(viewport.view_position.x, 920.0);
+        close(viewport.view_position.y, 1000.0);
     }
 }
 
@@ -1712,6 +2079,75 @@ mod application_context_tests {
         assert!(effects.take_signal(HostSignal::ResetInput));
         assert!(!effects.take_signal(HostSignal::ResetInput));
         assert!(effects.take_signal(HostSignal::ShowConsole));
+    }
+
+    #[test]
+    fn trading_signal_requires_host_enabled_rule_and_sherwood() {
+        use robin_engine::trading::TradeRejectReason;
+
+        let allowed = SherwoodTradingAccess {
+            local_is_host: true,
+            enabled: true,
+            in_sherwood: true,
+        };
+        let cases = [
+            (
+                SherwoodTradingAccess {
+                    local_is_host: false,
+                    ..allowed
+                },
+                TradeRejectReason::HostOnly,
+            ),
+            (
+                SherwoodTradingAccess {
+                    enabled: false,
+                    ..allowed
+                },
+                TradeRejectReason::TradingDisabled,
+            ),
+            (
+                SherwoodTradingAccess {
+                    in_sherwood: false,
+                    ..allowed
+                },
+                TradeRejectReason::NotInSherwood,
+            ),
+        ];
+
+        for (access, reason) in cases {
+            let mut effects = HostEffectBatches::default();
+            assert_eq!(effects.request_sherwood_trading(access), Err(reason));
+            assert!(!effects.has_signal(HostSignal::SherwoodTrading));
+        }
+
+        let mut effects = HostEffectBatches::default();
+        assert_eq!(effects.request_sherwood_trading(allowed), Ok(()));
+        assert!(effects.has_signal(HostSignal::SherwoodTrading));
+        assert_eq!(effects.take_sherwood_trading(allowed), Ok(true));
+        assert_eq!(effects.take_sherwood_trading(allowed), Ok(false));
+    }
+
+    #[test]
+    fn queued_trading_signal_is_revalidated_and_drained_before_modal_dispatch() {
+        use robin_engine::trading::TradeRejectReason;
+
+        let allowed = SherwoodTradingAccess {
+            local_is_host: true,
+            enabled: true,
+            in_sherwood: true,
+        };
+        let mut effects = HostEffectBatches::default();
+        effects.request_sherwood_trading(allowed).unwrap();
+
+        let disabled = SherwoodTradingAccess {
+            enabled: false,
+            ..allowed
+        };
+        assert_eq!(
+            effects.take_sherwood_trading(disabled),
+            Err(TradeRejectReason::TradingDisabled)
+        );
+        assert!(!effects.has_signal(HostSignal::SherwoodTrading));
     }
 
     fn dictionary_frame_holder(shadow_color: u16) -> FrameHolder {

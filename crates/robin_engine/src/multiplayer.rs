@@ -785,7 +785,8 @@ mod tests {
 
     #[test]
     fn protocol_version_includes_snapshot_transition_barrier() {
-        // Version 27 adds the exact-byte prepare/ready/commit transition.
+        // Version 27 adds the exact-byte prepare/ready/commit transition on
+        // top of version 26's achievements and authoritative trading state.
         assert_eq!(NET_PROTOCOL_VERSION, 27);
     }
 

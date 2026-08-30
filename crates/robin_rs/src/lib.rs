@@ -17,6 +17,7 @@ use std::sync::{Mutex, Once, OnceLock};
 
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 pub mod auto_update;
+pub(crate) mod touch_input;
 pub mod version;
 
 static TRACING_INIT: Once = Once::new();
@@ -163,9 +164,11 @@ fn compose_env_filter(s: &str) -> String {
 // ──────────────────────────────────────────────────────────────────
 // Host-local modules (files in robin_rs/src/)
 // ──────────────────────────────────────────────────────────────────
+pub mod achievement_hud;
 #[cfg(target_os = "android")]
 pub mod android;
 pub mod app_effect;
+pub mod autosave;
 pub mod bg_cache;
 pub mod blit_to_map;
 pub mod campaign_map;
@@ -250,6 +253,8 @@ pub mod ui_screens;
 pub mod video_player;
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
 mod web_audio_backend;
+#[cfg(any(test, all(feature = "audio", target_arch = "wasm32")))]
+pub mod web_audio_state;
 pub mod widget;
 pub mod window;
 pub mod zoom_hud;

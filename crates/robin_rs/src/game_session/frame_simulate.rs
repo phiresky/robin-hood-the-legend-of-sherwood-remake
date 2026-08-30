@@ -151,7 +151,8 @@ enum ScriptedModalMode {
 async fn drive_scripted_modal_lanes(
     host: &mut Host,
     game: &Game,
-    manager: &robin_engine::engine_manager::EngineManager,
+    manager: &mut robin_engine::engine_manager::EngineManager,
+    assets: &robin_engine::engine::LevelAssets,
     profiles: &engine_profiles::ProfileManager,
     window: &mut GameWindow,
     audio: &mut super::interactive::MissionAudio,
@@ -164,6 +165,38 @@ async fn drive_scripted_modal_lanes(
     mut rendered: bool,
 ) -> bool {
     let auto_dismiss = mode == ScriptedModalMode::AutoDismiss;
+    if !rendered
+        && ui.active_modal.is_none()
+        && host.effects.has_signal(HostSignal::SherwoodTrading)
+    {
+        let access = sherwood_trading_access(host, &manager.engine, profiles);
+        match host.effects.take_sherwood_trading(access) {
+            Ok(false) => {}
+            Err(reason) => {
+                tracing::warn!(?reason, "queued Sherwood trading-panel request rejected");
+            }
+            Ok(true) if auto_dismiss => {
+                tracing::debug!("headless mode ignored a local Sherwood trading-panel request");
+            }
+            Ok(true) => {
+                let Some(menu_resources) = resources.menu.as_ref() else {
+                    tracing::warn!("Sherwood trading: menu resources unavailable — skipped");
+                    return rendered;
+                };
+                let sectors = manager.engine.live_tradable_production_sectors(profiles);
+                let ransom = crate::ingame_menu::trading::ransom_from_engine(&manager.engine);
+                ui.active_modal = Some(ActiveModal::Trading(Box::new(
+                    crate::ingame_menu::TradingModalState::new(
+                        window,
+                        &presentation.renderer,
+                        menu_resources,
+                        &sectors,
+                        ransom,
+                    ),
+                )));
+            }
+        }
+    }
     let mut modal_ctx = ModalContext {
         window,
         renderer: &mut presentation.renderer,
@@ -203,8 +236,16 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
+                &manager.engine,
+                profiles,
             );
-            debug_assert_eq!(outcome, ActiveModalOutcome::None);
+            dispatch_trading_modal_outcome(
+                outcome,
+                host,
+                manager,
+                assets,
+                &mut frame.post_commands,
+            );
             rendered = true;
         }
     }
@@ -257,8 +298,16 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
+                &manager.engine,
+                profiles,
             );
-            debug_assert_eq!(outcome, ActiveModalOutcome::None);
+            dispatch_trading_modal_outcome(
+                outcome,
+                host,
+                manager,
+                assets,
+                &mut frame.post_commands,
+            );
             rendered = true;
         }
     }
@@ -290,12 +339,50 @@ async fn drive_scripted_modal_lanes(
                 host,
                 &mut modal_ctx,
                 &mut frame.replay_modal_dismissals,
+                &manager.engine,
+                profiles,
             );
-            debug_assert_eq!(outcome, ActiveModalOutcome::None);
+            dispatch_trading_modal_outcome(
+                outcome,
+                host,
+                manager,
+                assets,
+                &mut frame.post_commands,
+            );
             rendered = true;
         }
     }
     rendered
+}
+
+fn dispatch_trading_modal_outcome(
+    outcome: ActiveModalOutcome,
+    host: &mut Host,
+    manager: &mut robin_engine::engine_manager::EngineManager,
+    assets: &robin_engine::engine::LevelAssets,
+    post_commands: &mut engine_player_command::FrameCommands,
+) {
+    match outcome {
+        ActiveModalOutcome::None => {}
+        ActiveModalOutcome::SellSherwoodItem {
+            request_id,
+            prod_type,
+            quantity,
+        } => dispatch_local_command(
+            host,
+            &mut manager.engine,
+            post_commands,
+            assets,
+            &PlayerCommand::CampaignSellProductionItem {
+                request_id,
+                prod_type,
+                quantity,
+            },
+        ),
+        ActiveModalOutcome::QuitMissionRequested => {
+            debug_assert!(false, "mission-state modal reached scripted modal lanes")
+        }
+    }
 }
 
 /// Drive the first mission-won "leave now" prompt after scripted modal lanes.
@@ -373,6 +460,8 @@ fn drive_leave_mission_prompt(
         host,
         &mut modal_ctx,
         &mut frame.replay_modal_dismissals,
+        &manager.engine,
+        &assets.profile_manager,
     );
     if outcome == ActiveModalOutcome::QuitMissionRequested {
         let cmd = PlayerCommand::QuitMissionRequested;
@@ -726,6 +815,18 @@ impl InteractiveFrameSimulation {
                         host.frontend.key_config = result.key_config.clone();
                         host.frontend.custom_key_config = result.custom_key_config.clone();
                         host.control_tactical_units = result.gameplay_config.control_tactical_units;
+                        host.touch_camera_gestures = result.gameplay_config.touch_camera_gestures;
+                        host.gameplay_config = result.gameplay_config;
+                        host.native_refresh_presentation =
+                            result.graphic_config.native_refresh_presentation;
+                        window.set_native_refresh_presentation(
+                            result.graphic_config.native_refresh_presentation,
+                        );
+                        presentation.renderer.configure_native_refresh_presentation(
+                            result.graphic_config.native_refresh_presentation,
+                            window.surface_config.width,
+                            window.surface_config.height,
+                        );
                         if !host.control_tactical_units {
                             dispatch_local_command(
                                 host,
@@ -774,6 +875,23 @@ impl InteractiveFrameSimulation {
                                 },
                             );
                         }
+                        if result.gameplay_config.clean_hands_npc_kills_invalidate
+                            != result
+                                .original_gameplay_config
+                                .clean_hands_npc_kills_invalidate
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetCleanHandsNpcKillsInvalidate {
+                                    enabled: result
+                                        .gameplay_config
+                                        .clean_hands_npc_kills_invalidate,
+                                },
+                            );
+                        }
                         if result.gameplay_config.reusable_cloaks
                             != result.original_gameplay_config.reusable_cloaks
                         {
@@ -784,6 +902,19 @@ impl InteractiveFrameSimulation {
                                 assets.as_ref(),
                                 &PlayerCommand::SetReusableCloaks {
                                     enabled: result.gameplay_config.reusable_cloaks,
+                                },
+                            );
+                        }
+                        if result.gameplay_config.sherwood_trading
+                            != result.original_gameplay_config.sherwood_trading
+                        {
+                            dispatch_local_command(
+                                host,
+                                &mut manager.engine,
+                                &mut frame.post_commands,
+                                assets.as_ref(),
+                                &PlayerCommand::SetSherwoodTrading {
+                                    enabled: result.gameplay_config.sherwood_trading,
                                 },
                             );
                         }
@@ -806,15 +937,17 @@ impl InteractiveFrameSimulation {
                         }
 
                         if result.resolution_changed {
-                            let width = result.graphic_config.resolution_x;
-                            let height = result.graphic_config.resolution_y;
-                            let width_u16 = width.round() as u16;
-                            let height_u16 = height.round() as u16;
-                            window.set_logical_size(width_u16 as u32, height_u16 as u32);
+                            window.set_logical_resolution_policy(&result.graphic_config);
+                            presentation.renderer.sync_window_size(window);
+                            let (logical_width, logical_height) = window.logical_size();
+                            let width = logical_width as f32;
+                            let height = logical_height as f32;
+                            let width_u16 = logical_width as u16;
+                            let height_u16 = logical_height as u16;
                             host.viewport.set_screen_size(width, height);
-                            presentation.renderer.resize(width_u16, height_u16);
-                            input.resize(width_u16 as u32, height_u16 as u32, &result.key_config);
-                            hud.resize(width_u16 as u32, height_u16 as u32);
+                            game.set_resolution(width_u16, height_u16);
+                            input.resize(logical_width, logical_height, &result.key_config);
+                            hud.resize(logical_width, logical_height);
                             if host.minimap_corner_size.x > 0.0 {
                                 dispatch_local_command(
                                     host,
@@ -954,6 +1087,7 @@ impl InteractiveFrameSimulation {
                 host,
                 game,
                 manager,
+                assets.as_ref(),
                 profiles,
                 window,
                 audio,

@@ -10,7 +10,7 @@ use super::{CameraDisplayState, EngineInner, LevelAssets};
 use super::{HostDisplayState, InputState};
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId, Human as _};
-use crate::player_command::{PlayerCommand, PlayerInput};
+use crate::player_command::{PlayerCommand, PlayerId, PlayerInput};
 use crate::profiles::Action;
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
@@ -1284,6 +1284,19 @@ impl EngineInner {
             CampaignHarvestProductionSectorState => {
                 self.harvest_production_sector_state(assets);
             }
+            CampaignSellProductionItem {
+                request_id,
+                prod_type,
+                quantity,
+            } => {
+                self.sell_sherwood_production_item(
+                    assets,
+                    seat,
+                    *request_id,
+                    *prod_type,
+                    *quantity,
+                );
+            }
             CampaignConvertSelectedPeasantsToBlazons => {
                 self.convert_selected_peasants_to_blazons(sim, &assets.profile_manager);
             }
@@ -1466,8 +1479,22 @@ impl EngineInner {
             SetUnbindingEnabled { enabled } => {
                 self.control.sim_config.enable_unbinding = *enabled;
             }
+            SetCleanHandsNpcKillsInvalidate { enabled } => {
+                self.control.sim_config.clean_hands_npc_kills_invalidate = *enabled;
+                self.mission_domain
+                    .achievements
+                    .refresh_clean_hands_rule(*enabled)
+                    .expect("achievement results changed after mission finalization");
+            }
             SetReusableCloaks { enabled } => {
                 self.set_reusable_cloaks_enabled(*enabled);
+            }
+            SetSherwoodTrading { enabled } => {
+                if seat == usize::from(PlayerId::HOST.0) {
+                    self.control.sim_config.sherwood_trading = *enabled;
+                } else {
+                    tracing::warn!(seat, "non-host Sherwood trading setting command rejected");
+                }
             }
 
             HeroSpeak { pc_id, expression } => {

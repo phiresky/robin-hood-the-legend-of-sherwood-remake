@@ -329,10 +329,35 @@ pub enum GameEvent {
     /// (x, y, button, clicks)
     MouseDown(i32, i32, u8, u8),
     MouseUp(i32, i32, u8),
+    /// Cancel an in-progress primary-pointer drag without treating it as a
+    /// click/release. Touch emits this when a second finger takes ownership.
+    PointerCancel,
+    /// Stop host-local touch-camera inertia on a new primary contact.
+    TouchMotionStop,
     MouseWheel(i32),
     ViewportPan {
         xrel: i32,
         yrel: i32,
+    },
+    TouchTransformStart {
+        first_x: f32,
+        first_y: f32,
+        second_x: f32,
+        second_y: f32,
+    },
+    TouchTransform {
+        centroid_x: f32,
+        centroid_y: f32,
+        pan_x: f32,
+        pan_y: f32,
+        scale: f32,
+        velocity_x: f32,
+        velocity_y: f32,
+    },
+    TouchTransformEnd {
+        velocity_x: f32,
+        velocity_y: f32,
+        cancelled: bool,
     },
     MenuToggleRequested,
     PauseRequested,

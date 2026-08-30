@@ -850,6 +850,14 @@ pub enum PlayerCommand {
     /// into the campaign before exiting Sherwood.  Invoked on the
     /// mission-start branch.
     CampaignHarvestProductionSectorState,
+    /// Sell exactly one or five stored Sherwood production items.  The
+    /// authoritative handler validates host ownership, location, stock and
+    /// currency overflow before mutating anything.
+    CampaignSellProductionItem {
+        request_id: u64,
+        prod_type: crate::sector_production::Type,
+        quantity: crate::trading::TradeQuantity,
+    },
     /// Convert every peasant on the current mission team into blazons,
     /// removing their PC entities from the engine.  Dispatched from
     /// the Sherwood mission-start branch when the player committed
@@ -971,6 +979,11 @@ pub enum PlayerCommand {
     SetUnbindingEnabled {
         enabled: bool,
     },
+    /// Toggle the deterministic trading rule immediately after an in-game
+    /// options change.
+    SetSherwoodTrading {
+        enabled: bool,
+    },
 
     // ── Hero speech (side-effect feedback) ───────────────────────
     /// Trigger a hero speech barked line on `pc_id`.  Used by input
@@ -1029,6 +1042,11 @@ pub enum PlayerCommand {
     /// Toggle reusable-cloak mechanics in the authoritative simulation.
     /// Appended for bitcode compatibility with every pre-cloak command.
     SetReusableCloaks {
+        enabled: bool,
+    },
+    /// Toggle deterministic NPC-on-NPC Clean Hands invalidation. Appended to
+    /// preserve every current-main bitcode variant index.
+    SetCleanHandsNpcKillsInvalidate {
         enabled: bool,
     },
 }
@@ -1090,6 +1108,31 @@ mod tests {
             assert_eq!(
                 serde_json::to_value(decoded).expect("serialize decoded cloak command"),
                 serde_json::to_value(command).expect("serialize cloak command")
+            );
+        }
+    }
+
+    #[test]
+    fn sherwood_trading_commands_roundtrip_in_current_native_codec() {
+        for command in [
+            PlayerCommand::CampaignSellProductionItem {
+                request_id: 41,
+                prod_type: crate::sector_production::Type::MakeNet,
+                quantity: crate::trading::TradeQuantity::One,
+            },
+            PlayerCommand::CampaignSellProductionItem {
+                request_id: 42,
+                prod_type: crate::sector_production::Type::MakeWaspNest,
+                quantity: crate::trading::TradeQuantity::Five,
+            },
+            PlayerCommand::SetSherwoodTrading { enabled: false },
+        ] {
+            let bytes = bitcode::encode(&command);
+            let decoded: PlayerCommand =
+                bitcode::decode(&bytes).expect("decode Sherwood trading command");
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded trading command"),
+                serde_json::to_value(command).expect("serialize trading command")
             );
         }
     }

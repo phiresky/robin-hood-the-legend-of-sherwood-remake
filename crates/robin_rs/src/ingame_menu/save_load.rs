@@ -25,7 +25,7 @@ use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::savegame::SaveGameManager;
+use crate::savegame::{SaveGame, SaveGameManager};
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
@@ -551,7 +551,7 @@ pub async fn show_save_load(
     if mode == SaveLoadMode::Save {
         input_widget.enter_edit_mode();
     }
-    let mut caret_timer: u32 = 0;
+    let mut caret_started_at_ms = crate::window::process_uptime_ms();
 
     // Reset IME state when opening a Save-mode picker so
     // IME composition and non-ASCII layouts work. Load mode stays quiet.
@@ -585,7 +585,7 @@ pub async fn show_save_load(
             (mode, selected),
             (SaveLoadMode::Save, Some(_)) | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
         );
-        let delete_enabled = matches!(selected, Some(ListRow::Existing(_)));
+        let delete_enabled = selected_is_deletable(selected, save_manager, &visible);
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
@@ -632,7 +632,7 @@ pub async fn show_save_load(
                             &visible,
                             save_manager,
                         );
-                        caret_timer = 0;
+                        caret_started_at_ms = crate::window::process_uptime_ms();
                     }
                 }
                 GameEvent::KeyDown {
@@ -649,7 +649,7 @@ pub async fn show_save_load(
                             &visible,
                             save_manager,
                         );
-                        caret_timer = 0;
+                        caret_started_at_ms = crate::window::process_uptime_ms();
                     }
                 }
                 GameEvent::KeyDown {
@@ -667,49 +667,49 @@ pub async fn show_save_load(
                     ..
                 } if input_editable => {
                     input_widget.backspace();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Delete,
                     ..
                 } if input_editable => {
                     input_widget.delete_char();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Left,
                     ..
                 } if input_editable => {
                     input_widget.move_caret_left();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Right,
                     ..
                 } if input_editable => {
                     input_widget.move_caret_right();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Home,
                     ..
                 } if input_editable => {
                     input_widget.move_caret_home();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::End,
                     ..
                 } if input_editable => {
                     input_widget.move_caret_end();
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 GameEvent::TextInput { .. } if input_editable => {
                     // Text input is consumed by the widget below via
                     // `ModalInputState::as_widget_input().text_input`
                     // after it's been accumulated. Reset the caret
                     // blink so the insertion stays visible.
-                    caret_timer = 0;
+                    caret_started_at_ms = crate::window::process_uptime_ms();
                 }
                 // Row selection + double-click activation fire on the
                 // release edge. Double-click detection uses the window layer's
@@ -730,7 +730,7 @@ pub async fn show_save_load(
                                 &visible,
                                 save_manager,
                             );
-                            caret_timer = 0;
+                            caret_started_at_ms = crate::window::process_uptime_ms();
                         }
                         if input_state
                             .buttons
@@ -887,6 +887,12 @@ pub async fn show_save_load(
                 ID_DELETE => {
                     if let Some(ListRow::Existing(v_idx)) = selected {
                         let slot = visible[v_idx];
+                        if save_manager.get(slot).is_some_and(SaveGame::is_autosave) {
+                            tracing::warn!(
+                                "manual save picker ignored a delete request for an autosave"
+                            );
+                            continue;
+                        }
                         let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
                         if show_yesno(
                             event_pump,
@@ -945,7 +951,13 @@ pub async fn show_save_load(
 
         // Input field — only drawn in Save + New mode.
         if input_editable {
-            draw_input_field(renderer, resources, transform, &input_widget, caret_timer);
+            draw_input_field(
+                renderer,
+                resources,
+                transform,
+                &input_widget,
+                crate::window::process_uptime_ms().wrapping_sub(caret_started_at_ms),
+            );
         }
 
         // Rows.
@@ -1035,8 +1047,7 @@ pub async fn show_save_load(
         }
 
         renderer.present();
-        caret_timer = caret_timer.wrapping_add(1);
-        crate::window::sleep_ms(16).await;
+        crate::window::sleep_ui_frame().await;
     };
 
     // Make sure the cached thumbnail surface is returned to the renderer
@@ -1110,7 +1121,7 @@ fn draw_input_field(
     resources: &IngameMenuResources,
     transform: MenuTransform,
     input_widget: &WidgetInputField,
-    caret_timer: u32,
+    caret_elapsed_ms: u32,
 ) {
     // Use the menu's input-field sprite if loaded, otherwise fall back
     // to a simple outlined rect so layouts without DEFAULT.RES still
@@ -1175,11 +1186,11 @@ fn draw_input_field(
     let right_text =
         input_widget.get_text_from_caret(TextFromCaretSide::Right, right_budget, char_advance);
 
-    // Render the buffer plus a blinking caret. `caret_timer` ticks once
-    // per frame (~60 Hz); the caret toggles every ~500 ms. We don't
+    // Render the buffer plus a blinking caret. Wall time keeps the ~500 ms
+    // toggle stable on high-refresh displays. We don't
     // have a dedicated caret sprite yet, so this inlines a `|` character
     // at the caret position.
-    let show_caret = (caret_timer / 30).is_multiple_of(2);
+    let show_caret = (caret_elapsed_ms / 500).is_multiple_of(2);
     let display = if show_caret {
         format!("{left_text}|{right_text}")
     } else {
@@ -1321,11 +1332,26 @@ fn row_label(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) ->
         ListRow::Existing(v_idx) => {
             let slot = visible[v_idx];
             match save_manager.get(slot) {
-                Some(s) => s.text.clone(),
+                Some(save) if save.is_autosave() => format!("Autosave - {}", save.text),
+                Some(save) => save.text.clone(),
                 None => format!("<invalid slot {slot}>"),
             }
         }
     }
+}
+
+fn selected_is_deletable(
+    selected: Option<ListRow>,
+    save_manager: &SaveGameManager,
+    visible: &[usize],
+) -> bool {
+    let Some(ListRow::Existing(visible_index)) = selected else {
+        return false;
+    };
+    visible
+        .get(visible_index)
+        .and_then(|&slot| save_manager.get(slot))
+        .is_some_and(|save| !save.is_autosave())
 }
 
 fn row_detail(row: ListRow, save_manager: &SaveGameManager, visible: &[usize]) -> String {
@@ -1522,7 +1548,7 @@ fn collect_visible_slots(save_manager: &SaveGameManager, mode: SaveLoadMode) -> 
                 .expect("index from 0..count() must resolve");
             match mode {
                 SaveLoadMode::Load => !save.is_continue() && !save.is_restart(),
-                SaveLoadMode::Save => save.special.is_none(),
+                SaveLoadMode::Save => !save.is_special(),
             }
         })
         .collect()
@@ -1531,6 +1557,29 @@ fn collect_visible_slots(save_manager: &SaveGameManager, mode: SaveLoadMode) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autosaves_are_loadable_but_not_overwritable_or_deletable() {
+        let mut manager = SaveGameManager::new("/tmp/test_saves".into());
+        manager.saves.push(SaveGame::new(
+            "Autosave_100_0000".into(),
+            "The Silver Arrow".into(),
+            7,
+        ));
+
+        let load_visible = collect_visible_slots(&manager, SaveLoadMode::Load);
+        assert_eq!(load_visible, vec![0]);
+        assert!(!selected_is_deletable(
+            Some(ListRow::Existing(0)),
+            &manager,
+            &load_visible,
+        ));
+        assert!(collect_visible_slots(&manager, SaveLoadMode::Save).is_empty());
+        assert_eq!(
+            row_label(ListRow::Existing(0), &manager, &load_visible),
+            "Autosave - The Silver Arrow"
+        );
+    }
 
     #[test]
     fn empty_new_save_name_gets_default_label() {

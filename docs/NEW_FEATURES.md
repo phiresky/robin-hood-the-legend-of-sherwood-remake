@@ -17,6 +17,64 @@ A list of which additional features we have added, which ones we might still wan
   selection across list mutations, and ordinary HTTP screenshots capture the
   presented topmost pause UI. The native desktop data-folder chooser remains
   a synchronous OS dialog launched from the cooperative Options state.
+- **Per-mission achievements, debrief evidence, XP, and trackers.** Four
+  deterministic achievements are evaluated independently for each successful
+  attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
+  Stashed**. Tracking establishes a post-initialization baseline of living and
+  already-dead NPCs, then records exact death causality, hostile sighting pairs,
+  and exact building-sector membership. Clean Hands fails only for deaths
+  caused by player-controlled units by default; `NPC Kills Break Clean Hands`
+  can additionally count NPC-on-NPC deaths. Ghost cares only whether a living
+  hostile actually observed a player character, so it remains independent of
+  killing. Pile-o-Bones latches after any ten NPC bodies occupy one building;
+  All Enemies Stashed requires every encountered hostile to be out of order in
+  the same building.
+
+  Results and metrics are frozen into the canonical attempt, and an exactly-once
+  host attestation decides whether the badges may enter campaign and lifetime
+  history. Custom, cheated, headless, and replay-playback runs remain auditable
+  but do not award icons. A normal history replay is an eligible campaign
+  practice attempt, so a player can return to one mission and earn a missed
+  badge after the fact. Campaign badges, detailed debrief conditions, exact
+  selected-character sword/bow XP, the speedrun clock, and each of the four
+  top-left achievement trackers have separate settings. Fresh profiles show
+  campaign badges and debrief details but leave the HUD trackers and detailed
+  XP off; settings documents that predate these presentation fields leave all
+  of those presentations off without discarding calculated history. The authoritative rules live in
+  `crates/robin_engine/src/achievement.rs`; presentation lives in
+  `crates/robin_rs/src/achievement_hud.rs`.
+
+  Mission badges remain four independent pieces of evidence. Campaign and
+  lifetime badges apply a separate typed aggregation policy: **Clean Hands**
+  and **Ghost** require the badge on every successful canonical mission in one
+  completed campaign path, while **Pile-o-Bones** and **All Enemies Stashed**
+  unlock permanently after any one eligible mission. The required path is
+  frozen by campaign run ID and terminal sequence when the Original campaign
+  completion boundary is crossed. Lost, failed, and interrupted attempts stay
+  in full history but never expand that won-mission set. A later practice
+  replay may fill evidence for a mission already in the envelope, but cannot
+  add a mission or combine evidence from another campaign. Completed envelopes
+  live in the profile's lifetime archive and survive campaign reset.
+  Incomplete Original C++ imports are shown as unverifiable until real eligible
+  evidence exists; import never fabricates an award.
+
+  Deterministic tracker fields and the NPC-death gameplay rule are part of the
+  native state contract. This feature therefore advances native saves to v58,
+  replays to v18, and multiplayer to protocol v25; obsolete Rust layouts fail
+  closed instead of being decoded as plausible achievement evidence.
+
+- **Rotating autosaves.** Single-player missions create interruption-safe
+  recovery points at mission boundaries, when the native window or browser page
+  is backgrounded, and every five minutes of active gameplay. One ordered
+  writer commits an immutable full save payload before publishing a separate
+  manifest, retains exactly the newest three generations, drains accepted work
+  during clean shutdown, and removes unpublished crash leftovers on recovery.
+  Browser records use the same portable JSON value model inside compressed,
+  SHA-256-checked storage envelopes; lifecycle events wake the game before
+  hidden-page timer throttling and urgent snapshots publish synchronously.
+  Autosaves appear only in Load lists and cannot be manually overwritten or
+  deleted. The independent Gameplay option is enabled by default. Multiplayer,
+  replay playback, and headless automation never autosave.
 
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
@@ -47,6 +105,16 @@ A list of which additional features we have added, which ones we might still wan
   specialist inputs, authored speed, and the original game's explicit lack of
   raw-material consumption. Forecasting and campaign production call the same
   pure calculation, with boundary tests guarding truncation and saturation.
+
+- **Authoritative Sherwood item trading.** Hosts can sell any stored production
+  item for a fixed, documented ransom value through an independently toggleable
+  Sherwood panel. The built-in **T** action and the touch/mouse-accessible pause
+  menu row share one fail-closed modal request; both require Sherwood, the host
+  seat, and the enabled gameplay rule. Explicit **Sell 1** and **Sell 5**
+  actions require a second matching activation, then exact stock removal and
+  ransom mutation occur only in the deterministic command frame. Replays,
+  rollback, multiplayer, saves, and Original-parity policy carry or reject the
+  same typed command and configuration.
 
 - **Data-driven mission allegiances.** Hackable JSON missions may assign a
   numeric `allegiance` to each soldier and rescue PC. IDs `0` and `1` preserve
@@ -422,16 +490,16 @@ A list of which additional features we have added, which ones we might still wan
   full character corpus at 2.27x smaller than zstd-19. Integration design in
   `docs/COMPRESSION.md` (schema v7 section).
 
-## Todo
+- **Touch camera gestures and native-refresh presentation**. Touch input now
+  classifies taps, drags, double-taps, and two-finger transforms without
+  leaking cancelled pointer actions into gameplay. World gestures support
+  anchored pinch zoom, pan, bounded inertia, and UI/minimap exclusion, with an
+  independent Gameplay toggle. A separate Graphics toggle presents and
+  interpolates at the display's actual cadence while deterministic simulation
+  remains fixed at 25 Hz; 60/90/120/144/240 Hz are covered without a
+  hard-coded refresh-rate policy.
 
-- **Android touch polish**
-  - Complete two-finger pan and pinch-zoom support. The first Android pass maps
-    one-finger touch to left mouse and two-finger centroid drag to viewport pan;
-    follow up with proper gesture state, inertia/clamping, pinch zoom around the
-    gesture centroid, and interaction rules for UI/minimap/pause overlays.
-  - Render pacing should target 60 FPS or the device screen refresh rate instead
-    of the current fixed game-loop cadence. Keep simulation at the existing
-    fixed timestep, but present/interpolate at display cadence where possible.
+## Todo
 
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.
@@ -483,8 +551,6 @@ A list of which additional features we have added, which ones we might still wan
 - More difficulty settings than in the original.
 - Every save should have a timestamp automatically, plus mission name and
   player name. Timestamp should be shown as relative time too (`x hours ago`).
-- Add autosave support.
-- trading: if you over produce an item, maybe you can sell it for money?
 - throw something skill that makes a noise somewhere else so guards run there
 - Cloaking (implemented, optional): selected heroes whose sprite profile has
   the shipped cape rows can put the cloak back on with a rebindable key. The

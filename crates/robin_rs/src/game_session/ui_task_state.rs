@@ -287,6 +287,7 @@ pub(super) struct OptionsTaskState {
     shortcut_dirty: bool,
     shortcut_reserved: bool,
     can_3d_sound: bool,
+    sherwood_trading_editable: bool,
 }
 
 impl OptionsTaskState {
@@ -302,6 +303,7 @@ impl OptionsTaskState {
         keys: KeyConfig,
         custom_keys: KeyConfig,
         can_3d_sound: bool,
+        sherwood_trading_editable: bool,
     ) -> Self {
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
@@ -334,6 +336,7 @@ impl OptionsTaskState {
             shortcut_dirty: false,
             shortcut_reserved: false,
             can_3d_sound,
+            sherwood_trading_editable,
         };
         state.rebuild_frame(resources);
         state
@@ -498,9 +501,15 @@ impl OptionsTaskState {
                 _ => {}
             },
             OptionsPage::Gameplay => match index {
-                0..=5 => self.adjust_selected(1, resources),
-                6 => self.accept_page(resources),
-                7 => self.restore_page(resources),
+                index if index < crate::ingame_menu::gameplay::OPTION_LABELS.len() => {
+                    self.adjust_selected(1, resources)
+                }
+                index if index == crate::ingame_menu::gameplay::OPTION_LABELS.len() => {
+                    self.accept_page(resources)
+                }
+                index if index == crate::ingame_menu::gameplay::OPTION_LABELS.len() + 1 => {
+                    self.restore_page(resources)
+                }
                 _ => {}
             },
             OptionsPage::Shortcuts => {
@@ -605,23 +614,12 @@ impl OptionsTaskState {
                 let value = sound_value_mut(&mut self.sound, index - 2);
                 *value = (*value as i32 + delta).clamp(0, 9) as u16;
             }
-            (OptionsPage::Gameplay, 0) => {
-                self.gameplay.fix_hard_reaction_times = !self.gameplay.fix_hard_reaction_times
-            }
-            (OptionsPage::Gameplay, 1) => {
-                self.gameplay.control_tactical_units = !self.gameplay.control_tactical_units
-            }
-            (OptionsPage::Gameplay, 2) => {
-                self.gameplay.enable_unbinding = !self.gameplay.enable_unbinding
-            }
-            (OptionsPage::Gameplay, 3) => {
-                self.gameplay.show_production_forecast = !self.gameplay.show_production_forecast
-            }
-            (OptionsPage::Gameplay, 4) => {
-                self.gameplay.reusable_cloaks = !self.gameplay.reusable_cloaks
-            }
-            (OptionsPage::Gameplay, 5) => {
-                self.gameplay.campaign_presentation = self.gameplay.campaign_presentation.next()
+            (OptionsPage::Gameplay, index)
+                if index < crate::ingame_menu::gameplay::OPTION_LABELS.len()
+                    && (index != crate::ingame_menu::gameplay::SHERWOOD_TRADING_OPTION_INDEX
+                        || self.sherwood_trading_editable) =>
+            {
+                crate::ingame_menu::gameplay::apply_option_toggle(&mut self.gameplay, index)
             }
             _ => return,
         }
@@ -763,28 +761,33 @@ impl OptionsTaskState {
                 resources.menu_text.get(MT_BTN_OK),
                 resources.menu_text.get(MT_BTN_CANCEL),
             ],
-            OptionsPage::Gameplay => vec![
-                toggle_label(
-                    "Fix Hard Reaction Times",
-                    self.gameplay.fix_hard_reaction_times,
-                ),
-                toggle_label(
-                    "Control Tactical Units",
-                    self.gameplay.control_tactical_units,
-                ),
-                toggle_label("Allow Untying NPCs", self.gameplay.enable_unbinding),
-                toggle_label(
-                    "Sherwood Production Forecast",
-                    self.gameplay.show_production_forecast,
-                ),
-                toggle_label("Reusable Cloaks", self.gameplay.reusable_cloaks),
-                format!(
-                    "Campaign Presentation: {}",
-                    self.gameplay.campaign_presentation.label()
-                ),
-                resources.menu_text.get(MT_BTN_OK),
-                resources.menu_text.get(MT_BTN_CANCEL),
-            ],
+            OptionsPage::Gameplay => {
+                let mut labels = crate::ingame_menu::gameplay::OPTION_LABELS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, label)| {
+                        if index == 5 {
+                            format!(
+                                "Campaign Presentation: {}",
+                                self.gameplay.campaign_presentation.label()
+                            )
+                        } else {
+                            toggle_label(
+                                label,
+                                crate::ingame_menu::gameplay::is_option_selected(
+                                    &self.gameplay,
+                                    index,
+                                ),
+                            )
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                labels.extend([
+                    resources.menu_text.get(MT_BTN_OK),
+                    resources.menu_text.get(MT_BTN_CANCEL),
+                ]);
+                labels
+            }
             OptionsPage::Shortcuts => {
                 let visible = MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
                 let mut labels = (0..visible)
@@ -834,15 +837,49 @@ impl OptionsTaskState {
             let enabled = !matches!(
                 (self.page, index),
                 (OptionsPage::Sounds, 0) if !self.can_3d_sound
-            );
+            ) && !(self.page == OptionsPage::Gameplay
+                && index == crate::ingame_menu::gameplay::SHERWOOD_TRADING_OPTION_INDEX
+                && !self.sherwood_trading_editable);
+            let (x, y, width, height) = if self.page == OptionsPage::Gameplay {
+                let option_count = crate::ingame_menu::gameplay::OPTION_LABELS.len();
+                if index < option_count {
+                    let rows = option_count.div_ceil(2);
+                    (
+                        if index < rows { 30 } else { 320 },
+                        100 + i32::try_from(index % rows).expect("gameplay option row fits i32")
+                            * (row_h + BUTTON_GAP),
+                        button_w,
+                        row_h,
+                    )
+                } else {
+                    let (button_width, button_height) = resources.button_dimensions();
+                    let bottom = crate::ingame_menu::layout::align_bottom_right(
+                        &[
+                            (&self.labels[option_count], true),
+                            (&self.labels[option_count + 1], true),
+                        ],
+                        button_width,
+                        button_height,
+                    );
+                    let button = &bottom[index - option_count];
+                    (button.x, button.y, button.w, button.h)
+                }
+            } else {
+                (
+                    BUTTON_X,
+                    BUTTON_Y + index as i32 * (row_h + BUTTON_GAP),
+                    button_w,
+                    row_h,
+                )
+            };
             frame.add_widget_absolute(widget_bridge::make_button_enabled(
                 index as u32,
                 label,
                 enabled,
-                BUTTON_X,
-                BUTTON_Y + index as i32 * (row_h + BUTTON_GAP),
-                button_w,
-                row_h,
+                x,
+                y,
+                width,
+                height,
             ));
         }
         self.frame = frame;

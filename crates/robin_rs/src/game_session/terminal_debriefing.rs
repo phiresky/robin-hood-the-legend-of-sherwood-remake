@@ -116,7 +116,7 @@ fn terminal_debriefing_page(
     let kind = engine_player_command::ModalKind::FinalDebriefing {
         text_id: engine_player_command::DebriefingTextId::from_outcome(won, index),
     };
-    let body = if let Some(descriptors) = context.resources.level_descriptors.as_ref() {
+    let mut body = if let Some(descriptors) = context.resources.level_descriptors.as_ref() {
         let table_id = debriefing_text_table_id(
             won,
             descriptors.debriefing.win_text_table_id,
@@ -135,6 +135,13 @@ fn terminal_debriefing_page(
         tracing::warn!("Debriefing text lookup: level descriptors unavailable");
         "No dynamic resources for this level...".to_string()
     };
+    if won
+        && context.host.gameplay_config.show_achievement_debrief
+        && let Some(results) = context.manager.engine.mission_achievement_results()
+    {
+        body.push_str("\n\n");
+        body.push_str(&crate::achievement_hud::format_attempt_summary(*results));
+    }
     let mission_length = <RustCallbacks as crate::game::GameCallbacks>::get_current_playing_time(
         context.callbacks,
         context.manager.engine.campaign(),
@@ -578,6 +585,60 @@ pub(super) fn drive_tick_exit_modals(
             campaign_run_nonce,
         },
     );
+    if exit_code == GameCode::LevelSucceeded {
+        let run_context = robin_engine::achievement::AchievementRunContext {
+            kind: context.host.achievement_run_kind,
+            multiplayer: context.host.transport.net.is_some(),
+            replay_playback: context.host.achievement_replay_playback,
+            headless: context.host.achievement_headless,
+            // The engine ORs its authoritative cheat flag into this value.
+            cheat_used: false,
+        };
+        let update = context
+            .manager
+            .engine
+            .promote_mission_achievement_results(
+                robin_engine::achievement::AchievementUnlockPolicy::default(),
+                run_context,
+                &context.assets.profile_manager,
+            )
+            .unwrap_or_else(|error| panic!("achievement history promotion failed: {error}"));
+        if let Some(update) = update
+            && !update.blockers.is_empty()
+        {
+            tracing::info!(
+                ?run_context,
+                "achievement results calculated but unlock/history persistence was blocked"
+            );
+        }
+    }
+
+    // ApplyQuitMissionUpdates first appends the immutable raw attempt and the
+    // success path above attaches its exactly-once eligibility attestation.
+    // Only then promote that canonical campaign history into the profile, so
+    // failed/interrupted attempts and policy-blocked calculations remain
+    // losslessly auditable without becoming awarded badges.
+    let campaign = context.manager.engine.campaign().clone();
+    context
+        .host
+        .application_context
+        .with_player_profiles_mut(|profiles| {
+            let profile = profiles.get_active_mut().unwrap_or_else(|| {
+                panic!("campaign-history promotion has no active player profile")
+            });
+            profile
+                .promote_campaign_history(&campaign, &context.assets.profile_manager)
+                .unwrap_or_else(|error| panic!("campaign-history promotion failed: {error}"));
+            if let Err(error) = profiles.save() {
+                #[cfg(not(target_arch = "wasm32"))]
+                panic!("failed to persist campaign history: {error}");
+                #[cfg(target_arch = "wasm32")]
+                tracing::warn!(
+                    "Failed to persist campaign history in browser storage; keeping it in memory for this session: {error}"
+                );
+            }
+        })
+        .unwrap_or_else(|error| panic!("campaign profile synchronization failed: {error}"));
 
     let Some((popup_title, _)) = crate::ingame_menu::mission_state_text(exit_code) else {
         return TerminalDebriefingProgress::Complete;

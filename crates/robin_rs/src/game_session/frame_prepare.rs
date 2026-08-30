@@ -148,6 +148,8 @@ fn apply_post_save_ui_state(
         let text = match kind {
             SaveBannerKind::Saved => "Game saved.",
             SaveBannerKind::Loaded => "Game loaded.",
+            SaveBannerKind::Autosaved => "Game autosaved.",
+            SaveBannerKind::AutosaveFailed => "Autosave failed - check the log.",
         };
         // TODO(refactor): replace these literals with MT_MSG_GAME_SAVED and
         // MT_MSG_GAME_LOADED once the localized text ownership is explicit.
@@ -160,6 +162,7 @@ fn apply_post_save_ui_state(
 fn apply_host_view_input(
     host: &mut Host,
     engine: &Engine,
+    hud: &super::interactive::MissionHud,
     mouse_position: engine_coordinates::ScreenPoint,
     keyboard_actions: &[GameAction],
     mouse_actions: &[GameAction],
@@ -167,6 +170,12 @@ fn apply_host_view_input(
     view_suppressed: bool,
     pan_suppressed: bool,
 ) {
+    let now_ms = crate::window::process_uptime_ms();
+    if pan_suppressed || engine.user_locked() {
+        host.viewport.cancel_touch_motion();
+    } else {
+        host.viewport.advance_touch_inertia(now_ms);
+    }
     if !view_suppressed {
         for action in keyboard_actions.iter().chain(mouse_actions) {
             let scroll_suppressed_by_minimap = matches!(
@@ -197,15 +206,94 @@ fn apply_host_view_input(
         return;
     }
     for event in events {
-        if let GameEvent::ViewportPan { xrel, yrel } = *event {
-            host.viewport
-                .scroll_by(robin_engine::coordinates::ScreenVec::new(
-                    -(xrel as f32),
-                    -(yrel as f32),
-                ));
-            host.input.cancel_multi_selection();
+        match *event {
+            GameEvent::TouchMotionStop => host.viewport.cancel_touch_motion(),
+            GameEvent::ViewportPan { xrel, yrel } => {
+                host.viewport.cancel_touch_motion();
+                host.viewport
+                    .scroll_by(robin_engine::coordinates::ScreenVec::new(
+                        -(xrel as f32),
+                        -(yrel as f32),
+                    ));
+                host.input.cancel_multi_selection();
+            }
+            GameEvent::TouchTransformStart {
+                first_x,
+                first_y,
+                second_x,
+                second_y,
+            } => {
+                let first = engine_coordinates::ScreenPoint::new(first_x, first_y);
+                let second = engine_coordinates::ScreenPoint::new(second_x, second_y);
+                let accepted = touch_point_is_world(host, hud, first)
+                    && touch_point_is_world(host, hud, second);
+                host.viewport.begin_touch_transform(accepted);
+                if accepted {
+                    host.input.cancel_multi_selection();
+                }
+            }
+            GameEvent::TouchTransform {
+                centroid_x,
+                centroid_y,
+                pan_x,
+                pan_y,
+                scale,
+                ..
+            } => {
+                let applied = host.viewport.apply_touch_transform(
+                    engine_coordinates::ScreenPoint::new(centroid_x, centroid_y),
+                    engine_coordinates::ScreenVec::new(pan_x, pan_y),
+                    scale,
+                );
+                if applied {
+                    host.input.cancel_multi_selection();
+                }
+            }
+            GameEvent::TouchTransformEnd {
+                velocity_x,
+                velocity_y,
+                cancelled,
+            } => host.viewport.end_touch_transform(
+                engine_coordinates::ScreenVec::new(velocity_x, velocity_y),
+                cancelled,
+                now_ms,
+            ),
+            _ => {}
         }
     }
+}
+
+fn touch_point_is_world(
+    host: &Host,
+    hud: &super::interactive::MissionHud,
+    point: engine_coordinates::ScreenPoint,
+) -> bool {
+    if !point.x.is_finite()
+        || !point.y.is_finite()
+        || point.x < 0.0
+        || point.y < 0.0
+        || point.x >= host.viewport.screen_size.x
+        || point.y >= host.viewport.screen_size.y - engine_api::PANNEL_HEIGHT
+        || host.engine_display.minimap().is_over_widget(point)
+    {
+        return false;
+    }
+
+    let point = crate::gfx_types::Point::new(point.x as i32, point.y as i32);
+    let reserved = [
+        hud.zoom_layout.zoom_up,
+        hud.zoom_layout.zoom_down,
+        hud.corner_layout.clock,
+        hud.corner_layout.sight,
+        hud.corner_layout.quickstart,
+        hud.stature_layout.up,
+        hud.stature_layout.down,
+        hud.sherwood_layout.display_campaign_map,
+        hud.sherwood_layout.go_to_exit,
+        hud.sherwood_layout.start_mission,
+        hud.sherwood_layout.quit_mission,
+    ];
+    !reserved.iter().any(|rect| rect.contains_point(point))
 }
 
 /// Drain packets which arrived while the frame was processing local input.
@@ -767,12 +855,16 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         apply_host_view_input(
             host,
             &manager.engine,
+            hud,
             input.threaded.position(),
             &kb_actions,
             &mouse_actions,
             &events,
             ui.console_overlay.is_visible() || ui.pause_menu.is_some() || pause_closed_this_frame,
-            ui.pause_menu.is_some() || pause_closed_this_frame,
+            ui.console_overlay.is_visible()
+                || ui.pause_menu.is_some()
+                || pause_closed_this_frame
+                || !host.touch_camera_gestures,
         );
 
         // ── Skip all sim-affecting input during replay / rewind ──
@@ -856,6 +948,8 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let services = &mut *self.services;
         let callbacks = &mut *services.callbacks;
         let profiles = services.profiles;
+        let args = services.args;
+        let window = &mut *services.window;
         let PreparationPhaseState {
             mut frame,
             mp_clock_pause,
@@ -892,11 +986,39 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // The Game state machine queues save/load intents on the
         // callbacks; `perform_pending_save_load` then flushes them to
         // disk with live engine access.
+        callbacks.poll_autosaves();
         let exit_code = game.process_operation(manager.engine.campaign(), profiles, callbacks);
-        let pending_thumbnail = if callbacks
+        let lifecycle_autosave = window.lifecycle_autosave_requested();
+        let mission_id = current_mission_id(manager.engine.campaign(), profiles);
+        let autosave_allowed = crate::autosave::session_allows_autosave(
+            callbacks.autosave_enabled(),
+            host.transport.net.is_some(),
+            runtime.replay_player.is_some(),
+            args.headless,
+        );
+        let snapshot_available = callbacks
+            .pending
+            .as_ref()
+            .is_none_or(SaveLoadRequest::writes_save_payload);
+        if lifecycle_autosave && !autosave_allowed {
+            // This session is excluded by policy, rather than temporarily
+            // unable to capture. Do not retain a stale browser lifecycle edge
+            // that could fire after returning to an eligible session.
+            window.acknowledge_lifecycle_autosave_request();
+        }
+        let autosave_reason = callbacks.plan_autosave(
+            autosave_allowed,
+            snapshot_available,
+            mission_id,
+            u64::from(runtime.frame_number()),
+            lifecycle_autosave,
+            exit_code.is_some(),
+        );
+        let pending_thumbnail = if (callbacks
             .pending
             .as_ref()
             .is_some_and(|request| request.writes_save_payload())
+            || autosave_reason.is_some())
             && !host.skip_render
             && !modal_rendered_this_frame
         {
@@ -943,6 +1065,20 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         } else {
             None
         };
+        if let Some(reason) = autosave_reason {
+            let accepted = callbacks.enqueue_autosave(
+                host,
+                game,
+                &manager.engine,
+                mission_id,
+                profiles,
+                pending_thumbnail.clone(),
+                reason,
+            );
+            if accepted && lifecycle_autosave {
+                window.acknowledge_lifecycle_autosave_request();
+            }
+        }
         if let Some(exit_code) = exit_code {
             // `RHGame::GameLoop` applies transition sound/input changes
             // before returning its terminal code. Execute them here so
@@ -1110,7 +1246,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let modal_pause = ui
             .active_modal
             .as_ref()
-            .is_some_and(|modal| !modal.is_empty())
+            .is_some_and(|modal| modal.pauses_simulation(host.transport.net.is_some()))
             || ui.terminal_debriefing.is_some()
             || (ui.sherwood_campaign_flow.is_some() && host.transport.net.is_none())
             || ui.quickload_confirmation.is_some()

@@ -1,6 +1,7 @@
 //! Game-flow callbacks, save/load plumbing, and mission-launch helpers.
 
 use crate::app_effect::{AppEffect, AppEffectExecutionError, AppEffectQueue};
+use crate::autosave::{AutosaveCoordinator, AutosavePollResult, AutosaveReason};
 use crate::host::ApplicationContext;
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
@@ -36,6 +37,7 @@ pub(crate) struct RustCallbacks {
     application_context: ApplicationContext,
     /// Save-slot metadata manager, persists slot list as `saves.json`.
     pub save_manager: SaveGameManager,
+    autosave: AutosaveCoordinator,
     /// Pending save/load request queued by the state machine, handled
     /// before the next engine tick in `game_session`.
     pub pending: Option<SaveLoadRequest>,
@@ -115,6 +117,8 @@ pub struct PostLoadSync {
 pub enum SaveBannerKind {
     Saved,
     Loaded,
+    Autosaved,
+    AutosaveFailed,
 }
 
 /// Pending save/load intent set by the state machine and consumed
@@ -212,6 +216,7 @@ impl RustCallbacks {
         Self {
             application_context,
             save_manager,
+            autosave: AutosaveCoordinator::default(),
             pending: None,
             loading_requested: false,
             debriefing_code: GameCode::LevelInProgress,
@@ -223,6 +228,105 @@ impl RustCallbacks {
             pending_multiplayer_campaign_exit: None,
             pending_save_banner: None,
             pending_reset_input: false,
+        }
+    }
+
+    pub(crate) fn autosave_enabled(&self) -> bool {
+        self.application_context
+            .active_profile_snapshot()
+            .unwrap_or_else(|error| panic!("autosave requires an active profile: {error}"))
+            .gameplay_config
+            .autosave_enabled
+    }
+
+    pub(crate) fn plan_autosave(
+        &mut self,
+        enabled_and_allowed: bool,
+        snapshot_available: bool,
+        mission_id: u32,
+        frame: u64,
+        backgrounded: bool,
+        terminal_transition: bool,
+    ) -> Option<AutosaveReason> {
+        self.autosave.plan(
+            enabled_and_allowed,
+            snapshot_available,
+            mission_id,
+            frame,
+            backgrounded,
+            terminal_transition,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_autosave(
+        &mut self,
+        host: &crate::host::Host,
+        game: &crate::game::Game,
+        engine: &engine_api::Engine,
+        mission_id: u32,
+        profiles: &engine_profiles::ProfileManager,
+        thumbnail: Option<crate::save_file::Thumbnail>,
+        reason: AutosaveReason,
+    ) -> bool {
+        match self.autosave.enqueue(
+            &self.save_manager,
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            thumbnail,
+            reason,
+        ) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(reason = ?reason, "Autosave could not be queued: {error:#}");
+                self.pending_save_banner = Some(SaveBannerKind::AutosaveFailed);
+                false
+            }
+        }
+    }
+
+    pub(crate) fn poll_autosaves(&mut self) {
+        let results = self.autosave.poll(&mut self.save_manager);
+        self.consume_autosave_results(results);
+    }
+
+    fn consume_autosave_results(&mut self, results: Vec<AutosavePollResult>) {
+        for result in results {
+            match result {
+                AutosavePollResult::Saved { .. } => {
+                    self.pending_save_banner = Some(SaveBannerKind::Autosaved);
+                }
+                AutosavePollResult::Failed { .. } => {
+                    self.pending_save_banner = Some(SaveBannerKind::AutosaveFailed);
+                }
+            }
+        }
+    }
+}
+
+impl Drop for RustCallbacks {
+    fn drop(&mut self) {
+        let results = self.autosave.shutdown_and_poll(&mut self.save_manager);
+        for result in results {
+            match result {
+                AutosavePollResult::Saved { filename, reason } => {
+                    tracing::info!(filename, ?reason, "Autosave completed during shutdown");
+                }
+                AutosavePollResult::Failed {
+                    filename,
+                    reason,
+                    error,
+                } => {
+                    tracing::error!(
+                        filename,
+                        ?reason,
+                        "Autosave failed during shutdown: {error}"
+                    );
+                }
+            }
         }
     }
 }

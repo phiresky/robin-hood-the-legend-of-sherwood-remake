@@ -1,9 +1,10 @@
 //! In-game pause menu.
 //!
-//! A full-screen 640x480 menu with six vertical buttons (Continue /
-//! Load / Save / Options / Restart / Quit Game) aligned bottom-right,
-//! and the short-briefings list shown on the left half of the window
-//! at `(2,2)..(440,480)`.
+//! A full-screen 640x480 menu with the standard six vertical buttons
+//! (Continue / Load / Save / Options / Restart / Quit Game) aligned
+//! bottom-right, plus a conditional Sherwood Trading row for an eligible
+//! host. The short-briefings list is shown on the left half of the window at
+//! `(2,2)..(440,480)`.
 //!
 //! Unlike the other in-game menus the pause menu is driven from the
 //! main game loop as a non-blocking state machine: events from the
@@ -31,7 +32,7 @@ use super::briefings::draw_short_briefings;
 use super::layout::{MenuRect, MenuTransform, align_bottom_right, dim_screen};
 use super::resources::{
     IngameMenuResources, MT_BTN_CONTINUE, MT_BTN_LOAD, MT_BTN_OPTIONS, MT_BTN_QUIT_GAME,
-    MT_BTN_RESTART, MT_BTN_SAVE,
+    MT_BTN_RESTART, MT_BTN_SAVE, MT_TTL_SHERWOOD_TRADING,
 };
 use super::widget_bridge::{self, ModalInputState};
 
@@ -43,6 +44,7 @@ pub const PAUSE_BTN_SAVE: u32 = 2;
 pub const PAUSE_BTN_OPTIONS: u32 = 3;
 pub const PAUSE_BTN_RESTART: u32 = 4;
 pub const PAUSE_BTN_QUIT: u32 = 5;
+pub const PAUSE_BTN_SHERWOOD_TRADING: u32 = 6;
 
 /// Short briefings area inside the window: `(2, 2)..(440, 480)`.
 const BRIEFINGS_RECT: MenuRect = MenuRect {
@@ -71,6 +73,8 @@ pub enum PauseMenuOutcome {
     /// Open the Save slot picker.  The caller runs it, optionally
     /// emits a `SaveLoadRequest::Save`, then returns to this menu.
     OpenSave,
+    /// Open the host-only Sherwood item-trading panel.
+    OpenSherwoodTrading,
     /// Restart the mission.
     Restart,
     /// Quit to the main menu.
@@ -93,6 +97,16 @@ impl PauseMenu {
     /// `restart_allowed` is `false` in Sherwood (the hub level has no
     /// mission to restart).
     pub fn new(resources: &IngameMenuResources, restart_allowed: bool) -> Self {
+        Self::new_with_sherwood_trading(resources, restart_allowed, false)
+    }
+
+    /// Build the pause menu and optionally insert the touch/mouse-accessible
+    /// Sherwood Trading row immediately below Continue.
+    pub fn new_with_sherwood_trading(
+        resources: &IngameMenuResources,
+        restart_allowed: bool,
+        sherwood_trading_available: bool,
+    ) -> Self {
         let (btn_w, btn_h) = resources.button_dimensions();
 
         // Localised button labels.
@@ -102,24 +116,32 @@ impl PauseMenu {
         let options_txt = resources.menu_text.get(MT_BTN_OPTIONS);
         let restart_txt = resources.menu_text.get(MT_BTN_RESTART);
         let quit_txt = resources.menu_text.get(MT_BTN_QUIT_GAME);
-        let labels: &[(&str, bool)] = &[
-            (&continue_txt, true),
-            (&load_txt, true),
-            (&save_txt, true),
-            (&options_txt, true),
-            (&restart_txt, restart_allowed),
-            (&quit_txt, true),
-        ];
+        let trading_txt = resources.menu_text.get(MT_TTL_SHERWOOD_TRADING);
+        let mut entries = vec![(PAUSE_BTN_CONTINUE, continue_txt, true)];
+        if sherwood_trading_available {
+            entries.push((PAUSE_BTN_SHERWOOD_TRADING, trading_txt, true));
+        }
+        entries.extend([
+            (PAUSE_BTN_LOAD, load_txt, true),
+            (PAUSE_BTN_SAVE, save_txt, true),
+            (PAUSE_BTN_OPTIONS, options_txt, true),
+            (PAUSE_BTN_RESTART, restart_txt, restart_allowed),
+            (PAUSE_BTN_QUIT, quit_txt, true),
+        ]);
+        let labels: Vec<(&str, bool)> = entries
+            .iter()
+            .map(|(_, label, enabled)| (label.as_str(), *enabled))
+            .collect();
 
-        let menu_buttons = align_bottom_right(labels, btn_w, btn_h);
+        let menu_buttons = align_bottom_right(&labels, btn_w, btn_h);
 
         // Build a FrameWnd with widget buttons matching the layout.
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
-        for (i, mb) in menu_buttons.iter().enumerate() {
+        for ((id, _, _), mb) in entries.iter().zip(&menu_buttons) {
             frame.add_widget_absolute(widget_bridge::make_button_enabled(
-                i as u32, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,
+                *id, &mb.label, mb.enabled, mb.x, mb.y, mb.w, mb.h,
             ));
         }
 
@@ -291,13 +313,19 @@ impl PauseMenu {
         if len == 0 {
             return;
         }
-        let mut idx = self.keyboard_selection as i32;
+        let current_position = self
+            .frame
+            .widgets()
+            .iter()
+            .position(|widget| widget.id() == self.keyboard_selection)
+            .unwrap_or(0) as i32;
+        let mut position = current_position;
         for _ in 0..len {
-            idx = (idx + direction).rem_euclid(len);
-            if let Some(w) = self.frame.widget_at(idx as usize)
+            position = (position + direction).rem_euclid(len);
+            if let Some(w) = self.frame.widget_at(position as usize)
                 && w.base().enabled
             {
-                self.keyboard_selection = idx as u32;
+                self.keyboard_selection = w.id();
                 break;
             }
         }
@@ -313,6 +341,7 @@ impl PauseMenu {
             PAUSE_BTN_CONTINUE => PauseMenuOutcome::Continue,
             PAUSE_BTN_LOAD => PauseMenuOutcome::OpenLoad,
             PAUSE_BTN_SAVE => PauseMenuOutcome::OpenSave,
+            PAUSE_BTN_SHERWOOD_TRADING => PauseMenuOutcome::OpenSherwoodTrading,
             PAUSE_BTN_OPTIONS => PauseMenuOutcome::OpenOptions,
             PAUSE_BTN_RESTART => PauseMenuOutcome::Restart,
             PAUSE_BTN_QUIT => PauseMenuOutcome::Quit,
@@ -443,6 +472,22 @@ mod tests {
         let mut menu = PauseMenu::new(&resources, true);
         menu.activate(PAUSE_BTN_OPTIONS);
         assert_eq!(menu.outcome(), PauseMenuOutcome::OpenOptions);
+    }
+
+    #[test]
+    fn sherwood_trading_row_is_conditional_and_keyboard_openable() {
+        let resources = stub_resources();
+        let ordinary = PauseMenu::new(&resources, true);
+        assert!(ordinary.frame.widget(PAUSE_BTN_SHERWOOD_TRADING).is_none());
+
+        let mut sherwood = PauseMenu::new_with_sherwood_trading(&resources, false, true);
+        assert!(sherwood.frame.widget(PAUSE_BTN_SHERWOOD_TRADING).is_some());
+        assert_eq!(sherwood.button_count(), 7);
+
+        sherwood.move_keyboard_selection(1);
+        assert_eq!(sherwood.keyboard_selection, PAUSE_BTN_SHERWOOD_TRADING);
+        sherwood.activate(PAUSE_BTN_SHERWOOD_TRADING);
+        assert_eq!(sherwood.outcome(), PauseMenuOutcome::OpenSherwoodTrading);
     }
 
     /// Open Pause → open Save → cancel back → pause still alive →

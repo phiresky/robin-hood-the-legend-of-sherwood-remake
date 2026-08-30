@@ -76,6 +76,7 @@ pub async fn show_options(
     sound_config: &mut SoundConfig,
     key_config: &mut KeyConfig,
     custom_key_config: &mut KeyConfig,
+    sherwood_trading_editable: bool,
     mut sound: Option<&mut SoundManager>,
     mut audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
@@ -252,6 +253,7 @@ pub async fn show_options(
                             resources,
                             cursor.as_mut().map(|c| c.reborrow()),
                             gameplay_config,
+                            sherwood_trading_editable,
                         )
                         .await;
                         outcome.changed |= changed;
@@ -295,7 +297,7 @@ pub async fn show_options(
             }
 
             renderer.present();
-            crate::window::sleep_ms(16).await;
+            crate::window::sleep_ui_frame().await;
         }
 
         if !re_display {

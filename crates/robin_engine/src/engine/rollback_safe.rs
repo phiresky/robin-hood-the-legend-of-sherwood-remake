@@ -19,6 +19,7 @@
 //! Anything that doesn't fit one of those buckets should be pushed into
 //! the sim via `SimulationFrameInput`, not added here.
 
+use std::collections::BTreeMap;
 use std::ops::Deref;
 
 use super::SimConfig;
@@ -37,6 +38,115 @@ use crate::minimap::HitMask;
 #[cfg(test)]
 use crate::player_command::PlayerCommand;
 use crate::player_command::PlayerInput;
+
+/// Spatial data copied from one authoritative fixed tick for host-side
+/// presentation interpolation.
+///
+/// This value is deliberately detached from [`Engine`]. Reading it cannot
+/// mutate simulation state, and applying it is only supported on an owned
+/// presentation clone through [`Engine::apply_spatial_presentation`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SpatialPresentationSnapshot {
+    poses: BTreeMap<EntityId, SpatialPresentationPose>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SpatialPresentationPose {
+    position: crate::coordinates::WorldPoint3D,
+    map_position: crate::coordinates::MapPoint,
+    jump_z_offset: f32,
+    kind: crate::element::ElementKind,
+    active: bool,
+    hidden_in_building: bool,
+    in_honolulu: bool,
+    layer: u16,
+    sector: Option<crate::position_interface::SectorHandle>,
+    obstacle: Option<crate::position_interface::ObstacleHandle>,
+    in_door_transit: bool,
+    posture: crate::element::Posture,
+    carrier: Option<EntityId>,
+    carried: Option<EntityId>,
+    display_order_ref: Option<EntityId>,
+    behind_display_order_ref: bool,
+    mobile_index: Option<u16>,
+    delayed_teleport_queued: bool,
+    pc_teleport_counter: Option<u16>,
+    pc_teleport_origin: Option<crate::coordinates::MapPoint>,
+}
+
+impl SpatialPresentationPose {
+    fn from_entity(entity: &crate::element::Entity) -> Self {
+        let element = entity.element_data();
+        Self {
+            position: element.position(),
+            map_position: element.position_map(),
+            jump_z_offset: entity.actor_data().map_or(0.0, |actor| actor.jump_z_offset),
+            kind: element.kind,
+            active: element.active,
+            hidden_in_building: element.hidden_in_building,
+            in_honolulu: element.in_honolulu,
+            layer: element.layer(),
+            sector: element.sector(),
+            obstacle: element.obstacle_index(),
+            in_door_transit: element.is_in_door_transit(),
+            posture: element.posture,
+            carrier: entity.human_data().and_then(|human| human.carrier),
+            carried: entity.pc_data().and_then(|pc| pc.carried),
+            display_order_ref: element.sprite.display_order_ref,
+            behind_display_order_ref: element.sprite.behind_display_order_ref,
+            mobile_index: entity.fx_data().and_then(|fx| fx.mobile_index),
+            delayed_teleport_queued: element.position_delayed || element.position_map_delayed,
+            pc_teleport_counter: entity.pc_data().map(|pc| pc.teleport_counter),
+            pc_teleport_origin: entity.pc_data().map(|pc| pc.position_before_teleport),
+        }
+    }
+
+    fn requires_snap_to(&self, next: &Self) -> bool {
+        // Normal actor/projectile motion is far below this in one 40 ms fixed
+        // tick. The guard also catches same-sector scripted teleports, which
+        // otherwise have no retained command tag after their immediate
+        // sequence element terminates. TODO: replace this final distance guard
+        // with a presentation-only teleport epoch once every non-PC teleport
+        // path exposes an explicit retained transition marker.
+        const MAX_CONTINUOUS_MAP_DISTANCE_PER_TICK: f32 = 128.0;
+        let dx = next.map_position.x - self.map_position.x;
+        let dy = next.map_position.y - self.map_position.y;
+        let implausibly_large_step = dx.abs().max(dy.abs()) > MAX_CONTINUOUS_MAP_DISTANCE_PER_TICK;
+        let pc_teleported = match (
+            self.pc_teleport_counter,
+            next.pc_teleport_counter,
+            next.pc_teleport_origin,
+        ) {
+            (Some(previous), Some(current), Some(origin)) => {
+                current > previous
+                    || (current > 0
+                        && origin.x.to_bits() == self.map_position.x.to_bits()
+                        && origin.y.to_bits() == self.map_position.y.to_bits()
+                        && (dx != 0.0 || dy != 0.0))
+            }
+            _ => false,
+        };
+
+        self.kind != next.kind
+            || self.active != next.active
+            || self.hidden_in_building != next.hidden_in_building
+            || self.in_honolulu != next.in_honolulu
+            || self.layer != next.layer
+            || self.sector != next.sector
+            || self.obstacle != next.obstacle
+            || self.in_door_transit != next.in_door_transit
+            || self.posture != next.posture
+            || self.carrier != next.carrier
+            || self.carried != next.carried
+            || self.display_order_ref != next.display_order_ref
+            || self.behind_display_order_ref != next.behind_display_order_ref
+            || self.mobile_index != next.mobile_index
+            || self.delayed_teleport_queued
+            || next.delayed_teleport_queued
+            || pc_teleported
+            || implausibly_large_step
+    }
+}
 
 /// Canonical gameplay-authoritative engine scalars emitted by schema-13
 /// Original parity traces. Presentation camera/surface/backend state is
@@ -136,6 +246,80 @@ impl<'de> serde::Deserialize<'de> for Engine {
 }
 
 impl Engine {
+    /// Capture the world transforms required for smooth host presentation.
+    /// The authoritative engine and all sprite/gameplay animation state are
+    /// left untouched.
+    pub fn spatial_presentation_snapshot(&self) -> SpatialPresentationSnapshot {
+        SpatialPresentationSnapshot {
+            poses: self
+                .inner
+                .entities_with_ids_iter()
+                .map(|(id, entity)| (id, SpatialPresentationPose::from_entity(entity)))
+                .collect(),
+        }
+    }
+
+    /// Apply an absolute interpolation sample to an owned presentation clone.
+    ///
+    /// Only entities present at both fixed-tick endpoints are interpolated.
+    /// Spawned/despawned entities therefore snap with the current fixed state.
+    /// Teleports and attachment/layer/topology transitions also snap to their
+    /// new transform instead of sweeping through invalid world space.
+    ///
+    /// Calling this repeatedly with the same snapshots and `alpha` is
+    /// idempotent; no result depends on the clone's previously sampled pose.
+    pub fn apply_spatial_presentation(
+        &mut self,
+        previous: &SpatialPresentationSnapshot,
+        current: &SpatialPresentationSnapshot,
+        alpha: f32,
+    ) {
+        let alpha = if alpha.is_finite() {
+            alpha.clamp(0.0, 1.0)
+        } else {
+            tracing::warn!(
+                alpha,
+                "non-finite spatial presentation alpha; snapping to current tick"
+            );
+            1.0
+        };
+
+        for (&id, next) in &current.poses {
+            let Some(before) = previous.poses.get(&id) else {
+                continue;
+            };
+            let sampled = if before.requires_snap_to(next) {
+                next.clone()
+            } else {
+                let lerp = |a: f32, b: f32| a + (b - a) * alpha;
+                let mut pose = next.clone();
+                pose.position = crate::coordinates::WorldPoint3D::new(
+                    lerp(before.position.x, next.position.x),
+                    lerp(before.position.y, next.position.y),
+                    lerp(before.position.z, next.position.z),
+                );
+                pose.map_position = crate::coordinates::MapPoint::new(
+                    lerp(before.map_position.x, next.map_position.x),
+                    lerp(before.map_position.y, next.map_position.y),
+                );
+                pose.jump_z_offset = lerp(before.jump_z_offset, next.jump_z_offset);
+                pose
+            };
+
+            let entity = self.inner.get_entity_mut(id).unwrap_or_else(|| {
+                panic!("presentation clone lost current entity {id:?} while sampling")
+            });
+            let element = entity.element_data_mut();
+            element.set_position(sampled.position);
+            // Some authored targets intentionally keep an interaction point
+            // distinct from their visible 3D anchor. Preserve both channels.
+            element.set_position_map_preserving_3d(sampled.map_position);
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.jump_z_offset = sampled.jump_z_offset;
+            }
+        }
+    }
+
     /// Encode a native engine snapshot through the bounded-stack facade codec.
     pub fn encode_native_snapshot(&self) -> Vec<u8> {
         super::snapshot::encode_native_engine_inner(&self.inner)
@@ -330,6 +514,16 @@ impl Engine {
         profiles: &crate::profiles::ProfileManager,
     ) -> Vec<crate::sector_production::SectorProduction> {
         self.inner.live_production_sectors(profiles)
+    }
+
+    /// Presentation view of exactly the inventory stacks Sherwood sale
+    /// commands can remove. Unlike mission-exit harvesting, this excludes
+    /// active in-flight arrow projectiles.
+    pub fn live_tradable_production_sectors(
+        &self,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Vec<crate::sector_production::SectorProduction> {
+        self.inner.live_tradable_production_sectors(profiles)
     }
 
     fn has_pending_recorded_drop_ale_route(
@@ -2977,6 +3171,9 @@ impl Engine {
                 inner.dispatch_startup_message(sim, assets, 1001, 0, 0);
             });
         }
+        // Startup scripts and Sherwood setup may intentionally create or kill
+        // actors. Only the fully settled world is the Clean Hands baseline.
+        inner.initialize_achievement_tracking();
         inner
             .world
             .validate_level_attachments(assets, inner.script_domains.zones.scripts.len());
@@ -3263,6 +3460,12 @@ impl Engine {
         self.inner
             .apply_frame_commands_with_mode(&sim, assets, &post_commands, command_batch_mode);
 
+        // Post-boundary commands are admitted after the main hourglass has
+        // already drained its effects. Drain their effects explicitly before
+        // the optional PostInitialize stage so acknowledgements are observable
+        // on this transaction even on paused/no-hourglass frames.
+        let post_boundary_events = SimEvents::from(self.inner.feedback.drain_side_effects());
+
         let post_initialize_events = run_post_initialize
             .then(|| self.inner.perform_frame_post_initialize(assets))
             .flatten()
@@ -3275,6 +3478,7 @@ impl Engine {
             frame_after,
             hourglass_ran: run_hourglass,
             events: SimEvents::from(side_effects),
+            post_boundary_events,
             post_initialize_events,
             external_action_results,
             state_hash,
@@ -3459,6 +3663,37 @@ impl Engine {
         self.inner.control.sim_config
     }
 
+    /// Attach host-only run eligibility to the exact terminal campaign
+    /// attempt after its deterministic quit command has been admitted.
+    pub fn promote_mission_achievement_results(
+        &mut self,
+        policy: crate::achievement::AchievementUnlockPolicy,
+        context: crate::achievement::AchievementRunContext,
+        profiles: &crate::profiles::ProfileManager,
+    ) -> Result<Option<crate::achievement::AchievementHistoryUpdate>, String> {
+        self.inner
+            .promote_mission_achievement_results(policy, context, profiles)
+    }
+
+    /// Live deterministic achievement evidence for optional host HUDs.
+    pub fn achievement_progress(&self) -> crate::achievement::AchievementProgressSnapshot {
+        self.inner.achievement_progress()
+    }
+
+    /// Frozen successful-attempt evidence used by the terminal debrief.
+    pub fn mission_achievement_results(
+        &self,
+    ) -> Option<&crate::achievement::MissionAchievementResults> {
+        self.inner.mission_achievement_results()
+    }
+
+    /// Exact selected-character skill evidence for the detailed XP HUD.
+    pub fn pc_experience_snapshot(
+        &self,
+        entity: crate::element::EntityId,
+    ) -> Result<super::PcExperienceSnapshot, String> {
+        self.inner.pc_experience_snapshot(entity)
+    }
     /// Seed and configuration captured before this mission's frame-0 setup.
     pub fn mission_start_simulation(&self) -> (u64, SimConfig) {
         (
@@ -3924,6 +4159,94 @@ mod tests {
         (engine, assets)
     }
 
+    fn sherwood_trading_frame_fixture() -> (Engine, LevelAssets) {
+        use crate::element::{ElementBonus, ElementData, ElementKind, Entity, ObjectData};
+        use crate::mission::Mission;
+        use crate::profiles::{Action, MissionLocation, MissionProfile, ProfileManager};
+
+        let mut profiles = ProfileManager::default();
+        profiles.missions.push(MissionProfile {
+            location: MissionLocation::Sherwood,
+            ..MissionProfile::default()
+        });
+        let mut assets = LevelAssets {
+            profile_manager: std::sync::Arc::new(profiles),
+            ..LevelAssets::default()
+        };
+        let mut campaign = Campaign::default();
+        campaign.missions.push(Mission {
+            profile_idx: Some(0),
+            ..Mission::default()
+        });
+        campaign.current_mission_idx = Some(0);
+        let mut engine = Engine::new_for_test_with_simulation(
+            1024.0,
+            768.0,
+            campaign,
+            &mut assets,
+            0x7A4D_E001,
+            SimConfig {
+                sherwood_trading: true,
+                script_enabled: false,
+                ignore_default_loose: true,
+                ..SimConfig::default()
+            },
+        )
+        .expect("construct Sherwood trading frame fixture");
+        engine
+            .inner
+            .world
+            .entities
+            .push(Some(Entity::Bonus(ElementBonus {
+                element: ElementData {
+                    kind: ElementKind::ObjectBonus,
+                    active: true,
+                    ..ElementData::default()
+                },
+                object: ObjectData {
+                    associated_action: Action::Bow,
+                    quantity: 1,
+                    ..ObjectData::default()
+                },
+            })));
+        (engine, assets)
+    }
+
+    #[test]
+    fn paused_post_boundary_trade_delivers_its_receipt_in_the_same_transaction() {
+        use crate::player_command::PlayerCommand;
+        use crate::sector_production::Type;
+        use crate::trading::{TradeOutcome, TradeQuantity};
+
+        let (mut engine, assets) = sherwood_trading_frame_fixture();
+        let output = engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::no_hourglass().with_post_commands(vec![SimCommand::host(
+                    PlayerCommand::CampaignSellProductionItem {
+                        request_id: 77,
+                        prod_type: Type::MakeArrow,
+                        quantity: TradeQuantity::One,
+                    },
+                )]),
+            )
+            .expect("admit paused modal trade");
+
+        assert!(!output.hourglass_ran);
+        assert!(output.events.side_effects().trade_receipts.is_empty());
+        let receipts = &output.post_boundary_events.side_effects().trade_receipts;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].request_id, 77);
+        assert!(matches!(
+            receipts[0].outcome,
+            TradeOutcome::Sold {
+                units: 1,
+                remaining_stock: 0,
+                ..
+            }
+        ));
+    }
+
     #[test]
     fn native_snapshot_decodes_through_the_engine_facade() {
         let (mut engine, _) = frame_api_fixture();
@@ -4067,6 +4390,116 @@ mod tests {
             .sequence_manager
             .element_in_progress(wait_sequence, 0);
         (engine, assets, pc_id, wait_sequence)
+    }
+
+    #[test]
+    fn spatial_presentation_sampling_is_absolute_and_authoritative_hashes_are_unchanged() {
+        let (mut previous, _, pc_id, _) = selection_boundary_fixture();
+        previous
+            .inner
+            .get_entity_mut(pc_id)
+            .expect("presentation test PC")
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::ZERO);
+        let mut current = previous.clone();
+        {
+            let entity = current
+                .inner
+                .get_entity_mut(pc_id)
+                .expect("presentation test PC");
+            entity
+                .element_data_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(40.0, 60.0, 10.0));
+            entity
+                .actor_data_mut()
+                .expect("presentation test actor")
+                .jump_z_offset = 8.0;
+        }
+        let previous_hash = crate::replay::state_hash(&previous);
+        let current_hash = crate::replay::state_hash(&current);
+        let previous_spatial = previous.spatial_presentation_snapshot();
+        let current_spatial = current.spatial_presentation_snapshot();
+        let mut presentation = current.clone();
+
+        presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
+        let first_sample_hash = crate::replay::state_hash(&presentation);
+        let sampled = presentation.get_entity(pc_id).expect("sampled PC");
+        assert_eq!(
+            sampled.element_data().position(),
+            crate::coordinates::WorldPoint3D::new(10.0, 15.0, 2.5)
+        );
+        assert_eq!(
+            sampled.element_data().position_map(),
+            crate::coordinates::MapPoint::new(10.0, 12.5)
+        );
+        assert_eq!(
+            sampled.actor_data().expect("sampled actor").jump_z_offset,
+            2.0
+        );
+
+        presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
+        assert_eq!(
+            crate::replay::state_hash(&presentation),
+            first_sample_hash,
+            "repeating one display sample must be idempotent"
+        );
+        assert_eq!(crate::replay::state_hash(&previous), previous_hash);
+        assert_eq!(crate::replay::state_hash(&current), current_hash);
+    }
+
+    #[test]
+    fn spatial_presentation_snaps_layer_transitions_and_new_entities() {
+        let (previous, _, pc_id, _) = selection_boundary_fixture();
+        let mut current = previous.clone();
+        {
+            let element = current
+                .inner
+                .get_entity_mut(pc_id)
+                .expect("presentation test PC")
+                .element_data_mut();
+            element.set_position_map(crate::coordinates::MapPoint::new(64.0, 96.0));
+            element.set_layer(1);
+        }
+        let spawned_id =
+            current
+                .inner
+                .add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
+                    element: crate::element::ElementData {
+                        kind: crate::element::ElementKind::Fx,
+                        ..Default::default()
+                    },
+                    fx: Default::default(),
+                }));
+        current
+            .inner
+            .get_entity_mut(spawned_id)
+            .expect("spawned presentation FX")
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
+        let previous_spatial = previous.spatial_presentation_snapshot();
+        let current_spatial = current.spatial_presentation_snapshot();
+        let mut presentation = current.clone();
+
+        presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.0);
+
+        assert_eq!(
+            presentation
+                .get_entity(pc_id)
+                .expect("sampled PC")
+                .element_data()
+                .position_map(),
+            crate::coordinates::MapPoint::new(64.0, 96.0),
+            "layer transition must snap rather than sweep"
+        );
+        assert_eq!(
+            presentation
+                .get_entity(spawned_id)
+                .expect("sampled spawned FX")
+                .element_data()
+                .position_map(),
+            crate::coordinates::MapPoint::new(12.0, 34.0),
+            "spawned entity must use its current fixed-tick transform"
+        );
     }
 
     fn adjacent_select_and_cancel(pc_id: EntityId) -> Vec<SimCommand> {
