@@ -173,12 +173,14 @@ pub(crate) fn drain_net_inputs(
                 mission_id,
                 rng_seed,
                 sim_config,
+                speech_timing_locale,
             } => {
                 // Welcome is awaited before Engine construction; retain the
                 // event copy for diagnostics and reconnect validation.
                 if host.transport.mission_id.as_deref() != Some(mission_id.as_str())
                     || host.transport.mission_seed != Some(rng_seed)
                     || host.transport.mission_sim_config != Some(sim_config)
+                    || host.transport.speech_timing_locale != speech_timing_locale
                 {
                     panic!(
                         "fatal multiplayer session error: Welcome/reconnect mission construction state changed"
@@ -186,6 +188,7 @@ pub(crate) fn drain_net_inputs(
                 }
                 host.transport.mission_seed = Some(rng_seed);
                 host.transport.mission_sim_config = Some(sim_config);
+                host.transport.speech_timing_locale = speech_timing_locale;
                 host.transport.mission_id = Some(mission_id);
             }
             NetEvent::Fatal(message) => panic!("fatal multiplayer session error: {message}"),
@@ -716,12 +719,19 @@ pub(super) async fn setup_multiplayer_session(
 
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let speech_timing_locale = host
+                .application_context
+                .canonical_speech_timing_locale()
+                .map_err(|error| {
+                    format!("multiplayer: cannot select authoritative speech timing: {error}")
+                })?;
             let (mut channels, in_tx, out_rx, frame_cursor, snapshot_slot) = NetChannels::new();
             match start_server(
                 nickname.clone(),
                 authoritative_mission_id.to_string(),
                 authoritative_rng_seed,
                 authoritative_sim_config,
+                speech_timing_locale.clone(),
                 in_tx,
                 out_rx,
                 frame_cursor,
@@ -741,6 +751,7 @@ pub(super) async fn setup_multiplayer_session(
                     host.transport.net = Some(channels);
                     host.transport.mission_seed = Some(authoritative_rng_seed);
                     host.transport.mission_sim_config = Some(authoritative_sim_config);
+                    host.transport.speech_timing_locale = speech_timing_locale;
                     host.transport.mission_id = Some(authoritative_mission_id.to_string());
                 }
                 Err(e) => {
@@ -758,7 +769,9 @@ pub(super) async fn setup_multiplayer_session(
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);
                     while (handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
-                        || handle.mission_sim_config().is_none())
+                        || handle.mission_sim_config().is_none()
+                        || handle.assigned_seat.borrow().is_none()
+                        || handle.speech_timing_authority().is_none())
                         && web_time::Instant::now() < deadline
                     {
                         crate::window::sleep_ms(10).await;
@@ -766,6 +779,8 @@ pub(super) async fn setup_multiplayer_session(
                     if handle.mission_id().is_none()
                         || handle.mission_seed().is_none()
                         || handle.mission_sim_config().is_none()
+                        || handle.assigned_seat.borrow().is_none()
+                        || handle.speech_timing_authority().is_none()
                     {
                         return Err(
                             "multiplayer: timed out awaiting authoritative Welcome before Engine construction"
@@ -781,11 +796,33 @@ pub(super) async fn setup_multiplayer_session(
                         "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
                     ));
                 }
+                #[cfg(target_arch = "wasm32")]
+                let speech_timing_locale = handle
+                    .speech_timing_authority()
+                    .expect("successful browser Welcome must publish speech timing authority");
+                #[cfg(not(target_arch = "wasm32"))]
+                let speech_timing_locale = handle.speech_timing_locale();
+                if let Some(authoritative_locale) = speech_timing_locale.as_deref() {
+                    let has_timing_pack = host
+                        .application_context
+                        .installed_languages()
+                        .map_err(|error| {
+                            format!("multiplayer: cannot inspect installed voice packs: {error}")
+                        })?
+                        .into_iter()
+                        .any(|pack| pack.locale == authoritative_locale && pack.has_voice);
+                    if !has_timing_pack {
+                        return Err(format!(
+                            "multiplayer: host requires voice pack `{authoritative_locale}` for deterministic speech timing, but that validated pack is not installed"
+                        ));
+                    }
+                }
                 host.transport.mission_id = Some(welcomed_mission.to_string());
                 if let Some(seed) = handle.mission_seed() {
                     host.transport.mission_seed = Some(seed);
                 }
                 host.transport.mission_sim_config = handle.mission_sim_config();
+                host.transport.speech_timing_locale = speech_timing_locale;
                 tracing::info!(
                     server = %addr,
                     nickname = %nickname,

@@ -245,7 +245,7 @@ fn load_mission_texts(datadir: &Path, mission_id: u32, names: &mut ActorNames) {
     // Resolve the `.red` level-descriptor file.
     let red_name = crate::res_descr::red_filename(mission_id);
     let descriptors = if let Some(dd) = shipping.as_ref()
-        && let Some(d) = dd.red_files.get(&red_name)
+        && let Some(d) = dd.localized_level_descriptors(&red_name)
     {
         d.clone()
     } else {

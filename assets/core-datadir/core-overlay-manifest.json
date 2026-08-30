@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "shippingDatadirSchema": 14,
+  "shippingDatadirSchema": 15,
   "files": [
     {
       "path": "Data/Interface/Fonts/Debrief.bfn",

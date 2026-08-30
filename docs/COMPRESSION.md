@@ -1929,6 +1929,20 @@ download/compile, assets, datadir, boot) and, for static hosts, the
 coi-serviceworker so threads work on GitHub Pages after one automatic
 first-visit reload.
 
+## Shipping integration: schema v15 — runtime locale overlays (2026-08-29)
+
+Datadir schema v15 (`RHDDNA15`) adds the canonical per-locale resources and
+raw byte maps used by runtime language switching. The serialized form keeps
+owned `Vec<u8>` values; loading converts those bytes to the VFS's shared
+`AssetBytes` representation only at the atomic locale-mount boundary. This
+keeps the on-disk manifest portable while avoiding repeated runtime copies.
+
+Mission payloads are unchanged from the preceding RLE-atlas format at
+`RHMISN08`/v8. Because bitcode is not
+self-describing and the top-level datadir shape changed, older datadir
+manifests are rejected with a regeneration error instead of being decoded as
+the new shape or assigned an invented locale identity.
+
 ## Session bootstrap: overlapped terrain + interface decodes (2026-08-29)
 
 Follow-up to the final integrated browser measurement above, whose closing

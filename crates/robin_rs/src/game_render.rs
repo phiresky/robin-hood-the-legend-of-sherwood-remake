@@ -1872,8 +1872,8 @@ where
 
 /// Renderer-path wrapper around [`crate::hud_text::render_text_background`]
 /// for the ransom/amulet overlay and dev noise labels.  Routes the
-/// shadow+foreground pass through `Renderer::render_text_argb` instead of
-/// the old HUD surface-raster path.
+/// shadow+foreground pass through the native/TrueType renderer instead of the
+/// old HUD surface-raster path.
 fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str, x: i32, y: i32) {
     hud_text::render_text_background(
         &fonts.tooltip_font,
@@ -1882,7 +1882,7 @@ fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str
         x,
         y,
         |f, t, fx, fy| {
-            layout::render_text_screen(renderer, f, t, fx, fy);
+            layout::render_text_screen_font(renderer, f, t, fx, fy);
         },
     );
 }

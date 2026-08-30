@@ -1141,7 +1141,7 @@ pub(crate) fn resolve_loading_pak(
         }
         let normalized = path.replace('\\', "/").to_ascii_lowercase();
         let key = normalized.strip_prefix("data/").unwrap_or(&normalized);
-        shipping.is_some_and(|dd| dd.pak_files.contains_key(key))
+        shipping.is_some_and(|dd| dd.localized_pak(key).is_some())
     };
 
     if let Some(proto) = proto_level_filename {

@@ -6,7 +6,7 @@
 //! hover labels.
 
 use crate::host::ViewportState;
-use crate::native_font::{self, NativeFont};
+use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
 use crate::ui_panel::{
     PortraitCache, PortraitTarget, portrait_bar_items, portrait_slot_count, slot_left_x,
@@ -67,9 +67,9 @@ const ACTIONB_WIDTH: u16 = 56;
 /// - `portrait_font`: "PCPortrait" — portrait name/HP text
 /// - `shadow_font`: "Background" — dark shadow behind text for readability
 pub struct HudFonts {
-    pub tooltip_font: NativeFont,
-    pub portrait_font: NativeFont,
-    pub shadow_font: Option<NativeFont>,
+    pub tooltip_font: Font,
+    pub portrait_font: Font,
+    pub shadow_font: Option<Font>,
 }
 
 impl HudFonts {
@@ -82,32 +82,28 @@ impl HudFonts {
             .map_err(|e| tracing::warn!("HUD font config not available: {e}"))
             .ok()?;
 
-        // HUD text uses the bitmap (native) rendering path — a TrueType
-        // fallback would need a separate rasteriser. Skip the entry if
-        // the font resolves to TrueType; the caller falls through to
-        // the secondary key.
-        let as_native = |name: &str| -> Option<NativeFont> {
-            match native_font::load_font_by_name(&config, name) {
-                Ok(native_font::Font::Native(f)) => Some(f),
-                Ok(native_font::Font::TrueType(_)) => {
-                    tracing::info!("HUD font '{name}' is TrueType-only; bitmap pipeline skips it");
+        let load = |name: &str| -> Option<Font> {
+            match native_font::load_font_by_name_for_active_locale(&config, name) {
+                Ok(font) if font.is_renderable() => Some(font),
+                Ok(_) => {
+                    tracing::info!("HUD font '{name}' is not renderable");
                     None
                 }
-                Err(e) => {
-                    tracing::info!("HUD font '{name}' not available: {e}");
+                Err(error) => {
+                    tracing::info!("HUD font '{name}' not available: {error}");
                     None
                 }
             }
         };
 
-        let tooltip_font = as_native("Tooltips").or_else(|| as_native("PCPortrait"))?;
+        let tooltip_font = load("Tooltips").or_else(|| load("PCPortrait"))?;
 
-        let portrait_font = as_native("PCPortrait").unwrap_or_else(|| {
+        let portrait_font = load("PCPortrait").unwrap_or_else(|| {
             tracing::info!("PCPortrait font not found, reusing tooltip font");
-            as_native("Tooltips").expect("tooltip font was already loaded successfully")
+            load("Tooltips").expect("tooltip font was already loaded successfully")
         });
 
-        let shadow_font = as_native("Background");
+        let shadow_font = load("Background");
 
         tracing::info!(
             "HUD fonts loaded: tooltip={}px, portrait={}px, shadow={}",
@@ -268,14 +264,14 @@ pub enum Alignment {
 /// underlying rasterisation backend. Live HUD rendering routes this through
 /// `Renderer::render_text_argb` so text is emitted from the GPU font atlas.
 pub fn render_text_background<F>(
-    foreground: &NativeFont,
-    shadow: Option<&NativeFont>,
+    foreground: &Font,
+    shadow: Option<&Font>,
     text: &str,
     x: i32,
     y: i32,
     mut render_at: F,
 ) where
-    F: FnMut(&NativeFont, &str, i32, i32),
+    F: FnMut(&Font, &str, i32, i32),
 {
     if let Some(shadow_font) = shadow {
         for &(dx, dy) in &[(-1i32, -1i32), (-1, 1), (1, -1), (1, 1)] {
@@ -287,22 +283,22 @@ pub fn render_text_background<F>(
 
 fn render_text_with_shadow_gpu(
     renderer: &mut Renderer,
-    font: &NativeFont,
-    shadow: Option<&NativeFont>,
+    font: &Font,
+    shadow: Option<&Font>,
     text: &str,
     x: i32,
     y: i32,
 ) {
     render_text_background(font, shadow, text, x, y, |f, t, fx, fy| {
-        renderer.render_text_argb(f, t, fx, fy);
+        crate::ingame_menu::layout::render_text_screen_font(renderer, f, t, fx, fy);
     });
 }
 
 #[allow(clippy::too_many_arguments)]
 fn render_text_in_box_gpu(
     renderer: &mut Renderer,
-    font: &NativeFont,
-    shadow: Option<&NativeFont>,
+    font: &Font,
+    shadow: Option<&Font>,
     text: &str,
     box_x: i32,
     box_y: i32,
@@ -356,8 +352,8 @@ fn render_text_in_box_gpu(
 
 fn render_text_at_point_gpu(
     renderer: &mut Renderer,
-    font: &NativeFont,
-    shadow: Option<&NativeFont>,
+    font: &Font,
+    shadow: Option<&Font>,
     text: &str,
     x: i32,
     y: i32,
@@ -373,8 +369,8 @@ fn render_text_at_point_gpu(
 
 fn render_text_centered_gpu(
     renderer: &mut Renderer,
-    font: &NativeFont,
-    shadow: Option<&NativeFont>,
+    font: &Font,
+    shadow: Option<&Font>,
     text: &str,
     x_left: i32,
     x_right: i32,
@@ -569,7 +565,7 @@ fn render_counter_titbits_gpu(
     camera: &ViewportState,
     renderer: &mut Renderer,
     fonts: &HudFonts,
-    shadow: Option<&NativeFont>,
+    shadow: Option<&Font>,
 ) {
     use robin_engine::titbit::TitbitKind;
 
@@ -611,7 +607,7 @@ fn render_portrait_text_gpu(
     portraits: &PortraitCache,
     renderer: &mut Renderer,
     fonts: &HudFonts,
-    shadow: Option<&NativeFont>,
+    shadow: Option<&Font>,
 ) {
     let font = &fonts.portrait_font;
     let sw = renderer.screen_width();
@@ -792,7 +788,7 @@ fn render_ammo_counts_gpu(
     assets: &LevelAssets,
     renderer: &mut Renderer,
     fonts: &HudFonts,
-    shadow: Option<&NativeFont>,
+    shadow: Option<&Font>,
 ) {
     let font = &fonts.portrait_font;
     let sw = renderer.screen_width();

@@ -14,13 +14,14 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, Sender};
 
-/// Browser-side handle to an active client connection.  Never
-/// constructed while the iroh wasm transport is missing; exists so
+/// Browser-side handle to an active client connection. Never constructed
+/// while the iroh wasm transport is missing; exists so
 /// [`super::MultiplayerRuntime`] compiles on wasm.
 pub struct ClientHandle {
     pub assigned_seat: Rc<RefCell<Option<PlayerId>>>,
     pub mission_seed: Rc<RefCell<Option<u64>>>,
     pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
+    pub speech_timing_locale: Rc<RefCell<Option<String>>>,
     pub mission_id: Rc<RefCell<Option<String>>>,
 }
 
@@ -37,11 +38,23 @@ impl ClientHandle {
         self.mission_id.borrow().clone()
     }
 
+    pub fn speech_timing_locale(&self) -> Option<String> {
+        self.speech_timing_locale.borrow().clone()
+    }
+
+    /// The authoritative speech timing carried by Welcome. The outer option
+    /// distinguishes a pending handshake from an explicit `None`, meaning all
+    /// peers must use base `Data/Sounds` timing. This stub cannot construct a
+    /// live handle, so any handle visible to shared code is already welcomed.
+    pub fn speech_timing_authority(&self) -> Option<Option<String>> {
+        Some(self.speech_timing_locale())
+    }
+
     pub fn shutdown(&mut self) {}
 }
 
-/// Browser multiplayer is unavailable until iroh's wasm support is
-/// wired in; always errors.
+/// Browser multiplayer is unavailable until iroh's wasm support is wired in;
+/// always errors.
 pub fn connect_client(
     addr: impl AsRef<str>,
     _nickname: String,

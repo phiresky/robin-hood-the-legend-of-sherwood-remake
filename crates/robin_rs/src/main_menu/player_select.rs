@@ -13,7 +13,7 @@ use crate::gfx_types::GameEvent;
 use crate::host::ApplicationContext;
 use crate::ingame_menu::layout::{
     MENU_H, MENU_W, MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
-    draw_fallback_panel, draw_screen_background, enter_modal_gpu_phase, render_text_virt,
+    draw_fallback_panel, draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
 };
 use crate::ingame_menu::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_NEW, MT_BTN_OK, MT_BTN_RENAME,
@@ -408,11 +408,11 @@ pub(crate) async fn show_select_player(
                     },
                 );
             }
-            let Some(font) = resources.label_font() else {
+            let Some(font) = resources.label_font_any() else {
                 continue;
             };
             let label = format_profile_row(profile, resources);
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1045,9 +1045,9 @@ async fn run_name_prompt(
             );
         }
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(title);
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1061,12 +1061,12 @@ async fn run_name_prompt(
             );
         }
 
-        if is_new_player && let Some(font) = resources.popup_font() {
+        if is_new_player && let Some(font) = resources.popup_font_any() {
             let name = resources.menu_text.get(MT_STR_NAME);
             let difficulty = resources.menu_text.get(MT_STR_DIFFICULTY_LEVEL);
             let name_w = font.text_width(&name);
             let difficulty_w = font.text_width(&difficulty);
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1074,7 +1074,7 @@ async fn run_name_prompt(
                 win_x + (win_w - name_w) / 2,
                 win_y + 100,
             );
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1128,8 +1128,8 @@ async fn run_name_prompt(
         } else {
             input_widget.edit_text.clone()
         };
-        if let Some(font) = resources.edit_field_font() {
-            render_text_virt(
+        if let Some(font) = resources.edit_field_font_any() {
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1140,14 +1140,14 @@ async fn run_name_prompt(
         }
 
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
-        if is_new_player && let Some(font) = resources.popup_font() {
+        if is_new_player && let Some(font) = resources.popup_font_any() {
             let label_box_w = 100;
             let label_y = diff_row_y + diff_btn_h + 5;
             for (i, (_id, label, _level)) in diff_labels.iter().enumerate() {
                 let radio_x = diff_row_x + i as i32 * (diff_btn_w + diff_btn_gap);
                 let box_x = radio_x + (diff_btn_w - label_box_w) / 2;
                 let text_w = font.text_width(label);
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -1477,9 +1477,9 @@ async fn show_difficulty_prompt(
         dim_screen(renderer);
         draw_fallback_panel(renderer, transform, &PANEL);
 
-        if let Some(font) = resources.title_font() {
+        if let Some(font) = resources.title_font_any() {
             let title = resources.menu_text.get(MT_PORT_TTL_ADVANCED_DIFFICULTY);
-            render_text_virt(
+            render_text_virt_font(
                 renderer,
                 font,
                 transform,
@@ -1489,7 +1489,7 @@ async fn show_difficulty_prompt(
             );
         }
 
-        if let Some(font) = resources.popup_font() {
+        if let Some(font) = resources.popup_font_any() {
             for (index, label) in preset_labels.iter().enumerate() {
                 let x = PRESET_X + index as i32 * (PRESET_W + PRESET_GAP);
                 let marker = if index == preset_index(difficulty) {
@@ -1498,7 +1498,7 @@ async fn show_difficulty_prompt(
                     "[ ]"
                 };
                 let text = format!("{marker} {label}");
-                render_text_virt(renderer, font, transform, &text, x + 4, PRESET_Y + 7);
+                render_text_virt_font(renderer, font, transform, &text, x + 4, PRESET_Y + 7);
             }
 
             let rules = difficulty.rules();
@@ -1512,7 +1512,7 @@ async fn show_difficulty_prompt(
                 let label = resources.menu_text.get(advanced_rule_label_id(row));
                 let value = advanced_rule_value(resources, rules, row);
                 let text = format!("{marker} {label}: {value}");
-                render_text_virt(
+                render_text_virt_font(
                     renderer,
                     font,
                     transform,
@@ -1523,7 +1523,7 @@ async fn show_difficulty_prompt(
             }
             if matches!(difficulty, DifficultyLevel::Custom(_)) {
                 let help = resources.menu_text.get(MT_PORT_STR_DIFFICULTY_HELP);
-                render_text_virt(renderer, font, transform, &help, RULE_X, 390);
+                render_text_virt_font(renderer, font, transform, &help, RULE_X, 390);
             }
         }
 

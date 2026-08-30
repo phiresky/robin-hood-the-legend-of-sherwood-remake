@@ -978,6 +978,24 @@ impl PortraitCache {
         self.localized_names = names;
     }
 
+    /// Refresh data-authored hero/VIP names without rewriting the generated
+    /// Merry Men names that are already part of campaign/replay identity.
+    pub fn reload_localized_names_preserving_generated(
+        &mut self,
+        names: [Option<String>; CharacterKind::COUNT],
+    ) {
+        for kind in CharacterKind::VARIANTS {
+            if matches!(
+                kind,
+                CharacterKind::MerryManA | CharacterKind::MerryManB | CharacterKind::MerryManC
+            ) && self.localized_names[kind.as_index()].is_some()
+            {
+                continue;
+            }
+            self.localized_names[kind.as_index()] = names[kind.as_index()].clone();
+        }
+    }
+
     //
     // Determinism: the resulting names are persisted to
     // `campaign.peasant_names` via `RegisterPeasantName`, which is
@@ -3035,13 +3053,12 @@ impl RequirementsTooltipTracker {
 /// fill — relies on the shadow font for contrast against the scene.
 ///
 /// `shadow` is the optional "Background" font; when `None`, the text is
-/// drawn without an explicit shadow (the NativeFont rasterizer still
-/// bakes a subtle halo into ARGB glyphs).  `cursor_size` is the current
-/// cursor sprite's on-screen size (width, height).
+/// drawn without an explicit shadow. `cursor_size` is the current cursor
+/// sprite's on-screen size (width, height).
 pub fn draw_screen_tooltip(
     renderer: &mut Renderer,
-    font: &crate::native_font::NativeFont,
-    shadow: Option<&crate::native_font::NativeFont>,
+    font: &crate::native_font::Font,
+    shadow: Option<&crate::native_font::Font>,
     text: &str,
     mouse_x: i32,
     mouse_y: i32,
@@ -3075,7 +3092,7 @@ pub fn draw_screen_tooltip(
         let box_x = mouse_x.max(0);
         let box_y = default_y.max(0);
         let box_w = (sw - box_x).max(1);
-        let wrap = layout::wrap_text(font, text, box_w, 3);
+        let wrap = layout::wrap_text_for_box_font(font, text, box_w, 3);
         // Clamp vertically if the wrapped box overflows the bottom.
         let total_h = (wrap.lines.len() as i32) * th;
         let y_top = if box_y + total_h > sh {
@@ -3086,9 +3103,9 @@ pub fn draw_screen_tooltip(
         for (i, line) in wrap.lines.iter().enumerate() {
             let ly = y_top + (i as i32) * th;
             if let Some(sh_font) = shadow {
-                renderer.render_text_argb(sh_font, line, box_x + 1, ly + 1);
+                layout::render_text_screen_font(renderer, sh_font, line, box_x + 1, ly + 1);
             }
-            renderer.render_text_argb(font, line, box_x, ly);
+            layout::render_text_screen_font(renderer, font, line, box_x, ly);
         }
         return;
     }
@@ -3112,9 +3129,9 @@ pub fn draw_screen_tooltip(
     }
 
     if let Some(sh_font) = shadow {
-        renderer.render_text_argb(sh_font, text, x + 1, y + 1);
+        layout::render_text_screen_font(renderer, sh_font, text, x + 1, y + 1);
     }
-    renderer.render_text_argb(font, text, x, y);
+    layout::render_text_screen_font(renderer, font, text, x, y);
 }
 
 // ─── PC info popup overlay ────────────────────────────────────────

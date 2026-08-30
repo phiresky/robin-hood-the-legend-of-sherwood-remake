@@ -477,4 +477,8 @@ impl GpuResources {
         );
         bind_group
     }
+
+    pub(super) fn clear_font_atlas_cache(&mut self) {
+        self.font_atlas_cache.clear();
+    }
 }
