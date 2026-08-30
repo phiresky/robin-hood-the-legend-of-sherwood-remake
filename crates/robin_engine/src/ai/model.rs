@@ -2242,7 +2242,7 @@ pub enum ReportType {
 pub struct Hint {
     pub seek_point: Position,
     pub seek_flags: u16,
-    pub who_tells_me: NpcHandle,
+    pub who_tells_me: AiEntityHandle,
 }
 
 /// Info about a stolen object.
@@ -2258,8 +2258,8 @@ pub struct Hint {
     bitcode::Decode,
 )]
 pub struct StolenObject {
-    pub object: ObjectHandle,
-    pub thief: NpcHandle,
+    pub object: AiEntityHandle,
+    pub thief: AiEntityHandle,
 }
 
 /// Info about a friend in trouble.
@@ -2368,7 +2368,7 @@ pub enum StimulusInfo {
     Position(Position),
     Human(AiEntityHandle),
     Hint(Hint),
-    Object(ObjectHandle),
+    Object(AiEntityHandle),
     Stolen(StolenObject),
     Combat(CombatInfo),
     DoorCombat(DoorCombatInfo),
@@ -2518,7 +2518,7 @@ impl Stimulus {
     pub fn with_human(stimulus_type: StimulusType, human: HumanHandle) -> Self {
         Self {
             stimulus_type,
-            info: StimulusInfo::Human(human),
+            info: StimulusInfo::Human(AiEntityHandle::new(human)),
             owner: None,
             to_whole_patrol: false,
             self_origin: SelfStimulusOrigin::Ordinary,

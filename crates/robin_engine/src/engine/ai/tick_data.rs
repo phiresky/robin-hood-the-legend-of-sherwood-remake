@@ -15,7 +15,7 @@ impl EngineInner {
         let (target_handle, target_creation_order) = match stimulus.info {
             crate::ai::StimulusInfo::Human(handle) => (
                 Some(handle),
-                self.entity_id_for_index(handle)
+                self.entity_id_for_index(handle.get())
                     .map(|target| self.world.original_creation_order(target)),
             ),
             _ => (None, None),

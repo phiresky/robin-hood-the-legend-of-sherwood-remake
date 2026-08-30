@@ -80,14 +80,17 @@ impl EngineInner {
             else {
                 return;
             };
+            let mut sector_out =
+                crate::position_interface::SectorHandle::from_number(door.sector_out);
+            if let Some(index) = door.sector_out_index {
+                sector_out = sector_out.with_arena_index(index);
+            }
             DoorSnapshot {
                 point_out: door.point_out,
                 point_in: door.point_in,
                 layer_out: door.layer_out,
                 layer_in: door.layer_in,
-                sector_out: door.position_out.sector.unwrap_or_else(|| {
-                    panic!("reinforcement door {door_index} has no outside sector identity")
-                }),
+                sector_out,
             }
         };
 

@@ -611,7 +611,7 @@ impl FriendlyAi {
         self.base.think_recursion_depth = self.base.think_recursion_depth.saturating_add(1);
 
         if let StimulusInfo::Human(h) = stimulus.info {
-            self.base.last_stimulus_actor = Some(AiEntityHandle::new(h));
+            self.base.last_stimulus_actor = Some(h);
         }
 
         // LOSE_CONSCIOUSNESS always drops the alert regardless of the
@@ -1156,7 +1156,7 @@ impl FriendlyAi {
                             info: StimulusInfo::Hint(Hint {
                                 seek_point: self.base.seek_position,
                                 seek_flags: 0,
-                                who_tells_me: self.base.me,
+                                who_tells_me: AiEntityHandle::new(self.base.me),
                             }),
                             fallback_to_sender: None,
                             to_whole_patrol: false,
@@ -1348,7 +1348,7 @@ impl FriendlyAi {
                 if self.base.current_substate == Substate::SeekingCivilianRunningToSoldier =>
             {
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = Some(AiEntityHandle::new(soldier_handle));
+                    self.base.antagonist = Some(soldier_handle);
                     // The original deletes friend detectables before the
                     // direct CALL_ALERT, including when the soldier refuses.
                     self.base
@@ -1358,7 +1358,7 @@ impl FriendlyAi {
                         .push(crate::element::DetectableType::Friend);
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::RequestAlert {
-                            target: soldier_handle,
+                            target: soldier_handle.get(),
                             caller: self.base.me,
                             continuation: crate::ai::AlertContinuation::CivilianSawSoldier,
                         },
@@ -1405,7 +1405,7 @@ impl FriendlyAi {
                         // reused unchanged for a retained EVENT_VIEW.
                         let mut nested_ctx = ctx.clone();
                         if let StimulusInfo::Human(handle) = q.info {
-                            let view = nested_ctx.entity_view(handle).unwrap_or_else(|| {
+                            let view = nested_ctx.entity_view(handle.get()).unwrap_or_else(|| {
                                 panic!(
                                     "retained {:?} for civilian {} references missing human {}",
                                     q.stimulus_type, self.base.me, handle
@@ -1490,7 +1490,7 @@ impl FriendlyAi {
             StimulusType::CallYouJustWait => {
                 // Soldier tells child to wait (apple chase begins)
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = Some(AiEntityHandle::new(soldier_handle));
+                    self.base.antagonist = Some(soldier_handle);
 
                     if let Some(pos_goal) =
                         self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
@@ -1503,7 +1503,7 @@ impl FriendlyAi {
                             ctx,
                         );
                     } else {
-                        let antag = ctx.entity_view(soldier_handle).unwrap_or_else(|| {
+                        let antag = ctx.entity_view(soldier_handle.get()).unwrap_or_else(|| {
                             panic!(
                                 "CALL_YOU_JUST_WAIT civilian {} requires chaser {} entity view",
                                 self.base.me, soldier_handle
@@ -1517,7 +1517,7 @@ impl FriendlyAi {
             StimulusType::EventAppleChaseNear => {
                 // Nearby apple chase — friend flees too
                 if let StimulusInfo::Human(soldier_handle) = stimulus.info {
-                    self.base.antagonist = Some(AiEntityHandle::new(soldier_handle));
+                    self.base.antagonist = Some(soldier_handle);
 
                     if let Some(pos_goal) =
                         self.propose_good_apple_chase_flee_destination(sim, ctx, grid)
@@ -1533,7 +1533,7 @@ impl FriendlyAi {
                         // Directed panic from the chaser's live
                         // position, same as the CallYouJustWait
                         // fallback above.
-                        let antag = ctx.entity_view(soldier_handle).unwrap_or_else(|| {
+                        let antag = ctx.entity_view(soldier_handle.get()).unwrap_or_else(|| {
                             panic!(
                                 "EVENT_APPLE_CHASE_NEAR civilian {} requires chaser {} entity view",
                                 self.base.me, soldier_handle
@@ -1629,7 +1629,7 @@ impl FriendlyAi {
                 if let StimulusInfo::Human(human_handle) = stimulus.info {
                     match self.base.current_state {
                         AiState::Default | AiState::Wondering => {
-                            self.event_view_standard_procedure(human_handle, ctx);
+                            self.event_view_standard_procedure(human_handle.get(), ctx);
                         }
                         AiState::Seeking => {
                             // Only update the recon report when the
@@ -1642,7 +1642,7 @@ impl FriendlyAi {
                             // encounter's last-seen point — so the
                             // report update uses the currently-
                             // spotted human's position instead.
-                            if let Some(view) = ctx.entity_view(human_handle)
+                            if let Some(view) = ctx.entity_view(human_handle.get())
                                 && view.camp != ctx.camp
                             {
                                 self.base
@@ -1655,7 +1655,7 @@ impl FriendlyAi {
                             // spotted human currently swordfighting.
                             // Look up both flags via the per-tick
                             // view map.
-                            let Some(v) = ctx.entity_view(human_handle) else {
+                            let Some(v) = ctx.entity_view(human_handle.get()) else {
                                 return false;
                             };
                             let different_camp = v.camp != ctx.camp;
@@ -1693,7 +1693,7 @@ impl FriendlyAi {
                 if let StimulusInfo::Human(body_handle) = stimulus.info {
                     match self.base.current_state {
                         AiState::Default | AiState::Wondering => {
-                            self.event_sees_body_standard_procedure(body_handle, ctx);
+                            self.event_sees_body_standard_procedure(body_handle.get(), ctx);
                         }
                         _ => {
                             // Other states: ignore bodies

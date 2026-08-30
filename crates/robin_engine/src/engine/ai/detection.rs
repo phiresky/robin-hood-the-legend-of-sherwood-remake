@@ -5407,7 +5407,9 @@ impl EngineInner {
             for target_id in rising_dispatches {
                 let mut stimulus =
                     crate::ai::Stimulus::new(crate::ai::StimulusType::EventSeesObject);
-                stimulus.info = crate::ai::StimulusInfo::Object(target_id.index());
+                stimulus.info = crate::ai::StimulusInfo::Object(crate::ai::AiEntityHandle::new(
+                    target_id.index(),
+                ));
                 ai.outbox.detection.stimuli.push(stimulus);
                 tracing::trace!(
                     npc = ?npc_id,
@@ -5456,7 +5458,7 @@ impl OwnerViewRadiusCache {
             cache.values.borrow_mut().insert(None, radius);
         }
         for index in 0..persistent.obstacles.len() {
-            let Some(handle) = u16::try_from(index)
+            let Some(handle) = u32::try_from(index)
                 .ok()
                 .and_then(crate::position_interface::ObstacleHandle::new)
             else {

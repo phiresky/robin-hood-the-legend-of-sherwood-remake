@@ -514,7 +514,7 @@ impl EngineInner {
         // Read the actor's current obstacle — used as the seed for the
         // sort when multiple lines are crossed.
         let mut current_obstacle = match self.world.entities.get(entity_id) {
-            Some(e) => e.element_data().obstacle_index().map(u16::from),
+            Some(e) => e.element_data().obstacle_index(),
             None => return false,
         };
 

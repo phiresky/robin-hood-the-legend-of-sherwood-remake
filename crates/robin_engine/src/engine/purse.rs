@@ -464,6 +464,7 @@ impl EngineInner {
                 if self.world.fast_grid.is_straight_movement_authorized(
                     corrected_map,
                     candidate,
+                    layer,
                     &move_box,
                 ) {
                     vector = candidate_vector;
@@ -932,7 +933,6 @@ impl EngineInner {
             let coin = {
                 let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                     fast_find_grid: &self.world.fast_grid,
-                    layer,
                     sight_obstacles: self.sight_obstacles(assets),
                     water_zones: Some(&assets.water_zones),
                 };

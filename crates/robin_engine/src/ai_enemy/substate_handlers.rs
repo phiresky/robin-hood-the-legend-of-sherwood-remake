@@ -44,17 +44,18 @@ impl EnemyAi {
     ///
     /// Original tests the left combat-neighbour pointer first, then the right,
     /// and copies that soldier's target verbatim. A present neighbour whose
-    /// target is null therefore returns `Some(0)`; only the absence of both
-    /// soldier neighbours authorizes `GetNewPrimaryTarget`.
+    /// target is null therefore returns `Some(None)`; only the absence of both
+    /// soldier neighbours returns outer `None` and authorizes
+    /// `GetNewPrimaryTarget`.
     pub(super) fn phalanx_neighbour_primary_target(
         &self,
         tick: &AiPerTickData,
-    ) -> Option<HumanHandle> {
+    ) -> Option<Option<AiEntityHandle>> {
         for neighbour in [self.left_combat_neighbour, self.right_combat_neighbour] {
-            if neighbour == 0 {
+            let Some(neighbour) = neighbour else {
                 continue;
-            }
-            let fighter = self.find_fighter(neighbour, tick).unwrap_or_else(|| {
+            };
+            let fighter = self.find_fighter(neighbour.get(), tick).unwrap_or_else(|| {
                 panic!(
                     "combat neighbour {neighbour} missing from complete fighter registry for {}",
                     self.base.me
@@ -731,7 +732,7 @@ impl EnemyAi {
         // Take sequence normally finishes with EVENT_DONE, but any expected
         // event advances the same completion boundary.
         if let Some(coin) = self.get_nearest_seen_money_and_remove_it_from_list(ctx) {
-            self.base.interesting_object = coin;
+            self.base.interesting_object = Some(AiEntityHandle::new(coin));
             self.set_state(AiState::Wondering, Substate::WonderingMoneyReactiontime);
             self.base.launch_timer(1, ctx.frame);
         } else {
@@ -767,7 +768,7 @@ impl EnemyAi {
 
                 if !self.money_fight_victims.is_empty() {
                     let next = self.money_fight_victims.remove(0);
-                    self.base.detected_body = next as HumanHandle;
+                    self.base.detected_body = Some(AiEntityHandle::new(next));
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SetLootedAfterMoneyFight {
                             target: next,
@@ -807,8 +808,8 @@ impl EnemyAi {
     ) -> bool {
         if stimulus_type == StimulusType::EventTimer {
             if self.answer_question(Question::ShallITakeAle, ctx) {
-                assert_ne!(
-                    self.base.interesting_object, 0,
+                assert!(
+                    self.base.interesting_object.is_some(),
                     "ale reaction timer requires the retained bottle pointer"
                 );
                 // Original reads Position(mpInterestingObject) even when a
@@ -877,8 +878,7 @@ impl EnemyAi {
                     self.set_state(AiState::Wondering, Substate::WonderingDrinkingAle);
                     // Launch a DrinkAle interaction to trigger
                     // the drinking animation on the ale bottle.
-                    let obj = self.base.interesting_object;
-                    if obj != 0 {
+                    if let Some(obj) = self.base.interesting_object {
                         use crate::element::Command;
                         use crate::sequence::{Sequence, SequenceElement};
                         let owner = self.base.owner_entity_id;
@@ -1035,11 +1035,12 @@ impl EnemyAi {
         match stimulus_type {
                 StimulusType::EventMyTalk1
                     // antagonist.think(CallYourTalk1)
-                    if self.base.antagonist != 0 => {
+                    if self.base.antagonist.is_some() => {
+                        let antagonist = self.required_antagonist("chasing an apple-throwing child");
                         self.base
                             .outbox.reentrant.cross_npc_actions
                             .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
+                                target: antagonist.get(),
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: crate::ai::StimulusInfo::None,
                                 fallback_to_sender: None,
@@ -1165,7 +1166,9 @@ impl EnemyAi {
                             CrossNpcAction::SendStimulus {
                                 target: chief_id.index(),
                                 stimulus_type: StimulusType::EventSeesBrawl,
-                                info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                                info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(
+                                    self.base.me,
+                                )),
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
                             },
@@ -1188,7 +1191,7 @@ impl EnemyAi {
                         dx.max(dy) < 25.0
                     })
                     .unwrap_or(false);
-                if obj != 0 && close_enough {
+                if let Some(obj) = obj.filter(|_| close_enough) {
                     // StopAll + Take sequence.
                     self.base.stop_all();
                     use crate::element::Command;
@@ -1212,7 +1215,7 @@ impl EnemyAi {
                     // is take-money or fight-for-money with
                     // EventObjectAway carrying a StolenObject.
                     let stolen = crate::ai::StolenObject {
-                        object: obj as crate::ai::ObjectHandle,
+                        object: obj.get(),
                         thief: self.base.me,
                     };
                     for cs in tick.camp_soldiers.iter() {
@@ -1308,21 +1311,13 @@ impl EnemyAi {
                 self.base.launch_timer(1, ctx.frame);
             }
             StimulusType::EventReachPoint => {
-                let friend = self.base.friend_in_trouble;
-                if friend == 0 {
-                    tracing::error!(
-                        soldier = self.base.me,
-                        "brawl approach reached its point without a friend in trouble"
-                    );
-                    self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                    return false;
-                }
+                let friend = self.required_friend_in_trouble("reaching a brawl opponent");
                 let friend_view =
                     ctx.expect_entity_view(friend, "brawl-approach friend in trouble");
                 if friend_view.ai_state == AiState::Sleeping {
-                    let fit = friend as NpcHandle;
+                    let fit = friend.get();
                     self.money_fight_enemies.retain(|h| *h != fit);
-                    self.base.friend_in_trouble = 0;
+                    self.base.friend_in_trouble = None;
                     self.set_state(AiState::Wondering, Substate::WonderingBrawlHitting);
                     self.base
                         .outbox
@@ -1392,8 +1387,8 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) {
         // Remove KO'd target from the enemy list.
-        if self.base.friend_in_trouble != 0 {
-            let fit = self.base.friend_in_trouble as NpcHandle;
+        if let Some(friend_in_trouble) = self.base.friend_in_trouble {
+            let fit = friend_in_trouble.get();
             let is_unconscious = ctx
                 .expect_entity_view(fit as HumanHandle, "brawl-hitting friend")
                 .is_unconscious;
@@ -1418,16 +1413,16 @@ impl EnemyAi {
             // Handle 0 ("no brawl partner") deliberately
             // fails this gate and falls through to picking
             // the nearest remaining enemy.
-            let fit_ok = self.base.friend_in_trouble != 0
-                && !ctx
-                    .expect_entity_view(self.base.friend_in_trouble, "brawl-hitting friend")
-                    .is_unconscious;
+            let fit_ok = self.base.friend_in_trouble.is_some_and(|friend| {
+                !ctx.expect_entity_view(friend, "brawl-hitting friend")
+                    .is_unconscious
+            });
             if fit_ok {
                 self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
                 self.base.face_entity(self.base.friend_in_trouble, ctx);
                 self.base.launch_timer(30, ctx.frame);
             } else if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                self.base.friend_in_trouble = next as HumanHandle;
+                self.base.friend_in_trouble = Some(AiEntityHandle::new(next));
                 self.set_state(AiState::Wondering, Substate::WonderingBrawlReactiontime);
                 self.base.launch_timer(10, ctx.frame);
             } else {
@@ -1457,13 +1452,14 @@ impl EnemyAi {
             self.base.set_emoticon(EmoticonType::Thunderstorm);
             // Insert friend_in_trouble into money_fight_enemies
             // (asserts soldier + non-self).
-            let fit = self.base.friend_in_trouble;
-            if fit != 0 && fit != self.base.me {
+            if let Some(fit) = self.base.friend_in_trouble
+                && fit.get() != self.base.me
+            {
                 let is_soldier = ctx
                     .expect_entity_view(fit, "brawl-got-hit attacker")
                     .is_soldier();
-                if is_soldier && !self.money_fight_enemies.contains(&(fit as NpcHandle)) {
-                    self.money_fight_enemies.push(fit as NpcHandle);
+                if is_soldier && !self.money_fight_enemies.contains(&fit.get()) {
+                    self.money_fight_enemies.push(fit.get());
                 }
             }
             // If lying, launch StandUp; else recurse
@@ -1496,7 +1492,7 @@ impl EnemyAi {
         if stimulus_type == StimulusType::EventDone {
             // Pick nearest money-fight enemy and approach.
             if let Some(next) = self.get_nearest_money_fight_enemy(ctx) {
-                self.base.friend_in_trouble = next as HumanHandle;
+                self.base.friend_in_trouble = Some(AiEntityHandle::new(next));
                 self.set_state(AiState::Wondering, Substate::WonderingBrawlApproaching);
                 let view = ctx.expect_entity_view(next as HumanHandle, "brawl-recovering enemy");
                 self.base.go_near(
@@ -1525,19 +1521,19 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         if stimulus_type == StimulusType::EventReachPoint {
-            let body = self.base.detected_body;
+            let body = self.required_detected_body("reacting to a body");
             // A cleared body handle takes the too-far arm below;
             // a live handle must resolve to a view.
-            let (body_pos, is_tied) = if body == 0 {
-                (Position::default(), false)
-            } else {
+            let (body_pos, is_tied) = if let Some(body) = body {
                 let v = ctx.expect_entity_view(body, "loot-approach body");
                 (v.position, v.posture == crate::element::Posture::Tied)
+            } else {
+                (Position::default(), false)
             };
             let dx = body_pos.x - ctx.position.x;
             let dy = body_pos.y - ctx.position.y;
             let dist = dx.abs().max(dy.abs());
-            if body == 0 || dist > 100.0 {
+            if body.is_none() || dist > 100.0 {
                 // Too far — let Looting handle re-entry.
                 self.set_state(AiState::Wondering, Substate::WonderingLooting);
                 // Kick the state machine via a 1-tick timer;
@@ -1550,7 +1546,9 @@ impl EnemyAi {
                 // Spot the tied body and transition to
                 // body-seek; emit the reconnaissance report
                 // update.
-                self.base.my_reconnaissance_report.add_seen_body(body);
+                self.base
+                    .my_reconnaissance_report
+                    .add_seen_body(body.expect("checked loot body presence").get());
                 self.base
                     .my_reconnaissance_report
                     .update(ReportType::Body, body_pos);
@@ -1575,7 +1573,9 @@ impl EnemyAi {
                 self.base.stop_all();
                 let owner = self.base.owner_entity_id;
                 let antagonist = Some(crate::element::EntityId::Soldier(
-                    crate::entity_id::SoldierId(body),
+                    crate::entity_id::SoldierId(
+                        body.expect("loot search requires a detected body").get(),
+                    ),
                 ));
                 let mut seq = Sequence::new();
                 seq.append_element(SequenceElement::new_interaction(
@@ -1627,7 +1627,7 @@ impl EnemyAi {
             }
             if !self.money_fight_victims.is_empty() {
                 let next = self.money_fight_victims.remove(0);
-                self.base.detected_body = next as HumanHandle;
+                self.base.detected_body = Some(AiEntityHandle::new(next));
                 self.base.outbox.reentrant.cross_npc_actions.push(
                     CrossNpcAction::SetLootedAfterMoneyFight {
                         target: next,
@@ -1662,8 +1662,9 @@ impl EnemyAi {
             if !self.other_seen_ale.is_empty() {
                 // Remember next beer as object of desire.
                 let next = self.other_seen_ale.remove(0);
-                self.base.object_of_desire = next;
-                self.base.interesting_object = next;
+                let next = AiEntityHandle::new(next);
+                self.base.object_of_desire = Some(next);
+                self.base.interesting_object = Some(next);
                 // SetState(Wondering, ApproachingAle).
                 self.set_state(AiState::Wondering, Substate::WonderingApproachingAle);
                 // GoNear(obj_pos, AI_STOP_BEFORE_MONEY_DISTANCE, FIND_ACCESSIBLE)
@@ -1758,7 +1759,7 @@ impl EnemyAi {
                     .list_us
                     .iter()
                     .copied()
-                    .filter(|h| *h != antagonist && *h != self.base.me)
+                    .filter(|h| Some(AiEntityHandle::new(*h)) != antagonist && *h != self.base.me)
                     .collect();
                 for target in us {
                     self.base.outbox.reentrant.cross_npc_actions.push(
@@ -1774,10 +1775,10 @@ impl EnemyAi {
                 self.base.list_us.clear();
 
                 // CallCleanUpAfterBrawl to antagonist.
-                if antagonist != 0 {
+                if let Some(antagonist) = antagonist {
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
-                            target: antagonist,
+                            target: antagonist.get(),
                             stimulus_type: StimulusType::CallCleanUpAfterBrawl,
                             info: crate::ai::StimulusInfo::None,
                             fallback_to_sender: None,
@@ -1854,10 +1855,10 @@ impl EnemyAi {
                 // triggered — the 3 cycle variants just vary
                 // which BadExcuse sample plays; the callback
                 // is always CallYourTalk1 on the officer.
-                if self.base.antagonist != 0 {
+                if let Some(antagonist) = self.base.antagonist {
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
-                            target: self.base.antagonist,
+                            target: antagonist.get(),
                             stimulus_type: StimulusType::CallYourTalk1,
                             info: crate::ai::StimulusInfo::None,
                             fallback_to_sender: None,
@@ -1955,10 +1956,9 @@ impl EnemyAi {
             self.set_state(AiState::Wondering, Substate::WonderingAwakenBrawlVictim);
             self.base.stop_all();
             let owner = self.base.owner_entity_id;
-            let body = self.base.detected_body;
-            if body != 0 {
+            if let Some(body) = self.base.detected_body {
                 let antagonist = Some(crate::element::EntityId::Soldier(
-                    crate::entity_id::SoldierId(body),
+                    crate::entity_id::SoldierId(body.get()),
                 ));
                 let mut seq = Sequence::new();
                 seq.append_element(SequenceElement::new_interaction(
@@ -2497,6 +2497,7 @@ impl EnemyAi {
         // position (set by seek_next_point → go_near).
         // On arrival, stop and begin identification.
         if stimulus_type == StimulusType::EventReachPoint {
+            let beggar = self.required_beggar_to_examine("approaching a beggar seek point");
             // `RHartificialmalignity.cpp:2394-2427`: the arrival is only an
             // identification when `MaxNormDistance( mpBeggarToExamine ) < 100`.
             // The go_near(50) request only bounds the *path goal*; the beggar
@@ -2504,10 +2505,10 @@ impl EnemyAi {
             // side of an obstacle, so the arrival must be re-measured against
             // the beggar's live body position. Otherwise the soldier menaces
             // thin air instead of resuming the search at the next seek point.
-            let beggar_view = ctx.entity_view(self.beggar_to_examine).unwrap_or_else(|| {
+            let beggar_view = ctx.entity_view(beggar).unwrap_or_else(|| {
                 panic!(
                     "beggar {} disappeared before the approach distance check",
-                    self.beggar_to_examine
+                    beggar
                 )
             });
             let beggar_world = beggar_view.detection_position_world;
@@ -2529,12 +2530,9 @@ impl EnemyAi {
             // menace/equip command can begin.
             use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
             let beggar_position = ctx
-                .entity_view(self.beggar_to_examine)
+                .entity_view(beggar)
                 .unwrap_or_else(|| {
-                    panic!(
-                        "beggar {} disappeared before identification turn",
-                        self.beggar_to_examine
-                    )
+                    panic!("beggar {} disappeared before identification turn", beggar)
                 })
                 .position;
             let turn_direction = crate::position_interface::vector_to_sector_0_to_15_iso(
@@ -2563,11 +2561,11 @@ impl EnemyAi {
                 // directly from a save, in which case our compatibility
                 // cache has never been populated.
                 let beggar_is_npc = ctx
-                    .entity_view(self.beggar_to_examine)
+                    .entity_view(beggar)
                     .unwrap_or_else(|| {
                         panic!(
                             "beggar {} disappeared before identification timer setup",
-                            self.beggar_to_examine
+                            beggar
                         )
                     })
                     .is_civilian();
@@ -2595,19 +2593,15 @@ impl EnemyAi {
         // First inspection phase: timer fires after the
         // menace/equip-bow animation completes.
         if stimulus_type == StimulusType::EventTimer {
+            let beggar = self.required_beggar_to_examine("identifying a beggar");
             // `RHartificialmalignity.cpp` queries
             // `mpBeggarToExamine->IsNPC()` at the instant this timer fires.
             // Do not use `beggar_is_npc`: it is only a compatibility cache
             // populated while choosing the next seek point, and therefore is
             // false when a save resumes in this identification substate.
             let beggar_is_npc = ctx
-                .entity_view(self.beggar_to_examine)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "beggar {} disappeared during identification",
-                        self.beggar_to_examine
-                    )
-                })
+                .entity_view(beggar)
+                .unwrap_or_else(|| panic!("beggar {} disappeared during identification", beggar))
                 .is_civilian();
             if beggar_is_npc {
                 // Real beggar: NPC shows face and identifies
@@ -2617,19 +2611,21 @@ impl EnemyAi {
                 // the beggar via `pending_launch_on_target`,
                 // which carries (target, cmd) to the
                 // engine-side sequence-manager drain.
-                self.base.outbox.actor.launch_on_target.push((
-                    self.beggar_to_examine,
-                    crate::element::Command::BeggarShowFace,
-                ));
+                self.base
+                    .outbox
+                    .actor
+                    .launch_on_target
+                    .push((beggar, crate::element::Command::BeggarShowFace));
                 // Original immediately follows the show-face launch
                 // with `beggar->Say(CIV_REMARK_BEGGAR_IDENTIFIES_HIMSELF)`.
                 // Keep both calls in the ordered actor-effect prefix:
                 // SetState below snapshots that prefix before its
                 // synchronous script callback.
-                self.base.outbox.actor.say_on_target.push((
-                    self.beggar_to_examine,
-                    crate::ai::Remark::CivBeggarIdentifiesHimself,
-                ));
+                self.base
+                    .outbox
+                    .actor
+                    .say_on_target
+                    .push((beggar, crate::ai::Remark::CivBeggarIdentifiesHimself));
                 self.set_state(
                     AiState::Seeking,
                     Substate::SeekingSeekpointIdentifyingBeggar2,
@@ -2638,9 +2634,9 @@ impl EnemyAi {
             } else {
                 // Disguised PC detected! Set as primary target
                 // and begin combat.
-                self.base.primary_target = self.beggar_to_examine;
+                self.base.primary_target = Some(beggar);
                 self.list_them.clear();
-                self.list_them.push(self.beggar_to_examine);
+                self.list_them.push(beggar.get());
 
                 if self.is_archer() {
                     // False beggar stands up via `LeaveBeggar`,
@@ -2650,9 +2646,9 @@ impl EnemyAi {
                         .outbox
                         .actor
                         .launch_on_target
-                        .push((self.beggar_to_examine, crate::element::Command::LeaveBeggar));
+                        .push((beggar, crate::element::Command::LeaveBeggar));
                     self.set_state(AiState::Attacking, Substate::AttackingBowShooting);
-                    self.shoot_arrow_at(self.base.primary_target, ctx, tick);
+                    self.shoot_arrow_at(beggar.get(), ctx, tick);
                 } else {
                     // Melee: call PC for duel.
                     self.begin_swordfight(ctx, tick);
@@ -2893,7 +2889,7 @@ impl EnemyAi {
                         // Officer must have already processed
                         // this body (dropped it from their
                         // DETECTABLE_BODY list).
-                        if cs.detectable_bodies.contains(&body) {
+                        if cs.detectable_bodies.contains(&body.get()) {
                             return None;
                         }
                         Some(cs.handle)
@@ -2934,7 +2930,7 @@ impl EnemyAi {
                 self.officer_look_for_soldier(ReportType::Body, ctx, tick);
             } else {
                 // RunToExamineBody(body).
-                self.run_to_examine_body(body, ctx, tick, grid);
+                self.run_to_examine_body(body.get(), ctx, tick, grid);
             }
         }
         false
@@ -2953,7 +2949,7 @@ impl EnemyAi {
             // The timer only watches for a body that has recovered
             // while we are travelling. Body examination itself is
             // exclusively driven by EVENT_REACHPOINT in the original.
-            let body_handle = self.base.detected_body;
+            let body_handle = self.required_detected_body("travelling toward a body");
             let view = ctx.entity_view(body_handle).unwrap_or_else(|| {
                 panic!("SeekingBody timer target {body_handle} has no typed live entity view")
             });
@@ -2963,7 +2959,7 @@ impl EnemyAi {
                 self.base.launch_timer(10, ctx.frame);
             }
         } else if stimulus_type == StimulusType::EventReachPoint {
-            let body_handle = self.base.detected_body;
+            let body_handle = self.required_detected_body("reaching a body");
             let view = ctx.entity_view(body_handle).unwrap_or_else(|| {
                 panic!("SeekingBody target {body_handle} has no typed live entity view")
             });
@@ -3048,8 +3044,8 @@ impl EnemyAi {
                 // Dead-body / rider-confirms-dead branch: remember
                 // this body so a later officer "examine here" call
                 // can short-circuit (see the `CallYourTalk1` arm).
-                if body_handle != 0 && !self.already_seen_bodies.contains(&body_handle) {
-                    self.already_seen_bodies.push(body_handle);
+                if !self.already_seen_bodies.contains(&body_handle.get()) {
+                    self.already_seen_bodies.push(body_handle.get());
                 }
                 self.set_state(AiState::Seeking, Substate::SeekingBodyLookingDeadBody);
                 self.base.set_emoticon(EmoticonType::XMark);
@@ -3057,7 +3053,7 @@ impl EnemyAi {
                     parameters_ai::AI_WATCH_DEADBODY_AGAIN_TIME as u32,
                     ctx.frame,
                 );
-            } else if body_handle != 0 && (is_tied || is_unconscious) {
+            } else if is_tied || is_unconscious {
                 use crate::element::Command;
                 use crate::sequence::{Sequence, SequenceElement};
                 self.base.say(Remark::AwakensSleeperr);
@@ -3392,7 +3388,7 @@ impl EnemyAi {
                         seek_position: civ_view.report_seek_position,
                         seen_bodies: civ_view.report_seen_bodies.clone(),
                         charly: civ_view.report_charly,
-                        charly_seen: civ_view.report_charly != 0,
+                        charly_seen: civ_view.report_charly.is_some(),
                     };
                     // Merge with all three flags.
                     self.base.consider_report_merged_at_frame(
@@ -3417,7 +3413,7 @@ impl EnemyAi {
                             AiState::Seeking,
                             Substate::SeekingGetAlertingReportFromCivilian,
                         );
-                        self.base.antagonist = hint.who_tells_me;
+                        self.base.antagonist = Some(AiEntityHandle::new(hint.who_tells_me));
                         self.base.face_entity(hint.who_tells_me, ctx);
                         self.base.seek_position = civ_report.seek_position;
                         self.base
@@ -3616,15 +3612,16 @@ impl EnemyAi {
     fn seeking_officer_call_soldier(&mut self, stimulus_type: StimulusType) -> bool {
         // Officer turned to face soldier, now calls them
         if stimulus_type == StimulusType::EventDone {
+            let antagonist = self.required_antagonist("calling an individual soldier");
             self.base
                 .outbox
                 .reentrant
                 .cross_npc_actions
                 .push(CrossNpcAction::RequestThinkResult {
-                    target: self.base.antagonist,
+                    target: antagonist.get(),
                     caller: self.base.me,
                     stimulus_type: StimulusType::CallHey,
-                    info: StimulusInfo::Human(self.base.me),
+                    info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                     continuation: ThinkResultContinuation::OfficerCalledSoldier,
                 });
         }
@@ -3641,10 +3638,11 @@ impl EnemyAi {
         // Officer waits for soldier to approach
         match stimulus_type {
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("waiting for a called soldier");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 match ant_substate {
                     Some(
@@ -3685,6 +3683,7 @@ impl EnemyAi {
                     .say_with_flags(Remark::OfficerSendsOutSoldier, SpeechFlags::MYTALK_1);
             }
             StimulusType::EventMyTalk1 => {
+                let antagonist = self.required_antagonist("instructing a soldier");
                 // I said "Soldier! Examine this place!"
                 self.base
                     .outbox
@@ -3696,7 +3695,7 @@ impl EnemyAi {
                         // does not retry the call on the speaker.
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk1,
                         info: StimulusInfo::None,
                     });
@@ -3711,10 +3710,11 @@ impl EnemyAi {
                 self.base.launch_timer(30, ctx.frame);
             }
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("waiting for an instructed soldier");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 if ant_substate == Some(Substate::SeekingSoldierGetInstructedByOfficer) {
                     self.base.launch_timer(20, ctx.frame);
@@ -3743,10 +3743,12 @@ impl EnemyAi {
                 self.base.say(Remark::OfficerAsksWhatsup);
             }
             StimulusType::EventTimer => {
+                let antagonist =
+                    self.required_antagonist("waiting for an instructed soldier to return");
                 let ant = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist);
+                    .find(|cs| cs.handle == antagonist.get());
                 if let Some(ant) = ant {
                     let alive_and_conscious = ctx
                         .entity_view(ant.handle)
@@ -3813,8 +3815,10 @@ impl EnemyAi {
             }
             StimulusType::CallReport => {
                 let soldier = match stimulus.info {
-                    StimulusInfo::Human(h) => h,
-                    _ => self.base.antagonist,
+                    StimulusInfo::Human(h) => h.get(),
+                    _ => self
+                        .required_antagonist("receiving an instructed soldier report")
+                        .get(),
                 };
                 if !self.get_report_from_soldier(soldier, false, ctx, tick) {
                     // Nothing special discovered
@@ -3862,15 +3866,16 @@ impl EnemyAi {
     ) -> bool {
         // Soldier called by officer, approach on timer
         if stimulus_type == StimulusType::EventTimer {
+            let antagonist = self.required_antagonist("approaching a calling officer");
             let officer_pos = tick
                 .camp_soldiers
                 .iter()
-                .find(|cs| cs.handle == self.base.antagonist)
+                .find(|cs| cs.handle == antagonist.get())
                 .map(|cs| cs.position)
                 .unwrap_or_else(|| {
                     panic!(
                         "called soldier {} requires officer {} in the camp snapshot",
-                        self.base.me, self.base.antagonist
+                        self.base.me, antagonist
                     )
                 });
             self.go_near(
@@ -3900,10 +3905,11 @@ impl EnemyAi {
         // Soldier walking to officer
         match stimulus_type {
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("walking to a calling officer");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 if ant_substate == Some(Substate::SeekingOfficerWaitForSoldier) {
                     self.base.launch_timer(20, ctx.frame);
@@ -3912,19 +3918,20 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventReachPoint => {
+                let antagonist = self.required_antagonist("reaching a calling officer");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 if ant_substate == Some(Substate::SeekingOfficerWaitForSoldier) {
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
                             fallback_to_sender: None,
                             to_whole_patrol: false,
-                            target: self.base.antagonist,
+                            target: antagonist.get(),
                             stimulus_type: StimulusType::CallCoordinate,
-                            info: StimulusInfo::Human(self.base.me),
+                            info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                         },
                     );
                     self.set_state(
@@ -3954,6 +3961,7 @@ impl EnemyAi {
         // Soldier receiving instructions from officer
         match stimulus_type {
             StimulusType::EventMyTalk1 => {
+                let antagonist = self.required_antagonist("receiving officer instructions");
                 // I said "What's your order, Sir?"
                 self.base
                     .outbox
@@ -3964,7 +3972,7 @@ impl EnemyAi {
                         // in the Original conversation chain.
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk1,
                         info: StimulusInfo::None,
                     });
@@ -3972,9 +3980,12 @@ impl EnemyAi {
             StimulusType::CallYourTalk1 => {
                 // Officer said "Soldier! Examine this place!"
                 // Check if body was already examined
-                if self.base.detected_body != 0
-                    && self.already_seen_bodies.contains(&self.base.detected_body)
+                if self
+                    .base
+                    .detected_body
+                    .is_some_and(|body| self.already_seen_bodies.contains(&body.get()))
                 {
+                    let antagonist = self.required_antagonist("declining an already examined body");
                     // Already examined — skip search, return to officer
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
@@ -3982,7 +3993,7 @@ impl EnemyAi {
                             // fallback in the Original.
                             fallback_to_sender: None,
                             to_whole_patrol: false,
-                            target: self.base.antagonist,
+                            target: antagonist.get(),
                             stimulus_type: StimulusType::CallYourTalk2,
                             info: StimulusInfo::None,
                         },
@@ -3996,6 +4007,7 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventMyTalk2 => {
+                let antagonist = self.required_antagonist("accepting officer instructions");
                 // I said "Sir, yes, Sir!"
                 // Original captures the officer's selected body before
                 // delivering CALL_YOURTALK_2, which can advance the
@@ -4003,11 +4015,11 @@ impl EnemyAi {
                 let officer = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .unwrap_or_else(|| {
                         panic!(
                             "instructed soldier {} requires missing officer antagonist {}",
-                            self.base.me, self.base.antagonist
+                            self.base.me, antagonist
                         )
                     });
                 let body_handle = officer.detected_body;
@@ -4020,13 +4032,13 @@ impl EnemyAi {
                         // in the Original conversation chain.
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk2,
                         info: StimulusInfo::None,
                     });
                 // Add the body to our detection list so we don't
                 // re-react when detecting it later.
-                if body_handle != 0 {
+                if let Some(body_handle) = body_handle {
                     self.base.outbox.actor.add_detectables.push((
                         ctx.entity_id(body_handle).unwrap_or_else(|| {
                             panic!("CallYourTalk2 body {body_handle} has no typed live entity view")
@@ -4050,10 +4062,12 @@ impl EnemyAi {
                 );
             }
             StimulusType::EventTimer => {
+                let antagonist =
+                    self.required_antagonist("waiting for officer instruction completion");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 if ant_substate == Some(Substate::SeekingOfficerInstructSoldier) {
                     self.base.launch_timer(20, ctx.frame);
@@ -4117,9 +4131,11 @@ impl EnemyAi {
                 match ant_substate {
                     Substate::SeekingOfficerWaitForInstructedSoldier
                     | Substate::SeekingOfficerWaitForInstructedGroup => {
+                        let antagonist =
+                            self.required_antagonist("starting a report to an officer");
                         self.base.outbox.reentrant.owner_work.push(
                             crate::ai::AiOwnerWork::BeginSoldierGiveReport {
-                                officer: self.base.antagonist,
+                                officer: antagonist.get(),
                                 current_frame: ctx.frame,
                             },
                         );
@@ -4144,6 +4160,7 @@ impl EnemyAi {
         // Soldier gives report to officer
         match stimulus_type {
             StimulusType::EventMyTalk1 => {
+                let antagonist = self.required_antagonist("giving a report to an officer");
                 self.base
                     .outbox
                     .reentrant
@@ -4154,9 +4171,9 @@ impl EnemyAi {
                         // it never retries on the reporting soldier.
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk1,
-                        info: StimulusInfo::Human(self.base.me),
+                        info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                     });
                 self.base.launch_timer(20, ctx.frame);
             }
@@ -4378,8 +4395,10 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::CallReport => {
                 let soldier = match stimulus.info {
-                    StimulusInfo::Human(h) => h,
-                    _ => self.base.antagonist,
+                    StimulusInfo::Human(h) => h.get(),
+                    _ => self
+                        .required_antagonist("receiving an instructed group report")
+                        .get(),
                 };
                 if !self.get_report_from_soldier(soldier, true, ctx, tick) {
                     // Nothing special detected
@@ -4428,11 +4447,13 @@ impl EnemyAi {
 
                 if self.alerted_us.is_empty() {
                     let report = &self.base.my_reconnaissance_report;
-                    if report.report_type == ReportType::MissedCharly && report.charly != 0 {
-                        let charly = ctx.entity_view(report.charly).unwrap_or_else(|| {
+                    if report.report_type == ReportType::MissedCharly
+                        && let Some(charly_handle) = report.charly
+                    {
+                        let charly = ctx.entity_view(charly_handle).unwrap_or_else(|| {
                             panic!(
                                 "officer waiting for instructed group requires Charly {} view",
-                                report.charly
+                                charly_handle
                             )
                         });
                         if matches!(
@@ -4507,15 +4528,16 @@ impl EnemyAi {
                 // ReachPoint -> Turn sequence ordering.
                 self.base.go_to(self.gather_position, GotoFlags::RUN, ctx);
             } else {
+                let antagonist = self.required_antagonist("joining a called officer group");
                 let officer_pos = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.position)
                     .unwrap_or_else(|| {
                         panic!(
                             "called group member {} requires officer {} in the camp snapshot",
-                            self.base.me, self.base.antagonist
+                            self.base.me, antagonist
                         )
                     });
                 self.base.go_near(
@@ -4540,10 +4562,11 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("travelling to a group officer");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 match ant_substate {
                     Some(
@@ -4573,10 +4596,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventDone => {
+                let antagonist = self.required_antagonist("finishing travel to a group officer");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 match ant_substate {
                     Some(
@@ -4593,9 +4617,9 @@ impl EnemyAi {
                             CrossNpcAction::SendStimulus {
                                 fallback_to_sender: None,
                                 to_whole_patrol: false,
-                                target: self.base.antagonist,
+                                target: antagonist.get(),
                                 stimulus_type: StimulusType::CallCoordinate,
-                                info: StimulusInfo::Human(self.base.me),
+                                info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                             },
                         );
                     }
@@ -4769,11 +4793,12 @@ impl EnemyAi {
         // Soldier reached officer, starting report
         match stimulus_type {
             StimulusType::EventMyTalk0 => {
+                let antagonist = self.required_antagonist("starting an officer report");
                 // Forward talk to officer
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 if matches!(
                     ant_substate,
@@ -4787,7 +4812,7 @@ impl EnemyAi {
                         CrossNpcAction::SendStimulus {
                             fallback_to_sender: None,
                             to_whole_patrol: false,
-                            target: self.base.antagonist,
+                            target: antagonist.get(),
                             stimulus_type: StimulusType::CallYourTalk0,
                             info: StimulusInfo::None,
                         },
@@ -4795,10 +4820,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("waiting during an officer report");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 match ant_substate {
                     Some(
@@ -4814,10 +4840,11 @@ impl EnemyAi {
                 }
             }
             StimulusType::EventReachPoint => {
+                let antagonist = self.required_antagonist("reaching an officer to report");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 match ant_substate {
                     Some(
@@ -4892,15 +4919,16 @@ impl EnemyAi {
             stimulus_type,
             StimulusType::EventMyTalk1 | StimulusType::EventTimer
         ) {
+            let antagonist = self.required_antagonist("giving an alerting report");
             let officer_report = tick
                 .camp_soldiers
                 .iter()
-                .find(|cs| cs.handle == self.base.antagonist)
+                .find(|cs| cs.handle == antagonist.get())
                 .map(|cs| cs.report_type)
                 .unwrap_or_else(|| {
                     panic!(
                         "reporting soldier {} requires officer {} in the camp snapshot",
-                        self.base.me, self.base.antagonist
+                        self.base.me, antagonist
                     )
                 });
 
@@ -4920,9 +4948,9 @@ impl EnemyAi {
                     .push(CrossNpcAction::SendStimulus {
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallReport,
-                        info: StimulusInfo::Human(self.base.me),
+                        info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                     });
                 // Original invokes both recipient Think calls before
                 // changing the caller's substate. The officer's
@@ -4931,7 +4959,7 @@ impl EnemyAi {
                 // the report-start substate.
                 self.base.outbox.reentrant.cross_npc_actions.push(
                     CrossNpcAction::RequestThinkResult {
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         caller: self.base.me,
                         stimulus_type: StimulusType::CallYourTalk1,
                         info: StimulusInfo::None,
@@ -4950,9 +4978,9 @@ impl EnemyAi {
                     .push(CrossNpcAction::SendStimulus {
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallReport,
-                        info: StimulusInfo::Human(self.base.me),
+                        info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                     });
                 self.base
                     .launch_timer(combat::STANDARD_TALK_TIME as u32, ctx.frame);
@@ -5016,10 +5044,11 @@ impl EnemyAi {
                 self.base.say(Remark::OfficerAsksWhatsup);
             }
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("waiting for an alerting soldier");
                 let ant_substate = tick
                     .camp_soldiers
                     .iter()
-                    .find(|cs| cs.handle == self.base.antagonist)
+                    .find(|cs| cs.handle == antagonist.get())
                     .map(|cs| cs.ai_substate);
                 match ant_substate {
                     Some(
@@ -5038,8 +5067,10 @@ impl EnemyAi {
             }
             StimulusType::CallReport => {
                 let soldier = match stimulus.info {
-                    StimulusInfo::Human(h) => h,
-                    _ => self.base.antagonist,
+                    StimulusInfo::Human(h) => h.get(),
+                    _ => self
+                        .required_antagonist("receiving an alerting soldier report")
+                        .get(),
                 };
                 if !self.get_report_from_soldier(soldier, false, ctx, tick) {
                     // Nothing really alerting
@@ -5075,6 +5106,7 @@ impl EnemyAi {
                 );
             }
             StimulusType::EventMyTalk1 => {
+                let antagonist = self.required_antagonist("answering an alerting soldier");
                 self.base
                     .outbox
                     .reentrant
@@ -5082,7 +5114,7 @@ impl EnemyAi {
                     .push(CrossNpcAction::SendStimulus {
                         fallback_to_sender: None,
                         to_whole_patrol: false,
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk1,
                         info: StimulusInfo::None,
                     });
@@ -5154,7 +5186,7 @@ impl EnemyAi {
                 let body_stuck = ctx
                     .expect_entity_view(self.base.detected_body, "seeking-net body")
                     .stuck_under_net;
-                if !body_stuck && self.is_detecting(self.base.detected_body as HumanHandle, ctx) {
+                if !body_stuck && self.is_detecting(self.base.detected_body, ctx) {
                     // Resurrected.
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 } else {
@@ -5188,14 +5220,14 @@ impl EnemyAi {
                         // SEARCH×4 + TAKE on interesting_object
                         // (the net).  Only fire the sequence if
                         // the object is still active.
-                        let net_obj = self.base.interesting_object;
-                        let active = net_obj != 0 && ctx.entity_position(net_obj).is_some();
-                        if active {
+                        if let Some(net_obj) = self.base.interesting_object
+                            && ctx.entity_position(net_obj).is_some()
+                        {
                             self.set_state(AiState::Seeking, Substate::SeekingTakingNet);
                             self.base.stop_all();
                             let owner = self.base.owner_entity_id;
                             let antagonist = Some(crate::element::EntityId::Net(
-                                crate::entity_id::NetId(net_obj),
+                                crate::entity_id::NetId(net_obj.get()),
                             ));
                             let mut seq = crate::sequence::Sequence::new();
                             seq.append_element(crate::sequence::SequenceElement::new_interaction(
@@ -5258,7 +5290,12 @@ impl EnemyAi {
             //     another net on top)
             //   dead|unconscious → RunToExamineBody
             //   else → ReturnToDuty
-            let body = self.base.detected_body;
+            let body = self.base.detected_body.unwrap_or_else(|| {
+                panic!(
+                    "enemy AI {} taking a net requires a detected body",
+                    self.base.me
+                )
+            });
             let view = ctx.expect_entity_view(body, "taking-net body");
             let stuck = view.stuck_under_net;
             let examine = !view.is_able_to_fight && !view.stuck_under_net;
@@ -5267,7 +5304,7 @@ impl EnemyAi {
                 // `stuck_under_net` and transitions into
                 // SeekingNet for the net-takedown path, or
                 // SeekingBody for the examine path.
-                self.run_to_examine_body(body, ctx, tick, grid);
+                self.run_to_examine_body(body.get(), ctx, tick, grid);
             } else {
                 self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
             }
@@ -5361,7 +5398,7 @@ impl EnemyAi {
                 // If checkpoint_charly == 0 → ReturnToDuty;
                 // else transition to CharlyWatching +
                 // LookSidewards(LeftRight).
-                if self.base.checkpoint_charly == 0 {
+                if self.base.checkpoint_charly.is_none() {
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
                 } else {
                     self.set_state(AiState::Seeking, Substate::SeekingCharlyWatching);
@@ -5458,19 +5495,20 @@ impl EnemyAi {
         match stimulus_type {
             StimulusType::EventMyTalk1 => {
                 let charly = self.base.friend_in_trouble;
-                if charly == 0 {
+                let Some(charly) = charly else {
                     self.return_to_duty(sim, DutyFlags::empty(), ctx, tick);
-                } else {
-                    self.base.outbox.reentrant.cross_npc_actions.push(
-                        CrossNpcAction::RequestThinkResult {
-                            target: charly,
-                            caller: self.base.me,
-                            stimulus_type: StimulusType::CallGoToOfficer,
-                            info: crate::ai::StimulusInfo::Human(self.base.antagonist),
-                            continuation: ThinkResultContinuation::OfficerSentCharlyToOfficer,
-                        },
-                    );
-                }
+                    return false;
+                };
+                let antagonist = self.required_antagonist("sending Charly to another officer");
+                self.base.outbox.reentrant.cross_npc_actions.push(
+                    CrossNpcAction::RequestThinkResult {
+                        target: charly.get(),
+                        caller: self.base.me,
+                        stimulus_type: StimulusType::CallGoToOfficer,
+                        info: crate::ai::StimulusInfo::Human(antagonist),
+                        continuation: ThinkResultContinuation::OfficerSentCharlyToOfficer,
+                    },
+                );
             }
             StimulusType::EventMyTalk2 => {
                 self.set_state(AiState::Seeking, Substate::SeekingLookingResurrectedCharly);
@@ -5541,15 +5579,16 @@ impl EnemyAi {
     ) -> bool {
         match stimulus_type {
             StimulusType::EventTimer => {
+                let antagonist = self.required_antagonist("reporting back to an officer");
                 // Original: mpMe->IsDetecting(mpAntagonist). This is
                 // the normal live view cone, not the 360° helper.
-                if self.is_detecting(self.base.antagonist as HumanHandle, ctx) {
+                if self.is_detecting(antagonist, ctx) {
                     // The engine delivers this action synchronously and
                     // feeds the officer's actual Think return value into
                     // `resolve_charly_officer_report`.
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::ReportBackToOfficer {
-                            officer: self.base.antagonist,
+                            officer: antagonist.get(),
                             charly: self.base.me,
                         },
                     );
@@ -5601,12 +5640,12 @@ impl EnemyAi {
             }
             StimulusType::EventReachPoint => {
                 // antagonist.think(CallCoordinate, me)
-                if self.base.antagonist != 0 {
+                if let Some(antagonist) = self.base.antagonist {
                     self.base.outbox.reentrant.cross_npc_actions.push(
                         CrossNpcAction::SendStimulus {
-                            target: self.base.antagonist,
+                            target: antagonist.get(),
                             stimulus_type: StimulusType::CallCoordinate,
-                            info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                            info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                             fallback_to_sender: None,
                             to_whole_patrol: false,
                         },
@@ -5651,11 +5690,12 @@ impl EnemyAi {
         match stimulus_type {
                 StimulusType::EventMyTalk1
                     // antagonist.think(CallYourTalk1)
-                    if self.base.antagonist != 0 => {
+                    if self.base.antagonist.is_some() => {
+                        let antagonist = self.required_antagonist("answering an officer lecture");
                         self.base
                             .outbox.reentrant.cross_npc_actions
                             .push(CrossNpcAction::SendStimulus {
-                                target: self.base.antagonist,
+                                target: antagonist.get(),
                                 stimulus_type: StimulusType::CallYourTalk1,
                                 info: crate::ai::StimulusInfo::None,
                                 fallback_to_sender: None,
@@ -5706,7 +5746,7 @@ impl EnemyAi {
                 // If antagonist == stimulus_info.human
                 let human_matches = matches!(
                     stimulus.info,
-                    crate::ai::StimulusInfo::Human(h) if h as NpcHandle == self.base.antagonist,
+                    crate::ai::StimulusInfo::Human(h) if Some(h) == self.base.antagonist,
                 );
                 if human_matches {
                     self.base.face_entity(self.base.antagonist, ctx);
@@ -5732,13 +5772,14 @@ impl EnemyAi {
         ctx: &AiContext,
     ) -> bool {
         match stimulus_type {
-            StimulusType::EventMyTalk1 if self.base.antagonist != 0 => {
+            StimulusType::EventMyTalk1 if self.base.antagonist.is_some() => {
+                let antagonist = self.required_antagonist("lecturing Charly");
                 self.base
                     .outbox
                     .reentrant
                     .cross_npc_actions
                     .push(CrossNpcAction::SendStimulus {
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk1,
                         info: crate::ai::StimulusInfo::None,
                         fallback_to_sender: None,
@@ -5794,13 +5835,13 @@ impl EnemyAi {
         tick: &AiPerTickData,
     ) -> bool {
         if stimulus_type == StimulusType::EventMyTalk3 {
-            if self.base.antagonist != 0 {
+            if let Some(antagonist) = self.base.antagonist {
                 self.base
                     .outbox
                     .reentrant
                     .cross_npc_actions
                     .push(CrossNpcAction::SendStimulus {
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallYourTalk2,
                         info: crate::ai::StimulusInfo::None,
                         fallback_to_sender: None,
@@ -5870,15 +5911,15 @@ impl EnemyAi {
                 AiState::Seeking,
                 Substate::SeekingCivilianGiveAlertingReportToSoldierPoint,
             );
-            if self.base.antagonist != 0 {
+            if let Some(antagonist) = self.base.antagonist {
                 self.base
                     .outbox
                     .reentrant
                     .cross_npc_actions
                     .push(CrossNpcAction::SendStimulus {
-                        target: self.base.antagonist,
+                        target: antagonist.get(),
                         stimulus_type: StimulusType::CallReport,
-                        info: crate::ai::StimulusInfo::Human(self.base.me as HumanHandle),
+                        info: crate::ai::StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                         fallback_to_sender: None,
                         to_whole_patrol: false,
                     });
@@ -6233,13 +6274,15 @@ impl EnemyAi {
             }
 
             // Turned: if detecting target, BattleDecisions, else overview.
-            Substate::FleeingRetireFromCombatTurn if stimulus_type == StimulusType::EventDone => {
-                if self.base.primary_target != 0
-                    && self.is_detecting_180_degrees(self.base.primary_target as HumanHandle, ctx)
-                {
-                    self.battle_decisions(sim, global, ctx, tick, grid);
-                } else {
-                    self.get_battle_overview(0, ctx, tick);
+            Substate::FleeingRetireFromCombatTurn => {
+                if stimulus_type == StimulusType::EventDone {
+                    if self.base.primary_target.is_some_and(|primary_target| {
+                        self.is_detecting_180_degrees(primary_target, ctx)
+                    }) {
+                        self.battle_decisions(sim, global, ctx, tick, grid);
+                    } else {
+                        self.get_battle_overview(0, ctx, tick);
+                    }
                 }
             }
 

@@ -610,7 +610,7 @@ impl EngineInner {
                 }
                 let owner_position = owner_entity.element_data().position();
                 let turn_sprite = turn_sprite
-                    && owner_entity.element_data().posture != crate::element::Posture::Riding;
+                    && !matches!(owner_entity, crate::element::Entity::Soldier(s) if s.soldier.rider);
                 if turn_sprite {
                     self.halt_actor(owner);
                 }
@@ -661,7 +661,7 @@ impl EngineInner {
                 }
                 let owner_position = owner_entity.element_data().position();
                 let turn_sprite = turn_sprite
-                    && owner_entity.element_data().posture != crate::element::Posture::Riding;
+                    && !matches!(owner_entity, crate::element::Entity::Soldier(s) if s.soldier.rider);
                 if turn_sprite {
                     self.halt_actor(owner);
                 }
@@ -1358,19 +1358,20 @@ impl EngineInner {
         } else {
             0
         };
+        let layer = entity.element_data().layer();
         let handle = crate::titbit::ElementHandle(actor.index());
         self.feedback.titbit_manager.add_titbit(
             crate::coordinates::WorldPoint3D::default(),
-            None,
+            layer,
             crate::titbit::TitbitKind::Hidden,
             handle,
             phase,
             handle,
             false,
-            0,
+            None,
             true,
             None,
-            None,
+            Some(layer),
         );
     }
 
@@ -3010,7 +3011,7 @@ impl EngineInner {
 
         let source = match stimulus.info {
             crate::ai::StimulusInfo::Human(h) => crate::natives::ScriptHandleCodec::actor_handle(
-                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h)),
+                crate::element::EntityId::Soldier(crate::entity_id::SoldierId(h.get())),
             ),
             _ => 0,
         };
@@ -4814,7 +4815,9 @@ impl EngineInner {
                                 to_whole_patrol: false,
                                 target: officer,
                                 stimulus_type: crate::ai::StimulusType::CallReport,
-                                info: crate::ai::StimulusInfo::Human(reporter),
+                                info: crate::ai::StimulusInfo::Human(
+                                    crate::ai::AiEntityHandle::new(reporter),
+                                ),
                             },
                         );
                     self.process_synchronous_reentrant_actions_for(sim, owner, assets);
@@ -5066,7 +5069,9 @@ impl EngineInner {
                 crate::ai::AiStateChangeSource::SelfActor => handle,
                 crate::ai::AiStateChangeSource::Null => 0,
                 crate::ai::AiStateChangeSource::Human(raw_index) => {
-                    crate::natives::ScriptHandleCodec::actor_handle_from_index(raw_index as usize)
+                    crate::natives::ScriptHandleCodec::actor_handle_from_index(
+                        raw_index.get() as usize
+                    )
                 }
             };
             let code = notification.incoming_state.state_change_event_code();

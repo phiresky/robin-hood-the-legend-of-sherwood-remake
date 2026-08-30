@@ -684,33 +684,33 @@ impl Engine {
                 StimulusInfo::Human(entity) => (
                     3,
                     json!({
-                        "kind": "human", "entity": resolve_ai_handle(entity),
+                        "kind": "human", "entity": resolve_ai_handle(entity.get()),
                     }),
                 ),
                 StimulusInfo::Hint(hint) => (
                     4,
                     json!({
                         "kind": "hint", "position": ai_position(hint.seek_point),
-                        "teller": resolve_ai_handle(hint.who_tells_me), "seek_flags": hint.seek_flags,
+                        "teller": resolve_ai_handle(hint.who_tells_me.get()), "seek_flags": hint.seek_flags,
                     }),
                 ),
                 StimulusInfo::Object(entity) => (
                     5,
                     json!({
-                        "kind": "object", "entity": resolve_ai_handle(entity),
+                        "kind": "object", "entity": resolve_ai_handle(entity.get()),
                     }),
                 ),
                 StimulusInfo::Stolen(stolen) => (
                     6,
                     json!({
-                        "kind": "stolen", "object": resolve_ai_handle(stolen.object),
-                        "thief": resolve_ai_handle(stolen.thief),
+                        "kind": "stolen", "object": resolve_ai_handle(stolen.object.get()),
+                        "thief": resolve_ai_handle(stolen.thief.get()),
                     }),
                 ),
                 StimulusInfo::Combat(combat) => (
                     7,
                     json!({
-                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc),
+                        "kind": "combat", "actor": resolve_ai_handle(combat.actor_npc.get()),
                         "enemy_position": ai_position(combat.enemy_position),
                     }),
                 ),

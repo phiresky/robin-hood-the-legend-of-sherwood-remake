@@ -233,14 +233,14 @@ pub enum CharlySeekerTarget {
 pub enum AiStateChangeSource {
     SelfActor,
     Null,
-    Human(HumanHandle),
+    Human(AiEntityHandle),
 }
 
 impl AiStateChangeSource {
     pub fn from_optional_human(handle: impl IntoOptionalAiHandle) -> Self {
         handle
             .into_optional_ai_handle()
-            .map_or(Self::Null, |handle| Self::Human(handle.get()))
+            .map_or(Self::Null, Self::Human)
     }
 }
 
@@ -258,15 +258,15 @@ impl AiStateChangeSource {
 )]
 pub enum EnterSwordfightRequest {
     RaiseSword,
-    Engage(HumanHandle),
+    Engage(AiEntityHandle),
     /// Direct `RHElementActorHuman::EnterSwordFight` call made by
     /// `ReconsiderSwordfight` while rebalancing an existing melee.
-    Rebalance(HumanHandle),
+    Rebalance(AiEntityHandle),
     /// Direct `RHElementActorHuman::EnterSwordFight` call made by the
     /// already-swordfighting `EVENT_GOTHIT` arm. This synchronously updates
     /// the relationship and, when needed, authors the reciprocal command on
     /// the attacker rather than on the AI receiving the event.
-    Direct(HumanHandle),
+    Direct(AiEntityHandle),
 }
 
 pub use crate::position_interface::SectorHandle;

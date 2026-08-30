@@ -3700,8 +3700,9 @@ impl EnemyAi {
         // uses the full fighter registry because the pointer is not limited
         // to the 500-unit nearby snapshot; preserve that same scope when
         // publishing `mposSeekPosition` for the later rider-return Face.
+        let target = target.expect("successful rider charge search has no target");
         self.base.seek_position = self
-            .find_fighter(target, tick)
+            .find_fighter(target.get(), tick)
             .unwrap_or_else(|| {
                 panic!(
                     "selected rider charge target {target:?} disappeared from the fighter registry"
@@ -4151,8 +4152,7 @@ impl EnemyAi {
         self.base.outbox.actor.enter_swordfight = Some(EnterSwordfightRequest::Engage(
             self.base
                 .primary_target
-                .expect("swordfight entry target presence was checked")
-                .get(),
+                .expect("swordfight entry target presence was checked"),
         ));
         self.base.outbox.actor.enter_swordfight_jump_line = self.my_line_jump;
 

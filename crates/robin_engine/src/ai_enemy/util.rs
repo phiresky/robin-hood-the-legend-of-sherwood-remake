@@ -138,9 +138,19 @@ crate::bitcode_adapters::impl_native_bitcode_flags!(ConditionFlags, u16);
     bitcode::Decode,
 )]
 pub struct CombatPosition {
-    pub attacker: HumanHandle,
+    #[serde(
+        default,
+        serialize_with = "crate::ai::serialize_optional_ai_handle",
+        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
+    )]
+    pub attacker: Option<AiEntityHandle>,
     pub attacker_position: Position,
-    pub target: HumanHandle,
+    #[serde(
+        default,
+        serialize_with = "crate::ai::serialize_optional_ai_handle",
+        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
+    )]
+    pub target: Option<AiEntityHandle>,
     pub target_position: Position,
     pub target_direction: u16,
     pub change_position: bool,
@@ -148,8 +158,18 @@ pub struct CombatPosition {
     pub bonus: i16,
     pub estimated_damage: i16,
     pub line_position: bool,
-    pub left_neighbour: HumanHandle,
-    pub right_neighbour: HumanHandle,
+    #[serde(
+        default,
+        serialize_with = "crate::ai::serialize_optional_ai_handle",
+        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
+    )]
+    pub left_neighbour: Option<AiEntityHandle>,
+    #[serde(
+        default,
+        serialize_with = "crate::ai::serialize_optional_ai_handle",
+        deserialize_with = "crate::ai::deserialize_optional_ai_handle"
+    )]
+    pub right_neighbour: Option<AiEntityHandle>,
     /// Jump-line index when the combat position sits across a jump line
     /// (table-swordfight case); `None` otherwise.
     pub line_jump: Option<u32>,
@@ -158,9 +178,9 @@ pub struct CombatPosition {
 impl Default for CombatPosition {
     fn default() -> Self {
         Self {
-            attacker: 0,
+            attacker: None,
             attacker_position: Position::default(),
-            target: 0,
+            target: None,
             target_position: Position::default(),
             target_direction: 0,
             change_position: false,
@@ -168,8 +188,8 @@ impl Default for CombatPosition {
             bonus: 0,
             estimated_damage: NOT_YET_COMPUTED,
             line_position: false,
-            left_neighbour: 0,
-            right_neighbour: 0,
+            left_neighbour: None,
+            right_neighbour: None,
             line_jump: None,
         }
     }
@@ -1224,25 +1244,28 @@ fn estimate_damage(
     if cp.estimated_damage != NOT_YET_COMPUTED {
         return cp.estimated_damage;
     }
-    if cp.target == 0 {
+    let Some(target_handle) = cp.target else {
         cp.estimated_damage = 0;
         return 0;
-    }
+    };
 
     // Original: `RHArtificialMalignity::EvaluateCombatPosition` operates on
     // live fighter pointers and dereferences both combatants' `mpSword`.
     // A selected combat position without either fighter is corrupt input, not
     // a harmless zero-damage position.
-    let attacker = all_fighters.get(cp.attacker).unwrap_or_else(|| {
+    let attacker_handle = cp
+        .attacker
+        .unwrap_or_else(|| panic!("combat position with target {target_handle} has no attacker"));
+    let attacker = all_fighters.get(attacker_handle.get()).unwrap_or_else(|| {
         panic!(
             "combat position attacker {} is absent from the per-tick fighter view",
-            cp.attacker
+            attacker_handle
         )
     });
-    let target = all_fighters.get(cp.target).unwrap_or_else(|| {
+    let target = all_fighters.get(target_handle.get()).unwrap_or_else(|| {
         panic!(
             "combat position target {} is absent from the per-tick fighter view",
-            cp.target
+            target_handle
         )
     });
     let evaluator = all_fighters.get(evaluator).unwrap_or_else(|| {
@@ -1464,7 +1487,7 @@ pub(super) fn evaluate_combat_position_full(
     // Accumulate friends' scores
     let mut friends_points: i32 = 0;
     for fp in friend_positions.iter_mut() {
-        if fp.attacker == me_handle {
+        if fp.attacker == Some(AiEntityHandle::new(me_handle)) {
             continue;
         }
 
@@ -1496,8 +1519,8 @@ pub(super) fn evaluate_combat_position_full(
     // Penalize unengaged enemies (enemies nobody is targeting)
     let mut general_points: i32 = 0;
     for &enemy_handle in them_handles {
-        let is_engaged = enemy_handle == cp.target
-            || friend_positions.iter().any(|fp| fp.target == enemy_handle);
+        let enemy = Some(AiEntityHandle::new(enemy_handle));
+        let is_engaged = enemy == cp.target || friend_positions.iter().any(|fp| fp.target == enemy);
         if !is_engaged {
             general_points -= combat::NON_ENGAGED_ENEMY_MALUS;
         }
@@ -1521,36 +1544,31 @@ pub(super) fn calculate_opponent_nearest_to_rene<'a>(
     lookup: impl Fn(HumanHandle) -> Option<&'a FighterSnapshot>,
     maurice_handle: HumanHandle,
     rene_pos: &Position,
-) -> HumanHandle {
-    let Some(maurice) = lookup(maurice_handle) else {
-        tracing::warn!(
-            maurice = maurice_handle,
-            "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice is absent from the fighter \
-             registry; Original dereferences a live pointer here"
-        );
-        return 0;
-    };
+) -> Option<AiEntityHandle> {
+    let maurice = lookup(maurice_handle).unwrap_or_else(|| {
+        panic!(
+            "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice {maurice_handle} is absent \
+             from the fighter registry"
+        )
+    });
 
-    let mut nearest: HumanHandle = 0;
+    let mut nearest = None;
     let mut min_dist = u16::MAX;
 
     for &opp_handle in &maurice.opponent_handles {
-        let Some(opp) = lookup(opp_handle) else {
-            tracing::warn!(
-                maurice = maurice_handle,
-                opponent = opp_handle,
-                "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice's opponent is absent from \
-                 the fighter registry; Original dereferences a live pointer here"
-            );
-            continue;
-        };
+        let opp = lookup(opp_handle).unwrap_or_else(|| {
+            panic!(
+                "CalculateOpponentOfMauriceWhoIsNearestToRene: Maurice {maurice_handle}'s \
+                 opponent {opp_handle} is absent from the fighter registry"
+            )
+        });
         // Original subtracts raw map-space RHpositions and stores the 2D
         // MaxNorm in a UWORD before the strict comparison. Fractional
         // ties therefore retain Maurice's first opponent.
         let dist = max_norm(pos_diff(rene_pos, &opp.position)) as u16;
         if dist < min_dist {
             min_dist = dist;
-            nearest = opp_handle;
+            nearest = Some(AiEntityHandle::new(opp_handle));
         }
     }
 
@@ -1716,10 +1734,28 @@ pub(super) fn resolve_seek_point_mut<'a>(
 mod required_combat_input_tests {
     use super::*;
 
+    #[test]
+    fn formation_proposal_round_trip_preserves_live_slot_zero() {
+        let position = CombatPosition {
+            attacker: Some(AiEntityHandle::new(0)),
+            target: Some(AiEntityHandle::new(2)),
+            left_neighbour: Some(AiEntityHandle::new(0)),
+            right_neighbour: None,
+            ..CombatPosition::default()
+        };
+        let json = serde_json::to_string(&position).unwrap();
+        assert!(json.contains(r#""attacker":{"entity":0}"#));
+        assert!(json.contains(r#""left_neighbour":{"entity":0}"#));
+        let restored: CombatPosition = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.attacker, Some(AiEntityHandle::new(0)));
+        assert_eq!(restored.left_neighbour, Some(AiEntityHandle::new(0)));
+        assert_eq!(restored.right_neighbour, None);
+    }
+
     fn combat_position() -> CombatPosition {
         CombatPosition {
-            attacker: 1,
-            target: 2,
+            attacker: Some(AiEntityHandle::new(1)),
+            target: Some(AiEntityHandle::new(2)),
             attacker_position: Position::default(),
             target_position: Position {
                 x: 10.0,
@@ -1850,9 +1886,9 @@ mod required_combat_input_tests {
         };
         let fighters = [attacker, target];
         let mut position = CombatPosition {
-            attacker: 1,
+            attacker: Some(AiEntityHandle::new(1)),
             attacker_position: Position::default(),
-            target: 2,
+            target: Some(AiEntityHandle::new(2)),
             target_position: Position {
                 x: 10.0,
                 ..Position::default()
@@ -1907,9 +1943,9 @@ mod required_combat_input_tests {
         };
         let fighters = [attacker, target];
         let mut position = CombatPosition {
-            attacker: 1,
+            attacker: Some(AiEntityHandle::new(1)),
             attacker_position: Position::default(),
-            target: 2,
+            target: Some(AiEntityHandle::new(2)),
             target_position: Position {
                 x: 10.0,
                 ..Position::default()
@@ -1955,11 +1991,11 @@ mod required_combat_input_tests {
     fn nearest_opponent_keeps_first_fractional_uword_tie() {
         let maurice = FighterSnapshot {
             handle: 10,
-            opponent_handles: vec![20, 30],
+            opponent_handles: vec![0, 30],
             ..FighterSnapshot::default()
         };
         let first = FighterSnapshot {
-            handle: 20,
+            handle: 0,
             position: Position {
                 x: 10.9,
                 ..Position::default()
@@ -1981,7 +2017,7 @@ mod required_combat_input_tests {
                 10,
                 &Position::default(),
             ),
-            20,
+            Some(AiEntityHandle::new(0)),
         );
     }
 
@@ -2025,7 +2061,7 @@ mod required_combat_input_tests {
                 10,
                 &Position::default(),
             ),
-            30,
+            Some(AiEntityHandle::new(30)),
             "an opponent known only to the complete registry must still win the MaxNorm scan"
         );
     }

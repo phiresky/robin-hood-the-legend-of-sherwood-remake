@@ -275,7 +275,7 @@ impl NativeContext<'_, '_> {
                         x,
                         y,
                         level,
-                        sector,
+                        sector: Some(sector),
                     },
                     turn_sprite,
                     native_return: 0,

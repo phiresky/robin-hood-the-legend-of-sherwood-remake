@@ -3775,12 +3775,12 @@ fn convert_stimulus(
         LegacyStimulusInfo::Human(reference) => (
             3,
             "Human",
-            StimulusInfo::Human(ai_handle(
+            StimulusInfo::Human(AiEntityHandle::new(ai_handle(
                 entities.resolve_ai_element(*reference)?,
                 ReferenceKind::Human,
                 creation_order,
                 "local_ai.stimulus_queue.human",
-            )?),
+            )?)),
         ),
         LegacyStimulusInfo::Hint {
             position,
@@ -3797,40 +3797,40 @@ fn convert_stimulus(
                     "local_ai.stimulus_queue.hint.position.sector",
                 )?,
                 seek_flags: *seek_flags,
-                who_tells_me: ai_handle(
+                who_tells_me: AiEntityHandle::new(ai_handle(
                     entities.resolve_ai_element(*teller)?,
                     ReferenceKind::Npc,
                     creation_order,
                     "local_ai.stimulus_queue.hint.teller",
-                )?,
+                )?),
             }),
         ),
         LegacyStimulusInfo::Object(reference) => (
             5,
             "Object",
-            StimulusInfo::Object(ai_handle(
+            StimulusInfo::Object(AiEntityHandle::new(ai_handle(
                 entities.resolve_ai_element(*reference)?,
                 ReferenceKind::Object,
                 creation_order,
                 "local_ai.stimulus_queue.object",
-            )?),
+            )?)),
         ),
         LegacyStimulusInfo::Stolen { object, thief } => (
             6,
             "Stolen",
             StimulusInfo::Stolen(StolenObject {
-                object: ai_handle(
+                object: AiEntityHandle::new(ai_handle(
                     entities.resolve_ai_element(*object)?,
                     ReferenceKind::Object,
                     creation_order,
                     "local_ai.stimulus_queue.stolen.object",
-                )?,
-                thief: ai_handle(
+                )?),
+                thief: AiEntityHandle::new(ai_handle(
                     entities.resolve_ai_element(*thief)?,
                     ReferenceKind::Npc,
                     creation_order,
                     "local_ai.stimulus_queue.stolen.thief",
-                )?,
+                )?),
             }),
         ),
         LegacyStimulusInfo::Combat {
@@ -3840,12 +3840,12 @@ fn convert_stimulus(
             7,
             "Combat",
             StimulusInfo::Combat(CombatInfo {
-                actor_npc: ai_handle(
+                actor_npc: AiEntityHandle::new(ai_handle(
                     entities.resolve_ai_element(*actor)?,
                     ReferenceKind::Npc,
                     creation_order,
                     "local_ai.stimulus_queue.combat.actor",
-                )?,
+                )?),
                 enemy_position: stimulus_position(
                     *enemy_position,
                     topology,

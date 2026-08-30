@@ -652,7 +652,7 @@ impl EnemyAi {
                 target: first,
                 caller: self.base.me,
                 stimulus_type: StimulusType::CallAlert,
-                info: StimulusInfo::Human(self.base.me),
+                info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                 continuation: ThinkResultContinuation::OfficerAlertedSoldier {
                     last: first_is_last,
                     use_formation: grid.is_some(),
@@ -1533,7 +1533,7 @@ impl EnemyAi {
         let alert_hint = Hint {
             seek_point: danger_pos,
             seek_flags: 0,
-            who_tells_me: self.base.me,
+            who_tells_me: AiEntityHandle::new(self.base.me),
         };
 
         // Two categorisations emerge from the loop:

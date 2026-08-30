@@ -2766,7 +2766,7 @@ fn ai_move_goal_door(
     route_sector_by_exact_handle(engine, exact_goal_sector)
         .filter(|sector| sector.sector_type.is_door())
         .and_then(|sector| sector.door_index)
-        .map(crate::gate::DoorIndex)
+        .and_then(crate::gate::DoorIndex::new)
 }
 
 /// Timeout queue entry for a Move/Seek element whose pathfind failed.
@@ -3591,7 +3591,7 @@ pub(crate) fn current_door_for_route_source(
             })
         })
         .map(|pass| (pass.door_index, pass.direct))
-        .unwrap_or_else(|| {
+        .or_else(|| {
             let position = entity.position_iface();
             position
                 .get_door()

@@ -520,8 +520,10 @@ impl EngineInner {
                     self.launch_element(elem);
                 }
                 crate::ai::EnterSwordfightRequest::Engage(target_handle) => {
-                    let target_id = self
-                        .expect_human_id_for_ai_handle(target_handle, "AI enter_swordfight target");
+                    let target_id = self.expect_human_id_for_ai_handle(
+                        target_handle.get(),
+                        "AI enter_swordfight target",
+                    );
                     let mut elem = crate::sequence::SequenceElement::new_generic(
                         1,
                         crate::element::Command::EnterSwordfight,
@@ -555,14 +557,14 @@ impl EngineInner {
                 }
                 crate::ai::EnterSwordfightRequest::Direct(target_handle) => {
                     let target_id = self.expect_human_id_for_ai_handle(
-                        target_handle,
+                        target_handle.get(),
                         "AI direct swordfight target",
                     );
                     self.direct_enter_swordfight(sim, assets, npc_id, target_id);
                 }
                 crate::ai::EnterSwordfightRequest::Rebalance(target_handle) => {
                     let target_id = self.expect_human_id_for_ai_handle(
-                        target_handle,
+                        target_handle.get(),
                         "AI reconsider swordfight target",
                     );
                     if self.direct_enter_swordfight(sim, assets, npc_id, target_id) {

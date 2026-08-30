@@ -1868,20 +1868,21 @@ impl StealthCommandContext<'_> {
 
         use crate::coordinates::WorldPoint3D;
         use crate::titbit::{ElementHandle, TitbitKind};
+        let layer = entity.element_data().layer();
         let handle = ElementHandle(owner.index());
         if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
             self.titbit_manager.add_titbit(
                 WorldPoint3D::default(),
-                None,
+                layer,
                 TitbitKind::Hidden,
                 handle,
                 hidden_phase.expect("hidden phase resolved before entering hidden posture"),
                 handle,
                 false,
-                0,
+                None,
                 true,
                 None,
-                None,
+                Some(layer),
             );
         } else if !transition.result_posture.is_hidden() && old_posture.is_hidden() {
             self.titbit_manager

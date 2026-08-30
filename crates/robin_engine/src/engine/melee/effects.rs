@@ -343,7 +343,7 @@ impl EngineInner {
             .get(door_idx as usize)?;
         let point = door.point_out;
         let layer = door.layer_out;
-        let sector = door.position_out.sector?;
+        let sector = u16::from(door.sector_out);
         let obstacle = self.get_projection_area_index(assets, sector, layer, point);
         let z = obstacle
             .and_then(|idx| {
@@ -478,9 +478,7 @@ impl EngineInner {
                     antagonist: None,
                     goal_layer: entry.layer,
                     goal_sector: crate::position_interface::SectorHandle::new(entry.sector),
-                    obstacle: entry
-                        .obstacle
-                        .and_then(crate::position_interface::ObstacleHandle::new),
+                    obstacle: entry.obstacle,
                     ladder_fall: true,
                 });
             }
