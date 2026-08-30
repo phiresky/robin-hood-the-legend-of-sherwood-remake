@@ -206,6 +206,7 @@ pub struct MissionAttemptStats {
     pub killed_allies: Option<u32>,
     pub added_score: Option<u32>,
     pub recruited_characters: Option<Vec<crate::mission_stat::PcStatName>>,
+    pub factions: Option<std::collections::BTreeMap<u16, crate::mission_stat::FactionMissionStat>>,
 }
 
 impl MissionAttemptStats {
@@ -221,6 +222,7 @@ impl MissionAttemptStats {
             killed_allies: Some(stat.killed_allied_count),
             added_score: Some(stat.added_score),
             recruited_characters: Some(stat.pc_names.clone()),
+            factions: Some(stat.factions.clone()),
         }
     }
 
@@ -235,6 +237,7 @@ impl MissionAttemptStats {
             && self.killed_allies.is_some()
             && self.added_score.is_some()
             && self.recruited_characters.is_some()
+            && self.factions.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -248,6 +251,7 @@ impl MissionAttemptStats {
             && self.killed_allies.is_none()
             && self.added_score.is_none()
             && self.recruited_characters.is_none()
+            && self.factions.is_none()
     }
 }
 
