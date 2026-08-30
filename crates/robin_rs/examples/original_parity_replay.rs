@@ -3090,22 +3090,20 @@ const TRACE_NATIVE_FOOTER_LEN: u64 = 16 + 4 + 8 + 8;
 // Keep the reader bounded at zstd's platform maximum while accepting those
 // valid trace frames.
 const TRACE_ZSTD_WINDOW_LOG_MAX: u32 = if usize::BITS >= 64 { 31 } else { 30 };
-// Bitcode's dense output makes level 9 a good throughput/size tradeoff. A
-// representative min/median/max corpus benchmark made it 12-17x faster than
-// level 19 for only 16-19% larger native traces. Long-distance matching was
-// neutral at level 19 and made level 9 both slower and 5-8% larger, so the
-// native writer deliberately leaves it disabled.
-const TRACE_NATIVE_ZSTD_LEVEL: i32 = 9;
+// Prefer maximum archival density for parity recordings. A representative
+// min/median/max corpus benchmark made level 19 16-19% smaller than level 9,
+// at the cost of substantially slower conversion. Long-distance matching was
+// neutral at level 19, so the native writer deliberately leaves it disabled.
+const TRACE_NATIVE_ZSTD_LEVEL: i32 = 19;
 const TRACE_NATIVE_LONG_DISTANCE_MATCHING: bool = false;
 /// Frames per on-disk block. A current-schema frame contains a complete Original
-/// state envelope, so decoding 1024 at once expanded a roughly 100 MiB
-/// bitcode record into 2-3.6 GiB of live Rust allocations. Sixteen frames
-/// retain bitcode's columnar packing while bounding the decoded block to a
-/// small fraction of one replay engine. Readers accept any block size, so
+/// state envelope, so decoding roughly 1,000 at once can require 2-3.6 GiB of
+/// live Rust allocations. The larger block favors archival density. Readers
+/// accept any block size, so
 /// this storage-only change remains compatible within the current native version.
-const TRACE_NATIVE_BLOCK_RECORDS: usize = 16;
+const TRACE_NATIVE_BLOCK_RECORDS: usize = 1000;
 /// Bound the zstd history retained by every replay process. Cross-frame
-/// repetition is already captured inside the 16-frame bitcode blocks; a
+/// repetition is already captured inside the 1,000-frame bitcode blocks; a
 /// whole-trace 512 MiB-2 GiB window only traded resident memory for a small
 /// artifact-size win and prevented one replay lane per CPU core.
 const TRACE_NATIVE_WINDOW_LOG: u32 = 25;
@@ -7481,11 +7479,28 @@ fn read_binary_record<T: bitcode::DecodeOwned>(
 
 /// Storage experiment for the canonical trace layout: re-encode the cached
 /// records of one trace with bitcode in several layouts and report raw and
-/// zstd-compressed sizes.
+/// zstd-compressed sizes. Each candidate is streamed independently so the
+/// benchmark retains at most one block of decoded frames.
 ///
 /// `PARITY_BENCH_ZSTD_LEVELS` (default `3,19`) and `PARITY_BENCH_BLOCKS`
 /// (default `16,64,256`) tune the sweep.
 fn bench_trace_encodings(trace_path: &Path) {
+    #[derive(Default)]
+    struct CountingWriter {
+        bytes: usize,
+    }
+
+    impl Write for CountingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.bytes += bytes.len();
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     fn env_list(name: &str, default: &str) -> Vec<usize> {
         std::env::var(name)
             .unwrap_or_else(|_| default.to_owned())
@@ -7498,24 +7513,62 @@ fn bench_trace_encodings(trace_path: &Path) {
             .collect()
     }
 
-    fn zstd_size(bytes: &[u8], level: i32) -> (usize, Duration) {
-        let started = Instant::now();
-        let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), level)
-            .unwrap_or_else(|error| panic!("start zstd level {level}: {error}"));
-        configure_cache_compression(&mut encoder, Some(bytes.len() as u64));
-        encoder
-            .write_all(bytes)
-            .unwrap_or_else(|error| panic!("zstd level {level}: {error}"));
-        let compressed = encoder
-            .finish()
-            .unwrap_or_else(|error| panic!("finish zstd level {level}: {error}"));
-        (compressed.len(), started.elapsed())
+    fn measured_record<T: bitcode::Encode + ?Sized>(
+        encoder: &mut zstd::stream::write::Encoder<'_, CountingWriter>,
+        raw_bytes: &mut usize,
+        value: &T,
+    ) {
+        let encoded = bitcode::encode(value);
+        let length = (encoded.len() as u64).to_le_bytes();
+        *raw_bytes += length.len() + encoded.len();
+        encoder.write_all(&length).expect("write benchmark length");
+        encoder.write_all(&encoded).expect("write benchmark record");
     }
 
-    fn bitcode_record<T: bitcode::Encode + ?Sized>(out: &mut Vec<u8>, value: &T) {
-        let encoded = bitcode::encode(value);
-        out.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-        out.extend_from_slice(&encoded);
+    fn measure_layout(
+        native_path: &Path,
+        records_per_block: usize,
+        level: i32,
+    ) -> (u64, usize, usize, Duration) {
+        assert_ne!(records_per_block, 0, "benchmark block size must be nonzero");
+        let started = Instant::now();
+        let mut reader = BinaryTraceReader::open(native_path);
+        let header = reader.read_header();
+        let mut encoder = zstd::stream::write::Encoder::new(CountingWriter::default(), level)
+            .unwrap_or_else(|error| panic!("start benchmark zstd level {level}: {error}"));
+        // Real traces of this scale use the production 32 MiB window. Using
+        // the same fixed bound also avoids a raw-size pre-pass per candidate.
+        configure_cache_compression(&mut encoder, None);
+        let mut raw_bytes = 0_usize;
+        measured_record(&mut encoder, &mut raw_bytes, &header);
+
+        let mut frame_count = 0_u64;
+        let mut block = Vec::with_capacity(records_per_block);
+        loop {
+            let record = reader.read_record();
+            let is_end = matches!(record, BinaryTraceRecord::End { .. });
+            if matches!(record, BinaryTraceRecord::Frame(_)) {
+                frame_count += 1;
+            }
+            block.push(record);
+            if block.len() == records_per_block || is_end {
+                if records_per_block == 1 {
+                    measured_record(&mut encoder, &mut raw_bytes, &block[0]);
+                } else {
+                    measured_record(&mut encoder, &mut raw_bytes, block.as_slice());
+                }
+                block.clear();
+            }
+            if is_end {
+                break;
+            }
+        }
+
+        let compressed_bytes = encoder
+            .finish()
+            .unwrap_or_else(|error| panic!("finish benchmark zstd level {level}: {error}"))
+            .bytes;
+        (frame_count, raw_bytes, compressed_bytes, started.elapsed())
     }
 
     let zstd_levels: Vec<i32> = env_list("PARITY_BENCH_ZSTD_LEVELS", "3,19")
@@ -7532,111 +7585,48 @@ fn bench_trace_encodings(trace_path: &Path) {
         .expect("stat trace cache")
         .len();
 
-    let started = Instant::now();
-    let mut reader = BinaryTraceReader::open(&native_path);
-    let header = reader.read_header();
-    let mut records = Vec::new();
-    loop {
-        let record = reader.read_record();
-        let is_end = matches!(record, BinaryTraceRecord::End { .. });
-        records.push(record);
-        if is_end {
-            break;
-        }
-    }
-    let frame_count = records.len() - 1;
-    eprintln!(
-        "loaded {frame_count} frames from {} in {:.1}s",
-        native_path.display(),
-        started.elapsed().as_secs_f64()
-    );
-
-    // Viability probe. bitcode's *serde* backend panics ("type changed") on
-    // `TraceJsonValue`, because `#[serde(untagged)]` values of differing
-    // shapes share one sequence/map slot. The native derives handle enums
-    // properly, so that is what a real switch would use; confirm the native
-    // derives round-trip a frame and time a whole-trace decode.
-    if let Some(first_frame) = records.first() {
-        let encoded = bitcode::encode(first_frame);
-        bitcode::decode::<BinaryTraceRecord>(&encoded)
-            .expect("bitcode native round-trip of a frame");
-        eprintln!("bitcode native round-trip of a frame: ok");
-    }
-
-    let mut rows: Vec<(String, Vec<u8>, Duration)> = Vec::new();
-
-    let started = Instant::now();
-    let mut out = Vec::new();
-    bitcode_record(&mut out, &header);
-    for record in &records {
-        bitcode_record(&mut out, record);
-    }
-    rows.push(("bitcode per-record".into(), out, started.elapsed()));
-
-    for &block in &block_sizes {
-        let started = Instant::now();
-        let mut out = Vec::new();
-        bitcode_record(&mut out, &header);
-        for chunk in records.chunks(block) {
-            bitcode_record(&mut out, chunk);
-        }
-        let marker = if block == TRACE_NATIVE_BLOCK_RECORDS {
-            " (current cache)"
-        } else {
-            ""
-        };
-        rows.push((
-            format!("bitcode blocks of {block}{marker}"),
-            out,
-            started.elapsed(),
-        ));
-    }
-
-    // bitcode has no `Encode` for references, so the whole-trace layout
-    // encodes an owned tuple and its decode is timed for the "one block"
-    // discussion (it must materialize every frame).
-    let whole = (header, records);
-
-    let started = Instant::now();
-    let out = bitcode::encode(&whole);
-    let encode_time = started.elapsed();
-    let started = Instant::now();
-    let decoded: (BinaryTraceHeader, Vec<BinaryTraceRecord>) =
-        bitcode::decode(&out).expect("bitcode decode whole trace");
-    eprintln!(
-        "bitcode whole-trace decode: {} records in {:.2}s",
-        decoded.1.len(),
-        started.elapsed().as_secs_f64()
-    );
-    drop(decoded);
-    rows.push(("bitcode whole-trace".into(), out, encode_time));
-
-    let baseline_raw = rows[0].1.len();
-    let mut results: Vec<(String, Duration, usize, Vec<(i32, usize, Duration)>)> = Vec::new();
-    for (name, bytes, encode_time) in &rows {
+    let mut results: Vec<(String, usize, Vec<(i32, usize, Duration)>)> = Vec::new();
+    let mut frame_count = None;
+    for (name, block) in std::iter::once(("bitcode per-record".to_owned(), 1_usize)).chain(
+        block_sizes.iter().map(|&block| {
+            let marker = if block == TRACE_NATIVE_BLOCK_RECORDS {
+                " (current cache)"
+            } else {
+                ""
+            };
+            (format!("bitcode blocks of {block}{marker}"), block)
+        }),
+    ) {
+        let mut raw_bytes = None;
         let mut compressed = Vec::new();
         for &level in &zstd_levels {
-            let (size, time) = zstd_size(bytes, level);
+            let (measured_frames, measured_raw, size, time) =
+                measure_layout(&native_path, block, level);
+            assert_eq!(*frame_count.get_or_insert(measured_frames), measured_frames);
+            assert_eq!(*raw_bytes.get_or_insert(measured_raw), measured_raw);
             compressed.push((level, size, time));
         }
         eprintln!("measured {name}");
-        results.push((name.clone(), *encode_time, bytes.len(), compressed));
+        results.push((
+            name,
+            raw_bytes.expect("benchmark has a zstd level"),
+            compressed,
+        ));
     }
+    let frame_count = frame_count.expect("benchmark has a layout");
+    let baseline_raw = results[0].1;
 
     let mib = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
     println!();
     println!("trace: {} ({} frames)", trace_path.display(), frame_count);
     println!(
-        "source jsonl.zst: {:.2} MiB; existing cache (bitcode + zstd {TRACE_NATIVE_ZSTD_LEVEL}): {:.2} MiB",
+        "source artifact: {:.2} MiB; existing native artifact: {:.2} MiB",
         mib(source_bytes as usize),
         mib(cache_bytes as usize)
     );
     println!();
-    let mut head = format!(
-        "| {:<36} | {:>10} | {:>8} |",
-        "encoding", "raw MiB", "enc s"
-    );
-    let mut sep = format!("|{:-<38}|{:->12}|{:->10}|", "", "", "");
+    let mut head = format!("| {:<36} | {:>10} |", "encoding", "raw MiB");
+    let mut sep = format!("|{:-<38}|{:->12}|", "", "");
     for level in &zstd_levels {
         head.push_str(&format!(
             " {:>13} | {:>8} |",
@@ -7647,16 +7637,15 @@ fn bench_trace_encodings(trace_path: &Path) {
     }
     println!("{head}");
     println!("{sep}");
-    for (name, encode_time, raw, compressed) in &results {
+    for (name, raw, compressed) in &results {
         let mut line = format!(
-            "| {:<36} | {:>5.2} {:>4.0}% | {:>8.2} |",
+            "| {:<36} | {:>5.2} {:>4.0}% |",
             name,
             mib(*raw),
-            100.0 * *raw as f64 / baseline_raw as f64,
-            encode_time.as_secs_f64()
+            100.0 * *raw as f64 / baseline_raw as f64
         );
         for (index, (_, size, time)) in compressed.iter().enumerate() {
-            let baseline = results[0].3[index].1;
+            let baseline = results[0].2[index].1;
             line.push_str(&format!(
                 " {:>6.2} {:>5.0}% | {:>8.2} |",
                 mib(*size),
@@ -7668,7 +7657,7 @@ fn bench_trace_encodings(trace_path: &Path) {
     }
     println!();
     println!(
-        "percentages are relative to the authoritative per-record bitcode layout at the same zstd level"
+        "percentages are relative to the authoritative per-record bitcode layout at the same zstd level; timings include native decode, bitcode encode, and zstd"
     );
 }
 
@@ -10570,11 +10559,11 @@ mod tests {
     }
 
     #[test]
-    fn native_level_nine_policy_round_trips_records_and_footer() {
+    fn native_level_nineteen_policy_round_trips_records_and_footer() {
         assert_eq!(TRACE_NATIVE_VERSION, 67);
-        assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 9);
+        assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
         assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
-        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
+        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 1000);
         assert_eq!(TRACE_NATIVE_WINDOW_LOG, 25);
 
         let footer = BinaryTraceFooter {
@@ -11435,7 +11424,7 @@ mod tests {
             native_stream_window_log(Some(u64::MAX)),
             TRACE_NATIVE_WINDOW_LOG
         );
-        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 16);
+        assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 1000);
     }
 
     #[test]
