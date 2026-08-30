@@ -74,10 +74,13 @@ pub struct ReplayHeader {
 /// rules, cached ale eligibility, and ground-stone state. Version 20 combines
 /// that state with authoritative Sherwood trading configuration, commands,
 /// and receipts. Version 21 carries resolved Legendary/Custom difficulty
-/// rules alongside both feature families. There is deliberately
-/// no Rust-schema compatibility adapter:
-/// earlier incompatible layouts are rejected at the header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 21;
+/// rules alongside both feature families. Version 22 adds typed nullable AI
+/// entity handles and exact spatial provenance to that complete state: arena
+/// slot zero is a live entity and absence is encoded by `Option`, so the
+/// preceding raw-zero layout cannot be decoded safely. There is deliberately
+/// no Rust-schema compatibility adapter; earlier incompatible layouts are
+/// rejected at the header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 22;
 
 /// A recorded in-mission load and the slot-specific post-load behavior that
 /// must be reproduced after restoring its earlier save marker.
@@ -783,8 +786,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_identifies_items_trading_and_resolved_difficulty() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 21);
+    fn replay_schema_version_identifies_typed_complete_native_state() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 22);
     }
 
     fn unique_replay_path(label: &str) -> String {
@@ -879,6 +882,59 @@ mod tests {
 
         assert!(player.is_finished());
 
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn replay_hash_roundtrip_distinguishes_live_ai_slot_zero_from_absence() {
+        let mut live = crate::engine::EngineInner::new();
+        let mut ai = crate::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
+        let owner = live.add_entity(crate::element::Entity::Soldier(
+            crate::element::ActorSoldier {
+                element: crate::element::ElementData {
+                    kind: crate::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = crate::element::NpcData::default();
+                    npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(owner.index(), 0);
+        let live_slot_zero_hash = state_hash(&live);
+        let mut absent = live;
+        absent
+            .get_entity_mut(owner)
+            .and_then(crate::element::Entity::enemy_ai_mut)
+            .unwrap()
+            .base
+            .primary_target = None;
+        assert_ne!(live_slot_zero_hash, state_hash(&absent));
+
+        let path = unique_replay_path("typed_slot_zero_hash");
+        let campaign = crate::campaign::Campaign::default();
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "typed_slot_zero".into(),
+            42,
+            crate::engine::SimConfig::default(),
+            &campaign,
+        )
+        .unwrap();
+        recorder.write_hash(0, live_slot_zero_hash);
+        record_tick(&mut recorder, 0, SimulationFrameInput::default());
+        drop(recorder);
+
+        let data = ReplayData::from_file(&path).expect("load current replay schema");
+        assert_eq!(data.hash_for_frame(0), Some(live_slot_zero_hash));
+        let player = ReplayPlayer::new(data);
+        assert_eq!(player.hash_for_frame(0), Some(live_slot_zero_hash));
         let _ = std::fs::remove_file(path);
     }
 
@@ -1237,7 +1293,33 @@ mod tests {
 
         let mut assets = crate::engine::LevelAssets::new();
         assets.profile_manager = std::sync::Arc::new(profiles);
+        let mut level_grid = crate::fast_find_grid::LevelGrid::default();
+        level_grid
+            .move_box_half_diagonals
+            .push(crate::coordinates::MoveBoxHalfDiagonal::new(1.0, 1.0));
+        assets.level_grid = std::sync::Arc::new(level_grid);
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
+        let mut graph_bytes = Vec::new();
+        graph_bytes.extend_from_slice(&1_u16.to_le_bytes());
+        graph_bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        graph_bytes.extend_from_slice(&1.0_f32.to_le_bytes());
+        graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
+        graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
+        graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
+        loaded.proto.motion_data = Some(crate::level_data::RawMotionData {
+            layers: vec![vec![crate::level_data::RawMotionArea {
+                is_lift: false,
+                state_id: 0,
+                polygon: crate::level_data::SectorPolygon {
+                    points: vec![(0, 0), (1_000, 0), (1_000, 1_000), (0, 1_000)],
+                },
+                skeleton_segments: Vec::new(),
+                flags: 0,
+                obstacles: Vec::new(),
+            }]],
+            graph_bytes,
+        });
+        loaded.proto.grid_chunk_order = vec![crate::level_data::ProtoGridChunk::Motion];
         loaded.mission.beam_mes.push(crate::level_data::BeamMe {
             position: crate::coordinates::MapPoint::new(100.0, 200.0),
             direction: 0,
@@ -1286,7 +1368,10 @@ mod tests {
     fn sherwood_recording_reconstructs_frame_zero_team_pcs_and_hash() {
         let path = unique_replay_path("sherwood_frame_zero");
         let rng_seed = 0x5EED_5151;
-        let sim_config = crate::engine::SimConfig::default();
+        let sim_config = crate::engine::SimConfig {
+            script_enabled: false,
+            ..Default::default()
+        };
         let (campaign, assets, loaded) = sherwood_fixture();
         let pre_engine_campaign = campaign.clone();
         let (live, _live_assets) =
@@ -1498,7 +1583,7 @@ mod tests {
                 source_layer: 11,
                 outcome: crate::gate::RecordedGateOutcome::Success(vec![
                     crate::gate::GatePathStep {
-                        door_index: crate::gate::DoorIndex(7),
+                        door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
                         direct: false,
                     },
                 ]),

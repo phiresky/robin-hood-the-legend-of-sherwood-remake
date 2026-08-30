@@ -28,6 +28,7 @@ const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
+pub(crate) const DETAILED_SAVE_METADATA_OPTION_INDEX: usize = 33;
 
 /// Toggle rows shown on the screen, in display order.
 pub(crate) const OPTION_LABELS: &[&str] = &[
@@ -64,6 +65,7 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Preview Ale Effect",
     "Preview Purse Effect",
     "Preview Wasp Area",
+    "Detailed Save Metadata",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -100,6 +102,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Explain visibility, outdoor, drunkenness, and beer-interest conditions.",
     "Explain purse value and money-interest conditions.",
     "Show wasp acquisition range and target eligibility.",
+    "Show mission and player provenance, relative age, and expanded save details.",
 ];
 
 pub(crate) fn option_tooltip(index: usize) -> &'static str {
@@ -428,6 +431,9 @@ pub(crate) fn apply_option_toggle(config: &mut GameplayConfig, idx: usize) {
         30 => config.item_previews.ale_effect = !config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect = !config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area = !config.item_previews.wasp_area,
+        DETAILED_SAVE_METADATA_OPTION_INDEX => {
+            config.detailed_save_metadata = !config.detailed_save_metadata
+        }
         _ => {}
     }
 }
@@ -470,6 +476,7 @@ pub(crate) fn is_option_selected(config: &GameplayConfig, idx: usize) -> bool {
         30 => config.item_previews.ale_effect,
         31 => config.item_previews.purse_effect,
         32 => config.item_previews.wasp_area,
+        DETAILED_SAVE_METADATA_OPTION_INDEX => config.detailed_save_metadata,
         _ => false,
     }
 }
@@ -516,6 +523,7 @@ mod tests {
                 "Preview Ale Effect",
                 "Preview Purse Effect",
                 "Preview Wasp Area",
+                "Detailed Save Metadata",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
@@ -533,6 +541,10 @@ mod tests {
         assert!(is_option_selected(&config, SHERWOOD_TRADING_OPTION_INDEX));
         assert!(is_option_selected(&config, AUTOSAVE_OPTION_INDEX));
         assert!(is_option_selected(&config, 32));
+        assert!(is_option_selected(
+            &config,
+            DETAILED_SAVE_METADATA_OPTION_INDEX
+        ));
 
         apply_option_toggle(&mut config, 1);
         assert!(config.control_tactical_units);
@@ -602,6 +614,11 @@ mod tests {
         assert_eq!(config.autosave_enabled, autosave_enabled);
         apply_option_toggle(&mut config, SHERWOOD_TRADING_OPTION_INDEX);
         assert!(!config.sherwood_trading);
+
+        let autosave_enabled = config.autosave_enabled;
+        apply_option_toggle(&mut config, DETAILED_SAVE_METADATA_OPTION_INDEX);
+        assert!(!config.detailed_save_metadata);
+        assert_eq!(config.autosave_enabled, autosave_enabled);
     }
 
     #[test]

@@ -1556,12 +1556,21 @@ pub(super) fn handle_pause_menu_events(
                     required_menu_resources(menu_resources, "pause-menu save/load picker");
                 let campaign = engine.campaign();
                 let mission_id = current_mission_id(campaign, &assets.profile_manager);
+                let detailed_metadata = host
+                    .application_context
+                    .active_profile_snapshot()
+                    .unwrap_or_else(|error| {
+                        panic!("pause-menu save/load requires an active profile: {error}")
+                    })
+                    .gameplay_config
+                    .detailed_save_metadata;
                 *active_ui_task = Some(ActiveUiTask::SaveLoad(SaveLoadTaskState::new(
                     event_pump,
                     renderer,
                     resources,
                     &mut callbacks.save_manager,
                     mission_id,
+                    detailed_metadata,
                     mode,
                     host.transport.net.is_some(),
                 )));

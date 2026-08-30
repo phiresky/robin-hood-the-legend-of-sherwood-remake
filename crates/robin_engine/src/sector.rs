@@ -88,10 +88,12 @@ impl std::fmt::Display for BuildingIdx {
 /// Canonical sector identifier.
 ///
 /// Stored as signed i16 on sectors and reinterpreted as u16 on door
-/// records; both refer to the same id space.  Negative values are used
-/// as "invalid" sentinels (`sector == -1` ⇒ "not found"), so we keep the
-/// i16 representation and surface it with `From<SectorNumber> for u16` via
-/// `as u16` (sign-preserving reinterpretation at door-comparison sites).
+/// records; both refer to the same id space. `-1` has two distinct Original
+/// meanings depending on provenance: a failed public-number lookup, or the
+/// real out-of-map sector whose pointer/arena identity is still valid. We
+/// therefore keep the signed value and never use it alone as a nullable live
+/// reference. `From<SectorNumber> for u16` uses `as u16` so door comparisons
+/// retain the Original bit pattern.
 ///
 /// Distinct from [`crate::fast_find_grid::SectorIndex`] which is the
 /// slot index into `FastFindGrid::level::sectors`.
@@ -124,8 +126,9 @@ impl SectorNumber {
     pub const fn get(self) -> i16 {
         self.0
     }
-    /// True when the value is a valid (non-negative) id.  Negative
-    /// sector numbers (especially `-1`) are used as "invalid" sentinels.
+    /// True when this number can be used for public-number lookup. A false
+    /// result does not prove that an exact sector reference is absent: the
+    /// live out-of-map sector deliberately has public number `-1`.
     #[inline]
     pub const fn is_valid(self) -> bool {
         self.0 >= 0

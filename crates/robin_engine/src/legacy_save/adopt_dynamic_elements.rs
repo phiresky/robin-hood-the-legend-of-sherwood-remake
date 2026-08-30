@@ -491,9 +491,10 @@ fn construct_pc(
     // character profile and the loaded fast-find grid. RHPositionInterface's
     // v48 serializer omits both fields, so phase-two save adoption must
     // preserve this constructor state.
-    sprite
-        .position_iface
-        .set_pathfinder_index(pathfinder_index as u16);
+    sprite.position_iface.set_pathfinder_index(
+        crate::position_interface::PathfinderIndex::new(u16::from(pathfinder_index))
+            .expect("u8 profile pathfinder index cannot equal 0xffff"),
+    );
     sprite.position_iface.set_move_box(MoveBox::from_corners(
         MapVec::new(-half_diagonal.x, -half_diagonal.y),
         MapVec::new(half_diagonal.x, half_diagonal.y),
@@ -842,7 +843,7 @@ mod tests {
         };
         let position = &pc.element.sprite.position_iface;
 
-        assert_eq!(position.get_pathfinder_index(), 1);
+        assert_eq!(position.get_pathfinder_index().map(u16::from), Some(1));
         assert_eq!(
             position.get_half_diagonal(),
             MoveBoxHalfDiagonal::new(7.0, 11.0)

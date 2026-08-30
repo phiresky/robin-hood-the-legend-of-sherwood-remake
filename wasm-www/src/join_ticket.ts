@@ -1,6 +1,6 @@
 const JOIN_CODE_PREFIX = 'rhmp3-';
 const JOIN_TICKET_SCHEMA = 3;
-const NET_PROTOCOL_VERSION = 30;
+const NET_PROTOCOL_VERSION = 31;
 const TRANSPORT = 'iroh-relay-websocket';
 const SIGNING_DOMAIN = new TextEncoder().encode('robinhood/browser-join-ticket/v3\0');
 const MAX_JOIN_CODE_BYTES = 16 * 1024;

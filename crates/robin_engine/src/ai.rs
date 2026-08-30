@@ -35,11 +35,12 @@ pub(crate) fn legacy_nearest_door_distance(
 
 mod types;
 pub use types::{
-    AiLockFlags, AiStateChangeSource, AlertFlags, CharlySeekerTarget, DoorHandle, DutyFlags,
-    ElementHandle, EnterSwordfightRequest, GotoFlags, HALF_MAX_ATT_VALUE, HumanHandle,
-    MAX_ATT_VALUE, NpcHandle, ObjectHandle, QUARTER_MAX_ATT_VALUE, RemarkTargetFlags, SectorHandle,
-    SpeechFlags, THREE_QUARTERS_MAX_ATT_VALUE,
+    AiEntityHandle, AiLockFlags, AiStateChangeSource, AlertFlags, CharlySeekerTarget, DoorHandle,
+    DutyFlags, ElementHandle, EnterSwordfightRequest, GotoFlags, HALF_MAX_ATT_VALUE, HumanHandle,
+    IntoOptionalAiHandle, MAX_ATT_VALUE, NpcHandle, ObjectHandle, QUARTER_MAX_ATT_VALUE,
+    RemarkTargetFlags, SectorHandle, SpeechFlags, THREE_QUARTERS_MAX_ATT_VALUE,
 };
+pub(crate) use types::{deserialize_optional_ai_handle, serialize_optional_ai_handle};
 
 mod macro_patrol;
 pub use macro_patrol::{
@@ -53,11 +54,12 @@ pub use model::{
     AMBUSH_BOX_HALF_SIZE, AiState, AlertContinuation, AlertLevel, AlertSoldiersFailureContinuation,
     AmbushPoint, Attitude, CombatInfo, CrossNpcAction, Curiosity, Decision, Detection,
     DoorCombatInfo, DoorSeekInfo, EmoticonType, ForbiddenRemark, Hint, LogLine, LogLineType,
-    LookDirection, LookThereContinuation, Noise, NoiseType, PanicRequest, PatrolAssignment,
-    PointArchery, ProbabilityDistribution, Question, ReconnaissanceReport, Remark, ReportType,
-    RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest, SectorArchery, SeekPoint,
-    SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo, StimulusType, StolenObject,
-    Substate, TargetType, ThinkResultContinuation, ViewCone, stimulus_to_ai_event_code,
+    LookDirection, LookThereContinuation, Noise, NoiseOrigin, NoiseType, PanicRequest,
+    PatrolAssignment, PointArchery, ProbabilityDistribution, Question, ReconnaissanceReport,
+    Remark, ReportType, RepulsivePoint, ScreenRemark, ScriptSeekAreaRequest, SectorArchery,
+    SeekPoint, SeekPointDirection, Stimulus, StimulusCategory, StimulusInfo, StimulusType,
+    StolenObject, Substate, TargetType, ThinkResultContinuation, ViewCone,
+    stimulus_to_ai_event_code,
 };
 pub(crate) use model::{
     QueuedSelfStimulus, SelfStimulusOrigin, cache_npc_villain_authorized_direct,

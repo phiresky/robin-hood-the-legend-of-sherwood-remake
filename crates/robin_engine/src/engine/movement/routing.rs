@@ -275,12 +275,12 @@ impl EngineInner {
             intent.not_before_frame = Some(self.control.frame_counter.saturating_add(1));
         }
         if intent.source_position.is_none() {
-            let (raw_source, raw_sector, raw_layer, door_handle, door_direction) = {
+            let (raw_source, raw_sector, raw_layer, door_source) = {
                 let entity = self.get_entity(entity_id).unwrap_or_else(|| {
                     panic!("AI GoTo source actor {entity_id:?} disappeared before enqueue")
                 });
                 let element = entity.element_data();
-                let (door_handle, door_direction) = current_door_for_route_source(entity);
+                let door_source = current_door_for_route_source(entity);
                 (
                     element.position_map(),
                     // Original snapshots `Position(mpMe)`, including its
@@ -294,8 +294,7 @@ impl EngineInner {
                     // EVENT_COULDNT_REACHPOINT.
                     super::ai::ai_view_position_sector(self, element),
                     element.layer(),
-                    door_handle,
-                    door_direction,
+                    door_source,
                 )
             };
             // Original chooses the simple same-topology Move from the raw
@@ -325,19 +324,22 @@ impl EngineInner {
             let adapted_source = crosses_raw_topology
                 .then(|| {
                     self.scripts.mission.as_ref().and_then(|_| {
-                        adapt_source_to_current_door(
-                            &self.script_domains.interactables.doors,
-                            door_handle,
-                            door_direction,
-                        )
+                        door_source.and_then(|(door_handle, door_direction)| {
+                            adapt_source_to_current_door(
+                                &self.script_domains.interactables.doors,
+                                door_handle,
+                                door_direction,
+                            )
+                        })
                     })
                 })
                 .flatten();
             let adapted_sector_index = adapted_source.and_then(|_| {
+                let (door_handle, door_direction) = door_source?;
                 self.script_domains
                     .interactables
                     .doors
-                    .get(usize::try_from(door_handle.0).expect("door handle exceeds runtime usize"))
+                    .get(usize::from(door_handle))
                     .and_then(|door| {
                         if door_direction {
                             door.sector_in_index
@@ -783,7 +785,7 @@ impl EngineInner {
             panic!("AI gate-route authorization owner {entity_id:?} disappeared")
         });
         let ed = entity.element_data();
-        let (door_handle, door_direction) = current_door_for_route_source(entity);
+        let door_source = current_door_for_route_source(entity);
         let raw_source = ed.position_map();
         let raw_layer = ed.layer();
         let raw_sector = ed.sector();
@@ -821,11 +823,13 @@ impl EngineInner {
             crosses_raw_topology
                 .then(|| {
                     self.scripts.mission.as_ref().and_then(|_| {
-                        adapt_source_to_current_door_with_identity(
-                            &self.script_domains.interactables.doors,
-                            door_handle,
-                            door_direction,
-                        )
+                        door_source.and_then(|(door_handle, door_direction)| {
+                            adapt_source_to_current_door_with_identity(
+                                &self.script_domains.interactables.doors,
+                                door_handle,
+                                door_direction,
+                            )
+                        })
                     })
                 })
                 .flatten()
@@ -1427,11 +1431,11 @@ mod exact_ai_goto_source_tests {
             route,
             [
                 GatePathStep {
-                    door_index: crate::gate::DoorIndex(0),
+                    door_index: crate::gate::DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                 },
                 GatePathStep {
-                    door_index: crate::gate::DoorIndex(1),
+                    door_index: crate::gate::DoorIndex::new(1).expect("valid door index"),
                     direct: false,
                 },
             ]

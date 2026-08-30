@@ -30,7 +30,9 @@ serde-value = "0.7"
 tracing.workspace = true
 thiserror.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-jiff = "0.2"
+# Browser save metadata needs both the JavaScript wall clock and browser local
+# time zone. The `js` feature is inert on native targets.
+jiff = { version = "0.2", features = ["js"] }
 sys-locale = { version = "0.3", features = ["js"] }
 fastrand.workspace = true
 rand = "0.10"

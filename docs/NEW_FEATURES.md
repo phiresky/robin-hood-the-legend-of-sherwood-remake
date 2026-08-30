@@ -17,9 +17,21 @@ A list of which additional features we have added, which ones we might still wan
   selection across list mutations, and ordinary HTTP screenshots capture the
   presented topmost pause UI. Settings rows carry typed actions, enabled state,
   labels, and help text; large pages use bounded 12-row pagination, so the
-  integrated Gameplay page exposes all 33 current settings without index or
+  integrated Gameplay page exposes all 34 current settings without index or
   hit-box remapping. The native desktop data-folder chooser remains
   a synchronous OS dialog launched from the cooperative Options state.
+- **Self-describing save metadata.** Every newly written manual, quick,
+  rotating-autosave, continue, restart, and Sherwood save freezes its
+  wall-clock timestamp, mission title, stable player-profile identity, and
+  player name into both the payload header and lightweight slot index. The save
+  picker shows mission/player provenance, honest relative age (including future
+  times after clock correction), exact local time, and expanded campaign
+  details. The per-profile **Detailed Save Metadata** option switches to a
+  compact presentation without discarding stored metadata. Native save schema
+  v64 requires provenance and the multiplayer diagnostic-authority marker and
+  rejects every older Rust schema; only the
+  separate Original C++ importer may produce incomplete historical detail.
+
 - **Per-mission achievements, debrief evidence, XP, and trackers.** Four
   deterministic achievements are evaluated independently for each successful
   attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
@@ -440,7 +452,7 @@ A list of which additional features we have added, which ones we might still wan
   linearly replayable.
 
 - **Original-game parity traces**
-  (`crates/robin_rs/examples/original_parity_replay.rs`). A diagnostic runner
+  (`crates/robin_parity/examples/original_parity_replay.rs`). A diagnostic runner
   streams the neutral JSONL trace emitted by the instrumented C++ game,
   applies its resolved player commands on the recorded frames, and compares
   typed entity state using exact floating-point bits. Unsupported legacy
@@ -508,7 +520,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the protocol-30 game wire,
+  relay-over-WebSocket transport with the protocol-31 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native
@@ -602,8 +614,6 @@ A list of which additional features we have added, which ones we might still wan
 - Gesture quality: the more accurately a fighting gesture is drawn, the more
   damage points it applies. Needs to show the correct template somehow so the
   user can learn.
-- Every save should have a timestamp automatically, plus mission name and
-  player name. Timestamp should be shown as relative time too (`x hours ago`).
 - Item reliability rebalances are implemented as independent Gameplay
   settings. Direct apples can interrupt active swordfights; wasps acquire
   valid initial targets within 75 instead of 50 units; Will Scarlet's stone

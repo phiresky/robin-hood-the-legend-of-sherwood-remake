@@ -769,7 +769,9 @@ pub fn derive_position_topology(
                     "sparse door sector references non-door Original gate index {gate_index}"
                 )));
             }
-            Ok(Some(DoorHandle(runtime.0)))
+            Ok(Some(
+                DoorHandle::new(runtime.get()).expect("valid door index"),
+            ))
         })
         .collect::<Result<Vec<_>, _>>()?;
     build_position_topology(
@@ -797,7 +799,7 @@ fn build_position_topology(
     }
     let doors = gate_order
         .iter()
-        .map(|index| DoorHandle(index.0))
+        .map(|index| DoorHandle::new(index.get()).expect("valid door index"))
         .collect::<Vec<_>>();
 
     // Rust stores only authored obstacles. Place each binding by the retained
@@ -816,7 +818,7 @@ fn build_position_topology(
         }
         let runtime_index = u16::try_from(runtime_index)
             .map_err(|_| position_topology_detail("runtime authored obstacle index exceeds u16"))?;
-        let obstacle_handle = ObstacleHandle::new(runtime_index).ok_or_else(|| {
+        let obstacle_handle = ObstacleHandle::new(u32::from(runtime_index)).ok_or_else(|| {
             position_topology_detail("runtime authored obstacle index equals null sentinel 0xffff")
         })?;
         let binding = LegacyPositionObstacleBinding {
@@ -952,9 +954,7 @@ pub(crate) fn preflight_v48_position(
         payload.sector_goal.0,
         &topology.sector_indices,
     )?;
-    let door = checked_index("door", payload.door.0, &topology.doors)?
-        .copied()
-        .unwrap_or(DoorHandle::NULL);
+    let door = checked_index("door", payload.door.0, &topology.doors)?.copied();
     let obstacle_space = if payload.layer == u16::MAX {
         &topology.sight_obstacles
     } else {
@@ -971,8 +971,8 @@ pub(crate) fn preflight_v48_position(
         direction,
         direction_goal,
         slow_turn_count: payload.slow_turn_count,
-        layer: Layer::from_saved_raw(payload.layer),
-        layer_goal: Layer::from_saved_raw(payload.layer_goal),
+        layer: Layer::new(payload.layer),
+        layer_goal: Layer::new(payload.layer_goal),
         tolerance: payload.tolerance,
         directional_tolerance: payload.directional_tolerance,
         accumulate_movement_map: payload.accumulate_movement_map,
@@ -1369,9 +1369,9 @@ mod tests {
             identity_sector_indices(17),
             vec![None; 17],
             &[
-                crate::gate::DoorIndex(2),
-                crate::gate::DoorIndex(0),
-                crate::gate::DoorIndex(1),
+                crate::gate::DoorIndex::new(2).expect("valid door index"),
+                crate::gate::DoorIndex::new(0).expect("valid door index"),
+                crate::gate::DoorIndex::new(1).expect("valid door index"),
             ],
             &obstacles,
         )
@@ -1381,7 +1381,11 @@ mod tests {
         assert_eq!(topology.sector_indices, identity_sector_indices(17));
         assert_eq!(
             topology.doors,
-            vec![DoorHandle(2), DoorHandle(0), DoorHandle(1)]
+            vec![
+                DoorHandle::new(2).expect("valid door index"),
+                DoorHandle::new(0).expect("valid door index"),
+                DoorHandle::new(1).expect("valid door index")
+            ]
         );
         assert_eq!(
             topology.sight_obstacles,
@@ -1429,7 +1433,7 @@ mod tests {
             identity_sectors(3),
             identity_sector_indices(3),
             vec![None; 3],
-            &[crate::gate::DoorIndex(0)],
+            &[crate::gate::DoorIndex::new(0).expect("valid door index")],
             &[],
         )
         .unwrap();
@@ -1493,14 +1497,14 @@ mod tests {
                 ],
                 sector_indices: identity_sector_indices(3),
                 sector_doors: vec![None; 3],
-                doors: vec![DoorHandle(9)],
+                doors: vec![DoorHandle::new(9).expect("valid door index")],
                 projection_areas: vec![projection],
                 sight_obstacles: vec![sight],
             },
         )
         .unwrap();
 
-        assert_eq!(saved.layer.get(), u16::MAX);
+        assert_eq!(saved.layer, None);
         assert_eq!(saved.sector.map(u16::from), Some(42));
         assert_eq!(saved.sector_index, SectorIndex::new(1));
         assert_eq!(saved.sector_goal.map(u16::from), Some(7));
@@ -1513,13 +1517,13 @@ mod tests {
         assert!(saved.blocked_box.0.is_none());
 
         let mut position = PositionInterface::new();
-        position.set_pathfinder_index(77);
+        position.set_pathfinder_index(crate::position_interface::PathfinderIndex::new(77).unwrap());
         position.restore_v48_serialized_state(saved.clone());
 
         assert_eq!(position.v48_serialized_state(), saved);
         assert_eq!(
             position.get_pathfinder_index(),
-            77,
+            crate::position_interface::PathfinderIndex::new(77),
             "Original does not serialize mission-derived pathfinder indices"
         );
     }
@@ -1539,7 +1543,7 @@ mod tests {
                 sectors: identity_sectors(3),
                 sector_indices: identity_sector_indices(3),
                 sector_doors: vec![None; 3],
-                doors: vec![DoorHandle(9)],
+                doors: vec![DoorHandle::new(9).expect("valid door index")],
                 projection_areas: Vec::new(),
                 sight_obstacles: Vec::new(),
             },
@@ -1571,7 +1575,7 @@ mod tests {
         let mut payload = position_payload();
         payload.direction = 16;
         let mut position = PositionInterface::new();
-        position.set_pathfinder_index(23);
+        position.set_pathfinder_index(crate::position_interface::PathfinderIndex::new(23).unwrap());
         let before = position.clone();
 
         let error = preflight_v48_position(
@@ -1581,7 +1585,7 @@ mod tests {
                 sectors: identity_sectors(3),
                 sector_indices: identity_sector_indices(3),
                 sector_doors: vec![None; 3],
-                doors: vec![DoorHandle(9)],
+                doors: vec![DoorHandle::new(9).expect("valid door index")],
                 projection_areas: vec![],
                 sight_obstacles: vec![],
             },
@@ -1626,7 +1630,7 @@ mod tests {
             sectors: identity_sectors(3),
             sector_indices: identity_sector_indices(3),
             sector_doors: vec![None; 3],
-            doors: vec![DoorHandle(9)],
+            doors: vec![DoorHandle::new(9).expect("valid door index")],
             projection_areas: vec![projection],
             sight_obstacles: vec![sight],
         };

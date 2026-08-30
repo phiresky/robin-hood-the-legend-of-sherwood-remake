@@ -218,65 +218,72 @@ impl NativeContext<'_, '_> {
                 1
             }
             StareActor => {
-                // StareActor(Actor npc, Actor target, int duration_frames)
-                // Makes npc face toward target for duration frames. 0 = stop staring.
-                let duration = stack.pop_i32();
+                // Original's third argument is a turn-sprite flag, not a
+                // duration. SetViewTarget is persistent until superseded.
+                let turn_sprite = stack.pop_i32() != 0;
                 let target = stack.pop_i32();
                 let actor = stack.pop_i32();
-                let target_handle = u32::try_from(target)
-                    .ok()
-                    .and_then(std::num::NonZeroU32::new)
-                    .map(std::num::NonZeroU32::get);
-                if duration > 0
-                    && let Some(target_handle) = target_handle
-                    && self.get_entity(target_handle as i32).is_none()
-                {
-                    tracing::error!("Script Error: StareActor invalid target {target_handle}");
+                let Some(target_id) = self.actor_id(target) else {
+                    tracing::error!("Script Error: StareActor invalid target {target}");
+                    return 0;
+                };
+                if !self.get_entity(actor).is_some_and(|entity| entity.is_npc()) {
+                    tracing::error!(
+                        "Script Error: StareActor actor {actor} is invalid or not an NPC"
+                    );
                     return 0;
                 }
-                if let Some(entity) = self.get_entity_mut(actor)
-                    && let Some(ai) = entity.ai_controller_mut()
-                {
-                    if duration > 0
-                        && let Some(target_handle) = target_handle
-                    {
-                        ai.stare_target_actor = Some(target_handle);
-                        ai.stare_target_position = None;
-                        ai.stare_remaining = duration as u32;
-                    } else {
-                        ai.stare_target_actor = None;
-                        ai.stare_target_position = None;
-                        ai.stare_remaining = 0;
-                    }
-                }
+                let request = crate::interp::SynchronousScriptRequest::StareActor {
+                    actor,
+                    target: target_id,
+                    turn_sprite,
+                    native_return: 0,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 0
             }
             StareLocation => {
-                // StareLocation(Actor npc, Location loc, int duration_frames)
-                // Makes npc face toward a location for duration frames.
-                let duration = stack.pop_i32();
+                let turn_sprite = stack.pop_i32() != 0;
                 let loc = stack.pop_i32();
                 let actor = stack.pop_i32();
-                let resolved_pos =
-                    self.resolve_location_pos(loc)
-                        .map(|(x, y)| crate::ai::Position {
-                            x,
-                            y,
-                            ..Default::default()
-                        });
-                if let Some(entity) = self.get_entity_mut(actor)
-                    && let Some(ai) = entity.ai_controller_mut()
-                {
-                    if duration > 0 {
-                        ai.stare_target_actor = None;
-                        ai.stare_target_position = resolved_pos;
-                        ai.stare_remaining = duration as u32;
-                    } else {
-                        ai.stare_target_actor = None;
-                        ai.stare_target_position = None;
-                        ai.stare_remaining = 0;
-                    }
+                if !self.get_entity(actor).is_some_and(|entity| entity.is_npc()) {
+                    tracing::error!(
+                        "Script Error: StareLocation actor {actor} is invalid or not an NPC"
+                    );
+                    return 0;
                 }
+                if !self.is_script_point(loc) {
+                    tracing::error!("Script Error: StareLocation location {loc} is not a point");
+                    return 0;
+                }
+                let Some((x, y)) = self.resolve_location_pos(loc) else {
+                    tracing::error!("Script Error: StareLocation location {loc} is missing");
+                    return 0;
+                };
+                let Some((level, sector)) = self.resolve_location_layer_sector_handle(loc) else {
+                    tracing::error!(
+                        "Script Error: StareLocation location {loc} has no exact layer/sector"
+                    );
+                    return 0;
+                };
+                let request = crate::interp::SynchronousScriptRequest::StareLocation {
+                    actor,
+                    target: crate::ai::Position {
+                        x,
+                        y,
+                        level,
+                        sector: Some(sector),
+                    },
+                    turn_sprite,
+                    native_return: 0,
+                };
+                self.pending_yield = Some(crate::interp::NativeYield {
+                    resume: crate::interp::ResumePolicy::Fixed(request.native_return()),
+                    operation: crate::interp::NativeOperation::EngineAction(request),
+                });
                 0
             }
             AssignPath => {

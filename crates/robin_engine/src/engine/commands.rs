@@ -574,7 +574,7 @@ impl EngineInner {
                     // Write the new titbit id into the slot.  Only
                     // overwrite when the titbit manager returned a real
                     // id, to avoid clobbering with INVALID.
-                    if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
+                    if let Some(tb) = titbit_id {
                         self.players
                             .macro_store
                             .get_or_insert(*actor)
@@ -689,7 +689,7 @@ impl EngineInner {
                         None,
                     );
                     // Write the new titbit id into the slot.  Skip INVALID.
-                    if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
+                    if let Some(tb) = titbit_id {
                         self.players
                             .macro_store
                             .get_or_insert(*actor)
@@ -777,7 +777,7 @@ impl EngineInner {
                         Some(pos.y),
                         Some(target_layer),
                     );
-                    if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
+                    if let Some(tb) = titbit_id {
                         self.players
                             .macro_store
                             .get_or_insert(*actor)
@@ -2267,9 +2267,7 @@ impl EngineInner {
             ),
         };
         let manager = ElementHandle(recording_pc.index());
-        let supplier_handle = supplier
-            .map(|id| ElementHandle(id.index()))
-            .unwrap_or(ElementHandle::INVALID);
+        let supplier_handle = supplier.map(|id| ElementHandle(id.index()));
         let titbit_id = self.feedback.titbit_manager.add_titbit(
             pos3d,
             layer,
@@ -2283,7 +2281,7 @@ impl EngineInner {
             None,
             Some(layer),
         );
-        if let Some(tb) = crate::titbit::TitbitId::new(titbit_id) {
+        if let Some(tb) = titbit_id {
             match recording_store {
                 QuickActionRecordingStore::Manual => self
                     .players
@@ -4007,19 +4005,18 @@ impl EngineInner {
         command: Command,
         running: bool,
     ) -> bool {
-        let (actor_pos, actor_sector, actor_posture, actor_auth, door, door_direction) = {
+        let (actor_pos, actor_sector, actor_posture, actor_auth, door_source) = {
             let entity = self
                 .get_entity(actor)
                 .unwrap_or_else(|| panic!("target interaction requires missing actor {actor:?}"));
-            let (door, door_direction) = super::movement::current_door_for_route_source(entity);
+            let door_source = super::movement::current_door_for_route_source(entity);
             (
                 entity.element_data().position_map(),
                 super::ai::ai_view_position_sector(self, entity.element_data())
                     .unwrap_or_else(|| panic!("target interaction actor {actor:?} has no sector")),
                 entity.element_data().posture,
                 entity.actor_auth_info(),
-                door,
-                door_direction,
+                door_source,
             )
         };
         let (target_pos, target_sector, target_layer, target_point) = {
@@ -4054,12 +4051,14 @@ impl EngineInner {
         let (gate_path, gate_source_sector) = if same_sector {
             (Vec::new(), None)
         } else {
-            let (source_pos, source_sector) =
-                super::movement::adapt_source_to_current_door_with_identity(
-                    &self.script_domains.interactables.doors,
-                    door,
-                    door_direction,
-                )
+            let (source_pos, source_sector) = door_source
+                .and_then(|(door, door_direction)| {
+                    super::movement::adapt_source_to_current_door_with_identity(
+                        &self.script_domains.interactables.doors,
+                        door,
+                        door_direction,
+                    )
+                })
                 .map(|(position, sector, _)| (position, sector))
                 .unwrap_or((actor_pos, actor_sector));
             let level = self.world.fast_grid.level.clone();
@@ -4651,16 +4650,17 @@ impl EngineInner {
             // Source adaptation: when the PC is currently straddling
             // a gate, rewrite the path source to the gate's far-side
             // anchor.
-            let (door_handle, door_direction) = self
+            let door_source = self
                 .get_entity(pc_id)
-                .map(crate::engine::movement::current_door_for_route_source)
-                .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
+                .and_then(crate::engine::movement::current_door_for_route_source);
             let (adj_src_pos, adj_src_sector) = {
-                let adapted = crate::engine::movement::adapt_source_to_current_door(
-                    &self.script_domains.interactables.doors,
-                    door_handle,
-                    door_direction,
-                );
+                let adapted = door_source.and_then(|(door_handle, door_direction)| {
+                    crate::engine::movement::adapt_source_to_current_door(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
+                });
                 match adapted {
                     Some((adj, sector, _layer)) => (adj, sector),
                     None => (MapPoint::new(pc_pos.x, pc_pos.y), u16::from(pcs)),
@@ -5081,6 +5081,10 @@ impl EngineInner {
             "DropAle exact goal-sector identity requires a goal_override"
         );
         let (goal_sector, goal_layer) = if let Some((goal_sector, goal_layer)) = goal_override {
+            assert!(
+                goal_sector.get() >= 0,
+                "DropAle goal_override has invalid public sector {goal_sector}"
+            );
             let public_sector = u16::from(goal_sector);
             let mut sector = crate::position_interface::SectorHandle::new(public_sector)
                 .unwrap_or_else(|| {
@@ -6386,6 +6390,11 @@ mod tests {
                 ..PcData::default()
             },
         }));
+        engine
+            .get_entity_mut(pc_id)
+            .unwrap()
+            .position_iface_mut()
+            .set_pathfinder_index(crate::position_interface::PathfinderIndex::new(0).unwrap());
 
         (engine, assets, pc_id)
     }
@@ -6472,8 +6481,11 @@ mod tests {
             .find(|titbit| titbit.kind == TitbitKind::QuickAction)
             .expect("recorded shield QA titbit");
         assert_eq!(titbit.phase, crate::titbit::QuickAction::Shield as u16);
-        assert_eq!(titbit.element_supplier, ElementHandle(protected_pc.index()));
-        assert_eq!(titbit.element_manager, ElementHandle(actor.index()));
+        assert_eq!(
+            titbit.element_supplier,
+            Some(ElementHandle(protected_pc.index()))
+        );
+        assert_eq!(titbit.element_manager, Some(ElementHandle(actor.index())));
         assert_eq!(titbit.position, danger_point);
         assert_eq!(titbit.layer, 7);
 
@@ -6727,7 +6739,7 @@ mod tests {
                 .titbit_manager
                 .titbits()
                 .iter()
-                .all(|titbit| titbit.id != original_titbit.get()),
+                .all(|titbit| titbit.id != original_titbit),
             "the first replacement append must retire the former titbit atomically"
         );
     }
@@ -7017,7 +7029,7 @@ mod tests {
                 .titbit_manager
                 .titbits()
                 .iter()
-                .any(|titbit| titbit.id == manual_titbit.get())
+                .any(|titbit| titbit.id == manual_titbit)
         );
         let restored_icon = engine
             .get_entity(pc_id)
@@ -7388,7 +7400,7 @@ mod tests {
             .expect("pickup QA titbit");
         assert_eq!(
             engine.feedback.titbit_manager.get_phase(titbit),
-            crate::titbit::QuickAction::Take as u16
+            Some(crate::titbit::QuickAction::Take as u16)
         );
     }
 
@@ -7648,9 +7660,16 @@ mod tests {
         let element = engine.get_entity_mut(id).unwrap().element_data_mut();
         let position = element.position_map();
         let direction = element.direction();
+        let pathfinder_index = element.sprite.position_iface.get_pathfinder_index();
         element.sprite = sprite;
         element.set_position_map(position);
         element.set_direction_instantly(direction);
+        if let Some(pathfinder_index) = pathfinder_index {
+            element
+                .sprite
+                .position_iface
+                .set_pathfinder_index(pathfinder_index);
+        }
     }
 
     fn setup_take_corpse_macro_scene(
@@ -8153,7 +8172,7 @@ mod tests {
             source_sector_index: Some(source_index),
             source_layer: 0,
             outcome: crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                door_index: crate::gate::DoorIndex(42),
+                door_index: crate::gate::DoorIndex::new(42).expect("valid door index"),
                 direct: false,
             }]),
         };
@@ -8571,8 +8590,10 @@ mod tests {
             let pc = engine.get_entity_mut(pc_id).unwrap();
             pc.element_data_mut().set_sector(Some(raw_goal));
             pc.element_data_mut().set_layer(2);
-            pc.position_iface_mut()
-                .set_door(crate::position_interface::DoorHandle(7), true);
+            pc.position_iface_mut().set_door(
+                crate::position_interface::DoorHandle::new(7).expect("valid door index"),
+                true,
+            );
         }
         engine.script_domains.interactables.doors =
             (0..8).map(|_| crate::gate::Door::default()).collect();
@@ -8631,8 +8652,10 @@ mod tests {
             let pc = engine.get_entity_mut(pc_id).unwrap();
             pc.element_data_mut().set_sector(Some(raw_goal));
             pc.element_data_mut().set_layer(2);
-            pc.position_iface_mut()
-                .set_door(crate::position_interface::DoorHandle(7), false);
+            pc.position_iface_mut().set_door(
+                crate::position_interface::DoorHandle::new(7).expect("valid door index"),
+                false,
+            );
         }
         engine.script_domains.interactables.doors =
             (0..8).map(|_| crate::gate::Door::default()).collect();
@@ -8831,7 +8854,7 @@ mod tests {
         );
         assert_eq!(manager.titbits().len(), if running { 2 } else { 1 });
         let titbit = &manager.titbits()[0];
-        assert_eq!(titbit.id, 0);
+        assert_eq!(titbit.id, crate::titbit::TitbitId::new(0).unwrap());
         assert_eq!(titbit.kind, crate::titbit::TitbitKind::QuickAction);
         assert_eq!(titbit.phase, phase as u16);
         assert_eq!(
@@ -8843,13 +8866,11 @@ mod tests {
         assert!(!titbit.blinking);
         assert_eq!(
             titbit.element_supplier,
-            supplier
-                .map(|id| crate::titbit::ElementHandle(id.index()))
-                .unwrap_or(crate::titbit::ElementHandle::INVALID)
+            supplier.map(|id| crate::titbit::ElementHandle(id.index()))
         );
         assert_eq!(
             titbit.element_manager,
-            crate::titbit::ElementHandle(actor.index())
+            Some(crate::titbit::ElementHandle(actor.index()))
         );
         assert_eq!(titbit.position, position);
         assert_eq!(titbit.layer, layer);
@@ -11832,7 +11853,7 @@ mod tests {
             },
         });
         state.stop_recording();
-        let raw = engine.feedback.titbit_manager.add_titbit(
+        let titbit = engine.feedback.titbit_manager.add_titbit(
             WorldPoint3D::new(target_position.x, target_position.y, 0.0),
             target_layer,
             TitbitKind::QuickAction,
@@ -11845,7 +11866,7 @@ mod tests {
             None,
             Some(target_layer),
         );
-        let titbit = crate::titbit::TitbitId::new(raw).expect("QA titbit allocation succeeds");
+        let titbit = titbit.expect("QA titbit allocation succeeds");
         engine
             .players
             .macro_store

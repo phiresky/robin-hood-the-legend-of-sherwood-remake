@@ -180,7 +180,9 @@ fn required_unlock_door_id(
     });
     match element.get_property(crate::sequence::Field::Door) {
         Some(crate::sequence::FieldValue::DoorId(id)) => *id,
-        Some(crate::sequence::FieldValue::Integer(id)) => crate::gate::DoorIndex(*id),
+        Some(crate::sequence::FieldValue::Integer(id)) => {
+            crate::gate::DoorIndex::new(*id).expect("valid door index")
+        }
         _ => panic!("UnlockDoor sequence element {seq_id:?}/{elem_idx} has no Door property"),
     }
 }
@@ -1866,20 +1868,21 @@ impl StealthCommandContext<'_> {
 
         use crate::coordinates::WorldPoint3D;
         use crate::titbit::{ElementHandle, TitbitKind};
+        let layer = entity.element_data().layer();
         let handle = ElementHandle(owner.index());
         if transition.result_posture.is_hidden() && !old_posture.is_hidden() {
             self.titbit_manager.add_titbit(
                 WorldPoint3D::default(),
-                0,
+                layer,
                 TitbitKind::Hidden,
                 handle,
                 hidden_phase.expect("hidden phase resolved before entering hidden posture"),
                 handle,
                 false,
-                0,
+                None,
                 true,
                 None,
-                None,
+                Some(layer),
             );
         } else if !transition.result_posture.is_hidden() && old_posture.is_hidden() {
             self.titbit_manager
@@ -3724,13 +3727,21 @@ mod canonical_door_invariant_tests {
     #[test]
     #[should_panic(expected = "UnlockDoor dispatch references missing canonical door 4")]
     fn required_door_lookup_rejects_stale_unlock_target() {
-        required_canonical_door(&[], crate::gate::DoorIndex(4), "UnlockDoor dispatch");
+        required_canonical_door(
+            &[],
+            crate::gate::DoorIndex::new(4).expect("valid door index"),
+            "UnlockDoor dispatch",
+        );
     }
 
     #[test]
     #[should_panic(expected = "UnlockDoor completion references missing canonical door 9")]
     fn required_mutable_door_lookup_rejects_stale_completion_target() {
-        required_canonical_door_mut(&mut [], crate::gate::DoorIndex(9), "UnlockDoor completion");
+        required_canonical_door_mut(
+            &mut [],
+            crate::gate::DoorIndex::new(9).expect("valid door index"),
+            "UnlockDoor completion",
+        );
     }
 
     #[test]

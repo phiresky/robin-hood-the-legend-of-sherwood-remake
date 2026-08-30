@@ -1455,7 +1455,7 @@ impl EngineInner {
             return None;
         }
         if let Some(ai) = entity.enemy_ai()
-            && (ai.left_combat_neighbour != 0 || ai.right_combat_neighbour != 0)
+            && (ai.left_combat_neighbour.is_some() || ai.right_combat_neighbour.is_some())
         {
             return None;
         }

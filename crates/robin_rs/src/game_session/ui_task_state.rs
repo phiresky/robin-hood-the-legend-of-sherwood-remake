@@ -1173,6 +1173,9 @@ pub(super) struct SaveLoadTaskState {
     buttons: FrameWnd,
     confirmation: Option<(SaveConfirmation, YesNoModalState)>,
     text_input_active: bool,
+    detailed_metadata: bool,
+    local_time_zone: Option<jiff::tz::TimeZone>,
+    clock_error_reported: bool,
     multiplayer_connected: bool,
 }
 
@@ -1183,6 +1186,7 @@ impl SaveLoadTaskState {
         resources: &IngameMenuResources,
         save_manager: &mut SaveGameManager,
         mission_id: u32,
+        detailed_metadata: bool,
         mode: SaveLoadMode,
         multiplayer_connected: bool,
     ) -> Self {
@@ -1212,6 +1216,11 @@ impl SaveLoadTaskState {
             buttons,
             confirmation: None,
             text_input_active,
+            detailed_metadata,
+            local_time_zone: jiff::tz::TimeZone::try_system()
+                .inspect_err(|error| tracing::warn!("Save menu local time is unavailable: {error}"))
+                .ok(),
+            clock_error_reported: false,
             multiplayer_connected,
         }
     }
@@ -1344,14 +1353,14 @@ impl SaveLoadTaskState {
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = self.transform.from_screen(*x, *y);
-                    if (30..450).contains(&vx) && (10..430).contains(&vy) {
-                        let row = ((vy - 14) / 34).max(0) as usize + self.scroll;
+                    if (30..450).contains(&vx) && (38..430).contains(&vy) {
+                        let row = ((vy - 42) / self.row_height()).max(0) as usize + self.scroll;
                         self.select_row(row, save_manager, resources);
                     }
                 }
                 GameEvent::MouseWheel(delta) => {
                     let total = self.visible.len() + usize::from(self.mode == SaveLoadMode::Save);
-                    let max = total.saturating_sub(12);
+                    let max = total.saturating_sub(self.visible_rows());
                     if *delta > 0 {
                         self.scroll = self.scroll.saturating_sub(1);
                     } else if *delta < 0 {
@@ -1489,8 +1498,9 @@ impl SaveLoadTaskState {
         if next < self.scroll {
             self.scroll = next;
         }
-        if next >= self.scroll + 12 {
-            self.scroll = next + 1 - 12;
+        let visible_rows = self.visible_rows();
+        if next >= self.scroll + visible_rows {
+            self.scroll = next + 1 - visible_rows;
         }
     }
 
@@ -1525,15 +1535,34 @@ impl SaveLoadTaskState {
         }
         if let Some(font) = resources.label_font_any() {
             let total = self.visible.len() + usize::from(self.mode == SaveLoadMode::Save);
-            for offset in 0..12 {
+            let row_height = self.row_height();
+            let now_unix = if self.detailed_metadata {
+                match crate::save_file::unix_timestamp_now() {
+                    Ok(now) => Some(now),
+                    Err(error) => {
+                        if !self.clock_error_reported {
+                            tracing::warn!("Save menu relative time is unavailable: {error:#}");
+                            self.clock_error_reported = true;
+                        }
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            for offset in 0..self.visible_rows() {
                 let row = self.scroll + offset;
                 if row >= total {
                     break;
                 }
-                let (selected, label) = if self.mode == SaveLoadMode::Save && row == 0 {
+                let (selected, label, details) = if self.mode == SaveLoadMode::Save && row == 0 {
                     (
                         self.selected == Some(SaveRow::New),
                         "< New Save >".to_string(),
+                        [
+                            "Name optional - creates a new save slot".to_string(),
+                            String::new(),
+                        ],
                     )
                 } else {
                     let index = row - usize::from(self.mode == SaveLoadMode::Save);
@@ -1544,18 +1573,41 @@ impl SaveLoadTaskState {
                     let save = save_manager.get(slot).expect("visible save slot exists");
                     (
                         self.selected == Some(SaveRow::Existing(index)),
-                        save.text.clone(),
+                        if save.is_autosave() {
+                            format!("Autosave - {}", save.text)
+                        } else {
+                            save.text.clone()
+                        },
+                        crate::ingame_menu::save_load::cooperative_save_row_detail_lines(
+                            save,
+                            self.detailed_metadata,
+                            now_unix,
+                            self.local_time_zone.as_ref(),
+                        ),
                     )
                 };
                 let prefix = if selected { "> " } else { "  " };
+                let row_y = 42 + offset as i32 * row_height;
                 render_text_virt_font(
                     renderer,
                     font,
                     self.transform,
                     &format!("{prefix}{label}"),
                     40,
-                    42 + offset as i32 * 32,
+                    row_y,
                 );
+                for (line_index, detail) in
+                    details.iter().filter(|line| !line.is_empty()).enumerate()
+                {
+                    render_text_virt_font(
+                        renderer,
+                        font,
+                        self.transform,
+                        detail,
+                        54,
+                        row_y + 16 * (line_index as i32 + 1),
+                    );
+                }
             }
             if self.mode == SaveLoadMode::Save {
                 render_text_virt_font(
@@ -1579,6 +1631,14 @@ impl SaveLoadTaskState {
             crate::window::stop_text_input();
             self.text_input_active = false;
         }
+    }
+
+    fn row_height(&self) -> i32 {
+        if self.detailed_metadata { 52 } else { 36 }
+    }
+
+    fn visible_rows(&self) -> usize {
+        if self.detailed_metadata { 7 } else { 10 }
     }
 }
 
@@ -1845,7 +1905,7 @@ mod tests {
     #[test]
     fn options_pager_covers_every_integrated_gameplay_setting() {
         let total = crate::ingame_menu::gameplay::OPTION_LABELS.len();
-        assert_eq!(total, 33, "update this contract when settings are added");
+        assert_eq!(total, 34, "update this contract when settings are added");
         assert_eq!(OptionsPager::page_count(total), 3);
         let covered = (0..OptionsPager::page_count(total))
             .flat_map(|page| OptionsPager { page }.visible_range(total))

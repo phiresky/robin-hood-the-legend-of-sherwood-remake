@@ -652,7 +652,7 @@ impl EnemyAi {
                 target: first,
                 caller: self.base.me,
                 stimulus_type: StimulusType::CallAlert,
-                info: StimulusInfo::Human(self.base.me),
+                info: StimulusInfo::Human(AiEntityHandle::new(self.base.me)),
                 continuation: ThinkResultContinuation::OfficerAlertedSoldier {
                     last: first_is_last,
                     use_formation: grid.is_some(),
@@ -1027,7 +1027,7 @@ impl EnemyAi {
             seek_position: soldier_seek_position,
             seen_bodies: soldier.report_seen_bodies.clone(),
             charly: soldier.report_charly,
-            charly_seen: soldier.report_charly != 0,
+            charly_seen: soldier.report_charly.is_some(),
         };
         self.base.consider_report_merged_at_frame(
             &soldier_report,
@@ -1061,7 +1061,7 @@ impl EnemyAi {
                 AiState::Seeking,
                 Substate::SeekingOfficerGetAlertingReportFromSoldier,
             );
-            self.base.antagonist = soldier_handle;
+            self.base.antagonist = Some(AiEntityHandle::new(soldier_handle));
             self.face_npc(soldier_handle, ctx);
             self.base.seek_position = soldier_seek_position;
             self.base
@@ -1103,13 +1103,15 @@ impl EnemyAi {
         // after seeking (REPORT_OFFICER_AFTER flag).
         let mut nearest_officer: Option<&CampSoldierInfo> = None;
 
-        if self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER) && self.base.antagonist != 0 {
+        if self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
+            && self.base.antagonist.is_some()
+        {
             // Find the antagonist in camp_soldiers
-            if let Some(ant) = tick
-                .camp_soldiers
-                .iter()
-                .find(|cs| cs.handle == self.base.antagonist)
-            {
+            if let Some(ant) = tick.camp_soldiers.iter().find(|cs| {
+                self.base
+                    .antagonist
+                    .is_some_and(|handle| handle.get() == cs.handle)
+            }) {
                 match ant.ai_substate {
                     Substate::SeekingOfficerWaitForInstructedSoldier => {
                         nearest_officer = Some(ant);
@@ -1231,7 +1233,7 @@ impl EnemyAi {
             .position;
 
         self.current_task_priority = task_priority::ALERT;
-        self.base.antagonist = officer_handle;
+        self.base.antagonist = Some(AiEntityHandle::new(officer_handle));
         self.gather_position = officer_target_pos;
         self.go_near(
             AiState::Seeking,
@@ -1272,9 +1274,11 @@ impl EnemyAi {
     /// GoNear and deliberately skips the ordinary final route-failure test.
     pub(crate) fn alert_officer_returns_to_instructed_group(&self, tick: &AiPerTickData) -> bool {
         self.seek_flags.contains(SeekFlags::REPORT_OFFICER_AFTER)
-            && self.base.antagonist != 0
+            && self.base.antagonist.is_some()
             && tick.camp_soldiers.iter().any(|soldier| {
-                soldier.handle == self.base.antagonist
+                self.base
+                    .antagonist
+                    .is_some_and(|handle| handle.get() == soldier.handle)
                     && soldier.ai_substate == Substate::SeekingOfficerWaitForInstructedGroup
             })
     }
@@ -1306,7 +1310,7 @@ impl EnemyAi {
         // body-alert.
         self.base.alert_soldiers_point = position;
         if reason != ReportType::Body {
-            self.base.detected_body = 0;
+            self.base.detected_body = None;
         }
 
         // Rank policy table.
@@ -1529,7 +1533,7 @@ impl EnemyAi {
         let alert_hint = Hint {
             seek_point: danger_pos,
             seek_flags: 0,
-            who_tells_me: self.base.me,
+            who_tells_me: AiEntityHandle::new(self.base.me),
         };
 
         // Two categorisations emerge from the loop:
@@ -1767,7 +1771,7 @@ impl EnemyAi {
         // my_door = nearest_door — stash the door so the
         // subsequent indoor `AlertSoldiers` formation flow has the
         // right exit-door geometry to project gather slots outside.
-        self.base.my_door_index = Some(door.door_index.0);
+        self.base.my_door_index = Some(door.door_index);
         self.go_to(
             AiState::Fleeing,
             Substate::FleeingRunToAlertSoldiers,
@@ -1796,7 +1800,7 @@ mod tests {
             is_able_to_fight: true,
             is_dead: false,
             knocked_out_in_money_fight: false,
-            primary_target: 0,
+            primary_target: None,
             pride: 0,
             is_able_to_help: true,
             script_locked: false,
@@ -1805,11 +1809,11 @@ mod tests {
             report_type: ReportType::Nothing,
             report_seek_position: Position::default(),
             report_seen_bodies: Vec::new(),
-            report_charly: 0,
+            report_charly: None,
             alert_soldiers_point: Position::default(),
             patrol_chief: None,
-            antagonist: 0,
-            detected_body: 0,
+            antagonist: None,
+            detected_body: None,
             blood_alcohol: 0,
             duty_flag: false,
             is_tower_guard: false,

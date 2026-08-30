@@ -2213,7 +2213,7 @@ fn unlock_door_done_clears_every_lock_in_owner_slot_with_swapped_creation_order(
             engine.orders.allocate_order_id(),
         )
         .with_completion(OrderCompletion::UnlockDoor {
-            door_id: DoorIndex(0),
+            door_id: DoorIndex::new(0).expect("valid door index"),
         });
         let order_id = order.order_id;
         let mut element = SequenceElement::new_generic(1, Command::UnlockDoor, Some(unlocker));
@@ -2631,7 +2631,8 @@ fn animation_execution_gates_do_not_skip_action_change() {
                 .actor_data_mut()
                 .expect("skipped actor is typed")
                 .active_door_pass = Some(crate::element::ActiveDoorPass {
-                door_index: crate::gate::DoorIndex(u32::MAX),
+                door_index: crate::gate::DoorIndex::new(u32::MAX - 1)
+                    .expect("largest valid door index"),
                 direct: true,
                 position_direct: true,
                 steps: std::collections::VecDeque::new(),
@@ -2761,7 +2762,8 @@ fn movement_owned_token_skip_does_not_sample_stale_execute_inputs() {
                 .actor_data_mut()
                 .expect("token-skip actor is typed")
                 .active_door_pass = Some(crate::element::ActiveDoorPass {
-                door_index: crate::gate::DoorIndex(u32::MAX),
+                door_index: crate::gate::DoorIndex::new(u32::MAX - 1)
+                    .expect("largest valid door index"),
                 direct: true,
                 position_direct: true,
                 steps: std::collections::VecDeque::new(),
@@ -4383,7 +4385,7 @@ fn stunned_sword_initialisation_dispatches_adversary_weak_synchronously() {
         soldier.npc.view_radius = 400;
         let ai = soldier.npc.ai_brain.enemy_mut().unwrap();
         ai.base.me = opponent.index();
-        ai.base.primary_target = stunned.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(stunned.index()));
         ai.base.current_state = AiState::Attacking;
         ai.base.current_substate = Substate::AttackingSwordfight;
         // An unrelated deferred detection event must not be stolen by the
@@ -5659,7 +5661,7 @@ fn install_unrelated_multi_exit_building_actor(
     pc.element.active = true;
     pc.pc.life_points = 100;
     pc.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex(0),
+        door_index: DoorIndex::new(0).expect("valid door index"),
         direct: true,
         position_direct: true,
         steps: VecDeque::new(),
@@ -5669,10 +5671,9 @@ fn install_unrelated_multi_exit_building_actor(
         saved_action_state: None,
     });
     pc.actor.passing_door_directly = true;
-    pc.element
-        .sprite
-        .position_iface
-        .set_door_for_test(crate::position_interface::DoorHandle(0));
+    pc.element.sprite.position_iface.set_door_for_test(
+        crate::position_interface::DoorHandle::new(0).expect("valid door index"),
+    );
 
     let building_sector = SectorNumber::new(8);
     engine.script_domains.interactables.doors = vec![
@@ -5776,7 +5777,7 @@ fn select_unrelated_pass_door_fixture(engine: &mut EngineInner, door_actor: Enti
         gate_id, direction, ..
     } = &mut pass.data
     {
-        *gate_id = Some(DoorIndex(0));
+        *gate_id = Some(DoorIndex::new(0).expect("valid door index"));
         *direction = 1;
     } else {
         unreachable!("PassDoor fixture must be a movement element")
@@ -5799,7 +5800,7 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
         unreachable!("PC fixture changed kind")
     };
     pc.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex(7),
+        door_index: DoorIndex::new(7).expect("valid door index"),
         direct: true,
         position_direct: true,
         steps: VecDeque::new(),
@@ -5826,15 +5827,14 @@ fn destination_forecast_ignores_a_stale_door_pass_without_a_live_door() {
     let Entity::Pc(pc) = &mut actor else {
         unreachable!("PC fixture changed kind")
     };
-    pc.element
-        .sprite
-        .position_iface
-        .set_door_for_test(crate::position_interface::DoorHandle(7));
+    pc.element.sprite.position_iface.set_door_for_test(
+        crate::position_interface::DoorHandle::new(7).expect("valid door index"),
+    );
     assert_eq!(
         super::ai::extract_forecast_input(&actor, true)
             .expect("actor has forecast state")
             .door_pass,
-        Some((DoorIndex(7), false)),
+        Some((DoorIndex::new(7).expect("valid door index"), false)),
         "the live door must use the independent serialized passage-direction latch, not the runtime mirror"
     );
 }
@@ -5855,10 +5855,9 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
         "legacy adoption does not reconstruct runtime door choreography"
     );
     pc.actor.passing_door_directly = true;
-    pc.element
-        .sprite
-        .position_iface
-        .set_door_for_test(crate::position_interface::DoorHandle(133));
+    pc.element.sprite.position_iface.set_door_for_test(
+        crate::position_interface::DoorHandle::new(133).expect("valid door index"),
+    );
 
     let owner = EntityId::Pc(PcId(0));
     let mut sequences = SequenceManager::new();
@@ -5881,7 +5880,10 @@ fn destination_forecast_uses_legacy_saved_live_door_without_runtime_pass() {
 
     let input = super::ai::extract_forecast_input(&actor, selected_pass_door)
         .expect("actor has forecast state");
-    assert_eq!(input.door_pass, Some((DoorIndex(133), true)));
+    assert_eq!(
+        input.door_pass,
+        Some((DoorIndex::new(133).expect("valid door index"), true))
+    );
     assert!(input.passing_door_directly);
 }
 
@@ -6377,7 +6379,7 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
     officer.element.active = true;
     officer.soldier.cached_camp = owner_camp;
     officer.actor.active_door_pass = Some(ActiveDoorPass {
-        door_index: DoorIndex(0),
+        door_index: DoorIndex::new(0).expect("valid door index"),
         direct: true,
         position_direct: true,
         steps: VecDeque::new(),
@@ -6394,8 +6396,8 @@ fn unrelated_detection_event_does_not_resolve_entering_primary_or_officer_foreca
         .get_entity_mut(owner)
         .and_then(Entity::enemy_ai_mut)
         .expect("detection RNG owner has Enemy AI");
-    owner_ai.base.primary_target = entering_primary.index();
-    owner_ai.missed_pc = entering_primary.index();
+    owner_ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
+    owner_ai.missed_pc = Some(crate::ai::AiEntityHandle::new(entering_primary.index()));
     owner_ai.base.locks_flag_field = AiLockFlags::FREEZE;
     owner_ai
         .base
@@ -6691,7 +6693,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        ai.base.primary_target = target_raw;
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target_raw));
         ai.set_state(
             crate::ai::AiState::Attacking,
             crate::ai::Substate::AttackingSwordfight,
@@ -6726,7 +6728,7 @@ fn enemy_state_change_sources_and_same_substate_gate_match_original() {
             .unwrap()
             .enemy_ai_mut()
             .unwrap();
-        ai.base.primary_target = 0;
+        ai.base.primary_target = None;
         ai.set_state(
             crate::ai::AiState::Fleeing,
             crate::ai::Substate::FleeingPanic,
@@ -6764,7 +6766,7 @@ fn friendly_repeated_state_change_callbacks_see_target_alert_and_outgoing_state(
             .unwrap()
             .friendly_ai_mut()
             .unwrap();
-        ai.base.primary_target = target.index();
+        ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(target.index()));
         ai.set_state(
             crate::ai::AiState::Fleeing,
             crate::ai::Substate::FleeingPanic,

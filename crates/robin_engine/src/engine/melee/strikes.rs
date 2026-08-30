@@ -2020,7 +2020,8 @@ impl EngineInner {
         // self`) without conflicting with the per-entity mutable borrow.
         // Apply the goal obstacle / layer / sector at flight
         // termination.
-        let mut landings: Vec<(EntityId, Option<u16>)> = Vec::new();
+        let mut landings: Vec<(EntityId, Option<crate::sight_obstacle::SightObstacleIndex>)> =
+            Vec::new();
         let mut refresh_script_sectors = false;
         // Ladder/wall falls that reached their tick countdown this
         // frame; the post-loop pass applies the landing concussion,
@@ -2162,7 +2163,7 @@ impl EngineInner {
                     );
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
-                    landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
+                    landings.push((entity_id.into(), flight.obstacle));
                     refresh_script_sectors = true;
                     entity.actor_data_mut().unwrap().active_flight = None;
                     snapped_to_goal = true;
@@ -2219,7 +2220,7 @@ impl EngineInner {
                 } else {
                     entity.element_data_mut().set_layer(flight.goal_layer);
                     entity.element_data_mut().set_sector(flight.goal_sector);
-                    landings.push((entity_id.into(), flight.obstacle.map(|h| h.get())));
+                    landings.push((entity_id.into(), flight.obstacle));
                     if flight.ladder_fall {
                         // Settle the landing like the original's
                         // position recompute + fresh-move snapshot on
@@ -2350,8 +2351,7 @@ impl EngineInner {
         for &(flyer_id, obstacle) in &landings {
             let current_obstacle = self
                 .get_entity(flyer_id)
-                .and_then(|entity| entity.element_data().obstacle_index())
-                .map(|handle| handle.get());
+                .and_then(|entity| entity.element_data().obstacle_index());
             if current_obstacle != obstacle {
                 self.set_obstacle_and_material(assets, flyer_id, obstacle);
             }
@@ -2882,15 +2882,21 @@ impl EngineInner {
             };
 
             let weapon_id = ai.hth_weapon_id;
+            let target_handle = ai.base.primary_target.unwrap_or_else(|| {
+                panic!(
+                    "authorized sword-strike proposal owner {:?} has no principal opponent",
+                    npc_id
+                )
+            });
             let target_id = self
                 .world
                 .entities
-                .id_at_legacy_slot(ai.base.primary_target)
+                .id_at_legacy_slot(target_handle.get())
                 .unwrap_or_else(|| {
                     panic!(
                         "authorized sword-strike proposal owner {:?} requires missing principal opponent slot {}",
                         npc_id,
-                        ai.base.primary_target
+                        target_handle
                     )
                 });
             let target = self
@@ -4364,7 +4370,7 @@ mod tests {
                 .unwrap();
             ai.set_ai_state(crate::ai::AiState::Attacking);
             ai.current_substate = crate::ai::Substate::AttackingSwordfight;
-            ai.primary_target = victim.index();
+            ai.primary_target = Some(crate::ai::AiEntityHandle::new(victim.index()));
         }
         engine
             .get_entity_mut(victim)

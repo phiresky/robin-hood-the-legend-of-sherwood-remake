@@ -394,7 +394,7 @@ impl EngineInner {
         }
 
         // Layer-sentinel reject, followed by the fixed-AABB hit test.
-        if entity.element_data().layer() == u16::MAX {
+        if entity.element_data().optional_layer().is_none() {
             return false;
         }
         self.is_point_over_object(entity, mouse_map)
@@ -784,7 +784,7 @@ impl EngineInner {
             if net_elem.projectile.flying {
                 return false;
             }
-            if entity.element_data().layer() == u16::MAX {
+            if entity.element_data().optional_layer().is_none() {
                 return false;
             }
             if self.players.seats[0].selection.len() > 1 {
@@ -2410,7 +2410,6 @@ impl EngineInner {
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
-            layer,
             sight_obstacles: self.sight_obstacles(assets),
             water_zones: Some(&assets.water_zones),
         };
@@ -2448,7 +2447,11 @@ impl EngineInner {
                     .last()
                     .map(|p| p.position)
                     .unwrap_or(target_point);
-                let crumpled = self.predict_net_crumple_at(assets, landing, layer);
+                let crumpled = self.predict_net_crumple_at(
+                    assets,
+                    landing,
+                    crate::position_interface::Layer::new(layer),
+                );
                 return TrajectoryPreview::ShowArc {
                     points: trajectory,
                     start: source_point,

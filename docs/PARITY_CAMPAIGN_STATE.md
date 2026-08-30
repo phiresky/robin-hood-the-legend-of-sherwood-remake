@@ -863,7 +863,7 @@ access inside the launch loop (e.g. a resumable launch action).
   `interest`, not the sweep.
 
 ### The `position_goal_map` comparison tolerance is HIDING real drift
-`crates/robin_rs/examples/original_parity_replay.rs:6131` compares `position_goal_map` with a **0.011
+`crates/robin_parity/examples/original_parity_replay.rs` compares `position_goal_map` with a **0.011
 absolute** tolerance (floats elsewhere use 1e-5 relative). A whole class of 1-ULP goal errors is therefore
 invisible, and only surfaces indirectly via `movement_map` — which is the derived
 `mpointMap - mpointOldMap` (`original-code/RHpositioninterface.h:215`), a small difference of two large

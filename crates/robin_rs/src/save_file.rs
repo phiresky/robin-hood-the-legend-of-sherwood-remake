@@ -516,7 +516,52 @@ pub const SAVE_MAGIC: &str = "RHSG";
 ///   feature state with Legendary or
 ///   validated Custom difficulty, including independent hostile-soldier
 ///   distance, cone-width, and hearing modifiers.
-pub const SAVE_FORMAT_VERSION: u32 = 61;
+/// - **v62** (2026-08-30, typed runtime sentinel boundaries): combines all
+///   preceding feature state with nullable AI entity handles and exact spatial
+///   provenance, preserving live arena slot zero without conflating it with
+///   absence. The native snapshot layout changed.
+/// - **v63** (2026-08-30, self-describing native saves): every Rust-authored
+///   save requires immutable mission and player provenance in its header.
+///   Earlier Rust schemas are rejected; the separate Original C++ importer is
+///   the only compatibility path.
+/// - **v64** (2026-08-30, multiplayer diagnostic saves): combines mandatory
+///   provenance with the required diagnostic marker that prevents a local
+///   multiplayer capture from becoming authoritative transition input.
+pub const SAVE_FORMAT_VERSION: u32 = 64;
+
+/// Human-facing provenance captured when a save is written.
+///
+/// Mission and player names are snapshots, rather than live lookups. This
+/// keeps an exported save self-describing if the active profile is renamed or
+/// the game is later started with a different localization or mod set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SaveProvenance {
+    pub mission_name: String,
+    pub player_profile_id: u32,
+    pub player_name: String,
+}
+
+impl SaveProvenance {
+    pub fn new(mission_name: String, player_profile_id: u32, player_name: String) -> Result<Self> {
+        let provenance = Self {
+            mission_name,
+            player_profile_id,
+            player_name,
+        };
+        provenance.validate()?;
+        Ok(provenance)
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.mission_name.trim().is_empty() {
+            bail!("save provenance requires a non-empty mission name");
+        }
+        if self.player_name.trim().is_empty() {
+            bail!("save provenance requires a non-empty player name");
+        }
+        Ok(())
+    }
+}
 
 /// Save file header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,24 +579,25 @@ pub struct SaveHeader {
     pub display_text: String,
     /// Local state capture made during multiplayer for diagnostics only.
     /// These bytes are never an authoritative session transition source.
-    #[serde(default)]
     pub multiplayer_diagnostic: bool,
+    /// Mission and player identity frozen at save time. This is mandatory for
+    /// every native Rust save; Original C++ saves use a separate importer.
+    pub provenance: SaveProvenance,
 }
 
 impl SaveHeader {
-    pub fn new(mission_id: u32, display_text: String) -> Self {
-        let timestamp_unix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        Self {
+    pub fn new(mission_id: u32, display_text: String, provenance: SaveProvenance) -> Result<Self> {
+        let timestamp_unix = unix_timestamp_now()?;
+        provenance.validate()?;
+        Ok(Self {
             magic: SAVE_MAGIC.to_string(),
             version: SAVE_FORMAT_VERSION,
             mission_id,
             timestamp_unix,
             display_text,
             multiplayer_diagnostic: false,
-        }
+            provenance,
+        })
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -570,8 +616,20 @@ impl SaveHeader {
         if self.mission_id == 0 {
             bail!("invalid save mission ID: zero is not a valid mission");
         }
+        self.provenance.validate()?;
         Ok(())
     }
+}
+
+/// Current wall-clock time as Unix seconds on native and browser builds.
+///
+/// A broken/pre-epoch clock is an error. Callers must not substitute epoch
+/// zero because it would turn corrupted metadata into a plausible date.
+pub fn unix_timestamp_now() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")
+        .map(|duration| duration.as_secs())
 }
 
 // ─── Full save file ──────────────────────────────────────────────────
@@ -607,8 +665,15 @@ impl GameSaveFile {
     /// payload can never silently substitute default persistent state.
     #[cfg(test)]
     pub fn capture(engine: &Engine, host: &Host, mission_id: u32, display_text: String) -> Self {
+        let provenance = SaveProvenance::new(
+            format!("Test Mission {mission_id}"),
+            0,
+            "Test Player".to_string(),
+        )
+        .expect("valid test save provenance");
         Self {
-            header: SaveHeader::new(mission_id, display_text),
+            header: SaveHeader::new(mission_id, display_text, provenance)
+                .expect("test clock must produce a Unix timestamp"),
             engine: engine.clone(),
             sound: host.audio.sound.clone(),
             game_persistent: GamePersistentState::default(),
@@ -623,14 +688,15 @@ impl GameSaveFile {
         game: &crate::game::Game,
         mission_id: u32,
         display_text: String,
-    ) -> Self {
+        provenance: SaveProvenance,
+    ) -> Result<Self> {
         let snapshot = GameRuntimeSnapshot::capture(engine, host, game);
-        Self {
-            header: SaveHeader::new(mission_id, display_text),
+        Ok(Self {
+            header: SaveHeader::new(mission_id, display_text, provenance)?,
             engine: snapshot.engine,
             sound: snapshot.sound,
             game_persistent: snapshot.game_persistent,
-        }
+        })
     }
 
     /// Identity of the serialized runtime payload, excluding header metadata.
@@ -698,13 +764,26 @@ impl GameSaveFile {
             .with_context(|| format!("reading save file {}", path.display()))?;
         let document: serde_json::Value = serde_json::from_str(&json)
             .with_context(|| format!("parsing save file {}", path.display()))?;
-        let header: SaveHeader = serde_json::from_value(
-            document
-                .get("header")
+        let header_document = document
+            .get("header")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("save file has no header"))?;
+        // Reject an obsolete Rust schema before asking serde to decode its
+        // historical field layout. This keeps version errors precise while
+        // still making every field in the current header structurally
+        // mandatory.
+        let version: u32 = serde_json::from_value(
+            header_document
+                .get("version")
                 .cloned()
-                .ok_or_else(|| anyhow::anyhow!("save file has no header"))?,
+                .ok_or_else(|| anyhow::anyhow!("save header has no version"))?,
         )
-        .with_context(|| format!("parsing save header {}", path.display()))?;
+        .with_context(|| format!("parsing save header version {}", path.display()))?;
+        if version != SAVE_FORMAT_VERSION {
+            bail!("unsupported save file version: expected {SAVE_FORMAT_VERSION}, got {version}");
+        }
+        let header: SaveHeader = serde_json::from_value(header_document)
+            .with_context(|| format!("parsing save header {}", path.display()))?;
         header.validate()?;
         let save: Self = serde_json::from_value(document)
             .with_context(|| format!("parsing save payload {}", path.display()))?;
@@ -777,9 +856,13 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn test_provenance() -> SaveProvenance {
+        SaveProvenance::new("Test Mission".into(), 7, "Alice".into()).unwrap()
+    }
+
     #[test]
-    fn save_format_version_requires_items_trading_and_resolved_difficulty() {
-        assert_eq!(SAVE_FORMAT_VERSION, 61);
+    fn save_format_version_requires_provenance_and_diagnostic_authority() {
+        assert_eq!(SAVE_FORMAT_VERSION, 64);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
@@ -792,12 +875,55 @@ mod tests {
 
     #[test]
     fn header_validate_ok() {
-        let header = SaveHeader::new(42, "My Save".into());
+        let header = SaveHeader::new(42, "My Save".into(), test_provenance()).unwrap();
         assert_eq!(header.magic, SAVE_MAGIC);
         assert_eq!(header.version, SAVE_FORMAT_VERSION);
         assert_eq!(header.mission_id, 42);
         assert_eq!(header.display_text, "My Save");
+        assert!(!header.multiplayer_diagnostic);
+        assert_eq!(header.provenance, test_provenance());
         header.validate().unwrap();
+    }
+
+    #[test]
+    fn current_native_header_without_provenance_is_rejected() {
+        let mut value = serde_json::to_value(
+            SaveHeader::new(42, "Missing provenance".into(), test_provenance()).unwrap(),
+        )
+        .unwrap();
+        value
+            .as_object_mut()
+            .expect("header JSON object")
+            .remove("provenance");
+
+        let error = serde_json::from_value::<SaveHeader>(value).unwrap_err();
+        assert!(error.to_string().contains("missing field `provenance`"));
+    }
+
+    #[test]
+    fn current_native_header_without_diagnostic_authority_is_rejected() {
+        let mut value = serde_json::to_value(
+            SaveHeader::new(42, "Missing diagnostic marker".into(), test_provenance()).unwrap(),
+        )
+        .unwrap();
+        value
+            .as_object_mut()
+            .expect("header JSON object")
+            .remove("multiplayer_diagnostic");
+
+        let error = serde_json::from_value::<SaveHeader>(value).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("missing field `multiplayer_diagnostic`")
+        );
+    }
+
+    #[test]
+    fn provenance_rejects_missing_real_names() {
+        assert!(SaveProvenance::new("".into(), 7, "Alice".into()).is_err());
+        assert!(SaveProvenance::new("Mission".into(), 7, "".into()).is_err());
+        assert!(SaveProvenance::new("Mission".into(), 7, "   ".into()).is_err());
     }
 
     #[test]
@@ -812,21 +938,21 @@ mod tests {
 
     #[test]
     fn header_rejects_bad_magic() {
-        let mut header = SaveHeader::new(0, String::new());
+        let mut header = SaveHeader::new(0, String::new(), test_provenance()).unwrap();
         header.magic = "XXXX".into();
         assert!(header.validate().is_err());
     }
 
     #[test]
     fn header_rejects_bad_version() {
-        let mut header = SaveHeader::new(0, String::new());
+        let mut header = SaveHeader::new(0, String::new(), test_provenance()).unwrap();
         header.version = SAVE_FORMAT_VERSION + 999;
         assert!(header.validate().is_err());
     }
 
     #[test]
     fn header_rejects_zero_mission_id() {
-        let header = SaveHeader::new(0, String::new());
+        let header = SaveHeader::new(0, String::new(), test_provenance()).unwrap();
         assert_eq!(
             header.validate().unwrap_err().to_string(),
             "invalid save mission ID: zero is not a valid mission"
@@ -859,6 +985,51 @@ mod tests {
         engine2.test_assert_level_assets_attached(&assets2);
         assert_eq!(engine2.frame_counter(), 12345);
         assert!(engine2.mission().mission_won);
+    }
+
+    #[test]
+    fn save_apply_round_trips_live_ai_slot_zero_without_null_collapse() {
+        let (mut engine, assets) = fresh_engine();
+        let mut ai = robin_engine::ai_enemy::EnemyAi::new(0);
+        ai.base.primary_target = Some(robin_engine::ai::AiEntityHandle::new(0));
+        let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
+            robin_engine::element::ActorSoldier {
+                element: robin_engine::element::ElementData {
+                    kind: robin_engine::element::ElementKind::ActorSoldier,
+                    ..Default::default()
+                },
+                actor: Default::default(),
+                human: Default::default(),
+                npc: {
+                    let mut npc = robin_engine::element::NpcData::default();
+                    npc.ai_brain = robin_engine::element::AiBrain::Enemy(Box::new(ai));
+                    npc
+                },
+                soldier: Default::default(),
+            },
+        ));
+        assert_eq!(owner.index(), 0, "fixture must occupy live arena slot zero");
+        let host = Host::scratch(800.0, 600.0);
+        let save = GameSaveFile::capture(&engine, &host, 7, "typed slot zero".into());
+
+        let json = serde_json::to_string(&save).expect("serialize current save schema");
+        assert!(json.contains(r#""primary_target":{"entity":0}"#));
+        let decoded: GameSaveFile =
+            serde_json::from_str(&json).expect("decode current save schema");
+        assert_eq!(
+            decoded.engine.parity_entity_runtime_state(owner, &assets)["npc_ai"]["targets"]["primary"],
+            serde_json::json!({"kind": "soldier", "index": 0})
+        );
+
+        let (mut restored, restored_assets) = fresh_engine();
+        let mut restored_host = Host::scratch(800.0, 600.0);
+        decoded
+            .apply_to(&mut restored, &mut restored_host, &restored_assets)
+            .expect("apply typed slot-zero save");
+        assert_eq!(
+            restored.parity_entity_runtime_state(owner, &restored_assets)["npc_ai"]["targets"]["primary"],
+            serde_json::json!({"kind": "soldier", "index": 0})
+        );
     }
 
     #[test]

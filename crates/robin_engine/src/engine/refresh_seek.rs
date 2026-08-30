@@ -911,16 +911,13 @@ impl crate::engine::EngineInner {
         flags: MoveFlags,
         seek_distance: f32,
     ) -> bool {
-        let (owner_pos, owner_sector, door_handle, door_direction) = match self.get_entity(owner) {
+        let (owner_pos, owner_sector, door_source) = match self.get_entity(owner) {
             Some(e) => {
                 let elem = e.element_data();
-                let (door_handle, door_direction) =
-                    super::movement::current_door_for_route_source(e);
                 (
                     elem.position_map(),
                     super::ai::ai_view_position_sector(self, elem),
-                    door_handle,
-                    door_direction,
+                    super::movement::current_door_for_route_source(e),
                 )
             }
             None => {
@@ -969,11 +966,13 @@ impl crate::engine::EngineInner {
 
         let (path_src_pos, path_src_sector) = {
             let adapted = self.scripts.mission.as_ref().and_then(|_| {
-                crate::engine::movement::adapt_source_to_current_door_with_identity(
-                    &self.script_domains.interactables.doors,
-                    door_handle,
-                    door_direction,
-                )
+                door_source.and_then(|(door_handle, door_direction)| {
+                    crate::engine::movement::adapt_source_to_current_door_with_identity(
+                        &self.script_domains.interactables.doors,
+                        door_handle,
+                        door_direction,
+                    )
+                })
             });
             match adapted {
                 Some((adj, sector, _layer)) => (adj, sector),
@@ -1129,16 +1128,17 @@ impl crate::engine::EngineInner {
             return false;
         }
 
-        let (door_handle, door_direction) = self
+        let door_source = self
             .get_entity(owner)
-            .map(crate::engine::movement::current_door_for_route_source)
-            .unwrap_or((crate::position_interface::DoorHandle::NULL, false));
+            .and_then(crate::engine::movement::current_door_for_route_source);
         let (src_pos, src_sector, src_layer) =
-            match crate::engine::movement::adapt_source_to_current_door_with_identity(
-                &self.script_domains.interactables.doors,
-                door_handle,
-                door_direction,
-            ) {
+            match door_source.and_then(|(door_handle, door_direction)| {
+                crate::engine::movement::adapt_source_to_current_door_with_identity(
+                    &self.script_domains.interactables.doors,
+                    door_handle,
+                    door_direction,
+                )
+            }) {
                 Some((adjusted, sector, layer)) => (adjusted, sector, layer),
                 None => (owner_pos, owner_sector, owner_layer),
             };
@@ -1330,7 +1330,7 @@ mod tests {
     #[test]
     fn recorded_drop_ale_gate_path_preserves_original_exit_over_alternate() {
         let expected = vec![crate::gate::GatePathStep {
-            door_index: crate::gate::DoorIndex(7),
+            door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
             direct: false,
         }];
         assert_eq!(
@@ -1385,7 +1385,7 @@ mod tests {
         let (_, adapted_source, adapted_layer) =
             crate::engine::movement::adapt_source_to_current_door_with_identity(
                 &doors,
-                crate::position_interface::DoorHandle(7),
+                crate::position_interface::DoorHandle::new(7).expect("valid door index"),
                 true,
             )
             .expect("a straddling actor adapts to the gate's in side at Seek dispatch");
@@ -1400,13 +1400,13 @@ mod tests {
                     adapted_source,
                     adapted_layer,
                     crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                        door_index: crate::gate::DoorIndex(7),
+                        door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
                         direct: false,
                     }]),
                 )),
             ),
             Some(Some(vec![crate::gate::GatePathStep {
-                door_index: crate::gate::DoorIndex(7),
+                door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
                 direct: false,
             }])),
             "raw owner==goal must not suppress a route whose dispatch-time door source differs"
@@ -1486,10 +1486,8 @@ mod tests {
                 .flat_map(|sequence| &sequence.elements)
                 .any(|element| matches!(
                     element.data,
-                    SequenceElementData::Movement {
-                        gate_id: Some(crate::gate::DoorIndex(7)),
-                        ..
-                    }
+                    SequenceElementData::Movement { gate_id: Some(door), .. }
+                        if door.get() == 7
                 )),
             "live point Seek must fall back to the reconstructed gate graph"
         );
@@ -1507,7 +1505,7 @@ mod tests {
                 SectorHandle::new(133).unwrap(),
                 11,
                 crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                    door_index: crate::gate::DoorIndex(99),
+                    door_index: crate::gate::DoorIndex::new(99).expect("valid door index"),
                     direct: false,
                 }]),
             )),
@@ -1526,7 +1524,7 @@ mod tests {
                 SectorHandle::new(133).unwrap(),
                 11,
                 crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                    door_index: crate::gate::DoorIndex(7),
+                    door_index: crate::gate::DoorIndex::new(7).expect("valid door index"),
                     direct: true,
                 }]),
             )),
@@ -1545,7 +1543,7 @@ mod tests {
                 SectorHandle::new(133).unwrap(),
                 11,
                 crate::gate::RecordedGateOutcome::Success(vec![crate::gate::GatePathStep {
-                    door_index: crate::gate::DoorIndex(6),
+                    door_index: crate::gate::DoorIndex::new(6).expect("valid door index"),
                     direct: false,
                 }]),
             )),
@@ -1868,11 +1866,11 @@ mod tests {
             path,
             vec![
                 crate::gate::GatePathStep {
-                    door_index: DoorIndex(73),
+                    door_index: DoorIndex::new(73).expect("valid door index"),
                     direct: false,
                 },
                 crate::gate::GatePathStep {
-                    door_index: DoorIndex(18),
+                    door_index: DoorIndex::new(18).expect("valid door index"),
                     direct: true,
                 },
             ]
@@ -2051,7 +2049,13 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(gates, vec![DoorIndex(111), DoorIndex(113)]);
+        assert_eq!(
+            gates,
+            vec![
+                DoorIndex::new(111).expect("valid door index"),
+                DoorIndex::new(113).expect("valid door index")
+            ]
+        );
     }
 
     #[test]
@@ -2161,7 +2165,7 @@ mod tests {
                 owner,
                 crate::position_interface::SectorHandle::new(1),
                 vec![GatePathStep {
-                    door_index: DoorIndex(0),
+                    door_index: DoorIndex::new(0).expect("valid door index"),
                     direct: true,
                 }],
                 GoalShape::Point {

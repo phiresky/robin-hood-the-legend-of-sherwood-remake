@@ -2,8 +2,8 @@
 
 ## Decision summary
 
-- **Owner decision:** Pending final review of this revised implementation.
-- **Recommendation:** **ACCEPT AFTER THE SCHEMA RECONCILIATION DESCRIBED BELOW.**
+- **Owner decision:** **Accepted.**
+- **Recommendation:** **MERGE THE RECONCILED REVISION.**
 - **Reviewed implementation:** exact source tip
   `7a61c72ba5e28e6ca18b94f5327f68a822d953b7` on
   `codex/feature39-revised`.
@@ -21,12 +21,10 @@
   protocol, authority, pagination, and transition coverage. Medium for manual
   two-machine play because the final branch was not exercised in a recorded
   live native/browser campaign session.
-- **Direct-merge status:** The isolated tip is not itself safe to merge onto
-  current `main`: Feature 39 and accepted Feature 45 independently assigned
-  incompatible layouts the same network version, and Feature 39 did not assign
-  a unique native-save version to its diagnostic marker. The exact required
-  reconciliation is network protocol **31**, native save **63**, and replay
-  **22** when combining only current `main` with this reviewed tip.
+- **Direct-merge status:** Reconciled with exact accepted-state `main`
+  `fe3c37193`. Feature 45 typed sentinels, Feature 07 mandatory save
+  provenance, the parity-crate move, and Feature 39 authority are retained in
+  network protocol **31**, native save **64**, and replay **22**.
 
 This is primarily multiplayer/session infrastructure rather than a configurable
 gameplay or visual effect. There is no setting that may turn off authority,
@@ -40,7 +38,8 @@ are read-only on clients.
 This dossier reviews the final isolated Feature 39 branch at `7a61c72ba`. Its
 last rolling-main merge was `938d1f3d6`, which used native save 61, replay 21,
 and network protocol 29. The final branch itself reports save 61, replay 21,
-and protocol 30.
+and protocol 30. That isolated number is not the reconciled protocol described
+below.
 
 The implementation was built incrementally in these material checkpoints:
 
@@ -273,8 +272,8 @@ descriptors instead of deriving button behavior from a rendered row index:
 The cooperative page shows at most 12 settings (six per column), followed by
 fixed Previous/Next and Accept/Cancel controls. Disabled actions reject mouse
 and keyboard activation. The selected row has a visible keyboard focus state,
-and the menu transform refreshes on window resize. The integrated 33-setting
-Gameplay page is therefore 12/12/9 instead of overflowing the 640x480 logical
+and the menu transform refreshes on window resize. The integrated 34-setting
+Gameplay page is therefore 12/12/10 instead of overflowing the 640x480 logical
 viewport. A synthetic 45-row test proves that four pages expose every setting
 exactly once. The Shortcuts page retains its deliberately compact 27-pixel row
 layout.
@@ -351,12 +350,30 @@ Focused coverage includes:
   dismissal;
 - multiplayer pause/step rejection and explicit host synchronized stepping;
 - diagnostic markers being written to both payload and index;
-- 45-row and integrated 33-row pagination coverage; and
+- 45-row and integrated 34-row pagination coverage; and
 - strict/default HTTP policy across every Pause-side task kind.
 
 The final build emitted existing non-fatal unused/deprecation warnings. The
 local `sccache` server repeatedly stopped, so some compilation fell back to
 local rustc. Neither condition changed the successful results.
+
+After reconciling onto `fe3c37193`, the conflict/schema-focused gates also
+passed:
+
+- `robin_engine::multiplayer` tests: **14 passed**;
+- `robin_rs::save_file` tests: **26 passed**;
+- `robin_rs::savegame` tests: **20 passed**;
+- cooperative UI task/pager/HTTP-policy tests: **9 passed**;
+- detailed Save/Load presentation tests: **9 passed**;
+- Gameplay option-mapping tests: **2 passed**;
+- terminal debriefing tests: **2 passed**;
+- browser TypeScript tests: **9 passed**; and
+- `pnpm typecheck`, `cargo fmt --check`, and diff validation: passed.
+
+These focused gates caught and corrected the only compile-time reconciliation
+defect: the frame-owned terminal load picker now consumes Feature 07's detailed
+metadata/local-time helper API and active-profile toggle without restoring a
+blocking loop.
 
 ## Current limitations and review risks
 
@@ -377,11 +394,6 @@ local rustc. Neither condition changed the successful results.
 - **No legacy network compatibility.** Protocol, current native snapshots, and
   current Rust save/replay formats are exact-match boundaries. Legacy C++ save
   import is separate and remains supported by `legacy_save`.
-- **The isolated diagnostic flag is too permissive.** At reviewed tip
-  `7a61c72ba`, `SaveHeader::multiplayer_diagnostic` uses `#[serde(default)]` and
-  save version remains 61. That silently accepts a pre-feature Rust header as
-  non-diagnostic. This contradicts the owner's no-old-Rust-compatibility policy
-  and must be removed during the Feature 45 schema reconciliation below.
 - **The standalone main-menu settings screen is not paginated here.** Feature
   39 provides and tests the typed cooperative pager seam; Feature 00 owns
   routing the separate presentation through it.
@@ -391,15 +403,16 @@ local rustc. Neither condition changed the successful results.
 
 ## Exact current-main and Feature 45 reconciliation
 
-Do not merge code as part of this review. After owner acceptance, integrate
-Feature 39 with exact current `main` (observed here at `3bc6f4ac1`) and preserve
-accepted Feature 45 `ea4b9fd00` plus the `robin_parity` move in `0c8acd407`.
+After owner acceptance, Feature 39 was reconciled with exact accepted-state
+`main` `fe3c37193`. The merge preserves accepted Feature 45 `ea4b9fd00`,
+Feature 07's strict self-describing saves, and the `robin_parity` move in
+`0c8acd407`.
 
 The important ancestry is:
 
 | Boundary | Shared base `938d1f3d6` | Feature 39 `7a61c72ba` | Current main after Feature 45 | Required union |
 | --- | ---: | ---: | ---: | ---: |
-| Native save | 61 | 61 plus a new diagnostic field | 62 | **63** |
+| Native save | 61 | 61 plus a new diagnostic field | 63 | **64** |
 | Replay | 21 | 21, no new replay layout | 22 | **22** |
 | Multiplayer protocol | 29 | 30 | 30 | **31** |
 
@@ -412,25 +425,27 @@ a different wire/snapshot layout. The union must therefore be protocol 31.
 
 Likewise, Feature 39's diagnostic marker changes current save JSON but the
 isolated branch left the version at 61 and supplied a serde default. Feature 45
-already assigns save 62 to a different typed runtime layout. The union must:
+assigned save 62 to its typed runtime layout, and Feature 07 then assigned save
+63 to mandatory provenance. The accepted union therefore:
 
-1. remove `#[serde(default)]` from `SaveHeader::multiplayer_diagnostic` so the
+1. removes `#[serde(default)]` from `SaveHeader::multiplayer_diagnostic` so the
    field is required in current Rust saves;
-2. assign `SAVE_FORMAT_VERSION = 63` and update its version-history/exact-value
+2. assigns `SAVE_FORMAT_VERSION = 64` and updates its version-history/exact-value
    tests;
-3. retain Feature 45's `REPLAY_SCHEMA_VERSION = 22`, because Feature 39 adds no
+3. retains Feature 45's `REPLAY_SCHEMA_VERSION = 22`, because Feature 39 adds no
    serialized replay field or command variant;
-4. assign `NET_PROTOCOL_VERSION = 31` in
+4. assigns `NET_PROTOCOL_VERSION = 31` in
    `crates/robin_engine/src/multiplayer.rs` and retain both Feature 45 typed
    snapshot state and every Feature 39 message/authority rule;
-5. update the protocol assertion/comment in that Rust module;
-6. update `wasm-www/src/join_ticket.ts`, `join_ticket.test.ts`, and
+5. updates the protocol assertion/comment in that Rust module;
+6. updates `wasm-www/src/join_ticket.ts`, `join_ticket.test.ts`, and
    `multiplayer_content.test.ts` to 31;
-7. update the protocol heading/invitation text in `docs/MULTIPLAYER.md`, the
+7. updates the protocol heading/invitation text in `docs/MULTIPLAYER.md`, the
    protocol reference in `docs/NEW_FEATURES.md`, and the Feature 38 review's
    compatibility references; and
-8. rerun the full Engine/robin_rs save, replay, native, wasm, browser, and
-   TypeScript gates on the reconciled tree.
+8. runs focused conflict/schema tests, formatting, and diff validation. The
+   exact main advance was otherwise conflict-free and, by owner direction, did
+   not repeat the already-green full native/WASM builds.
 
 Current main also moves the Original parity example from
 `crates/robin_rs/examples/original_parity_replay.rs` to
@@ -438,11 +453,10 @@ Current main also moves the Original parity example from
 new `StepKind::{Forward, GoToFrame}` patterns with `..` in the moved file rather
 than resurrecting the deleted example.
 
-If another accepted protocol-changing feature lands before reconciliation, 31
-must not be reused. In that case use the next globally unallocated protocol
-after that integrated tip and update every Rust/browser/documentation binding
-atomically. The exact union of only current `3bc6f4ac1` and reviewed Feature 39
-is 31/63/22 as specified above.
+The accepted union at `fe3c37193` is 31/64/22 as specified above. Any later
+protocol- or persistence-changing feature must use the next globally
+unallocated boundary and update every Rust/browser/documentation binding
+atomically.
 
 ## Owner acceptance checklist
 
@@ -458,9 +472,8 @@ The final decision is whether to accept these policies as implemented:
   explicit synchronized host opt-in while connected;
 - authenticated key ownership, never nickname, preserves a seat across an
   outer mission; and
-- post-acceptance integration performs the mandatory 31/63/22 schema
+- post-acceptance integration performs the mandatory 31/64/22 schema
   reconciliation rather than merging either side's version constants as-is.
 
-With those policies accepted and that reconciliation performed, Feature 39 is
-ready for integration. No remaining source-level blocker was found in the
-isolated implementation.
+Those policies are accepted and the reconciliation is performed. Feature 39 is
+ready for immediate integration; no remaining source-level blocker was found.

@@ -1082,7 +1082,10 @@ mod forecast_sector_identity_tests {
         )
         .expect("Soldier94 must route to Officer71 through gate18");
         assert_eq!(path.len(), 1);
-        assert_eq!(path[0].door_index, crate::gate::DoorIndex(0));
+        assert_eq!(
+            path[0].door_index,
+            crate::gate::DoorIndex::new(0).expect("valid door index")
+        );
         assert!(path[0].direct);
 
         assert!(
@@ -1157,7 +1160,10 @@ mod forecast_sector_identity_tests {
         };
         let door_forecast = prepare_forecast_destination_for_ia(
             &ForecastInput {
-                door_pass: Some((crate::gate::DoorIndex(0), true)),
+                door_pass: Some((
+                    crate::gate::DoorIndex::new(0).expect("valid door index"),
+                    true,
+                )),
                 ..base_input
             },
             std::slice::from_ref(&crossing),
@@ -1171,9 +1177,9 @@ mod forecast_sector_identity_tests {
         lift_grid_sector.sector_type = crate::sector::SectorType::LIFT;
         lift_grid_sector.lift_type = Some(crate::sector::LiftType::Wall);
         lift_grid_sector.gate_indices = vec![
-            crate::gate::DoorIndex(0),
-            crate::gate::DoorIndex(1),
-            crate::gate::DoorIndex(2),
+            crate::gate::DoorIndex::new(0).expect("valid door index"),
+            crate::gate::DoorIndex::new(1).expect("valid door index"),
+            crate::gate::DoorIndex::new(2).expect("valid door index"),
         ];
         let lift_doors = [
             crate::gate::Door {
@@ -1245,7 +1251,10 @@ mod forecast_sector_identity_tests {
             &ForecastInput {
                 sector: 50,
                 sector_handle: Some(exact(50, 0)),
-                door_pass: Some((crate::gate::DoorIndex(0), true)),
+                door_pass: Some((
+                    crate::gate::DoorIndex::new(0).expect("valid door index"),
+                    true,
+                )),
                 passing_door_directly: true,
                 ..base_input
             },

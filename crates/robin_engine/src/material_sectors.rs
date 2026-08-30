@@ -230,7 +230,7 @@ impl MaterialSector {
     bitcode::Decode,
 )]
 pub struct MaterialSectorRegistration {
-    pub layer: u16,
+    pub layer: Option<crate::position_interface::Layer>,
     pub sector: MaterialSector,
 }
 
@@ -283,7 +283,11 @@ impl MaterialSectors {
     }
 
     /// Append one `AddSector( sector, layer, true )` registration.
-    pub fn register(&mut self, layer: u16, sector: MaterialSector) {
+    pub fn register(
+        &mut self,
+        layer: Option<crate::position_interface::Layer>,
+        sector: MaterialSector,
+    ) {
         self.registrations
             .push(MaterialSectorRegistration { layer, sector });
     }
@@ -299,7 +303,9 @@ impl MaterialSectors {
     /// roof or inside a building never picks up the ground-level material.
     pub fn material_at_layer(&self, point: MapPoint, layer: u16) -> GameMaterial {
         for registration in &self.registrations {
-            if registration.layer == layer && registration.sector.contains(point) {
+            if registration.layer.is_some_and(|value| value.get() == layer)
+                && registration.sector.contains(point)
+            {
                 return registration.sector.material;
             }
         }

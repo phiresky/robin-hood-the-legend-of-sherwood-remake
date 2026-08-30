@@ -45,7 +45,7 @@ the same directional allocation limits as native before decoding a body.
   on by default and can be overridden per host launch. Disabling it leaves
   native iroh play available without requiring relay readiness.
 - A canonical `rhmp3` invitation is signed by the host endpoint key, valid for
-  first redemption for exactly 30 minutes, and binds protocol 30, the full
+  first redemption for exactly 30 minutes, and binds protocol 31, the full
   engine commit, mission/session, expected seats, one disclosed canonical
   HTTPS relay, Demo/Full edition, and the native host's exact content-closure
   SHA-256. The URL stores the public ticket in its fragment; the stable shell
@@ -107,7 +107,7 @@ world through that host viewport while HUD/input query the Engine selection for
 camera design: split-screen or replay-from-another-seat would need an explicit
 host viewport policy.
 
-## Protocol 30
+## Protocol 31
 
 Messages are bitcode-encoded binary frames, class-tagged and length-prefixed
 on a single bidirectional iroh stream per peer. The handshake rejects a

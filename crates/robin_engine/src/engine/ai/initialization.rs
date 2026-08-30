@@ -888,7 +888,7 @@ impl EngineInner {
                         )),
                         level: door.layer_out,
                     },
-                    door_index: crate::gate::DoorIndex(idx as u32),
+                    door_index: crate::gate::DoorIndex::new(idx as u32).expect("valid door index"),
                     radius: AI_DOOR_RALLY_POINT_DISTANCE,
                 });
             }

@@ -17,11 +17,10 @@ use crate::sector::{LiftType, SectorNumber};
 
 /// Index into the engine's door table.
 ///
-/// Plain `u32` wrapper; no niche optimization because `Option<DoorIndex>`
-/// is rare in live fields (most consumers deal with a valid index they
-/// already hold).  Existing `door_index: u32` fields will migrate to
-/// this type in a follow-up pass; adding the type first keeps the
-/// commit reviewable.
+/// Runtime absence uses `Option<DoorIndex>`. `u32::MAX` was the historical
+/// Rust/JSON null marker and cannot be represented by this type; the Original
+/// binary gate-pointer codec instead writes signed 16-bit `-1`, which legacy
+/// readers translate at their boundary.
 #[derive(
     Debug,
     Clone,
@@ -31,36 +30,53 @@ use crate::sector::{LiftType, SectorNumber};
     Hash,
     PartialOrd,
     Ord,
-    Default,
     Serialize,
     Deserialize,
     robin_state_hash_derive::StateHash,
-    bitcode::Encode,
-    bitcode::Decode,
 )]
-pub struct DoorIndex(pub u32);
+pub struct DoorIndex(pub nonmax::NonMaxU32);
+
+crate::bitcode_adapters::impl_native_bitcode_index!(DoorIndex, u32);
+
+impl DoorIndex {
+    #[inline]
+    pub fn new(value: u32) -> Option<Self> {
+        nonmax::NonMaxU32::new(value).map(Self)
+    }
+
+    #[inline]
+    pub fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl Default for DoorIndex {
+    fn default() -> Self {
+        Self::new(0).expect("zero is a valid door index")
+    }
+}
 
 impl From<DoorIndex> for u32 {
     #[inline]
     fn from(i: DoorIndex) -> u32 {
-        i.0
+        i.get()
     }
 }
 impl From<DoorIndex> for usize {
     #[inline]
     fn from(i: DoorIndex) -> usize {
-        i.0 as usize
+        i.get() as usize
     }
 }
 impl From<u32> for DoorIndex {
     #[inline]
     fn from(v: u32) -> Self {
-        Self(v)
+        Self::new(v).expect("door index cannot equal the legacy null sentinel")
     }
 }
 impl std::fmt::Display for DoorIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        self.get().fmt(f)
     }
 }
 
@@ -1220,7 +1236,7 @@ pub fn build_gate_links(doors: &mut [Door]) {
                     let dy = other_point.y - my_point.y;
                     let dist = (dx * dx + dy * dy).sqrt();
                     doors[door_idx].gate_links.push(GateLink {
-                        other_door: DoorIndex(other_idx),
+                        other_door: DoorIndex::new(other_idx).expect("valid door index"),
                         via_sector: my_sector,
                         via_sector_index: my_sector_index,
                         distance: dist,
@@ -1425,7 +1441,11 @@ pub fn find_path_gates_with_sector_indices(
             score,
             prev_gate: None,
         };
-        add_to_open_gates_original(&mut open, &state, DoorIndex(idx as u32));
+        add_to_open_gates_original(
+            &mut open,
+            &state,
+            DoorIndex::new(idx as u32).expect("valid door index"),
+        );
     }
 
     if open.is_empty() {
@@ -1700,7 +1720,11 @@ pub fn find_path_into_door_with_sector_index(
             score,
             prev_gate: None,
         };
-        add_to_open_gates_original(&mut open, &state, DoorIndex(idx as u32));
+        add_to_open_gates_original(
+            &mut open,
+            &state,
+            DoorIndex::new(idx as u32).expect("valid door index"),
+        );
     }
 
     if open.is_empty() {
@@ -2046,14 +2070,28 @@ mod tests {
         let mut state = vec![GateSearchState::default(); 3];
         state[0].score = 654.0; // Goal gate currently at the front.
         state[1].score = 672.0; // Gate already queued behind it.
-        let mut open = vec![DoorIndex(0), DoorIndex(1)];
+        let mut open = vec![
+            DoorIndex::new(0).expect("valid door index"),
+            DoorIndex::new(1).expect("valid door index"),
+        ];
 
         // Relaxing gate 1 mutates the shared score in place, making `open`
         // temporarily unsorted: [654, 570]. Original linearly scans that live
         // list and inserts the improved gate before the goal.
         state[1].score = 570.0;
-        add_to_open_gates_original(&mut open, &state, DoorIndex(1));
-        assert_eq!(open, vec![DoorIndex(1), DoorIndex(0), DoorIndex(1)]);
+        add_to_open_gates_original(
+            &mut open,
+            &state,
+            DoorIndex::new(1).expect("valid door index"),
+        );
+        assert_eq!(
+            open,
+            vec![
+                DoorIndex::new(1).expect("valid door index"),
+                DoorIndex::new(0).expect("valid door index"),
+                DoorIndex::new(1).expect("valid door index")
+            ]
+        );
     }
 
     #[test]
@@ -2108,7 +2146,10 @@ mod tests {
         )
         .expect("Original accepts the first goal gate even when its score is NaN");
 
-        assert_eq!(path.last().map(|step| step.door_index), Some(DoorIndex(3)));
+        assert_eq!(
+            path.last().map(|step| step.door_index),
+            Some(DoorIndex::new(3).expect("valid door index"))
+        );
     }
 
     #[test]
@@ -2223,7 +2264,7 @@ mod tests {
                 (0.0, 0.0),
                 1,
                 Some(sector(10)),
-                DoorIndex(1),
+                DoorIndex::new(1).expect("valid door index"),
                 None,
                 false,
                 &|_| true,
