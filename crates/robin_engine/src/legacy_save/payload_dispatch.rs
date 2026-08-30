@@ -20,7 +20,7 @@ use super::payload_actors::{
 };
 use super::payload_base::{
     LegacyHumanPayload, LegacyNpcPayload, LegacyPayloadDecodeContext, LegacyPayloadLimits,
-    LegacyPositionPayload,
+    LegacyPositionPayload, LegacySpritePayload,
 };
 use super::payload_nonactors::{
     LegacyBonusPayload, LegacyNonActorPayloadDecodeContext, LegacyNonActorPayloadLimits,
@@ -95,19 +95,24 @@ pub enum LegacyElementPayload {
 }
 
 impl LegacyElementPayload {
-    /// Exact serialized position payload for actor families.
-    ///
-    /// This exposes the raw bounding-box presence bit as well as its stale
-    /// coordinate words. Original deliberately leaves those words untouched
-    /// when `SBGeoBoundingBox2D::Reset` clears `bounds_are_set`.
-    pub fn actor_position(&self) -> Option<&LegacyPositionPayload> {
+    /// Exact serialized sprite payload for actor families.
+    pub fn actor_sprite(&self) -> Option<&LegacySpritePayload> {
         let element = match self {
             Self::ActorPc(payload) => &payload.human.actor.element,
             Self::ActorNpcSoldier(payload) => &payload.npc.human.actor.element,
             Self::ActorNpcCivilian(payload) => &payload.npc.human.actor.element,
             _ => return None,
         };
-        Some(&element.sprite.position)
+        Some(&element.sprite)
+    }
+
+    /// Exact serialized position payload for actor families.
+    ///
+    /// This exposes the raw bounding-box presence bit as well as its stale
+    /// coordinate words. Original deliberately leaves those words untouched
+    /// when `SBGeoBoundingBox2D::Reset` clears `bounds_are_set`.
+    pub fn actor_position(&self) -> Option<&LegacyPositionPayload> {
+        self.actor_sprite().map(|sprite| &sprite.position)
     }
 }
 

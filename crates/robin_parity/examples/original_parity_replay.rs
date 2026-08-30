@@ -416,58 +416,154 @@ fn apply_initial_npc_transients(engine: &mut Engine, transients: &[TraceInitialN
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LegacyInactiveBlockedBox {
+struct LegacyBlockedBoxTuple {
     min_x: u32,
     min_y: u32,
     max_x: u32,
     max_y: u32,
 }
 
-fn legacy_inactive_blocked_boxes(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacyBlockedBoxValidity {
+    Unknown,
+    Unset,
+    Set,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LegacyBlockedBoxShadow {
+    tuple: LegacyBlockedBoxTuple,
+    validity: LegacyBlockedBoxValidity,
+    last_processed_order_id: u32,
+    direct_validity_observed: bool,
+}
+
+fn initial_legacy_blocked_box_shadows(
     save: &robin_engine::legacy_save::body::LegacySaveBody,
-) -> BTreeMap<u32, LegacyInactiveBlockedBox> {
+) -> BTreeMap<u32, LegacyBlockedBoxShadow> {
     save.element_payloads
         .records
         .iter()
         .filter_map(|record| {
-            let blocked = record.payload.actor_position()?.blocked_box;
-            (!blocked.bounds_are_set).then_some((
+            let sprite = record.payload.actor_sprite()?;
+            let blocked = sprite.position.blocked_box;
+            Some((
                 record.header.creation_order,
-                LegacyInactiveBlockedBox {
-                    min_x: blocked.top_left.x.to_bits(),
-                    min_y: blocked.top_left.y.to_bits(),
-                    max_x: blocked.bottom_right.x.to_bits(),
-                    max_y: blocked.bottom_right.y.to_bits(),
+                LegacyBlockedBoxShadow {
+                    tuple: LegacyBlockedBoxTuple {
+                        min_x: blocked.top_left.x.to_bits(),
+                        min_y: blocked.top_left.y.to_bits(),
+                        max_x: blocked.bottom_right.x.to_bits(),
+                        max_y: blocked.bottom_right.y.to_bits(),
+                    },
+                    validity: if blocked.bounds_are_set {
+                        LegacyBlockedBoxValidity::Set
+                    } else {
+                        LegacyBlockedBoxValidity::Unset
+                    },
+                    last_processed_order_id: sprite.last_processed_order_id,
+                    direct_validity_observed: false,
                 },
             ))
         })
         .collect()
 }
 
-/// Old schema-16 runtime capture omitted `SBGeoBoundingBox2D::bounds_are_set`
-/// and printed its stale coordinate words unconditionally. Null only the
-/// exact tuple whose inactive status is proven by the embedded RHSG; any
-/// changed tuple remains an active box and is compared normally.
-fn canonicalize_legacy_inactive_blocked_box(
-    runtime: &mut serde_json::Value,
-    saved: Option<&LegacyInactiveBlockedBox>,
-) -> bool {
-    let Some(saved) = saved else { return false };
-    let Some(blocked) = runtime.pointer_mut("/position/blocked_box") else {
-        return false;
-    };
+fn legacy_blocked_box_tuple(runtime: &serde_json::Value) -> Option<LegacyBlockedBoxTuple> {
+    let blocked = runtime.pointer("/position/blocked_box")?;
+    if blocked.is_null() {
+        return None;
+    }
     let bits = |pointer: &str| {
         blocked
             .pointer(pointer)
             .and_then(serde_json::Value::as_u64)
             .and_then(|value| u32::try_from(value).ok())
     };
-    if bits("/min/x/bits") == Some(saved.min_x)
-        && bits("/min/y/bits") == Some(saved.min_y)
-        && bits("/max/x/bits") == Some(saved.max_x)
-        && bits("/max/y/bits") == Some(saved.max_y)
-    {
-        *blocked = serde_json::Value::Null;
+    Some(LegacyBlockedBoxTuple {
+        min_x: bits("/min/x/bits")?,
+        min_y: bits("/min/y/bits")?,
+        max_x: bits("/max/x/bits")?,
+        max_y: bits("/max/y/bits")?,
+    })
+}
+
+/// Old schema-16 runtime capture omitted `SBGeoBoundingBox2D::bounds_are_set`
+/// and printed its stale coordinate words unconditionally. Track Original's
+/// validity bit from transitions which prove it without touching Rust state.
+/// `RHSprite::PerformMotion` changes the processed movement-order id and then
+/// calls `ResetBoxBlocked`; `UpdateBoxBlocked` is the sole tuple mutator and
+/// makes the box valid again.
+///
+/// TODO(parity-recorder): have new Original captures emit null when
+/// `mboxBlocked.IsSomewhere()` is false. A legacy capture cannot distinguish
+/// an update which happens to recreate the exact same stale tuple; the shadow
+/// deliberately retains its last proven validity in that intrinsically
+/// ambiguous case.
+fn canonicalize_legacy_blocked_box(
+    runtime: &mut serde_json::Value,
+    creation_order: u32,
+    reset_by_new_movement_order: bool,
+    shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
+) -> bool {
+    let blocked_is_null = runtime
+        .pointer("/position/blocked_box")
+        .is_some_and(serde_json::Value::is_null);
+    let tuple = legacy_blocked_box_tuple(runtime);
+    if tuple.is_none() && !blocked_is_null {
+        return false;
+    }
+    let Some(last_processed_order_id) = runtime
+        .pointer("/sprite/last_processed_order_id")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+    else {
+        return false;
+    };
+
+    let Some(shadow) = shadows.get_mut(&creation_order) else {
+        // Runtime-created actors have no saved validity bit. Their first old
+        // capture is observationally ambiguous, so retain it until a later
+        // transition proves whether the cache is valid.
+        if let Some(tuple) = tuple {
+            shadows.insert(
+                creation_order,
+                LegacyBlockedBoxShadow {
+                    tuple,
+                    validity: LegacyBlockedBoxValidity::Unknown,
+                    last_processed_order_id,
+                    direct_validity_observed: false,
+                },
+            );
+        }
+        return blocked_is_null;
+    };
+
+    let tuple_changed = tuple.is_some_and(|tuple| tuple != shadow.tuple);
+    let order_changed = last_processed_order_id != shadow.last_processed_order_id;
+    if blocked_is_null {
+        // New recordings carry the validity bit directly by emitting null.
+        shadow.validity = LegacyBlockedBoxValidity::Unset;
+        shadow.direct_validity_observed = true;
+    } else if shadow.direct_validity_observed {
+        shadow.validity = LegacyBlockedBoxValidity::Set;
+    } else if reset_by_new_movement_order && order_changed {
+        shadow.validity = LegacyBlockedBoxValidity::Unset;
+    }
+    if let Some(tuple) = tuple {
+        // PerformMotion resets before any UpdateBoxBlocked in the same call,
+        // so a changed tuple proves that the later update revalidated it.
+        if tuple_changed {
+            shadow.validity = LegacyBlockedBoxValidity::Set;
+        }
+        shadow.tuple = tuple;
+    }
+    shadow.last_processed_order_id = last_processed_order_id;
+
+    if shadow.validity == LegacyBlockedBoxValidity::Unset {
+        if let Some(blocked) = runtime.pointer_mut("/position/blocked_box") {
+            *blocked = serde_json::Value::Null;
+        }
         true
     } else {
         false
@@ -4202,10 +4298,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
     let (mut engine, assets, mission_scb) =
         initialize_headless_engine(&header, initial_rng_draws.clone());
     let mut loaded_save_host = None;
-    // Candidates are retired permanently as soon as a recorded tuple changes:
-    // a later box can then be genuinely active even if an actor eventually
-    // revisits the save's stale coordinates.
-    let mut inactive_saved_blocked_boxes = BTreeMap::new();
+    let mut legacy_blocked_box_shadows = BTreeMap::new();
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
             initial_save,
@@ -4241,7 +4334,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
                 eprintln!("parity stage: saved failed path {index}: {request:?}");
             }
         }
-        inactive_saved_blocked_boxes = legacy_inactive_blocked_boxes(&save);
+        legacy_blocked_box_shadows = initial_legacy_blocked_box_shadows(&save);
         loaded_save_host = Some(
             robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
                 &mut engine,
@@ -4863,7 +4956,7 @@ fn run_replay(options: Options, visual_window: Option<ClientWindow>) -> i32 {
             tick_effects.code as i32,
             map,
             header.initial_npc_transients.is_none(),
-            &mut inactive_saved_blocked_boxes,
+            &mut legacy_blocked_box_shadows,
         ));
         if profile_timing {
             comparison_time += comparison_started.elapsed();
@@ -9899,7 +9992,7 @@ fn compare_frame(
     actual_game_code: i32,
     entity_map: &EntityMap,
     legacy_additive_omissions: bool,
-    inactive_saved_blocked_boxes: &mut BTreeMap<u32, LegacyInactiveBlockedBox>,
+    legacy_blocked_box_shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
 ) -> Vec<String> {
     let mut differences = Vec::new();
 
@@ -10178,17 +10271,19 @@ fn compare_frame(
         );
         let mut expected_runtime = expected.runtime.to_json();
         if !expected_runtime.is_null() {
-            let saved_inactive_box = inactive_saved_blocked_boxes
-                .get(&expected.creation_order)
-                .copied();
-            if saved_inactive_box.is_some()
-                && !canonicalize_legacy_inactive_blocked_box(
-                    &mut expected_runtime,
-                    saved_inactive_box.as_ref(),
-                )
-            {
-                inactive_saved_blocked_boxes.remove(&expected.creation_order);
-            }
+            let reset_by_new_movement_order = expected.actor.as_ref().is_some_and(|actor| {
+                actor.motion_state == robin_engine::sprite::MotionState::Start as u32
+                    && actor
+                        .sequence_element
+                        .as_ref()
+                        .is_some_and(|sequence| sequence.movement.is_some())
+            });
+            canonicalize_legacy_blocked_box(
+                &mut expected_runtime,
+                expected.creation_order,
+                reset_by_new_movement_order,
+                legacy_blocked_box_shadows,
+            );
             canonicalize_original_runtime_representation(&mut expected_runtime);
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map);
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
@@ -11021,8 +11116,15 @@ mod tests {
     use super::*;
     use bitcode_parity as bitcode;
 
-    fn blocked_box_json(min_x: u32, min_y: u32, max_x: u32, max_y: u32) -> serde_json::Value {
+    fn blocked_box_json(
+        last_processed_order_id: u32,
+        min_x: u32,
+        min_y: u32,
+        max_x: u32,
+        max_y: u32,
+    ) -> serde_json::Value {
         serde_json::json!({
+            "sprite": {"last_processed_order_id": last_processed_order_id},
             "position": {
                 "blocked_box": {
                     "min": {"x": {"bits": min_x}, "y": {"bits": min_y}},
@@ -11033,38 +11135,148 @@ mod tests {
     }
 
     #[test]
-    fn legacy_inactive_blocked_box_requires_exact_saved_stale_tuple() {
-        let saved = LegacyInactiveBlockedBox {
+    fn legacy_blocked_box_shadow_tracks_resets_and_revalidation() {
+        let tuple = LegacyBlockedBoxTuple {
             min_x: 1,
             min_y: 2,
             max_x: 3,
             max_y: 4,
         };
-        let mut exact = blocked_box_json(1, 2, 3, 4);
-        assert!(canonicalize_legacy_inactive_blocked_box(
-            &mut exact,
-            Some(&saved)
-        ));
-        assert!(exact.pointer("/position/blocked_box").unwrap().is_null());
+        let mut shadows = BTreeMap::from([(
+            10,
+            LegacyBlockedBoxShadow {
+                tuple,
+                validity: LegacyBlockedBoxValidity::Set,
+                last_processed_order_id: 20,
+                direct_validity_observed: false,
+            },
+        )]);
 
-        let mut changed = blocked_box_json(1, 2, 3, 5);
-        let unchanged = changed.clone();
-        assert!(!canonicalize_legacy_inactive_blocked_box(
-            &mut changed,
-            Some(&saved)
+        let mut active = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut active,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert!(!active.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut continuing_motion = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut continuing_motion,
+            10,
+            true,
+            &mut shadows,
         ));
         assert_eq!(
-            changed, unchanged,
-            "changed coordinates may be an active box"
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "MotionState::Start alone is insufficient without a new raw order id"
         );
 
-        let mut unproven = blocked_box_json(1, 2, 3, 4);
-        let unchanged = unproven.clone();
-        assert!(!canonicalize_legacy_inactive_blocked_box(
-            &mut unproven,
-            None
+        let mut action_order = blocked_box_json(21, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut action_order,
+            10,
+            false,
+            &mut shadows,
         ));
-        assert_eq!(unproven, unchanged, "no save evidence means no rewrite");
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "PerformAction also changes the raw order id but does not reset the box"
+        );
+
+        let mut reset = blocked_box_json(22, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut reset,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert!(reset.pointer("/position/blocked_box").unwrap().is_null());
+
+        let mut still_unset = blocked_box_json(22, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut still_unset,
+            10,
+            false,
+            &mut shadows,
+        ));
+
+        let mut revalidated = blocked_box_json(23, 1, 2, 3, 5);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut revalidated,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert_eq!(
+            shadows[&10].validity,
+            LegacyBlockedBoxValidity::Set,
+            "a post-reset tuple update revalidates the box"
+        );
+
+        let mut revisited_old_tuple = blocked_box_json(23, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut revisited_old_tuple,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert!(
+            !revisited_old_tuple
+                .pointer("/position/blocked_box")
+                .unwrap()
+                .is_null()
+        );
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_does_not_guess_for_runtime_actor() {
+        let mut shadows = BTreeMap::new();
+        let mut first = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(!canonicalize_legacy_blocked_box(
+            &mut first,
+            10,
+            false,
+            &mut shadows,
+        ));
+        assert_eq!(shadows[&10].validity, LegacyBlockedBoxValidity::Unknown);
+
+        let mut reset = blocked_box_json(21, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut reset,
+            10,
+            true,
+            &mut shadows,
+        ));
+        assert!(reset.pointer("/position/blocked_box").unwrap().is_null());
+    }
+
+    #[test]
+    fn legacy_blocked_box_shadow_preserves_save_proven_inactive_box() {
+        let mut shadows = BTreeMap::from([(
+            10,
+            LegacyBlockedBoxShadow {
+                tuple: LegacyBlockedBoxTuple {
+                    min_x: 1,
+                    min_y: 2,
+                    max_x: 3,
+                    max_y: 4,
+                },
+                validity: LegacyBlockedBoxValidity::Unset,
+                last_processed_order_id: 20,
+                direct_validity_observed: false,
+            },
+        )]);
+        let mut runtime = blocked_box_json(20, 1, 2, 3, 4);
+        assert!(canonicalize_legacy_blocked_box(
+            &mut runtime,
+            10,
+            false,
+            &mut shadows,
+        ));
     }
 
     #[test]
