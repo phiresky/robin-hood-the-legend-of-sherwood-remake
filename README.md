@@ -157,6 +157,7 @@ same 12-character git hash that the Rust build embeds in `ROBIN_GIT_HASH`:
     /datadirs/demo-leicester/missions/*.rhmission.zst
     /datadirs/demo-leicester/rhs/*.rhmission.zst
     /datadirs/demo-leicester/audio/assets/*.opus
+    /datadirs/demo-leicester/audio/bundles/*.bin
 
 The shell fetches `/wasm/latest.json` when no query parameter is present. It
 prefers the deterministic `.gz` JS/wasm siblings and expands them with the
@@ -177,9 +178,15 @@ Publish the generated `Data/datadir.bin` as
 `Data/missions/`, `Data/rhs/`, and `Data/audio/` directories beside it. The
 browser initially fetches only the manifest, then fetches the selected
 mission's bounded core, terrain, and exact RHS dependency closure concurrently.
-Web audio is deterministic, content-addressed Opus under `audio/assets/`; each
-file is fetched and decoded by Web Audio only when it is first played, so its
-encoded bytes and decoded PCM never enter wasm memory. Only `arial.ttf`
+Web audio is a deterministic, content-addressed Opus catalog under `audio/`.
+Menu audio warms alongside engine startup; mission loading fetches the active
+logical bundles and decodes only its dialogue, voices, music, and long
+ambience. Other effects remain lazy, with cold playback requests held on real
+mixer channels until their shared decode completes. A cold transient
+non-looping effect reservation expires if playback has not started within 10
+seconds; voice, loop, jingle, and music requests wait until explicit halt,
+load failure, backend drop, or mission transition.
+Encoded bytes and decoded PCM never enter wasm memory. Only `arial.ttf`
 and the required Rust UI PNG overlay assets remain beside the wasm artifact and
 are listed in
 `/wasm/<short-hash>/preload-assets.json`; the shell preloads those files before
@@ -204,6 +211,14 @@ Leicester demo shipping datadir is bundled under `android/assets/Data/`:
 `--audio-format source`; do not use the web-only Opus artifact. Its generated
 `missions/`, `rhs/`, and `audio/` directories must be copied alongside it.
 Android reads selected payloads directly through `AAssetManager`.
+The retail-content-free `assets/core-datadir/` is packaged separately into
+every APK. Its canonical manifest pins the 13 font/config files and 19 engine
+UI PNGs (size plus SHA-256) to shipping-datadir schema 14; Gradle checks the
+source inventory, and Android validates and mounts it ahead of shipping and
+mission bundles before UI initialization. Packaged desktop startup validates
+the same manifest and exact loose-file inventory before registering the
+overlay. Missing, extra, symlinked, or corrupt core entries fail startup rather
+than falling back to game data.
 
 Prerequisites:
 
@@ -237,7 +252,8 @@ manifest metadata:
 
     <meta-data android:name="android.app.lib_name" android:value="robin_rs" />
 
-Runtime data is loaded from the bundled APK asset first. Loose
+Runtime shipping data is loaded from the bundled APK asset. The validated core
+overlay has higher VFS priority. Loose
 filesystem data is still supported as a developer override via
 `ROBINHOOD_DATA_DIR` or a `Data/` folder under the app files directory.
 Saves go to the app internal data directory under `saves/`. Video is

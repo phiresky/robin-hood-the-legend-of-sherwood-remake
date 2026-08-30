@@ -2653,10 +2653,9 @@ impl EngineInner {
     ///
     /// Called from every PC death site so the cascade runs once per
     /// kill regardless of which damage path triggered it:
-    /// - Gate `dead_pc = victim` on `is_vip && amulets == 0` (the
-    ///   `MSG_CHARACTER_KILLED` handler only sets `dead_pc` when the
-    ///   victim is a VIP, combined with the `!is_vip || amulets == 0`
-    ///   guard the net condition is `is_vip && amulets == 0`).
+    /// - Gate `dead_pc = victim` on player-party membership as well as
+    ///   `is_vip && amulets == 0`; autonomous PCs can reuse VIP character
+    ///   profiles without participating in player-party defeat logic.
     /// - When `!is_vip || amulets == 0`, drop the PC from the gang.
     /// - When `!is_vip` and a peasant replacement exists, enable the
     ///   trumpet portrait and bump the killed-peasant mission stat.
@@ -2673,8 +2672,8 @@ impl EngineInner {
             .entities
             .get(victim_id)
             .and_then(|e| e.pc_data())
-            .map(|pc| pc.profile_index);
-        let Some(profile_idx) = pc_info else {
+            .map(|pc| (pc.profile_index, pc.mission_role));
+        let Some((profile_idx, mission_role)) = pc_info else {
             return;
         };
         let (is_vip, profile_name) = Some(&self.mission_domain.campaign)
@@ -2689,13 +2688,17 @@ impl EngineInner {
 
         // `!is_vip || amulets == 0` forwards the kill message and
         // gang removal.  The dead-PC slot only latches when the
-        // victim is a VIP — net effect: `dead_pc = victim` iff
-        // `is_vip && amulets == 0`.
+        // victim is a player-party VIP — net effect: `dead_pc = victim` iff
+        // `mission_role == PlayerParty && is_vip && amulets == 0`.
         if !is_vip || amulets == 0 {
             if let (Some(idx), Some(c)) = (char_idx, Some(&mut self.mission_domain.campaign)) {
                 c.remove_from_gang(idx);
             }
-            if is_vip {
+            // Autonomous hero-bodied combatants (such as every Robin in the
+            // Twenty Robins battle) reuse character profiles which are VIPs,
+            // but they are not members of the player's party. Their deaths
+            // must not trip the ordinary hero-party loss latch.
+            if is_vip && mission_role == crate::human_control::MissionRole::PlayerParty {
                 self.mission_domain.dead_pc = Some(victim_id);
             }
         }
@@ -3113,6 +3116,29 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
         killer_is_pc: bool,
     ) {
+        // The damage element is the authoritative SetLifePoints `whoDunnit`
+        // equivalent. Capture it at the fresh-death boundary, before sequence
+        // cleanup can erase responsibility evidence.
+        let achievement_origin = self
+            .orders
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .unwrap_or_else(|| {
+                panic!(
+                    "fresh death for entity {} has no damage element {:?}",
+                    victim_id.index(),
+                    damage_element
+                )
+            });
+        let crate::sequence::SequenceElementData::Damage { origin, .. } = &achievement_origin.data
+        else {
+            panic!(
+                "fresh death for entity {} references a non-damage element",
+                victim_id.index()
+            );
+        };
+        self.record_achievement_npc_death(victim_id, *origin);
+
         // Throw away unrelated sequence work the victim owns. The active
         // damage sequence (which just had its dying order queued) and Todo
         // commands Original admits while dead remain in the manager FIFO.

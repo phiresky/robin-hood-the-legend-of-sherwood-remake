@@ -116,6 +116,11 @@ pub(super) fn handle_mouse_input(
                         | GameEvent::MouseUp(..)
                         | GameEvent::MouseMove { .. }
                         | GameEvent::ViewportPan { .. }
+                        | GameEvent::PointerCancel
+                        | GameEvent::TouchMotionStop
+                        | GameEvent::TouchTransformStart { .. }
+                        | GameEvent::TouchTransform { .. }
+                        | GameEvent::TouchTransformEnd { .. }
                 )
             {
                 continue;
@@ -125,6 +130,10 @@ pub(super) fn handle_mouse_input(
                 // `run_mission`'s always-on view-input pass so middle-
                 // drag panning works during replay; nothing to do here.
                 GameEvent::ViewportPan { .. } => {}
+                GameEvent::TouchMotionStop => {}
+                GameEvent::PointerCancel => {
+                    cancel_left_pointer(engine, host, assets, frame_cmds);
+                }
                 GameEvent::MouseDown(mx, my, 1, clicks) => {
                     on_left_mouse_down(
                         engine, host, assets, frame_cmds, mx, my, clicks, shift_held,
@@ -169,6 +178,36 @@ pub(super) fn handle_mouse_input(
             }
         }
     }
+}
+
+/// Tear down a touch-originated left drag without running any release action.
+/// In particular this must not box-select, perform a sword gesture, center the
+/// minimap, or dispatch a world click when a second finger takes over.
+fn cancel_left_pointer(
+    engine: &mut Engine,
+    host: &mut Host,
+    assets: &engine_api::LevelAssets,
+    frame_cmds: &mut FrameCommands,
+) {
+    if host.engine_display.minimap().drag_start() {
+        dispatch_local_command(
+            host,
+            engine,
+            frame_cmds,
+            assets,
+            &PlayerCommand::MinimapMouseUp { on_minimap: false },
+        );
+    }
+    host.input.left_mouse_down = false;
+    host.input.is_dragging = false;
+    host.input.target_drag = None;
+    host.input.left_double_click_pending = false;
+    host.input.next_left_double_is_simple = false;
+    host.input.ignore_next_drag = false;
+    host.input.ignore_next_left_click = false;
+    host.input.cancel_multi_selection();
+    host.input.cancel_multi_unselection();
+    host.mouse_way.clear();
 }
 
 // ─── Per-event handlers ─────────────────────────────────────────────
@@ -1480,11 +1519,15 @@ pub(super) async fn handle_pause_menu_events(
                         // so seed this deterministic option from the mission
                         // rather than showing a stale local preference.
                         gameplay_config.enable_unbinding = engine.sim_config().enable_unbinding;
+                        gameplay_config.clean_hands_npc_kills_invalidate =
+                            engine.sim_config().clean_hands_npc_kills_invalidate;
                         gameplay_config.reusable_cloaks = engine.sim_config().reusable_cloaks;
                         let profile_amount_of_speaking = sound_config.amount_of_speaking;
                         let profile_fix_hard_reaction_times =
                             gameplay_config.fix_hard_reaction_times;
                         let simulation_enable_unbinding = gameplay_config.enable_unbinding;
+                        let simulation_clean_hands_npc_kills_invalidate =
+                            gameplay_config.clean_hands_npc_kills_invalidate;
                         let simulation_reusable_cloaks = gameplay_config.reusable_cloaks;
                         let cursor =
                             Some(default_modal_cursor(cursor_renderer, cursor_res, renderer));
@@ -1534,6 +1577,18 @@ pub(super) async fn handle_pause_menu_events(
                         }
 
                         host.control_tactical_units = gameplay_config.control_tactical_units;
+                        host.touch_camera_gestures = gameplay_config.touch_camera_gestures;
+                        host.gameplay_config = gameplay_config;
+                        host.native_refresh_presentation =
+                            graphic_config.native_refresh_presentation;
+                        event_pump.set_native_refresh_presentation(
+                            graphic_config.native_refresh_presentation,
+                        );
+                        renderer.configure_native_refresh_presentation(
+                            graphic_config.native_refresh_presentation,
+                            event_pump.surface_config.width,
+                            event_pump.surface_config.height,
+                        );
                         if !host.control_tactical_units {
                             dispatch_local_command(
                                 host,
@@ -1561,6 +1616,14 @@ pub(super) async fn handle_pause_menu_events(
                         if gameplay_config.enable_unbinding != simulation_enable_unbinding {
                             let cmd = PlayerCommand::SetUnbindingEnabled {
                                 enabled: gameplay_config.enable_unbinding,
+                            };
+                            dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
+                        }
+                        if gameplay_config.clean_hands_npc_kills_invalidate
+                            != simulation_clean_hands_npc_kills_invalidate
+                        {
+                            let cmd = PlayerCommand::SetCleanHandsNpcKillsInvalidate {
+                                enabled: gameplay_config.clean_hands_npc_kills_invalidate,
                             };
                             dispatch_local_command(host, engine, frame_cmds, assets, &cmd);
                         }
@@ -2158,6 +2221,7 @@ pub(super) async fn handle_sherwood_campaign_map_overlay(
             cursor,
             pseudo_debrief_pending,
             campaign_view_config.campaign_presentation,
+            campaign_view_config.show_achievement_badges,
             &campaign_profile.campaign_history,
         )
         .await?;

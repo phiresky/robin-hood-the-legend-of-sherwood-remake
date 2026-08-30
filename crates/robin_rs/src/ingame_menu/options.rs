@@ -314,7 +314,7 @@ pub async fn show_options(
             }
 
             renderer.present();
-            crate::window::sleep_ms(16).await;
+            crate::window::sleep_ui_frame().await;
         }
 
         if !re_display {

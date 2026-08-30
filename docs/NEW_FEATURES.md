@@ -4,6 +4,52 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Per-mission achievements, debrief evidence, XP, and trackers.** Four
+  deterministic achievements are evaluated independently for each successful
+  attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
+  Stashed**. Tracking establishes a post-initialization baseline of living and
+  already-dead NPCs, then records exact death causality, hostile sighting pairs,
+  and exact building-sector membership. Clean Hands fails only for deaths
+  caused by player-controlled units by default; `NPC Kills Break Clean Hands`
+  can additionally count NPC-on-NPC deaths. Ghost cares only whether a living
+  hostile actually observed a player character, so it remains independent of
+  killing. Pile-o-Bones latches after any ten NPC bodies occupy one building;
+  All Enemies Stashed requires every encountered hostile to be out of order in
+  the same building.
+
+  Results and metrics are frozen into the canonical attempt, and an exactly-once
+  host attestation decides whether the badges may enter campaign and lifetime
+  history. Custom, cheated, headless, and replay-playback runs remain auditable
+  but do not award icons. A normal history replay is an eligible campaign
+  practice attempt, so a player can return to one mission and earn a missed
+  badge after the fact. Campaign badges, detailed debrief conditions, exact
+  selected-character sword/bow XP, the speedrun clock, and each of the four
+  top-left achievement trackers have separate settings. Fresh profiles show
+  campaign badges and debrief details but leave the HUD trackers and detailed
+  XP off; settings documents that predate these presentation fields leave all
+  of those presentations off without discarding calculated history. The authoritative rules live in
+  `crates/robin_engine/src/achievement.rs`; presentation lives in
+  `crates/robin_rs/src/achievement_hud.rs`.
+
+  Mission badges remain four independent pieces of evidence. Campaign and
+  lifetime badges apply a separate typed aggregation policy: **Clean Hands**
+  and **Ghost** require the badge on every successful canonical mission in one
+  completed campaign path, while **Pile-o-Bones** and **All Enemies Stashed**
+  unlock permanently after any one eligible mission. The required path is
+  frozen by campaign run ID and terminal sequence when the Original campaign
+  completion boundary is crossed. Lost, failed, and interrupted attempts stay
+  in full history but never expand that won-mission set. A later practice
+  replay may fill evidence for a mission already in the envelope, but cannot
+  add a mission or combine evidence from another campaign. Completed envelopes
+  live in the profile's lifetime archive and survive campaign reset.
+  Incomplete Original C++ imports are shown as unverifiable until real eligible
+  evidence exists; import never fabricates an award.
+
+  Deterministic tracker fields and the NPC-death gameplay rule are part of the
+  native state contract. This feature therefore advances native saves to v58,
+  replays to v18, and multiplayer to protocol v25; obsolete Rust layouts fail
+  closed instead of being decoded as plausible achievement evidence.
+
 - **Untie tied NPCs.** A PC with the Tie skill can click any living tied NPC
   to release them, using the rope cursor and the authored tying animation in
   reverse. Search remains the first contextual action while the NPC carries
@@ -133,7 +179,13 @@ A list of which additional features we have added, which ones we might still wan
   the game's native bitmap fonts (~280 KB) plus the font `manager.cfg`,
   fixing the Steam release — whose depot ships only the international
   TrueType (SimSun) font set and therefore renders every menu in a
-  Windows system font in the original build too. See
+  Windows system font in the original build too. It also carries 19 engine UI
+  PNGs, including the allied controls and villain portraits. Packaged native
+  targets validate the strictly sorted 32-file size/SHA-256 inventory in
+  `core-overlay-manifest.json`; desktop startup validates the exact physical
+  tree before mounting it, while Android packages it as a retail-content-free
+  asset root and validates every entry before UI startup. Browser builds
+  explicitly preload only their build-reachable font/UI subset. See
   `assets/core-datadir/README.md`.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
@@ -236,10 +288,11 @@ A list of which additional features we have added, which ones we might still wan
   mission titles as filenames.
 
 - **Local script-RPC HTTP server** (`crates/robin_rs/src/http_server.rs`).
-  Loopback-only blocking-IO server (`tiny_http`) that exposes the script VM
+  Desktop-native-only loopback blocking-IO server (`tiny_http`) that exposes the script VM
   and engine internals to external tooling: debug shells, test harnesses, AI
   drivers. Default port **17640**, configurable via `--http-server <port>`,
-  `--http-server 0` to disable.
+  `--http-server 0` to disable. Android disables this transport; browser builds
+  expose the same queue through the in-process `rh_rpc` JavaScript bridge.
   - `GET /` — endpoint listing.
   - `GET /natives` — every NativeFn (index, name, return_type, params)
     with signature provenance from `original-code/RHScriptAPI.scs`.
@@ -339,7 +392,7 @@ A list of which additional features we have added, which ones we might still wan
 - **Authenticated browser multiplayer**. A native host can publish a
   30-minute, fragment-only `rhmp3` invitation for
   `https://robinhood.phiresky.xyz/`. Browser peers use iroh's
-  relay-over-WebSocket transport with the unchanged protocol-25 game wire,
+  relay-over-WebSocket transport with the protocol-26 game wire,
   prove a durable non-extractable identity through an isolated typed signer,
   and reclaim only their parked seat generation. Demo and Full joins fail
   before boot unless the ticket-selected engine artifact, exact native
@@ -376,16 +429,16 @@ A list of which additional features we have added, which ones we might still wan
   full character corpus at 2.27x smaller than zstd-19. Integration design in
   `docs/COMPRESSION.md` (schema v7 section).
 
-## Todo
+- **Touch camera gestures and native-refresh presentation**. Touch input now
+  classifies taps, drags, double-taps, and two-finger transforms without
+  leaking cancelled pointer actions into gameplay. World gestures support
+  anchored pinch zoom, pan, bounded inertia, and UI/minimap exclusion, with an
+  independent Gameplay toggle. A separate Graphics toggle presents and
+  interpolates at the display's actual cadence while deterministic simulation
+  remains fixed at 25 Hz; 60/90/120/144/240 Hz are covered without a
+  hard-coded refresh-rate policy.
 
-- **Android touch polish**
-  - Complete two-finger pan and pinch-zoom support. The first Android pass maps
-    one-finger touch to left mouse and two-finger centroid drag to viewport pan;
-    follow up with proper gesture state, inertia/clamping, pinch zoom around the
-    gesture centroid, and interaction rules for UI/minimap/pause overlays.
-  - Render pacing should target 60 FPS or the device screen refresh rate instead
-    of the current fixed game-loop cadence. Keep simulation at the existing
-    fixed timestep, but present/interpolate at display cadence where possible.
+## Todo
 
 - **Cursor visual effects**. The wgpu cursor path draws the cursor as a regular
   sprite, but old software-cursor post-effects are not represented.

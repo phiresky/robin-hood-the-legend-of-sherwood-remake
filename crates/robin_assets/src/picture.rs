@@ -693,13 +693,31 @@ impl Picture {
         let mut data = Vec::with_capacity(pixel_count * 2);
         for i in 0..pixel_count {
             let off = i * 4;
-            let px = if rgba[off + 3] < 128 {
-                crate::frame_holder::TRANSPARENT_COLOR_16
-            } else {
-                let r = rgba[off] as u16;
-                let g = rgba[off + 1] as u16;
-                let b = rgba[off + 2] as u16;
-                ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3)
+            // Alpha carries the pixel CLASS, not opacity: the converter
+            // codes it losslessly so the game's exact key comparisons keep
+            // working after a lossy color pass. Banded rather than exact so
+            // artifacts produced before the shadow class existed (alpha was
+            // only 0 or 255, and lossily coded) still decode correctly.
+            let px = match rgba[off + 3] {
+                a if a < 64 => crate::frame_holder::TRANSPARENT_COLOR_16,
+                a if a < 192 => crate::frame_holder::SHADOW_KEY,
+                _ => {
+                    let r = rgba[off] as u16;
+                    let g = rgba[off + 1] as u16;
+                    let b = rgba[off + 2] as u16;
+                    let px = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
+                    // A visible pixel whose lossy colour lands exactly on a
+                    // key would be read as transparent or shadow by the
+                    // runtime's exact comparisons. Nudge it one step in the
+                    // dominant channel — imperceptible, and it cannot
+                    // collide (the same trick the original game's shadow
+                    // pass uses).
+                    match px {
+                        crate::frame_holder::TRANSPARENT_COLOR_16 => px + 1,
+                        crate::frame_holder::SHADOW_KEY => px - 1,
+                        _ => px,
+                    }
+                }
             };
             data.extend_from_slice(&px.to_le_bytes());
         }

@@ -396,6 +396,7 @@ impl MissionLoadingScreen {
         let renderer_config = MissionRendererConfig {
             scale_mode: profile.graphic_config.scale_mode,
             shader_preset: profile.graphic_config.shader_preset,
+            native_refresh_presentation: profile.graphic_config.native_refresh_presentation,
             texture_effect: profile.graphic_config.texture_effect,
             upscale_parameters: profile.graphic_config.upscale_parameters,
             texture_effect_parameters: profile.graphic_config.texture_effect_parameters,
@@ -447,14 +448,25 @@ impl MissionLoadingScreen {
         } else {
             progress.completed as f32 / progress.total as f32
         };
-        let target = 0.02 + 0.08 * fraction;
+        let (start, span, label) = match progress.phase {
+            crate::shipping_mission::MissionLoadPhase::Data => {
+                let span = if cfg!(all(target_arch = "wasm32", feature = "audio")) {
+                    0.06
+                } else {
+                    0.08
+                };
+                (0.02, span, "mission data")
+            }
+            crate::shipping_mission::MissionLoadPhase::Audio => (0.08, 0.02, "mission audio"),
+        };
+        let target = start + span * fraction;
         let text = match progress.file {
             Some(file) => format!(
-                "Loading mission data ({}/{}): {file}",
+                "Loading {label} ({}/{}): {file}",
                 progress.completed, progress.total
             ),
-            None if progress.completed == progress.total => "Mission data ready".to_owned(),
-            None => format!("Loading mission data (0/{})", progress.total),
+            None if progress.completed == progress.total => format!("{label} ready"),
+            None => format!("Loading {label} (0/{})", progress.total),
         };
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_counted_status(text, target);
@@ -527,6 +539,14 @@ impl InteractiveLoadStage {
             window.width as f32,
             window.height as f32,
         );
+        host.achievement_run_kind =
+            if args.custom_mission.is_some() || args.pending_lua_mission.is_some() {
+                robin_engine::achievement::AchievementRunKind::CustomMission
+            } else {
+                robin_engine::achievement::AchievementRunKind::Campaign
+            };
+        host.achievement_replay_playback = args.replay.is_some() || args.replay_data.is_some();
+        host.achievement_headless = false;
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         if let Some(code) = multiplayer_setup_failure_policy.resolve(
             setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await,
@@ -784,6 +804,14 @@ impl HeadlessLoadStage {
         sim_config: engine_api::SimConfig,
     ) -> Result<HeadlessLoadStage, String> {
         let mut host = Host::new(args.global_options.clone(), 1024.0, 768.0);
+        host.achievement_run_kind =
+            if args.custom_mission.is_some() || args.pending_lua_mission.is_some() {
+                robin_engine::achievement::AchievementRunKind::CustomMission
+            } else {
+                robin_engine::achievement::AchievementRunKind::Campaign
+            };
+        host.achievement_replay_playback = args.replay.is_some() || args.replay_data.is_some();
+        host.achievement_headless = true;
         install_pending_lua_session(&mut host, args).map_err(|error| error.to_string())?;
         let setup_exit = MultiplayerSetupFailurePolicy::Fatal.resolve(
             setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await,

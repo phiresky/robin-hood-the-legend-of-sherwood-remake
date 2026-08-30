@@ -8,7 +8,7 @@ Branch: `codex/feature38-revised`
 ## Acceptance summary
 
 The implementation is complete and locally verified. It adds an authenticated
-browser peer to the existing protocol-25 predictive multiplayer session through
+browser peer to the protocol-26 predictive multiplayer session through
 iroh's relay WebSocket transport, without adding a second gameplay protocol or
 a browser-owned canonical history. It also binds every browser join to the
 native host's exact Demo or Full content closure.
@@ -41,7 +41,7 @@ be called production-ready until those prerequisites and the live QA gate pass.
 ### Signed invitation
 
 - The canonical public artifact is an `rhmp3-...` ticket with schema 3. The
-  final revision keeps the gameplay wire protocol at 25; invitation and content
+  final integration uses gameplay wire protocol 26; invitation and content
   schemas are independently versioned.
 - The native host's persistent iroh endpoint key signs the ticket in the
   `robinhood/browser-join-ticket/v3` domain. The public key must be the key that
@@ -125,7 +125,7 @@ be called production-ready until those prerequisites and the live QA gate pass.
   relay disclosed in the signed invitation. It does not substitute a fixed
   project relay or a direct UDP path.
 - Native peers retain native iroh QUIC, direct connectivity, and relay
-  fallback. Both paths use the same ALPN, protocol-25 messages, class-tagged
+  fallback. Both paths use the same ALPN, protocol-26 messages, class-tagged
   framing, directional message policy, allocation limits, authoritative host
   ordering, snapshots, hashes, and start barrier.
 - The browser refuses client publication of host-only messages and fails
@@ -226,7 +226,7 @@ These are external prerequisites, not missing silent fallbacks in Feature 38:
 1. Deploy the stable game shell, versioned `/wasm/<12-char-commit>/` artifact,
    and `/wasm/latest.json` through the public Static Assets Worker at
    `https://robinhood.phiresky.xyz`. Its build manifest must advertise protocol
-   25, ticket schema 3, and multiplayer content schema 2.
+   26, ticket schema 3, and multiplayer content schema 2.
 2. Deploy the isolated signer at
    `https://identity.robinhood.phiresky.xyz/identity-signer/`, with the exact
    game origin in its policy and the matching game-shell `frame-src`. There
@@ -263,7 +263,7 @@ not converted into fake local success.
 
 - Browser transport is relay-WebSocket only. Browser direct UDP/hole punching
   is not implemented.
-- Builds must match the full engine commit and protocol 25. There is no legacy
+- Builds must match the full engine commit and protocol 26. There is no legacy
   protocol, snapshot, ticket, or content-manifest migration.
 - Browser multiplayer requires WebCrypto Ed25519 and durable IndexedDB. If the
   browser deletes the isolated origin's storage, it loses the durable owner and
@@ -283,8 +283,8 @@ not converted into fake local success.
 
 ## Owner acceptance checklist
 
-- [ ] Accept implementation and security behavior through `5bd80ff2f`.
-- [ ] Reconcile the stale parity example fix while integrating onto current
+- [x] Accept implementation and security behavior through `5bd80ff2f`.
+- [x] Reconcile the stale parity example fix while integrating onto current
       root.
 - [ ] Confirm the Worker and isolated signer contain no GitHub Pages fallback.
 - [ ] Prove and enforce the Demo artifact's 25 MiB Static Assets limit.

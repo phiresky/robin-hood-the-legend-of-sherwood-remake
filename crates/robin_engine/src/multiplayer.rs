@@ -47,7 +47,7 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// Wire-format protocol version. Bump on any breaking change to [`NetMsg`] or
 /// an engine snapshot carried by it. Both sides exchange this in the
 /// handshake; mismatches abort the connection.
-pub const NET_PROTOCOL_VERSION: u32 = 25;
+pub const NET_PROTOCOL_VERSION: u32 = 26;
 
 /// Default TCP port for the multiplayer server.
 pub const DEFAULT_PORT: u16 = 7878;
@@ -482,10 +482,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_includes_authenticated_browser_seat_claims() {
-        // Version 25 adds signed browser session binding and typed opening
-        // rejection. Older peers fail before decoding the changed Hello.
-        assert_eq!(NET_PROTOCOL_VERSION, 25);
+    fn protocol_version_includes_browser_auth_and_achievement_state() {
+        // Version 26 combines the authenticated browser seat/opening messages
+        // with deterministic achievement tracker state and its gameplay-rule
+        // command. Older peers fail before decoding either incompatible wire
+        // messages or snapshot/input bytes.
+        assert_eq!(NET_PROTOCOL_VERSION, 26);
     }
 
     #[test]

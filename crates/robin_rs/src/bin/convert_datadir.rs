@@ -1049,12 +1049,13 @@ fn animation_rhs_paths(sprite: &str) -> impl Iterator<Item = String> + '_ {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
-        animation_rhs_rel_existing, exclamation_dat_filename, insert_standalone_audio,
-        level_asset_rel_existing, normalize_robin_profile_index, positional_pair_map,
-        prepare_shipping_payload, transcode_audio_to_opus,
+        AudioFormat, AudioKind, add_character_action_rhs_profiles, animation_rhs_paths,
+        animation_rhs_rel_existing, exclamation_dat_filename, insert_shipping_audio,
+        insert_standalone_audio, is_common_audio_member, level_asset_rel_existing,
+        normalize_robin_profile_index, positional_pair_map, prepare_shipping_payload,
+        transcode_audio_to_opus, write_shipping_dependency,
     };
-    use robin_assets::shipping_datadir::ShippingMission;
+    use robin_assets::shipping_datadir::{ShippingAudioAsset, ShippingMission};
     use robin_engine::profiles::{Action, CharacterProfile, ProfileManager};
 
     #[test]
@@ -1244,6 +1245,91 @@ mod tests {
                 .windows(opus.len())
                 .any(|window| window == opus)
         );
+    }
+
+    #[test]
+    fn common_audio_excludes_menu_exclamations_and_mission_dialogue() {
+        let dialogue = std::collections::BTreeSet::from(["sounds/dialog/line.wav".into()]);
+        assert!(is_common_audio_member("arrow_hit.wav", &dialogue));
+        assert!(!is_common_audio_member("snd_001.wav", &dialogue));
+        assert!(!is_common_audio_member("menu/click.wav", &dialogue));
+        assert!(!is_common_audio_member(
+            "exclamations/robin/alert.wav",
+            &dialogue
+        ));
+        assert!(!is_common_audio_member("dialog/line.wav", &dialogue));
+    }
+
+    #[test]
+    fn opus_payload_retains_exact_catalog_membership_without_encoded_bytes() {
+        let sample_rate = 8_000u32;
+        let sample_count = 800u32;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + sample_count * 2).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&(sample_count * 2).to_le_bytes());
+        wav.resize(wav.len() + (sample_count * 2) as usize, 0);
+
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("arrow.wav");
+        std::fs::write(&source, wav).unwrap();
+        let mut payload = ShippingMission::default();
+        let mut catalog = std::collections::BTreeMap::from([(
+            "sounds/arrow.opus".into(),
+            ShippingAudioAsset {
+                file: "audio/assets/existing.opus".into(),
+                encoded_size: 42,
+                duration_ms: 100,
+                bundle_offset: None,
+            },
+        )]);
+
+        insert_shipping_audio(
+            &mut payload,
+            &mut catalog,
+            &temp.path().join("audio/assets"),
+            "common",
+            "Sounds/Arrow.wav",
+            &source,
+            AudioKind::Effect,
+            AudioFormat::Opus,
+        )
+        .unwrap();
+
+        assert!(payload.raw.is_empty());
+        assert_eq!(payload.audio_durations_ms["sounds/arrow.opus"], 100);
+    }
+
+    #[test]
+    fn opus_membership_only_dependency_is_written_and_decodes() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut payload = ShippingMission::default();
+        payload
+            .audio_durations_ms
+            .insert("sounds/arrow.opus".into(), 100);
+
+        let relative =
+            write_shipping_dependency(temp.path(), "metadata-only-audio", &payload, 30, false)
+                .unwrap()
+                .expect("Opus membership metadata is a real dependency");
+        let filename = std::path::Path::new(&relative)
+            .file_name()
+            .expect("dependency path has a file name");
+        let compressed = std::fs::read(temp.path().join(filename)).unwrap();
+        let decoded = robin_assets::shipping_datadir::decode_mission_compressed(&compressed)
+            .expect("decode metadata-only dependency");
+
+        assert!(decoded.raw.is_empty());
+        assert_eq!(decoded.audio_durations_ms["sounds/arrow.opus"], 100);
     }
 
     #[test]
@@ -1607,6 +1693,7 @@ struct ShippingMissionBuild {
     required_exclamation_ids: BTreeSet<u32>,
     music_names: BTreeSet<String>,
     dialogue_samples: BTreeSet<String>,
+    sound_wave_ids: BTreeSet<u32>,
     map_names: BTreeSet<String>,
     level_asset_keys: BTreeSet<String>,
     proto_filename: String,
@@ -2595,6 +2682,13 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .into_iter()
                 .filter(|name| !name.is_empty())
                 .cloned(),
+        );
+        build.sound_wave_ids.extend(
+            proto
+                .sound_sources
+                .iter()
+                .filter(|source| source.id >= 0)
+                .map(|source| source.id as u32),
         );
         let red_filename = res_descr::red_filename(mp.id);
         if let Some(descriptors) = dd.red_files.get(&red_filename) {
@@ -3655,6 +3749,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     // these payloads then retain only small blocking metadata such as FXG and
     // exclamation DAT files.
     let mut common_audio = ShippingMission::default();
+    // Dialogue and `snd_NNN` source waves receive exact per-mission metadata
+    // below. Keeping either in this shared payload would make active warmup
+    // falsely treat every campaign mission's speech/ambience as required.
+    let mission_dialogue_keys: BTreeSet<String> = mission_builds
+        .values()
+        .flat_map(|build| build.dialogue_samples.iter())
+        .map(|path| robin_util::asset_fs::bundle_key(Path::new(path)))
+        .collect();
     let sounds_root = data_in.join("Sounds");
     if sounds_root.is_dir() {
         let mut files = Vec::new();
@@ -3667,7 +3769,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                 .to_string_lossy()
                 .replace('\\', "/")
                 .to_ascii_lowercase();
-            if relative.starts_with("menu/") || relative.starts_with("exclamations/") {
+            if !is_common_audio_member(&relative, &mission_dialogue_keys) {
                 continue;
             }
             insert_shipping_audio(
@@ -3892,6 +3994,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_exclamation_ids,
                     music_names,
                     dialogue_samples,
+                    sound_wave_ids,
                     level_asset_keys,
                     forest_level,
                     ..
@@ -3913,6 +4016,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
                     required_exclamation_ids,
                     music_names,
                     dialogue_samples,
+                    sound_wave_ids,
                     level_asset_keys,
                     forest_level,
                 ))
@@ -3928,6 +4032,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             required_exclamation_ids,
             music_names,
             dialogue_samples,
+            sound_wave_ids,
             level_asset_keys,
             forest_level,
         ) = encoded?;
@@ -3978,6 +4083,40 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
             &audio_dir,
             "mission-dialogue",
             &dialogue_audio,
+            opts.zstd_window_log,
+            opts.resume,
+        )? {
+            files.push(file);
+        }
+        let mut source_audio = ShippingMission::default();
+        for id in sound_wave_ids {
+            let resolved = ["wav", "ogg"].into_iter().find_map(|extension| {
+                let relative = format!("Sounds/snd_{id:03}.{extension}");
+                in_path(&relative).map(|path| (relative, path))
+            });
+            let Some((relative, path)) = resolved else {
+                tracing::warn!(
+                    mission = mission_name,
+                    id,
+                    "mission sound source has no sample"
+                );
+                continue;
+            };
+            insert_shipping_audio(
+                &mut source_audio,
+                &mut dd.audio_assets,
+                &audio_assets_dir,
+                &format!("ambience-{}", shipping_file_stem(&mission_name)),
+                &relative,
+                &path,
+                AudioKind::Effect,
+                opts.audio_format,
+            )?;
+        }
+        if let Some(file) = write_shipping_dependency(
+            &audio_dir,
+            "mission-ambience",
+            &source_audio,
             opts.zstd_window_log,
             opts.resume,
         )? {
@@ -4305,6 +4444,23 @@ fn insert_shipping_raw(payload: &mut ShippingMission, relative: &str, path: &Pat
     Ok(())
 }
 
+fn is_common_audio_member(relative: &str, mission_dialogue_keys: &BTreeSet<String>) -> bool {
+    !relative.starts_with("menu/")
+        && !relative.starts_with("exclamations/")
+        && !is_sound_source_audio(relative)
+        && !mission_dialogue_keys.contains(&format!("sounds/{relative}"))
+}
+
+fn is_sound_source_audio(relative: &str) -> bool {
+    let Some(name) = relative.strip_prefix("snd_").and_then(|name| {
+        name.strip_suffix(".wav")
+            .or_else(|| name.strip_suffix(".ogg"))
+    }) else {
+        return false;
+    };
+    name.len() >= 3 && name.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum AudioKind {
     Voice,
@@ -4388,19 +4544,23 @@ fn insert_shipping_audio(
                         existing.duration_ms
                     );
                 }
-                return Ok(());
-            }
-            // Music encodes from the lossless remaster drop when one exists;
-            // the catalog duration above stays derived from the GAME source,
-            // so timing-deterministic tables are unaffected by small length
-            // differences in the masters.
-            let encode_source = if matches!(kind, AudioKind::Music) {
-                music_lossless_source(path)
             } else {
-                None
-            };
-            let bytes = transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
-            insert_standalone_audio(catalog, assets_dir, group, relative, &bytes, duration_ms)
+                // Music encodes from the lossless remaster drop when one
+                // exists; the catalog duration above stays derived from the
+                // GAME source, so deterministic timing tables are unchanged.
+                let encode_source = if matches!(kind, AudioKind::Music) {
+                    music_lossless_source(path)
+                } else {
+                    None
+                };
+                let bytes =
+                    transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
+                insert_standalone_audio(catalog, assets_dir, group, relative, &bytes, duration_ms)?;
+            }
+            // Opus bytes live only in the standalone catalog, but each boot
+            // or mission payload retains this tiny exact-membership index.
+            // Runtime warmup uses it to avoid decoding the whole catalog.
+            insert_audio_duration(&mut payload.audio_durations_ms, logical, duration_ms)
         }
     }
 }
@@ -4775,7 +4935,10 @@ fn write_shipping_dependency(
     window_log: u32,
     resume: bool,
 ) -> Result<Option<String>> {
-    if payload.raw.is_empty() {
+    // Opus payloads deliberately keep their bytes in the browser-owned
+    // catalog, so their exact boot/mission membership consists solely of
+    // duration keys. Treat that metadata as real dependency content.
+    if payload.raw.is_empty() && payload.audio_durations_ms.is_empty() {
         return Ok(None);
     }
     let (filename, compressed) =
@@ -4793,6 +4956,7 @@ fn write_shipping_dependency(
     tracing::info!(
         label,
         files = payload.raw.len(),
+        audio_members = payload.audio_durations_ms.len(),
         bytes = compressed_len,
         "wrote shipping audio dependency"
     );
@@ -4890,6 +5054,28 @@ fn jxl_quality_label(quality: Option<u8>) -> String {
 /// given, so leave the existing bytes alone.
 fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Result<Vec<u8>> {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    use robin_assets::picture::PixelFormat;
+
+    // RGB16 interface art carries BOTH key colors as literal pixel values:
+    // transparent (bright green) and SHADOW_KEY (pure blue). Neither may be
+    // coded as color — VarDCT ringing bleeds them into visible neighbours,
+    // and a lossy round trip breaks the exact `== SHADOW_KEY` comparisons
+    // the cursor and UI paths run, which renders shadows as raw blue. Carry
+    // both classes in the alpha channel instead (the scheme the RLE sprite
+    // atlases already use, with alpha coded losslessly) and edge-extend the
+    // color underneath.
+    if pic.pixel_format == PixelFormat::Rgb16 && quality.is_some() {
+        let canvas = picture_rgb16_canvas(pic)?;
+        let mut rgba = robin_assets::rle_jxl::canvas_to_rgba(&canvas)?;
+        robin_assets::rle_jxl::smear_invisible_rgb(
+            &mut rgba,
+            pic.width as usize,
+            pic.height as usize,
+        );
+        let encoded = transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)?;
+        verify_keyed_picture_classes(&encoded, &canvas)?;
+        return Ok(encoded);
+    }
 
     let mut rgba = pic.to_rgba8888(Some(TRANSPARENT_COLOR_16));
     if quality.is_some() {
@@ -4902,6 +5088,58 @@ fn transcode_picture_to_jxl_rgba_keyed(pic: &Picture, quality: Option<u8>) -> Re
         );
     }
     transcode_pixels_to_jxl(pic, rgba, png::ColorType::Rgba, quality, 9)
+}
+
+/// Decode a just-encoded keyed picture and fail the conversion if any pixel
+/// changed CLASS. Color is lossy by design, but transparent and shadow are
+/// exact comparisons at runtime (`px == SHADOW_KEY` in the cursor and UI
+/// paths), so a class that shifts is silent corruption — a blue cursor
+/// shadow, or a hole where art should be. Cheap next to the encode.
+fn verify_keyed_picture_classes(encoded: &[u8], source: &[u16]) -> Result<()> {
+    use robin_assets::rle_jxl::class_of;
+
+    let decoded =
+        Picture::load_jxl_rgba565_keyed(encoded).context("decode keyed interface picture")?;
+    let round_trip = picture_rgb16_canvas(&decoded)?;
+    if round_trip.len() != source.len() {
+        bail!(
+            "keyed interface picture round-tripped {} pixels, expected {}",
+            round_trip.len(),
+            source.len()
+        );
+    }
+    for (index, (&want, &got)) in source.iter().zip(round_trip.iter()).enumerate() {
+        if class_of(want) != class_of(got) {
+            bail!(
+                "keyed interface picture pixel {index} changed class: source {want:#06x} \
+                 decoded {got:#06x} — the alpha channel is not surviving the encode"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Row-major RGB565 words of an `Rgb16` picture, dropping any pitch padding.
+fn picture_rgb16_canvas(pic: &Picture) -> Result<Vec<u16>> {
+    let width = pic.width as usize;
+    let height = pic.height as usize;
+    let pitch = if pic.pitch == 0 {
+        width * 2
+    } else {
+        pic.pitch as usize
+    };
+    let mut canvas = Vec::with_capacity(width * height);
+    for y in 0..height {
+        let row = pic
+            .data
+            .get(y * pitch..y * pitch + width * 2)
+            .ok_or_else(|| anyhow!("picture row {y} is short of {width} RGB565 pixels"))?;
+        canvas.extend(
+            row.chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]])),
+        );
+    }
+    Ok(canvas)
 }
 
 /// Opaque RGB (maps); effort 7 — effort 9 did not produce a meaningful size

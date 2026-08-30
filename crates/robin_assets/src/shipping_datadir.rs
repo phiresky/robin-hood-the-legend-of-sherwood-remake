@@ -1583,14 +1583,19 @@ impl ShippingDatadir {
         })
     }
 
-    /// Iterate every catalog key (normalized logical Opus path). Used by the
-    /// browser's background audio prefetch to enumerate what exists.
-    pub fn audio_catalog_keys(&self) -> impl Iterator<Item = &str> {
-        self.audio_assets.keys().map(String::as_str)
+    /// Catalog keys required before any mission is selected (menu effects
+    /// and menu music). Browser startup decodes this deliberately small set;
+    /// it must not infer boot membership by scanning the whole catalog.
+    pub fn boot_audio_keys(&self) -> Vec<String> {
+        self.audio_durations_ms
+            .keys()
+            .filter(|key| self.audio_assets.contains_key(*key))
+            .cloned()
+            .collect()
     }
 
     /// Catalog keys the ACTIVE mission's payloads reference (its dialogue,
-    /// required actor voices, music, ambience): the prefetch-first set.
+    /// required actor voices, music, ambience): the exact mission warmup set.
     pub fn active_audio_keys(&self) -> Vec<String> {
         let Some(mission) = self.active_mission_name() else {
             return Vec::new();
@@ -2588,6 +2593,48 @@ mod tests {
         assert_eq!(
             datadir.active_audio_metadata(Path::new("Data/Sounds/Arrow.wav")),
             Some((321, 654))
+        );
+    }
+
+    #[test]
+    fn audio_warmup_membership_is_exact_for_boot_and_active_mission() {
+        let mut datadir = ShippingDatadir::default();
+        for key in [
+            "sounds/menu/click.opus",
+            "sounds/exclamations/robin/alert.opus",
+            "sounds/not-mounted.opus",
+        ] {
+            datadir.audio_assets.insert(
+                key.into(),
+                ShippingAudioAsset {
+                    file: format!("audio/assets/{key}"),
+                    encoded_size: 10,
+                    duration_ms: 100,
+                    bundle_offset: None,
+                },
+            );
+        }
+        datadir
+            .audio_durations_ms
+            .insert("sounds/menu/click.opus".into(), 100);
+        let mut mission = ShippingMission::default();
+        mission
+            .audio_durations_ms
+            .insert("sounds/exclamations/robin/alert.opus".into(), 100);
+        datadir
+            .loaded_missions
+            .write()
+            .unwrap()
+            .insert("MissionA".into(), Arc::new(mission));
+        *datadir.active_mission.write().unwrap() = Some("MissionA".into());
+
+        assert_eq!(
+            datadir.boot_audio_keys(),
+            vec!["sounds/menu/click.opus".to_owned()]
+        );
+        assert_eq!(
+            datadir.active_audio_keys(),
+            vec!["sounds/exclamations/robin/alert.opus".to_owned()]
         );
     }
 
