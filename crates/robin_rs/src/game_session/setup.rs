@@ -2707,7 +2707,7 @@ pub(super) fn load_level_and_sprite_bank(
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
-        match Engine::prepare_preserving_campaign(engine_api::EngineArgs {
+        let engine_args = engine_api::EngineArgs {
             campaign,
             level: engine_api::LevelLoadArgs {
                 assets: &mut assets,
@@ -2721,34 +2721,58 @@ pub(super) fn load_level_and_sprite_bank(
             rng_seed,
             original_rng_replay: None,
             sim_config,
-        }) {
-            Ok(prepared) => {
-                #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-                if let Some(request) = args.simulation_content_export.as_ref() {
-                    let exact_mission = match mission_name.as_deref() {
-                        Some(mission) => mission,
-                        None => {
-                            let campaign = Engine::from_prepared(prepared).into_campaign();
-                            return Err(MissionLoadError::new(
-                                campaign,
-                                "simulation-content export has no prepared mission identity"
-                                    .to_owned(),
-                            ));
-                        }
-                    };
-                    let components = prepared
-                        .static_projection()
-                        .components()
-                        .iter()
-                        .map(|component| {
-                            crate::official_projection_export::CanonicalProjectionComponent {
-                                document: component.document.clone(),
-                                canonical_bytes: component.canonical_bytes.clone(),
-                                sha256: component.sha256,
+        };
+        let needs_projection = matches!(
+            ranked_plan,
+            super::leaderboard_runtime::RankedPreFramePlan::Authority(_)
+        );
+        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+        let needs_projection = needs_projection || args.simulation_content_export.is_some();
+        if !needs_projection {
+            // Ordinary play has no consumer for the verification projection.
+            // Construct the same engine without cloning/serializing its inputs
+            // or hashing the sprite opacity surface.
+            let super::leaderboard_runtime::RankedPreFramePlan::BrowseOnly { reason } = ranked_plan
+            else {
+                unreachable!("authority sessions require a prepared projection");
+            };
+            let engine =
+                Engine::new_preserving_campaign(engine_args).map_err(|(error, campaign)| {
+                    MissionLoadError::new(campaign, format!("Level init failed: {error}"))
+                })?;
+            (
+                engine,
+                super::leaderboard_runtime::PreparedRankedAdmission::BrowseOnly { reason },
+            )
+        } else {
+            match Engine::prepare_preserving_campaign(engine_args) {
+                Ok(prepared) => {
+                    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+                    if let Some(request) = args.simulation_content_export.as_ref() {
+                        let exact_mission = match mission_name.as_deref() {
+                            Some(mission) => mission,
+                            None => {
+                                let campaign = Engine::from_prepared(prepared).into_campaign();
+                                return Err(MissionLoadError::new(
+                                    campaign,
+                                    "simulation-content export has no prepared mission identity"
+                                        .to_owned(),
+                                ));
                             }
-                        })
-                        .collect::<Vec<_>>();
-                    if let Err(error) =
+                        };
+                        let components = prepared
+                            .static_projection()
+                            .components()
+                            .iter()
+                            .map(|component| {
+                                crate::official_projection_export::CanonicalProjectionComponent {
+                                    document: component.document.clone(),
+                                    canonical_bytes: component.canonical_bytes.clone(),
+                                    sha256: component.sha256,
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        if let Err(error) =
                         crate::official_projection_export::write_simulation_content_projection(
                             request,
                             exact_mission,
@@ -2762,14 +2786,15 @@ pub(super) fn load_level_and_sprite_bank(
                             format!("simulation-content export failed: {error:#}"),
                         ));
                     }
+                    }
+                    ranked_plan.consume_prepared(prepared)
                 }
-                ranked_plan.consume_prepared(prepared)
-            }
-            Err((error, campaign)) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("Level init failed: {error}"),
-                ));
+                Err((error, campaign)) => {
+                    return Err(MissionLoadError::new(
+                        campaign,
+                        format!("Level init failed: {error}"),
+                    ));
+                }
             }
         }
     };

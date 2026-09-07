@@ -8,6 +8,8 @@
 // fetch+decode overlap improvements show up directly. --wait-ingame also
 // reports navigation-to-game, including module fetch/compile and preloads.
 // Timestamps originate in the browser, excluding the console relay delay.
+// --cpu-profile <file> records the main-thread Chrome CPU profile from
+// navigation through the finish marker (use an unstripped wasm for names).
 //
 //   node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> \
 //       [--mission H01_Lin_VL] [--pkg wasm-www/pkg] [--serial] [--chrome BIN]
@@ -15,7 +17,7 @@
 // --serial withholds the COOP/COEP headers, so crossOriginIsolated is false
 // and the game exercises the no-worker-pool fallback of the same build.
 import { createServer } from 'node:http';
-import { readFileSync, existsSync, mkdtempSync, rmSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, resolve, extname, normalize } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
@@ -27,6 +29,7 @@ let pkgDir = 'wasm-www/pkg';
 let chromeBin = 'google-chrome';
 let isolated = true;
 let waitIngame = false;
+let cpuProfile = null;
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--mission') mission = args[++i];
@@ -34,13 +37,14 @@ for (let i = 0; i < args.length; i++) {
     else if (arg === '--chrome') chromeBin = args[++i];
     else if (arg === '--serial') isolated = false;
     else if (arg === '--wait-ingame') waitIngame = true;
+    else if (arg === '--cpu-profile') cpuProfile = args[++i];
     else positional.push(arg);
 }
 const [root] = positional;
 if (!root) {
     console.error(
         'usage: node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> ' +
-        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN]',
+        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--cpu-profile FILE]',
     );
     process.exit(2);
 }
@@ -190,12 +194,76 @@ const server = createServer((req, res) => {
     res.end(readFileSync(filePath));
 });
 
+// Attach before navigation so the CPU profile includes the full bootstrap.
+async function startCpuProfile(profileDir, pageUrl) {
+    const deadline = Date.now() + 15000;
+    let target;
+    while (Date.now() < deadline) {
+        const portFile = join(profileDir, 'DevToolsActivePort');
+        if (existsSync(portFile)) {
+            const port = readFileSync(portFile, 'utf8').split('\n')[0];
+            const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+            target = targets.find((entry) => entry.type === 'page');
+            if (target) break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!target) throw new Error('Chrome did not expose a page for CPU profiling');
+    const socket = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+        socket.addEventListener('open', resolve, { once: true });
+        socket.addEventListener('error', reject, { once: true });
+    });
+    let nextId = 0;
+    const pending = new Map();
+    socket.addEventListener('message', ({ data }) => {
+        const message = JSON.parse(data);
+        const request = pending.get(message.id);
+        if (!request) return;
+        pending.delete(message.id);
+        if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+        else request.resolve(message.result);
+    });
+    socket.addEventListener('close', () => {
+        for (const request of pending.values()) request.reject(new Error('Chrome debugger closed'));
+        pending.clear();
+    });
+    const send = (method, params = {}) => new Promise((resolve, reject) => {
+        const id = ++nextId;
+        pending.set(id, { resolve, reject });
+        socket.send(JSON.stringify({ id, method, params }));
+    });
+    await send('Profiler.enable');
+    await send('Profiler.setSamplingInterval', { interval: 1000 });
+    await send('Profiler.start');
+    await send('Page.navigate', { url: pageUrl });
+    return async () => {
+        const { profile: result } = await send('Profiler.stop');
+        writeFileSync(cpuProfile, JSON.stringify(result));
+        socket.close();
+        console.log(`CPU profile: ${cpuProfile}`);
+    };
+}
+
 let chrome = null;
 let profile = null;
-function finish(code) {
-    chrome?.kill('SIGKILL');
+let profileReady = null;
+let finishing = false;
+async function finish(code) {
+    if (finishing) return;
+    finishing = true;
+    if (profileReady !== null) {
+        try { await (await profileReady)(); }
+        catch (error) { console.error('CPU profiling failed:', error); code = 1; }
+    }
+    if (chrome && chrome.exitCode === null && chrome.signalCode === null) {
+        await new Promise((resolve) => {
+            chrome.once('exit', resolve);
+            chrome.kill('SIGKILL');
+        });
+    }
     server.close();
-    if (profile !== null) rmSync(profile, { recursive: true, force: true });
+    if (profile !== null) rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     process.exit(code);
 }
 
@@ -203,14 +271,19 @@ server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
     profile = mkdtempSync(join(tmpdir(), 'robin-e2e-chrome-'));
     const query = new URLSearchParams({ mission, 'wasm-log': 'info' });
+    const pageUrl = `http://127.0.0.1:${port}/?${query}`;
     chrome = spawn(chromeBin, [
         '--headless=new',
         `--user-data-dir=${profile}`,
         '--no-first-run',
         '--enable-unsafe-swiftshader',
         '--autoplay-policy=no-user-gesture-required',
-        `http://127.0.0.1:${port}/?${query}`,
+        ...(cpuProfile ? ['--remote-debugging-port=0', 'about:blank'] : [pageUrl]),
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    if (cpuProfile) {
+        profileReady = startCpuProfile(profile, pageUrl);
+        profileReady.catch(() => finish(1));
+    }
     let chromeErr = '';
     chrome.stderr.on('data', (c) => { chromeErr += c; });
     console.log(`[e2e: mission=${mission} isolated=${isolated} pkg=${pkgDir}]`);

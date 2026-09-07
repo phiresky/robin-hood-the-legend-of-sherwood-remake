@@ -321,7 +321,7 @@ impl Validate for OfficialSimulationProjectionReceiptV1 {
             subject.content_manifest.validate()?;
             if subject.content_manifest.edition != self.edition
                 || subject.content_manifest.projection_schema_version
-                    != self.exporter.exporter_version
+                    != OFFICIAL_SIMULATION_CONTENT_PROJECTION_SCHEMA_VERSION_V1
                 || subject.content_manifest.name
                     != official_content_manifest_name_v1(
                         self.edition,
@@ -342,7 +342,7 @@ impl Validate for OfficialSimulationProjectionReceiptV1 {
 pub const OFFICIAL_PROJECTION_RECEIPT_SCHEMA_VERSION_V2: u32 = 2;
 pub const OFFICIAL_PROJECTION_EXPORT_REPORT_SCHEMA_VERSION_V2: u32 = 2;
 pub const OFFICIAL_PROJECTION_EXPORTER_VERSION_V2: u32 = 2;
-pub const OFFICIAL_SIMULATION_CONTENT_PROJECTION_SCHEMA_VERSION_V1: u32 = 1;
+pub const OFFICIAL_SIMULATION_CONTENT_PROJECTION_SCHEMA_VERSION_V1: u32 = 2;
 
 /// Exact physical-source selection policy used to author an official
 /// simulation projection. The policy version belongs to each variant; adding
@@ -1086,19 +1086,19 @@ pub const fn simulation_component_filename_v1(
     kind: SimulationContentComponentKindV1,
 ) -> &'static str {
     match kind {
-        SimulationContentComponentKindV1::Profiles => "profiles.json",
-        SimulationContentComponentKindV1::LoadedLevel => "loaded_level.json",
-        SimulationContentComponentKindV1::MissionScripts => "mission_scripts.json",
+        SimulationContentComponentKindV1::Profiles => "profiles.bitcode",
+        SimulationContentComponentKindV1::LoadedLevel => "loaded_level.bitcode",
+        SimulationContentComponentKindV1::MissionScripts => "mission_scripts.bitcode",
         SimulationContentComponentKindV1::SpriteSimulationMetadata => {
-            "sprite_simulation_metadata.json"
+            "sprite_simulation_metadata.bitcode"
         }
-        SimulationContentComponentKindV1::MapGeometryMetadata => "map_geometry_metadata.json",
+        SimulationContentComponentKindV1::MapGeometryMetadata => "map_geometry_metadata.bitcode",
         SimulationContentComponentKindV1::LocalizedDeterministicText => {
-            "localized_deterministic_text.json"
+            "localized_deterministic_text.bitcode"
         }
-        SimulationContentComponentKindV1::SoundDurationTables => "sound_duration_tables.json",
+        SimulationContentComponentKindV1::SoundDurationTables => "sound_duration_tables.bitcode",
         SimulationContentComponentKindV1::InterfaceSimulationMetadata => {
-            "interface_simulation_metadata.json"
+            "interface_simulation_metadata.bitcode"
         }
     }
 }
@@ -1117,7 +1117,19 @@ pub enum ContentClosureKindV1 {
     StaticPreparedMissionContentProjection,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SimulationContentComponentKindV1 {
     Profiles,
@@ -1200,7 +1212,7 @@ impl Validate for SimulationSpeechTimingSourceV1 {
 }
 
 pub const SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1: &str =
-    "application/vnd.robinhood.simulation-content-component-v1+json";
+    "application/vnd.robinhood.simulation-content-component-v2+bitcode";
 
 /// One canonical component of the exact `PreparedMissionInputs` projection.
 /// The referenced object is a canonical `SimulationContentComponentDocumentV1`.
@@ -1239,6 +1251,52 @@ pub struct SimulationContentComponentDocumentV1 {
     pub kind: SimulationContentComponentKindV1,
     pub component_schema_version: u32,
     pub payload: CanonicalValue,
+}
+
+// The semantic document stays inspectable through serde. Published bytes use
+// native bitcode exclusively; the format marker rejects former JSON artifacts.
+impl SimulationContentComponentDocumentV1 {
+    pub fn bitcode_bytes(&self) -> Result<Vec<u8>, crate::bitcode_value::ProjectionBitcodeError> {
+        self.validate()?;
+        Ok(bitcode::encode(&(
+            *b"RHSC0002",
+            self.schema_version,
+            self.kind,
+            self.component_schema_version,
+            crate::bitcode_value::BitcodeValue::from_value(&self.payload)?,
+        )))
+    }
+
+    pub fn from_bitcode(
+        bytes: &[u8],
+    ) -> Result<Self, crate::bitcode_value::ProjectionBitcodeError> {
+        use crate::bitcode_value::{BitcodeValue, ProjectionBitcodeError};
+        let (magic, schema_version, kind, component_schema_version, payload): (
+            [u8; 8],
+            u32,
+            SimulationContentComponentKindV1,
+            u32,
+            BitcodeValue,
+        ) = bitcode::decode(bytes)?;
+        if magic != *b"RHSC0002" {
+            return Err(ProjectionBitcodeError::Invalid(
+                "unsupported component format",
+            ));
+        }
+        let document = Self {
+            schema_version,
+            kind,
+            component_schema_version,
+            payload: payload.into_value()?,
+        };
+        document.validate()?;
+        if document.bitcode_bytes()? != bytes {
+            return Err(ProjectionBitcodeError::Invalid(
+                "noncanonical bitcode encoding",
+            ));
+        }
+        Ok(document)
+    }
 }
 
 impl Validate for SimulationContentComponentDocumentV1 {

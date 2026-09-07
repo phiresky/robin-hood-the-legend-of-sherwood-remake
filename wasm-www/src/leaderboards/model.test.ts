@@ -903,7 +903,7 @@ test('build and content manifests are recursively strict and content-addressed',
         edition: 'demo',
         subject: { kind: 'field_mission', mission_id: 'm01' },
         closure: 'static_prepared_mission_content_projection',
-        projection_schema_version: 1,
+        projection_schema_version: 2,
         resource_locale_root: '1033',
         speech_timing: { kind: 'base_installation' },
         components: [
@@ -914,7 +914,7 @@ test('build and content manifests are recursively strict and content-addressed',
             kind,
             component_schema_version: 1,
             artifact: artifact(String(index + 1).repeat(64),
-                'application/vnd.robinhood.simulation-content-component-v1+json'),
+                'application/vnd.robinhood.simulation-content-component-v2+bitcode'),
         })),
     };
     const contentDigest = await canonicalDocumentSha256(contentManifest);

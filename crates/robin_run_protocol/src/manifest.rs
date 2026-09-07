@@ -1466,7 +1466,7 @@ pub(crate) mod tests {
                 mission_id: "Dem_Lei_MP".into(),
             },
             closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 1,
+            projection_schema_version: 2,
             resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SimulationSpeechTimingSourceV1::LanguagePack {
                 canonical_locale: "en-US".into(),
@@ -1522,7 +1522,7 @@ pub(crate) mod tests {
                 SimulationContentComponentKindV1::LoadedLevel,
             )
             .unwrap(),
-            "field-missions/44656d204c65692fc3a4/loaded_level.json"
+            "field-missions/44656d204c65692fc3a4/loaded_level.bitcode"
         );
         let first_hq = OfficialContentSubjectV1::Headquarters {
             mission_id: "Sherwood_A".into(),
@@ -1603,7 +1603,7 @@ pub(crate) mod tests {
             edition: OfficialContentEditionV1::Demo,
             subject,
             closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 1,
+            projection_schema_version: 2,
             resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
             components: simulation_components(),
@@ -1645,7 +1645,7 @@ pub(crate) mod tests {
                 mission_id: "S01_Not_MP".into(),
             },
             closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 1,
+            projection_schema_version: 2,
             resource_locale_root: ResourceLocaleRootV1::new("2047").unwrap(),
             speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
             components: simulation_components(),

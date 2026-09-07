@@ -1192,7 +1192,16 @@ pub fn canonicalize_document(
             canonicalize_typed::<CampaignContentManifestV1>(input, output)
         }
         DocumentKind::SimulationComponent => {
-            canonicalize_typed::<SimulationContentComponentDocumentV1>(input, output)
+            let document = SimulationContentComponentDocumentV1::from_bitcode(
+                &read_regular_file_bounded(input, MAX_DOCUMENT_BYTES)?,
+            )?;
+            let canonical_bytes = document.bitcode_bytes()?;
+            let digest = Digest32::digest_bytes(&canonical_bytes);
+            write_bytes(output, &canonical_bytes)?;
+            Ok(AuthoredDocument {
+                digest,
+                canonical_bytes,
+            })
         }
         DocumentKind::SourceTreeManifest => {
             canonicalize_typed::<OfficialSourceTreeManifestV1>(input, output)
@@ -1251,7 +1260,9 @@ pub fn validate_document(kind: DocumentKind, input: &Path) -> Result<Digest32> {
         DocumentKind::Content => validate_typed::<ContentManifestV1>(input),
         DocumentKind::CampaignContent => validate_typed::<CampaignContentManifestV1>(input),
         DocumentKind::SimulationComponent => {
-            validate_typed::<SimulationContentComponentDocumentV1>(input)
+            let bytes = read_regular_file_bounded(input, MAX_DOCUMENT_BYTES)?;
+            SimulationContentComponentDocumentV1::from_bitcode(&bytes)?;
+            Ok(Digest32::digest_bytes(bytes))
         }
         DocumentKind::SourceTreeManifest => validate_typed::<OfficialSourceTreeManifestV1>(input),
         DocumentKind::SourceTreeManifestV2 => validate_typed::<OfficialSourceTreeManifestV2>(input),
@@ -1606,18 +1617,19 @@ fn read_mounted_projection(
 ) -> Result<Vec<u8>> {
     let path = resolve_mounted_file(root, relative)?;
     let bytes = read_regular_file_bounded(&path, MAX_DOCUMENT_BYTES)?;
-    let document: SimulationContentComponentDocumentV1 = strict_json_from_slice(&bytes)
-        .with_context(|| format!("parse {source_name} component {}", path.display()))?;
+    let document: SimulationContentComponentDocumentV1 =
+        SimulationContentComponentDocumentV1::from_bitcode(&bytes)
+            .with_context(|| format!("parse {source_name} component {}", path.display()))?;
     document.validate()?;
     ensure!(
         document.kind == component.kind
             && document.component_schema_version == component.component_schema_version,
         "{source_name} component declaration does not match its document"
     );
-    let canonical = document.canonical_bytes()?;
+    let canonical = document.bitcode_bytes()?;
     ensure!(
         bytes == canonical,
-        "{source_name} projection {} is not byte-for-byte canonical JSON",
+        "{source_name} projection {} is not byte-for-byte canonical bitcode",
         path.display()
     );
     ensure!(
@@ -1841,8 +1853,9 @@ fn validate_verifier_bundle_layout(root: &Path, editions: &[AuthoredEdition; 2])
                         == component.artifact,
                     "verifier component bytes do not match manifest"
                 );
-                let document: SimulationContentComponentDocumentV1 =
-                    load_canonical_document(&path)?;
+                let document = SimulationContentComponentDocumentV1::from_bitcode(
+                    &read_regular_file_bounded(&path, MAX_DOCUMENT_BYTES)?,
+                )?;
                 ensure!(
                     document.kind == component.kind
                         && document.component_schema_version == component.component_schema_version,
@@ -2938,7 +2951,7 @@ mod tests {
                             subject.mission_id()
                         )),
                     };
-                    let bytes = document.canonical_bytes()?;
+                    let bytes = document.bitcode_bytes()?;
                     component_references.push(SimulationContentComponentV1 {
                         kind,
                         component_schema_version: 1,
@@ -2961,7 +2974,7 @@ mod tests {
                     edition,
                     subject: subject.clone(),
                     closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-                    projection_schema_version: 1,
+                    projection_schema_version: 2,
                     resource_locale_root: robin_run_protocol::ResourceLocaleRootV1::new(
                         match edition {
                             OfficialContentEditionV1::Demo => "1033",
@@ -3190,7 +3203,7 @@ mod tests {
             component_schema_version: 1,
             payload: CanonicalValue::String("transcoded simulation mismatch".into()),
         };
-        fs::write(path, changed.canonical_bytes()?)?;
+        fs::write(path, changed.bitcode_bytes()?)?;
         assert!(
             author_official_content(
                 &mismatch.plan_path,

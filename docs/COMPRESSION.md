@@ -20,6 +20,10 @@ context and grid-loop improvements reduce measured complete native decode
 CPU cost by about 18%, with matching decoded output. A follow-up cuts
 four-worker RLE/JXL latency by a further 65% through image parallelism.
 
+[Startup projection removal](#startup-verification-and-native-projection-encoding-2026-09-08):
+matched headless Chrome startup falls from 9.433 s to 5.583 s; remaining
+simulation fingerprints migrate from JSON to native bitcode.
+
 ## Initial findings (superseded by later implementation sections)
 
 - **Character sprites (~78% of bank, ~67% of shipping blob)**: keep the existing shipping format, but trim demo shipping banks to the sprite IDs reachable from RHS profiles loaded by the demo mission. The current Leicester demo v4 q80 blob keeps 64 774 / 65 100 sprite slots and is **35 213 242 B**.
@@ -2861,3 +2865,73 @@ Three interleaved samples were 4.300/3.735, 4.281/3.686, and 4.261/3.659 s.
 All six decoded 47,179 sprites and matched grid FNV `589daa9f51ba962e`.
 This isolates VQ decoding; it does not include image decode or browser startup.
 Raw results are `node-{after,packed}-{0,1,2}.log` in the scratch directory.
+
+## Startup verification and native projection encoding (2026-09-08)
+
+The Chrome main-thread profile shows that the interval labelled “engine
+construction” also includes building the deterministic input projection.
+Canonical JSON construction, integer formatting, allocator growth and sprite
+opacity hashing dominate that work. The browser harness accepts
+`--cpu-profile FILE` to capture a Chrome CPU profile; use an unstripped
+wasm-bindgen package to retain Rust function names. Profiled runs are diagnostic,
+not comparable to uninstrumented startup timings.
+
+Ordinary (`BrowseOnly`) sessions now construct the engine directly. They skip
+projection-only input clones, serialization and opacity hashing on both native
+and WASM. Ranked admission and explicit native projection export still prepare
+and verify the full input projection. Simulation construction and replay
+recording use the same engine and campaign ownership rules.
+
+Static simulation projection artifacts now use native `bitcode::encode` /
+`bitcode::decode`, with `RHSC0002` format identity, `.bitcode` filenames and
+`application/vnd.robinhood.simulation-content-component-v2+bitcode` media type.
+Run projection hashes use `RHRP0002`; the projection schema is 2. There is no
+JSON fallback. Existing component artifacts, content manifests and dependent
+ranked authorities must be regenerated. Signed public JSON protocol documents
+retain their existing encoding; this migration changes simulation fingerprints.
+
+The native representation is a flat preorder stream of typed values. Object
+keys are ordered, nonnegative integers are normalized to unsigned values, and
+float projections retain exact IEEE bits, including negative zero and NaN
+payloads. Readers reject malformed structure, excessive depth, duplicate or
+unordered keys, trailing bytes and noncanonical encoding. The internal
+`serde_value` projection remains for heterogeneous simulation inputs; replacing
+that intermediate tree with directly ordered typed fields is follow-up work.
+
+The WASM build also aligns the direct `wasm-streams` dependency with reqwest's
+0.5 dependency. Linking both 0.5 and 0.6 exports duplicate wasm-bindgen symbols
+and prevents the current threaded build from linking.
+
+### Matched browser startup results
+
+Baseline: `899a46ad4` plus only the wasm-streams link fix. Both packages use
+JXL 0.7.1, the same threaded release build and wasm-opt/wasm-strip processing,
+four Rayon workers, and the unchanged converted Leicester demo
+(`Dem_Lei_MP`, 22,920,071 compressed bytes in the complete closure).
+Chrome 152 uses its SwiftShader GL adapter and a 1×1 initial surface in this
+harness. The endpoint is the game's “Recording replay” marker, not first
+presented gameplay frame. Each run starts a fresh Chrome profile; three
+before/after pairs alternate, with profiling disabled and no task builds
+running during measurement.
+
+| Measurement | Before | After |
+| --- | ---: | ---: |
+| Navigation → recording replay, median | 9.433 s | 5.583 s |
+| Individual navigation times | 9.723 / 9.182 / 9.433 s | 5.613 / 5.580 / 5.583 s |
+| Engine-construction interval, median | 3,952 ms | 311 ms |
+| Individual engine intervals | 4,058 / 3,786 / 3,952 ms | 311 / 316 / 269 ms |
+| Postprocessed WASM size | 21,288,696 B | 21,299,854 B |
+
+That is **3.850 s (40.8%) less startup time** and a **92.1% reduction** in the
+engine-construction interval. Separate named-WASM profiles have zero samples
+in `canonical::write_value`, `canonicalize_serde_value` and
+`simulation_opacity_sha256` after the change; all three were prominent before.
+
+Validation: the explicit `robin_engine`, `robin_run_protocol` (102 tests),
+`robin_manifest_tool` (144), `robin_ranked_verification`, `robin_replay_verifier`
+(36) and `robin_rs --features projection-export` (1,510 active) suites pass,
+as do both exporter-example tests and all 83 browser leaderboard/signer tests.
+The original Leicester admission test independently prepares matching seals
+and rejects a forged component. A 30-second native smoke run records a session;
+its 104-frame replay reaches EOF with exit status 0 and no reported hash
+mismatch. The normal native game and threaded WASM release build both pass.
