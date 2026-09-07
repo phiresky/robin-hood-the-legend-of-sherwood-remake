@@ -2935,3 +2935,60 @@ The original Leicester admission test independently prepares matching seals
 and rejects a forged component. A 30-second native smoke run records a session;
 its 104-frame replay reaches EOF with exit status 0 and no reported hash
 mismatch. The normal native game and threaded WASM release build both pass.
+
+### Further startup experiments (2026-09-08)
+
+Two experiments were implemented and tested against `05cf64faf`, then
+**reverted because optimized browser startup did not improve**:
+
+- Replace per-sprite binary search/vector insertion in
+  `ShippingMission::merge_from` with append, stable sort and duplicate checks.
+  Compare dictionaries and shipped sprite fields directly instead of encoding
+  them solely for equality. Preserve already decoded grids when later parts
+  repeat empty VQ placeholders, and continue rejecting metadata/data conflicts.
+- Batch browser audio progress updates and explicit zero-delay timer yields
+  at 16 ms intervals instead of yielding after every completed item. Keep all
+  489 active-mission items, the three-request concurrency limit and error
+  propagation unchanged.
+
+Separate named-WASM diagnostic profiles attributed about 266 ms inclusive to
+`ShippingMission::merge_from` before and 5 ms after. These profiles used
+unoptimized named packages and ran under build/optimizer contention; they do
+not establish a speedup in the shipped optimized package.
+
+The decisive comparison used Chrome 152, the fixed Leicester shipping corpus,
+threaded `wasm-release` packages with the same wasm-bindgen/wasm-opt/strip
+pipeline, fresh browser profiles, and no concurrent task builds or profiling.
+The endpoint remains navigation to the “Recording replay” marker, not the
+first presented gameplay frame.
+
+| Experiment | Alternating pairs | Baseline median | Candidate median |
+| --- | ---: | ---: | ---: |
+| Bulk merge + audio batching | 8 | 4.8925 s | 4.9295 s |
+| Bulk merge alone | 3 | 4.824 s | 4.908 s |
+
+The combined experiment was about 0.8% slower; the isolated merge experiment
+was about 1.7% slower. Neither supports retaining a startup optimization.
+The first three combined pairs ran baseline first, and the remaining five
+ran candidate first. Raw logs, profiles, package artifacts and the rejected
+patch are in `/tmp/robin-merge-perf/` (local scratch, not versioned).
+
+Before reverting, the native game and threaded WASM release builds passed,
+as did all 139 active `robin_assets` tests (four fixture-dependent tests
+ignored). Added regression cases covered reverse/interleaved arrivals,
+duplicates, materialized-grid ownership, conflicts and out-of-range IDs.
+The complete release decode retained SHA-256
+`3e80fe96ac7f5f20a422a8e1d60aeffeb4f28388944acb611da129b80a34b6c4`,
+covering 28 VQ chunks, 73 RLE/JXL atlases, 1,171 interface images and two
+terrain images. Experimental code and its new tests were reverted together.
+
+The debug full-corpus probe hit an upstream JXL 0.7.1 subtraction overflow in
+`group_scheduler.rs`: `then_some(Rect { size: (x1-x0, y1-y0), ... })` eagerly
+constructs a rejected rectangle. Release pixel verification passed; no
+assertions were suppressed and no dependency patch was introduced.
+TODO: move to an upstream fix for this debug-only empty-rectangle case.
+
+TODO: investigate motion-grid initialization, JXL context-map validation and
+terrain decode/upload using optimized browser measurements. These remain
+visible costs; the rejected experiments show why named-profile improvements
+must be checked against total startup before retaining them.
