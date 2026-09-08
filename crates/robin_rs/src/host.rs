@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::bg_cache::BackgroundDecal;
+use crate::bg_cache::BackgroundDecals;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::distributed_mod_cache::DistributedModCache;
 use crate::draw_manager::DrawManager;
@@ -1573,10 +1573,9 @@ pub struct HostFrontend {
     /// Per-FX-entity persistent background decals replacing the legacy
     /// map-patch bake/restore surface pipeline. A queued map-patch insertion
     /// inserts or replaces the entity's decal; a queued restore removes it.
-    pub background_decals: HashMap<EntityId, BackgroundDecal>,
-    /// Stable draw order for [`Self::background_decals`], preserving the
-    /// order in which patch effects became permanent.
-    pub background_decal_order: Vec<EntityId>,
+    /// Draw order is owned by the collection: replacement keeps its position,
+    /// removal preserves survivor order, and reinsertion appends.
+    pub(crate) background_decals: BackgroundDecals,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2559,7 +2558,6 @@ impl HostFrontend {
     /// Clear persistent decals that belonged to the previous level.
     pub fn clear_background_decals(&mut self) {
         self.background_decals.clear();
-        self.background_decal_order.clear();
     }
 
     pub fn install_trajectory_ground_mark_sprite(&mut self, data: &GroundMarkSpriteData) {
