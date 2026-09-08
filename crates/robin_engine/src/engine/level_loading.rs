@@ -4222,12 +4222,18 @@ impl EngineInner {
         }
 
         // ── Part 2: Pathfinder graph ──
+        let graph_started = web_time::Instant::now();
         if !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
                 .load_from_proto_stream(self.world.fast_grid_mut(), &motion_data.graph_bytes)
         {
             tracing::error!("Failed to load pathfinder graph: {e}");
         }
+        tracing::debug!(
+            bytes = motion_data.graph_bytes.len(),
+            elapsed_ms = graph_started.elapsed().as_secs_f64() * 1000.0,
+            "engine construction: proto pathfinder graph parsing"
+        );
         if motion_data.graph_bytes.is_empty() {
             // Hackable descriptors omit the legacy precomputed graph. Keep
             // its hierarchy/state topology faithful to the authored motion

@@ -268,7 +268,7 @@ where
         downloads_finished();
         (merged, fetched_bytes)
     };
-    // Browser worker-pool build: prioritized bounded requests, parts merged
+    // Browser worker-pool build: prioritized requests, parts merged
     // as they arrive, and critical VQ sprite chunks materialized concurrently
     // with the remaining downloads; reinforcement-only chunks return as a
     // deferred tail that streams after activation. `install_mission` still
@@ -821,7 +821,11 @@ where
     );
     let mut download_files = files.to_vec();
     let download_concurrency = match query.get("mission-downloads").as_deref() {
-        None | Some("prioritized") => MISSION_FETCH_CONCURRENCY,
+        // Keep the browser's connections busy while short decompression jobs
+        // await worker/main-thread progress. Worker admission remains bounded
+        // independently; limiting both queues delayed transfers in Chrome.
+        None | Some("ordered") => total.max(1),
+        Some("prioritized") => MISSION_FETCH_CONCURRENCY,
         Some("unbounded") => {
             // Restore the original alphabetical all-at-once policy exactly.
             download_files.sort();
