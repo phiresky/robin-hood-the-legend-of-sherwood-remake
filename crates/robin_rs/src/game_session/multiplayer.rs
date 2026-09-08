@@ -1005,12 +1005,15 @@ pub(super) async fn setup_multiplayer_session(
     authoritative_mission_id: &str,
     authoritative_rng_seed: u64,
     authoritative_sim_config: robin_engine::engine::SimConfig,
+    #[cfg(not(target_arch = "wasm32"))] campaign: &crate::multiplayer::MultiplayerCampaignSession,
 ) -> Result<(), String> {
+    use crate::multiplayer::NetChannels;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::multiplayer::NetEvent;
+    #[cfg(target_arch = "wasm32")]
+    use crate::multiplayer::connect_client;
     #[cfg(not(target_arch = "wasm32"))]
-    use crate::multiplayer::{HostedModContent, start_server, start_server_with_content};
-    use crate::multiplayer::{NetChannels, connect_client};
+    use crate::multiplayer::{HostedModContent, start_server_in_campaign};
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{Duration, Instant};
 
@@ -1033,7 +1036,7 @@ pub(super) async fn setup_multiplayer_session(
         #[cfg(not(target_arch = "wasm32"))]
         {
             if !args.mp_continue_session {
-                crate::multiplayer::discard_host_session_continuation();
+                campaign.discard_host_continuation()?;
             }
             let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host
@@ -1048,7 +1051,8 @@ pub(super) async fn setup_multiplayer_session(
                     HostedModContent::from_encoded(encoded.to_vec()).map_err(|error| {
                         format!("multiplayer: invalid hosted full-mod package: {error}")
                     })?;
-                start_server_with_content(
+                start_server_in_campaign(
+                    campaign,
                     nickname.clone(),
                     authoritative_mission_id.to_string(),
                     authoritative_rng_seed,
@@ -1059,11 +1063,12 @@ pub(super) async fn setup_multiplayer_session(
                     frame_cursor,
                     snapshot_slot,
                     args.mp_expected_players.unwrap_or(1),
-                    content,
+                    Some(content),
                     publish_browser_links,
                 )
             } else {
-                start_server(
+                start_server_in_campaign(
+                    campaign,
                     nickname.clone(),
                     authoritative_mission_id.to_string(),
                     authoritative_rng_seed,
@@ -1074,6 +1079,7 @@ pub(super) async fn setup_multiplayer_session(
                     frame_cursor,
                     snapshot_slot,
                     args.mp_expected_players.unwrap_or(1),
+                    None,
                     publish_browser_links,
                 )
             };
@@ -1159,7 +1165,17 @@ pub(super) async fn setup_multiplayer_session(
     } else if let Some(addr) = args.connect.as_deref() {
         let (mut channels, in_tx, out_rx, _client_frame_cursor, _client_snapshot) =
             NetChannels::new();
-        match connect_client(addr, nickname.clone(), in_tx, out_rx) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let connection = crate::multiplayer::connect_client_in_campaign(
+            campaign,
+            addr,
+            nickname.clone(),
+            in_tx,
+            out_rx,
+        );
+        #[cfg(target_arch = "wasm32")]
+        let connection = connect_client(addr, nickname.clone(), in_tx, out_rx);
+        match connection {
             Ok(handle) => {
                 #[cfg(not(target_arch = "wasm32"))]
                 let offered_content = handle.content_offer();

@@ -50,7 +50,6 @@ use robin_run_protocol::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::thread::{self, JoinHandle};
@@ -96,15 +95,78 @@ impl HostedModContent {
     }
 }
 
-/// Native reconnects within one process retain a transport identity across
-/// outer-mission rebuilds. The install's separate durable game seed remains
-/// the sole ranking identity; this process-held iroh key is never persisted.
-fn native_client_secret_key() -> SecretKey {
-    static KEY: OnceLock<SecretKey> = OnceLock::new();
-    KEY.get_or_init(SecretKey::generate).clone()
+/// Explicit campaign lifetime, independent of each mission's QUIC endpoint.
+/// Transport credentials are deliberately neither persisted nor reconstructed
+/// by deserialization. Durable ranked identity remains install-owned.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct MultiplayerCampaignSession {
+    #[serde(skip)]
+    state: Option<Arc<CampaignTransportState>>,
 }
 
-/// One-shot process-local handoff between the old and replacement mission
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CampaignTransportState {
+    #[serde(skip, default = "SecretKey::generate")]
+    client_key: SecretKey,
+    #[serde(skip)]
+    continuation: Mutex<Option<HostSessionContinuation>>,
+    #[serde(skip)]
+    server_active: AtomicBool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CampaignServerLease {
+    #[serde(skip)]
+    state: Option<Arc<CampaignTransportState>>,
+}
+
+impl Drop for CampaignServerLease {
+    fn drop(&mut self) {
+        if let Some(state) = &self.state {
+            state.server_active.store(false, Ordering::Release);
+        }
+    }
+}
+
+impl Default for MultiplayerCampaignSession {
+    fn default() -> Self {
+        Self {
+            state: Some(Arc::new(CampaignTransportState {
+                client_key: SecretKey::generate(),
+                continuation: Mutex::new(None),
+                server_active: AtomicBool::new(false),
+            })),
+        }
+    }
+}
+
+impl MultiplayerCampaignSession {
+    fn state(&self) -> &Arc<CampaignTransportState> {
+        self.state
+            .as_ref()
+            .expect("decoded campaign has no live multiplayer authority")
+    }
+
+    pub(crate) fn discard_host_continuation(&self) -> Result<(), String> {
+        let _lease = self.reserve_server().map_err(|error| error.to_string())?;
+        *self.state().continuation.lock() = None;
+        Ok(())
+    }
+
+    fn reserve_server(&self) -> std::io::Result<CampaignServerLease> {
+        self.state()
+            .server_active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                std::io::Error::other("campaign already owns an active mission transport")
+            })?;
+        Ok(CampaignServerLease {
+            state: Some(Arc::clone(self.state())),
+        })
+    }
+}
+
+/// One-shot campaign-local handoff between the old and replacement mission
 /// transports. The outer campaign loop deliberately destroys each QUIC
 /// endpoint at a load/restart boundary, but the authenticated session and its
 /// seat ownership must survive that implementation detail.
@@ -117,13 +179,11 @@ struct HostSessionContinuation {
     relay_url: Option<iroh::RelayUrl>,
 }
 
-fn host_session_continuation() -> &'static Mutex<Option<HostSessionContinuation>> {
-    static SLOT: OnceLock<Mutex<Option<HostSessionContinuation>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-fn publish_host_session_continuation(continuation: HostSessionContinuation) {
-    let mut slot = host_session_continuation().lock();
+fn publish_host_session_continuation(
+    state: &CampaignTransportState,
+    continuation: HostSessionContinuation,
+) {
+    let mut slot = state.continuation.lock();
     if let Some(existing) = slot.as_mut()
         && existing.host_endpoint_id == continuation.host_endpoint_id
         && existing.session_id == continuation.session_id
@@ -138,15 +198,12 @@ fn publish_host_session_continuation(continuation: HostSessionContinuation) {
     *slot = Some(continuation);
 }
 
-pub(super) fn discard_host_session_continuation() {
-    *host_session_continuation().lock() = None;
-}
-
-fn take_host_session_continuation(
+fn pending_host_session_continuation(
+    state: &CampaignTransportState,
     host_endpoint_id: EndpointId,
     expected_players: u32,
 ) -> Result<Option<HostSessionContinuation>, String> {
-    let mut slot = host_session_continuation().lock();
+    let slot = state.continuation.lock();
     let Some(continuation) = slot.as_ref() else {
         return Ok(None);
     };
@@ -159,7 +216,7 @@ fn take_host_session_continuation(
             continuation.expected_players
         ));
     }
-    Ok(slot.take())
+    Ok(slot.clone())
 }
 
 // ─── Framing ─────────────────────────────────────────────────────
@@ -447,13 +504,16 @@ fn publish_context_continuation(context: &ServerContext) {
     let peers = context.peers.lock();
     let mut owner_seats = peers.disconnected_seats.clone();
     owner_seats.extend(peers.owners.iter().map(|(&seat, &owner)| (owner, seat)));
-    publish_host_session_continuation(HostSessionContinuation {
-        host_endpoint_id: context.host_endpoint_id,
-        session_id: context.session_id,
-        expected_players: peers.expected_players,
-        owner_seats,
-        relay_url: context.relay_url.lock().clone(),
-    });
+    publish_host_session_continuation(
+        &context.campaign,
+        HostSessionContinuation {
+            host_endpoint_id: context.host_endpoint_id,
+            session_id: context.session_id,
+            expected_players: peers.expected_players,
+            owner_seats,
+            relay_url: context.relay_url.lock().clone(),
+        },
+    );
 }
 
 impl Drop for ServerHandle {
@@ -859,6 +919,8 @@ fn maybe_begin_sim_locked(
 
 /// Per-session context shared by every server task.
 struct ServerContext {
+    _campaign_lease: CampaignServerLease,
+    campaign: Arc<CampaignTransportState>,
     peers: Mutex<ServerPeers>,
     incoming_tx: Sender<NetEvent>,
     host_nickname: String,
@@ -913,6 +975,7 @@ pub fn start_server(
 ) -> std::io::Result<ServerHandle> {
     let key = game_secret_key().map_err(std::io::Error::other)?;
     start_server_inner(
+        &MultiplayerCampaignSession::default(),
         key,
         host_nickname,
         mission_id,
@@ -947,6 +1010,7 @@ pub fn start_server_with_content(
 ) -> std::io::Result<ServerHandle> {
     let key = game_secret_key().map_err(std::io::Error::other)?;
     start_server_inner(
+        &MultiplayerCampaignSession::default(),
         key,
         host_nickname,
         mission_id,
@@ -980,6 +1044,7 @@ pub fn start_server_with_key(
     expected_players: u32,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
+        &MultiplayerCampaignSession::default(),
         key,
         host_nickname,
         mission_id,
@@ -1015,6 +1080,7 @@ pub(super) fn start_server_with_key_and_content(
     content: Option<HostedModContent>,
 ) -> std::io::Result<ServerHandle> {
     start_server_inner(
+        &MultiplayerCampaignSession::default(),
         key,
         host_nickname,
         mission_id,
@@ -1031,8 +1097,44 @@ pub(super) fn start_server_with_key_and_content(
     )
 }
 
+/// Start a mission transport within an explicitly owned campaign.
+#[allow(clippy::too_many_arguments)]
+pub fn start_server_in_campaign(
+    campaign: &MultiplayerCampaignSession,
+    host_nickname: String,
+    mission_id: String,
+    mission_seed: u64,
+    sim_config: robin_engine::engine::SimConfig,
+    speech_timing_locale: Option<String>,
+    incoming_tx: Sender<NetEvent>,
+    outgoing_rx: Receiver<NetOutbound>,
+    frame_cursor: FrameCursor,
+    initial_snapshot: InitialSnapshot,
+    expected_players: u32,
+    content: Option<HostedModContent>,
+    browser_join_enabled: bool,
+) -> std::io::Result<ServerHandle> {
+    start_server_inner(
+        campaign,
+        game_secret_key().map_err(std::io::Error::other)?,
+        host_nickname,
+        mission_id,
+        mission_seed,
+        sim_config,
+        speech_timing_locale,
+        incoming_tx,
+        outgoing_rx,
+        frame_cursor,
+        initial_snapshot,
+        expected_players,
+        content,
+        browser_join_enabled,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn start_server_inner(
+    campaign: &MultiplayerCampaignSession,
     key: SecretKey,
     host_nickname: String,
     mission_id: String,
@@ -1047,6 +1149,7 @@ fn start_server_inner(
     content: Option<HostedModContent>,
     browser_join_enabled: bool,
 ) -> std::io::Result<ServerHandle> {
+    let campaign_lease = campaign.reserve_server()?;
     robin_engine::multiplayer::validate_display_name(&host_nickname)
         .map_err(std::io::Error::other)?;
     robin_engine::multiplayer::validate_mission_id(&mission_id).map_err(std::io::Error::other)?;
@@ -1068,8 +1171,9 @@ fn start_server_inner(
             .offer(host_endpoint_id.to_string())
             .map_err(std::io::Error::other)?;
     }
-    let continuation = take_host_session_continuation(host_endpoint_id, expected_players)
-        .map_err(std::io::Error::other)?;
+    let continuation =
+        pending_host_session_continuation(campaign.state(), host_endpoint_id, expected_players)
+            .map_err(std::io::Error::other)?;
     let session_id = continuation.as_ref().map_or_else(
         || MultiplayerSessionId(SecretKey::generate().to_bytes()),
         |continuation| continuation.session_id,
@@ -1085,6 +1189,8 @@ fn start_server_inner(
     )?;
 
     let context = Arc::new(ServerContext {
+        _campaign_lease: campaign_lease,
+        campaign: Arc::clone(campaign.state()),
         peers: Mutex::new(continuation.as_ref().map_or_else(
             || ServerPeers::new(expected_players.max(1)),
             ServerPeers::from_continuation,
@@ -1160,6 +1266,9 @@ fn start_server_inner(
             )));
         }
     };
+    // Only successful startup consumes the handoff. Validation, thread or
+    // endpoint failures leave it available for an explicit retry.
+    *campaign.state().continuation.lock() = None;
     tracing::info!(
         endpoint_id = %endpoint_id,
         seed = mission_seed,
@@ -3314,12 +3423,28 @@ impl Drop for ClientHandle {
 /// completes; the assigned seat is reported through `incoming_tx` as
 /// a [`NetEvent::AssignedLocalSeat`].
 ///
-/// The client binds a process-held ephemeral iroh transport identity and keeps
+/// This standalone entry point binds a fresh ephemeral iroh identity and keeps
 /// the install's durable game identity separate for ranked attestation. A
 /// durable-key storage failure never prevents otherwise-compatible gameplay;
 /// that client joins without ranked authority and the session is downgraded by
 /// the authenticated admission protocol.
 pub fn connect_client(
+    addr: impl AsRef<str>,
+    nickname: String,
+    incoming_tx: Sender<NetEvent>,
+    outgoing_rx: Receiver<NetOutbound>,
+) -> std::io::Result<ClientHandle> {
+    connect_client_in_campaign(
+        &MultiplayerCampaignSession::default(),
+        addr,
+        nickname,
+        incoming_tx,
+        outgoing_rx,
+    )
+}
+
+pub fn connect_client_in_campaign(
+    campaign: &MultiplayerCampaignSession,
     addr: impl AsRef<str>,
     nickname: String,
     incoming_tx: Sender<NetEvent>,
@@ -3333,7 +3458,7 @@ pub fn connect_client(
         }
     };
     connect_client_inner(
-        native_client_secret_key(),
+        campaign.state().client_key.clone(),
         durable_ranked_key,
         addr,
         nickname,
@@ -5781,6 +5906,98 @@ mod tests {
             &robin_engine::player_command::PlayerCommand::CrouchDown,
         )
         .expect("ordinary seat input remains admissible");
+    }
+
+    #[test]
+    fn campaign_owners_isolate_transport_identity_and_handoffs() {
+        let a = super::MultiplayerCampaignSession::default();
+        let b = super::MultiplayerCampaignSession::default();
+        assert_eq!(a.state().client_key.public(), a.state().client_key.public());
+        assert_ne!(a.state().client_key.public(), b.state().client_key.public());
+        let continuation = HostSessionContinuation {
+            host_endpoint_id: iroh::SecretKey::from_bytes(&[3; 32]).public(),
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([4; 32]),
+            expected_players: 2,
+            owner_seats: std::collections::HashMap::from([(PeerOwner::Native([8; 32]), 1)]),
+            relay_url: None,
+        };
+        super::publish_host_session_continuation(a.state(), continuation.clone());
+        super::publish_host_session_continuation(b.state(), continuation.clone());
+        a.discard_host_continuation().unwrap();
+        drop(a);
+        assert!(
+            super::pending_host_session_continuation(b.state(), continuation.host_endpoint_id, 3)
+                .is_err()
+        );
+        assert!(
+            super::pending_host_session_continuation(
+                b.state(),
+                iroh::SecretKey::generate().public(),
+                2
+            )
+            .is_err()
+        );
+        let restored =
+            super::pending_host_session_continuation(b.state(), continuation.host_endpoint_id, 2)
+                .unwrap()
+                .unwrap();
+        assert_eq!(restored.owner_seats, continuation.owner_seats);
+        assert_eq!(restored.session_id, continuation.session_id);
+        // Reading for replacement preparation is transactional: failure before
+        // successful endpoint publication leaves the handoff intact.
+        assert!(b.state().continuation.lock().is_some());
+    }
+
+    #[test]
+    fn campaign_server_lease_rejects_overlap_and_releases_failed_preparation() {
+        let campaign = super::MultiplayerCampaignSession::default();
+        let lease = campaign.reserve_server().unwrap();
+        assert!(campaign.reserve_server().is_err());
+        let other = super::MultiplayerCampaignSession::default();
+        let other_lease = other.reserve_server().unwrap();
+        drop(lease);
+        let replacement = campaign.reserve_server().unwrap();
+        assert!(other.reserve_server().is_err());
+        drop(other_lease);
+        drop(replacement);
+        assert!(campaign.reserve_server().is_ok());
+    }
+
+    #[test]
+    fn campaign_serialization_cannot_restore_transport_authority() {
+        let campaign = super::MultiplayerCampaignSession::default();
+        let encoded = serde_json::to_string(&campaign).unwrap();
+        assert_eq!(encoded, "{}");
+        let decoded: super::MultiplayerCampaignSession = serde_json::from_str(&encoded).unwrap();
+        assert!(decoded.state.is_none());
+    }
+
+    #[test]
+    fn campaign_repeated_publication_merges_authenticated_seats() {
+        let campaign = super::MultiplayerCampaignSession::default();
+        let mut continuation = HostSessionContinuation {
+            host_endpoint_id: iroh::SecretKey::from_bytes(&[3; 32]).public(),
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([4; 32]),
+            expected_players: 3,
+            owner_seats: std::collections::HashMap::from([(PeerOwner::Native([8; 32]), 1)]),
+            relay_url: None,
+        };
+        super::publish_host_session_continuation(campaign.state(), continuation.clone());
+        continuation.owner_seats =
+            std::collections::HashMap::from([(PeerOwner::Browser([9; 32]), 2)]);
+        super::publish_host_session_continuation(campaign.state(), continuation.clone());
+        assert_eq!(
+            super::pending_host_session_continuation(
+                campaign.state(),
+                continuation.host_endpoint_id,
+                3
+            )
+            .unwrap()
+            .unwrap()
+            .owner_seats
+            .len(),
+            2
+        );
     }
 
     #[test]
