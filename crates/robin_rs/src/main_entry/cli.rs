@@ -645,8 +645,8 @@ mod tests {
     use super::apply_authenticated_join_route;
     use super::{requested_replay_data, try_parse_cli_from};
     use crate::main_entry::callbacks::{
-        current_mission_id, preflight_or_use_decoded_load, recommended_export_team,
-        required_mission_id, validate_save_mission, validated_save_reload_target,
+        PreparedLoad, current_mission_id, recommended_export_team, required_mission_id,
+        validate_save_mission, validated_save_reload_target,
     };
     use robin_engine::campaign::Campaign;
 
@@ -1092,7 +1092,9 @@ mod tests {
         manager
             .write_save_from_engine(&mut host, &game, slot, &original, 1, Some(&profiles), None)
             .unwrap();
-        let (decoded_slot, decoded) = manager.preflight_load(Some(slot)).unwrap().unwrap();
+        let prepared = PreparedLoad::preflight(&manager, Some(manager.slot_handle(slot).unwrap()))
+            .unwrap()
+            .unwrap();
 
         let mut replacement = original.clone();
         replacement.test_set_frame_counter(222);
@@ -1100,17 +1102,7 @@ mod tests {
             .write_to(&manager.save_path(slot))
             .unwrap();
 
-        let (resolved_slot, resolved) = preflight_or_use_decoded_load(
-            &manager,
-            Some(manager.slot_handle(decoded_slot).unwrap()),
-            Some(decoded.into_payload()),
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(
-            manager.resolve_handle(&resolved_slot.unwrap()).unwrap(),
-            slot
-        );
-        assert_eq!(resolved.engine.frame_counter(), 111);
+        prepared.validate_slot(&manager).unwrap();
+        assert_eq!(prepared.save().engine.frame_counter(), 111);
     }
 }

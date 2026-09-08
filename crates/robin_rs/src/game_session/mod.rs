@@ -654,12 +654,10 @@ pub(super) fn pending_cold_save_lua_launch(
     callbacks: &RustCallbacks,
     args: &crate::main_entry::CliArgs,
 ) -> Result<Option<(String, robin_engine::spellforge::SpellforgePackage)>, String> {
-    let Some(SaveLoadRequest::Load {
-        save: Some(save), ..
-    }) = callbacks.pending_request()
-    else {
+    let Some(SaveLoadRequest::ApplyLoad(load)) = callbacks.pending_request() else {
         return Ok(None);
     };
+    let save = load.save();
     let resolved = args.resolved_mission_assets.as_ref().ok_or_else(|| {
         "preflighted save reached engine construction without a resolved mission asset lifetime"
             .to_owned()
@@ -915,7 +913,6 @@ pub(crate) async fn run_session(
         callbacks.queue_operation(SaveLoadRequest::Load {
             slot: Some(slot),
             mission_id,
-            save: None,
         });
     }
     if args.replay_data.is_some() || args.replay.is_some() {
@@ -930,13 +927,11 @@ pub(crate) async fn run_session(
     if let Some(SaveLoadRequest::Load {
         slot,
         mission_id,
-        save,
     }) = callbacks.take_initial_request()
     {
-        let (slot, save) = match crate::main_entry::preflight_or_use_decoded_load(
+        let load = match crate::main_entry::PreparedLoad::preflight(
             &callbacks.save_manager,
             slot,
-            save,
         ) {
             Ok(Some(result)) => result,
             Ok(None) => {
@@ -952,6 +947,7 @@ pub(crate) async fn run_session(
                 };
             }
         };
+        let save = load.save();
         if mission_id != save.header.mission_id {
             return SessionOutcome {
                 campaign,
@@ -976,11 +972,7 @@ pub(crate) async fn run_session(
         (authoritative_rng_seed, authoritative_sim_config) = save.engine.mission_start_simulation();
         campaign = save.engine.campaign().clone();
         preselected_mission = Some(target_idx);
-        callbacks.queue_operation(SaveLoadRequest::Load {
-            slot,
-            mission_id,
-            save: Some(save.into_payload()),
-        });
+        callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
     }
     let mut replay_restart: Option<crate::http_server::PendingReplay> = None;
     loop {
@@ -1181,7 +1173,7 @@ pub(crate) async fn run_session(
                 session_args.resolved_mission_assets = None;
                 clear_ambient_custom_launch(&mut session_args);
                 let (idx, _location, resolved) =
-                    match prepare_cold_save_mission(application_context, profiles, &req.save).await
+                    match prepare_cold_save_mission(application_context, profiles, req.save()).await
                     {
                         Ok(prepared) => prepared,
                         Err(error) => {
@@ -1194,28 +1186,18 @@ pub(crate) async fn run_session(
                 session_args.resolved_mission_assets = Some(resolved);
                 tracing::info!(
                     "Cross-mission load: switching to mission id={} (idx={}) and applying slot {:?}",
-                    req.target_mission_id,
+                    req.mission_id(),
                     idx,
-                    req.slot,
+                    req,
                 );
-                let save = req.save;
+                let save = req.save();
                 (authoritative_rng_seed, authoritative_sim_config) =
                     save.engine.mission_start_simulation();
                 campaign = save.engine.campaign().clone();
                 preselected_mission = Some(idx);
                 // Queue the Load again so the first frame of the
                 // new mission applies the save to its fresh engine.
-                let request = SaveLoadRequest::Load {
-                    slot: req.slot,
-                    mission_id: req.target_mission_id,
-                    save: Some(save),
-                };
-                match req.origin {
-                    crate::main_entry::OperationOrigin::Local => callbacks.queue_operation(request),
-                    crate::main_entry::OperationOrigin::CommittedMultiplayer => {
-                        callbacks.queue_committed_load(request)
-                    }
-                }
+                callbacks.queue_operation(SaveLoadRequest::ApplyLoad(req.into_load()));
                 session_args.mp_continue_session = session_args.server;
                 continue;
             }
@@ -1479,27 +1461,27 @@ fn prepare_quickload_cross_mission(
     if !callbacks.save_manager.slot_file_exists(idx) {
         return None;
     }
-    let save = match callbacks.save_manager.preflight_exact_slot(idx) {
-        Ok(save) => save,
+    let load = match callbacks
+        .save_manager
+        .slot_handle(idx)
+        .and_then(|slot| {
+            crate::main_entry::PreparedLoad::preflight(&callbacks.save_manager, Some(slot))
+        })
+        .and_then(|load| load.ok_or_else(|| anyhow::anyhow!("quick-load slot is unavailable")))
+    {
+        Ok(load) => load,
         Err(error) => {
             tracing::error!("QuickLoad confirmation preflight failed for {slot_name}: {error:#}");
             callbacks.clear_operation();
             return None;
         }
     };
+    let save = load.save();
     if let Err(error) = callbacks.save_manager.validate_slot_identity(idx, &save) {
         tracing::error!("QuickLoad confirmation rejected stale {slot_name} slot: {error:#}");
         callbacks.clear_operation();
         return None;
     }
-    let slot = match callbacks.save_manager.slot_handle(idx) {
-        Ok(slot) => slot,
-        Err(error) => {
-            tracing::error!("QuickLoad confirmation rejected stale {slot_name} handle: {error:#}");
-            callbacks.clear_operation();
-            return None;
-        }
-    };
     let current = current_mission_id(engine.campaign(), profiles);
     let active_mission_assets = match game.mission_assets() {
         Ok(descriptor) => descriptor,
@@ -1524,11 +1506,7 @@ fn prepare_quickload_cross_mission(
         }
     };
     if target_mission_id.is_none() {
-        callbacks.queue_operation(SaveLoadRequest::Load {
-            slot: Some(slot),
-            mission_id: current,
-            save: Some(save.into_payload()),
-        });
+        callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
         return None;
     }
     let resources = required_menu_resources(menu_resources, "cross-mission QuickLoad confirmation");
@@ -1537,15 +1515,7 @@ fn prepare_quickload_cross_mission(
     // exact, already-decoded `Load`; cancelling leaves the queue empty.
     callbacks.clear_operation();
     Some(ui_task_state::ActiveUiTask::QuickLoad(
-        ui_task_state::QuickLoadTaskState::new(
-            event_pump,
-            renderer,
-            resources,
-            msg,
-            slot,
-            current,
-            save.into_payload(),
-        ),
+        ui_task_state::QuickLoadTaskState::new(event_pump, renderer, resources, msg, load),
     ))
 }
 
@@ -1786,7 +1756,7 @@ where
 fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
     matches!(
         callbacks.pending_request(),
-        Some(SaveLoadRequest::Load { save: Some(_), .. })
+        Some(SaveLoadRequest::ApplyLoad(_))
     )
 }
 

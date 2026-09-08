@@ -696,41 +696,43 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let presentation = &mut frontend.presentation;
 
         if let Some(transition) = host.transport.take_committed_snapshot_transition() {
-            match transition.payload {
-                crate::host::PendingSnapshotTransitionPayload::Save { slot, save } => {
-                    let target_mission_id = save.header.mission_id;
-                    *campaign_transition = Some(crate::main_entry::PendingLevelLoad {
-                        slot,
-                        target_mission_id,
-                        origin: crate::main_entry::OperationOrigin::CommittedMultiplayer,
-                        save: *save,
-                    });
-                    game.operation.set(GameCode::LevelLoad);
-                    tracing::info!(
-                        ?transition.id,
-                        target_mission_id,
-                        "multiplayer: authoritative load committed; rebuilding mission transport"
-                    );
-                    runtime.trace(FrameContractStage::Exit);
-                    return Ok(Some(FrameControl::Exit(MissionExit::new(
-                        GameCode::LevelLoad,
-                    ))));
-                }
-                crate::host::PendingSnapshotTransitionPayload::CampaignExit {
-                    exit_code,
-                    engine,
-                } => {
-                    if let Some(engine) = engine {
-                        manager.engine = *engine;
+            let transition_id = transition.id();
+            if transition.is_save() {
+                let load = crate::main_entry::PreparedLoad::from_committed_snapshot(transition)
+                    .map_err(|error| format!("committed load admission failed: {error:#}"))?;
+                let target_mission_id = load.mission_id();
+                *campaign_transition = Some(crate::main_entry::PendingLevelLoad::new(load));
+                game.operation.set(GameCode::LevelLoad);
+                tracing::info!(
+                    ?transition_id,
+                    target_mission_id,
+                    "multiplayer: authoritative load committed; rebuilding mission transport"
+                );
+                runtime.trace(FrameContractStage::Exit);
+                return Ok(Some(FrameControl::Exit(MissionExit::new(
+                    GameCode::LevelLoad,
+                ))));
+            } else {
+                match transition.into_payload() {
+                    crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                        exit_code,
+                        engine,
+                    } => {
+                        if let Some(engine) = engine {
+                            manager.engine = *engine;
+                        }
+                        game.operation.set(exit_code);
+                        tracing::info!(
+                            ?transition_id,
+                            ?exit_code,
+                            "multiplayer: host campaign transition committed"
+                        );
+                        runtime.trace(FrameContractStage::Exit);
+                        return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
                     }
-                    game.operation.set(exit_code);
-                    tracing::info!(
-                        ?transition.id,
-                        ?exit_code,
-                        "multiplayer: host campaign transition committed"
-                    );
-                    runtime.trace(FrameContractStage::Exit);
-                    return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
+                    crate::host::PendingSnapshotTransitionPayload::Save { .. } => {
+                        unreachable!("save transition handled above")
+                    }
                 }
             }
         }
@@ -767,14 +769,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 .unwrap_or_else(|error| {
                     panic!("failed to begin multiplayer campaign transition: {error}")
                 });
-            host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition {
+            host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition::new(
                 id,
-                payload: crate::host::PendingSnapshotTransitionPayload::CampaignExit {
+                crate::host::PendingSnapshotTransitionPayload::CampaignExit {
                     exit_code: GameCode::LevelInterrupted,
                     engine: None,
                 },
-                committed: false,
-            });
+            ));
             host.transport.reconnecting = true;
             callbacks.queue_operation(crate::main_entry::SaveLoadRequest::Sherwood {
                 mission_id: pending.mission_id,

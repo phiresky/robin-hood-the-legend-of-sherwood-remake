@@ -1,9 +1,9 @@
 //! Staged save/load execution after the callback consume/publication barrier.
 
 use super::{
-    AutosaveNotices, OperationOrigin, OperationOutcome, PendingLevelLoad, SaveBannerKind,
+    AutosaveNotices, OperationOutcome, PendingLevelLoad, PreparedLoad, SaveBannerKind,
     SaveLoadEvent, SaveLoadRequest, begin_multiplayer_snapshot_transition, current_mission_id,
-    preflight_load_with_origin, replay_save_written_event,
+    replay_save_written_event,
 };
 use crate::save_file::special_slots;
 use crate::savegame::{SaveGameManager, SpecialSlot};
@@ -14,7 +14,6 @@ mod persistence;
 
 pub(super) fn execute(
     request: SaveLoadRequest,
-    origin: OperationOrigin,
     save_manager: &mut SaveGameManager,
     notices: &mut AutosaveNotices,
     host: &mut crate::host::Host,
@@ -87,7 +86,7 @@ pub(super) fn execute(
                             Some(profiles),
                             thumb_ref,
                         )
-                        .and_then(|()| save_manager.save_index().map_err(|e| anyhow::anyhow!(e))),
+                        .map(|_committed| ()),
                     true,
                 ),
                 None => (
@@ -142,18 +141,19 @@ pub(super) fn execute(
                 }
             }
         }
-        SaveLoadRequest::Load {
-            slot,
-            mission_id: _,
-            save,
-        } => {
-            let applying_multiplayer_transition = origin == OperationOrigin::CommittedMultiplayer;
+        request @ (SaveLoadRequest::Load { .. } | SaveLoadRequest::ApplyLoad(_)) => {
             // If the save targets a different mission than the one currently
             // running, stash a `PendingLevelLoad` and let the session loop
             // switch missions before re-applying. This replaces the previous
             // warn-and-apply behaviour, which corrupted engine state when
             // the payload's mission didn't match the active level.
-            let resolved = match preflight_load_with_origin(&save_manager, slot, save, origin) {
+            let resolved = match match request {
+                SaveLoadRequest::Load { slot, .. } => PreparedLoad::preflight(save_manager, slot),
+                SaveLoadRequest::ApplyLoad(load) => {
+                    load.validate_slot(save_manager).map(|()| Some(load))
+                }
+                _ => unreachable!("load request pattern"),
+            } {
                 Ok(resolved) => resolved,
                 Err(error) => {
                     tracing::error!("Load preflight failed: {error:#}");
@@ -161,11 +161,11 @@ pub(super) fn execute(
                 }
             };
             match resolved {
-                Some((slot, save)) => {
+                Some(save) => {
                     // Remote committed snapshots have no local slot metadata;
                     // all locally selected handles were validated by preflight.
-                    let idx = match slot
-                        .as_ref()
+                    let idx = match save
+                        .slot()
                         .map(|handle| save_manager.resolve_handle(handle))
                         .transpose()
                     {
@@ -175,13 +175,8 @@ pub(super) fn execute(
                             return outcome;
                         }
                     };
-                    if host.transport.net.is_some() && !applying_multiplayer_transition {
-                        let Some(slot) = slot else {
-                            tracing::error!("Local multiplayer load is missing its selected slot");
-                            return outcome;
-                        };
-                        match begin_multiplayer_snapshot_transition(host, slot, save.into_payload())
-                        {
+                    if host.transport.net.is_some() && !save.is_committed() {
+                        match begin_multiplayer_snapshot_transition(host, save) {
                             Ok(true) => return outcome,
                             Ok(false) => unreachable!("multiplayer transition guard checked net"),
                             Err(error) => {
@@ -202,12 +197,7 @@ pub(super) fn execute(
                                 target_mission_id,
                                 active_mission_id
                             );
-                            outcome.transition = Some(PendingLevelLoad {
-                                slot,
-                                target_mission_id,
-                                origin,
-                                save: save.into_payload(),
-                            });
+                            outcome.transition = Some(PendingLevelLoad::new(save));
                             return outcome;
                         }
                         Err(error) => {
@@ -281,20 +271,9 @@ pub(super) fn execute(
         }
         SaveLoadRequest::LoadRestart => {
             if host.transport.net.is_some() {
-                match save_manager.preflight_restart_save() {
-                    Ok(Some((idx, save))) => {
-                        let slot = match save_manager.slot_handle(idx) {
-                            Ok(slot) => slot,
-                            Err(error) => {
-                                tracing::error!(
-                                    "Multiplayer restart rejected stale slot: {error:#}"
-                                );
-                                return outcome;
-                            }
-                        };
-                        if let Err(error) =
-                            begin_multiplayer_snapshot_transition(host, slot, save.into_payload())
-                        {
+                match PreparedLoad::restart(save_manager) {
+                    Ok(Some(save)) => {
+                        if let Err(error) = begin_multiplayer_snapshot_transition(host, save) {
                             tracing::error!("Multiplayer restart rejected: {error}");
                         }
                     }
@@ -308,8 +287,7 @@ pub(super) fn execute(
                 return outcome;
             }
             let restore_result = (|| -> anyhow::Result<_> {
-                let (_idx, save) = save_manager
-                    .preflight_restart_save()?
+                let save = PreparedLoad::restart(save_manager)?
                     .ok_or_else(|| anyhow::anyhow!("no restart snapshot exists"))?;
                 let save = match load::route(save, engine, game, profiles)
                     .map_err(anyhow::Error::msg)?
@@ -428,7 +406,10 @@ pub(super) fn execute(
             let idx = save_manager.find_by_filename(slot_name);
             match idx {
                 Some(i) if save_manager.slot_file_exists(i) => {
-                    match save_manager.preflight_load(Some(i)) {
+                    match save_manager
+                        .slot_handle(i)
+                        .and_then(|slot| PreparedLoad::preflight(save_manager, Some(slot)))
+                    {
                         Err(error) => {
                             tracing::error!("Quick load ({slot_name}) preflight failed: {error:#}");
                         }
@@ -437,22 +418,9 @@ pub(super) fn execute(
                                 "Quick load ({slot_name}) lost its selected slot during preflight"
                             );
                         }
-                        Ok(Some((decoded_idx, save))) => {
-                            let slot = match save_manager.slot_handle(decoded_idx) {
-                                Ok(slot) => slot,
-                                Err(error) => {
-                                    tracing::error!(
-                                        "Quick load ({slot_name}) rejected stale slot: {error:#}"
-                                    );
-                                    return outcome;
-                                }
-                            };
+                        Ok(Some(save)) => {
                             if host.transport.net.is_some() {
-                                match begin_multiplayer_snapshot_transition(
-                                    host,
-                                    slot,
-                                    save.into_payload(),
-                                ) {
+                                match begin_multiplayer_snapshot_transition(host, save) {
                                     Ok(true) => return outcome,
                                     Ok(false) => {
                                         unreachable!("multiplayer transition guard checked net")
@@ -475,12 +443,7 @@ pub(super) fn execute(
                                     tracing::info!(
                                         "Quick load ({slot_name}): routing mission {target_mission_id} through session LevelLoad"
                                     );
-                                    outcome.transition = Some(PendingLevelLoad {
-                                        slot: Some(slot),
-                                        target_mission_id,
-                                        origin,
-                                        save: save.into_payload(),
-                                    });
+                                    outcome.transition = Some(PendingLevelLoad::new(save));
                                     return outcome;
                                 }
                                 Err(error) => {

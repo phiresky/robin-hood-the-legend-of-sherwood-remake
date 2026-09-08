@@ -1117,7 +1117,6 @@ impl InteractiveFrameSimulation {
                                 SaveLoadMode::Load => SaveLoadRequest::Load {
                                     slot: Some(slot),
                                     mission_id,
-                                    save: None,
                                 },
                             }),
                             Err(error) => {
@@ -1129,16 +1128,8 @@ impl InteractiveFrameSimulation {
                         input.reset_after_modal(host);
                         callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
                     }
-                    UiTaskOutcome::QuickLoadAccepted {
-                        slot,
-                        mission_id,
-                        save,
-                    } => {
-                        callbacks.queue_operation(SaveLoadRequest::Load {
-                            slot: Some(slot),
-                            mission_id,
-                            save: Some(*save),
-                        });
+                    UiTaskOutcome::QuickLoadAccepted { load } => {
+                        callbacks.queue_operation(SaveLoadRequest::ApplyLoad(load));
                         input.reset_after_modal(host);
                     }
                     UiTaskOutcome::QuickLoadCancelled => {
