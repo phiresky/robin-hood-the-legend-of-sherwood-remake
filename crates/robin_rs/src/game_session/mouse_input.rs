@@ -393,6 +393,7 @@ fn on_mouse_move(
         // `left_mouse_down`) so a portrait re-arm on a
         // double-click stops the append path.
         if host.frontend.input.is_dragging()
+            && !host.frontend.pointer_capture.minimap_drag_active()
             && !engine.is_alt_effective(&host.frontend.input)
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
             && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
