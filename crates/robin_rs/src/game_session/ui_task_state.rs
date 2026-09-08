@@ -1418,10 +1418,13 @@ impl SaveLoadTaskState {
                                 self.mission_id,
                                 profiles,
                             );
-                            save_manager
-                                .get_mut(slot)
-                                .expect("overwrite slot exists")
-                                .text = text;
+                            let name = save_manager
+                                .slot_handle(slot)
+                                .expect("overwrite slot exists");
+                            if let Err(error) = save_manager.rename_slot(&name, text) {
+                                tracing::error!("Cannot rename save slot: {error:#}");
+                                return None;
+                            }
                             return Some(UiTaskOutcome::SaveLoadSelected {
                                 mode: self.mode,
                                 filename,
@@ -1837,7 +1840,7 @@ fn visible_save_filenames(
     multiplayer_connected: bool,
 ) -> Vec<String> {
     save_manager
-        .saves
+        .saves()
         .iter()
         .filter(|save| match mode {
             SaveLoadMode::Save => !save.is_special(),

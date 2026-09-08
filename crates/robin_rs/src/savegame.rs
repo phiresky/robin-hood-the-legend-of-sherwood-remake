@@ -310,14 +310,60 @@ fn required_save_provenance(
 
 /// Manages a collection of save games for a player profile.
 // Runtime directory authority must never be reconstructed by serde.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SaveGameManager {
-    pub saves: Vec<SaveGame>,
+    saves: Vec<SaveGame>,
+    states: std::collections::HashMap<SlotName, SlotState>,
+    operations: crate::save_operation::SaveOperationOwner,
+    operation_error: Option<String>,
+    owner_id: u64,
+    next_generation: u64,
+    generations: std::collections::HashMap<SlotName, u64>,
     save_directory: String,
     next_id: u32,
     /// Browser Restart is a session checkpoint, not a durable/manual save.
     /// Its metadata and payload are published together after successful capture.
     session_restart: Option<std::sync::Arc<PreparedGameSave>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SlotState {
+    Draft,
+    Published,
+    Session,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SaveWriteStatus {
+    Queued,
+    Completed,
+}
+
+/// Stable in-process selection. Serialized data cannot restore owner authority:
+/// decoded handles have owner/generation zero and are rejected by every manager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlotHandle {
+    name: SlotName,
+    #[serde(skip)]
+    owner_id: u64,
+    #[serde(skip)]
+    generation: u64,
+}
+
+impl SlotHandle {
+    pub fn name(&self) -> &SlotName {
+        &self.name
+    }
+}
+
+fn next_store_owner() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_update(
+        std::sync::atomic::Ordering::Relaxed,
+        std::sync::atomic::Ordering::Relaxed,
+        |value| value.checked_add(1),
+    )
+    .expect("save owner identity space exhausted")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,6 +392,12 @@ impl SaveGameManager {
     pub fn new(save_directory: String) -> Self {
         SaveGameManager {
             saves: Vec::new(),
+            states: Default::default(),
+            operations: Default::default(),
+            operation_error: None,
+            owner_id: next_store_owner(),
+            next_generation: 1,
+            generations: Default::default(),
             save_directory,
             next_id: 0,
             session_restart: None,
@@ -378,6 +430,107 @@ impl SaveGameManager {
 
     pub fn save_directory(&self) -> &str {
         &self.save_directory
+    }
+
+    pub fn saves(&self) -> &[SaveGame] {
+        &self.saves
+    }
+
+    pub fn slot_handle(&self, index: usize) -> Result<SlotHandle> {
+        let name = self.slot_name(index).map_err(anyhow::Error::msg)?;
+        let generation = *self
+            .generations
+            .get(&name)
+            .context("save slot has no runtime generation")?;
+        Ok(SlotHandle {
+            name,
+            owner_id: self.owner_id,
+            generation,
+        })
+    }
+
+    pub fn resolve_handle(&self, handle: &SlotHandle) -> Result<usize> {
+        anyhow::ensure!(
+            handle.owner_id == self.owner_id
+                && self.generations.get(&handle.name) == Some(&handle.generation),
+            "save selection is stale or belongs to another store"
+        );
+        self.find_by_filename(handle.name.as_str())
+            .context("selected save slot no longer exists")
+    }
+
+    pub fn slot_state(&self, name: &SlotName) -> Result<SlotState> {
+        self.states
+            .get(name)
+            .copied()
+            .with_context(|| format!("save slot {} no longer exists", name.as_str()))
+    }
+
+    pub fn rename_slot(&mut self, handle: &SlotHandle, text: String) -> Result<()> {
+        self.finish_background()?;
+        let index = self.resolve_handle(handle)?;
+        self.saves[index].text = text;
+        Ok(())
+    }
+
+    fn mark_state(&mut self, filename: &str, state: SlotState) {
+        let name = SlotName::new(filename).expect("validated runtime slot name");
+        if !self.states.contains_key(&name) {
+            self.generations.insert(name.clone(), self.next_generation);
+            self.next_generation = self
+                .next_generation
+                .checked_add(1)
+                .expect("save generation space exhausted");
+        }
+        self.states.insert(name, state);
+    }
+
+    /// Polling never blocks on serialization. Errors remain sticky until the
+    /// caller explicitly reopens the store, so failed publication cannot be
+    /// mistaken for an idle successful writer on the next frame.
+    pub fn poll_background(&mut self) -> Result<bool> {
+        self.check_operation_error()?;
+        if !self.operations.is_finished() {
+            return Ok(false);
+        }
+        self.finish_background()?;
+        Ok(true)
+    }
+
+    pub fn finish_background(&mut self) -> Result<()> {
+        self.check_operation_error()?;
+        let completion = self.operations.finish();
+        let result = (|| {
+            let Some((name, metadata)) = completion? else {
+                return Ok(());
+            };
+            let index = self
+                .find_by_filename(name.as_str())
+                .context("completed save lost its owned slot")?;
+            metadata.validate_published_metadata()?;
+            self.saves[index] = metadata;
+            self.states.insert(name, SlotState::Published);
+            self.save_index_anyhow()
+        })();
+        if let Err(error) = &result {
+            self.operation_error = Some(format!(
+                "owned save publication failed: {error:#}; reopen the save store before further operations"
+            ));
+        }
+        result
+    }
+
+    fn check_operation_error(&self) -> Result<()> {
+        if let Some(error) = &self.operation_error {
+            anyhow::bail!("{error}");
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_test_slot(&mut self, slot: SaveGame, state: SlotState) {
+        self.mark_state(&slot.filename, state);
+        self.saves.push(slot);
     }
 
     pub fn slot_name(&self, index: usize) -> Result<SlotName, String> {
@@ -438,7 +591,7 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
+    ) -> Result<SaveWriteStatus> {
         self.write_special_save_background(
             save_file::special_slots::CONTINUE,
             "Continue",
@@ -464,6 +617,7 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
+        self.finish_background()?;
         self.ensure_no_pending_delete()?;
         self.reconcile_quick_slots()?;
         // Validate and serialize before touching either published quick slot.
@@ -573,11 +727,12 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
+    ) -> Result<SaveWriteStatus> {
         #[cfg(target_arch = "wasm32")]
         {
             let _ = thumbnail;
-            return self.write_session_restart(host, game, engine, mission_id, profiles);
+            self.write_session_restart(host, game, engine, mission_id, profiles)?;
+            return Ok(SaveWriteStatus::Completed);
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -601,71 +756,72 @@ impl SaveGameManager {
         &mut self,
         filename: &str,
         display_text: &str,
-        thread_name: &str,
-        log_label: &'static str,
+        _thread_name: &str,
+        _log_label: &'static str,
         host: &mut Host,
         game: &crate::game::Game,
         engine: &Engine,
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
+    ) -> Result<SaveWriteStatus> {
+        self.finish_background()?;
         self.ensure_no_pending_delete()?;
         #[cfg(target_arch = "wasm32")]
-        let _ = thread_name;
+        {
+            let _ = (
+                filename,
+                display_text,
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            );
+            anyhow::bail!(
+                "browser manual special-save persistence is unavailable; use durable autosaves"
+            );
+        }
 
-        let idx = self.ensure_special_slot(filename, display_text);
-        let display_text = self.saves[idx].text.clone();
-        let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-        // Capture (clone) on the main thread — fast.
-        let save = GameSaveFile::capture_with_game(
-            engine,
-            host,
-            game,
-            mission_id,
-            game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
-            display_text,
-            provenance,
-        )?;
-        let path = self.save_path(idx);
-        let thumb_data = thumbnail.cloned();
-        let thumb_path = self.thumb_path(idx);
-
-        // Eagerly update slot metadata so it's available immediately.
-        self.sync_slot_metadata_from_save(idx, &save, profiles)?;
-        self.save_index_anyhow()
-            .with_context(|| format!("failed to index background {filename} save"))?;
-
-        // Spawn the slow serialization + write on a background thread.
-        // Wasm doesn't support threads; defer it to a queued task on the
-        // main-thread executor instead, so mission startup (this call sits
-        // between level load and the first gameplay frame) doesn't stall on
-        // serializing the whole engine. The captured state is already
-        // snapshotted above, so writing later loses nothing.
-        let do_write = move || {
-            tracing::info!("{log_label}: writing to {}", path.display());
-            if let Err(err) = save.write_to(&path) {
-                tracing::warn!("{log_label} failed: {err:#}");
-            }
-            if let Some(thumb) = thumb_data
-                && let Err(err) = thumb.write_to(&thumb_path)
-            {
-                tracing::warn!("{log_label} thumbnail failed: {err:#}");
-            }
-            tracing::info!("{log_label} complete");
-        };
         #[cfg(not(target_arch = "wasm32"))]
         {
-            std::thread::Builder::new()
-                .name(thread_name.into())
-                .spawn(do_write)
-                .with_context(|| format!("failed to spawn {thread_name} thread"))?;
+            let idx = self.ensure_special_slot(filename, display_text);
+            let display_text = self.saves[idx].text.clone();
+            let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
+            // Capture (clone) on the main thread — fast.
+            let save = GameSaveFile::capture_with_game(
+                engine,
+                host,
+                game,
+                mission_id,
+                game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
+                display_text,
+                provenance,
+            )?;
+            let path = self.save_path(idx);
+            let thumb_data = thumbnail.cloned();
+            let thumb_path = self.thumb_path(idx);
+            let mut metadata = self.saves[idx].clone();
+            Self::sync_slot_metadata_from_header(&mut metadata, &save.header)?;
+            Self::sync_slot_campaign_metadata(
+                &mut metadata,
+                save.engine.campaign(),
+                profiles.context("save metadata requires profiles")?,
+            );
+            metadata.validate_published_metadata()?;
+            let name = self.slot_name(idx).map_err(anyhow::Error::msg)?;
+            self.operations.start(name, move || {
+                save.write_to(&path)?;
+                if let Some(thumb) = thumb_data
+                    && let Err(err) = thumb.write_to(&thumb_path)
+                {
+                    tracing::warn!("Owned save thumbnail failed (payload completed): {err:#}");
+                }
+                Ok(metadata)
+            })?;
+            Ok(SaveWriteStatus::Queued)
         }
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move {
-            do_write();
-        });
-        Ok(())
     }
 
     /// Capture and publish a session-only Restart atomically. No disk index is
@@ -707,6 +863,7 @@ impl SaveGameManager {
         } else {
             self.saves.push(slot);
         }
+        self.mark_state(save_file::special_slots::RESTART, SlotState::Session);
         self.session_restart = Some(std::sync::Arc::new(save));
         Ok(())
     }
@@ -794,10 +951,24 @@ impl SaveGameManager {
     /// This is used when a UI decision and the later apply must refer to the
     /// same selected file even if the directory changes concurrently.
     pub(crate) fn preflight_exact_slot(&self, index: usize) -> Result<PreparedGameSave> {
+        self.check_operation_error()?;
         let slot = self
             .saves
             .get(index)
             .ok_or_else(|| anyhow::anyhow!("save slot index {index} is out of range"))?;
+        anyhow::ensure!(
+            self.operations
+                .pending_name()
+                .is_none_or(|name| name.as_str() != slot.filename),
+            "save slot {} is still being published; poll completion first",
+            slot.filename
+        );
+        anyhow::ensure!(
+            self.slot_state(&SlotName::new(slot.filename.clone()).map_err(anyhow::Error::msg)?)?
+                != SlotState::Draft,
+            "save slot {} is an unpublished draft",
+            slot.filename
+        );
         if slot.is_restart() {
             if let Some(save) = &self.session_restart {
                 return Ok(save.as_ref().clone());
@@ -832,10 +1003,13 @@ impl SaveGameManager {
 
     /// Create a new save game slot with auto-generated filename. Returns its index.
     pub fn create(&mut self, text: String, mission_id: u32) -> usize {
+        self.finish_background()
+            .expect("previous save failed; reopen store before creating another slot");
         self.ensure_no_pending_delete()
             .expect("save store requires deletion recovery before creating slots");
         let filename = self.next_filename();
         let save = SaveGame::new(filename, text, mission_id);
+        self.mark_state(&save.filename, SlotState::Draft);
         self.saves.push(save);
         self.saves.len() - 1
     }
@@ -847,6 +1021,8 @@ impl SaveGameManager {
         text: String,
         mission_id: u32,
     ) -> usize {
+        self.finish_background()
+            .expect("previous save failed; reopen store before creating another slot");
         self.ensure_no_pending_delete()
             .expect("save store requires deletion recovery before creating slots");
         SlotName::new(filename.clone()).expect("caller supplied an invalid save basename");
@@ -855,12 +1031,15 @@ impl SaveGameManager {
             "duplicate save slot {filename}"
         );
         let save = SaveGame::new(filename, text, mission_id);
+        self.mark_state(&save.filename, SlotState::Draft);
         self.saves.push(save);
         self.saves.len() - 1
     }
 
     /// Find by filename, or create if not found. Updates text either way.
     pub fn find_or_create_by_filename(&mut self, filename: &str, text: &str) -> usize {
+        self.finish_background()
+            .expect("previous save failed; reopen store before updating slots");
         if let Some(idx) = self.find_by_filename(filename) {
             self.saves[idx].text = text.to_string();
             idx
@@ -873,7 +1052,8 @@ impl SaveGameManager {
         self.saves.get(index)
     }
 
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut SaveGame> {
+    #[cfg(test)]
+    pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut SaveGame> {
         self.saves.get_mut(index)
     }
 
@@ -939,19 +1119,25 @@ impl SaveGameManager {
     }
 
     pub fn remove(&mut self, index: usize) -> Result<()> {
+        self.finish_background()?;
         let slot = self
             .saves
             .get(index)
             .context("delete slot no longer exists")?;
-        if !slot.is_special() && slot.timestamp.is_empty() {
+        if self.slot_state(&self.slot_name(index).map_err(anyhow::Error::msg)?)? == SlotState::Draft
+        {
             // A failed/new draft never acquired authority to delete a payload
             // that another writer may have created at the selected basename.
-            self.saves.remove(index);
+            let removed = self.saves.remove(index);
+            self.states
+                .remove(&SlotName::new(removed.filename).map_err(anyhow::Error::msg)?);
             return Ok(());
         }
         if slot.is_restart() && (self.session_restart.is_some() || cfg!(target_arch = "wasm32")) {
             self.session_restart = None;
-            self.saves.remove(index);
+            let removed = self.saves.remove(index);
+            self.states
+                .remove(&SlotName::new(removed.filename).map_err(anyhow::Error::msg)?);
             return Ok(());
         }
         anyhow::ensure!(
@@ -993,6 +1179,7 @@ impl SaveGameManager {
     }
 
     fn ensure_no_pending_delete(&self) -> Result<()> {
+        self.check_operation_error()?;
         #[cfg(target_arch = "wasm32")]
         return Ok(()); // Desktop deletion receipts do not exist in the memory backend.
         #[cfg(not(target_arch = "wasm32"))]
@@ -1025,6 +1212,7 @@ impl SaveGameManager {
         // Intent is the authoritative logical deletion even if publication or
         // cleanup fails. Keep memory consistent and retain intent for reopen.
         self.saves.retain(|slot| slot.filename != filename);
+        self.states.remove(&receipt.filename);
         self.publish_index()
             .map_err(anyhow::Error::msg)
             .context("deletion recorded, index publication incomplete; recovery intent retained")?;
@@ -1082,6 +1270,8 @@ impl SaveGameManager {
     /// as ExQuickSave.
     ///
     pub fn copy_files(&mut self, src: usize, dst: usize) -> Result<(), String> {
+        self.finish_background()
+            .map_err(|error| format!("{error:#}"))?;
         self.ensure_no_pending_delete()
             .map_err(|error| format!("{error:#}"))?;
         // JSON payload
@@ -1105,6 +1295,7 @@ impl SaveGameManager {
     }
 
     fn copy_display_metadata(&mut self, src: usize, dst: usize) -> Result<()> {
+        let state = self.slot_state(&self.slot_name(src).map_err(anyhow::Error::msg)?)?;
         let src = self
             .saves
             .get(src)
@@ -1129,6 +1320,8 @@ impl SaveGameManager {
         dst.blazons = src.blazons;
         dst.amulets = src.amulets;
         dst.multiplayer_diagnostic = src.multiplayer_diagnostic;
+        let filename = dst.filename.clone();
+        self.mark_state(&filename, state);
         Ok(())
     }
 
@@ -1183,6 +1376,7 @@ impl SaveGameManager {
         thumbnail: Option<&Thumbnail>,
         multiplayer_diagnostic: bool,
     ) -> Result<()> {
+        self.finish_background()?;
         self.ensure_no_pending_delete()?;
         self.reconcile_quick_slots()?;
         let display_text = self
@@ -1203,7 +1397,10 @@ impl SaveGameManager {
         )?;
         save.header.multiplayer_diagnostic = multiplayer_diagnostic;
         let path = self.save_path(index);
-        if !self.saves[index].is_special() && self.saves[index].timestamp.is_empty() {
+        if !self.saves[index].is_special()
+            && self.slot_state(&self.slot_name(index).map_err(anyhow::Error::msg)?)?
+                == SlotState::Draft
+        {
             save.write_new_to(&path)?;
         } else {
             save.write_to(&path)?;
@@ -1240,6 +1437,8 @@ impl SaveGameManager {
         Self::sync_slot_metadata_from_header(slot, &save.header)?;
         let profiles = profiles.context("save metadata requires mission profiles")?;
         Self::sync_slot_campaign_metadata(slot, save.engine.campaign(), profiles);
+        let filename = slot.filename.clone();
+        self.mark_state(&filename, SlotState::Published);
         Ok(())
     }
 
@@ -1341,18 +1540,38 @@ impl SaveGameManager {
 
     /// Replace only auto-managed slots, preserving manual and Original
     /// special slots that may have changed while the writer was active.
-    pub(crate) fn replace_autosaves(&mut self, autosaves: Vec<SaveGame>) {
-        assert!(
+    pub(crate) fn replace_autosaves(&mut self, autosaves: Vec<SaveGame>) -> Result<()> {
+        self.finish_background()?;
+        anyhow::ensure!(
             autosaves.iter().all(SaveGame::is_autosave),
             "autosave replacement received a manual slot"
         );
+        validate_slot_names(&autosaves)?;
+        for slot in &autosaves {
+            slot.validate_published_metadata()?;
+        }
+        for slot in self.saves.iter().filter(|slot| slot.is_autosave()) {
+            self.states
+                .remove(&SlotName::new(slot.filename.clone()).map_err(anyhow::Error::msg)?);
+        }
         self.saves.retain(|save| !save.is_autosave());
+        for slot in &autosaves {
+            self.mark_state(&slot.filename, SlotState::Published);
+        }
         self.saves.extend(autosaves);
         self.sort_by_time();
+        Ok(())
     }
 
     /// Persist the save manager index itself (the list of saves).
     pub fn save_index(&self) -> Result<(), String> {
+        self.check_operation_error()
+            .map_err(|error| format!("{error:#}"))?;
+        if self.operations.pending_name().is_some() {
+            return Err(
+                "save publication still running; finish it before publishing an index".into(),
+            );
+        }
         self.ensure_no_pending_delete()
             .map_err(|error| format!("{error:#}"))?;
         match std::fs::symlink_metadata(self.quick_recovery_path()) {
@@ -1377,7 +1596,11 @@ impl SaveGameManager {
             saves: self
                 .saves
                 .iter()
-                .filter(|slot| !slot.timestamp.is_empty())
+                .filter(|slot| {
+                    self.states
+                        .get(&SlotName::new(slot.filename.clone()).expect("validated runtime slot"))
+                        == Some(&SlotState::Published)
+                })
                 .cloned()
                 .collect(),
             next_id: self.next_id,
@@ -1413,12 +1636,14 @@ impl SaveGameManager {
                 // Legacy save_directory is decoded only as compatibility metadata.
                 let index: SaveIndex =
                     serde_json::from_str(&data).map_err(|e| format!("parse: {e}"))?;
-                Self {
-                    saves: index.saves,
-                    next_id: index.next_id,
-                    save_directory: save_directory.to_owned(),
-                    session_restart: None,
+                let mut manager = Self::new(save_directory.to_owned());
+                manager.next_id = index.next_id;
+                for slot in &index.saves {
+                    SlotName::new(slot.filename.clone())?;
+                    manager.mark_state(&slot.filename, SlotState::Published);
                 }
+                manager.saves = index.saves;
+                manager
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 Self::new(save_directory.to_owned())
@@ -1482,13 +1707,18 @@ impl SaveGameManager {
                 // operation replaced it. Never install stale receipt metadata.
                 continue;
             }
+            self.mark_state(&slot.filename, SlotState::Published);
             if let Some(index) = self.find_by_filename(&slot.filename) {
                 self.saves[index] = slot;
             } else {
                 self.saves.push(slot);
             }
         }
-        for slot in self.saves.iter().filter(|slot| !slot.timestamp.is_empty()) {
+        for slot in self.saves.iter().filter(|slot| {
+            self.states
+                .get(&SlotName::new(slot.filename.clone()).expect("validated runtime slot"))
+                == Some(&SlotState::Published)
+        }) {
             slot.validate_published_metadata()?;
         }
         self.publish_index().map_err(anyhow::Error::msg)
@@ -1519,6 +1749,19 @@ impl SaveGameManager {
                 );
             if !occupied && self.find_by_filename(&name).is_none() {
                 return name;
+            }
+        }
+    }
+}
+
+impl Drop for SaveGameManager {
+    fn drop(&mut self) {
+        if self.operations.pending_name().is_some() {
+            tracing::warn!(
+                "save manager retired without explicit finish; joining outstanding publication"
+            );
+            if let Err(error) = self.finish_background() {
+                tracing::error!("retired save publication failed: {error:#}");
             }
         }
     }
@@ -1580,7 +1823,9 @@ mod tests {
 
     fn indexed_store(root: &Path, names: &[&str]) -> SaveGameManager {
         let mut manager = SaveGameManager::new(root.to_str().unwrap().into());
-        manager.saves = names.iter().map(|name| published_slot(name)).collect();
+        for name in names {
+            manager.insert_test_slot(published_slot(name), SlotState::Published);
+        }
         manager.save_index().unwrap();
         manager
     }
@@ -2135,9 +2380,9 @@ mod tests {
         mgr.create("Save 2".into(), 20);
 
         let json = serde_json::to_string(&SaveIndex {
-            saves: mgr.saves,
+            saves: mgr.saves.clone(),
             next_id: mgr.next_id,
-            save_directory: mgr.save_directory,
+            save_directory: mgr.save_directory.clone(),
         })
         .unwrap();
         let mgr2: SaveIndex = serde_json::from_str(&json).unwrap();
@@ -2257,12 +2502,11 @@ mod tests {
         };
         let index_data: SaveIndex =
             serde_json::from_str(&serde_json::to_string(&index_data).unwrap()).unwrap();
-        let reopened = SaveGameManager {
-            saves: index_data.saves,
-            next_id: index_data.next_id,
-            save_directory: blocked_root.to_str().unwrap().into(),
-            session_restart: None,
-        };
+        let mut reopened = SaveGameManager::new(blocked_root.to_str().unwrap().into());
+        reopened.next_id = index_data.next_id;
+        for slot in index_data.saves {
+            reopened.insert_test_slot(slot, SlotState::Published);
+        }
         assert!(!reopened.has_restart_save());
         assert_eq!(reopened.restart_session_identity(), None);
         let other_profile = SaveGameManager::new(
