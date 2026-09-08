@@ -5,8 +5,8 @@
 // material sectors + authored regions) → road strokes → forest canopy
 // (noise-displaced edge) → water (feathered, bank-shaded). Tree scatter along
 // canopy is returned as stamp points for the caller to composite.
-import type { Point } from "./level";
-import type { WallRun } from "./draft";
+import type { Point } from "./level.ts";
+import type { WallRun } from "./draft.ts";
 
 export interface SwatchData {
   /** raw RGB, row-major */

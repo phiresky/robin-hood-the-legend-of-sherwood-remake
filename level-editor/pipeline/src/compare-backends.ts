@@ -1,6 +1,6 @@
 // Side-by-side comparison of image-to-3D backends on the same assets.
 //
-//   tsx src/compare-backends.ts --assets york-tower-house,york-b038 [--cell 260] [--out name.png]
+//   node src/compare-backends.ts --assets york-tower-house,york-b038 [--cell 260] [--out name.png]
 //   -> work/<map>-scene/backends.png (or --out) and a markdown table on stdout
 //
 // One row per asset: the map crop, then per backend (asset.model = SAM 3D,
@@ -11,12 +11,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor, AssetModel, MapCamera } from "@rle/shared";
-import { libraryDir, workDir } from "./env";
-import { loadProtoLevel, mapImageSource } from "./asset-writer";
-import { fitMapCamera } from "./map-camera";
-import { bounds, loadGlb, transformPositions } from "./mesh";
-import { mapView, orbitView, render } from "./render";
-import type { Bbox } from "./clip";
+import { libraryDir, workDir } from "./env.ts";
+import { loadProtoLevel, mapImageSource } from "./asset-writer.ts";
+import { fitMapCamera } from "./map-camera.ts";
+import { bounds, loadGlb, transformPositions } from "./mesh.ts";
+import { mapView, orbitView, render } from "./render.ts";
+import type { Bbox } from "./clip.ts";
 
 const ORDER = ["sam3d", "trellis2", "tripo", "hunyuan"];
 

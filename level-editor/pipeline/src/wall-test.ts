@@ -4,7 +4,7 @@ import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor } from "@rle/shared";
 import { expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
-import { libraryDir, workDir } from "./env";
+import { libraryDir, workDir } from "./env.ts";
 
 const SEGS = [
   "leicester-castle-wall-south-slice-shp0",

@@ -407,7 +407,7 @@ impl PopupScrollModalState {
         self.pic_h = pic_h;
         self.drop_cap_w = if pic_w > 0 { pic_w + PIC_TEXT_PAD_X } else { 0 };
         self.drop_cap_h = if pic_h > 0 { pic_h + PIC_TEXT_PAD_Y } else { 0 };
-        self.picture_widget = self.picture.map(|pic| {
+        self.picture_widget = self.picture.map(|_pic| {
             let mut widget = WidgetPicture::new(u32::MAX);
             let bbox = ScreenBBox::from_coords(
                 (self.virt_x + pic_virt_x) as f32,
@@ -416,7 +416,6 @@ impl PopupScrollModalState {
                 (self.virt_y + pic_virt_y + pic_h) as f32,
             );
             widget.base.create("", bbox, 0);
-            widget.set_alternate_picture(pic.id);
             widget
         });
         self.text_remaining.clear();
@@ -464,13 +463,12 @@ impl PopupScrollModalState {
             );
         }
 
-        if let Some(widget) = &self.picture_widget {
-            widget_bridge::draw_picture_alternate_surface(
+        if let (Some(widget), Some(picture)) = (&self.picture_widget, self.picture) {
+            widget_bridge::draw_widget_surface(
                 renderer,
                 self.transform,
-                widget,
-                self.pic_w,
-                self.pic_h,
+                &crate::widget::Widget::Picture(widget.clone()),
+                picture,
                 true,
             );
         }

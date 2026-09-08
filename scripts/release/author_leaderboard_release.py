@@ -232,6 +232,9 @@ def install_directory_no_replace(stage: Path, output: Path) -> None:
         text=True,
         capture_output=True,
     )
+    # GNU mv versions differ in their exit status when --no-clobber refuses.
+    ensure(not (stage.exists() and os.path.lexists(output)),
+           "output appeared concurrently; staging tree was not installed")
     ensure(completed.returncode == 0, f"atomic output install failed: {completed.stderr}")
     ensure(not stage.exists(), "output appeared concurrently; staging tree was not installed")
     installed = output.lstat()

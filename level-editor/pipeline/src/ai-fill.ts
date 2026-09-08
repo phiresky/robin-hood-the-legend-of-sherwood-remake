@@ -1,6 +1,6 @@
 // AI texture completion of face tiles with gpt-image-2 (OpenAI images/edits).
 //
-//   tsx src/ai-fill.ts --tiles a.png,b.png [--map york --contexts "x0,y0,x1,y1;…"] [--out dir]
+//   node src/ai-fill.ts --tiles a.png,b.png [--map york --contexts "x0,y0,x1,y1;…"] [--out dir]
 //       [--quality low|medium|high]
 //
 // With --map and --contexts (one map-pixel box per tile, the face's
@@ -28,12 +28,12 @@ import {
   contentKey,
   cachedArtifacts,
   type CacheOptions,
-} from "./provider-cache";
+} from "./provider-cache.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import { requireEnv, workDir } from "./env";
-import { loadProtoLevel, mapImageSource } from "./asset-writer";
+import { requireEnv, workDir } from "./env.ts";
+import { loadProtoLevel, mapImageSource } from "./asset-writer.ts";
 
 const MODEL = "gpt-image-2";
 const CANVAS = 1024;

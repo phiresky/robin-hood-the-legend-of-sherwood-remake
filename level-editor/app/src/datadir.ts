@@ -8,7 +8,7 @@ import {
   readImage,
   readJson,
   subdir,
-} from "./fs";
+} from "./fs.ts";
 
 export interface DatadirIndex {
   /** map name (rhp basename) -> ambiance dirs that contain its map PNG */

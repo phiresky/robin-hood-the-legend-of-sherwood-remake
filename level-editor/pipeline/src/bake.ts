@@ -1,6 +1,6 @@
 // Bake a 3D level document back into game files.
 //
-//   tsx src/bake.ts --map york [--doc library/scenes/york.level3d.json] [--out work/york-bake]
+//   node src/bake.ts --map york [--doc library/scenes/york.level3d.json] [--out work/york-bake]
 //       [--fill proc|synth] [--ambiance Day]
 //
 // Reconstructs the map's volumes and textures exactly like volumes.ts (the
@@ -19,7 +19,7 @@
 import fs from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import crypto from "node:crypto";
-import { readDocument, pathComponent } from "./inputs";
+import { readDocument, pathComponent } from "./inputs.ts";
 import path from "node:path";
 import sharp from "sharp";
 import {
@@ -32,16 +32,16 @@ import {
   type MapCamera,
   type SightObstacle,
 } from "@rle/shared";
-import { libraryDir, workDir, datadirPath, loadEnvironment } from "./env";
-import type { MeshData } from "./mesh";
-import { mapView, render } from "./render";
+import { libraryDir, workDir, datadirPath, loadEnvironment } from "./env.ts";
+import type { MeshData } from "./mesh.ts";
+import { mapView, render } from "./render.ts";
 import { groundToScene } from "@rle/shared";
 import {
   reconstruct,
   type Fill,
   type Geometry,
   type ReconstructOptions,
-} from "./volumes";
+} from "./volumes.ts";
 
 /** the document's objects as one placed mesh (positions transformed, tiles shared) */
 function placeObjects(

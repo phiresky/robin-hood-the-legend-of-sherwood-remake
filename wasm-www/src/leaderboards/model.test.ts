@@ -1000,7 +1000,7 @@ test('public BuildManifestV2 is exact, private-authority-free, and keeps origins
             pages_shell: {
                 recipe: 'pnpm_frozen_lockfile_vite_static_shell_v1',
                 node: tool('24.19.0', sha('3')),
-                pnpm: tool('9.15.0', sha('4')),
+                pnpm: tool('12.3.4', sha('4')),
                 package_json_sha256: sha('5'),
                 pnpm_lock_sha256: sha('6'),
                 public_origin_artifacts: [{

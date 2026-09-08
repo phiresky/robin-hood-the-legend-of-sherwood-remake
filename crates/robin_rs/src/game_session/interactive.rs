@@ -883,6 +883,16 @@ pub(super) struct InteractiveFrontend {
     pub(super) native_refresh_interpolation: NativeRefreshInterpolation,
 }
 
+impl Drop for InteractiveFrontend {
+    fn drop(&mut self) {
+        if let Some(menu) = self.resources.menu.as_mut()
+            && let Err(error) = menu.retire(&mut self.presentation.renderer)
+        {
+            tracing::error!("failed to retire menu resources during mission teardown: {error}");
+        }
+    }
+}
+
 /// Complete process owner returned by interactive mission bootstrap.
 ///
 /// It deliberately does not implement serde because its frontend owns GPU,

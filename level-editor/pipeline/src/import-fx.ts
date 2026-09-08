@@ -2,19 +2,19 @@
 // asset library — no segmentation needed, these are already discrete RGBA
 // sprites. One asset per element (animations + patches from the proto level).
 //
-//   pnpm exec tsx src/import-fx.ts Leicester
+//   pnpm exec node src/import-fx.ts Leicester
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor, ProtoLevel } from "@rle/shared";
-import { datadirPath } from "./env";
-import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx";
-import { writeAsset } from "./library";
-import { slugify } from "./extract-core";
+import { datadirPath } from "./env.ts";
+import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx.ts";
+import { writeAsset } from "./library.ts";
+import { slugify } from "./extract-core.ts";
 
 async function main() {
   const map = process.argv[2];
-  if (!map) throw new Error("usage: tsx src/import-fx.ts <MapName>");
+  if (!map) throw new Error("usage: node src/import-fx.ts <MapName>");
 
   const levelsDir = path.join(datadirPath(), "Data", "Levels");
   const level: ProtoLevel = JSON.parse(

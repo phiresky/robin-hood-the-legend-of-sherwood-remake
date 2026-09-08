@@ -2,7 +2,7 @@
 // nearest texture sampling) for review sheets and scene litmus renders.
 import { mat3, vec3 } from "gl-matrix";
 import { cameraToSceneMatrix, type MapCamera, type Vec3 } from "@rle/shared";
-import type { MeshData } from "./mesh";
+import type { MeshData } from "./mesh.ts";
 
 export interface RenderInstance {
   mesh: MeshData;

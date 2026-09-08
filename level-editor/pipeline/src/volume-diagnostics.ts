@@ -2,11 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import { groundToScene, type MapCamera } from "@rle/shared";
-import { workDir } from "./env";
-import type { Geometry } from "./volume-geometry";
-import type { Textured } from "./volume-fill";
-import type { MeshData, TextureData } from "./mesh";
-import { mapView, orbitView, render } from "./render";
+import { workDir } from "./env.ts";
+import type { Geometry } from "./volume-geometry.ts";
+import type { Textured } from "./volume-fill.ts";
+import type { MeshData, TextureData } from "./mesh.ts";
+import { mapView, orbitView, render } from "./render.ts";
 async function downscale(
   tex: { width: number; height: number; rgba: Buffer },
   maxSide: number,

@@ -606,7 +606,7 @@ pub(crate) mod tests {
                     recipe:
                         BrowserPagesShellBuildRecipeV2::PnpmFrozenLockfileViteStaticShellV1,
                     node: build_tool(22, "24.19.0"),
-                    pnpm: build_tool(19, "9.15.0"),
+                    pnpm: build_tool(19, "12.3.4"),
                     package_json_sha256: Digest32::from_bytes([20; 32]),
                     pnpm_lock_sha256: Digest32::from_bytes([21; 32]),
                     public_origin_artifacts: vec![BrowserPagesArtifactV2 {

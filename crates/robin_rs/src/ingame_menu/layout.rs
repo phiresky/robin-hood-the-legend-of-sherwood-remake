@@ -260,7 +260,9 @@ pub fn draw_background(
         (sx + virt_w) as f32,
         (sy + virt_h) as f32,
     );
-    renderer.blit_to_screen(surface.id, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    renderer
+        .draw_surface(surface.id, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+        .expect("live menu surface");
 }
 
 /// Blit a menu-screen background across the active screen.
@@ -275,7 +277,9 @@ pub fn draw_screen_background(renderer: &mut Renderer, surface: &super::resource
         renderer.screen_width() as f32,
         renderer.screen_height() as f32,
     );
-    renderer.blit_to_screen(surface.id, Some(&src), Some(&dst), 0);
+    renderer
+        .draw_surface(surface.id, Some(&src), Some(&dst), 0)
+        .expect("live menu surface");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -396,19 +400,16 @@ pub fn draw_slider(
     // Attempt to overlay the slider-thumb sprite on top of the fallback
     // if the resource pack is available.  The sprite is centred on the
     // thumb and sized to its own dimensions.
-    if let (Some(&Some(sprite)), true) = (resources.slider_frames.first(), resources.slider_w > 0) {
-        let sw = resources.slider_w.min(thumb_w + 4);
-        let sh = resources.slider_h.min(rect.h);
+    if let Some(sprite) = resources.slider_surface().filter(|sprite| sprite.width > 0) {
+        let sw = sprite.width.min(thumb_w + 4);
+        let sh = sprite.height.min(rect.h);
         let sx = thumb_x + (thumb_w - sw) / 2;
         let sy = y + (rect.h - sh) / 2;
-        let src = BBox::from_coords(
-            0.0,
-            0.0,
-            resources.slider_w as f32,
-            resources.slider_h as f32,
-        );
+        let src = BBox::from_coords(0.0, 0.0, sprite.width as f32, sprite.height as f32);
         let dst = BBox::from_coords(sx as f32, sy as f32, (sx + sw) as f32, (sy + sh) as f32);
-        renderer.blit_to_screen(sprite, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        renderer
+            .draw_surface(sprite.id, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+            .expect("live slider surface");
     }
 }
 

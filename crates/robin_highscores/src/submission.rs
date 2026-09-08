@@ -1,7 +1,12 @@
-//! Derive persistence columns from one signed submission and its reserved authority.
+//! Submission workflow: immutable identity, admission, reservation, and finalization.
+//!
+//! The transport authenticates and lexically preflights its bounded opaque replay
+//! before entering this workflow. The artifact ingestion closure is invoked only
+//! after acquiring the current reservation; committed/busy retries never invoke it.
 use crate::{
     config::AdmissionProfile,
     db::{DbError, SubmissionUploadLease},
+    error::ApiError,
     model::{NewSubmission, ParticipantClaim},
 };
 use robin_run_protocol::{
@@ -11,7 +16,7 @@ use robin_run_protocol::{
 
 /// Authentication is independent; finalization checks the live lease in its transaction.
 /// Redundant storage fields are derived here, never supplied by the HTTP adapter.
-pub(crate) fn prepare_submission(
+fn prepare_submission(
     signed: &SignedSubmissionV1,
     lease: &SubmissionUploadLease,
 ) -> Result<NewSubmission, DbError> {
@@ -212,10 +217,67 @@ fn stored_json_error(error: serde_json::Error) -> DbError {
     DbError::Corrupt(format!("submission persistence document: {error}"))
 }
 
+/// Own the reserve-to-finalize transition without depending on multipart.
+/// Readiness is sampled immediately before the reservation transaction. Exact
+/// retries remain observable during unavailable admission; only acquired leases
+/// reach the caller's artifact I/O. The caller retains its outer database fence.
+pub(crate) async fn complete_upload<A, I, F>(
+    database: &crate::Database,
+    signed: &SignedSubmissionV1,
+    lease_ttl: std::time::Duration,
+    reservation_ttl: std::time::Duration,
+    admission: A,
+    ingestion: I,
+) -> Result<crate::model::SubmissionLifecycle, crate::error::ApiError>
+where
+    A: std::future::Future<Output = Result<(), crate::error::ApiError>>,
+    I: FnOnce(bool) -> F,
+    F: std::future::Future<Output = Result<(), crate::error::ApiError>>,
+{
+    use crate::{db::SubmissionUploadReservation, error::ApiError};
+    let intent = upload_intent(signed)?;
+    let admission_error = admission.await.err();
+    let reservation = database
+        .reserve_submission_upload_if_admitted(
+            &intent,
+            lease_ttl,
+            reservation_ttl,
+            admission_error.is_none(),
+        )
+        .await;
+    let reservation = match reservation {
+        Ok(reservation) => reservation,
+        Err(DbError::AdmissionUnavailable) => {
+            return Err(admission_error.unwrap_or(ApiError::Unavailable));
+        }
+        Err(error) => return Err(error.into()),
+    };
+    match reservation {
+        SubmissionUploadReservation::Existing { lifecycle } => Ok(lifecycle),
+        SubmissionUploadReservation::Busy { retry_after_ms } => {
+            Err(ApiError::UploadInProgress { retry_after_ms })
+        }
+        SubmissionUploadReservation::Acquired {
+            lease,
+            resume_uploaded,
+        } => {
+            debug_assert!(resume_uploaded || admission_error.is_none());
+            finish_reserved_upload(
+                database,
+                signed,
+                &lease,
+                resume_uploaded,
+                ingestion(resume_uploaded),
+            )
+            .await
+        }
+    }
+}
+
 /// Complete one reserved upload. The adapter supplies bounded artifact I/O as
 /// a future, so this workflow owns failure cleanup and durable transitions
 /// without depending on multipart or buffering a campaign itself.
-pub(crate) async fn finish_reserved_upload(
+async fn finish_reserved_upload(
     database: &crate::Database,
     signed: &SignedSubmissionV1,
     lease: &SubmissionUploadLease,
@@ -267,4 +329,87 @@ fn starting_state_storage(
             Some(predecessor_run_id.as_str().to_owned()),
         ),
     }
+}
+
+/// Derive the immutable upload identity once, outside the HTTP adapter.
+fn upload_intent(
+    signed: &SignedSubmissionV1,
+) -> Result<crate::db::SubmissionUploadIntent, crate::error::ApiError> {
+    let offer_json = serde_json::to_string(&signed.submission.offer).map_err(stored_json_error)?;
+    let envelope_json = serde_json::to_string(&signed).map_err(stored_json_error)?;
+    let controller_public_key = signed
+        .submission
+        .campaign_continuation_authorization
+        .as_ref()
+        .map(|authorization| authorization.claim.campaign_controller_public_key)
+        .unwrap_or(
+            signed
+                .submission
+                .offer
+                .session_genesis
+                .claim
+                .host_public_key,
+        )
+        .into_bytes();
+    let session_genesis_sha256 = signed
+        .submission
+        .offer
+        .session_genesis
+        .canonical_digest()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+        .into_bytes();
+    let session_genesis_host_public_key = signed
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .host_public_key
+        .into_bytes();
+    let replay_session_id = signed
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .replay_session_id
+        .into_bytes();
+    let session_genesis_host_nonce = signed
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .host_nonce
+        .into_bytes();
+    let participants = signed
+        .submission
+        .offer
+        .participant_claims
+        .iter()
+        .map(|claim| ParticipantClaim {
+            seat: claim.seat,
+            participant_instance_id: claim.participant_instance_id.into_bytes(),
+            public_key: claim.public_key.into_bytes(),
+            public_disclosure: match claim.public_disclosure {
+                ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
+                ParticipantPublicDisclosureV1::Anonymous => "anonymous",
+            }
+            .to_owned(),
+        })
+        .collect::<Vec<_>>();
+    Ok(crate::db::SubmissionUploadIntent {
+        proposed_submission_id: uuid::Uuid::now_v7().to_string(),
+        upload_challenge_id: signed
+            .submission
+            .offer
+            .upload_challenge_id
+            .as_str()
+            .to_owned(),
+        offer_json,
+        envelope_json,
+        controller_public_key,
+        session_genesis_sha256,
+        session_genesis_host_public_key,
+        replay_session_id,
+        session_genesis_host_nonce,
+        participants,
+    })
 }

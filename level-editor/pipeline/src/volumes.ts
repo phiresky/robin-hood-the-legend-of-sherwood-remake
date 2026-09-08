@@ -5,34 +5,34 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import sharp from "sharp";
 import { snapFloatingParts, type MapCamera, type SceneDoc } from "@rle/shared";
-import { libraryDir, workDir, loadEnvironment } from "./env";
-import { findMapPng, loadProtoLevel, mapImageSource } from "./asset-writer";
-import { fitMapCamera } from "./map-camera";
+import { libraryDir, workDir, loadEnvironment } from "./env.ts";
+import { findMapPng, loadProtoLevel, mapImageSource } from "./asset-writer.ts";
+import { fitMapCamera } from "./map-camera.ts";
 import {
   buildGeometry,
   footprintArea,
   TERRACE_AREA,
   type Geometry,
-} from "./volume-geometry";
-import { rasterOwners, type Owners } from "./volume-raster";
+} from "./volume-geometry.ts";
+import { rasterOwners, type Owners } from "./volume-raster.ts";
 import {
   buildTextures,
   synthesisOptions,
   type Textured,
   type Fill,
   type TextureOptions,
-} from "./volume-fill";
-import { encode, exportGlb } from "./volume-export";
-import { renders } from "./volume-diagnostics";
-import { pathComponent } from "./inputs";
-import { isMissing } from "./provider-cache";
-export { buildGeometry } from "./volume-geometry";
-export type { Face, Geometry } from "./volume-geometry";
-export { rasterOwners } from "./volume-raster";
-export type { Owners } from "./volume-raster";
-export { buildTextures } from "./volume-fill";
-export type { Textured, Fill } from "./volume-fill";
-export { encode, exportGlb } from "./volume-export";
+} from "./volume-fill.ts";
+import { encode, exportGlb } from "./volume-export.ts";
+import { renders } from "./volume-diagnostics.ts";
+import { pathComponent } from "./inputs.ts";
+import { isMissing } from "./provider-cache.ts";
+export { buildGeometry } from "./volume-geometry.ts";
+export type { Face, Geometry } from "./volume-geometry.ts";
+export { rasterOwners } from "./volume-raster.ts";
+export type { Owners } from "./volume-raster.ts";
+export { buildTextures } from "./volume-fill.ts";
+export type { Textured, Fill } from "./volume-fill.ts";
+export { encode, exportGlb } from "./volume-export.ts";
 /** everything the volume reconstruction of a map produces, for the exporter, the renders and the bake */
 export interface Reconstruction {
   map: string;

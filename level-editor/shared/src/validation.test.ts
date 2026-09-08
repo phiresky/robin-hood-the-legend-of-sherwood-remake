@@ -1,15 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseLevel3D, parseProtoLevel } from "./validation";
+import { parseLevel3D, parseProtoLevel } from "./validation.ts";
 import {
   applyAffineMatrix,
   signedPolygonArea,
   sceneToGame,
   sceneToGltf,
   gltfToScene,
-} from "./geometry";
-import { gameToScene, type MapCamera } from "./scene";
-import { gameTransformMatrix, transformedObstacle } from "./level3d";
+} from "./geometry.ts";
+import { gameToScene, type MapCamera } from "./scene.ts";
+import { gameTransformMatrix, transformedObstacle } from "./level3d.ts";
 
 const camera: MapCamera = { kind: "oblique-orthographic", elevation_deg: 35 };
 function level() {

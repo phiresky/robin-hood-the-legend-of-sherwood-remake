@@ -1,6 +1,6 @@
 // Assemble every reconstructed asset of a map into one 3D scene.
 //
-//   tsx src/scene.ts --map york [--out library/scenes] [--exclude id,id]
+//   node src/scene.ts --map york [--out library/scenes] [--exclude id,id]
 //       [--min-iou 0.5] [--ground-scale 0.5] [--texture-size 1024] [--render]
 //
 // Assets tagged "exclude" (e.g. wall segments the sweep caught) and ids
@@ -25,11 +25,11 @@ import type {
   ScenePlacement,
 } from "@rle/shared";
 import { groundToScene } from "@rle/shared";
-import { libraryDir, workDir } from "./env";
-import { findMapPng, loadProtoLevel } from "./asset-writer";
-import { fitMapCamera } from "./map-camera";
-import { loadGlb, transformPositions, type MeshData } from "./mesh";
-import { mapView, orbitView, render, type RenderInstance } from "./render";
+import { libraryDir, workDir } from "./env.ts";
+import { findMapPng, loadProtoLevel } from "./asset-writer.ts";
+import { fitMapCamera } from "./map-camera.ts";
+import { loadGlb, transformPositions, type MeshData } from "./mesh.ts";
+import { mapView, orbitView, render, type RenderInstance } from "./render.ts";
 
 /** Z-up scene frame -> glTF Y-up: (x, y, z) -> (x, z, -y) = rotation of -90° about X */
 const ZUP_TO_YUP: [number, number, number, number] = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];

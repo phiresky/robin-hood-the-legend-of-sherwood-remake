@@ -545,15 +545,15 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameSimulationOutcome, String> {
-        let state = Self::advance_simulation(self, mission, services);
+        let state = Self::advance_simulation(self, mission, services).await?;
         Self::drive_modals(mission, services, state).await
     }
 
-    fn advance_simulation(
+    async fn advance_simulation(
         this: Self,
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
-    ) -> SimulationModalState {
+    ) -> Result<SimulationModalState, String> {
         let window = &mut *services.window;
         let args = services.args;
         // File-backed screenshot runs have no player to dismiss a dialogue
@@ -618,7 +618,7 @@ impl InteractiveFrameSimulation {
         .run()
         .await?;
 
-        SimulationModalState {
+        Ok(SimulationModalState {
             frame,
             rewind_active,
             consumed_buffered,
@@ -627,7 +627,7 @@ impl InteractiveFrameSimulation {
             auto_dismiss_modals,
             tick_exit_code,
             history_commit_pending,
-        }
+        })
     }
 
     async fn drive_modals(

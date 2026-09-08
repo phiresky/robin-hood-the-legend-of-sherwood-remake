@@ -16,13 +16,13 @@ import type {
   Sam3ImageRleInput,
   SAM3RLEOutput,
 } from "@fal-ai/client/endpoints";
-import { requireEnv, workDir } from "./env";
+import { requireEnv, workDir } from "./env.ts";
 import {
   contentKey,
   cachedArtifacts,
   isMissing,
   type CacheOptions,
-} from "./provider-cache";
+} from "./provider-cache.ts";
 
 let configured = false;
 function ensureConfigured() {

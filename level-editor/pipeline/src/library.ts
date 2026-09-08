@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { AssetDescriptor, LibraryIndexEntry } from "@rle/shared";
-import { libraryDir } from "./env";
+import { libraryDir } from "./env.ts";
 
 export async function writeAsset(
   desc: AssetDescriptor,

@@ -1,19 +1,19 @@
 // Run a batch of extraction proposals from a JSON file.
 //
-//   pnpm --filter pipeline exec tsx src/sweep.ts proposals/leicester.json
+//   pnpm --filter pipeline exec node src/sweep.ts proposals/leicester.json
 //
 // Proposal file: { "map": "...", "proposals": [{ bbox, prompt, name, id?,
 // tags?, pick?, scale_class?, variant_group?, max_masks?, min_score?, pad? }] }
 // Unset fields fall back to EXTRACT_DEFAULTS. Failures don't abort the batch.
 import fs from "node:fs/promises";
-import type { Bbox } from "./clip";
+import type { Bbox } from "./clip.ts";
 import {
   EXTRACT_DEFAULTS,
   runExtraction,
   slugify,
   type ExtractOptions,
   type ExtractSummary,
-} from "./extract-core";
+} from "./extract-core.ts";
 
 interface Proposal {
   dedupe_iou?: number;
@@ -50,7 +50,7 @@ interface SweepFile {
 
 async function main() {
   const file = process.argv[2];
-  if (!file) throw new Error("usage: tsx src/sweep.ts <proposals.json>");
+  if (!file) throw new Error("usage: node src/sweep.ts <proposals.json>");
   const sweep: SweepFile = JSON.parse(await fs.readFile(file, "utf8"));
 
   const results: { id: string; written: number; skipped: number; error?: string }[] = [];

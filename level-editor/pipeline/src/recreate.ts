@@ -1,7 +1,7 @@
 // Litmus test: recreate a source map as a MapDraft from the extracted assets,
 // and render an offline composite PNG to visualize coverage gaps.
 //
-//   pnpm exec tsx src/recreate.ts Leicester
+//   pnpm exec node src/recreate.ts Leicester
 //
 // Writes ../drafts/<map>-recreation.json and ../work/<map>-recreated.png
 // (plus a side-by-side comparison against the original map).
@@ -9,14 +9,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor, LibraryIndexEntry, MapDraft, ProtoLevel } from "@rle/shared";
-import { datadirPath, editorRoot, libraryDir, workDir } from "./env";
-import { renderTerrain, type TerrainSpec } from "./terrain";
+import { datadirPath, editorRoot, libraryDir, workDir } from "./env.ts";
+import { renderTerrain, type TerrainSpec } from "./terrain.ts";
 import { expandWallRun, expandWallRunDirectional, type WallSegmentSpec } from "@rle/shared";
 
 
 async function main() {
   const map = process.argv[2];
-  if (!map) throw new Error("usage: tsx src/recreate.ts <MapName>");
+  if (!map) throw new Error("usage: node src/recreate.ts <MapName>");
 
   const index: LibraryIndexEntry[] = JSON.parse(
     await fs.readFile(path.join(libraryDir, "index.json"), "utf8"),

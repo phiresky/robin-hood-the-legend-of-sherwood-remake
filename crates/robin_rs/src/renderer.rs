@@ -1071,6 +1071,14 @@ impl Renderer {
         self.resources.alpha_mask(id)
     }
 
+    /// A foreign or retired handle is an error, not an absent optional mask.
+    pub fn surface_alpha_mask(&self, handle: SurfaceHandle) -> Result<AlphaMask, MissingSurface> {
+        self.surface_dimensions(handle)?;
+        self.resources
+            .alpha_mask(handle.id)
+            .ok_or(MissingSurface(handle))
+    }
+
     /// Override the shadow alpha baked into `SHADOW_KEY` pixels at
     /// upload time. Set to `MENU_BUTTON_SHADOW_ALPHA` (50%) for
     /// menu-button packs, leave at the default `DEFAULT_SHADOW_ALPHA`
@@ -1504,6 +1512,43 @@ impl Renderer {
     ) -> Result<(), MissingSurface> {
         self.surface_dimensions(handle)?;
         assert!(self.blit_to_screen(handle.id, src_rect, dst_rect, flags));
+        Ok(())
+    }
+
+    /// Alpha draw with the same renderer/lifetime checks as ordinary typed draws.
+    pub fn draw_surface_alpha(
+        &mut self,
+        handle: SurfaceHandle,
+        src_rect: Option<&BBox>,
+        dst_rect: Option<&BBox>,
+        alpha_level: u16,
+        flags: u32,
+    ) -> Result<(), MissingSurface> {
+        self.surface_dimensions(handle)?;
+        assert!(self.blit_to_screen_alpha(handle.id, src_rect, dst_rect, alpha_level, flags));
+        Ok(())
+    }
+
+    /// Shadow draw for a borrowed upload, always targeting this renderer's screen.
+    pub fn draw_surface_with_shadow(
+        &mut self,
+        handle: SurfaceHandle,
+        src_rect: Option<&BBox>,
+        dst_rect: Option<&BBox>,
+        shadow_color: u16,
+        shadow_level: u16,
+        flags: u32,
+    ) -> Result<(), MissingSurface> {
+        self.surface_dimensions(handle)?;
+        assert!(self.blit_with_shadow(
+            handle.id,
+            src_rect,
+            0,
+            dst_rect,
+            shadow_color,
+            shadow_level,
+            flags
+        ));
         Ok(())
     }
 
@@ -3208,6 +3253,19 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
             .draw_surface(owned.handle(), None, None, 0)
             .is_err()
     );
+    let before_foreign_draw = other_renderer.draw_queue_checkpoint();
+    assert!(
+        other_renderer
+            .draw_surface_alpha(owned.handle(), None, None, 25, 0)
+            .is_err()
+    );
+    assert!(
+        other_renderer
+            .draw_surface_with_shadow(owned.handle(), None, None, 0, 40, BLIT_SOURCE_TRANSPARENT)
+            .is_err()
+    );
+    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
+    assert!(other_renderer.surface_alpha_mask(owned.handle()).is_err());
     let restored: OwnedSurface =
         serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
     assert!(renderer.surface_dimensions(restored.handle()).is_err());
@@ -3218,14 +3276,27 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     let mut mission = crate::mission_render_resources::MissionRenderResources::default();
     mission.replace_map(&mut other_renderer, other_id);
     assert!(mission.try_retire(&mut renderer).is_err());
-    assert_eq!(mission.map(), Some(other_id));
+    assert_eq!(
+        mission.map(),
+        Some(other_renderer.surface_handle(other_id).unwrap())
+    );
+    let borrowed_map = mission.map().unwrap();
+    assert!(renderer.draw_surface(borrowed_map, None, None, 0).is_err());
+    assert!(
+        renderer
+            .draw_surface_alpha(borrowed_map, None, None, 0, 0)
+            .is_err()
+    );
     assert!(other_renderer.surface_handle(other_id).is_ok());
     assert!(
         mission
             .try_replace_map(&mut other_renderer, u32::MAX)
             .is_err()
     );
-    assert_eq!(mission.map(), Some(other_id));
+    assert_eq!(
+        mission.map(),
+        Some(other_renderer.surface_handle(other_id).unwrap())
+    );
     assert!(renderer.try_adopt_surface(local_id).is_err());
     assert!(renderer.try_delete_legacy_surface(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
@@ -3233,6 +3304,11 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert!(renderer.surface_handle(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
     mission.retire(&mut other_renderer);
+    assert!(
+        other_renderer
+            .draw_surface(borrowed_map, None, None, 0)
+            .is_err()
+    );
     let pixels = [
         255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255,
         0, 255,
@@ -3323,6 +3399,23 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
         TextureScaleMode::Nearest,
     );
     crate::ui_panel::verify_portrait_gpu_ownership(&mut portrait_renderer, &mut portrait_peer);
+    let mut menu_renderer = Renderer::with_optional_surface(
+        renderer.gpu.clone(),
+        None,
+        None,
+        3,
+        2,
+        TextureScaleMode::Nearest,
+    );
+    let mut menu_peer = Renderer::with_optional_surface(
+        renderer.gpu.clone(),
+        None,
+        None,
+        3,
+        2,
+        TextureScaleMode::Nearest,
+    );
+    crate::ingame_menu::resources::verify_menu_gpu_ownership(&mut menu_renderer, &mut menu_peer);
     verify_deferred_menu_surfaces(&mut renderer);
 }
 

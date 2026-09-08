@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MapSession } from "./session";
+import { MapSession } from "./session.ts";
 
 test("reverse load completion cannot publish old identity or resources", () => {
   const session = new MapSession<object, string>();

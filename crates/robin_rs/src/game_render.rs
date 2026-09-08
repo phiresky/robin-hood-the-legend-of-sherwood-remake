@@ -1178,15 +1178,16 @@ fn render_ground_mark_set(
         );
 
         let draw_checkpoint = renderer.draw_queue_checkpoint();
-        renderer.blit_with_shadow(
-            surf_id,
-            Some(&src_box),
-            0,
-            Some(&dst_box),
-            shadow_color,
-            shadow_level,
-            BLIT_SOURCE_TRANSPARENT,
-        );
+        renderer
+            .draw_surface_with_shadow(
+                surf_id,
+                Some(&src_box),
+                Some(&dst_box),
+                shadow_color,
+                shadow_level,
+                BLIT_SOURCE_TRANSPARENT,
+            )
+            .expect("mission ground mark must belong to the live renderer");
 
         let mark_world_bbox = engine_coordinates::MapBBox::from_coords(
             mark.x + ox as f32,

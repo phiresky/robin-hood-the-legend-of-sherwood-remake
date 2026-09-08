@@ -7,6 +7,21 @@
 //! distinct read-only user-owned trees and recorded only as path declarations.
 
 use std::collections::{BTreeMap, BTreeSet};
+mod host_policy;
+#[cfg(test)]
+use host_policy::{
+    CANONICAL_API_SERVICE, SYSTEM_UNIT_ROOT, VALIDATOR_SYSTEM_UNIT_DENYLIST_BLOCK,
+    validate_literal_install_root_assignment, validate_system_unit_root_authority,
+};
+use host_policy::{DEPLOY_BOOTSTRAP_FILES, ROOT_ONCE_KIT_FILES, validate_host_template_bytes};
+#[cfg(target_os = "linux")]
+mod activation_lock;
+#[cfg(target_os = "linux")]
+pub use activation_lock::{
+    PinnedVpsActivationLockV2, acquire_vps_activation_lock_v2, pin_inherited_vps_activation_lock_v2,
+};
+#[cfg(all(test, target_os = "linux"))]
+use activation_lock::{acquire_vps_activation_lock_at, pin_inherited_vps_activation_lock_at};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Write as _};
 use std::path::{Component, Path, PathBuf};
@@ -48,57 +63,6 @@ const BACKUP_ROOT: &str = "/home/robinhood/.local/share/robin-highscores/backups
 const BACKUP_STATUS_ROOT: &str = "/home/robinhood/.local/share/robin-highscores/status";
 const BACKUP_STATUS_PATH: &str =
     "/home/robinhood/.local/share/robin-highscores/status/backup-status.json";
-const SYSTEM_UNIT_ROOT: &str = "/etc/systemd/system";
-const CANONICAL_VALIDATE_RELEASE_SCRIPT: &str =
-    include_str!("../../robin_highscores/deploy/validate-release-bundle.sh");
-const CANONICAL_DEPLOY_RELEASE_SCRIPT: &str =
-    include_str!("../../robin_highscores/deploy/deploy-release.sh");
-const CANONICAL_ROLLBACK_RELEASE_SCRIPT: &str =
-    include_str!("../../robin_highscores/deploy/rollback-release.sh");
-const CANONICAL_REAL_FENCE_RELEASE_GATE: &str =
-    include_str!("../../robin_highscores/deploy/tests/real-runtime-fence-release-gate.sh");
-const CANONICAL_REAL_FENCE_HARNESS: &str =
-    include_str!("../../robin_highscores/deploy/tests/real-runtime-fence-e2e.py");
-const CANONICAL_REAL_FENCE_SELFTEST: &str =
-    include_str!("../../robin_highscores/deploy/tests/real-runtime-fence-e2e-selftest.py");
-const CANONICAL_ROOT_ONCE_SCRIPT: &str = include_str!("../../robin_highscores/deploy/root-once.sh");
-const CANONICAL_NGINX_CHALLENGE: &str =
-    include_str!("../../robin_highscores/deploy/nginx-robinhood-api.challenge.conf");
-const CANONICAL_NGINX_CLOUDFLARE_ONLY: &str =
-    include_str!("../../robin_highscores/deploy/nginx-robinhood-cloudflare-only.conf");
-const CANONICAL_NGINX_API_LOCATIONS: &str =
-    include_str!("../../robin_highscores/deploy/nginx-robinhood-api.locations.conf");
-const CANONICAL_NGINX_VHOST: &str =
-    include_str!("../../robin_highscores/deploy/nginx-robinhood-api.vhost.conf");
-const CANONICAL_USER_TARGET: &str =
-    include_str!("../../robin_highscores/deploy/robin-highscores.target");
-const CANONICAL_API_SERVICE: &str =
-    include_str!("../../robin_highscores/deploy/robin-highscores-api.service");
-const CANONICAL_WORKER_SERVICE: &str =
-    include_str!("../../robin_highscores/deploy/robin-highscores-worker.service");
-const CANONICAL_BACKUP_SERVICE: &str =
-    include_str!("../../robin_highscores/deploy/robin-highscores-backup.service");
-const CANONICAL_BACKUP_TIMER: &str =
-    include_str!("../../robin_highscores/deploy/robin-highscores-backup.timer");
-const VALIDATOR_SYSTEM_UNIT_DENYLIST_BLOCK: &str = concat!(
-    "    unit_path=$bundle/systemd/user/$unit\n",
-    "    grep -Fq \"$release_root\" \"$unit_path\" || fail \"$unit is not pinned to the exact release\"\n",
-    "    if grep -Eq '^(User|Group|SupplementaryGroups)=|WantedBy=multi-user.target|/etc/systemd/system|verifier-broker|sudo|polkit' \"$unit_path\"; then\n",
-    "        fail \"$unit contains a root/system-service assumption\"\n",
-    "    fi\n",
-);
-const ROOT_ONCE_KIT_FILES: [&str; 5] = [
-    "nginx-robinhood-api.challenge.conf",
-    "nginx-robinhood-cloudflare-only.conf",
-    "nginx-robinhood-api.locations.conf",
-    "nginx-robinhood-api.vhost.conf",
-    "root-once.sh",
-];
-const DEPLOY_BOOTSTRAP_FILES: [&str; 3] = [
-    "deploy-release.sh",
-    "rollback-release.sh",
-    "validate-release-bundle.sh",
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -719,114 +683,6 @@ impl Drop for NixOwnedFdV2 {
     }
 }
 
-#[cfg(target_os = "linux")]
-#[derive(Debug)]
-enum PinnedVpsActivationLockDescriptorV2 {
-    Owned(std::os::fd::OwnedFd),
-    InheritedDuplicate(NixOwnedFdV2),
-}
-
-#[cfg(target_os = "linux")]
-impl PinnedVpsActivationLockDescriptorV2 {
-    fn as_raw_fd(&self) -> std::os::fd::RawFd {
-        use std::os::fd::AsRawFd as _;
-
-        match self {
-            Self::Owned(fd) => fd.as_raw_fd(),
-            Self::InheritedDuplicate(fd) => fd.0,
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-#[derive(Debug)]
-pub struct PinnedVpsActivationLockV2 {
-    lock_fd: PinnedVpsActivationLockDescriptorV2,
-    opt_fd: std::os::fd::OwnedFd,
-    opt_root: PathBuf,
-    opt_device: u64,
-    opt_inode: u64,
-    lock_device: u64,
-    lock_inode: u64,
-}
-
-#[cfg(target_os = "linux")]
-impl PinnedVpsActivationLockV2 {
-    pub fn as_raw_fd(&self) -> std::os::fd::RawFd {
-        self.lock_fd.as_raw_fd()
-    }
-
-    pub fn clear_close_on_exec(&self) -> Result<()> {
-        nix_legacy::fcntl::fcntl(
-            self.lock_fd.as_raw_fd(),
-            nix_legacy::fcntl::FcntlArg::F_SETFD(nix_legacy::fcntl::FdFlag::empty()),
-        )?;
-        Ok(())
-    }
-
-    pub fn ensure_canonical(&self) -> Result<()> {
-        use rustix::fs::{FileType, Mode, OFlags, ResolveFlags, openat2};
-        use std::os::fd::AsFd as _;
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-        let path_metadata = fs::symlink_metadata(&self.opt_root)?;
-        ensure!(
-            path_metadata.is_dir()
-                && !path_metadata.file_type().is_symlink()
-                && fs::canonicalize(&self.opt_root)? == self.opt_root
-                && path_metadata.uid() == rustix::process::geteuid().as_raw()
-                && path_metadata.permissions().mode() & 0o777 == 0o750
-                && path_metadata.dev() == self.opt_device
-                && path_metadata.ino() == self.opt_inode,
-            "canonical activation opt root changed while its lock was held"
-        );
-        let current_opt = openat2(
-            rustix::fs::CWD,
-            &self.opt_root,
-            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-            Mode::empty(),
-            ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-        )?;
-        let current_opt_metadata = rustix::fs::fstat(&current_opt)?;
-        let pinned_opt_metadata = rustix::fs::fstat(&self.opt_fd)?;
-        ensure!(
-            current_opt_metadata.st_dev == self.opt_device
-                && current_opt_metadata.st_ino == self.opt_inode
-                && pinned_opt_metadata.st_dev == self.opt_device
-                && pinned_opt_metadata.st_ino == self.opt_inode,
-            "canonical activation opt root differs from its held descriptor"
-        );
-        let current_lock = openat2(
-            current_opt.as_fd(),
-            "activation.lock",
-            OFlags::RDWR | OFlags::CLOEXEC,
-            Mode::empty(),
-            ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-        )?;
-        let current_lock_metadata = rustix::fs::fstat(&current_lock)?;
-        let held_lock_metadata = nix_legacy::sys::stat::fstat(self.lock_fd.as_raw_fd())?;
-        ensure!(
-            FileType::from_raw_mode(current_lock_metadata.st_mode).is_file()
-                && current_lock_metadata.st_uid == rustix::process::geteuid().as_raw()
-                && current_lock_metadata.st_nlink == 1
-                && current_lock_metadata.st_mode & 0o777 == 0o600
-                && current_lock_metadata.st_dev == self.lock_device
-                && current_lock_metadata.st_ino == self.lock_inode
-                && held_lock_metadata.st_dev == self.lock_device
-                && held_lock_metadata.st_ino == self.lock_inode
-                && held_lock_metadata.st_nlink == 1
-                && held_lock_metadata.st_mode & 0o777 == 0o600,
-            "canonical activation lock changed while its descriptor was held"
-        );
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub fn acquire_vps_activation_lock_v2() -> Result<PinnedVpsActivationLockV2> {
-    acquire_vps_activation_lock_at(Path::new(INSTALL_ROOT))
-}
-
 /// Validate every inherited deploy authority before acquiring the canonical
 /// activation lock, then replace this process with the reviewed deploy script.
 /// The same lock open-file-description and plan descriptor remain inherited by
@@ -1102,15 +958,22 @@ fn read_pinned_descriptor_bounded(
             && u64::try_from(initial.st_size)? <= maximum_bytes,
         "{label} descriptor has unsafe type, owner, links, or size"
     );
+    // Reading can legitimately update atime on relatime/strictatime mounts.
+    // Continue checking inode, permissions, size, mtime and ctime for mutation.
+    let unchanged = |mut observed: nix_legacy::sys::stat::FileStat| {
+        observed.st_atime = initial.st_atime;
+        observed.st_atime_nsec = initial.st_atime_nsec;
+        observed == initial
+    };
     let duplicate = NixOwnedFdV2(nix_legacy::unistd::dup(descriptor)?);
     ensure!(
-        nix_legacy::sys::stat::fstat(duplicate.0)? == initial,
+        unchanged(nix_legacy::sys::stat::fstat(duplicate.0)?),
         "{label} descriptor changed before its duplicate was read"
     );
     let duplicate_path = PathBuf::from(format!("/proc/self/fd/{}", duplicate.0));
     let file = File::open(duplicate_path)?;
     ensure!(
-        nix_legacy::sys::stat::fstat(file.as_raw_fd())? == initial,
+        unchanged(nix_legacy::sys::stat::fstat(file.as_raw_fd())?),
         "{label} procfs duplicate names another inode"
     );
     let expected_length = usize::try_from(initial.st_size)?;
@@ -1127,8 +990,8 @@ fn read_pinned_descriptor_bounded(
         "{label} descriptor grew while it was read"
     );
     ensure!(
-        nix_legacy::sys::stat::fstat(file.as_raw_fd())? == initial
-            && nix_legacy::sys::stat::fstat(descriptor)? == initial,
+        unchanged(nix_legacy::sys::stat::fstat(file.as_raw_fd())?)
+            && unchanged(nix_legacy::sys::stat::fstat(descriptor)?),
         "{label} descriptor changed while it was read"
     );
     Ok(bytes)
@@ -1331,200 +1194,6 @@ fn pin_vps_activation_candidate_at(
         "VPS activation candidate changed while it was pinned"
     );
     Ok(fd)
-}
-
-#[cfg(target_os = "linux")]
-pub fn pin_inherited_vps_activation_lock_v2(
-    activation_lock_fd: std::os::fd::RawFd,
-) -> Result<PinnedVpsActivationLockV2> {
-    pin_inherited_vps_activation_lock_at(Path::new(INSTALL_ROOT), activation_lock_fd)
-}
-
-#[cfg(target_os = "linux")]
-fn pin_inherited_vps_activation_lock_at(
-    opt_root: &Path,
-    activation_lock_fd: std::os::fd::RawFd,
-) -> Result<PinnedVpsActivationLockV2> {
-    use rustix::fs::{FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
-    use rustix::io::Errno;
-    use std::os::fd::AsFd as _;
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    ensure!(
-        activation_lock_fd >= 3,
-        "inherited activation lock descriptor must be at least 3"
-    );
-    let lock_fd = NixOwnedFdV2(nix_legacy::unistd::dup(activation_lock_fd)?);
-    nix_legacy::fcntl::fcntl(
-        lock_fd.0,
-        nix_legacy::fcntl::FcntlArg::F_SETFD(nix_legacy::fcntl::FdFlag::FD_CLOEXEC),
-    )?;
-    let opt_metadata = fs::symlink_metadata(opt_root)?;
-    ensure!(
-        opt_metadata.is_dir()
-            && !opt_metadata.file_type().is_symlink()
-            && fs::canonicalize(opt_root)? == opt_root
-            && opt_metadata.uid() == rustix::process::geteuid().as_raw()
-            && opt_metadata.permissions().mode() & 0o777 == 0o750,
-        "activation opt root must be canonical, EUID-owned, and mode 0750"
-    );
-    let opt_fd = openat2(
-        rustix::fs::CWD,
-        opt_root,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let pinned_opt = rustix::fs::fstat(&opt_fd)?;
-    ensure!(
-        pinned_opt.st_dev == opt_metadata.dev() && pinned_opt.st_ino == opt_metadata.ino(),
-        "activation opt root changed while inherited lock was pinned"
-    );
-    let inherited_metadata = nix_legacy::sys::stat::fstat(lock_fd.0)?;
-    let canonical_lock = openat2(
-        opt_fd.as_fd(),
-        "activation.lock",
-        OFlags::RDWR | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let canonical_metadata = rustix::fs::fstat(&canonical_lock)?;
-    ensure!(
-        rustix::fs::FileType::from_raw_mode(inherited_metadata.st_mode).is_file()
-            && inherited_metadata.st_uid == rustix::process::geteuid().as_raw()
-            && inherited_metadata.st_nlink == 1
-            && inherited_metadata.st_mode & 0o777 == 0o600
-            && inherited_metadata.st_dev == pinned_opt.st_dev
-            && inherited_metadata.st_dev == canonical_metadata.st_dev
-            && inherited_metadata.st_ino == canonical_metadata.st_ino,
-        "inherited activation lock is not the canonical owner-only lock inode"
-    );
-    match flock(&canonical_lock, FlockOperation::NonBlockingLockExclusive) {
-        Ok(()) => {
-            flock(&canonical_lock, FlockOperation::Unlock)?;
-            anyhow::bail!(
-                "inherited activation lock descriptor does not already own the exclusive lock"
-            );
-        }
-        Err(Errno::WOULDBLOCK) => {}
-        Err(error) => return Err(error.into()),
-    }
-    #[allow(deprecated)]
-    nix_legacy::fcntl::flock(
-        lock_fd.0,
-        nix_legacy::fcntl::FlockArg::LockExclusiveNonblock,
-    )
-    .context("inherited activation lock is not the open file description holding exclusion")?;
-    let pinned = PinnedVpsActivationLockV2 {
-        lock_fd: PinnedVpsActivationLockDescriptorV2::InheritedDuplicate(lock_fd),
-        opt_fd,
-        opt_root: opt_root.to_path_buf(),
-        opt_device: pinned_opt.st_dev,
-        opt_inode: pinned_opt.st_ino,
-        lock_device: inherited_metadata.st_dev,
-        lock_inode: inherited_metadata.st_ino,
-    };
-    pinned.ensure_canonical()?;
-    Ok(pinned)
-}
-
-#[cfg(target_os = "linux")]
-fn acquire_vps_activation_lock_at(opt_root: &Path) -> Result<PinnedVpsActivationLockV2> {
-    use rustix::fs::{FlockOperation, Mode, OFlags, ResolveFlags, flock, openat2};
-    use rustix::io::Errno;
-    use std::os::fd::{AsFd as _, AsRawFd as _};
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-    let opt_metadata = fs::symlink_metadata(opt_root)?;
-    ensure!(
-        opt_metadata.is_dir()
-            && !opt_metadata.file_type().is_symlink()
-            && fs::canonicalize(opt_root)? == opt_root
-            && opt_metadata.uid() == rustix::process::geteuid().as_raw()
-            && opt_metadata.permissions().mode() & 0o777 == 0o750,
-        "activation opt root must be canonical, EUID-owned, and mode 0750"
-    );
-    let opt_fd = openat2(
-        rustix::fs::CWD,
-        opt_root,
-        OFlags::RDONLY | OFlags::CLOEXEC | OFlags::DIRECTORY,
-        Mode::empty(),
-        ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let pinned_opt = rustix::fs::fstat(&opt_fd)?;
-    ensure!(
-        pinned_opt.st_dev == opt_metadata.dev() && pinned_opt.st_ino == opt_metadata.ino(),
-        "activation opt root changed while being pinned"
-    );
-    let lock_name = Path::new("activation.lock");
-    let (lock_fd, created) = match openat2(
-        opt_fd.as_fd(),
-        lock_name,
-        OFlags::RDWR | OFlags::CREATE | OFlags::EXCL | OFlags::CLOEXEC,
-        Mode::from_raw_mode(0o600),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    ) {
-        Ok(fd) => (fd, true),
-        Err(Errno::EXIST) => (
-            openat2(
-                opt_fd.as_fd(),
-                lock_name,
-                OFlags::RDWR | OFlags::CLOEXEC,
-                Mode::empty(),
-                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-            )?,
-            false,
-        ),
-        Err(error) => return Err(error.into()),
-    };
-    let lock_metadata = rustix::fs::fstat(&lock_fd)?;
-    let lock_std_metadata = fs::metadata(format!("/proc/self/fd/{}", lock_fd.as_raw_fd()))?;
-    ensure!(
-        lock_std_metadata.is_file()
-            && lock_metadata.st_uid == rustix::process::geteuid().as_raw()
-            && lock_std_metadata.nlink() == 1
-            && lock_std_metadata.permissions().mode() & 0o777 == 0o600
-            && lock_metadata.st_dev == pinned_opt.st_dev,
-        "activation lock has unsafe owner, type, links, mode, or device"
-    );
-    let observed_lock = openat2(
-        opt_fd.as_fd(),
-        lock_name,
-        OFlags::RDWR | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?;
-    let observed = rustix::fs::fstat(&observed_lock)?;
-    ensure!(
-        observed.st_dev == lock_metadata.st_dev && observed.st_ino == lock_metadata.st_ino,
-        "activation lock path changed after pinning"
-    );
-    if created {
-        rustix::fs::fsync(&opt_fd)?;
-    }
-    flock(&lock_fd, FlockOperation::NonBlockingLockExclusive)
-        .context("another VPS activation holds the shared lock")?;
-    let final_observed = rustix::fs::fstat(&openat2(
-        opt_fd.as_fd(),
-        lock_name,
-        OFlags::RDWR | OFlags::CLOEXEC,
-        Mode::empty(),
-        ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
-    )?)?;
-    ensure!(
-        final_observed.st_dev == lock_metadata.st_dev
-            && final_observed.st_ino == lock_metadata.st_ino,
-        "activation lock path changed after locking"
-    );
-    Ok(PinnedVpsActivationLockV2 {
-        lock_fd: PinnedVpsActivationLockDescriptorV2::Owned(lock_fd),
-        opt_fd,
-        opt_root: opt_root.to_path_buf(),
-        opt_device: pinned_opt.st_dev,
-        opt_inode: pinned_opt.st_ino,
-        lock_device: lock_metadata.st_dev,
-        lock_inode: lock_metadata.st_ino,
-    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -5571,270 +5240,15 @@ fn nonzero_lower_hex_table(value: &toml::map::Map<String, toml::Value>, field: &
         })
 }
 
-fn validate_final_text(path: &Path, label: &str) -> Result<()> {
-    let bytes = read_regular_file_bounded(path, MAX_CONFIG_BYTES)?;
-    std::str::from_utf8(&bytes).with_context(|| format!("{label} is not UTF-8"))?;
-    reject_placeholders(&bytes, label)
-}
-
 fn validate_final_host_file(
     role: VpsHostFileRoleV2,
     path: &Path,
     source_commit: &str,
 ) -> Result<()> {
-    validate_final_text(path, "host deployment file")?;
+    // Bind policy evaluation to the same bounded byte snapshot, not a second
+    // read of a path that may have changed after UTF-8/placeholder validation.
     let bytes = read_regular_file_bounded(path, MAX_CONFIG_BYTES)?;
-    let text = std::str::from_utf8(&bytes)?;
-    let release_root = format!("{INSTALL_ROOT}/releases/{source_commit}");
-    validate_system_unit_root_authority(role, text)?;
-    let canonical_bytes = match role {
-        VpsHostFileRoleV2::UserTarget => Some(CANONICAL_USER_TARGET.to_owned()),
-        VpsHostFileRoleV2::ApiService => {
-            Some(CANONICAL_API_SERVICE.replace("@SOURCE_COMMIT@", source_commit))
-        }
-        VpsHostFileRoleV2::WorkerService => {
-            Some(CANONICAL_WORKER_SERVICE.replace("@SOURCE_COMMIT@", source_commit))
-        }
-        VpsHostFileRoleV2::BackupService => {
-            Some(CANONICAL_BACKUP_SERVICE.replace("@SOURCE_COMMIT@", source_commit))
-        }
-        VpsHostFileRoleV2::BackupTimer => Some(CANONICAL_BACKUP_TIMER.to_owned()),
-        VpsHostFileRoleV2::DeployReleaseScript => Some(CANONICAL_DEPLOY_RELEASE_SCRIPT.to_owned()),
-        VpsHostFileRoleV2::RollbackReleaseScript => {
-            Some(CANONICAL_ROLLBACK_RELEASE_SCRIPT.to_owned())
-        }
-        VpsHostFileRoleV2::ValidateReleaseScript => {
-            Some(CANONICAL_VALIDATE_RELEASE_SCRIPT.to_owned())
-        }
-        VpsHostFileRoleV2::RealRuntimeFenceReleaseGate => {
-            Some(CANONICAL_REAL_FENCE_RELEASE_GATE.to_owned())
-        }
-        VpsHostFileRoleV2::RealRuntimeFenceHarness => Some(CANONICAL_REAL_FENCE_HARNESS.to_owned()),
-        VpsHostFileRoleV2::RealRuntimeFenceSelftest => {
-            Some(CANONICAL_REAL_FENCE_SELFTEST.to_owned())
-        }
-        VpsHostFileRoleV2::RootOnceScript => Some(CANONICAL_ROOT_ONCE_SCRIPT.to_owned()),
-        VpsHostFileRoleV2::NginxChallenge => Some(CANONICAL_NGINX_CHALLENGE.to_owned()),
-        VpsHostFileRoleV2::NginxCloudflareOnly => Some(CANONICAL_NGINX_CLOUDFLARE_ONLY.to_owned()),
-        VpsHostFileRoleV2::NginxApiLocations => Some(CANONICAL_NGINX_API_LOCATIONS.to_owned()),
-        VpsHostFileRoleV2::NginxVhost => Some(CANONICAL_NGINX_VHOST.to_owned()),
-        _ => None,
-    };
-    if let Some(canonical) = canonical_bytes {
-        ensure!(
-            text == canonical,
-            "security-sensitive host file differs from its exact canonical repository template"
-        );
-    } else {
-        reject_placeholders(&bytes, "host deployment file")?;
-    }
-    match role {
-        VpsHostFileRoleV2::UserTarget => {
-            ensure!(
-                text.contains("robin-highscores-api.service")
-                    && text.contains("robin-highscores-worker.service")
-                    && text.contains("WantedBy=default.target"),
-                "user target does not own the API/worker boot lifecycle"
-            );
-            validate_user_unit(text)?;
-        }
-        VpsHostFileRoleV2::ApiService => {
-            ensure!(
-                text.contains(&format!(
-                    "ExecStart={release_root}/bin/robin-highscores-server --config {release_root}/config/highscores-server.toml"
-                )),
-                "API user unit is not pinned to the exact release"
-            );
-            validate_user_unit(text)?;
-        }
-        VpsHostFileRoleV2::WorkerService => {
-            ensure!(
-                text.contains(&format!(
-                    "ExecStart={release_root}/bin/robin-highscores-worker --config {release_root}/config/highscores-worker.toml"
-                )),
-                "worker user unit is not pinned to the exact release"
-            );
-            validate_user_unit(text)?;
-        }
-        VpsHostFileRoleV2::BackupService => {
-            ensure!(
-                text.contains(&format!(
-                    "ExecStart={release_root}/bin/robin-highscores-admin"
-                )) && text.contains(&format!(
-                    "--config {release_root}/config/highscores-server.toml"
-                )),
-                "backup user unit is not pinned to the exact release"
-            );
-            validate_user_unit(text)?;
-        }
-        VpsHostFileRoleV2::BackupTimer => {
-            ensure!(
-                text.contains("Unit=robin-highscores-backup.service")
-                    && text.contains("WantedBy=timers.target"),
-                "backup timer does not activate the user backup service"
-            );
-            validate_user_unit(text)?;
-        }
-        VpsHostFileRoleV2::DeployReleaseScript | VpsHostFileRoleV2::RollbackReleaseScript => {
-            validate_literal_install_root_assignment(text)?;
-            ensure!(
-                text.starts_with("#!/bin/sh\n")
-                    && text.contains(INSTALL_ROOT)
-                    && text.contains("systemctl --user"),
-                "user release script does not use the canonical install root and user manager"
-            );
-            ensure!(
-                !text.contains("sudo ") && !text.contains("/etc/systemd/system"),
-                "user release script retains privileged activation authority"
-            );
-            if role == VpsHostFileRoleV2::DeployReleaseScript {
-                ensure!(
-                    text.contains(
-                        "managed state directory is not exact and will not be repaired"
-                    ) && text.contains(
-                        "backup state directory is missing on upgrade and will not be repaired"
-                    ) && text.contains("if [ \"$receipt_source_commit\" = none ]; then")
-                        && text.contains(
-                            "for initialized_directory in \"$backup_root\" \"$state_root/status\"; do"
-                        )
-                        && text.contains("mkdir -m 0700 -- \"$initialized_directory\"")
-                        && text.contains(
-                            "could not durably bind the initialized runtime authority"
-                        )
-                        && text.contains(
-                            "deploy/tests/real-runtime-fence-release-gate.sh"
-                        )
-                        && text.contains("ROBIN_REAL_FENCE_PINNED_CANDIDATE_FD")
-                        && text.contains(
-                            "mandatory authentic runtime-fence release gate failed before activation mutation"
-                        )
-                        && !text.contains("chmod 0700 -- \"$state_root\"")
-                        && !text.contains("chmod 0700 -- \"$managed_directory\""),
-                    "deploy script must validate all upgrade state without repair and create clean-first backup state only after durable runtime authority"
-                );
-            }
-        }
-        VpsHostFileRoleV2::ValidateReleaseScript => {
-            ensure!(
-                text.starts_with("#!/bin/sh\n")
-                    && text.contains("robin-highscores-manifestctl")
-                    && text.contains("SHA256SUMS")
-                    && text.contains("MODE_INVENTORY"),
-                "release validator does not check the typed bundle and both inventories"
-            );
-            ensure!(
-                !text.contains("sudo "),
-                "release validator retains privileged activation authority"
-            );
-        }
-        VpsHostFileRoleV2::RealRuntimeFenceReleaseGate
-        | VpsHostFileRoleV2::RealRuntimeFenceHarness
-        | VpsHostFileRoleV2::RealRuntimeFenceSelftest => {
-            ensure!(
-                text.starts_with("#!/bin/sh\n") || text.starts_with("#!/usr/bin/env python3\n"),
-                "real runtime-fence gate authority has no exact interpreter"
-            );
-            ensure!(
-                !text.contains("sudo ") && !text.contains("/etc/systemd/system"),
-                "real runtime-fence gate retains privileged mutation authority"
-            );
-        }
-        VpsHostFileRoleV2::RootOnceScript => {
-            ensure!(
-                text.starts_with("#!/bin/sh\n") && text.contains("nginx"),
-                "root-once script is not the reviewed nginx setup"
-            );
-            ensure!(
-                !text.contains("/etc/systemd/system") && !text.contains("useradd"),
-                "root-once nginx script retains service/principal bootstrap authority"
-            );
-        }
-        VpsHostFileRoleV2::NginxChallenge => {
-            ensure!(
-                text.contains(".well-known/acme-challenge"),
-                "nginx challenge vhost omits the ACME challenge route"
-            );
-        }
-        VpsHostFileRoleV2::NginxCloudflareOnly => {
-            ensure!(
-                text.contains("allow ") && text.contains("deny all"),
-                "nginx Cloudflare include is not a fail-closed allowlist"
-            );
-        }
-        VpsHostFileRoleV2::NginxApiLocations => {
-            ensure!(
-                text.contains("127.0.0.1:8787") && text.contains("/api"),
-                "nginx include does not route the loopback leaderboard API"
-            );
-        }
-        VpsHostFileRoleV2::NginxVhost => {
-            ensure!(
-                text.contains("robinhood.phiresky.xyz")
-                    && text.contains("robinhood-api.locations.conf"),
-                "nginx vhost does not bind the production domain and API include"
-            );
-        }
-        VpsHostFileRoleV2::DeploymentReadme
-        | VpsHostFileRoleV2::OperatorRunbook
-        | VpsHostFileRoleV2::BackupRunbook => {}
-    }
-    Ok(())
-}
-
-fn validate_system_unit_root_authority(role: VpsHostFileRoleV2, text: &str) -> Result<()> {
-    if role == VpsHostFileRoleV2::ValidateReleaseScript {
-        ensure!(
-            text == CANONICAL_VALIDATE_RELEASE_SCRIPT
-                && text.matches(SYSTEM_UNIT_ROOT).count() == 1
-                && text.matches(VALIDATOR_SYSTEM_UNIT_DENYLIST_BLOCK).count() == 1,
-            "release validator must be the exact canonical script with one system-unit-root denylist block"
-        );
-    } else {
-        ensure!(
-            !text.contains(SYSTEM_UNIT_ROOT),
-            "host deployment file retains root system-service authority"
-        );
-    }
-    Ok(())
-}
-
-fn validate_literal_install_root_assignment(text: &str) -> Result<()> {
-    let expected = format!("opt_root={INSTALL_ROOT}");
-    let mut assignments = text
-        .lines()
-        .filter(|line| line.trim_start().starts_with("opt_root="));
-    ensure!(
-        assignments.next() == Some(expected.as_str()) && assignments.next().is_none(),
-        "user release script must contain exactly one literal {expected} assignment"
-    );
-    Ok(())
-}
-
-fn validate_user_unit(text: &str) -> Result<()> {
-    for forbidden in [
-        "User=",
-        "Group=",
-        "SupplementaryGroups=",
-        "WantedBy=multi-user.target",
-        "/etc/systemd/system",
-        "/var/lib/robin-highscores",
-        "/srv/robin-highscores",
-        "verifier-broker",
-        "systemd-run",
-        "polkit",
-    ] {
-        ensure!(
-            !text.contains(forbidden),
-            "user unit retains obsolete root deployment field {forbidden}"
-        );
-    }
-    ensure!(
-        !text
-            .split(|character: char| character.is_ascii_whitespace() || character == '=')
-            .any(|token| token.starts_with("/opt/robin-highscores")),
-        "user unit retains the obsolete root-owned /opt release path"
-    );
-    Ok(())
+    validate_host_template_bytes(role, &bytes, source_commit)
 }
 
 fn validate_backup_sandbox_contract(
@@ -10249,6 +9663,8 @@ mod tests {
         let validator = File::open(validator_path)?;
         let tool = File::open(&test_tool_path)?;
         let plan = File::open(plan_path)?;
+        // Force a read-induced atime change on mounts that track access time.
+        plan.set_times(std::fs::FileTimes::new().set_accessed(std::time::UNIX_EPOCH))?;
         for descriptor in [
             script.as_raw_fd(),
             bootstrap.as_raw_fd(),

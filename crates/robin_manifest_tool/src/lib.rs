@@ -3538,7 +3538,7 @@ mod tests {
             binaryen_wasm_opt: official_tool("version_132", "binaryen-authority.json"),
             wabt_wasm_strip: official_tool("1.0.41", "wabt-authority.json"),
             node: javascript_tool("24.19.0", "node-authority.json"),
-            pnpm: javascript_tool("9.15.0", "pnpm-authority.json"),
+            pnpm: javascript_tool("12.3.4", "pnpm-authority.json"),
             package_json: root.path().join("package.json"),
             pnpm_lock: root.path().join("pnpm-lock.yaml"),
         };

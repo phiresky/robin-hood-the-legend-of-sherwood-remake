@@ -5,9 +5,9 @@ use crate::backup::{
 };
 use crate::backup::{BackupReleaseIdentityV2, BackupStatusV4, load_backup_release_identity};
 use crate::config::{AdmissionProfile, CompetitionConfig, ViewerContentRequirementConfig};
-use crate::db::{
-    BoardComposition, BoardCursor, BoardRow, SubmissionUploadIntent, SubmissionUploadReservation,
-};
+use crate::db::{BoardComposition, BoardCursor, BoardRow};
+#[cfg(test)]
+use crate::db::{SubmissionUploadIntent, SubmissionUploadReservation};
 use crate::error::ApiError;
 use crate::identity::{validate_username, verify_signature};
 #[cfg(test)]
@@ -2162,83 +2162,6 @@ async fn submit(
         required_build_hash,
     )?;
 
-    let offer_json = serde_json::to_string(&signed.submission.offer).map_err(internal_json)?;
-    let envelope_json = serde_json::to_string(&signed).map_err(internal_json)?;
-    let controller_public_key = signed
-        .submission
-        .campaign_continuation_authorization
-        .as_ref()
-        .map(|authorization| authorization.claim.campaign_controller_public_key)
-        .unwrap_or(
-            signed
-                .submission
-                .offer
-                .session_genesis
-                .claim
-                .host_public_key,
-        )
-        .into_bytes();
-    let session_genesis_sha256 = signed
-        .submission
-        .offer
-        .session_genesis
-        .canonical_digest()
-        .map_err(|error| ApiError::BadRequest(error.to_string()))?
-        .into_bytes();
-    let session_genesis_host_public_key = signed
-        .submission
-        .offer
-        .session_genesis
-        .claim
-        .host_public_key
-        .into_bytes();
-    let replay_session_id = signed
-        .submission
-        .offer
-        .session_genesis
-        .claim
-        .replay_session_id
-        .into_bytes();
-    let session_genesis_host_nonce = signed
-        .submission
-        .offer
-        .session_genesis
-        .claim
-        .host_nonce
-        .into_bytes();
-    let participants = signed
-        .submission
-        .offer
-        .participant_claims
-        .iter()
-        .map(|claim| ParticipantClaim {
-            seat: claim.seat,
-            participant_instance_id: claim.participant_instance_id.into_bytes(),
-            public_key: claim.public_key.into_bytes(),
-            public_disclosure: match claim.public_disclosure {
-                ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
-                ParticipantPublicDisclosureV1::Anonymous => "anonymous",
-            }
-            .to_owned(),
-        })
-        .collect::<Vec<_>>();
-    let intent = SubmissionUploadIntent {
-        proposed_submission_id: uuid::Uuid::now_v7().to_string(),
-        upload_challenge_id: signed
-            .submission
-            .offer
-            .upload_challenge_id
-            .as_str()
-            .to_owned(),
-        offer_json,
-        envelope_json: envelope_json.clone(),
-        controller_public_key,
-        session_genesis_sha256,
-        session_genesis_host_public_key,
-        replay_session_id,
-        session_genesis_host_nonce,
-        participants: participants.clone(),
-    };
     let lease_ttl = Duration::from_secs(
         state
             .config
@@ -2246,127 +2169,94 @@ async fn submit(
             .checked_add(30)
             .ok_or(ApiError::Internal)?,
     );
-    // Sample readiness after authenticating the signed exact lengths and
-    // immediately before the database is allowed to consume the challenge.
-    // The database still returns committed/busy idempotent retries while red,
-    // but cannot acquire an artifact-writing reservation.
-    let admission_error = ensure_upload_admission_ready(
-        &state,
-        artifacts.replay.artifact.byte_length,
-        artifacts.starting_campaign.byte_length,
-    )
-    .await
-    .err();
-    let reservation = state
-        .database
-        .reserve_submission_upload_if_admitted(
-            &intent,
-            lease_ttl,
-            Duration::from_secs(state.config.upload_reservation_ttl_seconds),
-            admission_error.is_none(),
-        )
-        .await;
-    let reservation = match reservation {
-        Ok(reservation) => reservation,
-        Err(crate::db::DbError::AdmissionUnavailable) => {
-            return Err(admission_error.unwrap_or(ApiError::Unavailable));
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let (lease, resume_uploaded) = match reservation {
-        SubmissionUploadReservation::Acquired {
-            lease,
-            resume_uploaded,
-        } => {
-            debug_assert!(resume_uploaded || admission_error.is_none());
-            (lease, resume_uploaded)
-        }
-        SubmissionUploadReservation::Existing { lifecycle } => {
-            return submission_accepted_response(&state, lifecycle).await;
-        }
-        SubmissionUploadReservation::Busy { retry_after_ms } => {
-            return Err(ApiError::UploadInProgress { retry_after_ms });
-        }
-    };
-
-    let ingestion = async {
-        if resume_uploaded {
-            verify_reserved_upload_storage_identity(
-                &state,
-                artifacts.replay.artifact.sha256.into_bytes(),
-                artifacts.replay.artifact.byte_length,
-                artifacts.starting_campaign.sha256.into_bytes(),
-                artifacts.starting_campaign.byte_length,
-            )
-            .await
-        } else {
-            async {
-                let stored_replay = state
-                    .replay_store
-                    .store_stream(
-                        stream::iter([Ok::<_, Infallible>(Bytes::from(replay_bytes))]),
-                        artifacts.replay.artifact.sha256.into_bytes(),
-                        artifacts.replay.artifact.byte_length,
-                    )
-                    .await?;
-                // Replay bytes remain semantically opaque in the network-facing
-                // process. The contained verifier is the sole base64/zstd/bitcode
-                // decoder and canonical representation authority.
-                let starting_campaign_field = multipart
-                    .next_field()
-                    .await
-                    .map_err(|error| ApiError::BadRequest(error.to_string()))?
-                    .ok_or_else(|| {
-                        ApiError::BadRequest(
-                            "missing `starting_campaign` multipart field".to_owned(),
+    let ingestion_state = &state;
+    let ingestion = |resume_uploaded| {
+        let state = ingestion_state;
+        async move {
+            if resume_uploaded {
+                verify_reserved_upload_storage_identity(
+                    state,
+                    artifacts.replay.artifact.sha256.into_bytes(),
+                    artifacts.replay.artifact.byte_length,
+                    artifacts.starting_campaign.sha256.into_bytes(),
+                    artifacts.starting_campaign.byte_length,
+                )
+                .await
+            } else {
+                async {
+                    let stored_replay = state
+                        .replay_store
+                        .store_stream(
+                            stream::iter([Ok::<_, Infallible>(Bytes::from(replay_bytes))]),
+                            artifacts.replay.artifact.sha256.into_bytes(),
+                            artifacts.replay.artifact.byte_length,
                         )
-                    })?;
-                if starting_campaign_field.name() != Some("starting_campaign") {
-                    return Err(ApiError::BadRequest(
-                        "the third multipart field must be `starting_campaign`".to_owned(),
-                    ));
+                        .await?;
+                    // Replay bytes remain semantically opaque in the network-facing
+                    // process. The contained verifier is the sole base64/zstd/bitcode
+                    // decoder and canonical representation authority.
+                    let starting_campaign_field = multipart
+                        .next_field()
+                        .await
+                        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+                        .ok_or_else(|| {
+                            ApiError::BadRequest(
+                                "missing `starting_campaign` multipart field".to_owned(),
+                            )
+                        })?;
+                    if starting_campaign_field.name() != Some("starting_campaign") {
+                        return Err(ApiError::BadRequest(
+                            "the third multipart field must be `starting_campaign`".to_owned(),
+                        ));
+                    }
+                    require_multipart_media_type(
+                        &starting_campaign_field,
+                        &artifacts.starting_campaign.media_type,
+                        "starting_campaign",
+                    )?;
+                    let stored_starting_campaign = state
+                        .campaign_store
+                        .store_stream(
+                            starting_campaign_field,
+                            artifacts.starting_campaign.sha256.into_bytes(),
+                            artifacts.starting_campaign.byte_length,
+                        )
+                        .await?;
+                    if multipart
+                        .next_field()
+                        .await
+                        .map_err(|error| ApiError::BadRequest(error.to_string()))?
+                        .is_some()
+                    {
+                        return Err(ApiError::BadRequest(
+                            "submission multipart body must contain exactly three fields"
+                                .to_owned(),
+                        ));
+                    }
+                    debug_assert_eq!(
+                        stored_replay.sha256,
+                        artifacts.replay.artifact.sha256.into_bytes()
+                    );
+                    debug_assert_eq!(
+                        stored_starting_campaign.sha256,
+                        artifacts.starting_campaign.sha256.into_bytes()
+                    );
+                    Ok(())
                 }
-                require_multipart_media_type(
-                    &starting_campaign_field,
-                    &artifacts.starting_campaign.media_type,
-                    "starting_campaign",
-                )?;
-                let stored_starting_campaign = state
-                    .campaign_store
-                    .store_stream(
-                        starting_campaign_field,
-                        artifacts.starting_campaign.sha256.into_bytes(),
-                        artifacts.starting_campaign.byte_length,
-                    )
-                    .await?;
-                if multipart
-                    .next_field()
-                    .await
-                    .map_err(|error| ApiError::BadRequest(error.to_string()))?
-                    .is_some()
-                {
-                    return Err(ApiError::BadRequest(
-                        "submission multipart body must contain exactly three fields".to_owned(),
-                    ));
-                }
-                debug_assert_eq!(
-                    stored_replay.sha256,
-                    artifacts.replay.artifact.sha256.into_bytes()
-                );
-                debug_assert_eq!(
-                    stored_starting_campaign.sha256,
-                    artifacts.starting_campaign.sha256.into_bytes()
-                );
-                Ok(())
+                .await
             }
-            .await
         }
     };
-    let lifecycle = crate::submission::finish_reserved_upload(
+    let lifecycle = crate::submission::complete_upload(
         &state.database,
         &signed,
-        &lease,
-        resume_uploaded,
+        lease_ttl,
+        Duration::from_secs(state.config.upload_reservation_ttl_seconds),
+        ensure_upload_admission_ready(
+            &state,
+            artifacts.replay.artifact.byte_length,
+            artifacts.starting_campaign.byte_length,
+        ),
         ingestion,
     )
     .await?;
@@ -5572,7 +5462,7 @@ pub(crate) mod tests {
                 pages_shell: BrowserPagesShellBuildIdentityV2 {
                     recipe: BrowserPagesShellBuildRecipeV2::PnpmFrozenLockfileViteStaticShellV1,
                     node: build_tool(48, "24.19.0"),
-                    pnpm: build_tool(49, "9.15.0"),
+                    pnpm: build_tool(49, "12.3.4"),
                     package_json_sha256: Digest32::from_bytes([50; 32]),
                     pnpm_lock_sha256: Digest32::from_bytes([51; 32]),
                     public_origin_artifacts: vec![BrowserPagesArtifactV2 {
