@@ -881,6 +881,8 @@ impl FrameClock {
 /// workers, and live network diagnostics are process resources, not game
 /// state. Persisting them would create a fake/default runtime on restore.
 pub(super) struct TimelineRuntime {
+    /// Actual save/replay restoration awaiting process-owned lifecycle sync.
+    state_restored: bool,
     /// Single authority for history, network, and replay frame identity.
     current_frame: TimelineFrame,
     /// Dense host-record position, separate from the lockstep cursor.
@@ -950,6 +952,7 @@ impl TimelineRuntime {
         local_is_host: bool,
     ) -> Self {
         Self {
+            state_restored: false,
             current_frame: TimelineFrame::ZERO,
             replay_ordinal: ReplayFrameOrdinal::ZERO,
             pending_inputs: BTreeMap::new(),
@@ -1491,6 +1494,7 @@ impl TimelineRuntime {
                 identity,
                 is_continue,
             } => {
+                self.state_restored = true;
                 if let Some(recorder) = self.replay_recorder.as_mut() {
                     recorder.record_input_taint(
                         robin_engine::replay_rankability::InputTaintKind::StateLoad,
@@ -1542,6 +1546,14 @@ impl TimelineRuntime {
                 }
             }
         }
+    }
+
+    pub(super) fn note_state_restored(&mut self) {
+        self.state_restored = true;
+    }
+
+    pub(super) fn take_state_restored(&mut self) -> bool {
+        std::mem::take(&mut self.state_restored)
     }
 
     /// Register the bootstrap Restart auto-save as a frame-0 save marker.
@@ -1627,6 +1639,7 @@ impl TimelineRuntime {
             assets,
         )?;
         if let Some(target) = adopted_timeline {
+            self.state_restored = true;
             // The boundary helper resets rewind itself because debugger-step
             // callers use it directly. TimelineRuntime additionally rebases
             // every reconstruction consumer on the adopted pre-tick state.
@@ -2275,6 +2288,8 @@ mod tests {
             &engine,
             &assets,
         );
+        assert!(timeline.take_state_restored());
+        assert!(!timeline.take_state_restored());
         assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
         timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
         timeline.begin_recording(&mut frame, true);

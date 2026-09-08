@@ -1203,6 +1203,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 ))));
             }
             if let Some(sync) = save_load.restore {
+                runtime.note_state_restored();
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
             }
@@ -1263,6 +1264,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // variant succeeds, threading the slot type back out of the
         // save-I/O layer.
         if let Some(sync) = save_load.restore {
+            runtime.note_state_restored();
             game.apply_post_load_sync(sync.is_continue);
             game.post_load_resolution_resync();
         }
@@ -1309,7 +1311,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             world,
             timeline: runtime,
             control,
-            leaderboard: _,
+            leaderboard,
         } = runtime;
         let MissionPreTickPhase {
             host,
@@ -1395,6 +1397,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             paused,
             replay_cursor_paused,
         )?;
+
+        if runtime.take_state_restored()
+            && let Some(leaderboard) = leaderboard.as_mut()
+        {
+            leaderboard.after_state_restore(manager.engine.campaign());
+        }
 
         dispatch_pre_tick_pointer_commands(
             runtime,
