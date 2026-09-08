@@ -155,7 +155,7 @@ mod tests {
                     assert!(cache.stats.resident_bytes <= 32);
                     assert_eq!(
                         cache.stats.resident_bytes,
-                        cache.entries.iter().map(|entry| entry.1).sum()
+                        cache.entries.iter().map(|entry| entry.1).sum::<u64>()
                     );
                 }
             }
