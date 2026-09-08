@@ -1657,17 +1657,42 @@ pub struct HostTransport {
 }
 
 pub struct PendingSnapshotTransition {
-    pub id: robin_engine::multiplayer::SnapshotTransitionId,
-    pub payload: PendingSnapshotTransitionPayload,
-    pub committed: bool,
+    id: robin_engine::multiplayer::SnapshotTransitionId,
+    payload: PendingSnapshotTransitionPayload,
+    committed: bool,
+}
+
+impl PendingSnapshotTransition {
+    pub(crate) fn new(
+        id: robin_engine::multiplayer::SnapshotTransitionId,
+        payload: PendingSnapshotTransitionPayload,
+    ) -> Self {
+        Self {
+            id,
+            payload,
+            committed: false,
+        }
+    }
+    /// Called by the authenticated transport event drain; the prepared payload
+    /// and instance remain private and cannot be swapped after this admission.
+    pub(crate) fn commit_authenticated(
+        &mut self,
+        id: robin_engine::multiplayer::SnapshotTransitionId,
+    ) -> Result<(), String> {
+        if self.id != id {
+            return Err("snapshot transition commit does not match prepared payload".into());
+        }
+        if self.committed {
+            return Err("snapshot transition was already committed".into());
+        }
+        self.committed = true;
+        Ok(())
+    }
 }
 
 pub enum PendingSnapshotTransitionPayload {
     Save {
-        /// Host-local slot identity. Peers receive the exact save payload but do
-        /// not resolve it through their unrelated local slot index.
-        slot: Option<crate::savegame::SlotHandle>,
-        save: Box<crate::save_file::GameSaveFile>,
+        load: SnapshotSave,
     },
     CampaignExit {
         exit_code: robin_engine::game_operation::GameCode,
@@ -1678,6 +1703,38 @@ pub enum PendingSnapshotTransitionPayload {
     },
 }
 
+pub enum SnapshotSave {
+    Local(crate::main_entry::PreparedLoad),
+    Remote(Box<crate::save_file::GameSaveFile>),
+}
+
+/// Only the transport's committed take can create this process-local token.
+#[derive(serde::Serialize)]
+pub(crate) struct CommittedSnapshotTransition(#[serde(skip)] PendingSnapshotTransition);
+
+impl<'de> serde::Deserialize<'de> for CommittedSnapshotTransition {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "committed transition cannot be deserialized",
+        ))
+    }
+}
+
+impl CommittedSnapshotTransition {
+    pub(crate) fn id(&self) -> robin_engine::multiplayer::SnapshotTransitionId {
+        self.0.id
+    }
+    pub(crate) fn is_save(&self) -> bool {
+        matches!(
+            self.0.payload,
+            PendingSnapshotTransitionPayload::Save { .. }
+        )
+    }
+    pub(crate) fn into_payload(self) -> PendingSnapshotTransitionPayload {
+        self.0.payload
+    }
+}
+
 impl HostTransport {
     pub fn authoritative_transition_actions_enabled(&self) -> bool {
         !self.reconnecting
@@ -1686,13 +1743,17 @@ impl HostTransport {
                 || self.local_seat == robin_engine::player_command::PlayerId::HOST)
     }
 
-    pub fn take_committed_snapshot_transition(&mut self) -> Option<PendingSnapshotTransition> {
+    pub(crate) fn take_committed_snapshot_transition(
+        &mut self,
+    ) -> Option<CommittedSnapshotTransition> {
         if self
             .snapshot_transition
             .as_ref()
             .is_some_and(|transition| transition.committed)
         {
-            self.snapshot_transition.take()
+            self.snapshot_transition
+                .take()
+                .map(CommittedSnapshotTransition)
         } else {
             None
         }

@@ -26,7 +26,6 @@ use crate::options_model::{SoundSetting, sound_eq};
 #[cfg(test)]
 use crate::options_model::{graphic_eq, graphics_settings_for_retroarch_availability};
 use crate::renderer::Renderer;
-use crate::save_file::GameSaveFile;
 use crate::savegame::SaveGameManager;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
@@ -171,9 +170,7 @@ pub(super) enum UiTaskOutcome {
         mission_id: u32,
     },
     QuickLoadAccepted {
-        slot: crate::savegame::SlotHandle,
-        mission_id: u32,
-        save: Box<GameSaveFile>,
+        load: crate::main_entry::PreparedLoad,
     },
     QuickLoadCancelled,
     QuitMissionRequested,
@@ -338,9 +335,7 @@ impl UiTaskKind {
 
 pub(super) struct QuickLoadTaskState {
     dialog: YesNoModalState,
-    slot: crate::savegame::SlotHandle,
-    mission_id: u32,
-    save: Option<Box<GameSaveFile>>,
+    load: Option<crate::main_entry::PreparedLoad>,
 }
 
 impl QuickLoadTaskState {
@@ -349,15 +344,11 @@ impl QuickLoadTaskState {
         renderer: &Renderer,
         resources: &IngameMenuResources,
         message: String,
-        slot: crate::savegame::SlotHandle,
-        mission_id: u32,
-        save: GameSaveFile,
+        load: crate::main_entry::PreparedLoad,
     ) -> Self {
         Self {
             dialog: YesNoModalState::new(window, renderer, resources, message),
-            slot,
-            mission_id,
-            save: Some(Box::new(save)),
+            load: Some(load),
         }
     }
 
@@ -380,10 +371,8 @@ impl QuickLoadTaskState {
         result.map(|accepted| {
             if accepted {
                 UiTaskOutcome::QuickLoadAccepted {
-                    slot: self.slot.clone(),
-                    mission_id: self.mission_id,
-                    save: self
-                        .save
+                    load: self
+                        .load
                         .take()
                         .expect("accepted QuickLoad must retain its decoded payload"),
                 }

@@ -41,7 +41,6 @@ pub(super) fn diagnostic(
             Some(profiles),
             thumbnail,
         )
-        .and_then(|()| manager.save_index().map_err(anyhow::Error::msg))
         .map_err(DiagnosticFailure::Publication)?;
     Ok(index)
 }

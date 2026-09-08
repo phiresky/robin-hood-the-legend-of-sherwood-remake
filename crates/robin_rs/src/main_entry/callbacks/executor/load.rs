@@ -2,17 +2,16 @@
 //! publish an index, enqueue another callback, or change a presentation banner.
 
 use super::super::{
-    OperationOutcome, PostLoadSync, SaveBannerKind, SaveLoadEvent, current_mission_id,
-    replay_loaded_identity, validated_save_reload_target,
+    OperationOutcome, PostLoadSync, PreparedLoad, SaveBannerKind, SaveLoadEvent,
+    current_mission_id, replay_loaded_identity, validated_save_reload_target,
 };
-use crate::save_file::PreparedGameSave;
 use crate::savegame::SpecialSlot;
 use robin_engine::{engine as engine_api, profiles::ProfileManager};
 
 pub(super) enum LoadRoute {
     Current(CurrentMissionLoad),
     OtherMission {
-        save: PreparedGameSave,
+        save: PreparedLoad,
         target_mission_id: u32,
         active_mission_id: u32,
     },
@@ -23,7 +22,7 @@ pub(super) enum LoadRoute {
 #[derive(serde::Serialize)]
 pub(super) struct CurrentMissionLoad {
     #[serde(skip)]
-    save: PreparedGameSave,
+    save: PreparedLoad,
 }
 
 impl<'de> serde::Deserialize<'de> for CurrentMissionLoad {
@@ -41,7 +40,7 @@ pub(super) enum LoadCompletion {
 }
 
 pub(super) fn route(
-    save: PreparedGameSave,
+    save: PreparedLoad,
     engine: &engine_api::Engine,
     game: &crate::game::Game,
     profiles: &ProfileManager,
@@ -49,7 +48,7 @@ pub(super) fn route(
     let active_mission_id = current_mission_id(engine.campaign(), profiles);
     let active_spellforge_package = engine.spellforge_package();
     match validated_save_reload_target(
-        &save,
+        save.save(),
         profiles,
         active_mission_id,
         game.mission_assets()?,
@@ -117,6 +116,7 @@ pub(super) fn apply(
     assets: &engine_api::LevelAssets,
 ) -> anyhow::Result<AppliedLoad> {
     let CurrentMissionLoad { save } = prepared;
+    let save = save.into_payload();
     let mission_id = save.header.mission_id;
     let identity = replay_loaded_identity(&save);
     save.apply_to_with_game(engine, host, game, assets)?;
@@ -132,7 +132,6 @@ mod tests {
     use crate::main_entry::callbacks::{
         SaveBannerKind, operation_outcome_tests::diagnostic_callback_fixture,
     };
-    use crate::save_file::GameSaveFile;
     use crate::savegame::SpecialSlot;
 
     #[test]
@@ -150,18 +149,17 @@ mod tests {
             .save_manager
             .write_save_from_engine(&mut host, &game, index, &engine, 17, Some(&profiles), None)
             .unwrap();
-        let (_, prepared) = callbacks
-            .save_manager
-            .preflight_load(Some(index))
-            .unwrap()
-            .unwrap();
+        let prepared =
+            crate::main_entry::PreparedLoad::preflight(&callbacks.save_manager, Some(handle))
+                .unwrap()
+                .unwrap();
         engine.test_set_frame_counter(99);
         let routed = route(prepared, &engine, &game, &profiles).unwrap();
         assert_eq!(engine.frame_counter(), 99);
         let LoadRoute::Current(prepared) = routed else {
             panic!("same mission must not require reload")
         };
-        assert_eq!(prepared.save.engine.frame_counter(), 41);
+        assert_eq!(prepared.save.save().engine.frame_counter(), 41);
         let applied = apply(prepared, &mut engine, &mut host, &mut game, &assets).unwrap();
         assert_eq!(engine.frame_counter(), 41);
         assert_eq!(applied.mission_id(), 17);
@@ -175,23 +173,41 @@ mod tests {
     #[test]
     fn invalid_route_produces_no_application_and_completion_policies_stay_distinct() {
         let directory = tempfile::tempdir().unwrap();
-        let (_callbacks, host, engine, _assets, game, profiles) =
+        let (mut callbacks, mut host, engine, _assets, game, profiles) =
             diagnostic_callback_fixture(directory.path());
-        let mut invalid = GameSaveFile::capture(&engine, &host, 17, "invalid".into());
-        // The legacy capture helper chooses its own descriptor; bind this
-        // fixture to the active one before testing same-mission routing.
-        invalid.header.mission_assets = game.mission_assets().unwrap().clone();
+        let handle = callbacks
+            .save_manager
+            .create_draft("invalid preflight".into(), 17)
+            .unwrap();
+        let index = callbacks.save_manager.resolve_handle(&handle).unwrap();
+        callbacks
+            .save_manager
+            .write_save_from_engine(&mut host, &game, index, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        let prepared = crate::main_entry::PreparedLoad::preflight(
+            &callbacks.save_manager,
+            Some(handle.clone()),
+        )
+        .unwrap()
+        .unwrap();
+        let mut invalid = prepared.save().clone();
         assert!(matches!(
-            route(invalid.clone().into(), &engine, &game, &profiles).unwrap(),
+            route(prepared, &engine, &game, &profiles).unwrap(),
             LoadRoute::Current(_)
         ));
         // Another valid mission/descriptor means OtherMission, not rejection.
         // Mutate one actual descriptor invariant instead.
         invalid.header.mission_assets.mission_basename.clear();
-        match route(invalid.into(), &engine, &game, &profiles) {
-            Err(error) => assert!(error.contains("invalid current save schema")),
-            Ok(_) => panic!("invalid mission basename must be rejected before routing"),
-        }
+        std::fs::write(
+            callbacks.save_manager.save_path(index),
+            serde_json::to_vec(&invalid).unwrap(),
+        )
+        .unwrap();
+        // Corrupt input now fails before an owned prepared value can exist.
+        assert!(
+            crate::main_entry::PreparedLoad::preflight(&callbacks.save_manager, Some(handle))
+                .is_err()
+        );
         for (completion, reset, banner, continued) in [
             (LoadCompletion::Restart, false, None, false),
             (

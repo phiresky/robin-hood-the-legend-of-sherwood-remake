@@ -767,7 +767,6 @@ fn apply_terminal_debriefing_action(
             context.callbacks.queue_operation(SaveLoadRequest::Load {
                 slot: Some(slot),
                 mission_id,
-                save: None,
             });
             context.game.operation.set(GameCode::LevelInProgress);
             false

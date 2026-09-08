@@ -509,8 +509,7 @@ pub(crate) fn drain_net_inputs(
                             "snapshot transition bytes changed during validation"
                         );
                         crate::host::PendingSnapshotTransitionPayload::Save {
-                            slot: None,
-                            save: Box::new(save),
+                            load: crate::host::SnapshotSave::Remote(Box::new(save)),
                         }
                     }
                     robin_engine::multiplayer::SnapshotTransitionPayload::CampaignExit {
@@ -541,11 +540,8 @@ pub(crate) fn drain_net_inputs(
                         }
                     }
                 };
-                host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition {
-                    id,
-                    payload,
-                    committed: false,
-                });
+                host.transport.snapshot_transition =
+                    Some(crate::host::PendingSnapshotTransition::new(id, payload));
                 host.transport.reconnecting = true;
                 net.acknowledge_snapshot_transition(id)
                     .unwrap_or_else(|error| {
@@ -560,11 +556,9 @@ pub(crate) fn drain_net_inputs(
                     .unwrap_or_else(|| {
                         panic!("snapshot transition commit has no prepared payload")
                     });
-                assert_eq!(
-                    transition.id, id,
-                    "snapshot transition commit does not match prepared payload"
-                );
-                transition.committed = true;
+                transition
+                    .commit_authenticated(id)
+                    .unwrap_or_else(|error| panic!("{error}"));
                 host.transport.reconnecting = true;
             }
             event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
