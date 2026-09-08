@@ -13,17 +13,20 @@
 //! side opens the stream and sends `Hello`; the host answers
 //! `Welcome` on the same stream.
 
+use super::client_protocol::{WelcomeData, validate_reconnect_state};
+#[cfg(test)]
+use super::encode_msg;
 use super::identity::{
     GAME_ALPN, bind_endpoint, bind_endpoint_with_relay, game_secret_key, parse_connect_addr,
 };
 use super::{
     FrameCursor, INPUT_DELAY_FRAMES, InboundFramePolicy, InitialSnapshot,
     MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION, MultiplayerSessionId, NET_PROTOCOL_VERSION,
-    NetEvent, NetFrameClass, NetMsg, NetOutbound, RankedBrowseOnlyReason, RankedJoinAccepted,
+    NetEvent, NetMsg, NetOutbound, RankedBrowseOnlyReason, RankedJoinAccepted,
     RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinClaimDocument,
     RankedJoinResponse, RankedParticipantRosterDocument, RankedSessionGenesisDocument,
-    SharedClientLeaderboardCoSignState, SharedClientRankedJoinState, decode_msg, encode_msg,
-    net_frame_class, verify_leaderboard_cosign_response,
+    SharedClientLeaderboardCoSignState, SharedClientRankedJoinState,
+    verify_leaderboard_cosign_response,
 };
 use crate::distributed_mod::{
     DistributedModPackage, ValidatedDistributedMod, make_distributed_mod_offer,
@@ -165,19 +168,7 @@ fn take_host_session_continuation(
 // ─── Framing ─────────────────────────────────────────────────────
 
 async fn write_frame(send: &mut SendStream, msg: &NetMsg) -> Result<(), String> {
-    let bytes = encode_msg(msg);
-    let class = net_frame_class(msg);
-    if bytes.len() > class.absolute_limit() {
-        return Err(format!(
-            "outbound {class:?} frame of {} bytes exceeds {}-byte limit",
-            bytes.len(),
-            class.absolute_limit()
-        ));
-    }
-    let len = u32::try_from(bytes.len()).map_err(|_| "outbound frame exceeds u32".to_string())?;
-    let mut header = [0_u8; 5];
-    header[0] = class as u8;
-    header[1..].copy_from_slice(&len.to_le_bytes());
+    let (header, bytes) = super::client_protocol::encode_frame(msg)?;
     send.write_all(&header)
         .await
         .map_err(|e| format!("write frame header: {e}"))?;
@@ -199,28 +190,12 @@ async fn read_frame(
         Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
         Err(e) => return Err(format!("read frame header: {e}")),
     }
-    let class = NetFrameClass::from_byte(header[0])?;
-    let len = u32::from_le_bytes(header[1..].try_into().expect("four-byte frame length")) as usize;
-    let limit = policy
-        .limit(class)
-        .ok_or_else(|| format!("{policy:?} may not send {class:?} frames"))?;
-    if len > limit {
-        return Err(format!(
-            "inbound {class:?} frame of {len} bytes exceeds {limit}-byte {policy:?} limit"
-        ));
-    }
+    let (class, len) = super::client_protocol::decode_header(header, policy)?;
     let mut buf = vec![0u8; len];
     recv.read_exact(&mut buf)
         .await
         .map_err(|e| format!("read frame body: {e}"))?;
-    let message = decode_msg(&buf).map_err(|e| format!("decode frame: {e}"))?;
-    if net_frame_class(&message) != class {
-        return Err(format!(
-            "declared {class:?} frame decoded as {:?}",
-            net_frame_class(&message)
-        ));
-    }
-    Ok(Some(message))
+    super::client_protocol::decode_body(class, &buf).map(Some)
 }
 
 async fn read_frame_bounded_with_timeout(
@@ -3523,6 +3498,7 @@ struct ClientSession {
     _conn: Connection,
     send: SendStream,
     recv: RecvStream,
+    protocol: super::client_protocol::ClientHandshake,
 }
 
 #[derive(Debug)]
@@ -3535,16 +3511,6 @@ enum HandshakePrelude {
         session: ClientSession,
         offer: robin_engine::multiplayer::DistributedModOffer,
     },
-}
-
-#[derive(Debug, Clone)]
-struct WelcomeData {
-    seat: PlayerId,
-    mission_id: String,
-    mission_seed: u64,
-    sim_config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<String>,
-    session_id: MultiplayerSessionId,
 }
 
 #[derive(Debug)]
@@ -3585,68 +3551,29 @@ async fn handshake_async(
     .await
     .map_err(|e| format!("send Hello: {e}"))?;
 
-    match read_frame_bounded_with_timeout(
+    let message = read_frame_bounded_with_timeout(
         &mut recv,
         InboundFramePolicy::ServerToClient,
         HANDSHAKE_FRAME_TIMEOUT,
         "Welcome/content offer",
     )
-    .await?
-    {
-        Some(NetMsg::Welcome {
-            your_seat,
-            session_id,
-            mission_id,
-            mission_seed,
-            sim_config,
-            speech_timing_locale,
-            host_nickname,
-        }) => {
-            tracing::info!(
-                ?your_seat,
-                seed = mission_seed,
-                host = %host_nickname,
-                "welcomed by server"
-            );
-            Ok(HandshakePrelude::Welcome {
-                session: ClientSession {
-                    _conn: conn,
-                    send,
-                    recv,
-                },
-                welcome: WelcomeData {
-                    seat: your_seat,
-                    mission_id,
-                    mission_seed,
-                    sim_config,
-                    speech_timing_locale,
-                    session_id,
-                },
-            })
+    .await?;
+    let mut protocol =
+        super::client_protocol::ClientHandshake::new(server_addr.id.to_string(), None);
+    let action = protocol.receive(message)?;
+    let session = ClientSession {
+        _conn: conn,
+        send,
+        recv,
+        protocol,
+    };
+    match action {
+        super::client_protocol::HandshakeAction::Welcome(welcome) => {
+            Ok(HandshakePrelude::Welcome { session, welcome })
         }
-        Some(NetMsg::ContentOffer { offer }) => {
-            offer
-                .validate()
-                .map_err(|error| format!("invalid distributed-mod offer: {error}"))?;
-            let authenticated_host = server_addr.id.to_string();
-            if offer.host_endpoint_id != authenticated_host {
-                return Err(format!(
-                    "distributed-mod offer claims host `{}`, but the authenticated iroh endpoint is `{authenticated_host}`",
-                    offer.host_endpoint_id
-                ));
-            }
-            Ok(HandshakePrelude::Content {
-                session: ClientSession {
-                    _conn: conn,
-                    send,
-                    recv,
-                },
-                offer,
-            })
+        super::client_protocol::HandshakeAction::PrepareContent(offer) => {
+            Ok(HandshakePrelude::Content { session, offer })
         }
-        Some(NetMsg::Reject { reason }) => Err(format!("host rejected connection: {reason}")),
-        Some(other) => Err(format!("expected Welcome or ContentOffer, got {other:?}")),
-        None => Err("connection closed before Welcome/content offer".to_string()),
     }
 }
 
@@ -3666,52 +3593,20 @@ async fn handshake_or_cancel(
     }
 }
 
-async fn read_welcome(session: ClientSession) -> Result<(ClientSession, WelcomeData), String> {
-    let ClientSession {
-        _conn,
-        send,
-        mut recv,
-    } = session;
-    match read_frame_bounded_with_timeout(
-        &mut recv,
+async fn read_welcome(mut session: ClientSession) -> Result<(ClientSession, WelcomeData), String> {
+    session.protocol.content_ready()?;
+    let message = read_frame_bounded_with_timeout(
+        &mut session.recv,
         InboundFramePolicy::ServerToClient,
         HANDSHAKE_FRAME_TIMEOUT,
         "post-content Welcome",
     )
-    .await?
-    {
-        Some(NetMsg::Welcome {
-            your_seat,
-            mission_id,
-            mission_seed,
-            sim_config,
-            speech_timing_locale,
-            host_nickname,
-            session_id,
-        }) => {
-            tracing::info!(
-                ?your_seat,
-                seed = mission_seed,
-                host = %host_nickname,
-                "welcomed by server after exact content admission"
-            );
-            Ok((
-                ClientSession { _conn, send, recv },
-                WelcomeData {
-                    seat: your_seat,
-                    mission_id,
-                    mission_seed,
-                    sim_config,
-                    speech_timing_locale,
-                    session_id,
-                },
-            ))
+    .await?;
+    match session.protocol.receive(message)? {
+        super::client_protocol::HandshakeAction::Welcome(welcome) => Ok((session, welcome)),
+        super::client_protocol::HandshakeAction::PrepareContent(_) => {
+            unreachable!("post-content phase only accepts Welcome")
         }
-        Some(NetMsg::Reject { reason }) => Err(format!("host rejected connection: {reason}")),
-        Some(other) => Err(format!(
-            "expected Welcome after content admission, got {other:?}"
-        )),
-        None => Err("connection closed before post-content Welcome".to_owned()),
     }
 }
 
@@ -3909,16 +3804,14 @@ async fn resolve_reconnect_prelude(
     prelude: HandshakePrelude,
     admitted: Option<&robin_engine::multiplayer::DistributedModOffer>,
 ) -> Result<(ClientSession, WelcomeData), String> {
-    match (prelude, admitted) {
-        (HandshakePrelude::Welcome { session, welcome }, None) => Ok((session, welcome)),
-        (HandshakePrelude::Content { mut session, offer }, Some(expected)) => {
-            if &offer != expected {
-                return Err(format!(
-                    "reconnect host content changed from {} to {}",
-                    robin_engine::spellforge::hex_hash(&expected.full_mod_sha256),
-                    robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
-                ));
-            }
+    let offered = match &prelude {
+        HandshakePrelude::Welcome { .. } => None,
+        HandshakePrelude::Content { offer, .. } => Some(offer),
+    };
+    super::client_protocol::validate_reconnect_content(offered, admitted)?;
+    match prelude {
+        HandshakePrelude::Welcome { session, welcome } => Ok((session, welcome)),
+        HandshakePrelude::Content { mut session, offer } => {
             write_frame_with_timeout(
                 &mut session.send,
                 &NetMsg::ContentRequest {
@@ -3940,43 +3833,7 @@ async fn resolve_reconnect_prelude(
             .await?;
             read_welcome(session).await
         }
-        (HandshakePrelude::Content { offer, .. }, None) => Err(format!(
-            "reconnect unexpectedly introduced host content {}",
-            robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
-        )),
-        (HandshakePrelude::Welcome { .. }, Some(expected)) => Err(format!(
-            "reconnect omitted previously admitted host content {}",
-            robin_engine::spellforge::hex_hash(&expected.full_mod_sha256)
-        )),
     }
-}
-
-fn validate_reconnect_state(
-    expected_seat: PlayerId,
-    expected_mission_id: &str,
-    expected_seed: u64,
-    expected_config: robin_engine::engine::SimConfig,
-    expected_speech_timing_locale: Option<&str>,
-    expected_session_id: MultiplayerSessionId,
-    seat: PlayerId,
-    mission_id: &str,
-    seed: u64,
-    config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<&str>,
-    session_id: MultiplayerSessionId,
-) -> Result<(), String> {
-    if seat != expected_seat
-        || mission_id != expected_mission_id
-        || seed != expected_seed
-        || config != expected_config
-        || speech_timing_locale != expected_speech_timing_locale
-        || session_id != expected_session_id
-    {
-        return Err(format!(
-            "reconnect joined incompatible seat {seat:?} mission `{mission_id}` seed {seed} config {config:?} speech timing {speech_timing_locale:?} session {session_id:?}; expected seat {expected_seat:?} mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} speech timing {expected_speech_timing_locale:?} session {expected_session_id:?}"
-        ));
-    }
-    Ok(())
 }
 
 fn publish_speech_timing_authority(shared: &Mutex<Option<Option<String>>>, locale: Option<String>) {
@@ -4397,6 +4254,7 @@ async fn run_session_async(
         _conn,
         mut send,
         mut recv,
+        protocol: _,
     } = session;
     let (ranked_response_tx, mut ranked_response_rx) = unbounded_channel();
     let ranked_context = ClientRankedTransportContext {
