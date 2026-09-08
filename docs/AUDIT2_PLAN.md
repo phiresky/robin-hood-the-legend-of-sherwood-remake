@@ -12,7 +12,7 @@ Main remains unchanged by this pass during implementation and validation.
 | --- | --- | --- |
 | `audit2-menu-cache` | Structured source/resource/subpicture cache identity; missing versus broken assets | No cross-source or arithmetic key aliasing; preserve optional sparse frames and default-first fallbacks |
 | `audit2-ranked-runtime` | Admission, signing, submission and presentation boundaries; phase-owned tasks | Sign before frame zero; preserve authority and cancellation/duplicate-response behavior |
-| `audit2-persistence` | Cohesive database operations and reserved upload workflow outside HTTP parsing | Preserve fencing, atomic lease/challenge checks, retries, crash recovery and reserve-before-bytes ordering |
+| `audit2-persistence` | Cohesive database operations and reserved upload workflow outside HTTP parsing | Preserve fencing, atomic lease/challenge checks, retries, crash recovery and reservation before durable artifact ingestion/campaign streaming |
 | `audit2-editor` | Pure document commands, reactive session adapter, viewport owner and validated load candidates | Preserve undo/redo, asynchronous load generations, immutable save snapshots and resource disposal |
 | `audit2-release` | Policy/topology, pinned filesystem operations, publication outcomes and activation boundaries | Preserve exact canonical artifacts, descriptor authority and uncertain/published-but-unsynced failure distinctions |
 | `audit2-commands` | Cohesive command families inside the existing ordering skeleton | Preserve preflight, recording, callbacks, live/replay interpretation and RNG ordering |
@@ -35,6 +35,16 @@ Main remains unchanged by this pass during implementation and validation.
 - No deployment, push, main merge or worktree deletion by background agents.
 
 ## Completion evidence
+
+### Audit correction: upload ordering
+
+At the base commit, `crates/robin_highscores/src/web.rs:2138` intentionally
+buffers and lexically preflights the bounded opaque replay before reservation.
+Reservation occurs at `web.rs:2260`; durable ingestion begins at `web.rs:2292`.
+The audit's shorthand "reserve before bytes" was too broad. This pass preserves
+authentication → bounded replay transport preflight → admission/reservation →
+durable replay ingestion/campaign streaming, rather than changing transport
+admission policy to match that shorthand.
 
 Track reports must distinguish implemented behavior, executed tests, compile-only
 coverage and remaining limitations. Final integration needs affected native,
