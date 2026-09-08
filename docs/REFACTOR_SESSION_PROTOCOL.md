@@ -89,7 +89,11 @@ Command: `RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --loc
 -p robin_rs --lib --no-default-features --features release multiplayer::native::tests`.
 `cargo fmt --all` and `git diff --check` also passed.
 
-TODO: root integration records combined release/client and live-runtime results.
+Final combined source `09a2438b1`: 1,673 release-feature library tests passed,
+with six ignored. The separate release-feature binary passed both headless and
+graphical live multiplayer scenarios (ten checks each, zero desyncs/missed hash
+comparisons) and all four native lifecycle/replay phases. Default-client and
+browser checks also passed; see [combined acceptance](REFACTOR_BOUNDARIES.md).
 TODO: a future bounded actor mailbox could replace the synchronous gate if server
 throughput measurements justify it; this change intentionally does not alter the
 existing runtime scheduling or introduce queue backpressure policy.

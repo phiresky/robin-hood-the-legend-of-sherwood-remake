@@ -61,6 +61,13 @@ zero failures. Evidence: `/tmp/robin-lifecycle-gate-cd6g0qvi`.
 The four new native tests are compiled in that gate but are not Chrome tests;
 their execution belongs to the combined explicit native client suites.
 
+Final combined source `09a2438b1` passed the full default and release-feature
+library suites, executing the four stage tests, and the tools/projection-export
+examples check. The final named browser gate again passed all 24 Chrome tests.
+Both live multiplayer scenarios and all four native lifecycle/replay phases
+passed against the final release-feature binary. See
+[combined acceptance](REFACTOR_BOUNDARIES.md) for counts and artifact provenance.
+
 ## Remaining seams
 
 TODO: preparation is still substantial. Its file/resource, terrain-dimension,

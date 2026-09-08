@@ -32,6 +32,11 @@ Validation added:
 `cargo fmt` and `git diff --check` run in this worktree. Compilation and the named
 GPU gate run in the parent GPU integration lane to avoid duplicate cold builds.
 
+Final combined source `09a2438b1` passed the full client suite and named Vulkan
+gate, including this module's public lifecycle regressions. Graphical multiplayer
+and ordinary/save-load replay acceptance also passed. Exact evidence and limits
+are recorded in [combined acceptance](REFACTOR_BOUNDARIES.md).
+
 Remaining boundary: legacy generated preview surfaces and engine alternate-picture
 integers are intentionally outside this resource-bank migration. Cache lookup keys
 for DEFAULT.RES subpictures retain their historical integer encoding; replacing that

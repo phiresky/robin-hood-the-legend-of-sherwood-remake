@@ -27,4 +27,7 @@ Focused validation at `8846f1805`: `cargo test --locked -p robin_rs --lib
 mission_render_resources` passed all three pure ownership tests. This compiles
 the default client but does not execute the explicitly opted-in GPU contract.
 
-TODO: record the combined-client and named Vulkan gate results after integration.
+Final combined source `09a2438b1`: full default-client tests passed (1,569 library,
+33 integration, seven doctests), as did the named Vulkan gate, default binary
+build and tools/projection-export examples check. See
+[combined acceptance](REFACTOR_BOUNDARIES.md) for provenance and runtime evidence.
