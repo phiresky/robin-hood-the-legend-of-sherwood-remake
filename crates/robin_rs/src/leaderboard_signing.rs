@@ -355,6 +355,7 @@ fn verify_typed_signature(
         .map_err(|error| LeaderboardSigningError::InvalidClaim(error.to_string()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn canonical_document(
     error: robin_run_protocol::CanonicalDocumentError,
 ) -> LeaderboardSigningError {

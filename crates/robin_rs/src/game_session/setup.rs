@@ -1277,6 +1277,7 @@ enum PendingInterfaceResources {
 /// Worker-side body of the interface pre-decode: decode every encoded (JXL)
 /// picture once, then duplicate the decoded manager for the menu owner —
 /// a memcpy of decoded pixels, far cheaper than a second decode pass.
+#[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
 fn decode_interface_managers(mut cursor: ResourceManager) -> (ResourceManager, ResourceManager) {
     let started = web_time::Instant::now();
     let decoded = cursor.decode_all_encoded_pictures();

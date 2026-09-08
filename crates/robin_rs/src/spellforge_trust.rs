@@ -7,11 +7,13 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 
 pub const SPELLFORGE_TRUST_SCHEMA_VERSION: u32 = 1;
 pub const SPELLFORGE_TRUST_GRANT_LIMIT_PER_PROFILE: usize = 1_024;
 const DISPLAY_FIELD_BYTE_LIMIT: usize = 4 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const NATIVE_STORE_FILE: &str = "spellforge-trust.json";
 #[cfg(target_arch = "wasm32")]
 const BROWSER_STORE_KEY: &str = "robin-hood-spellforge-trust-v1";
@@ -299,6 +301,7 @@ impl SpellforgeTrustStore {
         save_serialized(&self.save_directory, &serialized)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn store_path(directory: &str) -> PathBuf {
         Path::new(directory).join(NATIVE_STORE_FILE)
     }
