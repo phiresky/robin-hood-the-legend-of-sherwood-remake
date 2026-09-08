@@ -3387,7 +3387,11 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
         vec![0; 3 * 2 * 4],
         "handoff must not expose loading pixels before the first composition"
     );
-    assert_eq!(renderer.try_capture_frame_rgba().unwrap().2, vec![0; 3 * 2 * 4], "an immediate modal must freeze the cleared target");
+    assert_eq!(
+        renderer.try_capture_frame_rgba().unwrap().2,
+        vec![0; 3 * 2 * 4],
+        "an immediate modal must freeze the cleared target"
+    );
     renderer.clear_frozen_scene();
     assert_eq!(
         renderer.try_capture_frame_rgba().unwrap().2,
