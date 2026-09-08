@@ -29,6 +29,13 @@ must not be removed to simplify tests.
   mission can prevent moving its simulation runtime into the mission outcome.
 - Actual browser execution must be distinguished from WASM compilation; this
   pass closes the previous shared-protocol and identity execution gap.
+- Draw-time portrait provenance checks remain constant-time; complete owner-bank
+  validation happens before replacement/retirement, not on every frame. Required
+  artwork errors preserve the previous cache, whereas absent optional artwork
+  clears its stale slots on successful replacement.
+- Requirements-table uploads use the same validated RGB565 upload path as the
+  other portrait assets, without collecting duplicate pixel buffers or
+  collapsing sparse subframe indices.
 
 ## Results
 

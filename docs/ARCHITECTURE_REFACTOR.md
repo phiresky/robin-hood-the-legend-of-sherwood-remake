@@ -164,6 +164,11 @@ performed.
 
 ### Deliberate limits and next slices
 
+The subsequent [cleanup continuation](CLEANUP_FOLLOWUP.md) tracks server seat
+consolidation, portrait upload ownership and execution of the browser protocol
+and identity tests. The results above describe this original pass, not that
+later checkpoint.
+
 - Movement authority is one cohesive sequence-only operation, not a complete
   rewrite of `EngineInner` or an ECS conversion.
 - Shared networking covers framing, admission and reconnect validation. Later
