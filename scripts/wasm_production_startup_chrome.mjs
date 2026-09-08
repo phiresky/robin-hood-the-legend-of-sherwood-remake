@@ -161,6 +161,7 @@ try {
     const screenshot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
     const screenshotEnd = performance.now();
     await writeFile(output + '.png', Buffer.from(screenshot.data, 'base64'));
+    if (errors.length) throw new Error('Browser exception during startup/capture: ' + JSON.stringify(errors));
     const navigationServerAt = page.timeOrigin - performance.timeOrigin;
     const result = {
         inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
