@@ -119,7 +119,7 @@ impl MissionRenderResources {
         ids: Vec<OwnedSurface>,
     ) {
         self.try_replace_corners(renderer, size, ids)
-            .expect("mission corners require unique local unowned uploads");
+            .expect("mission corners require unique local owned uploads");
     }
 
     pub fn try_replace_corners(
@@ -138,7 +138,7 @@ impl MissionRenderResources {
 
     pub fn replace_dots(&mut self, renderer: &mut Renderer, ids: Vec<Option<OwnedSurface>>) {
         self.try_replace_dots(renderer, ids)
-            .expect("mission dots require unique local unowned uploads");
+            .expect("mission dots require unique local owned uploads");
     }
 
     pub fn try_replace_dots(
@@ -155,7 +155,7 @@ impl MissionRenderResources {
 
     pub fn replace_ground_marks(&mut self, renderer: &mut Renderer, ids: Vec<OwnedSurface>) {
         self.try_replace_ground_marks(renderer, ids)
-            .expect("mission ground marks require unique local unowned uploads");
+            .expect("mission ground marks require unique local owned uploads");
     }
 
     pub fn try_replace_ground_marks(

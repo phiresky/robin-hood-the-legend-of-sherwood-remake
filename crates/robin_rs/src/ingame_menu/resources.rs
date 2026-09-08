@@ -2048,7 +2048,7 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
     assert_eq!(cache.ok_button_surface(3), cache.button_surface(3));
     assert_eq!(cache.button.width, 1);
     assert_eq!(cache.button.height, 1);
-    assert!(renderer.try_adopt_surface(first.legacy_id()).is_err());
+    renderer.assert_legacy_adoption_rejected(first);
     assert!(
         renderer
             .try_delete_legacy_surface(first.legacy_id())

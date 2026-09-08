@@ -232,8 +232,38 @@ pub(crate) async fn show_credits(
         // above remains at the original 50 pixels/second wall-clock rate.
         crate::window::sleep_ui_frame().await;
     }
-    renderer.retire_surface(credits_surface);
-    if let Some(background) = bg_surface {
+    retire_uploads(renderer, credits_surface, bg_surface);
+}
+
+fn retire_uploads(
+    renderer: &mut Renderer,
+    credits: crate::renderer::OwnedSurface,
+    background: Option<crate::renderer::OwnedSurface>,
+) {
+    renderer.retire_surface(credits);
+    if let Some(background) = background {
         renderer.retire_surface(background);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn verify_gpu_retirement(renderer: &mut Renderer) {
+    for with_background in [false, true] {
+        let credits = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
+        let handle = credits.handle();
+        let background = with_background.then(|| renderer.upload_rgb565(1, 1, &[0xffff]).unwrap());
+        let background_handle = background.as_ref().map(|upload| upload.handle());
+        renderer
+            .draw_surface_with_shadow(handle, None, None, 0x1f, 50, BLIT_SOURCE_TRANSPARENT)
+            .unwrap();
+        retire_uploads(renderer, credits, background);
+        assert!(renderer.surface_dimensions(handle).is_err());
+        if let Some(handle) = background_handle {
+            assert!(renderer.surface_dimensions(handle).is_err());
+        }
+        assert_eq!(
+            &renderer.try_capture_frame_rgba().unwrap().2[..4],
+            &[248, 252, 248, 255]
+        );
     }
 }

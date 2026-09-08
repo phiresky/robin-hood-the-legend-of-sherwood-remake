@@ -1001,14 +1001,16 @@ impl Renderer {
             .expect("ownership requires a live unowned upload")
     }
 
-    pub(crate) fn try_adopt_surface(
-        &mut self,
-        id: u32,
-    ) -> Result<OwnedSurface, SurfaceOwnershipError> {
+    fn try_adopt_surface(&mut self, id: u32) -> Result<OwnedSurface, SurfaceOwnershipError> {
         self.validate_surface_adoption(id)?;
         let handle = self.surface_handle(id)?;
         self.owned_surfaces.insert(id);
         Ok(OwnedSurface { handle })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn assert_legacy_adoption_rejected(&mut self, handle: SurfaceHandle) {
+        assert!(self.try_adopt_surface(handle.id).is_err());
     }
 
     fn validate_surface_adoption(&self, id: u32) -> Result<(), SurfaceOwnershipError> {
@@ -1620,7 +1622,7 @@ impl Renderer {
 
     /// `blit_to_screen` with a per-frame alpha applied to the whole
     /// quad (used by the fade-in / fade-out transitions).
-    pub(crate) fn blit_to_screen_alpha(
+    fn blit_to_screen_alpha(
         &mut self,
         src_id: u32,
         src_rect: Option<&BBox>,
@@ -3287,6 +3289,24 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
             .is_err()
     );
     assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
+    // Widget alpha mixing validates both borrowed uploads before queuing
+    // either draw: a foreign/decoded input cannot partially render a fade.
+    let mut alpha_widget = crate::ui::RendererAlphaConstant::default();
+    assert!(!alpha_widget.render(&mut other_renderer, 0, Some(owned.handle()), None));
+    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
+    alpha_widget.mixing_in_progress = true;
+    let local_other = other_renderer.surface_handle(other_id).unwrap();
+    assert!(!alpha_widget.render(
+        &mut other_renderer,
+        0,
+        Some(local_other),
+        Some(owned.handle())
+    ));
+    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
+    let decoded: SurfaceHandle =
+        serde_json::from_value(serde_json::to_value(local_other).unwrap()).unwrap();
+    assert!(!alpha_widget.render(&mut other_renderer, 0, Some(local_other), Some(decoded)));
+    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
     assert!(other_renderer.surface_alpha_mask(owned.handle()).is_err());
     let restored: OwnedSurface =
         serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
@@ -3413,6 +3433,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     crate::zoom_hud::verify_gpu_ownership(&mut renderer);
     crate::stature_hud::verify_gpu_ownership(&mut renderer);
     crate::sherwood_hud::verify_gpu_ownership(&mut renderer);
+    crate::main_menu::credits::verify_gpu_retirement(&mut renderer);
     let mut portrait_renderer = Renderer::with_optional_surface(
         renderer.gpu.clone(),
         None,

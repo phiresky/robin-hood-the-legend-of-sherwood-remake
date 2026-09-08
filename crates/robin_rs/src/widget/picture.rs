@@ -143,6 +143,19 @@ impl WidgetPicture {
     }
 }
 
+#[test]
+fn alternate_upload_is_borrowed_and_not_restored_from_diagnostics() {
+    let owner = crate::renderer::OwnedSurface::synthetic(42);
+    let mut picture = WidgetPicture::default();
+    picture.set_alternate_picture(owner.handle());
+    assert_eq!(picture.clone().alternate_picture(), Some(owner.handle()));
+    let restored: WidgetPicture =
+        serde_json::from_value(serde_json::to_value(&picture).unwrap()).unwrap();
+    assert!(restored.alternate_picture().is_none());
+    picture.reset_alternate_picture();
+    assert!(picture.alternate_picture().is_none());
+}
+
 /// Multi-frame picture widget.
 ///
 /// Displays one of several sub-pictures, selected by index.

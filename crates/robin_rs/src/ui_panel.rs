@@ -3798,7 +3798,7 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
     assert_ne!(first, foreign);
     assert_eq!(cache.get_sub_picture(42, 3), Some(first));
     assert!(cache.get_sub_picture(42, 2).is_none());
-    assert!(renderer.try_adopt_surface(first.legacy_id()).is_err());
+    renderer.assert_legacy_adoption_rejected(first);
     assert!(
         renderer
             .try_delete_legacy_surface(first.legacy_id())
