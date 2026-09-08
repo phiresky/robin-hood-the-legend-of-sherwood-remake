@@ -85,10 +85,10 @@ impl PickerModel {
                 }
             })
             .collect();
-        if let Some(Selection::Existing(name)) = &self.selection {
-            if !self.slots.iter().any(|slot| &slot.name == name) {
-                self.selection = None;
-            }
+        if let Some(Selection::Existing(name)) = &self.selection
+            && !self.slots.iter().any(|slot| &slot.name == name)
+        {
+            self.selection = None;
         }
         self.scroll_offset = self
             .scroll_offset

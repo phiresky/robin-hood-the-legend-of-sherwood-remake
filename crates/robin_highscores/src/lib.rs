@@ -223,10 +223,12 @@ mod tests {
     #[tokio::test]
     async fn reconciled_failed_submission_artifact_becomes_collectible_orphan() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.orphan_replay_retention_hours = 1;
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            orphan_replay_retention_hours: 1,
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let store = ReplayStore::create(config.replay_directory.clone(), 1024)
             .await

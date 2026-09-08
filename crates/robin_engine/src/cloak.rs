@@ -124,7 +124,7 @@ mod tests {
 
     #[test]
     fn shipped_content_has_no_invented_special_detector() {
-        assert!(!SHIPPED_AUTHORED_DETECTOR);
+        const { assert!(!SHIPPED_AUTHORED_DETECTOR) };
     }
 
     #[test]

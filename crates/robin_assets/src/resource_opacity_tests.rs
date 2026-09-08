@@ -51,7 +51,9 @@ fn exported_opacity_matches_pixels_without_loading_jxl_frames() {
     );
     let words: Vec<_> = pic
         .data
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|px| u16::from_le_bytes([px[0], px[1]]))
         .collect();
     let expected = robin_engine::minimap::HitMask::from_pixels_u16(2, 3, &words, 0x07c0);

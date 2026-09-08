@@ -1235,12 +1235,10 @@ mod noisy_tracker_tests {
         let (source, target) = button_horizontal_slices(164, 280);
         assert_eq!(source, [0, 8, 156, 164]);
         assert_eq!(target, [0, 8, 272, 280]);
-        for width in [164] {
-            assert_eq!(
-                button_horizontal_slices(164, width),
-                ([0, width, width, width], [0, width, width, width])
-            );
-        }
+        assert_eq!(
+            button_horizontal_slices(164, 164),
+            ([0, 164, 164, 164], [0, 164, 164, 164])
+        );
         assert_eq!(
             button_horizontal_slices(400, 280),
             ([0, 8, 392, 400], [0, 8, 272, 280])

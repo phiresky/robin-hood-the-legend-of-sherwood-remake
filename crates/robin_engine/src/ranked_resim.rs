@@ -407,9 +407,11 @@ mod tests {
                     )
                 })
                 .collect(),
-            hashes: include_hash
-                .then(|| BTreeMap::from([(0, state_hash(&engine))]))
-                .unwrap_or_default(),
+            hashes: if include_hash {
+                BTreeMap::from([(0, state_hash(&engine))])
+            } else {
+                Default::default()
+            },
             save_markers: BTreeMap::new(),
             load_backs: BTreeMap::new(),
         }

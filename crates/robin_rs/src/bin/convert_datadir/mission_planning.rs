@@ -68,7 +68,7 @@ pub(super) fn plan_missions(
             continue;
         };
 
-        let (proto, mission) = parse_level_pair(&rhp_path, &rhm_path, &beggar_ids)?;
+        let (proto, mission) = parse_level_pair(&rhp_path, &rhm_path, beggar_ids)?;
         let forest_level = proto
             .misc
             .as_ref()
@@ -127,7 +127,7 @@ pub(super) fn plan_missions(
         if mp.mission_filename == "Dem_Lei_MP" {
             add_required_pc_profiles_for_pcs(
                 required_rhs_profiles,
-                &cpf,
+                cpf,
                 "RJMT",
                 forest_level,
                 &in_path,
@@ -135,7 +135,7 @@ pub(super) fn plan_missions(
         } else if mp.mission_filename == "Demo_Lin" {
             add_required_pc_profiles_for_pcs(
                 required_rhs_profiles,
-                &cpf,
+                cpf,
                 "RSABC",
                 forest_level,
                 &in_path,
@@ -162,10 +162,10 @@ pub(super) fn plan_missions(
             build.map_names.insert(mission.header.map_filename.clone());
         }
         for &idx in &mp.required_character_indices {
-            let idx = normalize_robin_profile_index(&cpf, idx as usize, forest_level)?;
+            let idx = normalize_robin_profile_index(cpf, idx as usize, forest_level)?;
             add_required_character_rhs_profiles_for_index(
                 required_rhs_profiles,
-                &cpf,
+                cpf,
                 idx,
                 &in_path,
             );
@@ -239,10 +239,10 @@ pub(super) fn plan_missions(
         }
         for pc in &mission.pcs_to_rescue {
             let profile_index =
-                normalize_robin_profile_index(&cpf, pc.profile_index as usize, forest_level)?;
+                normalize_robin_profile_index(cpf, pc.profile_index as usize, forest_level)?;
             add_required_character_rhs_profiles_for_index(
                 required_rhs_profiles,
-                &cpf,
+                cpf,
                 profile_index,
                 &in_path,
             );

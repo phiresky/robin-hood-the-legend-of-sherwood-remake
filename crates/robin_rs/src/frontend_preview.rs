@@ -123,11 +123,11 @@ impl FrontendTrajectoryPreview {
         }
         if self.valid {
             self.mark_count = self.mark_count.wrapping_add(1);
-            if self.mark_count.is_multiple_of(10) {
-                if let Some(dest) = self.points.last() {
-                    let mark = dest.position.to_map();
-                    self.ground_mark.add_mark(mark.x, mark.y, self.layer);
-                }
+            if self.mark_count.is_multiple_of(10)
+                && let Some(dest) = self.points.last()
+            {
+                let mark = dest.position.to_map();
+                self.ground_mark.add_mark(mark.x, mark.y, self.layer);
             }
         } else {
             self.mark_count = 0;

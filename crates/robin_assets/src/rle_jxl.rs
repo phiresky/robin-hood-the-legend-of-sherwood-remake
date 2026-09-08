@@ -303,7 +303,9 @@ pub fn canvas_from_rgba(rgba: &[u8]) -> Result<Vec<u16>> {
     if !rgba.len().is_multiple_of(4) {
         bail!("decoded image is not whole RGBA pixels");
     }
-    rgba.chunks_exact(4)
+    rgba.as_chunks::<4>()
+        .0
+        .iter()
         .map(|px| {
             Ok(match alpha_to_class(px[3])? {
                 CL_TRANS => TRANSPARENT_COLOR_16,

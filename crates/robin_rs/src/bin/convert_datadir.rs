@@ -2915,7 +2915,7 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
         );
     }
 
-    bundle_grouped_audio(&mut dd, &data_out)?;
+    bundle_grouped_audio(&mut dd, data_out)?;
     if opts.browser_publication && opts.audio_format == AudioFormat::Opus {
         let trimmed =
             robin_assets::shipping_boot_trim::trim_browser_locale_audio(&mut dd, |key| {
@@ -3096,9 +3096,9 @@ fn walk_and_bundle_locale(
         }
         if extension.as_deref() == Some("red") {
             let filename = key.rsplit('/').next().unwrap_or(&key).to_owned();
-            if !locale.red_files.contains_key(&filename) {
-                locale.red_files.insert(
-                    filename,
+            if let std::collections::btree_map::Entry::Vacant(e) = locale.red_files.entry(filename)
+            {
+                e.insert(
                     res_descr::load(&path.to_string_lossy())
                         .with_context(|| format!("parse locale descriptor {}", path.display()))?,
                 );

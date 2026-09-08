@@ -1227,7 +1227,7 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         )
         .await
         .unwrap();
-        let receipt = &(*verification.receipt());
+        let receipt = verification.receipt();
         receipt.validate().unwrap();
         assert_eq!(receipt.backup_id, status.backup_id);
         assert_eq!(receipt.backup_directory, status.backup_directory);
@@ -1255,7 +1255,7 @@ async fn publication_is_authenticated_atomic_and_keeps_a_complete_backup() {
         .await
         .unwrap();
         assert!(
-            (*historical.receipt()).current_status.is_none(),
+            historical.receipt().current_status.is_none(),
             "historical verification must be independent of singleton latest status"
         );
         drop(historical);

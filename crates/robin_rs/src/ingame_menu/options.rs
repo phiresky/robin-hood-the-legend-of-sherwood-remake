@@ -321,14 +321,10 @@ pub async fn show_options(
                                 &mut preferences,
                             )
                             .await
-                            {
-                                if let Err(error) =
+                                && let Err(error) =
                                     crate::leaderboard_preferences::persist(&preferences)
-                                {
-                                    tracing::error!(
-                                        "failed to persist leaderboard settings: {error}"
-                                    );
-                                }
+                            {
+                                tracing::error!("failed to persist leaderboard settings: {error}");
                             }
                         }
                         Err(error) => {
@@ -422,19 +418,6 @@ pub async fn show_options(
     outcome
 }
 
-#[cfg(test)]
-mod tests {
-    use super::language_option_visible;
-
-    #[test]
-    fn language_option_respects_main_menu_only_scope() {
-        assert!(language_option_visible(true, true));
-        assert!(!language_option_visible(true, false));
-        assert!(!language_option_visible(false, true));
-        assert!(!language_option_visible(false, false));
-    }
-}
-
 /// Build the hardware description line shown on the options hub.
 fn hardware_description(text: &super::resources::MenuText) -> String {
     let processor = text.get(MT_STR_PROCESSOR);
@@ -453,4 +436,17 @@ fn hardware_description(text: &super::resources::MenuText) -> String {
         description.push_str(&format!("\n{memory} : {memory_mb} {mb}"));
     }
     description
+}
+
+#[cfg(test)]
+mod tests {
+    use super::language_option_visible;
+
+    #[test]
+    fn language_option_respects_main_menu_only_scope() {
+        assert!(language_option_visible(true, true));
+        assert!(!language_option_visible(true, false));
+        assert!(!language_option_visible(false, true));
+        assert!(!language_option_visible(false, false));
+    }
 }

@@ -600,8 +600,10 @@ pub fn decode_abuse_report_accepted(
 fn validate_canonical_replay_bytes(bytes: &[u8]) -> Result<String, LeaderboardServiceError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| LeaderboardServiceError::InvalidCompactReplay("not UTF-8".to_owned()))?;
-    let mut limits = robin_replay_format::ReplayAdmissionLimits::default();
-    limits.max_input_bytes = bytes.len();
+    let limits = robin_replay_format::ReplayAdmissionLimits {
+        max_input_bytes: bytes.len(),
+        ..Default::default()
+    };
     let (engine_hash, replay) = robin_replay_format::decode_compact_bounded(text, &limits)
         .map_err(|error| LeaderboardServiceError::InvalidCompactReplay(error.to_string()))?;
     robin_replay_format::validate_engine_hash(&engine_hash)

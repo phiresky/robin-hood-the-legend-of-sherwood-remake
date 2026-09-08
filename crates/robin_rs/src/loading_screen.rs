@@ -714,9 +714,8 @@ impl LoadingScreenRenderer {
         // pushing frames until focus returns (`refresh` short-circuits
         // while `window_focused == false`).
         for ev in event_pump.poll_events() {
-            match ev {
-                GameEvent::WindowFocusChanged(focused) => self.window_focused = focused,
-                _ => {}
+            if let GameEvent::WindowFocusChanged(focused) = ev {
+                self.window_focused = focused
             }
         }
         self.renderer.sync_window_size(event_pump);

@@ -156,8 +156,8 @@ impl PersistedWorldState {
             static_sight_obstacle_active: value.static_sight_obstacle_active.clone(),
             mobile_elements: value.mobile_elements.clone(),
             original_creation_order_by_entity: value.original_creation_order_by_entity.clone(),
-            next_original_creation_order: value.next_original_creation_order.clone(),
-            original_repulsive_point_counter: value.original_repulsive_point_counter.clone(),
+            next_original_creation_order: value.next_original_creation_order,
+            original_repulsive_point_counter: value.original_repulsive_point_counter,
         }
     }
 

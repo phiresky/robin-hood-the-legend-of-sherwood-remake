@@ -630,7 +630,7 @@ pub(crate) fn provision_test_runtime_fence(directory: &Path) -> anyhow::Result<(
         // inode safely. Production `open` still accepts exactly 0500 only.
         std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))?;
         std::fs::File::open(directory)?.sync_all()?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(unix))]
     anyhow::bail!("runtime database fence provisioning requires Unix metadata")

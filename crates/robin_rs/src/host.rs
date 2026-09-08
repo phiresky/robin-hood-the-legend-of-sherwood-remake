@@ -3135,9 +3135,11 @@ mod application_context_tests {
             item_gameplay: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
             ..engine_api::SimConfig::default()
         };
-        let mut options = engine_api::GlobalOptions::default();
-        options.script_enabled = false;
-        options.highlander = true;
+        let options = engine_api::GlobalOptions {
+            script_enabled: false,
+            highlander: true,
+            ..Default::default()
+        };
         let context =
             ApplicationContext::complete_official_projection(options, sim_config, None).unwrap();
 

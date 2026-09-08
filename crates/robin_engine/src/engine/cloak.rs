@@ -330,8 +330,10 @@ mod tests {
         assert!(!normalized_default.gesture_quality_damage);
         assert!(!normalized_default.fog_of_war);
 
-        let mut legendary = super::super::SimConfig::default();
-        legendary.difficulty = crate::player_profile::DifficultyLevel::Legendary;
+        let legendary = super::super::SimConfig {
+            difficulty: crate::player_profile::DifficultyLevel::Legendary,
+            ..Default::default()
+        };
         let normalized = preserve_original_gameplay_behavior(legendary);
         assert_eq!(
             normalized.difficulty,

@@ -1070,8 +1070,7 @@ impl NativeContext<'_, '_> {
         // recorded/script movement starts from the gate's far side.
         if let Some((door_handle, door_direction)) = self
             .get_entity(actor_handle)
-            .map(crate::engine::current_door_for_route_source)
-            .flatten()
+            .and_then(crate::engine::current_door_for_route_source)
             && let Some((adapted_source, adapted_sector, adapted_layer)) =
                 crate::engine::adapt_source_to_current_door_with_identity(
                     &self.script_domains.interactables.doors,

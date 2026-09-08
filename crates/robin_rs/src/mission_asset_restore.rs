@@ -293,7 +293,7 @@ pub fn resolve_native_mission_assets(
     descriptor: &MissionAssetDescriptor,
     embedded_spellforge_package: Option<&SpellforgePackage>,
     roots: &MissionAssetRoots,
-    mut cache: Option<&mut DistributedModCache>,
+    cache: Option<&mut DistributedModCache>,
     files: Arc<robin_engine::sbfile::SbFileSystem>,
 ) -> Result<ResolvedMissionAssets, MissionAssetRestoreError> {
     descriptor
@@ -324,9 +324,7 @@ pub fn resolve_native_mission_assets(
         return Err(missing_installed.unwrap_or(MissionAssetRestoreError::CacheUnavailable));
     };
     let cache_result = (|| {
-        let cache = cache
-            .as_deref_mut()
-            .ok_or(MissionAssetRestoreError::CacheUnavailable)?;
+        let cache = cache.ok_or(MissionAssetRestoreError::CacheUnavailable)?;
         let lease = cache
             .acquire(cache_identity.full_mod_sha256)
             .map_err(MissionAssetRestoreError::Cache)?
@@ -424,7 +422,7 @@ fn resolve_installed(
         ));
     }
     let root_name = installed_root_name(&locator.root);
-    let root = roots.selected(&locator.root).ok_or_else(|| {
+    let root = roots.selected(&locator.root).ok_or({
         InstalledAttempt::Missing(MissionAssetRestoreError::MissingInstalledRoot {
             root: root_name,
         })
@@ -988,8 +986,7 @@ mod tests {
             bundled_mods: None,
         };
         let error = resolve_native_mission_assets(&descriptor, None, &roots, None, files.clone())
-            .err()
-            .expect("tampered installed archive must fail");
+            .expect_err("tampered installed archive must fail");
         assert!(matches!(
             error,
             MissionAssetRestoreError::ArchiveIdentityMismatch { .. }
@@ -1111,8 +1108,7 @@ mod tests {
         descriptor.proto_level_filename = "DifferentMap".into();
         descriptor.map_filename = "DifferentMap".into();
         let error = resolve_cached_mission_assets(&descriptor, None, lease, files.clone())
-            .err()
-            .expect("descriptor/cache manifest mismatch must fail");
+            .expect_err("descriptor/cache manifest mismatch must fail");
         assert!(matches!(
             error,
             MissionAssetRestoreError::CacheIdentityMismatch(_)
@@ -1177,8 +1173,7 @@ mod tests {
             cache.acquire(full_hash).unwrap().unwrap(),
             files.clone(),
         )
-        .err()
-        .expect("derived guest code without embedded authority must fail");
+        .expect_err("derived guest code without embedded authority must fail");
         assert!(matches!(
             missing_authority,
             MissionAssetRestoreError::SpellforgePackageMismatch(_)

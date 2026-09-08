@@ -82,7 +82,7 @@ impl CampaignStore {
             crate::secure_fs::pin_private_root(&pinned_path)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         Ok(Self {
             root,
             root_dir: Arc::new(root_dir),
@@ -117,7 +117,7 @@ impl CampaignStore {
                 crate::secure_fs::ensure_private_dir(&root, Path::new(&shard))
             })
             .await
-            .map_err(|error| std::io::Error::other(error))??,
+            .map_err(std::io::Error::other)??,
         ))
     }
 
@@ -162,7 +162,7 @@ impl CampaignStore {
             file.sync_all()
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         let result = async {
             if !crate::secure_fs::link_immutable_object(
                 Arc::clone(&shard),
@@ -217,14 +217,14 @@ impl CampaignStore {
             crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         let mut file = tokio::fs::File::from_std(file);
         let result = async {
             let mut hasher = Sha256::new();
             let mut received = 0_u64;
             while let Some(chunk) = stream.next().await {
                 let chunk = chunk.map_err(|error| CampaignStoreError::Upload(error.to_string()))?;
-                received = received.checked_add(chunk.len() as u64).ok_or_else(|| {
+                received = received.checked_add(chunk.len() as u64).ok_or({
                     CampaignStoreError::TooLarge {
                         limit: self.max_bytes,
                     }
@@ -297,7 +297,7 @@ impl CampaignStore {
                 crate::secure_fs::open_private_dir(&root, Path::new(&shard_name))
             })
             .await
-            .map_err(|error| std::io::Error::other(error))??,
+            .map_err(std::io::Error::other)??,
         );
         self.open_pinned_verified(shard, Self::object_name(digest), digest)
             .await
@@ -315,7 +315,7 @@ impl CampaignStore {
             crate::secure_fs::open_regular_file(&opened_directory, Path::new(&opened_name))
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         verify_open_campaign_file(file, digest, self.max_bytes, true).await
     }
 
@@ -403,7 +403,7 @@ impl CampaignStore {
             Ok::<_, std::io::Error>(entries)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         for entry in &entries {
             drop(self.open_verified(&entry.sha256).await?);
         }
@@ -433,7 +433,7 @@ impl CampaignStore {
                     crate::secure_fs::ensure_private_dir(&root, Path::new(".purge"))
                 })
                 .await
-                .map_err(|error| std::io::Error::other(error))??,
+                .map_err(std::io::Error::other)??,
             )
         };
         let destination_name = format!("{}-{}.campaign", claim_token, hex::encode(digest));
@@ -472,7 +472,7 @@ impl CampaignStore {
             crate::secure_fs::sync_private_dir(&rename_purge)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         Ok(self.root.join(".purge").join(destination_name))
     }
 
@@ -503,7 +503,7 @@ impl CampaignStore {
             crate::secure_fs::sync_private_dir(&purge)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         Ok(())
     }
 }

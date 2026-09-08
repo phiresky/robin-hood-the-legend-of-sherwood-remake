@@ -3603,7 +3603,7 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
     assert_eq!(renderer.try_capture_frame_rgba().unwrap().2, expected);
     renderer.colorize_framebuffer(210.0, 0.35);
     let tinted = renderer.try_capture_frame_rgba().unwrap().2;
-    for pixel in tinted.chunks_exact(4) {
+    for pixel in tinted.as_chunks::<4>().0 {
         assert!(
             pixel[2] > pixel[0],
             "pause tint must include world and portrait: {pixel:?}"
@@ -3668,8 +3668,8 @@ fn verify_mask_atlas_pixels(gpu: GpuContext) {
                     captures.push(renderer.try_capture_frame_rgba().unwrap().2);
                 }
                 assert_eq!(captures[0], captures[1], "atlas {atlas_id} UV {uv:?}");
-                assert!(captures[0].chunks_exact(4).any(|p| p[0] == 255));
-                assert!(captures[0].chunks_exact(4).any(|p| p[0] == 0));
+                assert!(captures[0].as_chunks::<4>().0.iter().any(|p| p[0] == 255));
+                assert!(captures[0].as_chunks::<4>().0.iter().any(|p| p[0] == 0));
             }
         }
     }

@@ -65,7 +65,7 @@ pub(crate) fn open_private_dir(parent: &Dir, relative: &Path) -> std::io::Result
         if !file.metadata()?.is_dir() {
             return Err(std::io::Error::other("storage shard is not a directory"));
         }
-        return Ok(Dir::from_std_file(file));
+        Ok(Dir::from_std_file(file))
     }
     #[cfg(not(target_os = "linux"))]
     parent.open_dir(relative)
@@ -117,7 +117,7 @@ pub(crate) fn open_regular_file(parent: &Dir, name: &Path) -> std::io::Result<st
         if !file.metadata()?.is_file() {
             return Err(std::io::Error::other("stored object is not a regular file"));
         }
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -162,7 +162,7 @@ pub(crate) fn open_private_database_file(
         if file.metadata()?.permissions().mode() & 0o777 != SHARED_MUTABLE_FILE_MODE {
             file.set_permissions(std::fs::Permissions::from_mode(SHARED_MUTABLE_FILE_MODE))?;
         }
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(not(target_os = "linux"))]
     {

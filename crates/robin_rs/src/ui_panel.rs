@@ -1183,7 +1183,7 @@ fn owned_picture_surface(
         .map(|c| u16::from_le_bytes(*c))
         .collect();
     anyhow::ensure!(
-        pic.data.len() % 2 == 0,
+        pic.data.len().is_multiple_of(2),
         "portrait RGB565 payload has an incomplete pixel"
     );
     let owned = renderer

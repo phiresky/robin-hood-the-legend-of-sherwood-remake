@@ -4140,9 +4140,7 @@ mod tests {
             human: HumanData::default(),
             npc: NpcData {
                 ai: crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
-                        crate::ai_enemy::EnemyAi::default(),
-                    )),
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -4159,9 +4157,7 @@ mod tests {
             human: HumanData::default(),
             npc: NpcData {
                 ai: crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
-                        crate::ai_enemy::EnemyAi::default(),
-                    )),
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -4181,9 +4177,7 @@ mod tests {
             human: HumanData::default(),
             pc: PcData {
                 ai: Some(Box::new(crate::element::AiActorData {
-                    ai_brain: crate::element::AiBrain::Enemy(Box::new(
-                        crate::ai_enemy::EnemyAi::default(),
-                    )),
+                    ai_brain: crate::element::AiBrain::Enemy(Box::default()),
                     ..Default::default()
                 })),
                 ..Default::default()
@@ -8583,9 +8577,13 @@ mod tests {
                 ..HumanData::default()
             },
             npc: {
-                let mut npc = NpcData::default();
-                npc.money = 12;
-                npc
+                NpcData {
+                    ai: crate::element::AiActorData {
+                        money: 12,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
             },
             soldier: SoldierData {
                 cached_camp: Camp::Lacklandists,

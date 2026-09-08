@@ -1558,7 +1558,7 @@ impl InteractiveFrameSimulation {
         let keyboard_stepping_allowed = host.transport.net.is_none();
         if step_forward_pressed
             && keyboard_stepping_allowed
-            && !modal_state_pending(&host)
+            && !modal_state_pending(host)
             && !mission_ui_modal_pending
         {
             // Reuse the HTTP tick transaction, but do not auto-dismiss a
@@ -1574,7 +1574,7 @@ impl InteractiveFrameSimulation {
             }
         } else if step_back_pressed
             && keyboard_stepping_allowed
-            && !modal_state_pending(&host)
+            && !modal_state_pending(host)
             && !mission_ui_modal_pending
         {
             if let Some(target) = runtime.current_frame().previous()

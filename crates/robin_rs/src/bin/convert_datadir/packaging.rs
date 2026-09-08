@@ -1,33 +1,6 @@
 //! Deterministic payload encoding, resume validation and web manifest packaging.
 use super::*;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn diagnostic_plan_does_not_change_web_manifest_bytes() {
-        use robin_rs::multiplayer::content_identity::{
-            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
-        };
-        let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("datadir.bin"), b"boot fixture").unwrap();
-        fs::create_dir(temp.path().join("missions")).unwrap();
-        fs::write(
-            temp.path().join("missions/test.rhmission.zst"),
-            b"mission fixture",
-        )
-        .unwrap();
-        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
-        let before = fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap();
-        fs::write(temp.path().join("conversion-plan.json"), b"{}").unwrap();
-        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
-        assert_eq!(
-            fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap(),
-            before
-        );
-    }
-}
-
 pub(super) fn write_web_content_manifest(
     data_out: &Path,
     edition: robin_rs::multiplayer::content_identity::WebContentEdition,
@@ -258,4 +231,31 @@ pub(super) fn prepare_shipping_payload(
     let compressed = encode_shipping_payload(payload, window_log)?;
     let filename = shipping_payload_filename(label, window_log, &compressed);
     Ok((filename, Some(compressed)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn diagnostic_plan_does_not_change_web_manifest_bytes() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("datadir.bin"), b"boot fixture").unwrap();
+        fs::create_dir(temp.path().join("missions")).unwrap();
+        fs::write(
+            temp.path().join("missions/test.rhmission.zst"),
+            b"mission fixture",
+        )
+        .unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        let before = fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap();
+        fs::write(temp.path().join("conversion-plan.json"), b"{}").unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        assert_eq!(
+            fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap(),
+            before
+        );
+    }
 }

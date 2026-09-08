@@ -839,6 +839,12 @@ fn make_tree_writable(root: &Path) -> Result<()> {
     paths.sort_by_key(|path| path.components().count());
     for path in paths {
         let mut permissions = fs::metadata(&path)?.permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            permissions.set_mode(permissions.mode() | 0o200);
+        }
+        #[cfg(not(unix))]
         permissions.set_readonly(false);
         fs::set_permissions(path, permissions)?;
     }
@@ -1107,6 +1113,29 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("non-regular")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writable_cleanup_restores_only_owner_write_permission() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("content");
+        fs::write(&file, b"content").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o440)).unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o550)).unwrap();
+
+        make_tree_writable(root.path()).unwrap();
+
+        assert_eq!(
+            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+        assert_eq!(
+            fs::metadata(root.path()).unwrap().permissions().mode() & 0o777,
+            0o750
         );
     }
 
