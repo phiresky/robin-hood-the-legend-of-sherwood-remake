@@ -374,6 +374,17 @@ pub(super) fn init_replay_and_rollback(
             })
     };
 
+    assert_eq!(
+        is_playing_back,
+        player.is_some(),
+        "requested replay must be attached before gameplay starts"
+    );
+    tracing::info!(
+        playback = player.is_some(),
+        recording = recorder.is_some(),
+        "mission replay mode"
+    );
+
     // Rollback checker rewinds 25 frames every sim frame and re-simulates
     // to verify determinism. Disabled during replay playback (no new
     // commands to verify), when `--rollback-check=false`, on wasm, and

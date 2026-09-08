@@ -253,7 +253,11 @@ impl MissionBootstrap {
     ) {
         self.lifecycle
             .require(MissionBootstrapPhase::CampaignClockStarted);
-        if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
+        let playing_back = args.replay_data.is_some() || args.replay.is_some();
+        // Playback pins its frame-0 save markers in TimelineRuntime and replays
+        // load-back records from those immutable snapshots. It must not create
+        // a live disk Restart save or replace the user's previous recovery point.
+        if !playing_back && !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
             self.restart_save_started = match callbacks.save_manager.write_restart_save_background(
@@ -1635,8 +1639,7 @@ mod tests {
         assert_eq!(spec.frontend, MissionFrontendKind::Headless);
     }
 
-    #[test]
-    fn bootstrap_installs_save_assets_and_tracks_failed_restart_creation() {
+    fn scratch_bootstrap_fixture() -> super::MissionBootstrap {
         use super::{LoadedMissionCore, MissionBootstrap};
         use robin_engine::engine::{Engine, EngineArgs, LevelAssets, LevelLoadArgs};
 
@@ -1672,7 +1675,7 @@ mod tests {
             sim_config,
         })
         .expect("fixture level");
-        let mut bootstrap = MissionBootstrap::new(
+        MissionBootstrap::new(
             MissionSpec::interactive(0, MissionLocation::Lincoln, 1024.0, 768.0),
             crate::host::Host::scratch(1024.0, 768.0),
             crate::game::Game::new(MissionLocation::Lincoln),
@@ -1695,7 +1698,12 @@ mod tests {
                     },
             },
             &crate::main_entry::CliArgs::default(),
-        );
+        )
+    }
+
+    #[test]
+    fn bootstrap_installs_save_assets_and_tracks_failed_restart_creation() {
+        let mut bootstrap = scratch_bootstrap_fixture();
         assert_eq!(
             bootstrap.lifecycle.phase(),
             MissionBootstrapPhase::LevelInitialized
@@ -1739,6 +1747,95 @@ mod tests {
         assert_eq!(
             bootstrap.lifecycle.phase(),
             MissionBootstrapPhase::EntryPrepared
+        );
+    }
+
+    #[test]
+    fn replay_bootstrap_creates_no_restart_recording_or_autosave() {
+        let _spool = crate::http_server::replay_spool_test_lock();
+        let mut bootstrap = scratch_bootstrap_fixture();
+        let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Replay Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            robin_engine::engine::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
+        bootstrap.host =
+            crate::host::Host::new(context.clone().try_into().unwrap(), 1024.0, 768.0).unwrap();
+        let mut callbacks = crate::main_entry::RustCallbacks::new(context);
+        let descriptor = bootstrap.game.mission_assets().unwrap().clone();
+        let replay: robin_engine::replay::ReplayData = robin_engine::replay::ReplayFile {
+            header: robin_engine::replay::ReplayHeader {
+                mission_id: descriptor.mission_basename.clone(),
+                mission_assets: descriptor.clone(),
+                rng_seed: 0,
+                sim_config: bootstrap.loaded.engine_sim_config,
+                spellforge_package: None,
+                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
+                total_frames: 0,
+                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
+                campaign: bitcode::encode(&bootstrap.loaded.replay_campaign),
+            },
+            frames: Default::default(),
+            hashes: Default::default(),
+            save_markers: Default::default(),
+            load_backs: Default::default(),
+        }
+        .try_into()
+        .unwrap();
+        let args = crate::main_entry::CliArgs {
+            replay_data: Some(replay),
+            ..Default::default()
+        };
+        bootstrap.start_required_spellforge().unwrap();
+        bootstrap.lifecycle.advance(
+            MissionBootstrapPhase::SpellforgeStarted,
+            MissionBootstrapPhase::AudioPrepared,
+        );
+        bootstrap.start_campaign_clock();
+        let files_before = std::fs::read_dir(directory.path()).unwrap().count();
+        bootstrap.setup_restart_or_sherwood(&mut callbacks, &args);
+        assert!(!bootstrap.restart_save_started);
+        assert!(!callbacks.save_manager.has_restart_save());
+        assert_eq!(
+            bootstrap.lifecycle.phase(),
+            MissionBootstrapPhase::EntryPrepared
+        );
+        let replay = super::super::replay_init::init_replay_and_rollback(
+            &bootstrap.loaded.replay_campaign,
+            std::sync::Arc::new(bootstrap.loaded.assets),
+            &args,
+            0,
+            &descriptor.mission_basename,
+            descriptor.clone(),
+            0,
+            bootstrap.loaded.engine_sim_config,
+            false,
+        );
+        assert!(replay.player.is_some());
+        assert!(replay.recorder.is_none());
+        assert!(replay.rollback_checker.is_none());
+        let allowed =
+            crate::autosave::session_allows_autosave(true, false, replay.player.is_some(), false);
+        assert!(
+            callbacks
+                .plan_autosave(allowed, true, 1, 0, false, false)
+                .is_none()
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path()).unwrap().count(),
+            files_before
         );
     }
 

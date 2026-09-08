@@ -381,20 +381,22 @@ fn detected_input_taints(
 }
 
 /// A complete recorded replay loaded into memory.
+/// Validated frame maps are immutable and shared across admission/player clones.
+/// The exported ReplayFile retains the exact existing wire representation.
 #[derive(Clone, Debug)]
 pub struct ReplayData {
     header: ReplayHeader,
     /// Dense logical sequence, keyed explicitly so marker records can remain
     /// independent JSONL lines. Every frame in `0..total_frames` is present.
-    frames: BTreeMap<u32, ReplayFrame>,
+    frames: std::sync::Arc<BTreeMap<u32, ReplayFrame>>,
     /// Sparse map: expected engine state hash at the start of frame N.
-    hashes: BTreeMap<u32, u64>,
+    hashes: std::sync::Arc<BTreeMap<u32, u64>>,
     /// Save markers: frame → state hash at the pre-command boundary of
     /// that frame, where an in-mission save captured the engine state.
-    save_markers: BTreeMap<u32, ReplaySaveMarker>,
+    save_markers: std::sync::Arc<BTreeMap<u32, ReplaySaveMarker>>,
     /// Load-back records: frame → earlier save-marker frame whose
     /// captured state replaced the engine at this frame's boundary.
-    load_backs: BTreeMap<u32, ReplayLoadBack>,
+    load_backs: std::sync::Arc<BTreeMap<u32, ReplayLoadBack>>,
 }
 
 /// Flat serde-compatible snapshot of a [`ReplayData`], used as the
@@ -417,10 +419,10 @@ impl TryFrom<ReplayFile> for ReplayData {
     fn try_from(f: ReplayFile) -> Result<Self, Self::Error> {
         let mut data = Self {
             header: f.header,
-            frames: f.frames,
-            hashes: f.hashes,
-            save_markers: f.save_markers,
-            load_backs: f.load_backs,
+            frames: f.frames.into(),
+            hashes: f.hashes.into(),
+            save_markers: f.save_markers.into(),
+            load_backs: f.load_backs.into(),
         };
         data.validate_layout()?;
         data.header.rankability = data.rankability().map_err(|error| error.to_string())?;
@@ -432,10 +434,10 @@ impl From<&ReplayData> for ReplayFile {
     fn from(d: &ReplayData) -> Self {
         Self {
             header: d.header.clone(),
-            frames: d.frames.clone(),
-            hashes: d.hashes.clone(),
-            save_markers: d.save_markers.clone(),
-            load_backs: d.load_backs.clone(),
+            frames: (*d.frames).clone(),
+            hashes: (*d.hashes).clone(),
+            save_markers: (*d.save_markers).clone(),
+            load_backs: (*d.load_backs).clone(),
         }
     }
 }
@@ -450,9 +452,12 @@ impl ReplayData {
     /// Apply metadata changes transactionally. An invalid edit leaves this
     /// replay unchanged, including its reconstructed provenance evidence.
     pub fn try_edit_header(&mut self, edit: impl FnOnce(&mut ReplayHeader)) -> Result<(), String> {
-        let mut candidate = ReplayFile::from(&*self);
+        let mut candidate = self.clone();
         edit(&mut candidate.header);
-        *self = candidate.try_into()?;
+        candidate.validate_layout()?;
+        candidate.header.rankability =
+            candidate.rankability().map_err(|error| error.to_string())?;
+        *self = candidate;
         Ok(())
     }
     /// Total number of simulation frames in the replay.
@@ -464,7 +469,7 @@ impl ReplayData {
     /// canonical timeline from frame zero.
     pub fn replace_state_hashes(&mut self, hashes: BTreeMap<u32, u64>) -> Result<(), String> {
         self.validate_metadata_ordinals("hash", hashes.keys().copied())?;
-        self.hashes = hashes;
+        self.hashes = hashes.into();
         Ok(())
     }
 
@@ -538,7 +543,7 @@ impl ReplayData {
                 ));
             }
         }
-        for (&frame, load_back) in &self.load_backs {
+        for (&frame, load_back) in self.load_backs.iter() {
             let pristine_restart = frame == 0
                 && load_back.to_frame == 0
                 && self
@@ -559,7 +564,7 @@ impl ReplayData {
             }
         }
         let mut previous_after = None;
-        for (&ordinal, frame) in &self.frames {
+        for (&ordinal, frame) in self.frames.iter() {
             if frame.timeline_after < frame.timeline_before
                 || frame.timeline_after > frame.timeline_before.saturating_add(1)
             {
@@ -828,6 +833,26 @@ mod tests {
             load_backs: BTreeMap::new(),
         };
         let mut data = ReplayData::try_from(file).unwrap();
+        let mut shared = data.clone();
+        assert!(std::sync::Arc::ptr_eq(&data.frames, &shared.frames));
+        assert!(std::sync::Arc::ptr_eq(&data.hashes, &shared.hashes));
+        assert!(std::sync::Arc::ptr_eq(
+            &data.save_markers,
+            &shared.save_markers
+        ));
+        assert!(std::sync::Arc::ptr_eq(&data.load_backs, &shared.load_backs));
+        assert_eq!(
+            bitcode::encode(&ReplayFile::from(&data)),
+            bitcode::encode(&ReplayFile::from(&shared))
+        );
+        shared
+            .try_edit_header(|header| header.rng_seed = 42)
+            .unwrap();
+        assert_eq!(data.header().rng_seed, 17);
+        assert!(std::sync::Arc::ptr_eq(&data.frames, &shared.frames));
+        shared.replace_state_hashes(BTreeMap::new()).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&data.hashes, &shared.hashes));
+        assert!(std::sync::Arc::ptr_eq(&data.frames, &shared.frames));
         assert!(
             data.try_edit_header(|header| {
                 header.rng_seed = 99;
@@ -2089,10 +2114,10 @@ mod tests {
                 rankability: ReplayRankability::rankable(),
                 campaign: bitcode::encode(&crate::campaign::Campaign::default()),
             },
-            frames,
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
+            frames: frames.into(),
+            hashes: std::sync::Arc::default(),
+            save_markers: std::sync::Arc::default(),
+            load_backs: std::sync::Arc::default(),
         };
         let mut player = ReplayPlayer::new(data);
         let _ = player.next_frame();
