@@ -1450,11 +1450,13 @@ mod tests {
 
     // -- Integration tests (require game data) --
 
+    #[cfg(feature = "engine-adapters")]
     fn data_dir() -> Option<String> {
         std::env::var("ROBINHOOD_DATA_DIR").ok()
     }
 
     #[test]
+    #[cfg(feature = "engine-adapters")]
     fn test_load_res_file() {
         let Some(dir) = data_dir() else {
             eprintln!("ROBINHOOD_DATA_DIR not set, skipping integration test");
@@ -1492,6 +1494,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "engine-adapters")]
     fn test_picture_to_rgba_from_res() {
         let Some(dir) = data_dir() else {
             return;

@@ -25,9 +25,9 @@ use robin_data_io::sbfile::{SbFile, SbFileSystem};
 // SpriteVariant
 // ---------------------------------------------------------------------------
 
-// SpriteVariant lives in robin_engine (Decision 3C). Re-exported here
+// SpriteVariant lives in robin_content. Re-exported here
 // for backward-compat with existing callers.
-pub use robin_engine::sprite_variant::SpriteVariant;
+pub use robin_content::SpriteVariant;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -551,7 +551,7 @@ pub struct FrameHolder {
 /// a new COW generation and then published here, keeping every cloned
 /// `LevelAssets` handle on the same dictionary generation as the renderer.
 ///
-/// [`PixelOpacityLookup`]: robin_engine::engine::PixelOpacityLookup
+/// [`PixelOpacityLookup`]: robin_content::PixelOpacityLookup
 #[derive(Debug)]
 pub struct PublishedFrameHolder {
     current: RwLock<Arc<FrameHolder>>,
@@ -964,7 +964,11 @@ impl FrameHolder {
     ///
     /// The `.bks` file is the raw packed sprite data referenced by byte-position offsets.
     pub fn initialize_sprite_bank(&mut self, data_dir: &str) -> Result<()> {
-        self.initialize_sprite_bank_with_progress(data_dir, &mut |_| {}, None)
+        self.initialize_legacy_sprite_bank_with_progress_and_files(
+            data_dir,
+            &mut |_| {},
+            &SbFile::snapshot_legacy_file_system(),
+        )
     }
 
     /// Load both bank and dictionary through the same prepared authority.
@@ -973,7 +977,7 @@ impl FrameHolder {
         data_dir: &str,
         files: &SbFileSystem,
     ) -> Result<()> {
-        self.initialize_sprite_bank_with_progress_and_files(data_dir, &mut |_| {}, None, files)
+        self.initialize_legacy_sprite_bank_with_progress_and_files(data_dir, &mut |_| {}, files)
     }
 }
 
@@ -994,6 +998,7 @@ impl FrameHolder {
     /// Populate from a pre-parsed shipping sprite bank (no legacy I/O).
     /// Used by `initialize_sprite_bank_with_progress` when a shipping
     /// datadir is available.
+    #[cfg(feature = "engine-adapters")]
     fn load_from_shipping(
         &mut self,
         bank: &crate::shipping_datadir::ShippingSpriteBank,
@@ -1103,6 +1108,7 @@ impl FrameHolder {
     /// Emits [`ProgressUpdate::Tick`] deltas for smooth bar motion and
     /// [`ProgressUpdate::Phase`] sub-phase names (mapped by the caller
     /// onto the overall loading-bar target).
+    #[cfg(feature = "engine-adapters")]
     pub fn initialize_sprite_bank_with_progress(
         &mut self,
         data_dir: &str,
@@ -1120,6 +1126,7 @@ impl FrameHolder {
     }
 
     /// Load shipping values or legacy bank bytes using explicit file authority.
+    #[cfg(feature = "engine-adapters")]
     pub fn initialize_sprite_bank_with_progress_and_files(
         &mut self,
         data_dir: &str,
@@ -1145,6 +1152,16 @@ impl FrameHolder {
             return Ok(());
         }
 
+        self.initialize_legacy_sprite_bank_with_progress_and_files(data_dir, progress, files)
+    }
+
+    /// Load legacy bank bytes without any simulation or shipping adaptation.
+    pub fn initialize_legacy_sprite_bank_with_progress_and_files(
+        &mut self,
+        data_dir: &str,
+        progress: &mut dyn FnMut(ProgressUpdate),
+        files: &SbFileSystem,
+    ) -> Result<()> {
         progress(ProgressUpdate::Phase("Reading sprite bank file...", 0.30));
         progress(ProgressUpdate::Tick(0.5));
 
@@ -1508,7 +1525,7 @@ impl FrameHolder {
     }
 }
 
-impl robin_engine::engine::PixelOpacityLookup for FrameHolder {
+impl robin_content::PixelOpacityLookup for FrameHolder {
     fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
         self.sprites
             .get(bank_id as usize)
@@ -1601,7 +1618,7 @@ impl robin_engine::engine::PixelOpacityLookup for FrameHolder {
     }
 }
 
-impl robin_engine::engine::PixelOpacityLookup for PublishedFrameHolder {
+impl robin_content::PixelOpacityLookup for PublishedFrameHolder {
     fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
         self.current
             .read()
@@ -1623,10 +1640,7 @@ impl robin_engine::engine::PixelOpacityLookup for PublishedFrameHolder {
             .current
             .read()
             .expect("published frame-holder read lock poisoned");
-        robin_engine::engine::PixelOpacityLookup::simulation_opacity_sha256(
-            &**current,
-            sorted_bank_ids,
-        )
+        robin_content::PixelOpacityLookup::simulation_opacity_sha256(&**current, sorted_bank_ids)
     }
 }
 
@@ -2659,7 +2673,7 @@ mod tests {
     fn optimized_opacity_hash_matches_pixel_lookup_contract() {
         struct DefaultOpacity<'a>(&'a FrameHolder);
 
-        impl robin_engine::engine::PixelOpacityLookup for DefaultOpacity<'_> {
+        impl robin_content::PixelOpacityLookup for DefaultOpacity<'_> {
             fn sprite_dimensions(&self, bank_id: u32) -> Option<(u16, u16)> {
                 self.0.sprite_dimensions(bank_id)
             }
@@ -2711,9 +2725,8 @@ mod tests {
         });
 
         let ids = [0, 1];
-        let optimized =
-            robin_engine::engine::PixelOpacityLookup::simulation_opacity_sha256(&holder, &ids);
-        let reference = robin_engine::engine::PixelOpacityLookup::simulation_opacity_sha256(
+        let optimized = robin_content::PixelOpacityLookup::simulation_opacity_sha256(&holder, &ids);
+        let reference = robin_content::PixelOpacityLookup::simulation_opacity_sha256(
             &DefaultOpacity(&holder),
             &ids,
         );

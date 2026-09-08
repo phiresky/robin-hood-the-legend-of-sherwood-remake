@@ -15,6 +15,7 @@ default = []
 test-helpers = []
 
 [dependencies]
+robin_content = { workspace = true, features = ["simulation-codecs"] }
 serde-value = "0.7"
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
