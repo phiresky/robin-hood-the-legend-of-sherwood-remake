@@ -659,6 +659,27 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
+                // Lincoln's training actors each send StartUp message 2 when
+                // leaving the alert transition. That shipped callback repeatedly
+                // adds the same six members. Accept an already consistent
+                // relationship without rebuilding or disturbing the patrol.
+                // TODO(parity): the original native diagnoses even this harmless
+                // duplicate; move the repair to a mission-specific override if
+                // a narrowly scoped script correction mechanism becomes available.
+                if let (Some(chief_id), Some(sub_id)) =
+                    (self.actor_id(actor), self.actor_id(subordinate))
+                    && sub_entity
+                        .ai_controller()
+                        .is_some_and(|ai| ai.patrol_chief == Some(chief_id))
+                    && self.get_entity(actor).is_some_and(|chief| {
+                        chief.is_npc()
+                            && chief.ai_controller().is_some_and(|ai| {
+                                ai.patrol_chief.is_none() && ai.theoretical_patrol.contains(&sub_id)
+                            })
+                    })
+                {
+                    return 0;
+                }
                 // Guard 3: subordinate has no existing chief.
                 let sub_has_chief = sub_entity
                     .ai_controller()
