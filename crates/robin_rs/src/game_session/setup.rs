@@ -1562,11 +1562,11 @@ pub(super) fn pre_decode_maps_and_resources(
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     // Background + minimap bitmaps are pre-decoded inside
-    // `load_level_and_sprite_bank` — they must be decoded *before*
+    // `prepare_mission` — they must be decoded *before*
     // `Engine::new` so the engine can be constructed with real grid
     // dimensions (RAII).  This function now only handles the
     // post-engine resources (level descriptors + HUD fonts).  Let the
-    // caller use the bg/mm from `load_level_and_sprite_bank`.
+    // caller use the bg/mm carried through the mission preparation stages.
     let _ = (engine, game, host, event_pump);
 
     if let Some(ls) = loading_screen.as_mut() {
@@ -2313,7 +2313,7 @@ pub(super) fn prepare_mission(
         ground_mark: ground_mark_sprite,
         titbit_rows: titbit_row_frame_counts,
         minimap_widget,
-        screen_dimensions: (_screen_width, _screen_height),
+        screen_dimensions: (screen_width, screen_height),
     } = interface;
     let MissionLaunchSetup {
         rng_seed: authoritative_rng_seed,
@@ -2761,11 +2761,11 @@ pub(super) fn prepare_mission(
     // authority for a network mission.
     if let Some(mm) = minimap_widget {
         host.frontend.engine_display.setup_minimap_widget(
-            engine_coordinates::ScreenPoint::new(_screen_width - 83.0, 38.0),
+            engine_coordinates::ScreenPoint::new(screen_width - 83.0, 38.0),
             mm.corner_size,
             mm.button_hit_mask,
-            _screen_width,
-            _screen_height,
+            screen_width,
+            screen_height,
         );
     }
 
@@ -2852,6 +2852,8 @@ impl PreparedMission {
             launch,
             mut presentation,
         } = self;
+        #[cfg(not(all(feature = "projection-export", not(target_arch = "wasm32"))))]
+        let _ = (args, &mission_name);
         let MissionLaunchSetup {
             rng_seed,
             sim_config,
