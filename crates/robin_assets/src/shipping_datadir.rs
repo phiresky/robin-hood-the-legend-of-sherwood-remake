@@ -1277,7 +1277,7 @@ impl ShippingSpriteBank {
         _chunk: &SpriteVqChunk,
         grids: Vec<(u32, Vec<u16>)>,
     ) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
         let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
         for (sprite_id, grid) in grids {
             let sprite_id = &sprite_id;
@@ -1298,7 +1298,7 @@ impl ShippingSpriteBank {
             }
             sprite.packed_data = Arc::new(grid);
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
         if let Some(apply_start_ms) = apply_start {
             tracing::debug!(chunk = %_chunk.rhs, first_sprite = ?_chunk.sprite_ids.first(), apply_start_ms, apply_end_ms = js_sys::Date::now(),
                 "vq sprite chunk applied");
@@ -1470,7 +1470,7 @@ impl ShippingSpriteBank {
         chunk: &SpriteRleJxlChunk,
         rasters: Vec<(u32, crate::frame_holder::SpriteRaster)>,
     ) -> Result<()> {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
         let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
         for (sprite_id, raster) in rasters {
             let position = self
@@ -1494,7 +1494,7 @@ impl ShippingSpriteBank {
             }
             sprite.raster = Some(raster);
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
         if let Some(apply_start_ms) = apply_start {
             tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(), apply_start_ms, apply_end_ms = js_sys::Date::now(),
                 "rle_jxl sprite chunk applied");
