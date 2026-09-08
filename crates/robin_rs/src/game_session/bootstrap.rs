@@ -269,7 +269,10 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                Ok(()) => {
+                Ok(
+                    crate::savegame::SaveWriteStatus::Queued
+                    | crate::savegame::SaveWriteStatus::Completed,
+                ) => {
                     self.restart_save_identity = callbacks.save_manager.restart_session_identity();
                     true
                 }
