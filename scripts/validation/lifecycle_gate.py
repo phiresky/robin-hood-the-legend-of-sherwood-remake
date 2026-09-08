@@ -128,7 +128,7 @@ def browser(evidence, summary):
         result = re.search(r"test result: ok\. (\d+) passed; (\d+) failed", log.read_text())
         if not result or int(result[1]) == 0 or int(result[2]) != 0:
             raise RuntimeError("browser runner did not report a nonempty passing test suite")
-        if "web_audio_backend::" not in log.read_text():
+        if not re.search(r"test web_audio_backend::[^\n]+\.\.\. ok", log.read_text()):
             raise RuntimeError("browser runner did not execute audio ownership tests")
         summary["browser_tests_passed"] = int(result[1])
     summary["checks"] = {"audio_target_check": True, "test_module_link": True,
@@ -172,6 +172,7 @@ def native(evidence, summary):
                 saved = json.loads((live / "summary.json").read_text())["save_load"]
                 verify_replay((destination / "playback.log").read_text(),
                               saved["load_record_frame"], saved["final_record_frame"])
+                result["checks"]["save_load_post_restore_replay_hashes"] = True
             summary["checks"][name + "-" + suffix] = result
         summary[name + "_replay_sha256"] = digest(live / "export.rhrec")
     if digest(binary) != expected:
