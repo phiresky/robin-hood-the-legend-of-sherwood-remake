@@ -11,7 +11,7 @@ use robin_highscores::backup::{
     load_backup_release_identity_preserved_file, parse_backup_id,
 };
 use robin_highscores::db_fence::{
-    ExclusiveAdmissionGuard, ExclusiveQuiescenceGuard, RuntimeDatabaseFence, wait_for_pool_idle,
+    ExclusiveAdmissionGuard, ExclusiveQuiescenceGuard, RuntimeDatabaseFence,
 };
 use robin_highscores::live_schema::{LiveDatabaseSchemaProbeV2, verify_live_database_schema_v2};
 use robin_highscores::runtime_authority::{
@@ -3460,8 +3460,8 @@ async fn close_pre_exclusive_database_pool(
         (Some(Err(_)), Some(token)) => Some(database.backup_lock_token_present(token).await),
         _ => None,
     };
-    let idle_before_close = wait_for_pool_idle(database.pool()).await;
-    database.pool().close().await;
+    let idle_before_close = database.wait_for_idle().await;
+    database.close_pool_under_fence().await;
     let shared_validation = shared.revalidate();
     let runtime_validation = database.runtime_fence().revalidate();
     drop(shared);
@@ -3537,7 +3537,7 @@ async fn acquire_exclusive_backup_database_fence(
         // covered by the data fence.
         if let Some(shared) = runtime.try_acquire_one_off_shared()? {
             refresh_backup_lock(database, backup_lock).await?;
-            wait_for_pool_idle(database.pool()).await?;
+            database.wait_for_idle().await?;
             shared.revalidate()?;
             drop(shared);
         }
@@ -3559,7 +3559,7 @@ async fn acquire_exclusive_backup_database_fence(
             .acquire_shared_quiescence_while_admission_exclusive(&admission)
             .await?;
         refresh_backup_lock(database, backup_lock).await?;
-        wait_for_pool_idle(database.pool()).await?;
+        database.wait_for_idle().await?;
         shared.revalidate()?;
         drop(shared);
         anyhow::ensure!(
@@ -3570,7 +3570,7 @@ async fn acquire_exclusive_backup_database_fence(
     };
     runtime.validate_exclusive_pair(&admission, &quiescence)?;
     refresh_backup_lock(database, backup_lock).await?;
-    wait_for_pool_idle(database.pool()).await?;
+    database.wait_for_idle().await?;
     let pair = ExclusiveBackupDatabaseFence {
         runtime,
         admission,
@@ -3617,8 +3617,8 @@ where
     } else {
         None
     };
-    let idle_before_close = wait_for_pool_idle(database.pool()).await;
-    database.pool().close().await;
+    let idle_before_close = database.wait_for_idle().await;
+    database.close_pool_under_fence().await;
     let final_fence_validation = fence.revalidate();
 
     let mut cleanup_error: Option<anyhow::Error> = None;

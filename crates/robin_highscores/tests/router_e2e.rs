@@ -2292,6 +2292,68 @@ async fn truncated_three_part_multipart_fails_before_creating_submission_state()
 }
 
 #[tokio::test]
+async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once() {
+    for extra_field in [false, true] {
+        let rig = TestRig::new().await;
+        let owner = SigningKey::from_bytes(&[91; 32]);
+        rig.rename(&owner, "Workflow Robin", Ipv4Addr::new(127, 0, 9, 1))
+            .await;
+        let offer = rig
+            .issue_offer(&owner, rig.offer_request(&owner, 91), 91)
+            .await;
+        let replay = compact_replay_fixture("workflow-91");
+        let signed = signed_submission(&owner, offer, &replay, &rig.starting_campaign);
+        let request = multipart_request(&signed, &replay, &rig.starting_campaign);
+        let (parts, body) = request.into_parts();
+        let mut bytes = body.collect().await.unwrap().to_bytes().to_vec();
+        const END: &[u8] = b"\r\n--robin-router-e2e-boundary--\r\n";
+        assert!(bytes.ends_with(END));
+        if extra_field {
+            bytes.truncate(bytes.len() - END.len());
+            bytes.extend_from_slice(b"\r\n--robin-router-e2e-boundary\r\nContent-Disposition: form-data; name=\"extra\"\r\n\r\nforbidden\r\n--robin-router-e2e-boundary--\r\n");
+        } else {
+            // Valid authenticated replay, followed by an interrupted campaign.
+            bytes.truncate(bytes.len() - END.len() - 1);
+        }
+        let response = rig
+            .app
+            .clone()
+            .oneshot(Request::from_parts(parts, Body::from(bytes)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let state: (String, Option<String>) = sqlx::query_as(
+            "SELECT state, lease_token FROM submission_upload_reservations WHERE upload_challenge_id = ?",
+        )
+        .bind(signed.submission.offer.upload_challenge_id.as_str())
+        .fetch_one(rig.database.pool()).await.unwrap();
+        assert_eq!(state, ("abandoned".to_owned(), None));
+        let submissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
+            .fetch_one(rig.database.pool())
+            .await
+            .unwrap();
+        assert_eq!(submissions, 0, "partial artifacts must never be finalized");
+
+        // Cleanup releases the lease, not the immutable signed identity. An
+        // exact retry may reuse content-addressed artifacts and finalize once.
+        for _ in 0..2 {
+            let response = rig
+                .app
+                .clone()
+                .oneshot(multipart_request(&signed, &replay, &rig.starting_campaign))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+        }
+        let submissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
+            .fetch_one(rig.database.pool())
+            .await
+            .unwrap();
+        assert_eq!(submissions, 1);
+    }
+}
+
+#[tokio::test]
 async fn submission_ingress_accepts_only_the_exact_compact_transport_before_reservation() {
     let rig = TestRig::new().await;
     let owner = SigningKey::from_bytes(&[72; 32]);
