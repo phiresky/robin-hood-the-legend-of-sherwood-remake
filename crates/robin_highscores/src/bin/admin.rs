@@ -3164,8 +3164,7 @@ where
     )
     .await;
             if let Err(error) = backup_result {
-                remove_owned_partial_backup(backup_root, &partial)?;
-                return Err(error);
+                return Err(cleanup_failed_partial_backup(&database, backup_root, &partial, error).await);
             }
             let manifest_bytes = read_bounded_regular_nofollow(
                 &partial.join("backup-manifest.json"),
@@ -6025,6 +6024,26 @@ async fn add_regular_tree_capacity(
     Ok(())
 }
 
+async fn cleanup_failed_partial_backup(
+    database: &Database,
+    backup_root: &Path,
+    partial: &Path,
+    original: anyhow::Error,
+) -> anyhow::Error {
+    // VACUUM INTO uses the live pool's SQLite worker. An error can reach its
+    // awaiter before the statement and checked-out connection finish cleanup.
+    // Keep the partial in place until that worker has returned to idle.
+    if let Err(error) = database.wait_for_idle().await {
+        return original.context(format!(
+            "partial preserved because source SQL drain failed: {error:#}"
+        ));
+    }
+    match remove_owned_partial_backup(backup_root, partial) {
+        Ok(()) => original,
+        Err(error) => original.context(format!("partial backup cleanup also failed: {error:#}")),
+    }
+}
+
 fn remove_owned_partial_backup(backup_root: &Path, partial: &Path) -> anyhow::Result<()> {
     anyhow::ensure!(
         partial.parent() == Some(backup_root)
@@ -8593,6 +8612,42 @@ mod tests {
     #[tokio::test]
     async fn backup_owner_closes_destination_sqlite_on_error() {
         assert_scrub_connection_closes(false).await;
+    }
+
+    #[tokio::test]
+    async fn backup_owner_drains_source_sql_before_partial_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = ServerConfig::default();
+        config.database_path = directory.path().join("source.sqlite3");
+        let database = Database::migrate(&config).await.unwrap();
+        let partial = directory
+            .path()
+            .join(format!(".backup-v4-1-{}.partial", "a".repeat(32)));
+        std::fs::create_dir(&partial).unwrap();
+        let connection = database.pool().acquire().await.unwrap();
+        let cleanup = cleanup_failed_partial_backup(
+            &database,
+            directory.path(),
+            &partial,
+            anyhow::anyhow!("original backup failure"),
+        );
+        tokio::pin!(cleanup);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut cleanup)
+                .await
+                .is_err()
+        );
+        assert!(
+            partial.exists(),
+            "partial removed before source SQL returned to idle"
+        );
+        drop(connection);
+        let error = tokio::time::timeout(Duration::from_secs(5), cleanup)
+            .await
+            .unwrap();
+        assert_eq!(error.to_string(), "original backup failure");
+        assert!(!partial.exists());
+        database.close_fenced().await.unwrap();
     }
 
     #[tokio::test]
