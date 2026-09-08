@@ -1404,6 +1404,7 @@ impl InteractiveMissionBuilder {
         // A checkpoint belongs to one running mission, including when entry
         // into the next mission fails or takes the lost-Sherwood shortcut.
         callbacks.save_manager.clear_session_restart();
+        callbacks.begin_profile_clock_session();
 
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,

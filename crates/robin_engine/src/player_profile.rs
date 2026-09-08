@@ -938,27 +938,24 @@ pub struct CProfileScalars {
 // robin_pp_set_key_config, robin_pp_synchronize_with_campaign
 
 // FFI removed — only synchronize_with_campaign kept as normal Rust.
-/// Sync end-of-mission values into the explicitly selected profile.
+/// Project campaign metrics into the explicitly selected profile.
 ///
-/// `mission_play_time_secs` is the total play time for the mission just
-/// ending, in seconds.  Callers pass `GameCallbacks::get_current_playing_time`
-/// so any live segment that suspend-play-time has queued but not yet
-/// flushed to the campaign's mission-length counter is still counted —
-/// the callback boundary forces the split, so we take the authoritative
-/// value from the caller rather than re-reading the campaign value.
+/// `uncredited_play_time_secs` is a caller-owned, already deduplicated credit,
+/// not the mission's cumulative clock. History promotion is deliberately
+/// separate: the deterministic terminal command has not necessarily run yet.
 pub fn synchronize_with_campaign(
     profile: &mut PlayerProfile,
     campaign: &crate::campaign::Campaign,
     profiles: &crate::profiles::ProfileManager,
-    mission_play_time_secs: u32,
+    uncredited_play_time_secs: u32,
 ) {
     profile.score = campaign.get_value(CampaignValue::Score) as u32;
     profile.ransom = campaign.get_value(CampaignValue::Ransom) as u32;
     profile.progression = campaign.get_progression(profiles);
-    profile.play_time += mission_play_time_secs;
-    profile
-        .promote_campaign_history(campaign, profiles)
-        .unwrap_or_else(|error| panic!("cannot promote campaign history into profile: {error}"));
+    profile.play_time = profile
+        .play_time
+        .checked_add(uncredited_play_time_secs)
+        .expect("player profile play-time overflow");
 
     let dead = campaign.get_value(CampaignValue::DeadSoldiers) as u32;
     let alive = campaign.get_value(CampaignValue::LivingSoldiers) as u32;
