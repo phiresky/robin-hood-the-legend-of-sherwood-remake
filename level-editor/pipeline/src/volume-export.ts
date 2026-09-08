@@ -2,8 +2,8 @@ import sharp from "sharp";
 import { Document, NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS, KHRMaterialsUnlit } from "@gltf-transform/extensions";
 import { groundToScene, type MapCamera } from "@rle/shared";
-import type { Geometry } from "./volume-geometry";
-import type { Textured, Fill } from "./volume-fill";
+import type { Geometry } from "./volume-geometry.ts";
+import type { Textured, Fill } from "./volume-fill.ts";
 const ZUP_TO_YUP: [number, number, number, number] = [
   -Math.SQRT1_2,
   0,

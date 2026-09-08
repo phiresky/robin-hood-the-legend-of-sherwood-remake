@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { disposeObjectResources } from "./resources";
+import { disposeObjectResources } from "./resources.ts";
 
 test("shared source geometry, materials and all texture slots dispose once", () => {
   const geometry = new THREE.BoxGeometry();

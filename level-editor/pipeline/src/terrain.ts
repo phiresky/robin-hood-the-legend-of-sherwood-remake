@@ -8,7 +8,7 @@ import {
   type SwatchRole,
   type TerrainSpec,
 } from "@rle/shared";
-import { libraryDir } from "./env";
+import { libraryDir } from "./env.ts";
 
 export type { TerrainSpec, Road, TerrainRegion } from "@rle/shared";
 

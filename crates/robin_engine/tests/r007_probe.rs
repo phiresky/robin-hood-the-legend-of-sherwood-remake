@@ -1,11 +1,17 @@
 use robin_engine::level_data::load_level;
 
+#[allow(dead_code)]
+#[path = "../../../test-support/original_data.rs"]
+mod original_data;
+
 #[test]
+#[ignore = "requires original full-game Lincoln level data"]
 fn dump_r007_lift_geometry() {
+    let levels = original_data::data_directory("Data/Levels");
     let loaded = load_level(
         "H01_Lin_VL",
         "Lincoln",
-        "/home/phire/robinhood/datadirs/fullgame_linux/Data/Levels",
+        levels.to_str().expect("level fixture path must be UTF-8"),
         &|profile_id| profile_id == 1,
         &mut |_| {},
     )

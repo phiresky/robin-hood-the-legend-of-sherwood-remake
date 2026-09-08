@@ -1,4 +1,4 @@
-import type { MapCamera, Vec3 } from "./scene";
+import type { MapCamera, Vec3 } from "./scene.ts";
 
 /** Signed map-plane area; positive for counter-clockwise winding. */
 export function signedPolygonArea(

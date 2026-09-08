@@ -2,14 +2,14 @@
 // panel of each work/<id>/fit.png, labelled with id and fit IoU, sorted by
 // IoU ascending so the weakest fits come first.
 //
-//   tsx src/contact-sheet.ts --map york [--cell 220] [--cols 8]
+//   node src/contact-sheet.ts --map york [--cell 220] [--cols 8]
 //   -> work/<map>-scene/contact.png
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor, LibraryIndexEntry } from "@rle/shared";
-import { libraryDir, workDir } from "./env";
-import { fileExists } from "./mesh";
+import { libraryDir, workDir } from "./env.ts";
+import { fileExists } from "./mesh.ts";
 
 async function main() {
   const argv = process.argv.slice(2);

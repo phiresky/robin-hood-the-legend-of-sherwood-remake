@@ -2,7 +2,7 @@
 // "block" detection, so SAM 3D reconstructs the block as a single model
 // instead of cutting shared walls and roofs apart.
 //
-//   tsx src/merge-detections.ts --detections work/york-scene/detections.json
+//   node src/merge-detections.ts --detections work/york-scene/detections.json
 //       [--auto] [--gap 4] [--min-contact 30] [--max-members 4] [--max-side 900]
 //       [--groups b012+b013,b040+b041+b042]
 //
@@ -15,9 +15,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import type { Bbox } from "./clip";
-import { findMapPng } from "./asset-writer";
-import type { Detection, DetectionsFile } from "./reconstruct";
+import type { Bbox } from "./clip.ts";
+import { findMapPng } from "./asset-writer.ts";
+import type { Detection, DetectionsFile } from "./reconstruct.ts";
 
 interface Loaded extends Detection {
   data: Uint8Array;

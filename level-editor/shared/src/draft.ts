@@ -46,6 +46,6 @@ export interface MapDraft {
   /** wall runs stitched from spline-segment assets */
   walls?: WallRun[];
   /** synthesized ground layer (roads, material regions, swatch bindings) */
-  terrain?: import("./terrain").TerrainSpec;
+  terrain?: import("./terrain.ts").TerrainSpec;
   notes?: string;
 }

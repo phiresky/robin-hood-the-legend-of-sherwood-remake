@@ -1,6 +1,6 @@
-import type { Level3D } from "./level3d";
-import type { ProtoLevel } from "./level";
-import type { SceneDoc } from "./scene";
+import type { Level3D } from "./level3d.ts";
+import type { ProtoLevel } from "./level.ts";
+import type { SceneDoc } from "./scene.ts";
 
 function object(v: unknown, path: string): Record<string, any> {
   if (!v || typeof v !== "object" || Array.isArray(v))

@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { readDocument } from "./inputs";
-import { bake } from "./bake";
+import { readDocument } from "./inputs.ts";
+import { bake } from "./bake.ts";
 
 test("only a missing implicit document permits an unedited bake", async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bake-input-test-"));

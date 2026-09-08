@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { isMissing } from "./provider-cache";
+import { isMissing } from "./provider-cache.ts";
 
 /** Only an absent optional default means no document. Explicit paths, bad JSON,
  * and permission/I/O failures must stop before reconstruction or export. */

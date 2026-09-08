@@ -1,13 +1,13 @@
 // Synthesize a diagonal wall slice by vertically shearing a horizontal one:
 // column x shifts down by tan(angle)*x. Height and texture stay consistent
 // with the source family by construction.
-//   tsx src/shear-wall.ts <slice-asset-id> <angleDeg>
+//   node src/shear-wall.ts <slice-asset-id> <angleDeg>
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor } from "@rle/shared";
-import { libraryDir } from "./env";
-import { writeAsset } from "./library";
+import { libraryDir } from "./env.ts";
+import { writeAsset } from "./library.ts";
 
 async function shearPng(png: Buffer, slope: number): Promise<Buffer> {
   const img = sharp(png).ensureAlpha();
@@ -35,7 +35,7 @@ async function shearPng(png: Buffer, slope: number): Promise<Buffer> {
 async function main() {
   const id = process.argv[2];
   const angle = Number(process.argv[3]);
-  if (!id || Number.isNaN(angle)) throw new Error("usage: tsx src/shear-wall.ts <id> <angleDeg>");
+  if (!id || Number.isNaN(angle)) throw new Error("usage: node src/shear-wall.ts <id> <angleDeg>");
   const srcDir = path.join(libraryDir, id);
   const desc: AssetDescriptor = JSON.parse(
     await fs.readFile(path.join(srcDir, "asset.json"), "utf8"),

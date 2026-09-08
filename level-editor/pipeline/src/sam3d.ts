@@ -17,14 +17,14 @@ import type {
   Sam33dObjectsOutput,
 } from "@fal-ai/client/endpoints";
 import type { ModelPose } from "@rle/shared";
-import { requireEnv, workDir } from "./env";
+import { requireEnv, workDir } from "./env.ts";
 import {
   cacheDirectory,
   contentKey,
   cachedArtifacts,
   validateGlb,
   type CacheOptions,
-} from "./provider-cache";
+} from "./provider-cache.ts";
 
 const ENDPOINT = "fal-ai/sam-3/3d-objects";
 

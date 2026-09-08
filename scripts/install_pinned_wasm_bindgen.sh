@@ -31,7 +31,7 @@ curl \
     --retry-all-errors \
     --output "$archive" \
     "$distribution_url"
-printf '%s  %s\n' "$distribution_sha256" "$archive" | sha256sum --check --strict -
+printf '%s  %s\n' "$distribution_sha256" "$archive" | sha256sum --check --strict - >&2
 actual_length="$(wc -c < "$archive")"
 if [[ "$actual_length" != "$distribution_length" ]]; then
     echo "unexpected wasm-bindgen-cli distribution byte length: $actual_length" >&2
@@ -47,7 +47,7 @@ if [[ ! -f "$packaged_lock" || -L "$packaged_lock" ]]; then
     echo "pinned wasm-bindgen-cli distribution has no regular Cargo.lock" >&2
     exit 1
 fi
-printf '%s  %s\n' "$packaged_lock_sha256" "$packaged_lock" | sha256sum --check --strict -
+printf '%s  %s\n' "$packaged_lock_sha256" "$packaged_lock" | sha256sum --check --strict - >&2
 actual_lock_length="$(wc -c < "$packaged_lock")"
 if [[ "$actual_lock_length" != "$packaged_lock_length" ]]; then
     echo "unexpected packaged Cargo.lock byte length: $actual_lock_length" >&2

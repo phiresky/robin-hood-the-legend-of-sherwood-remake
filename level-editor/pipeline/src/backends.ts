@@ -7,14 +7,14 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fal } from "@fal-ai/client";
-import { requireEnv, workDir } from "./env";
+import { requireEnv, workDir } from "./env.ts";
 import {
   cacheDirectory,
   contentKey,
   cachedArtifacts,
   validateGlb,
   type CacheOptions,
-} from "./provider-cache";
+} from "./provider-cache.ts";
 
 export type Backend = "sam3d" | "trellis2" | "tripo" | "hunyuan";
 export const ALT_BACKENDS: Exclude<Backend, "sam3d">[] = [

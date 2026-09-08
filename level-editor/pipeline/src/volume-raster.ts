@@ -1,5 +1,5 @@
 import { sceneToMap, type MapCamera } from "@rle/shared";
-import { cross, type Geometry } from "./volume-geometry";
+import { cross, type Geometry } from "./volume-geometry.ts";
 export interface Owners {
   /** face id per map pixel, -1 = ground */
   owner: Int32Array;

@@ -6,10 +6,10 @@ import path from "node:path";
 import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import { type MapCamera, type SightObstacle } from "@rle/shared";
-import { buildGeometry } from "./volume-geometry";
-import { rasterOwners } from "./volume-raster";
-import { buildTextures, synthesisOptions } from "./volume-fill";
-import { exportGlb } from "./volume-export";
+import { buildGeometry } from "./volume-geometry.ts";
+import { rasterOwners } from "./volume-raster.ts";
+import { buildTextures, synthesisOptions } from "./volume-fill.ts";
+import { exportGlb } from "./volume-export.ts";
 
 const cam: MapCamera = { kind: "oblique-orthographic", elevation_deg: 35 };
 function obstacle(x: number, opaque: boolean): SightObstacle {

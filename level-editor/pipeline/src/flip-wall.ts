@@ -1,15 +1,15 @@
 // Create a horizontally mirrored variant of a wall slice (direction negates).
-//   tsx src/flip-wall.ts <slice-asset-id>
+//   node src/flip-wall.ts <slice-asset-id>
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor } from "@rle/shared";
-import { libraryDir } from "./env";
-import { writeAsset } from "./library";
+import { libraryDir } from "./env.ts";
+import { writeAsset } from "./library.ts";
 
 async function main() {
   const id = process.argv[2];
-  if (!id) throw new Error("usage: tsx src/flip-wall.ts <asset-id>");
+  if (!id) throw new Error("usage: node src/flip-wall.ts <asset-id>");
   const srcDir = path.join(libraryDir, id);
   const desc: AssetDescriptor = JSON.parse(
     await fs.readFile(path.join(srcDir, "asset.json"), "utf8"),

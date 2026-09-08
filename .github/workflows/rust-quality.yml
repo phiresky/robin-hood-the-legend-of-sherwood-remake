@@ -41,7 +41,7 @@ jobs:
 
   test:
     name: Rust / ${{ matrix.suite }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     strategy:
       fail-fast: false
       matrix:
@@ -70,6 +70,14 @@ jobs:
             libvulkan1 \
             mesa-vulkan-drivers \
             pkg-config
+
+      - name: Install verifier sandbox prerequisites
+        if: matrix.suite == 'services'
+        run: |
+          sudo apt-get install -y bubblewrap
+          # The verifier executes a pinned copy through /proc/self/fd, so the
+          # distro path-based AppArmor exception for bwrap does not apply.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
@@ -131,7 +139,7 @@ jobs:
 
   tooling:
     name: Fixture-free orchestration
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
       - name: Install test prerequisites
@@ -141,19 +149,17 @@ jobs:
 
   editor:
     name: Editor / tests, types and build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v5
-      - name: Install pinned pnpm
-        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - name: Install pinned pnpm and Node.js
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
         with:
-          version: 9.15.0
-      - name: Install pinned Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
-        with:
-          node-version: 24.19.0
-          cache: pnpm
-          cache-dependency-path: level-editor/pnpm-lock.yaml
+          version: 12.3.4
+          runtime: node@24.19.0
+          working-directory: level-editor
+          cache: true
+          install: false
       - name: Install locked editor dependencies
         run: pnpm --dir level-editor install --frozen-lockfile
       - name: Verify editor
