@@ -12,6 +12,7 @@ use super::filesystem::open_cap_regular_nofollow;
 use super::filesystem::pin_directory_capability;
 use super::filesystem::pinned_file_target;
 use super::filesystem::read_bounded_pinned_file;
+#[cfg(test)]
 use super::filesystem::read_bounded_regular_nofollow;
 use super::filesystem::read_cap_regular_bounded;
 use super::filesystem::read_cap_regular_bounded_with_mode;
@@ -29,6 +30,7 @@ use super::policy::DEFAULT_BACKUP_ROOT;
 use super::policy::DEFAULT_BACKUP_STATUS;
 use super::policy::INSTALLED_RELEASE_ROOT;
 use super::policy::RELEASE_AUTHORITY_STORE;
+#[cfg(test)]
 use super::sources::load_preserved_release_authority;
 use super::sources::pin_preserved_release_authority_from_root;
 use robin_highscores::backup::BackupCurrentStatusEvidenceV2;
