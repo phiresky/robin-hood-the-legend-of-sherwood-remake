@@ -41,5 +41,39 @@ main before integration. Untracked `original-code/` remains untouched.
   renderer are both live, not the outer mission whose runtime moves into an exit
   outcome. Standalone main-menu renderer lifetime already encloses its resources.
 
-TODO: record implementation commits, independent review findings, combined
-acceptance, exact binary/browser provenance, recovery bundle and remaining limits.
+### Implemented boundaries
+
+- [Session authority and protocol state](REFACTOR_SESSION_PROTOCOL.md): one
+  synchronous authorization boundary spans validation and publication. Four
+  cohesive components own readiness, snapshot transitions, co-sign requests and
+  ranked admission. Stale readers cannot mutate a successor's state.
+- [Mission GPU resources](REFACTOR_GPU_BANKS.md) and
+  [menu sprite banks](REFACTOR_MENU_BANKS.md): migrated draws use renderer-bound
+  handles; candidate replacements validate before retiring old resources.
+  Private sprite banks preserve sparse frames, fallback geometry and unique
+  ownership. Lazy menu lookups validate provenance in constant time.
+- Mission loading now consumes explicit preparation, engine-construction and
+  presentation-attachment stages. Failed construction returns the original
+  campaign allocation; stage deserialization cannot recreate runtime authority.
+  Interactive terrain remains deferred until presentation upload; headless
+  terrain joins before runtime construction.
+
+Independent review found a networking cancellation race: rejecting a buffered
+message after detachment could cancel the writer before its queued transition
+commit reached the peer. The fix preserves the original pinned writer for a
+bounded drain after any typed inactive-session outcome. The regression exercises
+the production dispatcher and I/O driver for commit, reconnect, replacement and
+release, plus a stalled-writer timeout. This tests an already-started waiting
+writer, not a partially transmitted QUIC frame. EOF/error classification was
+code-reviewed rather than covered by a dedicated test. No remaining review
+blockers were identified.
+
+### Acceptance checkpoints
+
+- `098f00021`: 42 focused release-native networking tests passed.
+- `d120b1a39`: full default-client tests passed, including 33 integration tests
+  and seven doctests. Named Vulkan execution passed, including actual menu and
+  mission ownership, foreign-handle rejection, reload and queued retirement.
+
+TODO: record final combined acceptance, exact binary/browser provenance,
+recovery bundle and remaining limits before merging into main.
