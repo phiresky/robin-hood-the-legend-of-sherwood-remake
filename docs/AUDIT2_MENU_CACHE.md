@@ -27,11 +27,19 @@ arithmetic key collisions, sparse slots, malformed encoded pictures, and failed
 recovery. Extended the existing named GPU ownership gate with source separation,
 rebinding invalidation, local corruption versus external fallback, and retirement.
 
-`cargo fmt --all` and `git diff --check` run locally. No compilation or test success
-is claimed: the coordinator requested combined validation to avoid parallel cold
-builds. Required integration suites: `cargo test -p robin_assets`, affected
-`robin_rs` menu tests, and the named Vulkan GPU ownership gate. The existing
-resource wire-contract test must continue passing.
+Formatting and whitespace checks passed. Coordinated acceptance passed: asset
+library 142 tests plus unchanged resource wire contracts (`9f0b52c2a`); default
+client 1578 tests (`f5f531c7`); pure assets 76 tests plus five fixture tests without
+engine adapters (`07520a632`); resolved dependency boundary; and the named Vulkan
+GPU execution gate (`07520a632`). The GPU fixture initially failed before cache
+assertions because `from_value` rejected a flattened integer-map representation.
+Test-only `3ddb65de6` uses real SRES/PIC loading and the public shipping encoder;
+source/clone/rebind/corruption/retirement assertions all passed on rerun.
+
+Additional native GL execution could not obtain an adapter because amd64
+EGL/GLES libraries are absent. It is not reported green. Browser protocol/audio
+24/24 passed, but is not full-game browser GPU coverage. Full provenance and
+limits: [final acceptance](AUDIT2_PLAN.md#final-acceptance).
 
 ## Remaining tradeoff
 

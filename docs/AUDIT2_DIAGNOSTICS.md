@@ -40,10 +40,12 @@ ranges, exact-frame precedence, missing/malformed/overflow/reversed filters,
 supported owner kinds, exact/optional creation filters, and Unix non-Unicode
 values. They never read or write the process environment.
 
-`cargo fmt --all` and `git diff --check` were run locally. Cargo compilation and
-tests are intentionally delegated to the combined integration lane to avoid
-duplicated cold targets. Required acceptance: explicit `cargo test -p robin_engine`
-(including `engine::diagnostics::tests`) and existing replay/hash validation.
+Formatting and whitespace checks passed. Coordinated engine suite passed at
+`9f0b52c2a`: 4472 tests, including all eight parser/filter regressions, with four
+ignored. Fresh native ordinary/save-load headless and graphical EOF replays and
+both multiplayer rollback/hash scenarios passed against the retained `f5f531c7`
+binary. See [final acceptance](AUDIT2_PLAN.md#final-acceptance); no original
+licensed parity corpus execution is claimed.
 
 TODO: diagnostic gates in other subsystems (sprite row tracing, command-specific
 capture and parity tools) remain outside this bounded engine tick/movement pass.

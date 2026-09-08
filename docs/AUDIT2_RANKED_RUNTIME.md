@@ -26,15 +26,17 @@ Added focused tests for delayed signer ownership and retirement, duplicate peer 
 
 The actual host `try_take` driver additionally has deterministic tests for delayed signer error/wrong operation, wrong local identity, wrong response instance, terminal re-poll without inbox consumption, valid final response with and without a queued duplicate, and failure after one successful remote publication without retry. The success test reaches the existing complete cryptographic validator. A closed transport adapter has a fixture variant only under `cfg(test)`; normal builds retain only the authenticated transport.
 
-`cargo fmt --all` and `git diff --check` pass. No Cargo build or test suite was run in this isolated worktree: the coordinator requested shared integration validation to avoid multiple cold frontend targets.
+Formatting and whitespace checks passed. Coordinated final acceptance at `f5f531c7` passed: default client 1578 library tests plus all integrations/doctests, release library 1682 tests, and the focused signing suite 8/8. The first full default run exposed an invalid test offer expiry; `7b61d5130` derives it from the retained signed grant without changing any validator.
 
-Required integration checks:
+Additional executed integration checks:
 
 - `cargo test --locked -p robin_rs` (includes existing admission/terminal materialization tests and new signing tests).
 - Release-feature library suite, especially `game_session::leaderboard_runtime`, `leaderboard_mission_end`, ranked lifecycle and multiplayer authorization suites.
-- Browser audio/multiplayer compile and browser tests to compile the relocated asynchronous signing adapters.
+- Browser audio/multiplayer target checks, linked module and real Chrome 24/24 passed. `018c78214` supplied a narrow sibling receipt-controller API after the initial browser compile exposed private-field access.
 
-The partial-publication regression injects an itinerary after constructing validated single-player evidence, to isolate the task's non-retry boundary; it does not assert multiplayer roster/admission validity. These tests do not run real network I/O or durable browser signing. Existing transport and browser suites remain required.
+Both native binaries built; isolated headless and graphical multiplayer scenarios passed all ten checks each, and all four native replay/save-load lifecycle phases passed. [Final acceptance](AUDIT2_PLAN.md#final-acceptance) records exact artifacts and limits.
+
+The partial-publication regression injects an itinerary after constructing validated single-player evidence, to isolate the task's non-retry boundary; it does not assert multiplayer roster/admission validity. These focused task tests do not themselves run real network I/O or durable browser signing; the separately executed transport/browser gates have the narrower coverage documented above.
 
 ## Concurrent work seam
 

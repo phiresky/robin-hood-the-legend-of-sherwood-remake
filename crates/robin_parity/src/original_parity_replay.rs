@@ -4717,7 +4717,7 @@ impl VisualReplay {
         self.host.frontend.viewport.view_position =
             MapPoint::new((focus.x - 512.0).max(0.0), (focus.y - 319.0).max(0.0));
         self.host.frontend.viewport.zoom_factor = 1.0;
-        engine.draw_background(&mut self.host, &mut self.renderer);
+        engine.draw_background(&self.host.frontend.viewport, &mut self.renderer);
 
         let mut entities: Vec<_> = engine.entities_with_ids_iter().collect();
         entities.sort_by(|(_, left), (_, right)| {
