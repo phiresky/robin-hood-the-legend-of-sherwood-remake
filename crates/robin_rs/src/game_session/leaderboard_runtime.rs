@@ -873,13 +873,22 @@ mod tests {
     pub(super) fn signed_single_player_admission(
         campaign_bytes: &[u8],
     ) -> (RankedMissionAdmission, robin_engine::replay::ReplayData) {
+        signed_single_player_admission_for_key(
+            campaign_bytes,
+            &ed25519_dalek::SigningKey::from_bytes(&[0x44; 32]),
+        )
+    }
+
+    pub(super) fn signed_single_player_admission_for_key(
+        campaign_bytes: &[u8],
+        key: &ed25519_dalek::SigningKey,
+    ) -> (RankedMissionAdmission, robin_engine::replay::ReplayData) {
         let mission_id = "Dem_Lei_MP";
         let config = test_ranked_config(campaign_bytes);
-        let key = ed25519_dalek::SigningKey::from_bytes(&[0x44; 32]);
         let host = crate::leaderboard_ranked_session::RankedSessionHost::new_official(
-            &key,
+            key,
             robin_engine::multiplayer::NET_PROTOCOL_VERSION,
-            official_fresh_setup(&key, config),
+            official_fresh_setup(key, config),
         )
         .unwrap();
         let replay = ReplayFile {
