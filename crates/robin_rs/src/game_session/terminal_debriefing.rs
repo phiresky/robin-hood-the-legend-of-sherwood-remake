@@ -8,6 +8,7 @@ use super::interactive::{
 };
 use super::*;
 use crate::game::Game;
+use crate::ingame_menu::modal_net::ModalDismissalGate;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -135,6 +136,8 @@ struct TerminalDebriefingPage {
 
 enum TerminalDebriefingPhase {
     MissionState(crate::ingame_menu::MissionStatePopupState),
+    /// Includes retrying a failed publication as well as awaiting a successfully
+    /// proposed client decision; the gate retains that distinction and outcome.
     AwaitingMissionAuthority,
     Debriefing(crate::ingame_menu::DebriefingModalState),
     LoadPicker {
@@ -153,6 +156,8 @@ enum TerminalDebriefingPhase {
 
 pub(super) struct TerminalDebriefingState {
     decisions: super::session_policy::TerminalDecisionOrder,
+    popup_dismissal: ModalDismissalGate,
+    final_dismissal: ModalDismissalGate,
     exit_code: GameCode,
     popup_kind: engine_player_command::ModalKind,
     page: TerminalDebriefingPage,
@@ -286,6 +291,8 @@ impl TerminalDebriefingState {
                 None,
             ));
         Self {
+            popup_dismissal: ModalDismissalGate::default(),
+            final_dismissal: ModalDismissalGate::default(),
             decisions: super::session_policy::TerminalDecisionOrder::new(
                 page.won,
                 match page.kind {
@@ -321,6 +328,15 @@ impl TerminalDebriefingState {
                 serde_json::to_string(&kind).expect("ModalKind serializes"),
                 serde_json::to_string(&current).expect("ModalKind serializes")
             ));
+        }
+        if self.http_result.is_some()
+            || self.popup_dismissal.is_pending()
+            || self.final_dismissal.is_pending()
+        {
+            return Err(
+                "terminal modal already retains a local decision pending publication or authority"
+                    .to_owned(),
+            );
         }
         self.http_result = Some((kind, result));
         Ok(())
@@ -361,6 +377,7 @@ impl TerminalDebriefingState {
         self.decisions
             .accept(&self.popup_kind, result)
             .unwrap_or_else(|error| panic!("terminal popup admission: {error}"));
+        self.popup_dismissal.retire();
         context
             .frame
             .modal_dismissals
@@ -384,6 +401,7 @@ impl TerminalDebriefingState {
         self.decisions
             .accept(&self.page.kind, result)
             .unwrap_or_else(|error| panic!("terminal final admission: {error}"));
+        self.final_dismissal.retire();
         context
             .frame
             .modal_dismissals
@@ -407,26 +425,26 @@ impl TerminalDebriefingState {
     fn poll_authoritative_decision(
         context: &TerminalDebriefingContext<'_>,
         kind: engine_player_command::ModalKind,
+        dismissal: &mut ModalDismissalGate,
     ) -> Option<engine_player_command::DialogResult> {
-        Self::modal_net(context, kind).and_then(|modal| modal.poll_remote_dismissal())
+        dismissal.poll(Self::modal_net(context, kind).as_ref())
     }
 
     fn publish_or_accept_local(
         context: &TerminalDebriefingContext<'_>,
         kind: engine_player_command::ModalKind,
         result: engine_player_command::DialogResult,
-    ) -> bool {
-        let Some(modal) = Self::modal_net(context, kind) else {
-            return true;
-        };
-        modal.publish(result);
-        modal.is_authority()
+        dismissal: &mut ModalDismissalGate,
+    ) -> Option<engine_player_command::DialogResult> {
+        dismissal.request(result, Self::modal_net(context, kind).as_ref())
     }
 
     fn tick(&mut self, context: &mut TerminalDebriefingContext<'_>) -> TerminalDebriefingProgress {
         if let Some((kind, result)) = self.http_result.take() {
             if kind == self.popup_kind {
-                if Self::publish_or_accept_local(context, kind, result) {
+                if let Some(result) =
+                    Self::publish_or_accept_local(context, kind, result, &mut self.popup_dismissal)
+                {
                     self.record_popup_decision(context, result);
                 } else {
                     self.phase = TerminalDebriefingPhase::AwaitingMissionAuthority;
@@ -437,7 +455,9 @@ impl TerminalDebriefingState {
                 if let TerminalDebriefingPhase::LoadPicker { picker, .. } = &mut self.phase {
                     picker.close(&mut context.presentation.renderer);
                 }
-                if Self::publish_or_accept_local(context, kind, result) {
+                if let Some(result) =
+                    Self::publish_or_accept_local(context, kind, result, &mut self.final_dismissal)
+                {
                     return self.finish_final_decision(context, result);
                 }
                 self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
@@ -454,9 +474,11 @@ impl TerminalDebriefingState {
 
         match &mut self.phase {
             TerminalDebriefingPhase::MissionState(state) => {
-                if let Some(result) =
-                    Self::poll_authoritative_decision(context, self.popup_kind.clone())
-                {
+                if let Some(result) = Self::poll_authoritative_decision(
+                    context,
+                    self.popup_kind.clone(),
+                    &mut self.popup_dismissal,
+                ) {
                     self.record_popup_decision(context, result);
                     return TerminalDebriefingProgress::Pending;
                 }
@@ -483,7 +505,12 @@ impl TerminalDebriefingState {
                 } else {
                     engine_player_command::DialogResult::Aborted
                 };
-                if Self::publish_or_accept_local(context, self.popup_kind.clone(), result) {
+                if let Some(result) = Self::publish_or_accept_local(
+                    context,
+                    self.popup_kind.clone(),
+                    result,
+                    &mut self.popup_dismissal,
+                ) {
                     self.record_popup_decision(context, result);
                 } else {
                     self.phase = TerminalDebriefingPhase::AwaitingMissionAuthority;
@@ -491,9 +518,11 @@ impl TerminalDebriefingState {
                 TerminalDebriefingProgress::Pending
             }
             TerminalDebriefingPhase::AwaitingMissionAuthority => {
-                if let Some(result) =
-                    Self::poll_authoritative_decision(context, self.popup_kind.clone())
-                {
+                if let Some(result) = Self::poll_authoritative_decision(
+                    context,
+                    self.popup_kind.clone(),
+                    &mut self.popup_dismissal,
+                ) {
                     self.record_popup_decision(context, result);
                 }
                 TerminalDebriefingProgress::Pending
@@ -505,9 +534,11 @@ impl TerminalDebriefingState {
                 ) {
                     return self.finish_final_decision(context, result);
                 }
-                if let Some(result) =
-                    Self::poll_authoritative_decision(context, self.page.kind.clone())
-                {
+                if let Some(result) = Self::poll_authoritative_decision(
+                    context,
+                    self.page.kind.clone(),
+                    &mut self.final_dismissal,
+                ) {
                     return self.finish_final_decision(context, result);
                 }
                 let resources = context
@@ -564,7 +595,12 @@ impl TerminalDebriefingState {
                     DebriefingOutcome::LoadAttempt { .. } => unreachable!(),
                 };
                 let result = final_debriefing_result(&settled);
-                if Self::publish_or_accept_local(context, self.page.kind.clone(), result) {
+                if let Some(result) = Self::publish_or_accept_local(
+                    context,
+                    self.page.kind.clone(),
+                    result,
+                    &mut self.final_dismissal,
+                ) {
                     self.finish_final_decision(context, result)
                 } else {
                     self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
@@ -624,7 +660,12 @@ impl TerminalDebriefingState {
                     SaveLoadOutcome::Slot(slot) => {
                         let result =
                             engine_player_command::DialogResult::Load { slot: slot as u32 };
-                        if Self::publish_or_accept_local(context, self.page.kind.clone(), result) {
+                        if let Some(result) = Self::publish_or_accept_local(
+                            context,
+                            self.page.kind.clone(),
+                            result,
+                            &mut self.final_dismissal,
+                        ) {
                             self.finish_final_decision(context, result)
                         } else {
                             self.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
@@ -634,9 +675,11 @@ impl TerminalDebriefingState {
                 }
             }
             TerminalDebriefingPhase::AwaitingFinalAuthority => {
-                if let Some(result) =
-                    Self::poll_authoritative_decision(context, self.page.kind.clone())
-                {
+                if let Some(result) = Self::poll_authoritative_decision(
+                    context,
+                    self.page.kind.clone(),
+                    &mut self.final_dismissal,
+                ) {
                     self.finish_final_decision(context, result)
                 } else {
                     TerminalDebriefingProgress::Pending
@@ -886,6 +929,105 @@ pub(super) fn drive_tick_exit_modals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_http_cannot_replace_a_retained_failed_decision() {
+        use robin_engine::multiplayer::{MultiplayerSessionId, NetChannels};
+        use robin_engine::player_command::{DebriefingTextId, DialogResult, ModalKind};
+        let text_id = DebriefingTextId::from_outcome(true, 0);
+        let mut state = TerminalDebriefingState {
+            decisions: super::super::session_policy::TerminalDecisionOrder::new(true, text_id),
+            popup_dismissal: ModalDismissalGate::default(),
+            final_dismissal: ModalDismissalGate::default(),
+            exit_code: GameCode::LevelSucceeded,
+            popup_kind: ModalKind::MissionState {
+                kind: engine_player_command::MissionStateModalKind::EndState { won: true },
+            },
+            page: TerminalDebriefingPage {
+                kind: ModalKind::FinalDebriefing { text_id },
+                body: String::new(),
+                mission_length: 0,
+                quick_load_key: None,
+                restart_allowed: false,
+                restart_snapshot_exists: false,
+                mission_id: 1,
+                won: true,
+                mission_stat: Default::default(),
+            },
+            phase: TerminalDebriefingPhase::AwaitingMissionAuthority,
+            leaderboard_preparation: None,
+            http_result: None,
+        };
+        let popup = state.popup_kind.clone();
+        state
+            .queue_http_result(popup.clone(), DialogResult::Aborted)
+            .unwrap();
+        assert!(
+            state
+                .queue_http_result(popup.clone(), DialogResult::Completed)
+                .is_err()
+        );
+        assert_eq!(
+            state.http_result.take(),
+            Some((popup.clone(), DialogResult::Aborted))
+        );
+
+        for final_page in [false, true] {
+            let (net, _incoming, outgoing, _, _) = NetChannels::new();
+            net.install_session_id(MultiplayerSessionId([9; 32]))
+                .unwrap();
+            drop(outgoing);
+            let kind = if final_page {
+                state.page.kind.clone()
+            } else {
+                popup.clone()
+            };
+            let modal = crate::ingame_menu::ModalNet::new(&net, kind.clone(), true);
+            let gate = if final_page {
+                &mut state.final_dismissal
+            } else {
+                &mut state.popup_dismissal
+            };
+            let result = if final_page {
+                DialogResult::Load { slot: 7 }
+            } else {
+                DialogResult::Aborted
+            };
+            assert_eq!(gate.request(result, Some(&modal)), None);
+            assert_eq!(gate.poll(Some(&modal)), None);
+            assert!(
+                state
+                    .queue_http_result(kind.clone(), DialogResult::Completed)
+                    .is_err()
+            );
+            assert!(state.http_result.is_none());
+            assert_eq!(
+                state.current_kind(),
+                Some(kind.clone()),
+                "failed publication cannot advance terminal decision order"
+            );
+            let (replacement, _incoming, outgoing, _, _) = NetChannels::new();
+            replacement
+                .install_session_id(MultiplayerSessionId([9; 32]))
+                .unwrap();
+            let replacement = crate::ingame_menu::ModalNet::new(&replacement, kind.clone(), true);
+            let gate = if final_page {
+                &mut state.final_dismissal
+            } else {
+                &mut state.popup_dismissal
+            };
+            assert_eq!(gate.poll(Some(&replacement)), Some(result));
+            assert!(matches!(
+                outgoing.try_recv().unwrap(),
+                robin_engine::multiplayer::NetOutbound::ModalDecision {
+                    result: observed,
+                    ..
+                } if observed == result
+            ));
+            state.decisions.accept(&kind, result).unwrap();
+        }
+        assert_eq!(state.current_kind(), None);
+    }
 
     #[test]
     fn playback_terminal_keeps_recorded_update_and_debrief_progression() {

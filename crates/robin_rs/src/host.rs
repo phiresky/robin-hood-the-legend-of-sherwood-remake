@@ -66,6 +66,8 @@ struct ApplicationServices {
     #[serde(skip)]
     asset_cache: Option<crate::process_asset_cache::ApplicationAssetCache>,
     #[serde(skip)]
+    cache_maintenance: crate::cache_maintenance::CacheMaintenance,
+    #[serde(skip)]
     preparation_files: Option<Arc<robin_engine::sbfile::SbFileSystem>>,
     #[serde(skip)]
     profile_store: crate::player_profile_store::PlayerProfileStore,
@@ -271,6 +273,7 @@ impl ApplicationContext {
             sim_config: Arc::new(Mutex::new(sim_config)),
             services: Some(Arc::new(ApplicationServices {
                 asset_cache: Some(Default::default()),
+                cache_maintenance: Default::default(),
                 #[cfg(all(target_arch = "wasm32", feature = "audio"))]
                 browser_audio: Default::default(),
                 preparation_files,
@@ -372,6 +375,7 @@ impl ApplicationContext {
             options,
             services: Some(Arc::new(ApplicationServices {
                 asset_cache: Some(Default::default()),
+                cache_maintenance: crate::cache_maintenance::CacheMaintenance::new(),
                 #[cfg(all(target_arch = "wasm32", feature = "audio"))]
                 browser_audio: Default::default(),
                 preparation_files,
@@ -881,6 +885,20 @@ impl ApplicationContext {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn clear_distributed_mod_cache(&self) -> Result<usize, String> {
         self.with_distributed_mod_cache_mut(DistributedModCache::clear)
+    }
+
+    pub(crate) fn cache_clear_status(
+        &self,
+    ) -> Result<crate::cache_maintenance::CacheClearStatus, String> {
+        self.required_services()?.cache_maintenance.status()
+    }
+
+    pub(crate) fn begin_distributed_mod_cache_clear(
+        &self,
+    ) -> Result<crate::cache_maintenance::CacheClearStatus, String> {
+        self.required_services()?
+            .cache_maintenance
+            .begin(self.clone())
     }
 
     pub fn active_key_configs(&self) -> Result<(KeyConfig, KeyConfig), String> {
@@ -2749,6 +2767,31 @@ mod application_context_tests {
     use robin_engine::sprite::Sprite;
     use robin_engine::sprite_script::SpriteScript;
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn cache_maintenance_is_application_owned_and_not_deserialized() {
+        let first = context(42, DifficultyLevel::Medium, KeyCode::KeyA, "maintenance");
+        let cloned = first.clone();
+        let independent = context(42, DifficultyLevel::Medium, KeyCode::KeyA, "maintenance");
+        assert!(std::ptr::eq(
+            &first.required_services().unwrap().cache_maintenance,
+            &cloned.required_services().unwrap().cache_maintenance,
+        ));
+        assert!(!std::ptr::eq(
+            &first.required_services().unwrap().cache_maintenance,
+            &independent.required_services().unwrap().cache_maintenance,
+        ));
+        assert_eq!(
+            first.cache_clear_status().unwrap(),
+            crate::cache_maintenance::CacheClearStatus::Idle
+        );
+        let encoded = serde_json::to_value(&first).unwrap();
+        assert!(encoded["services"].get("cache_maintenance").is_none());
+        let decoded: ApplicationContext = serde_json::from_value(encoded).unwrap();
+        assert!(decoded.cache_clear_status().is_err());
+        assert!(decoded.begin_distributed_mod_cache_clear().is_err());
+        assert!(ApplicationContext::default().cache_clear_status().is_err());
+    }
 
     #[test]
     fn application_asset_cache_is_shared_by_clones_only_and_not_decoded() {

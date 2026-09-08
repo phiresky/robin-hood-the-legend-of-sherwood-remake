@@ -207,7 +207,7 @@ pub struct PopupScrollModalState {
     /// briefing OK button on the web backend, where per-frame voice
     /// starts don't phase-stack).
     noise_tracker: widget_bridge::NoisyTracker,
-    awaiting_authority: bool,
+    dismissal: super::modal_net::ModalDismissalGate,
 }
 
 impl PopupScrollModalState {
@@ -280,7 +280,7 @@ impl PopupScrollModalState {
             page_body: body,
             text_remaining: String::new(),
             noise_tracker: widget_bridge::NoisyTracker::new(),
-            awaiting_authority: false,
+            dismissal: super::modal_net::ModalDismissalGate::default(),
         };
         state.rebuild_page_widgets();
         state
@@ -299,7 +299,7 @@ impl PopupScrollModalState {
         modal_net: Option<&super::ModalNet<'_>>,
     ) -> Option<DialogResult> {
         let mut dismissed = false;
-        let remote_result = modal_net.and_then(|net| net.poll_remote_dismissal());
+        let remote_result = self.dismissal.poll(modal_net);
         if remote_result.is_some() {
             dismissed = true;
         }
@@ -308,7 +308,7 @@ impl PopupScrollModalState {
         self.transform = transform;
         for event in events {
             self.input_state.update_from_event(&event, self.transform);
-            if self.awaiting_authority {
+            if self.dismissal.is_pending() {
                 continue;
             }
             match event {
@@ -330,7 +330,7 @@ impl PopupScrollModalState {
         }
 
         let widget_input = self.input_state.as_widget_input();
-        let events = if self.awaiting_authority {
+        let events = if self.dismissal.is_pending() {
             Vec::new()
         } else {
             self.frame.process_input(&widget_input)
@@ -375,13 +375,10 @@ impl PopupScrollModalState {
                 return None;
             }
             let result = DialogResult::Completed;
-            if let Some(net) = modal_net
-                && !net.publish(result)
-            {
-                self.awaiting_authority = true;
-                return None;
-            }
-            return Some(self.finish(result));
+            return self
+                .dismissal
+                .request(result, modal_net)
+                .map(|result| self.finish(result));
         }
         None
     }

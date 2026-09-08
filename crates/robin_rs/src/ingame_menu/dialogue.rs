@@ -510,10 +510,12 @@ pub async fn show_dialogue(
     if remote_result.is_none()
         && let Some(net) = modal_net.as_mut()
     {
-        net.publish(result);
-        if !net.is_authority() {
+        let mut dismissal = super::modal_net::ModalDismissalGate::default();
+        if let Some(confirmed) = dismissal.request(result, Some(net)) {
+            result = confirmed;
+        } else {
             loop {
-                if let Some(decision) = net.poll_remote_dismissal() {
+                if let Some(decision) = dismissal.poll(Some(net)) {
                     result = decision;
                     break;
                 }
@@ -546,7 +548,7 @@ pub struct DialogueModalState {
     aborted: bool,
     portrait_fade: PortraitFade,
     entered_dialogue: bool,
-    awaiting_authority: bool,
+    dismissal: super::modal_net::ModalDismissalGate,
 }
 
 impl DialogueModalState {
@@ -632,7 +634,7 @@ impl DialogueModalState {
             aborted: false,
             portrait_fade,
             entered_dialogue: false,
-            awaiting_authority: false,
+            dismissal: super::modal_net::ModalDismissalGate::default(),
         }
     }
 
@@ -651,11 +653,11 @@ impl DialogueModalState {
     ) -> Option<DialogResult> {
         self.ensure_audio_started(sound, sound_config, &mut audio, sound_enabled);
 
-        if let Some(result) = modal_net.and_then(|net| net.poll_remote_dismissal()) {
+        if let Some(result) = self.dismissal.poll(modal_net) {
             return Some(self.finish(sound, sound_config, audio, result));
         }
 
-        if self.awaiting_authority {
+        if self.dismissal.is_pending() {
             for event in event_pump.poll_events() {
                 self.input_state.update_from_event(&event, self.transform);
             }
@@ -718,15 +720,13 @@ impl DialogueModalState {
 
         if self.aborted {
             let result = DialogResult::Aborted;
-            if let Some(net) = modal_net
-                && !net.publish(result)
-            {
-                self.awaiting_authority = true;
+            if let Some(result) = self.dismissal.request(result, modal_net) {
+                return Some(self.finish(sound, sound_config, audio, result));
+            } else {
                 self.render(renderer, resources, cursor);
                 renderer.present();
                 return None;
             }
-            return Some(self.finish(sound, sound_config, audio, result));
         }
 
         if advance {
@@ -737,15 +737,13 @@ impl DialogueModalState {
             }
             if self.sentence_idx + 1 >= self.sentences.len() {
                 let result = DialogResult::Completed;
-                if let Some(net) = modal_net
-                    && !net.publish(result)
-                {
-                    self.awaiting_authority = true;
+                if let Some(result) = self.dismissal.request(result, modal_net) {
+                    return Some(self.finish(sound, sound_config, audio, result));
+                } else {
                     self.render(renderer, resources, cursor);
                     renderer.present();
                     return None;
                 }
-                return Some(self.finish(sound, sound_config, audio, result));
             }
             self.sentence_idx += 1;
             start_sentence(
@@ -1322,7 +1320,7 @@ mod tests {
             aborted: false,
             portrait_fade: PortraitFade::new(0),
             entered_dialogue: false,
-            awaiting_authority: false,
+            dismissal: super::super::modal_net::ModalDismissalGate::default(),
         }
     }
 
