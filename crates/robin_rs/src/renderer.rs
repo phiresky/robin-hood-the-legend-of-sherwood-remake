@@ -1383,6 +1383,43 @@ impl Renderer {
         Ok(())
     }
 
+    /// Alpha draw with the same renderer/lifetime checks as ordinary typed draws.
+    pub fn draw_surface_alpha(
+        &mut self,
+        handle: SurfaceHandle,
+        src_rect: Option<&BBox>,
+        dst_rect: Option<&BBox>,
+        alpha_level: u16,
+        flags: u32,
+    ) -> Result<(), MissingSurface> {
+        self.surface_dimensions(handle)?;
+        assert!(self.blit_to_screen_alpha(handle.id, src_rect, dst_rect, alpha_level, flags));
+        Ok(())
+    }
+
+    /// Shadow draw for a borrowed upload, always targeting this renderer's screen.
+    pub fn draw_surface_with_shadow(
+        &mut self,
+        handle: SurfaceHandle,
+        src_rect: Option<&BBox>,
+        dst_rect: Option<&BBox>,
+        shadow_color: u16,
+        shadow_level: u16,
+        flags: u32,
+    ) -> Result<(), MissingSurface> {
+        self.surface_dimensions(handle)?;
+        assert!(self.blit_with_shadow(
+            handle.id,
+            src_rect,
+            0,
+            dst_rect,
+            shadow_color,
+            shadow_level,
+            flags
+        ));
+        Ok(())
+    }
+
     /// Legacy compatibility entry point; new resource owners should retain typed handles.
     /// Submit a managed surface as a GPU overlay quad. Lazy-uploads
     /// the surface to a wgpu texture (cached, invalidated on surface
@@ -3059,6 +3096,18 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
             .draw_surface(owned.handle(), None, None, 0)
             .is_err()
     );
+    let before_foreign_draw = other_renderer.draw_queue_checkpoint();
+    assert!(
+        other_renderer
+            .draw_surface_alpha(owned.handle(), None, None, 25, 0)
+            .is_err()
+    );
+    assert!(
+        other_renderer
+            .draw_surface_with_shadow(owned.handle(), None, None, 0, 40, BLIT_SOURCE_TRANSPARENT)
+            .is_err()
+    );
+    assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
     let restored: OwnedSurface =
         serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
     assert!(renderer.surface_dimensions(restored.handle()).is_err());
@@ -3069,14 +3118,27 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     let mut mission = crate::mission_render_resources::MissionRenderResources::default();
     mission.replace_map(&mut other_renderer, other_id);
     assert!(mission.try_retire(&mut renderer).is_err());
-    assert_eq!(mission.map(), Some(other_id));
+    assert_eq!(
+        mission.map(),
+        Some(other_renderer.surface_handle(other_id).unwrap())
+    );
+    let borrowed_map = mission.map().unwrap();
+    assert!(renderer.draw_surface(borrowed_map, None, None, 0).is_err());
+    assert!(
+        renderer
+            .draw_surface_alpha(borrowed_map, None, None, 0, 0)
+            .is_err()
+    );
     assert!(other_renderer.surface_handle(other_id).is_ok());
     assert!(
         mission
             .try_replace_map(&mut other_renderer, u32::MAX)
             .is_err()
     );
-    assert_eq!(mission.map(), Some(other_id));
+    assert_eq!(
+        mission.map(),
+        Some(other_renderer.surface_handle(other_id).unwrap())
+    );
     assert!(renderer.try_adopt_surface(local_id).is_err());
     assert!(renderer.try_delete_legacy_surface(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
@@ -3084,6 +3146,11 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert!(renderer.surface_handle(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
     mission.retire(&mut other_renderer);
+    assert!(
+        other_renderer
+            .draw_surface(borrowed_map, None, None, 0)
+            .is_err()
+    );
     let pixels = [
         255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255,
         0, 255,

@@ -1,7 +1,7 @@
 //! Mission minimap rendering.
 
 use crate::host::HostPresentation;
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
+use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer, SurfaceHandle};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
@@ -41,7 +41,9 @@ pub(crate) fn render_minimap(
                 let br = mm.button_box().bottom_right();
                 let src = BBox::from_coords(0.0, 0.0, br.x - tl.x, br.y - tl.y);
                 let dst = BBox::from_coords(tl.x, tl.y, br.x, br.y);
-                renderer.blit_to_screen(surface, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
+                renderer
+                    .draw_surface(surface, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+                    .expect("mission corner must belong to the live renderer");
             }
         }
         return;
@@ -65,12 +67,14 @@ pub(crate) fn render_minimap(
     let src_box = BBox::from_coords(0.0, 0.0, map_w, map_h);
     let dst_box = BBox::from_coords(map_tl.x, map_tl.y, map_tl.x + map_w, map_tl.y + map_h);
 
-    renderer.blit_to_screen(
-        map_surface,
-        Some(&src_box),
-        Some(&dst_box),
-        BLIT_SOURCE_TRANSPARENT,
-    );
+    renderer
+        .draw_surface(
+            map_surface,
+            Some(&src_box),
+            Some(&dst_box),
+            BLIT_SOURCE_TRANSPARENT,
+        )
+        .expect("mission minimap must belong to the live renderer");
 
     render_minimap_fog(engine, mm, level_size_for(host), renderer);
 
@@ -223,12 +227,14 @@ fn refresh_dot(
     // Preserve the Original-compatible draw path exactly when no fade is
     // requested; disabled fog must not reroute ordinary minimap dots through
     // an alpha-specific renderer path.
-    renderer.blit_to_screen(
-        surface,
-        Some(&src_box),
-        Some(&dst_box),
-        BLIT_SOURCE_TRANSPARENT,
-    );
+    renderer
+        .draw_surface(
+            surface,
+            Some(&src_box),
+            Some(&dst_box),
+            BLIT_SOURCE_TRANSPARENT,
+        )
+        .expect("mission dot must belong to the live renderer");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -248,13 +254,15 @@ fn refresh_dot_alpha(
         return;
     };
     let transparency = 100u16.saturating_sub(u16::from(opacity) * 100 / 255);
-    renderer.blit_to_screen_alpha(
-        surface,
-        Some(&src_box),
-        Some(&dst_box),
-        transparency,
-        BLIT_SOURCE_TRANSPARENT,
-    );
+    renderer
+        .draw_surface_alpha(
+            surface,
+            Some(&src_box),
+            Some(&dst_box),
+            transparency,
+            BLIT_SOURCE_TRANSPARENT,
+        )
+        .expect("mission fading dot must belong to the live renderer");
 }
 
 fn clipped_dot_blit(
@@ -264,7 +272,7 @@ fn clipped_dot_blit(
     world_pos: engine_coordinates::MapPoint,
     dot_type: engine_minimap::DotType,
     widget_box: &engine_coordinates::ScreenBBox,
-) -> Option<(u32, BBox, BBox)> {
+) -> Option<(SurfaceHandle, BBox, BBox)> {
     let idx = dot_type as usize;
     let (surface, dot_w, dot_h) = match host.frontend.mission_surfaces.dots().get(idx) {
         Some(Some(frame)) => frame.parts(),
