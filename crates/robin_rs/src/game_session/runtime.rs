@@ -1551,7 +1551,19 @@ impl TimelineRuntime {
     /// boundary state the replay header reconstructs.  Registering it here
     /// lets a later script-triggered restart record as a load-back to
     /// frame 0 instead of a timeline discontinuity.
-    pub(super) fn register_bootstrap_save(&mut self, engine: &Engine, host: &Host, game: &Game) {
+    pub(super) fn register_bootstrap_save(
+        &mut self,
+        engine: &Engine,
+        host: &Host,
+        game: &Game,
+        restart_save_started: bool,
+    ) {
+        if !restart_save_started {
+            return;
+        }
+        // TODO: Background writes can still fail after admission. Publishing a
+        // marker only on completion requires retaining this exact frame-0 state
+        // and handling completion before a subsequent load-back is recorded.
         let Some(recorder) = self.replay_recorder.as_mut() else {
             return;
         };
@@ -2140,6 +2152,58 @@ mod tests {
         frame.recorder_state = RecorderFrameState::Finished;
 
         assert!(!timeline.seal_terminal_recording(&frame));
+    }
+
+    #[test]
+    fn bootstrap_marker_requires_an_admitted_restart_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut assets = LevelAssets::new();
+        let engine = Engine::new_for_test(
+            1024.0,
+            768.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .unwrap();
+        let host = Host::scratch(1024.0, 768.0);
+        let game = Game::default();
+        for restart_save_started in [false, true] {
+            let path = directory
+                .path()
+                .join(format!("{restart_save_started}.rhrec.jsonl"));
+            let recorder = ReplayRecorder::new(
+                path.to_str().unwrap(),
+                "bootstrap".into(),
+                test_mission_assets("bootstrap"),
+                0,
+                robin_engine::engine::SimConfig::default(),
+                engine.campaign(),
+            )
+            .unwrap();
+            let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
+            timeline.replay_recorder = Some(recorder);
+            timeline.register_bootstrap_save(&engine, &host, &game, restart_save_started);
+            if restart_save_started {
+                let identity =
+                    GameRuntimeSnapshot::identity_of_live(&engine, &host, &game).unwrap();
+                assert_eq!(
+                    timeline.recorded_save_frames_by_identity.get(&identity),
+                    Some(&(ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO)),
+                );
+            } else {
+                assert!(timeline.recorded_save_frames_by_identity.is_empty());
+            }
+            drop(timeline);
+            let replay =
+                robin_engine::replay::ReplayData::from_file(path.to_str().unwrap()).unwrap();
+            assert_eq!(
+                replay.save_marker_for_frame(0),
+                restart_save_started.then(|| robin_engine::replay::ReplaySaveMarker {
+                    state_hash: robin_engine::replay::state_hash(&engine),
+                    timeline_frame: 0,
+                }),
+            );
+        }
     }
 
     #[test]

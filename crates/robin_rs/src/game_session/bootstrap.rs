@@ -89,6 +89,7 @@ pub(super) struct MissionBootstrap {
     pub(super) game: Game,
     pub(super) loaded: LoadedMissionCore,
     lifecycle: MissionBootstrapLifecycle,
+    restart_save_started: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +179,7 @@ impl MissionBootstrap {
             game,
             loaded,
             lifecycle: MissionBootstrapLifecycle::new(),
+            restart_save_started: false,
         };
         bootstrap.install_mission_assets(args);
         bootstrap
@@ -252,7 +254,7 @@ impl MissionBootstrap {
         if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-            if let Err(error) = callbacks.save_manager.write_restart_save_background(
+            self.restart_save_started = match callbacks.save_manager.write_restart_save_background(
                 &mut self.host,
                 &self.game,
                 &self.loaded.engine,
@@ -260,8 +262,12 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                tracing::error!("Restart save could not start: {error:#}");
-            }
+                Ok(()) => true,
+                Err(error) => {
+                    tracing::error!("Restart save could not start: {error:#}");
+                    false
+                }
+            };
         }
         self.lifecycle.advance(
             MissionBootstrapPhase::CampaignClockStarted,
@@ -465,12 +471,15 @@ impl MissionBootstrap {
             self.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
-        // Mirror of the `setup_restart_or_sherwood` write condition: those
-        // missions captured a Restart auto-save of this exact pre-frame-0
-        // engine state, so mark frame 0 as its save marker.
-        if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
-            timeline.register_bootstrap_save(&self.loaded.engine, &self.host, &self.game);
-        }
+        // Entry eligibility is insufficient: capture/indexing can fail, and
+        // headless startup can skip restart creation entirely. Only an admitted
+        // background save represents a frame-0 payload that can later be loaded.
+        timeline.register_bootstrap_save(
+            &self.loaded.engine,
+            &self.host,
+            &self.game,
+            self.restart_save_started,
+        );
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
             .host
@@ -1536,7 +1545,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_installs_save_assets_before_entry_preparation() {
+    fn bootstrap_installs_save_assets_and_tracks_failed_restart_creation() {
         use super::{LoadedMissionCore, MissionBootstrap};
         use robin_engine::engine::{Engine, EngineArgs, LevelAssets, LevelLoadArgs};
 
@@ -1572,7 +1581,7 @@ mod tests {
             sim_config,
         })
         .expect("fixture level");
-        let bootstrap = MissionBootstrap::new(
+        let mut bootstrap = MissionBootstrap::new(
             MissionSpec::interactive(0, MissionLocation::Lincoln, 1024.0, 768.0),
             crate::host::Host::scratch(1024.0, 768.0),
             crate::game::Game::new(MissionLocation::Lincoln),
@@ -1606,6 +1615,39 @@ mod tests {
                 .mission_assets()
                 .expect("assets available before restart save"),
             &built_in_mission_assets_for_loaded_level("Mission", "ProtoLevel", "TerrainMap"),
+        );
+        // Scratch hosts have no active player profile, so the real background
+        // save path must reject capture. Mission startup still advances, but
+        // must not claim a frame-0 restart snapshot exists.
+        let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Bootstrap Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let application_context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            robin_engine::engine::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
+        let mut callbacks = crate::main_entry::RustCallbacks::new(application_context);
+        bootstrap.start_required_spellforge().unwrap();
+        bootstrap.lifecycle.advance(
+            MissionBootstrapPhase::SpellforgeStarted,
+            MissionBootstrapPhase::AudioPrepared,
+        );
+        bootstrap.start_campaign_clock();
+        bootstrap.setup_restart_or_sherwood(&mut callbacks, &crate::main_entry::CliArgs::default());
+        assert!(!bootstrap.restart_save_started);
+        assert_eq!(
+            bootstrap.lifecycle.phase(),
+            MissionBootstrapPhase::EntryPrepared
         );
     }
 
