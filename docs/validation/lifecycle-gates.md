@@ -6,7 +6,9 @@ provisioned host; a missing dependency is a failure, not an ignored test.
 synthetic fixtures and a bounded dummy process. It does not run Cargo, game
 data, Chrome, or deployments and is included in the tooling allowlist.
 
-## Browser audio
+## Browser audio and shared multiplayer protocol
+
+The suite name remains `browser-audio` for compatibility with existing callers.
 
 Requires Linux, Python 3.11+, the pinned Rust toolchain, the
 `wasm32-unknown-unknown` target, Chrome, matching ChromeDriver, and a
@@ -30,12 +32,20 @@ CARGO_BUILD_JOBS=1 bash scripts/check-quality.sh browser-audio
 
 The gate first checks client bin/tests with `audio`, then `audio,multiplayer`
 (so browser transport code is not silently excluded), then separately links
-the audio-enabled library test module with `wasm-dev`. It obtains the artifact
+the `audio,multiplayer` library test module with `wasm-dev`. It obtains the artifact
 from Cargo's compiler-artifact event, printing every Cargo output line instead
 of guessing from stale files in target. Compilation has no runtime timeout and
 uses the checkout's ordinary target directory. It then executes all browser
 tests with a 240-second outer bound and 120-second runner bound; zero tests or
-an output without audio tests is an error.
+an output missing passed audio, shared client-protocol, or identity cases is an
+error. The reported count must match distinct passing case lines, and both
+identity address round-tripping and refusal of a second durable browser identity
+must pass. Ignored cases and console mentions do not satisfy these checks.
+
+The shared protocol cases exercise frame limits/codec, content admission,
+authentication metadata and reconnect decisions using the same tests as native.
+They execute in Chrome alongside audio ownership/residency and browser identity
+checks. They do not establish remote multiplayer or network end-to-end coverage.
 
 Chrome receives a fresh temporary profile, background services disabled, and
 DNS restricted to loopback. The runner owns a process group which is terminated
@@ -47,7 +57,8 @@ The CI lane provisions matched Chrome and driver through the pinned
 installs the lockfile-selected CLI. Local execution installs nothing.
 
 Evidence includes `summary.json` (source commit, module hash, tool versions and
-test count), `browser-tests.wasm`, `browser-tests.log`, and the non-secret
+test count, selected features and passed cases by required group),
+`browser-tests.wasm`, `browser-tests.log`, and the non-secret
 WebDriver options. The recorded temporary profile path no longer exists after
 completion. It does not retain browser identity keys or assert audible sound.
 

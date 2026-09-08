@@ -19,6 +19,33 @@ LIVE_CHECKS = {"normal_frame_and_manual_steps", "paused_manual_steps",
                "canonical_compact_export"}
 SAVE_CHECKS = {"native_save_load_restored_state", "recording_continues_after_state_load",
                "save_load_post_restore_replay_hashes"}
+BROWSER_GROUPS = {
+    "audio": "web_audio_backend::",
+    "client_protocol": "multiplayer::client_protocol::tests::",
+    "identity": "multiplayer::identity::tests::",
+}
+BROWSER_IDENTITY_CASES = {
+    BROWSER_GROUPS["identity"] + "connect_addr_roundtrips_json_and_id",
+    BROWSER_GROUPS["identity"] + "browser_refuses_a_second_durable_transport_identity",
+}
+
+
+def verify_browser_tests(output):
+    result = re.search(r"^test result: ok\. (\d+) passed; (\d+) failed", output, re.MULTILINE)
+    if not result or int(result[1]) == 0 or int(result[2]) != 0:
+        raise RuntimeError("browser runner did not report a nonempty passing test suite")
+    passed = set(re.findall(r"^test ([\w:]+) \.\.\. ok\s*$", output, re.MULTILINE))
+    if len(passed) != int(result[1]):
+        raise RuntimeError("browser passing count does not match distinct executed cases")
+    groups = {group: sorted(name for name in passed if name.startswith(prefix))
+              for group, prefix in BROWSER_GROUPS.items()}
+    for group, cases in groups.items():
+        if not cases:
+            raise RuntimeError(f"browser runner did not execute {group} tests")
+    missing = BROWSER_IDENTITY_CASES - passed
+    if missing:
+        raise RuntimeError(f"browser runner did not execute required identity cases: {sorted(missing)}")
+    return int(result[1]), groups
 
 
 def digest(path):
@@ -115,7 +142,7 @@ def browser(evidence, summary):
     run([cargo[0], "check", cargo[1], *multiplayer_selection, "--bin", "robin", "--tests"])
     # Cargo's JSON artifact event identifies the exact linked test executable;
     # never guess using glob order or a stale target-directory timestamp.
-    argv = [cargo[0], "test", cargo[1], *selection, "--lib", "--no-run",
+    argv = [cargo[0], "test", cargo[1], *multiplayer_selection, "--lib", "--no-run",
             "--message-format=json-render-diagnostics"]
     artifacts = []
     with subprocess.Popen(argv, cwd=ROOT, stdout=subprocess.PIPE, text=True) as child:
@@ -148,15 +175,12 @@ def browser(evidence, summary):
                    WASM_BINDGEN_TEST_WEBDRIVER_JSON=str(options),
                    WASM_BINDGEN_TEST_TIMEOUT="120")
         env.pop("NO_HEADLESS", None)
-        # Running all module tests includes audio ownership and future additions.
+        # Execute audio, shared protocol and identity tests in the same browser module.
         log = evidence / "browser-tests.log"
         run([runner, module], env=env, timeout=240, log=log)
-        result = re.search(r"test result: ok\. (\d+) passed; (\d+) failed", log.read_text())
-        if not result or int(result[1]) == 0 or int(result[2]) != 0:
-            raise RuntimeError("browser runner did not report a nonempty passing test suite")
-        if not re.search(r"test web_audio_backend::[^\n]+\.\.\. ok", log.read_text()):
-            raise RuntimeError("browser runner did not execute audio ownership tests")
-        summary["browser_tests_passed"] = int(result[1])
+        count, groups = verify_browser_tests(log.read_text())
+        summary.update(browser_tests_passed=count, browser_passed_cases=groups,
+                       browser_test_features="audio,multiplayer")
     summary["checks"] = {"audio_target_check": True, "audio_multiplayer_target_check": True,
                          "test_module_link": True,
                          "real_browser_tests": True}
