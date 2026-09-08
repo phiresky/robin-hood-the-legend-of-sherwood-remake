@@ -287,8 +287,8 @@ mod lifecycle_tests {
         let owner = ApplicationAssetCache::default();
         let job = LoadingJob::new(key(1));
         owner.state.lock().unwrap().loading = Some(job.clone());
-        // Exercise the exact unwind cleanup without panicking in abort profiles.
-        drop(JobCompletionGuard { job: Some(&job) });
+        // Inject failure without relying on unwinding in abort profiles.
+        job.finish(JobResult::Failed);
         assert!(job.wait().is_none());
         let result = resolve(&owner, || key(1), build_test);
         assert_eq!(result.key.generation, 1);
@@ -546,33 +546,20 @@ impl LoadingJob {
     }
 
     fn run(&self, build: impl FnOnce() -> Option<Arc<ProcessAssetCache>>) {
-        let guard = JobCompletionGuard { job: Some(self) };
         if self.is_cancelled() {
             return;
         }
-        self.finish(match build() {
-            Some(cache) => JobResult::Complete(cache),
-            None => JobResult::Cancelled,
-        });
-        drop(guard);
-    }
-}
-
-/// Unwinding must release single-flight waiters without poisoning the owner's
-/// lock. Abort-on-panic builds still terminate the process, as before.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct JobCompletionGuard<'a> {
-    #[serde(skip)]
-    job: Option<&'a LoadingJob>,
-}
-
-impl Drop for JobCompletionGuard<'_> {
-    fn drop(&mut self) {
-        if let Some(job) = self.job {
-            if std::thread::panicking() {
+        // Explicit completion is important even with Cranelift configurations
+        // where catch_unwind works but destructor unwinding is incomplete.
+        // No owner/job mutex is held while calling user/asset parsing code.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(build)) {
+            Ok(Some(cache)) => self.finish(JobResult::Complete(cache)),
+            Ok(None) => self.finish(JobResult::Cancelled),
+            Err(panic) => {
+                self.finish(JobResult::Failed);
                 tracing::warn!("asset loading worker panicked; a subsequent caller can retry");
+                std::panic::resume_unwind(panic);
             }
-            job.finish(JobResult::Failed);
         }
     }
 }

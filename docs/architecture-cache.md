@@ -13,9 +13,10 @@ stable banks remain reusable after a locale-only invalidation. Cancelled partial
 products are never published or substituted for required asset data.
 
 Background jobs do not retain the application owner. Owner destruction cancels
-them without joining. Completion after cancellation is discarded. An unwind
-guard releases waiters if a worker panics, without poisoning the owner lock, so
-the next caller can retry. Abort-on-panic profiles still terminate on panic.
+them without joining. Completion after cancellation is discarded. Explicit
+panic capture releases waiters before resuming unwinding, without poisoning the
+owner lock, so the next caller can retry. This does not depend on destructor
+unwinding. Abort-on-panic profiles still terminate on panic.
 
 Cooperative cancellation checks run between sprite, FX, menu, and speech stages.
 TODO: Individual filesystem reads and sprite decoders are not interruptible;
@@ -36,7 +37,7 @@ prepared-snapshot identity. Validation is pending the isolated worktree build.
 The real panic/retry test is explicitly ignored in the default Cranelift suite:
 `cfg(panic = "unwind")` alone does not guarantee destructor unwinding with this
 repository's native backend. The default suite directly exercises the same
-completion guard; run the real panic case with LLVM:
+failure completion path; run the real panic case with LLVM:
 
 ```sh
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo --config 'profile.test.package.robin_rs.codegen-backend="llvm"' test --locked -p robin_rs --lib process_asset_cache::lifecycle_tests::panicking_worker_does_not_poison_owner_and_next_caller_retries -- --ignored --exact
