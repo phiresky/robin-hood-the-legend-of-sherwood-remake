@@ -73,6 +73,11 @@ cover stale teardown, readiness policy, snapshot acknowledgement rejection, and
 admission deadline/cancellation generation binding. Existing native lifecycle/co-sign tests
 are retained and use the extracted state operations.
 
+The async driver test preserves an already-started writer waiting on its queue;
+it does not emulate partially emitted QUIC frame bytes. EOF/read-error authority
+classification was independently code-reviewed, but is not directly exercised by
+a dedicated regression test.
+
 Initial checkpoint `8ccd2adfa`: 39 focused release-native tests passed, including
 the existing real-iroh ranked/reconnect tests. Independent review subsequently
 identified the terminal-writer cancellation race described above; the drain fix
