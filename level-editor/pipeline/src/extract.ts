@@ -2,8 +2,8 @@
 //
 //   pnpm --filter pipeline extract -- --map Leicester --bbox 2900,400,600,500 \
 //     --prompt "watermill building" --name "Leicester watermill" --tags building,water
-import type { Bbox } from "./clip";
-import { EXTRACT_DEFAULTS, runExtraction, slugify, type ExtractOptions } from "./extract-core";
+import type { Bbox } from "./clip.ts";
+import { EXTRACT_DEFAULTS, runExtraction, slugify, type ExtractOptions } from "./extract-core.ts";
 
 function parseArgs(argv: string[]): ExtractOptions {
   const get = (flag: string): string | undefined => {

@@ -12,9 +12,9 @@
 // and height contact, so the editor selects the whole building by default
 // while every part keeps its own transform relative to the group.
 import polygonClipping, { type Polygon } from "polygon-clipping";
-import type { MapCamera } from "./scene";
-import type { ObstaclePoint, SightObstacle } from "./level";
-import { signedPolygonArea } from "./geometry";
+import type { MapCamera } from "./scene.ts";
+import type { ObstaclePoint, SightObstacle } from "./level.ts";
+import { signedPolygonArea } from "./geometry.ts";
 
 /** rigid transform in game coordinates: translate (map px, absolute z) and turn about the vertical axis */
 export interface GameTransform {

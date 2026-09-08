@@ -3,16 +3,16 @@
 // calls) under all 24 interpretations and reports, per interpretation, the
 // mean/median pre-snap tilt and how often it is the most upright one.
 //
-//   tsx src/pose-diag.ts --map york
+//   node src/pose-diag.ts --map york
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor, LibraryIndexEntry } from "@rle/shared";
-import { libraryDir } from "./env";
-import { loadProtoLevel } from "./asset-writer";
-import { fitMapCamera } from "./map-camera";
-import { loadGlb } from "./mesh";
-import { describe, fitAll } from "./reconstruct";
+import { libraryDir } from "./env.ts";
+import { loadProtoLevel } from "./asset-writer.ts";
+import { fitMapCamera } from "./map-camera.ts";
+import { loadGlb } from "./mesh.ts";
+import { describe, fitAll } from "./reconstruct.ts";
 
 async function main() {
   const argv = process.argv.slice(2);

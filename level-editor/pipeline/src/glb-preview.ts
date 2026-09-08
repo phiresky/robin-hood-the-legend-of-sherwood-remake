@@ -1,10 +1,10 @@
 // Render a GLB as-is (Y-up assumed) from four orbit views, with its bounds.
 //
-//   tsx src/glb-preview.ts <file.glb> [--out preview.png] [--size 400]
+//   node src/glb-preview.ts <file.glb> [--out preview.png] [--size 400]
 import fs from "node:fs/promises";
 import sharp from "sharp";
-import { bounds, loadGlb } from "./mesh";
-import { orbitView, render } from "./render";
+import { bounds, loadGlb } from "./mesh.ts";
+import { orbitView, render } from "./render.ts";
 
 async function main() {
   const argv = process.argv.slice(2);

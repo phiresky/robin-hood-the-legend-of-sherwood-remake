@@ -4,20 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "extract": "tsx src/extract.ts",
+    "extract": "node src/extract.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts",
-    "detect": "tsx src/detect.ts",
-    "reconstruct": "tsx src/reconstruct.ts",
-    "scene": "tsx src/scene.ts",
-    "sweep": "tsx src/sweep.ts",
-    "contact-sheet": "tsx src/contact-sheet.ts",
-    "pose-diag": "tsx src/pose-diag.ts",
-    "merge-detections": "tsx src/merge-detections.ts",
-    "compare-backends": "tsx src/compare-backends.ts",
-    "glb-preview": "tsx src/glb-preview.ts",
-    "volumes": "tsx src/volumes.ts",
-    "bake": "tsx src/bake.ts"
+    "test": "node --test src/*.test.ts",
+    "detect": "node src/detect.ts",
+    "reconstruct": "node src/reconstruct.ts",
+    "scene": "node src/scene.ts",
+    "sweep": "node src/sweep.ts",
+    "contact-sheet": "node src/contact-sheet.ts",
+    "pose-diag": "node src/pose-diag.ts",
+    "merge-detections": "node src/merge-detections.ts",
+    "compare-backends": "node src/compare-backends.ts",
+    "glb-preview": "node src/glb-preview.ts",
+    "volumes": "node src/volumes.ts",
+    "bake": "node src/bake.ts"
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.1",
@@ -34,7 +34,6 @@
   "devDependencies": {
     "@types/earcut": "^3.0.0",
     "@types/node": "^24.3.0",
-    "tsx": "^4.20.4",
     "typescript": "^5.9.2"
   }
 }

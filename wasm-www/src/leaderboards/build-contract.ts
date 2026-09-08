@@ -214,8 +214,8 @@ export function parseBrowserPagesShellV2(value: unknown): BrowserPagesShellBuild
     ]);
     const node = parseBuildToolAuthority(obj.node, `${path}.node`);
     const pnpm = parseBuildToolAuthority(obj.pnpm, `${path}.pnpm`);
-    if (node.version !== '24.19.0' || pnpm.version !== '9.15.0') {
-        throw new Error(`${path} must use exact Node 24.19.0 and pnpm 9.15.0 authorities`);
+    if (node.version !== '24.19.0' || pnpm.version !== '12.3.4') {
+        throw new Error(`${path} must use exact Node 24.19.0 and pnpm 12.3.4 authorities`);
     }
     const publicOriginArtifacts = parseBrowserOriginClosure(
         obj.public_origin_artifacts,

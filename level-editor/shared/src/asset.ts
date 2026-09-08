@@ -17,8 +17,8 @@ import type {
   JumpLinePair,
   Lift,
   Mask,
-} from "./level";
-import type { AssetModel } from "./scene";
+} from "./level.ts";
+import type { AssetModel } from "./scene.ts";
 
 export type ScaleClass = "unique" | "variant" | "spline-segment" | "texture";
 

@@ -1370,12 +1370,10 @@ mod tests {
         std::fs::write(raw.join("raw.marker"), b"raw").unwrap();
         let catalog_fd = open_pinned_directory(&catalog, "catalog").unwrap();
         let raw_directory_fd = open_pinned_directory(&raw, "raw").unwrap();
-        let shell = sealed_executable(
-            Path::new("/usr/bin/dash"),
-            sha256_file(Path::new("/usr/bin/dash")),
-            "test shell",
-        )
-        .unwrap();
+        let shell_path = Path::new("/bin/sh")
+            .canonicalize()
+            .expect("sandbox probe requires a system POSIX shell");
+        let shell = sealed_executable(&shell_path, sha256_file(&shell_path), "test shell").unwrap();
         let inputs = (0..4)
             .map(|index| sealed_data_file(b"x", None, &format!("test-input-{index}")).unwrap())
             .collect::<Vec<_>>();

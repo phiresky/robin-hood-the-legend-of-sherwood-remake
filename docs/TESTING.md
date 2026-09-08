@@ -72,7 +72,10 @@ cargo build --locked -p robin_rs --example export_runtime_contract
 target/debug/examples/export_runtime_contract --check wasm-www/runtime-contract.json
 ```
 
-The Linux CI job installs the native library development packages it needs.
+The Ubuntu 26.04 CI job installs the native library development packages it needs.
+The services suite also needs bubblewrap 0.11.1 or newer and a system POSIX shell. Its runner
+allows unprivileged user namespaces for the verifier launched through a pinned
+file descriptor.
 For a machine without the local Wild linker, use
 `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc`; preserve the repository CPU
 flags. The pinned Rust toolchain includes the configured code generation
@@ -158,6 +161,11 @@ pinned Node/pnpm versions and a frozen-lockfile install in `wasm-www`. It runs
 TypeScript checking, top-level browser tests, leaderboard/signer tests,
 deployment script tests, shared JavaScript identity tests, and site/signer-shell
 builds. See platform runbooks for the additional publication checks.
+
+JavaScript workspaces pin pnpm 12.3.4. For local CI parity, select Node with
+`pnpm runtime set node 24.19.0 -g` and ensure pnpm’s bin directory is on PATH.
+Editor and pipeline TypeScript scripts run directly with Node; relative source
+imports include `.ts`, and TypeScript checks enforce erasable syntax.
 
 The editor suite runs `pnpm --dir level-editor verify`: shared/app/pipeline
 tests, app and pipeline typechecks, and the app build. Install its independent

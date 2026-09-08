@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
-import { prepare, callOpenAI, composite } from "./ai-fill";
+import { prepare, callOpenAI, composite } from "./ai-fill.ts";
 
 test("AI fill uses injected provider once, then validates cache without resolving credentials", async (t) => {
   const workDirectory = await fs.mkdtemp(

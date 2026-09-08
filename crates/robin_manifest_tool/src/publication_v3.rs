@@ -7579,7 +7579,7 @@ mod tests {
                 pages_shell: BrowserPagesShellBuildIdentityV2 {
                     recipe: BrowserPagesShellBuildRecipeV2::PnpmFrozenLockfileViteStaticShellV1,
                     node: tool(22, "24.19.0"),
-                    pnpm: tool(19, "9.15.0"),
+                    pnpm: tool(19, "12.3.4"),
                     package_json_sha256: Digest32::digest_bytes(b"package.json"),
                     pnpm_lock_sha256: Digest32::digest_bytes(b"pnpm-lock.yaml"),
                     public_origin_artifacts: vec![

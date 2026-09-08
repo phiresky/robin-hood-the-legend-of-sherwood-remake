@@ -9,10 +9,10 @@ import {
   contentKey,
   inspectCache,
   validateGlb,
-} from "./provider-cache";
-import { reconstructWith } from "./backends";
-import { decodeRle, segment } from "./sam";
-import { reconstruct3d } from "./sam3d";
+} from "./provider-cache.ts";
+import { reconstructWith } from "./backends.ts";
+import { decodeRle, segment } from "./sam.ts";
+import { reconstruct3d } from "./sam3d.ts";
 
 async function temp(t: { after(fn: () => Promise<void>): void }) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "pipeline-cache-test-"));

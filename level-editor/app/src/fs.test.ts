@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { subdir, readJson } from "./fs";
+import { subdir, readJson } from "./fs.ts";
 
 test("only missing optional directories are absence", async () => {
   const root = (name: string) =>

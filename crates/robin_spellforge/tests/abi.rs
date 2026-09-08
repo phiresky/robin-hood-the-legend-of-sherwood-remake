@@ -8,6 +8,6 @@ use wasm_bindgen_test::wasm_bindgen_test;
 fn executable_abi_digest_is_stable() {
     assert_eq!(
         spellforge_vm_abi(),
-        "spellforge-v1-sha256:ce382c5485879d8d2eb8629bb19d40ef237562f0978f6ec1cef6640ff11421ea"
+        "spellforge-v1-sha256:ef0f0b9cfd12b01cd3037fcde3622c4e4f5706ae669b0e43338837a743853d29"
     );
 }

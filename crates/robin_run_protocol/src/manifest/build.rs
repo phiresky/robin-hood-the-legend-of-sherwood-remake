@@ -440,7 +440,7 @@ impl Validate for BrowserPagesShellBuildIdentityV2 {
         validate_exact_release_semver("build.viewer.pages_shell.pnpm_version", &self.pnpm)?;
         if self.recipe != BrowserPagesShellBuildRecipeV2::PnpmFrozenLockfileViteStaticShellV1
             || self.node.version != "24.19.0"
-            || self.pnpm.version != "9.15.0"
+            || self.pnpm.version != "12.3.4"
             || self.package_json_sha256.is_zero()
             || self.pnpm_lock_sha256.is_zero()
         {

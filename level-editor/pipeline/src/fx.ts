@@ -9,7 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import { datadirPath } from "./env";
+import { datadirPath } from "./env.ts";
 
 /**
  * The hackable converter currently exports sprite-bank frames with the RGB565

@@ -1,6 +1,6 @@
 // Detect building instances across a whole map with SAM 3 concept prompts.
 //
-//   tsx src/detect.ts --map york [--prompts "house,tower,church,building"]
+//   node src/detect.ts --map york [--prompts "house,tower,church,building"]
 //       [--tile 1024] [--overlap 512] [--min-score 0.4] [--min-area 2500]
 //       [--max-masks 32] [--no-patches] [--out work/york-scene]
 //
@@ -15,11 +15,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import { workDir } from "./env";
-import { loadProtoLevel, mapImageSource } from "./asset-writer";
-import { segment } from "./sam";
-import type { Bbox } from "./clip";
-import type { Detection, DetectionsFile } from "./reconstruct";
+import { workDir } from "./env.ts";
+import { loadProtoLevel, mapImageSource } from "./asset-writer.ts";
+import { segment } from "./sam.ts";
+import type { Bbox } from "./clip.ts";
+import type { Detection, DetectionsFile } from "./reconstruct.ts";
 
 interface Candidate {
   prompt: string;

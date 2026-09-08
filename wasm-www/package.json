@@ -45,7 +45,7 @@
     "vite": "^8.0.10",
     "wrangler": "4.127.1"
   },
-  "packageManager": "pnpm@9.15.0",
+  "packageManager": "pnpm@12.3.4",
   "dependencies": {
     "@noble/hashes": "1.8.0"
   }

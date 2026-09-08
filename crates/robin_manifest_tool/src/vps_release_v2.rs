@@ -1102,15 +1102,22 @@ fn read_pinned_descriptor_bounded(
             && u64::try_from(initial.st_size)? <= maximum_bytes,
         "{label} descriptor has unsafe type, owner, links, or size"
     );
+    // Reading can legitimately update atime on relatime/strictatime mounts.
+    // Continue checking inode, permissions, size, mtime and ctime for mutation.
+    let unchanged = |mut observed: nix_legacy::sys::stat::FileStat| {
+        observed.st_atime = initial.st_atime;
+        observed.st_atime_nsec = initial.st_atime_nsec;
+        observed == initial
+    };
     let duplicate = NixOwnedFdV2(nix_legacy::unistd::dup(descriptor)?);
     ensure!(
-        nix_legacy::sys::stat::fstat(duplicate.0)? == initial,
+        unchanged(nix_legacy::sys::stat::fstat(duplicate.0)?),
         "{label} descriptor changed before its duplicate was read"
     );
     let duplicate_path = PathBuf::from(format!("/proc/self/fd/{}", duplicate.0));
     let file = File::open(duplicate_path)?;
     ensure!(
-        nix_legacy::sys::stat::fstat(file.as_raw_fd())? == initial,
+        unchanged(nix_legacy::sys::stat::fstat(file.as_raw_fd())?),
         "{label} procfs duplicate names another inode"
     );
     let expected_length = usize::try_from(initial.st_size)?;
@@ -1127,8 +1134,8 @@ fn read_pinned_descriptor_bounded(
         "{label} descriptor grew while it was read"
     );
     ensure!(
-        nix_legacy::sys::stat::fstat(file.as_raw_fd())? == initial
-            && nix_legacy::sys::stat::fstat(descriptor)? == initial,
+        unchanged(nix_legacy::sys::stat::fstat(file.as_raw_fd())?)
+            && unchanged(nix_legacy::sys::stat::fstat(descriptor)?),
         "{label} descriptor changed while it was read"
     );
     Ok(bytes)
@@ -10249,6 +10256,8 @@ mod tests {
         let validator = File::open(validator_path)?;
         let tool = File::open(&test_tool_path)?;
         let plan = File::open(plan_path)?;
+        // Force a read-induced atime change on mounts that track access time.
+        plan.set_times(std::fs::FileTimes::new().set_accessed(std::time::UNIX_EPOCH))?;
         for descriptor in [
             script.as_raw_fd(),
             bootstrap.as_raw_fd(),

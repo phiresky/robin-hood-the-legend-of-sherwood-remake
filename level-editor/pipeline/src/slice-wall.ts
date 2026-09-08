@@ -1,7 +1,7 @@
 // Cut a clean tileable slice out of a wall asset: a central vertical band
 // with straight left/right cut edges, so repeated stamps butt seamlessly.
 //
-//   tsx src/slice-wall.ts <asset-id> [sliceWidthPx]
+//   node src/slice-wall.ts <asset-id> [sliceWidthPx]
 //
 // Writes <asset-id>-slice with the same wall_direction_deg; anchor is the
 // slice's bottom-center on the mask baseline.
@@ -9,12 +9,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { AssetDescriptor } from "@rle/shared";
-import { libraryDir } from "./env";
-import { writeAsset } from "./library";
+import { libraryDir } from "./env.ts";
+import { writeAsset } from "./library.ts";
 
 async function main() {
   const id = process.argv[2];
-  if (!id) throw new Error("usage: tsx src/slice-wall.ts <asset-id> [sliceWidthPx]");
+  if (!id) throw new Error("usage: node src/slice-wall.ts <asset-id> [sliceWidthPx]");
   const srcDir = path.join(libraryDir, id);
   const desc: AssetDescriptor = JSON.parse(
     await fs.readFile(path.join(srcDir, "asset.json"), "utf8"),

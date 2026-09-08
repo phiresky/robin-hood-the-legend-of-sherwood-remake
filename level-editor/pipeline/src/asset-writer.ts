@@ -9,11 +9,11 @@ import {
   type AssetDescriptor,
   type ProtoLevel,
 } from "@rle/shared";
-import { isMissing } from "./provider-cache";
-import { datadirPath } from "./env";
-import { clipLevel, type Bbox } from "./clip";
-import { writeAsset } from "./library";
-import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx";
+import { isMissing } from "./provider-cache.ts";
+import { datadirPath } from "./env.ts";
+import { clipLevel, type Bbox } from "./clip.ts";
+import { writeAsset } from "./library.ts";
+import { fxTopLeft, loadFxSprite, loadKeyedFxPng } from "./fx.ts";
 
 export function levelsDirPath(): string {
   return path.join(datadirPath(), "Data", "Levels");

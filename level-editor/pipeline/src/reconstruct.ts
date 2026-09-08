@@ -1,12 +1,12 @@
 // 3D reconstruction of library assets with SAM 3D Objects.
 //
 //   # augment an existing 2D asset (uses its mask.png + source bbox)
-//   tsx src/reconstruct.ts --asset york-tower-house
+//   node src/reconstruct.ts --asset york-tower-house
 //   # ad-hoc: 2D-extract with SAM 3 first, then reconstruct
-//   tsx src/reconstruct.ts --map York --bbox 1450,840,200,300 --prompt "stone tower house" \
+//   node src/reconstruct.ts --map York --bbox 1450,840,200,300 --prompt "stone tower house" \
 //       --name "York tower house" [--id ...] [--tags building,tower]
 //   # batch from a detection file (see detect.ts)
-//   tsx src/reconstruct.ts --detections work/york-scene/detections.json [--only id,id] \
+//   node src/reconstruct.ts --detections work/york-scene/detections.json [--only id,id] \
 //       [--limit N] [--skip-existing] [--parallel 4]
 //
 // Options: --backend sam3d|trellis2|tripo|hunyuan (alternatives fill
@@ -39,13 +39,13 @@ import {
   type Quat,
   type ScenePlacement,
 } from "@rle/shared";
-import { libraryDir, workDir } from "./env";
-import { loadProtoLevel, mapImageSource, writeMaskedAsset } from "./asset-writer";
-import { EXTRACT_DEFAULTS, runExtraction, slugify } from "./extract-core";
-import type { Bbox } from "./clip";
-import { fitMapCamera } from "./map-camera";
-import { reconstruct3d } from "./sam3d";
-import { ALT_BACKENDS, backendInfo, reconstructWith, type Backend } from "./backends";
+import { libraryDir, workDir } from "./env.ts";
+import { loadProtoLevel, mapImageSource, writeMaskedAsset } from "./asset-writer.ts";
+import { EXTRACT_DEFAULTS, runExtraction, slugify } from "./extract-core.ts";
+import type { Bbox } from "./clip.ts";
+import { fitMapCamera } from "./map-camera.ts";
+import { reconstruct3d } from "./sam3d.ts";
+import { ALT_BACKENDS, backendInfo, reconstructWith, type Backend } from "./backends.ts";
 import {
   appearanceScore,
   bbox2d,
@@ -62,8 +62,8 @@ import {
   uniformScaleOf,
   type Grid,
   type MeshData,
-} from "./mesh";
-import { mapView, orbitView, render } from "./render";
+} from "./mesh.ts";
+import { mapView, orbitView, render } from "./render.ts";
 
 /**
  * What the alternative backends are shown (SAM 3D always gets the full crop

@@ -12,18 +12,18 @@ use serde::{Deserialize, Serialize};
 
 pub const JAVASCRIPT_BUILD_TOOL_AUTHORITY_SCHEMA_VERSION_V1: u32 = 1;
 pub const NODE_VERSION_V1: &str = "24.19.0";
-pub const PNPM_VERSION_V1: &str = "9.15.0";
+pub const PNPM_VERSION_V1: &str = "12.3.4";
 
 const NODE_DISTRIBUTION_URL_V1: &str =
     "https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz";
 const NODE_EXECUTABLE_RELATIVE_PATH_V1: &str = "node-v24.19.0-linux-x64/bin/node";
-const PNPM_DISTRIBUTION_URL_V1: &str = "https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz";
-const PNPM_EXECUTABLE_RELATIVE_PATH_V1: &str = "package/bin/pnpm.cjs";
+const PNPM_DISTRIBUTION_URL_V1: &str =
+    "https://registry.npmjs.org/@pnpm/exe.linux-x64/-/exe.linux-x64-12.3.4.tgz";
+const PNPM_EXECUTABLE_RELATIVE_PATH_V1: &str = "package/pnpm";
 
 const XZ_MEDIA_TYPE: &str = "application/x-xz";
 const GZIP_MEDIA_TYPE: &str = "application/gzip";
 const NATIVE_EXECUTABLE_MEDIA_TYPE: &str = "application/x-executable";
-const JAVASCRIPT_MEDIA_TYPE: &str = "text/javascript";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,8 +36,8 @@ pub enum JavaScriptBuildToolRoleV1 {
 /// build tool.
 ///
 /// `executable_relative_path` is relative to the root of the verified archive.
-/// In particular, pnpm's small JavaScript entrypoint loads the implementation
-/// shipped in the same digest-bound npm package; it is not accepted separately.
+/// pnpm 12 uses the Linux x64 native executable distribution; its JavaScript
+/// bootstrap package is not an executable authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JavaScriptBuildToolAuthorityDocumentV1 {
@@ -170,22 +170,22 @@ pub fn official_pnpm_authority_v1() -> JavaScriptBuildToolAuthorityDocumentV1 {
         distribution_url: PNPM_DISTRIBUTION_URL_V1.to_owned(),
         distribution: ArtifactRefV1 {
             sha256: Digest32::from_bytes([
-                0x09, 0xa8, 0xfe, 0x31, 0xa3, 0x4f, 0xda, 0x70, 0x63, 0x54, 0x68, 0x06, 0x19, 0xf4,
-                0x00, 0x2f, 0x4c, 0xce, 0xf6, 0xda, 0xdf, 0xf9, 0x32, 0x40, 0xd2, 0x4e, 0xf6, 0xc8,
-                0x31, 0xf0, 0xfd, 0x28,
+                0x9b, 0x1c, 0x95, 0xfc, 0x41, 0x36, 0x00, 0xca, 0x75, 0xa5, 0x1e, 0xbe, 0x83, 0x32,
+                0xd7, 0x01, 0x9d, 0xc3, 0x56, 0x8f, 0xd4, 0x18, 0x7f, 0x5a, 0x5f, 0x2d, 0xf4, 0xa1,
+                0x56, 0xef, 0xb6, 0x5c,
             ]),
-            byte_length: 4_314_910,
+            byte_length: 19_420_261,
             media_type: GZIP_MEDIA_TYPE.to_owned(),
         },
         executable_relative_path: PNPM_EXECUTABLE_RELATIVE_PATH_V1.to_owned(),
         executable: ArtifactRefV1 {
             sha256: Digest32::from_bytes([
-                0x98, 0xe6, 0xb9, 0x9a, 0x88, 0x1d, 0x64, 0xa1, 0xcc, 0x98, 0x2c, 0x3e, 0x60, 0xaa,
-                0x26, 0x0b, 0xf0, 0x21, 0x60, 0x38, 0x6b, 0x12, 0xe7, 0x44, 0x75, 0xe0, 0x64, 0x86,
-                0xdc, 0x74, 0xb0, 0x90,
+                0xcf, 0xb8, 0xaa, 0xd5, 0x1b, 0xaa, 0x14, 0xf1, 0xa7, 0x6d, 0x42, 0x27, 0x33, 0xe0,
+                0xa6, 0xd0, 0x2b, 0x09, 0x55, 0x43, 0x87, 0x52, 0xea, 0x5a, 0x92, 0x26, 0xa1, 0x41,
+                0xbe, 0x91, 0x79, 0x60,
             ]),
-            byte_length: 999,
-            media_type: JAVASCRIPT_MEDIA_TYPE.to_owned(),
+            byte_length: 45_153_536,
+            media_type: NATIVE_EXECUTABLE_MEDIA_TYPE.to_owned(),
         },
     }
 }
@@ -216,7 +216,7 @@ mod tests {
             ),
             (
                 official_pnpm_authority_v1(),
-                include_bytes!("../../../.github/tool-authorities/pnpm-v9.15.0.json").as_slice(),
+                include_bytes!("../../../.github/tool-authorities/pnpm-v12.3.4.json").as_slice(),
             ),
         ] {
             authority.validate().unwrap();
@@ -260,21 +260,21 @@ mod tests {
         assert_eq!(node.executable.byte_length, 125_989_464);
 
         let pnpm = official_pnpm_authority_v1();
-        assert_eq!(pnpm.version, "9.15.0");
+        assert_eq!(pnpm.version, "12.3.4");
         assert_eq!(
             pnpm.distribution_url,
-            "https://registry.npmjs.org/pnpm/-/pnpm-9.15.0.tgz"
+            "https://registry.npmjs.org/@pnpm/exe.linux-x64/-/exe.linux-x64-12.3.4.tgz"
         );
         assert_eq!(
             pnpm.distribution.sha256.to_string(),
-            "09a8fe31a34fda706354680619f4002f4ccef6dadff93240d24ef6c831f0fd28"
+            "9b1c95fc413600ca75a51ebe8332d7019dc3568fd4187f5a5f2df4a156efb65c"
         );
-        assert_eq!(pnpm.distribution.byte_length, 4_314_910);
+        assert_eq!(pnpm.distribution.byte_length, 19_420_261);
         assert_eq!(
             pnpm.executable.sha256.to_string(),
-            "98e6b99a881d64a1cc982c3e60aa260bf02160386b12e74475e06486dc74b090"
+            "cfb8aad51baa14f1a76d422733e0a6d02b0955438752ea5a9226a141be917960"
         );
-        assert_eq!(pnpm.executable.byte_length, 999);
+        assert_eq!(pnpm.executable.byte_length, 45_153_536);
     }
 
     #[test]

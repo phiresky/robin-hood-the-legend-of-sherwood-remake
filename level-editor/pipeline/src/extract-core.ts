@@ -9,10 +9,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
 import type { LibraryIndexEntry, ProtoLevel } from "@rle/shared";
-import { libraryDir, workDir } from "./env";
-import { segment, type SamMask } from "./sam";
-import type { Bbox } from "./clip";
-import { loadProtoLevel, mapImageSource, writeMaskedAsset } from "./asset-writer";
+import { libraryDir, workDir } from "./env.ts";
+import { segment, type SamMask } from "./sam.ts";
+import type { Bbox } from "./clip.ts";
+import { loadProtoLevel, mapImageSource, writeMaskedAsset } from "./asset-writer.ts";
 
 export interface ExtractOptions {
   map: string;

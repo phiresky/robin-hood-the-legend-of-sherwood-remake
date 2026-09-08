@@ -586,7 +586,7 @@ release build.
 
 Node and pnpm use the same closed model. `BuildDraftV2.node` must name
 `.github/tool-authorities/node-v24.19.0.json`; `BuildDraftV2.pnpm` must name
-`.github/tool-authorities/pnpm-v9.15.0.json`. These typed documents bind the
+`.github/tool-authorities/pnpm-v12.3.4.json`. These typed documents bind the
 exact upstream archive URL, archive digest and length, selected executable
 path, and selected executable digest and length. A generic JSON file carrying
 only a version, an ambient executable on `PATH`, or a role substitution is not
@@ -1755,7 +1755,7 @@ Before deployment, the proxied `A` record
 healthy. Do not create `identity.robinhood.phiresky.xyz`; the signer Custom
 Domain creates and manages that record and certificate.
 
-Use the release-authorized Node.js 24.19.0, pnpm 9.15.0, Wrangler 4.127.1, and
+Use the release-authorized Node.js 24.19.0, pnpm 12.3.4, Wrangler 4.127.1, and
 the `robin-highscores-manifestctl` built from the exact release commit. The
 scripts reject a different Node, source commit/tree, `Cargo.lock`, approved
 materialization receipt, PublicationV3 manifest/lock, or physical artifact
