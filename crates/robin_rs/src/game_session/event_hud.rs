@@ -276,33 +276,30 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     }
 
     let input_suppressed = runtime.replay_player.is_some() || rewind_active;
-    if !input_suppressed
-        && host.frontend.planning.enabled()
-        && crate::touch_plan_hud::platform_has_touch_planning_hud()
-    {
-        let screen_width = presentation.renderer.screen_width();
-        let pressed = events.iter().any(|event| {
-            matches!(
-                *event,
-                GameEvent::MouseDown(x, y, 1, _)
-                    if crate::touch_plan_hud::hit_test(screen_width, x, y)
-            )
-        });
-        if pressed {
-            host.frontend.planning.toggle_touch();
-            host.frontend.pointer_capture.capture_touch_plan();
-            if !host.frontend.planning.touch_latched() {
-                dispatch_local_command(
-                    &host.transport,
-                    &mut frame.commands,
-                    &PlayerCommand::CancelPlannedAction,
-                );
+    let admit_touch = !input_suppressed && crate::touch_plan_hud::platform_has_touch_planning_hud();
+    let screen_width = presentation.renderer.screen_width();
+    events.retain(|event| {
+        use crate::frontend_input::TouchPlanRoute;
+        match host.frontend.pointer_capture.route_touch_plan_event(
+            &mut host.frontend.planning,
+            event,
+            admit_touch,
+            |x, y| crate::touch_plan_hud::hit_test(screen_width, x, y),
+        ) {
+            TouchPlanRoute::Forward => true,
+            TouchPlanRoute::Captured => false,
+            TouchPlanRoute::Toggled { cancel_planned } => {
+                if cancel_planned {
+                    dispatch_local_command(
+                        &host.transport,
+                        &mut frame.commands,
+                        &PlayerCommand::CancelPlannedAction,
+                    );
+                }
+                false
             }
         }
-        host.frontend
-            .pointer_capture
-            .filter_touch_plan_events(&mut events);
-    }
+    });
     if !input_suppressed {
         let zoom_enable =
             ZoomButtonEnable::from_engine(&manager.engine, &host.frontend.engine_display);

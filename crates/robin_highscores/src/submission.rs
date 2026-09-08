@@ -14,12 +14,23 @@ use robin_run_protocol::{
     SignedSubmissionV1, SubmissionOfferV1, Validate,
 };
 
+/// Proof of signature verification against the server's exact offer. This owner
+/// deliberately has no serialization implementation: serialized records are data,
+/// not a way to recreate authentication. The borrow prevents mutation of the
+/// authenticated document while reservation/finalization use its one projection.
+pub(crate) struct AuthenticatedSubmission<'a> {
+    signed: &'a SignedSubmissionV1,
+    projection: crate::db::SubmissionUploadIntent,
+}
+
 /// Authentication is independent; finalization checks the live lease in its transaction.
 /// Redundant storage fields are derived here, never supplied by the HTTP adapter.
 fn prepare_submission(
-    signed: &SignedSubmissionV1,
+    authenticated: &AuthenticatedSubmission<'_>,
     lease: &SubmissionUploadLease,
 ) -> Result<NewSubmission, DbError> {
+    let signed = authenticated.signed;
+    let projection = &authenticated.projection;
     signed
         .validate()
         .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
@@ -31,67 +42,9 @@ fn prepare_submission(
         return Err(DbError::SubmissionConflict);
     }
     let artifacts = &signed.submission.artifacts;
-    let envelope_json = serde_json::to_string(signed).map_err(stored_json_error)?;
+    let envelope_json = projection.envelope_json.clone();
     let signatures_json =
         serde_json::to_string(&signed.participant_signatures).map_err(stored_json_error)?;
-    let controller_public_key = signed
-        .submission
-        .campaign_continuation_authorization
-        .as_ref()
-        .map(|authorization| authorization.claim.campaign_controller_public_key)
-        .unwrap_or(
-            signed
-                .submission
-                .offer
-                .session_genesis
-                .claim
-                .host_public_key,
-        )
-        .into_bytes();
-    let session_genesis_sha256 = signed
-        .submission
-        .offer
-        .session_genesis
-        .canonical_digest()
-        .map_err(|error| DbError::ResultInvariant(error.to_string()))?
-        .into_bytes();
-    let session_genesis_host_public_key = signed
-        .submission
-        .offer
-        .session_genesis
-        .claim
-        .host_public_key
-        .into_bytes();
-    let replay_session_id = signed
-        .submission
-        .offer
-        .session_genesis
-        .claim
-        .replay_session_id
-        .into_bytes();
-    let session_genesis_host_nonce = signed
-        .submission
-        .offer
-        .session_genesis
-        .claim
-        .host_nonce
-        .into_bytes();
-    let participants = signed
-        .submission
-        .offer
-        .participant_claims
-        .iter()
-        .map(|claim| ParticipantClaim {
-            seat: claim.seat,
-            participant_instance_id: claim.participant_instance_id.into_bytes(),
-            public_key: claim.public_key.into_bytes(),
-            public_disclosure: match claim.public_disclosure {
-                ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
-                ParticipantPublicDisclosureV1::Anonymous => "anonymous",
-            }
-            .to_owned(),
-        })
-        .collect::<Vec<_>>();
     let (scope_kind, chain_id, predecessor_id) = starting_state_storage(&signed.submission.offer);
     let admission_profile: AdmissionProfile =
         serde_json::from_str(&lease.public_metadata_json).map_err(stored_json_error)?;
@@ -140,7 +93,7 @@ fn prepare_submission(
         starting_campaign_sha256: artifacts.starting_campaign.sha256.into_bytes(),
         starting_campaign_bytes: artifacts.starting_campaign.byte_length,
         canonical_campaign_state_json,
-        controller_public_key,
+        controller_public_key: projection.controller_public_key,
         starting_state_json: serde_json::to_string(&signed.submission.offer.starting_state)
             .map_err(stored_json_error)?,
         campaign_chain_id: chain_id,
@@ -156,22 +109,28 @@ fn prepare_submission(
             .map_err(stored_json_error)?,
         max_concurrent_players: signed.submission.offer.max_concurrent_players,
         participant_instance_count: signed.submission.offer.participant_instance_count,
-        session_genesis_sha256,
-        session_genesis_host_public_key,
-        replay_session_id,
-        session_genesis_host_nonce,
-        participants,
+        session_genesis_sha256: projection.session_genesis_sha256,
+        session_genesis_host_public_key: projection.session_genesis_host_public_key,
+        replay_session_id: projection.replay_session_id,
+        session_genesis_host_nonce: projection.session_genesis_host_nonce,
+        participants: projection.participants.clone(),
     };
     Ok(submission)
 }
 
 /// Verify authorizing proofs against the server's exact immutable offer.
 /// Kept separate from transport parsing and from transaction-time lease checks.
-pub(crate) fn authenticate_reserved_offer(
-    signed: &SignedSubmissionV1,
+pub(crate) fn authenticate_reserved_offer<'a>(
+    signed: &'a SignedSubmissionV1,
     offer_json: &str,
-) -> Result<(), crate::error::ApiError> {
+) -> Result<AuthenticatedSubmission<'a>, crate::error::ApiError> {
     use crate::{error::ApiError, identity::verify_signature};
+    // The HTTP adapter already performs this before expiry/storage lookup.
+    // Retain that ordering there, while making this sole proof constructor safe
+    // for any future caller: shape errors are not cryptographic rejections.
+    signed
+        .validate()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
     let authoritative_offer: SubmissionOfferV1 =
         serde_json::from_str(offer_json).map_err(|_error| {
             tracing::error!(
@@ -210,7 +169,10 @@ pub(crate) fn authenticate_reserved_offer(
         )
         .map_err(|_| ApiError::Unauthorized)?;
     }
-    Ok(())
+    Ok(AuthenticatedSubmission {
+        signed,
+        projection: upload_intent(signed)?,
+    })
 }
 
 fn stored_json_error(error: serde_json::Error) -> DbError {
@@ -223,7 +185,7 @@ fn stored_json_error(error: serde_json::Error) -> DbError {
 /// reach the caller's artifact I/O. The caller retains its outer database fence.
 pub(crate) async fn complete_upload<A, I, F>(
     database: &crate::Database,
-    signed: &SignedSubmissionV1,
+    authenticated: &AuthenticatedSubmission<'_>,
     lease_ttl: std::time::Duration,
     reservation_ttl: std::time::Duration,
     admission: A,
@@ -235,11 +197,11 @@ where
     F: std::future::Future<Output = Result<(), crate::error::ApiError>>,
 {
     use crate::{db::SubmissionUploadReservation, error::ApiError};
-    let intent = upload_intent(signed)?;
+    let intent = &authenticated.projection;
     let admission_error = admission.await.err();
     let reservation = database
         .reserve_submission_upload_if_admitted(
-            &intent,
+            intent,
             lease_ttl,
             reservation_ttl,
             admission_error.is_none(),
@@ -264,7 +226,7 @@ where
             debug_assert!(resume_uploaded || admission_error.is_none());
             finish_reserved_upload(
                 database,
-                signed,
+                authenticated,
                 &lease,
                 resume_uploaded,
                 ingestion(resume_uploaded),
@@ -279,7 +241,7 @@ where
 /// without depending on multipart or buffering a campaign itself.
 async fn finish_reserved_upload(
     database: &crate::Database,
-    signed: &SignedSubmissionV1,
+    authenticated: &AuthenticatedSubmission<'_>,
     lease: &SubmissionUploadLease,
     resume_uploaded: bool,
     ingestion: impl std::future::Future<Output = Result<(), crate::error::ApiError>>,
@@ -294,7 +256,7 @@ async fn finish_reserved_upload(
             return Err(error.into());
         }
     }
-    let submission = prepare_submission(signed, lease)?;
+    let submission = prepare_submission(authenticated, lease)?;
     Ok(database
         .finalize_submission_upload(&submission, lease)
         .await?)
@@ -412,4 +374,22 @@ fn upload_intent(
         session_genesis_host_nonce,
         participants,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AuthenticatedSubmission;
+
+    #[test]
+    fn authentication_authority_cannot_be_deserialized() {
+        // Inference has exactly one implementation today. Adding Deserialize
+        // creates a second candidate and makes this test fail to compile.
+        trait AmbiguousIfDeserialize<Marker> {
+            fn check() {}
+        }
+        impl<T: ?Sized> AmbiguousIfDeserialize<()> for T {}
+        enum Deserializable {}
+        impl<T: serde::Deserialize<'static>> AmbiguousIfDeserialize<Deserializable> for T {}
+        let _ = <AuthenticatedSubmission<'static> as AmbiguousIfDeserialize<_>>::check;
+    }
 }

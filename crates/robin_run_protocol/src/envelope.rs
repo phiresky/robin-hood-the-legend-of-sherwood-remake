@@ -1291,7 +1291,40 @@ impl Validate for SubmissionOfferRequestV1 {
     }
 }
 
+// Shared identity policy only: campaign authority remains explicit in the adapters.
+fn preflight_session_identity_matches(
+    genesis: &ReplaySessionGenesisClaimV1,
+    host_public_key: PublicKey32,
+    replay_session_id: Digest32,
+    host_participant_instance_id: Digest32,
+    host_nonce: ChallengeNonce32,
+    ranked_session_sha256: Digest32,
+    expected_ranked_session_sha256: Digest32,
+) -> bool {
+    host_public_key == genesis.host_public_key
+        && replay_session_id == genesis.replay_session_id
+        && host_participant_instance_id == genesis.host_participant_instance_id
+        && host_nonce == genesis.host_nonce
+        && ranked_session_sha256 == expected_ranked_session_sha256
+}
+
 impl CampaignContinuationPreflightGrantV1 {
+    fn binds_chain(&self, chain_id: &OpaqueId, predecessor_run_id: &OpaqueId) -> bool {
+        &self.claim.chain_id == chain_id && &self.claim.predecessor_run_id == predecessor_run_id
+    }
+
+    fn binds_participants(
+        &self,
+        max_concurrent_players: u16,
+        participants: &[ParticipantClaimV1],
+    ) -> bool {
+        self.claim.max_concurrent_players == max_concurrent_players
+            && self.claim.participant_public_keys == durable_participant_keys(participants)
+            && participants.iter().any(|participant| {
+                participant.public_key == self.claim.campaign_controller_public_key
+            })
+    }
+
     fn validate_offer_request(
         &self,
         request: &SubmissionOfferRequestV1,
@@ -1314,20 +1347,16 @@ impl CampaignContinuationPreflightGrantV1 {
             .map_err(|_| ValidationError::ClaimMismatch {
                 field: "campaign_continuation_preflight_grant.ranked_session_sha256",
             })?;
-        if self.claim.host_public_key != request.session_genesis.claim.host_public_key
-            || self.claim.replay_session_id != request.session_genesis.claim.replay_session_id
-            || self.claim.host_participant_instance_id
-                != request.session_genesis.claim.host_participant_instance_id
-            || self.claim.host_nonce != request.session_genesis.claim.host_nonce
-            || self.claim.ranked_session_sha256 != ranked_session_sha256
-            || &self.claim.chain_id != chain_id
-            || &self.claim.predecessor_run_id != predecessor_run_id
-            || self.claim.max_concurrent_players != request.max_concurrent_players
-            || self.claim.participant_public_keys
-                != durable_participant_keys(&request.participant_claims)
-            || !request.participant_claims.iter().any(|participant| {
-                participant.public_key == self.claim.campaign_controller_public_key
-            })
+        if !preflight_session_identity_matches(
+            &request.session_genesis.claim,
+            self.claim.host_public_key,
+            self.claim.replay_session_id,
+            self.claim.host_participant_instance_id,
+            self.claim.host_nonce,
+            self.claim.ranked_session_sha256,
+            ranked_session_sha256,
+        ) || !self.binds_chain(chain_id, predecessor_run_id)
+            || !self.binds_participants(request.max_concurrent_players, &request.participant_claims)
         {
             return Err(ValidationError::ClaimMismatch {
                 field: "campaign_continuation_preflight_grant.offer_binding",
@@ -1359,23 +1388,19 @@ impl CampaignContinuationPreflightGrantV1 {
             .map_err(|_| ValidationError::ClaimMismatch {
                 field: "campaign_continuation_preflight_grant.ranked_session_sha256",
             })?;
-        if self.claim.host_public_key != offer.session_genesis.claim.host_public_key
-            || self.claim.replay_session_id != offer.session_genesis.claim.replay_session_id
-            || self.claim.host_participant_instance_id
-                != offer.session_genesis.claim.host_participant_instance_id
-            || self.claim.host_nonce != offer.session_genesis.claim.host_nonce
-            || self.claim.ranked_session_sha256 != ranked_session_sha256
-            || &self.claim.chain_id != chain_id
-            || &self.claim.predecessor_run_id != predecessor_run_id
+        if !preflight_session_identity_matches(
+            &offer.session_genesis.claim,
+            self.claim.host_public_key,
+            self.claim.replay_session_id,
+            self.claim.host_participant_instance_id,
+            self.claim.host_nonce,
+            self.claim.ranked_session_sha256,
+            ranked_session_sha256,
+        ) || !self.binds_chain(chain_id, predecessor_run_id)
             || self.claim.predecessor_verification_sha256 != *predecessor_verification_sha256
             || self.claim.starting_campaign.sha256 != *campaign_sha256
             || self.claim.starting_campaign.byte_length != *starting_campaign_byte_length
-            || self.claim.max_concurrent_players != offer.max_concurrent_players
-            || self.claim.participant_public_keys
-                != durable_participant_keys(&offer.participant_claims)
-            || !offer.participant_claims.iter().any(|participant| {
-                participant.public_key == self.claim.campaign_controller_public_key
-            })
+            || !self.binds_participants(offer.max_concurrent_players, &offer.participant_claims)
         {
             return Err(ValidationError::ClaimMismatch {
                 field: "campaign_continuation_preflight_grant.offer_binding",
@@ -1391,29 +1416,14 @@ impl FreshRunPreflightGrantV1 {
         request: &SubmissionOfferRequestV1,
         expected_scope: FreshRunScopeV1,
     ) -> Result<(), ValidationError> {
-        self.validate()?;
+        // Before admission, campaign facts are supplied by the ranked claim.
         let ranked = &request.session_genesis.claim.ranked_session;
-        let ranked_session_sha256 =
-            ranked
-                .canonical_digest()
-                .map_err(|_| ValidationError::ClaimMismatch {
-                    field: "fresh_run_preflight_grant.ranked_session_sha256",
-                })?;
-        if self.claim.host_public_key != request.session_genesis.claim.host_public_key
-            || self.claim.replay_session_id != request.session_genesis.claim.replay_session_id
-            || self.claim.host_participant_instance_id
-                != request.session_genesis.claim.host_participant_instance_id
-            || self.claim.host_nonce != request.session_genesis.claim.host_nonce
-            || self.claim.scope != expected_scope
-            || self.claim.ranked_session_sha256 != ranked_session_sha256
-            || self.claim.starting_campaign.sha256 != ranked.starting_campaign_sha256
-            || self.claim.starting_campaign.byte_length != ranked.starting_campaign_byte_length
-        {
-            return Err(ValidationError::ClaimMismatch {
-                field: "fresh_run_preflight_grant.offer_binding",
-            });
-        }
-        Ok(())
+        self.validate_submission_binding(
+            &request.session_genesis.claim,
+            expected_scope,
+            ranked.starting_campaign_sha256,
+            ranked.starting_campaign_byte_length,
+        )
     }
 
     fn validate_offer(
@@ -1421,24 +1431,39 @@ impl FreshRunPreflightGrantV1 {
         offer: &SubmissionOfferV1,
         expected_scope: FreshRunScopeV1,
     ) -> Result<(), ValidationError> {
+        // After admission, the authoritative offer owns campaign expectations.
+        self.validate_submission_binding(
+            &offer.session_genesis.claim,
+            expected_scope,
+            offer.starting_state.campaign_sha256(),
+            offer.starting_state.starting_campaign_byte_length(),
+        )
+    }
+
+    fn validate_submission_binding(
+        &self,
+        genesis: &ReplaySessionGenesisClaimV1,
+        expected_scope: FreshRunScopeV1,
+        campaign_sha256: Digest32,
+        campaign_byte_length: u64,
+    ) -> Result<(), ValidationError> {
         self.validate()?;
-        let ranked = &offer.session_genesis.claim.ranked_session;
-        let ranked_session_sha256 =
-            ranked
-                .canonical_digest()
-                .map_err(|_| ValidationError::ClaimMismatch {
-                    field: "fresh_run_preflight_grant.ranked_session_sha256",
-                })?;
-        if self.claim.host_public_key != offer.session_genesis.claim.host_public_key
-            || self.claim.replay_session_id != offer.session_genesis.claim.replay_session_id
-            || self.claim.host_participant_instance_id
-                != offer.session_genesis.claim.host_participant_instance_id
-            || self.claim.host_nonce != offer.session_genesis.claim.host_nonce
-            || self.claim.scope != expected_scope
-            || self.claim.ranked_session_sha256 != ranked_session_sha256
-            || self.claim.starting_campaign.sha256 != offer.starting_state.campaign_sha256()
-            || self.claim.starting_campaign.byte_length
-                != offer.starting_state.starting_campaign_byte_length()
+        let ranked_session_sha256 = genesis.ranked_session.canonical_digest().map_err(|_| {
+            ValidationError::ClaimMismatch {
+                field: "fresh_run_preflight_grant.ranked_session_sha256",
+            }
+        })?;
+        if !preflight_session_identity_matches(
+            genesis,
+            self.claim.host_public_key,
+            self.claim.replay_session_id,
+            self.claim.host_participant_instance_id,
+            self.claim.host_nonce,
+            self.claim.ranked_session_sha256,
+            ranked_session_sha256,
+        ) || self.claim.scope != expected_scope
+            || self.claim.starting_campaign.sha256 != campaign_sha256
+            || self.claim.starting_campaign.byte_length != campaign_byte_length
         {
             return Err(ValidationError::ClaimMismatch {
                 field: "fresh_run_preflight_grant.offer_binding",
@@ -3817,6 +3842,356 @@ mod tests {
             },
             allowed_metrics: vec![BoardMetricV1::OriginalScore, BoardMetricV1::FastestSuccess],
         }
+    }
+
+    fn grant_binding_request(offer: &SubmissionOfferV1) -> SubmissionOfferRequestV1 {
+        SubmissionOfferRequestV1 {
+            schema_version: offer.schema_version,
+            max_concurrent_players: offer.max_concurrent_players,
+            participant_instance_count: offer.participant_instance_count,
+            participant_claims: offer.participant_claims.clone(),
+            session_genesis: offer.session_genesis.clone(),
+            mission_id: offer.mission_id.clone(),
+            scope_request: match &offer.starting_state {
+                InitialStateExpectationV1::IndividualLevel { .. } => {
+                    ScopeRequestV1::IndividualLevel
+                }
+                InitialStateExpectationV1::CampaignGenesis { .. } => {
+                    ScopeRequestV1::CampaignGenesis
+                }
+                InitialStateExpectationV1::CampaignContinuation {
+                    chain_id,
+                    predecessor_run_id,
+                    ..
+                } => ScopeRequestV1::CampaignContinuation {
+                    chain_id: chain_id.clone(),
+                    predecessor_run_id: predecessor_run_id.clone(),
+                },
+            },
+            ruleset_manifest_sha256: offer.ruleset_manifest_sha256,
+            competition_manifest_sha256: offer.competition_manifest_sha256,
+        }
+    }
+
+    fn continuation_binding_offer() -> SubmissionOfferV1 {
+        let mut offer = offer();
+        let InitialStateExpectationV1::IndividualLevel {
+            campaign_state_requirement,
+            campaign_sha256,
+            starting_campaign_byte_length,
+            ..
+        } = offer.starting_state
+        else {
+            unreachable!()
+        };
+        offer.starting_state = InitialStateExpectationV1::CampaignContinuation {
+            chain_id: id("chain-1"),
+            predecessor_run_id: id("predecessor-1"),
+            predecessor_verification_sha256: Digest32::from_bytes([17; 32]),
+            campaign_state_requirement,
+            campaign_sha256,
+            starting_campaign_byte_length,
+        };
+        offer.session_genesis.claim.fresh_run_preflight_grant = None;
+        offer
+            .session_genesis
+            .claim
+            .campaign_continuation_preflight_grant = Some(continuation_preflight_grant(
+            &offer.session_genesis.claim,
+            id("chain-1"),
+            id("predecessor-1"),
+            Digest32::from_bytes([17; 32]),
+            host_claim().public_key,
+            vec![host_claim().public_key],
+            1,
+        ));
+        offer
+    }
+
+    fn assert_grant_binding_error(result: Result<(), ValidationError>, field: &'static str) {
+        assert_eq!(result, Err(ValidationError::ClaimMismatch { field }));
+    }
+
+    #[test]
+    fn preflight_submission_identity_mutations_reach_all_four_adapters() {
+        let fresh = offer();
+        let continuation = continuation_binding_offer();
+        let mutations: [(&str, fn(&mut ReplaySessionGenesisClaimV1)); 5] = [
+            ("host key", |claim| {
+                claim.host_public_key = PublicKey32::from_bytes([90; 32])
+            }),
+            ("session", |claim| {
+                claim.replay_session_id = Digest32::from_bytes([90; 32])
+            }),
+            ("host instance", |claim| {
+                claim.host_participant_instance_id = Digest32::from_bytes([90; 32])
+            }),
+            ("host nonce", |claim| {
+                claim.host_nonce = ChallengeNonce32::from_bytes([90; 32])
+            }),
+            ("ranked digest", |claim| {
+                claim.ranked_session.rules_config_sha256 = Digest32::from_bytes([90; 32])
+            }),
+        ];
+        for base in [&fresh, &continuation] {
+            for (label, mutate) in mutations {
+                let mut changed = base.clone();
+                mutate(&mut changed.session_genesis.claim);
+                let request = grant_binding_request(&changed);
+                if let Some(grant) = &base.session_genesis.claim.fresh_run_preflight_grant {
+                    assert!(
+                        grant
+                            .validate_offer(base, FreshRunScopeV1::IndividualLevel)
+                            .is_ok(),
+                        "{label}"
+                    );
+                    assert!(
+                        grant
+                            .validate_offer_request(
+                                &grant_binding_request(base),
+                                FreshRunScopeV1::IndividualLevel
+                            )
+                            .is_ok()
+                    );
+                    assert_grant_binding_error(
+                        grant.validate_offer(&changed, FreshRunScopeV1::IndividualLevel),
+                        "fresh_run_preflight_grant.offer_binding",
+                    );
+                    assert_grant_binding_error(
+                        grant.validate_offer_request(&request, FreshRunScopeV1::IndividualLevel),
+                        "fresh_run_preflight_grant.offer_binding",
+                    );
+                } else {
+                    let grant = base
+                        .session_genesis
+                        .claim
+                        .campaign_continuation_preflight_grant
+                        .as_ref()
+                        .unwrap();
+                    assert!(grant.validate_offer(base).is_ok(), "{label}");
+                    assert!(
+                        grant
+                            .validate_offer_request(&grant_binding_request(base))
+                            .is_ok()
+                    );
+                    assert_grant_binding_error(
+                        grant.validate_offer(&changed),
+                        "campaign_continuation_preflight_grant.offer_binding",
+                    );
+                    assert_grant_binding_error(
+                        grant.validate_offer_request(&request),
+                        "campaign_continuation_preflight_grant.offer_binding",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fresh_campaign_binding_uses_request_claim_but_offer_expectation() {
+        let base = offer();
+        let grant = base
+            .session_genesis
+            .claim
+            .fresh_run_preflight_grant
+            .as_ref()
+            .unwrap();
+        for field in ["sha256", "byte_length"] {
+            // Keep ranked identity bound while replacing just the campaign claim.
+            let mut changed = base.clone();
+            let ranked = &mut changed.session_genesis.claim.ranked_session;
+            if field == "sha256" {
+                ranked.starting_campaign_sha256 = Digest32::from_bytes([90; 32]);
+            } else {
+                ranked.starting_campaign_byte_length += 1;
+            }
+            let mut rebound = grant.clone();
+            rebound.claim.ranked_session_sha256 = ranked.canonical_digest().unwrap();
+            assert_grant_binding_error(
+                rebound.validate_offer_request(
+                    &grant_binding_request(&changed),
+                    FreshRunScopeV1::IndividualLevel,
+                ),
+                "fresh_run_preflight_grant.offer_binding",
+            );
+            assert!(
+                rebound
+                    .validate_offer(&changed, FreshRunScopeV1::IndividualLevel)
+                    .is_ok()
+            );
+
+            let mut changed = base.clone();
+            let InitialStateExpectationV1::IndividualLevel {
+                campaign_sha256,
+                starting_campaign_byte_length,
+                ..
+            } = &mut changed.starting_state
+            else {
+                unreachable!()
+            };
+            if field == "sha256" {
+                *campaign_sha256 = Digest32::from_bytes([90; 32]);
+            } else {
+                *starting_campaign_byte_length += 1;
+            }
+            assert_grant_binding_error(
+                grant.validate_offer(&changed, FreshRunScopeV1::IndividualLevel),
+                "fresh_run_preflight_grant.offer_binding",
+            );
+            assert!(
+                grant
+                    .validate_offer_request(
+                        &grant_binding_request(&changed),
+                        FreshRunScopeV1::IndividualLevel
+                    )
+                    .is_ok()
+            );
+        }
+        assert_grant_binding_error(
+            grant.validate_offer(&base, FreshRunScopeV1::CampaignGenesis),
+            "fresh_run_preflight_grant.offer_binding",
+        );
+        assert_grant_binding_error(
+            grant.validate_offer_request(
+                &grant_binding_request(&base),
+                FreshRunScopeV1::CampaignGenesis,
+            ),
+            "fresh_run_preflight_grant.offer_binding",
+        );
+    }
+
+    #[test]
+    fn continuation_binding_mutations_preserve_request_and_offer_authority() {
+        let base = continuation_binding_offer();
+        let grant = base
+            .session_genesis
+            .claim
+            .campaign_continuation_preflight_grant
+            .as_ref()
+            .unwrap();
+        let mutations = [
+            (
+                "/starting_state/chain_id",
+                serde_json::json!("other-chain"),
+                true,
+            ),
+            (
+                "/starting_state/predecessor_run_id",
+                serde_json::json!("other-run"),
+                true,
+            ),
+            (
+                "/starting_state/predecessor_verification_sha256",
+                serde_json::json!(Digest32::from_bytes([90; 32])),
+                false,
+            ),
+            (
+                "/starting_state/campaign_sha256",
+                serde_json::json!(Digest32::from_bytes([90; 32])),
+                false,
+            ),
+            (
+                "/starting_state/starting_campaign_byte_length",
+                serde_json::json!(322),
+                false,
+            ),
+            ("/max_concurrent_players", serde_json::json!(2), true),
+            (
+                "/participant_claims/0/public_key",
+                serde_json::json!(PublicKey32::from_bytes([90; 32])),
+                true,
+            ),
+        ];
+        for (path, value, request_must_reject) in mutations {
+            let mut json = serde_json::to_value(&base).unwrap();
+            *json.pointer_mut(path).unwrap() = value;
+            let changed: SubmissionOfferV1 = serde_json::from_value(json).unwrap();
+            assert_grant_binding_error(
+                grant.validate_offer(&changed),
+                "campaign_continuation_preflight_grant.offer_binding",
+            );
+            let result = grant.validate_offer_request(&grant_binding_request(&changed));
+            if request_must_reject {
+                assert_grant_binding_error(
+                    result,
+                    "campaign_continuation_preflight_grant.offer_binding",
+                );
+            } else {
+                assert!(result.is_ok(), "{path} belongs only to the admitted offer");
+            }
+        }
+
+        // Controller must be a durable member, not necessarily the current host.
+        let controller = PublicKey32::from_bytes([90; 32]);
+        let mut grant = grant.clone();
+        grant.claim.campaign_controller_public_key = controller;
+        grant.claim.participant_public_keys.push(controller);
+        grant.claim.max_concurrent_players = 2;
+        assert!(grant.validate().is_ok());
+        let mut changed = base.clone();
+        changed.max_concurrent_players = 2;
+        assert!(!grant.binds_participants(2, &changed.participant_claims));
+        assert_grant_binding_error(
+            grant.validate_offer(&changed),
+            "campaign_continuation_preflight_grant.offer_binding",
+        );
+        assert_grant_binding_error(
+            grant.validate_offer_request(&grant_binding_request(&changed)),
+            "campaign_continuation_preflight_grant.offer_binding",
+        );
+        let mut participant = host_claim();
+        participant.public_key = controller;
+        changed.participant_claims.push(participant);
+        assert!(grant.validate_offer(&changed).is_ok());
+        assert!(
+            grant
+                .validate_offer_request(&grant_binding_request(&changed))
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn grant_shape_and_continuation_scope_errors_precede_binding_errors() {
+        let base = offer();
+        let mut fresh = base
+            .session_genesis
+            .claim
+            .fresh_run_preflight_grant
+            .clone()
+            .unwrap();
+        fresh.claim.host_nonce = ChallengeNonce32::from_bytes([0; 32]);
+        for result in [
+            fresh.validate_offer(&base, FreshRunScopeV1::CampaignGenesis),
+            fresh.validate_offer_request(
+                &grant_binding_request(&base),
+                FreshRunScopeV1::CampaignGenesis,
+            ),
+        ] {
+            assert_grant_binding_error(result, "fresh_run_preflight_grant.identity_or_interval");
+        }
+        let continuation = continuation_binding_offer();
+        let mut grant = continuation
+            .session_genesis
+            .claim
+            .campaign_continuation_preflight_grant
+            .unwrap();
+        assert_grant_binding_error(
+            grant.validate_offer(&base),
+            "campaign_continuation_preflight_grant.offer_scope",
+        );
+        assert_grant_binding_error(
+            grant.validate_offer_request(&grant_binding_request(&base)),
+            "campaign_continuation_preflight_grant.offer_scope",
+        );
+        grant.claim.host_nonce = ChallengeNonce32::from_bytes([0; 32]);
+        assert_grant_binding_error(
+            grant.validate_offer(&base),
+            "campaign_continuation_preflight_grant.identity_or_interval",
+        );
+        assert_grant_binding_error(
+            grant.validate_offer_request(&grant_binding_request(&base)),
+            "campaign_continuation_preflight_grant.identity_or_interval",
+        );
     }
 
     #[test]
