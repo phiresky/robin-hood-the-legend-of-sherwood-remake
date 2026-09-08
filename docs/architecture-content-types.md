@@ -39,8 +39,27 @@ adapter is independent. Package counts are not compile-time measurements.
 
 ## Validation
 
-TODO: Record explicit content, codec-only, default asset, engine compatibility,
-and WASM example results once the cold worktree builds finish.
+- `cargo test --locked -p robin_content -p robin_assets --no-default-features`:
+  3 leaf contract tests, 76 asset unit tests and 5 fixture-resolver tests passed;
+  3 original-data asset tests remain explicitly ignored. This exercises the
+  optimized frame-holder opacity fingerprint against the shared canonical
+  implementation, plus raw sprite and picture codec regression suites.
+- `cargo check --locked -p robin_assets --no-default-features --example
+  wasm_decode_bench --target wasm32-unknown-unknown --profile wasm-dev` passed
+  at `751d7b1bd` (5m31s cold). This checks the real raw VQ JS export without
+  linking simulation; it is a compile check, not a browser timing measurement.
+
+- `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_content
+  --features simulation-codecs -p robin_assets -p robin_engine` passed:
+  default asset unit/integration suites, all 4 leaf contract tests including
+  unchanged snapshot bytes and state hashes, 4,449 engine unit tests (4 ignored),
+  15 engine integration tests, and 21 engine doctests (1 ignored).
+- The codec-only suite was rerun after the final source commit
+  `751d7b1bd` and passed again. `cargo fmt --all` and `git diff --check`
+  passed. Existing unrelated engine/data-I/O warnings were left unchanged.
+
+No game execution, browser benchmark timing, or full client build is claimed
+by this isolated lane; those belong to combined integration acceptance.
 
 ## Deliberately not relocated
 
