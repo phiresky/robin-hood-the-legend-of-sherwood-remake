@@ -212,20 +212,28 @@ mod lifecycle_tests {
         let (started, running) = std::sync::mpsc::channel();
         let builder_owner = owner.clone();
         let builder = std::thread::spawn(move || {
-            resolve(&builder_owner, || key(1), |key, stable| {
-                started.send(()).unwrap();
-                blocked.recv().unwrap();
-                build_test(key, stable)
-            })
+            resolve(
+                &builder_owner,
+                || key(1),
+                |key, stable| {
+                    started.send(()).unwrap();
+                    blocked.recv().unwrap();
+                    build_test(key, stable)
+                },
+            )
         });
-        running.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        running
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let invalidating_owner = owner.clone();
         let (done, invalidated) = std::sync::mpsc::channel();
         let invalidator = std::thread::spawn(move || {
             invalidating_owner.invalidate_localized();
             done.send(()).unwrap();
         });
-        invalidated.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        invalidated
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let fresh = resolve(&owner, || key(1), build_test);
         release.send(()).unwrap();
         assert!(Arc::ptr_eq(&fresh, &builder.join().unwrap()));
