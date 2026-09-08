@@ -1644,6 +1644,149 @@ mod operation_outcome_tests {
         assert_eq!(notices.select_banner(None), None);
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn diagnostic_callback_fixture(
+        directory: &std::path::Path,
+    ) -> (
+        RustCallbacks,
+        crate::host::Host,
+        engine_api::Engine,
+        engine_api::LevelAssets,
+        crate::game::Game,
+        ProfileManager,
+    ) {
+        let path = directory.to_str().unwrap().to_owned();
+        let mut players = robin_engine::player_profile::PlayerProfileManager::new(path.clone());
+        let player = players.create_profile(
+            "Diagnostic player".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let context = ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&path),
+            engine_api::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(path),
+            None,
+        )
+        .unwrap();
+        let mut host =
+            crate::host::Host::new(context.clone().try_into().unwrap(), 640.0, 480.0).unwrap();
+        let (channels, _incoming, _outgoing, _, _) = crate::multiplayer::NetChannels::new();
+        host.transport.net = Some(channels);
+        let callbacks = RustCallbacks::new(context).unwrap();
+        let mut profiles = ProfileManager::default();
+        profiles.missions.push(engine_profiles::MissionProfile {
+            id: 17,
+            mission_filename: "Mission_17".into(),
+            proto_level_filename: "Map_17".into(),
+            mission_name: "Mission 17".into(),
+            ..Default::default()
+        });
+        let mut campaign = Campaign::default();
+        campaign.missions.push(engine_campaign::Mission {
+            profile_idx: Some(0),
+            ..Default::default()
+        });
+        let mut assets = engine_api::LevelAssets::default();
+        let engine = engine_api::Engine::new_for_test(640.0, 480.0, campaign, &mut assets).unwrap();
+        let mut game = crate::game::Game::default();
+        game.set_mission_assets(
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "Mission_17",
+                "Map_17",
+                "Map_17",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        (callbacks, host, engine, assets, game, profiles)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn multiplayer_diagnostic_callbacks_publish_new_drafts_without_special_slot_aliases() {
+        for request in [
+            SaveLoadRequest::Save {
+                slot: None,
+                mission_id: 17,
+            },
+            SaveLoadRequest::QuickSave { mission_id: 17 },
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
+                diagnostic_callback_fixture(directory.path());
+            callbacks.queue_operation(request);
+            let outcome = perform_pending_save_load(
+                &mut host,
+                &mut game,
+                &mut callbacks,
+                &mut engine,
+                &assets,
+                &profiles,
+                None,
+            );
+            assert!(outcome.processed);
+            assert_eq!(outcome.banner, Some(SaveBannerKind::Saved));
+            assert!(outcome.event.is_none());
+            assert!(callbacks.pending_request().is_none());
+            assert_eq!(callbacks.save_manager.count(), 1);
+            let handle = callbacks.save_manager.slot_handle(0).unwrap();
+            assert_eq!(callbacks.save_manager.resolve_handle(&handle).unwrap(), 0);
+            let slot = callbacks.save_manager.get(0).unwrap();
+            assert!(slot.multiplayer_diagnostic);
+            assert!(!slot.is_special());
+            let reopened =
+                SaveGameManager::load_index(callbacks.save_manager.save_directory()).unwrap();
+            assert_eq!(reopened.count(), 1);
+            assert!(reopened.get(0).unwrap().multiplayer_diagnostic);
+            let (_, save) = reopened.preflight_load(Some(0)).unwrap().unwrap();
+            assert!(save.header.multiplayer_diagnostic);
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn multiplayer_diagnostic_callbacks_report_rejected_draft_allocation() {
+        for request in [
+            SaveLoadRequest::Save {
+                slot: None,
+                mission_id: 17,
+            },
+            SaveLoadRequest::QuickSave { mission_id: 17 },
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
+                diagnostic_callback_fixture(directory.path());
+            let root = std::path::Path::new(callbacks.save_manager.save_directory());
+            std::fs::create_dir_all(root).unwrap();
+            let receipt = root.join("owned-save-recovery.json");
+            let retained = b"pending recovery must not be replaced by a diagnostic";
+            std::fs::write(&receipt, retained).unwrap();
+            // Prove this reaches the allocation guard, not the earlier
+            // outstanding-write failure branch in perform_pending_save_load.
+            callbacks.save_manager.finish_background().unwrap();
+            callbacks.queue_operation(request);
+            let outcome = perform_pending_save_load(
+                &mut host,
+                &mut game,
+                &mut callbacks,
+                &mut engine,
+                &assets,
+                &profiles,
+                None,
+            );
+            assert!(outcome.processed);
+            assert_eq!(outcome.banner, Some(SaveBannerKind::SaveFailed));
+            assert!(outcome.event.is_none());
+            assert!(callbacks.pending_request().is_none());
+            assert_eq!(callbacks.save_manager.count(), 0);
+            assert_eq!(std::fs::read(&receipt).unwrap(), retained);
+            assert!(!receipt.with_file_name("saves.json").exists());
+            assert!(!receipt.with_file_name("Savegame_000.json").exists());
+        }
+    }
+
     #[test]
     fn decoded_load_requires_live_handle_even_when_payload_is_already_owned() {
         let directory = tempfile::tempdir().unwrap();

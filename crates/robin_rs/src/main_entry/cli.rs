@@ -1044,12 +1044,53 @@ mod tests {
             crate::savegame::SaveGameManager::new(directory.path().to_string_lossy().into_owned());
         let slot = manager.create("slot".into(), 1);
         let mut assets = LevelAssets::new();
-        let mut original =
-            Engine::new_for_test(800.0, 600.0, Campaign::default(), &mut assets).unwrap();
+        let mut profiles = ProfileManager::default();
+        profiles
+            .missions
+            .push(robin_engine::profiles::MissionProfile {
+                id: 1,
+                mission_filename: "Mission_1".into(),
+                proto_level_filename: "Map_1".into(),
+                mission_name: "Mission 1".into(),
+                ..Default::default()
+            });
+        let mut campaign = Campaign::default();
+        campaign.missions.push(robin_engine::campaign::Mission {
+            profile_idx: Some(0),
+            ..Default::default()
+        });
+        let mut original = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
         original.test_set_frame_counter(111);
-        let host = crate::host::Host::scratch(800.0, 600.0);
-        crate::save_file::GameSaveFile::capture(&original, &host, 1, "original".into())
-            .write_to(&manager.save_path(slot))
+        let path = directory.path().to_str().unwrap().to_owned();
+        let mut players = robin_engine::player_profile::PlayerProfileManager::new(path.clone());
+        let player = players.create_profile(
+            "Preflight player".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&path),
+            robin_engine::engine::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(path),
+            None,
+        )
+        .unwrap();
+        let mut host = crate::host::Host::new(context.try_into().unwrap(), 800.0, 600.0).unwrap();
+        let mut game = crate::game::Game::default();
+        game.set_mission_assets(
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "Mission_1",
+                "Map_1",
+                "Map_1",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        // A draft plus an externally written file is intentionally not a
+        // published slot. Use the real publication boundary before preflight.
+        manager
+            .write_save_from_engine(&mut host, &game, slot, &original, 1, Some(&profiles), None)
             .unwrap();
         let (decoded_slot, decoded) = manager.preflight_load(Some(slot)).unwrap().unwrap();
 
