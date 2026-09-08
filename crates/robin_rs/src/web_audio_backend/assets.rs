@@ -1,5 +1,6 @@
 //! Browser asset fetch/decode/cache owner. Voice lifecycle stays in the parent.
 use super::BrowserAudioSession;
+use crate::audio_bundle_cache::AudioBundleCache;
 use crate::web_audio_state::should_cache_decoded;
 use futures::{
     FutureExt as _,
@@ -7,7 +8,10 @@ use futures::{
 };
 use robin_assets::shipping_datadir::RemoteAudioAsset;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::AudioBuffer;
@@ -31,9 +35,12 @@ pub(super) struct AudioAssets {
     #[serde(skip)]
     cache_clock: u64,
     #[serde(skip)]
-    bundles: HashMap<String, js_sys::ArrayBuffer>,
+    bundles: AudioBundleCache<js_sys::ArrayBuffer>,
     #[serde(skip)]
     encoded_loads: HashMap<String, EncodedFuture>,
+    // Any joined bundle consumer may request retention of the shared result.
+    #[serde(skip)]
+    retain_encoded: HashSet<String>,
     #[serde(skip)]
     decode_loads: HashMap<String, DecodeFuture>,
     #[serde(skip)]
@@ -168,7 +175,12 @@ pub(super) fn request_encoded(
     {
         return Ok(futures::future::ready(Ok(bytes)).boxed_local().shared());
     }
-    if let Some(load) = session.with_audio(|audio| audio.assets.encoded_loads.get(url).cloned())? {
+    if let Some(load) = session.with_audio(|audio| {
+        if retain_bundle {
+            audio.assets.retain_encoded.insert(url.to_owned());
+        }
+        audio.assets.encoded_loads.get(url).cloned()
+    })? {
         return Ok(load);
     }
     let owner = session.downgrade()?;
@@ -189,25 +201,14 @@ pub(super) fn request_encoded(
         if audio.retired {
             return Err("browser audio session retired during fetch".into());
         }
-        if retain_bundle && let Ok(bytes) = &result {
-            audio
-                .assets
-                .bundles
-                .entry(future_url.clone())
-                .or_insert_with(|| bytes.clone());
-            let resident_bytes: u64 = audio
-                .assets
-                .bundles
-                .values()
-                .map(|bytes| u64::from(bytes.byte_length()))
-                .sum();
-            tracing::debug!(
-                resident_bytes,
-                bundles = audio.assets.bundles.len(),
-                "browser encoded audio residency (separate from PCM budget)"
+        if audio.assets.retain_encoded.remove(&future_url)
+            && let Ok(bytes) = &result
+        {
+            audio.assets.bundles.insert(
+                future_url.clone(),
+                u64::from(bytes.byte_length()),
+                bytes.clone(),
             );
-            // TODO: choose encoded retention policy from mission/locale
-            // traces; evicting bundles trades residency for repeat fetches.
         }
         audio.assets.encoded_loads.remove(&future_url);
         audio.assets.cancellations.remove(&future_cancellation_key);
@@ -396,6 +397,46 @@ mod browser_ownership_tests {
             DecodedRequest::Ready(buffer) => buffer,
             DecodedRequest::Pending(load) => load.await.unwrap(),
         }
+    }
+
+    #[wasm_bindgen_test]
+    async fn encoded_budget_eviction_preserves_shared_results_and_oversized_decode() {
+        let session = session(wav(8192));
+        let asset = resolve_asset(&session, "Data/Sounds/tone.wav").unwrap();
+        session
+            .with_audio(|audio| {
+                audio.assets.bundles = AudioBundleCache::new(u64::from(asset.encoded_size));
+            })
+            .unwrap();
+        let first = request_encoded(&session, &asset.url, false).unwrap();
+        let joined = request_encoded(&session, &asset.url, true).unwrap();
+        let bytes = first.await.unwrap();
+        session
+            .with_audio(|audio| {
+                assert!(audio.assets.bundles.get(&asset.url).is_some());
+                audio.assets.bundles.insert(
+                    "replacement".into(),
+                    u64::from(bytes.byte_length()),
+                    bytes.clone(),
+                );
+                assert!(audio.assets.bundles.get(&asset.url).is_none());
+            })
+            .unwrap();
+        assert_eq!(joined.await.unwrap().byte_length(), bytes.byte_length());
+        assert_eq!(js_sys::Uint8Array::new(&bytes).to_vec(), wav(8192));
+        // Cache retention is optional even when the caller requests a bundle.
+        // A tiny budget must not prevent fetching, slicing, or decoding it.
+        session
+            .with_audio(|audio| audio.assets.bundles = AudioBundleCache::new(1))
+            .unwrap();
+        assert!(decode(&session).await.get_channel_data(0).unwrap()[100] > 0.2);
+        assert!(
+            session
+                .with_audio(|audio| audio.assets.bundles.is_empty()
+                    && audio.assets.encoded_loads.is_empty()
+                    && audio.assets.decode_loads.is_empty())
+                .unwrap()
+        );
     }
 
     #[wasm_bindgen_test]
