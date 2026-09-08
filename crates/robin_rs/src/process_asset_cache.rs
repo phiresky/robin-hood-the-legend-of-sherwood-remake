@@ -206,6 +206,41 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn synchronous_builder_returns_replacement_after_invalidation() {
+        let owner = Arc::new(ApplicationAssetCache::default());
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, running) = std::sync::mpsc::channel();
+        let builder_owner = owner.clone();
+        let builder = std::thread::spawn(move || {
+            resolve(&builder_owner, || key(1), |key, stable| {
+                started.send(()).unwrap();
+                blocked.recv().unwrap();
+                build_test(key, stable)
+            })
+        });
+        running.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let invalidating_owner = owner.clone();
+        let (done, invalidated) = std::sync::mpsc::channel();
+        let invalidator = std::thread::spawn(move || {
+            invalidating_owner.invalidate_localized();
+            done.send(()).unwrap();
+        });
+        invalidated.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let fresh = resolve(&owner, || key(1), build_test);
+        release.send(()).unwrap();
+        assert!(Arc::ptr_eq(&fresh, &builder.join().unwrap()));
+        invalidator.join().unwrap();
+    }
+
+    #[test]
+    fn retired_job_does_not_start_new_work() {
+        let job = LoadingJob::new(key(1));
+        job.cancel();
+        job.run(|| panic!("retired work must not start"));
+        assert!(job.wait().is_none());
+    }
+
+    #[test]
     fn stale_warmup_key_does_not_block_current_generation() {
         let owner = ApplicationAssetCache::default();
         let stale = LoadingJob::new(key(0));
