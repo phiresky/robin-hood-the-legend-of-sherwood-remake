@@ -29,8 +29,12 @@ Validation: initial focused default client UI suite passed all 28 tests after
 kept panel identity checking constant-time, and reused the owned upload helper
 for sparse requirements pictures so malformed RGB565 payloads fail consistently.
 
-Validation pending on the combined integration checkpoint: named Vulkan GPU gate (including reload, sparse slots,
-failed replacement, duplicate ownership, wrong renderer, repeated retirement),
-successful public load with shipped PNGs, focused default client UI tests and
-full default client tests/build. Cargo fmt and git diff --check passed.
-The coordinator owns the final release binary runtime checks.
+Combined `b1d1ea032` passed 1,568 default library tests, 33 integration tests,
+7 doctests and the separate default binary build. The named Vulkan gate passed
+on `91e4753df`, including reload, sparse slots, failed replacement, duplicate
+ownership, same-number foreign renderer handles, repeated retirement,
+successful public PNG loads and queued draw readback. A test-only correction
+accounts for existing RGB565 white expansion. Both graphical multiplayer and
+the complete native save/load/replay lifecycle passed. Cargo fmt and
+git diff --check passed. See [combined evidence](CLEANUP_FOLLOWUP.md), including
+the successful local build retry after a shared compiler-cache connection reset.

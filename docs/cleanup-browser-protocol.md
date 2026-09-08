@@ -18,3 +18,10 @@ network multiplayer end-to-end execution. See
 source provenance requirements. Real acceptance must run after committing this
 change on a frozen clean checkout, using an already provisioned matched runner,
 Chrome and ChromeDriver. Evidence is retained outside the checkout.
+
+Combined acceptance passed at clean, frozen `b1d1ea032`: both WASM checks,
+module link and all 24 real Chrome cases, including every shared protocol case
+and both browser identity cases. No failures or ignored browser tests. The 17
+gate unit tests also pass. Final evidence is
+`/tmp/robin-lifecycle-gate-pzb_3ngx/summary.json`; tool versions and module digest
+are recorded in [the combined report](CLEANUP_FOLLOWUP.md).

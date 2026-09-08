@@ -37,7 +37,9 @@ policy; a broader stale-reader authorization audit belongs in a separate change.
 `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`:
 
 `cargo test --locked -p robin_rs --lib --no-default-features --features release multiplayer::native::tests`
-passed: 32 tests, zero failed/ignored, 2.91s after a 10m46s cold build. The small
-follow-up readiness-error test awaits the combined-source full library lane.
-The warm worktree will host combined native library and binary acceptance;
-the parent integration lane owns browser/runtime acceptance.
+passed: 32 tests, zero failed/ignored, 2.91s after a 10m46s cold build.
+Combined `b1d1ea032`, including the readiness-error regression, passed all 1,663
+release-feature library tests (6 intentional ignores) and the separate native
+binary build. Headless and graphical production reconnect checks each passed
+all 10 checks, with zero desyncs or missed hash comparisons. Full evidence and
+provenance are in [the combined report](CLEANUP_FOLLOWUP.md).
