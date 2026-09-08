@@ -570,6 +570,8 @@ impl LoadingJob {
 pub struct ApplicationAssetCache {
     #[serde(skip)]
     state: Mutex<State>,
+    #[serde(skip)]
+    early_terrain: Mutex<Option<crate::level_loading_host::EarlyTerrainDecode>>,
 }
 
 impl std::fmt::Debug for ApplicationAssetCache {
@@ -581,6 +583,37 @@ impl std::fmt::Debug for ApplicationAssetCache {
 }
 
 impl ApplicationAssetCache {
+    /// Publish only after installation succeeds; dropping a failed install's
+    /// local job cannot leave an entry available to a later mission.
+    pub fn publish_early_terrain(
+        &self,
+        mut job: crate::level_loading_host::EarlyTerrainDecode,
+        datadir: &assets_shipping_datadir::ShippingDatadir,
+    ) -> Result<(), String> {
+        job.publish(datadir)?;
+        *self
+            .early_terrain
+            .lock()
+            .expect("early terrain lock poisoned") = Some(job);
+        Ok(())
+    }
+
+    pub(crate) fn take_early_terrain(
+        &self,
+        datadir: &assets_shipping_datadir::ShippingDatadir,
+        mission: &str,
+        map: &str,
+        ambiance: &str,
+    ) -> Option<crate::level_loading_host::EarlyTerrainDecode> {
+        // Taking even a mismatched entry retires it; it must never be reused
+        // after an installation switch, failed restart, or locale change.
+        self.early_terrain
+            .lock()
+            .expect("early terrain lock poisoned")
+            .take()
+            .filter(|job| job.matches(datadir, mission, map, ambiance))
+    }
+
     /// Retain stable banks while invalidating locale-dependent parsed tables.
     pub fn invalidate_localized(&self) {
         let mut state = self

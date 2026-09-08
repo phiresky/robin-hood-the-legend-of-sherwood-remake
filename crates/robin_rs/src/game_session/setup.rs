@@ -2296,13 +2296,49 @@ pub(super) fn load_level_and_sprite_bank(
     // the `wasm-threads` build initialized one, and otherwise decodes
     // synchronously right here (single-threaded browser fallback — the
     // progress closure keeps feeding the loading bar in that case).
-    let pending_terrain = crate::level_loading_host::PendingTerrainDecode::start_with_files(
-        &map_name,
-        &ambiance_dir,
-        &level_directory,
-        host.frontend.shipping.clone(),
-        files.clone(),
-    );
+    let early_terrain = match (mission_name.as_deref(), host.frontend.shipping.as_ref()) {
+        (Some(mission), Some(shipping)) if defer_terrain_join => {
+            let cache = match host.application_context().asset_cache() {
+                Ok(cache) => cache,
+                Err(message) => return Err(MissionLoadError::new(campaign, message)),
+            };
+            match cache.take_early_terrain(shipping, mission, &map_name, &ambiance_dir) {
+                Some(job) => match job.matches_source(shipping, &files, &level_directory) {
+                    Ok(true) => Some(job),
+                    Ok(false) => {
+                        tracing::debug!(
+                            "discarding early terrain overridden by preparation reader"
+                        );
+                        None
+                    }
+                    Err(message) => return Err(MissionLoadError::new(campaign, message)),
+                },
+                None => None,
+            }
+        }
+        _ => None,
+    };
+    let pending_terrain = if let Some(job) = early_terrain {
+        tracing::info!("early terrain decode handed to mission setup");
+        crate::level_loading_host::PendingTerrainDecode::Early {
+            job,
+            level_directory: level_directory.clone(),
+            shipping: host
+                .frontend
+                .shipping
+                .clone()
+                .expect("early terrain requires shipping"),
+            files: files.clone(),
+        }
+    } else {
+        crate::level_loading_host::PendingTerrainDecode::start_with_files(
+            &map_name,
+            &ambiance_dir,
+            &level_directory,
+            host.frontend.shipping.clone(),
+            files.clone(),
+        )
+    };
     timer.step("terrain decode start");
 
     // TODO: To overlap the VQ tail as well, streaming install must hand off
@@ -2486,13 +2522,15 @@ pub(super) fn load_level_and_sprite_bank(
                 Err(message) => return Err(MissionLoadError::new(campaign, message)),
             }
         }
-        Err(pending) => match crate::level_loading_host::probe_background_map_dims_with_files(
-            &map_name,
-            &ambiance_dir,
-            &level_directory,
-            host.frontend.shipping.as_deref(),
-            &files,
-        ) {
+        Err(pending) => match pending.known_dimensions().or_else(|| {
+            crate::level_loading_host::probe_background_map_dims_with_files(
+                &map_name,
+                &ambiance_dir,
+                &level_directory,
+                host.frontend.shipping.as_deref(),
+                &files,
+            )
+        }) {
             Some((w, h)) => ((w as f32, h as f32), Some(pending)),
             None => {
                 let decoded = pending.join_now_or_redecode(&mut |_| {});
