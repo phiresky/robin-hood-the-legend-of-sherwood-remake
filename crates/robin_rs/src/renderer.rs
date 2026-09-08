@@ -3023,6 +3023,30 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert!(renderer.surface_dimensions(restored.handle()).is_err());
     assert!(
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || renderer.retire_surface(restored)
+        ))
+        .is_err()
+    );
+    assert!(renderer.surface_dimensions(owned.handle()).is_ok());
+    let mut mission = crate::mission_render_resources::MissionRenderResources::default();
+    mission.replace_map(&mut other_renderer, other_id);
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || mission.retire(&mut renderer)
+        ))
+        .is_err()
+    );
+    assert_eq!(mission.map(), Some(other_id));
+    assert!(other_renderer.surface_handle(other_id).is_ok());
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || mission.replace_map(&mut other_renderer, u32::MAX)
+        ))
+        .is_err()
+    );
+    assert_eq!(mission.map(), Some(other_id));
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
             || renderer.adopt_surface(local_id)
         ))
         .is_err()
@@ -3099,6 +3123,23 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surface_diagnostics_never_restore_renderer_authority() {
+        let handle = SurfaceHandle {
+            id: 42,
+            renderer: 7,
+        };
+        let json = serde_json::to_value(handle).unwrap();
+        assert_eq!(json, serde_json::json!({"id": 42}));
+        let restored: SurfaceHandle = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.legacy_id(), 42);
+        assert_eq!(restored.renderer, 0);
+        assert_ne!(restored, handle);
+        let forged: SurfaceHandle =
+            serde_json::from_value(serde_json::json!({"id": 42, "renderer": 7})).unwrap();
+        assert_eq!(forged.renderer, 0);
+    }
 
     fn queued_frame(index: u32) -> QueuedDraw {
         QueuedDraw {
