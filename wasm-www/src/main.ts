@@ -4,7 +4,7 @@ import { withAbort } from './cancellation.js';
 import { installCanvasBackingStore } from './canvas-lifecycle.js';
 import { preloadRuntimeAssets } from './asset-preload.js';
 import { bootGame, loadRuntimeInParallel, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
-import { appendLogLine } from './log.js';
+import { appendLogLine, appendLogLines } from './log.js';
 import {
     authenticateBrowserJoinTicket,
     captureAndScrubBrowserJoinCode,
@@ -138,9 +138,7 @@ function installConsoleMirror(target: HTMLElement): void {
     let flushScheduled = false;
     const flush = (): void => {
         flushScheduled = false;
-        for (const { text, cls } of pendingLines.splice(0)) {
-            appendLogLine(target, text, cls);
-        }
+        appendLogLines(target, pendingLines.splice(0));
     };
     const enqueue = (text: string, cls?: 'err'): void => {
         pendingLines.push(cls === undefined ? { text } : { text, cls });
