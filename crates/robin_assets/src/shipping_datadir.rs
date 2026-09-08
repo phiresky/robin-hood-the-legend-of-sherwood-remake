@@ -114,7 +114,7 @@ struct ShippingRuntime {
     locale_bundle_cache: RwLock<BTreeMap<String, Arc<robin_util::asset_fs::Bundle>>>,
 }
 
-/// Installed shipping assets. The payload alone owns the v15 wire layout.
+/// Installed shipping assets. The payload alone owns the v16 wire layout.
 /// Runtime caches and publication state never participate in shipping bytes.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ShippingDatadir {
