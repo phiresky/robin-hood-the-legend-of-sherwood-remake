@@ -1149,25 +1149,6 @@ impl IngameMenuResources {
         let (load_button_w, load_button_h, load_button_surfaces) =
             load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_LOAD);
 
-        // Menu-button packs render with a 50% shadow intensity
-        // (`MENU_BUTTON_SHADOW_ALPHA`).  Override the per-surface
-        // shadow alpha so the GPU `BlendMode::Blend` matches that
-        // intensity at draw time.  Other sprites stay at the default
-        // 40% from `FrameHolder::global_shadow()`.
-        for pack in [
-            &button_surfaces,
-            &ok_button_surfaces,
-            &cancel_button_surfaces,
-            &restart_button_surfaces,
-            &load_button_surfaces,
-            &radio_surfaces,
-        ] {
-            for id in pack.iter().flatten() {
-                renderer
-                    .set_shadow_alpha(id.legacy_id(), crate::renderer::MENU_BUTTON_SHADOW_ALPHA);
-            }
-        }
-
         timer.step("button sprite packs");
         let parchment_huge = load_surface(
             &mut res,
@@ -1836,8 +1817,12 @@ fn adopt_picture(
     renderer: &mut Renderer,
     owners: &mut Vec<OwnedSurface>,
     picture: &robin_assets::picture::Picture,
+    button_shadow: bool,
 ) -> SurfaceHandle {
     let id = picture_to_surface(renderer, picture);
+    if button_shadow {
+        renderer.set_shadow_alpha(id, crate::renderer::MENU_BUTTON_SHADOW_ALPHA);
+    }
     let owner = renderer.try_adopt_surface(id).expect("fresh menu upload");
     let handle = owner.handle();
     owners.push(owner);
@@ -1858,7 +1843,7 @@ fn load_surface(
     let pic = res.get_picture(id, 0).ok()?;
     let width = pic.width as i32;
     let height = pic.height as i32;
-    let surface_id = adopt_picture(renderer, owners, pic);
+    let surface_id = adopt_picture(renderer, owners, pic, false);
     Some(MenuSurface {
         id: surface_id,
         width,
@@ -1879,7 +1864,7 @@ fn load_surface_sub(
     let pic = res.get_picture(id, sub_id).ok()?;
     let width = pic.width as i32;
     let height = pic.height as i32;
-    let surface_id = adopt_picture(renderer, owners, pic);
+    let surface_id = adopt_picture(renderer, owners, pic, false);
     Some(MenuSurface {
         id: surface_id,
         width,
@@ -1898,7 +1883,24 @@ fn load_sprite_pack(
     let surfaces: Vec<Option<SurfaceHandle>> = match res.get_pictures(id) {
         Ok(pics) => pics
             .iter()
-            .map(|opt| opt.as_ref().map(|p| adopt_picture(renderer, owners, p)))
+            .map(|opt| {
+                opt.as_ref().map(|p| {
+                    adopt_picture(
+                        renderer,
+                        owners,
+                        p,
+                        matches!(
+                            id,
+                            resource_ids::RHID_MENU_BUTTON
+                                | resource_ids::RHID_OK
+                                | resource_ids::RHID_CANCEL
+                                | resource_ids::RHID_RESTART
+                                | resource_ids::RHID_LOAD
+                                | resource_ids::RHID_RADIO
+                        ),
+                    )
+                })
+            })
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -1942,6 +1944,14 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
     let files = Arc::new(robin_engine::sbfile::SbFileSystem::new(assets));
     let mut cache = IngameMenuResources::new(renderer, None, files.clone()).unwrap();
     let first = cache.button_surface(0).unwrap();
+    let mut peer = IngameMenuResources::new(other, None, files.clone()).unwrap();
+    let foreign = peer.button_surface(0).unwrap();
+    assert_eq!(
+        first.legacy_id(),
+        foreign.legacy_id(),
+        "gate supplies fresh renderers"
+    );
+    assert_ne!(first, foreign);
     assert_eq!(cache.button_surface(1), Some(first));
     assert_ne!(cache.button_surface(3), Some(first));
     assert_eq!(cache.ok_button_surface(3), cache.button_surface(3));
@@ -1957,6 +1967,8 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
     assert!(cache.retire(other).is_err());
     assert!(cache.reload(other, None, files.clone()).is_err());
     assert_eq!(cache.button_surface(0), Some(first));
+    assert!(other.surface_dimensions(foreign).is_ok());
+    peer.retire(other).unwrap();
     let missing = Arc::new(robin_engine::sbfile::SbFileSystem::new(Arc::new(
         robin_util::asset_fs::AssetVfs::new(),
     )));
@@ -1986,6 +1998,11 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
     assert!(renderer.surface_dimensions(lazy.id).is_err());
     assert!(cache.button_surface(0).is_none());
     cache.retire(renderer).unwrap();
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255],
+        "queued menu surface survives reload and retirement"
+    );
 }
 
 #[cfg(test)]
