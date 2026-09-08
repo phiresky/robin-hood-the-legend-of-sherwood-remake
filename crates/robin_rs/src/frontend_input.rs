@@ -56,6 +56,10 @@ impl FrontendPlanning {
 pub struct FrontendPointerCapture {
     right_double_click_pending: bool,
     touch_plan_captured: bool,
+    #[serde(default)]
+    hud_button: Option<u8>,
+    #[serde(default)]
+    minimap_camera_drag: Option<bool>,
 }
 
 /// One chronological routing decision; only the caller dispatches commands.
@@ -67,6 +71,43 @@ pub enum TouchPlanRoute {
 }
 
 impl FrontendPointerCapture {
+    pub fn begin_minimap_drag(&mut self, camera: bool) {
+        self.minimap_camera_drag = Some(camera);
+    }
+
+    pub fn minimap_drag_active(&self) -> bool {
+        self.minimap_camera_drag.is_some()
+    }
+
+    pub fn minimap_camera_drag_active(&self) -> bool {
+        self.minimap_camera_drag == Some(true)
+    }
+
+    pub fn end_minimap_drag(&mut self) {
+        self.minimap_camera_drag = None;
+    }
+
+    /// Capture a HUD press through its release, even outside the widget.
+    pub fn route_hud_event(&mut self, event: &GameEvent, hit: bool) -> bool {
+        if let Some(button) = self.hud_button {
+            match *event {
+                GameEvent::PointerCancel => self.hud_button = None,
+                GameEvent::MouseUp(_, _, released) if released == button => {
+                    self.hud_button = None;
+                    return true;
+                }
+                GameEvent::MouseDown(_, _, pressed, _) if pressed == button => return true,
+                GameEvent::MouseMove { .. } => return true,
+                _ => {}
+            }
+        }
+        if hit && let GameEvent::MouseDown(_, _, button, _) = *event {
+            self.hud_button = Some(button);
+            return true;
+        }
+        false
+    }
+
     pub fn right_button_down(&mut self, clicks: u8) {
         self.right_double_click_pending = clicks >= 2;
     }
@@ -131,6 +172,48 @@ impl FrontendPointerCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hud_press_captures_drag_and_release_across_frames() {
+        let mut capture = FrontendPointerCapture::default();
+        assert!(capture.route_hud_event(&GameEvent::MouseDown(10, 10, 1, 1), true));
+        assert!(capture.route_hud_event(
+            &GameEvent::MouseMove {
+                x: 100,
+                y: 100,
+                xrel: 90,
+                yrel: 90
+            },
+            false
+        ));
+        assert!(capture.route_hud_event(&GameEvent::MouseUp(100, 100, 1), false));
+        assert!(!capture.route_hud_event(&GameEvent::MouseDown(100, 100, 1, 1), false));
+        assert!(!capture.route_hud_event(&GameEvent::MouseUp(100, 100, 1), false));
+    }
+
+    #[test]
+    fn hud_capture_cancels_and_does_not_consume_other_buttons() {
+        let mut capture = FrontendPointerCapture::default();
+        assert!(capture.route_hud_event(&GameEvent::MouseDown(10, 10, 3, 1), true));
+        assert!(!capture.route_hud_event(&GameEvent::MouseUp(10, 10, 1), false));
+        assert!(!capture.route_hud_event(&GameEvent::PointerCancel, false));
+        assert!(!capture.route_hud_event(&GameEvent::MouseUp(10, 10, 3), false));
+    }
+
+    #[test]
+    fn minimap_gesture_is_captured_before_queued_commands_run() {
+        let mut capture = FrontendPointerCapture::default();
+        capture.begin_minimap_drag(true);
+        assert!(capture.minimap_drag_active());
+        assert!(capture.minimap_camera_drag_active());
+        capture.end_minimap_drag();
+        assert!(!capture.minimap_drag_active());
+        capture.begin_minimap_drag(false);
+        assert!(capture.minimap_drag_active());
+        assert!(!capture.minimap_camera_drag_active());
+        capture.cancel_sequence();
+        assert!(!capture.minimap_drag_active());
+    }
 
     #[test]
     fn session_policy_survives_preference_updates() {

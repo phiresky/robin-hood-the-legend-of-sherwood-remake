@@ -4584,6 +4584,64 @@ fn add_as_subordinate_requests_patrol_reinit() {
 }
 
 #[test]
+fn add_as_subordinate_existing_membership_preserves_patrol_and_rejects_transfer() {
+    let mut host = BoundScriptEffects::new();
+    host.entities = crate::entities::Entities::from_legacy_slots(vec![
+        Some(native_test_soldier()),
+        Some(native_test_soldier()),
+        Some(native_test_soldier()),
+    ]);
+    let chief = EntityId::Soldier(crate::entity_id::SoldierId(0));
+    let member = EntityId::Soldier(crate::entity_id::SoldierId(1));
+    {
+        let ai = host
+            .entities
+            .get_mut(chief)
+            .unwrap()
+            .ai_controller_mut()
+            .unwrap();
+        ai.theoretical_patrol.push(member);
+        ai.patrol.push(member);
+        ai.needs_patrol_reinit = false;
+    }
+    host.entities
+        .get_mut(member)
+        .unwrap()
+        .ai_controller_mut()
+        .unwrap()
+        .patrol_chief = Some(chief);
+    for chief_slot in [0, 2] {
+        let mut stack = NativeStack::default();
+        stack.push_i32(ScriptHandleCodec::actor_handle_from_index(chief_slot));
+        stack.push_i32(ScriptHandleCodec::actor_handle_from_index(1));
+        assert_eq!(
+            call_host_native(&mut host, NativeFn::AddAsSubordinate, &mut stack),
+            0
+        );
+        let ai = host.entities.get(chief).unwrap().ai_controller().unwrap();
+        assert_eq!(ai.theoretical_patrol, [member]);
+        assert_eq!(ai.patrol, [member]);
+        assert!(!ai.needs_patrol_reinit);
+        assert_eq!(
+            host.entities
+                .get(member)
+                .unwrap()
+                .ai_controller()
+                .unwrap()
+                .patrol_chief,
+            Some(chief)
+        );
+        assert!(
+            host.entity_at_legacy_slot(2)
+                .ai_controller()
+                .unwrap()
+                .theoretical_patrol
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn remove_all_subordinates_yields_engine_clear_before_vm_continues() {
     let mut host = BoundScriptEffects::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(native_test_soldier())]);

@@ -597,7 +597,10 @@ impl EngineInner {
                     super::special_motion::SpecialMovePosition::Map(destination),
                     None,
                     None,
-                    Some(destination),
+                    // RHelementactor.cpp:3726 retains the installed plane
+                    // for hidden interior motion; buildings have no floor
+                    // projection polygon to query at this destination.
+                    None,
                     "building interior move",
                 );
                 self.orders
@@ -897,6 +900,24 @@ impl EngineInner {
                                 owner,
                                 crate::sequence::SequenceElementRef::new(seq_id, elem_idx),
                             );
+                            break 'action;
+                        }
+
+                        // RHElementActor::Instruct terminates NULL before transition
+                        // generation or priority arbitration. MakeUpright deliberately
+                        // cancels queued CROUCH_DOWN elements by rewriting them to NULL;
+                        // they still need their normal termination/readiness cascade.
+                        if command == Some(Command::Null) {
+                            self.world
+                                .entities
+                                .get_mut(owner)
+                                .and_then(crate::element::Entity::actor_data_mut)
+                                .expect("NULL actor instruction requires its actor owner")
+                                .execution_frozen = false;
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
+                            self.dispatch_condolations(sim, assets);
                             break 'action;
                         }
 

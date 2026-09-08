@@ -6131,6 +6131,14 @@ impl EngineInner {
                     apply_sector_index: apply_sector_idx,
                     ..Default::default()
                 });
+            self.script_domains
+                .interactables
+                .patches
+                .last_mut()
+                .expect("just inserted patch")
+                .configure_background_reversal(
+                    self.control.sim_config.reversible_background_patches,
+                );
         }
 
         // Wire door↔patch connections. In the original game

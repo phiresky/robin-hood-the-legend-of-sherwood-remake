@@ -65,7 +65,9 @@ pub const INPUT_DELAY_FRAMES: u32 = 2;
 /// descriptor introduced by save 70 / replay 28. Protocol 38 adds the typed,
 /// targeted leaderboard co-sign and official-ranked-session authorization
 /// messages to that complete current-main wire contract.
-pub const NET_PROTOCOL_VERSION: u32 = 39;
+/// Protocol 40 adds reversible background-patch configuration and activation
+/// targets to the engine snapshots exchanged by peers.
+pub const NET_PROTOCOL_VERSION: u32 = 40;
 
 /// Maximum bytes in one resumable full-mod transfer chunk. The outer native
 /// transport frame has a larger bound for engine snapshots, so content must
@@ -1727,7 +1729,7 @@ mod tests {
         // package identity are also part of the protocol contract, as are the
         // targeted authenticated leaderboard co-sign and official-ranked-
         // session messages.
-        assert_eq!(NET_PROTOCOL_VERSION, 39);
+        assert_eq!(NET_PROTOCOL_VERSION, 40);
     }
 
     #[test]

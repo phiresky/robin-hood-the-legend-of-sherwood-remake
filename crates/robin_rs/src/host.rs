@@ -262,6 +262,8 @@ impl ApplicationContext {
         active.gameplay_config.clean_hands_npc_kills_invalidate =
             sim_config.clean_hands_npc_kills_invalidate;
         active.gameplay_config.reusable_cloaks = sim_config.reusable_cloaks;
+        active.gameplay_config.reversible_background_patches =
+            sim_config.reversible_background_patches;
         active.gameplay_config.item_gameplay = sim_config.item_gameplay;
         active.gameplay_config.noise_distraction_feedback = sim_config.noise_distraction_feedback;
         active.gameplay_config.sherwood_trading = sim_config.sherwood_trading;
@@ -1017,6 +1019,7 @@ fn profile_sim_config(
     sim_config.enable_unbinding = gameplay_config.enable_unbinding;
     sim_config.clean_hands_npc_kills_invalidate = gameplay_config.clean_hands_npc_kills_invalidate;
     sim_config.reusable_cloaks = gameplay_config.reusable_cloaks;
+    sim_config.reversible_background_patches = gameplay_config.reversible_background_patches;
     sim_config.item_gameplay = gameplay_config.item_gameplay;
     sim_config.noise_distraction_feedback = gameplay_config.noise_distraction_feedback;
     sim_config.sherwood_trading = gameplay_config.sherwood_trading;

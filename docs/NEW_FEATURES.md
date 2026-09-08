@@ -928,3 +928,28 @@ unless the project goals change.
   behavior and mission compatibility, but do not preserve dead code, obscure UI
   quirks, or obviously unused systems solely because an older implementation
   had them.
+
+## Reversible background patch animations
+
+Gameplay options includes **Reversible Background Patches (Next Launch)**
+(`gameplay_config.reversible_background_patches`, default `false`). Start a new
+mission after enabling it. Animated patches that were authored as one-shot
+remain active: triggering them again plays their transition backwards and
+restores the original background, collision/pathfinding obstacles, sight
+obstacles, occlusion masks, sectors, lines and connected door rights. Subsequent
+triggers alternate both states. Existing reversible patches retain their normal
+behavior; patches without a transition animation retain their original policy.
+
+The policy is recorded in simulation configuration and resolved patch state,
+so current-format saves/replays retain it. Original-parity mode disables it and
+standard ranked policy does not admit it. Existing sessions keep their resolved
+patch policy. Target callbacks remember the animated patch group they apply;
+subsequent activations replay that group directly, bypassing script one-shot
+guards without repeating mission messages or rewards. Locks and transitions
+prevent repeated activation while a mechanism is unavailable or still moving.
+TODO: patches applied later by delayed script commands need authored trigger
+metadata; only patch changes made during the target callback are captured.
+
+This state changes the native formats to save 73, replay 31 and multiplayer
+protocol 40. Earlier Rust saves/replays retain their original files but are
+rejected by the existing strict schema checks; they are not silently migrated.

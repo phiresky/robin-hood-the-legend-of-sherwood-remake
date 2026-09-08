@@ -50,6 +50,9 @@ pub struct SimConfig {
     /// Missing state predates the extension and retains Original behavior.
     #[serde(default)]
     pub reusable_cloaks: bool,
+    /// Opt-in animated terrain reversibility, resolved when loading the level.
+    #[serde(default)]
+    pub reversible_background_patches: bool,
     /// Deterministic item rules selected by the active profile.
     #[serde(default = "ItemGameplayConfig::classic")]
     pub item_gameplay: ItemGameplayConfig,
@@ -122,6 +125,7 @@ pub enum RankedSimulationConfigField {
     EnableUnbinding,
     CleanHandsNpcKillsInvalidate,
     ReusableCloaks,
+    ReversibleBackgroundPatches,
     ItemGameplay,
     NoiseDistractionFeedback,
     Diplomacy,
@@ -154,6 +158,7 @@ impl RankedSimulationConfigField {
             Self::FixHardReactionTimes => "sim_config.fix_hard_reaction_times",
             Self::EnableUnbinding => "sim_config.enable_unbinding",
             Self::CleanHandsNpcKillsInvalidate => "sim_config.clean_hands_npc_kills_invalidate",
+            Self::ReversibleBackgroundPatches => "sim_config.reversible_background_patches",
             Self::ReusableCloaks => "sim_config.reusable_cloaks",
             Self::ItemGameplay => "sim_config.item_gameplay",
             Self::NoiseDistractionFeedback => "sim_config.noise_distraction_feedback",
@@ -308,6 +313,7 @@ impl SimConfig {
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
             reusable_cloaks: true,
+            reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::default(),
             noise_distraction_feedback: true,
             diplomacy: true,
@@ -357,6 +363,7 @@ impl SimConfig {
             enable_unbinding,
             clean_hands_npc_kills_invalidate,
             reusable_cloaks,
+            reversible_background_patches,
             item_gameplay,
             noise_distraction_feedback,
             diplomacy,
@@ -382,6 +389,7 @@ impl SimConfig {
             enable_unbinding: expected_enable_unbinding,
             clean_hands_npc_kills_invalidate: expected_clean_hands_npc_kills_invalidate,
             reusable_cloaks: expected_reusable_cloaks,
+            reversible_background_patches: expected_reversible_background_patches,
             item_gameplay: expected_item_gameplay,
             noise_distraction_feedback: expected_noise_distraction_feedback,
             diplomacy: expected_diplomacy,
@@ -410,6 +418,8 @@ impl SimConfig {
                 .then_some(RankedSimulationConfigField::EnableUnbinding),
             (clean_hands_npc_kills_invalidate != expected_clean_hands_npc_kills_invalidate)
                 .then_some(RankedSimulationConfigField::CleanHandsNpcKillsInvalidate),
+            (reversible_background_patches != expected_reversible_background_patches)
+                .then_some(RankedSimulationConfigField::ReversibleBackgroundPatches),
             (reusable_cloaks != expected_reusable_cloaks)
                 .then_some(RankedSimulationConfigField::ReusableCloaks),
             (item_gameplay != expected_item_gameplay)
@@ -460,6 +470,7 @@ impl SimConfig {
             enable_unbinding: true,
             clean_hands_npc_kills_invalidate: false,
             reusable_cloaks: true,
+            reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::classic(),
             noise_distraction_feedback: true,
             diplomacy: true,
@@ -608,6 +619,31 @@ mod tests {
     use super::{RankedSimulationConfigField, SimConfig};
     use crate::gameplay_config::ItemGameplayConfig;
     use crate::player_profile::DifficultyLevel;
+
+    #[test]
+    fn background_reversal_is_authoritative_and_not_ranked() {
+        let original = SimConfig::default();
+        assert!(!original.reversible_background_patches);
+        let opted_in = SimConfig {
+            reversible_background_patches: true,
+            ..original
+        };
+        assert_ne!(
+            robin_util::state_hash::compute(&original),
+            robin_util::state_hash::compute(&opted_in)
+        );
+        assert_eq!(
+            opted_in.first_ranked_difference(original),
+            Some(RankedSimulationConfigField::ReversibleBackgroundPatches)
+        );
+        let roundtrip: SimConfig =
+            serde_json::from_str(&serde_json::to_string(&opted_in).unwrap()).unwrap();
+        assert!(roundtrip.reversible_background_patches);
+        assert!(
+            !super::super::cloak::preserve_original_gameplay_behavior(opted_in)
+                .reversible_background_patches
+        );
+    }
 
     #[test]
     fn hard_reaction_time_fix_is_the_fresh_simulation_default() {

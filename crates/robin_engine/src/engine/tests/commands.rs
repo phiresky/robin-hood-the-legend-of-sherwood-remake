@@ -660,6 +660,86 @@ fn timer_tick_decrements_and_removes() {
 }
 
 #[test]
+fn cancelled_crouch_terminates_in_manager_and_releases_successor() {
+    use crate::element::{Command, Posture};
+    use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceState};
+
+    let mut engine = EngineInner::new();
+    let owner = engine.add_entity(make_test_pc(Posture::Upright));
+    let mut sequence = Sequence::new();
+    sequence.append_element(SequenceElement::new_generic(1, Command::Wait, Some(owner)));
+    sequence.append_element(SequenceElement::new_generic(
+        2,
+        Command::CrouchDown,
+        Some(owner),
+    ));
+    let mut timer = SequenceElement::new_generic(3, Command::Timer, None);
+    timer.set_property(Field::Timer, FieldValue::Integer(5));
+    sequence.append_element(timer);
+    let sequence_id = engine.orders.sequence_manager.launch_sequence(sequence);
+    engine
+        .orders
+        .sequence_manager
+        .element_in_progress(sequence_id, 0);
+
+    // Exercise the real cancellation producer, including the selected actor's
+    // successor chain, then let the manager instruct the cancelled successor.
+    engine.orders.sequence_manager.make_upright(owner);
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .unwrap()
+            .command,
+        Command::Null,
+    );
+    engine
+        .orders
+        .sequence_manager
+        .element_terminated(sequence_id, 0);
+    engine
+        .get_entity_mut(owner)
+        .unwrap()
+        .actor_data_mut()
+        .unwrap()
+        .execution_frozen = true;
+    engine.hourglass_phase_sequences(
+        &crate::sim_rng::test_context(),
+        &mut HostDisplayState::default(),
+        &LevelAssets::new(),
+    );
+
+    assert_eq!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence_id, 1)
+            .unwrap()
+            .state,
+        SequenceState::Terminated,
+    );
+    assert!(
+        !engine
+            .get_entity(owner)
+            .unwrap()
+            .actor_data()
+            .unwrap()
+            .execution_frozen
+    );
+    assert_eq!(
+        engine.orders.timer_elements.len(),
+        1,
+        "termination must release the timer in the same manager drain"
+    );
+    assert_eq!(engine.orders.timer_elements[0].remaining, 5);
+    assert_eq!(
+        engine.get_entity(owner).unwrap().element_data().posture(),
+        Posture::Upright
+    );
+}
+
+#[test]
 fn timer_started_by_sequence_dispatch_ticks_on_its_launch_frame() {
     use crate::element::Command;
     use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};

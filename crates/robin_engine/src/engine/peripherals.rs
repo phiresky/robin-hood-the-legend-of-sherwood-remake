@@ -75,10 +75,8 @@ impl HostDisplayState {
         self.minimap.take_pending_position()
     }
 
-    /// Resolve the deterministic camera target of a minimap mouse-up while
-    /// all host-owned geometry and drag state are available. The returned
-    /// point is recorded as `PlayerCommand::CenterCameraOnPoint`; command
-    /// apply never re-reads presentation state to decide an Engine mutation.
+    /// Resolve a minimap camera target using host-owned geometry. The host
+    /// applies this to its local viewport on press, camera drag, and release.
     pub fn resolve_minimap_center(
         &self,
         click_pt: crate::coordinates::ScreenPoint,

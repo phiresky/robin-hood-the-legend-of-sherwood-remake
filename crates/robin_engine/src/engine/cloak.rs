@@ -254,6 +254,7 @@ pub(crate) fn preserve_original_gameplay_behavior(
     mut config: super::SimConfig,
 ) -> super::SimConfig {
     config.reusable_cloaks = false;
+    config.reversible_background_patches = false;
     config.more_combat_gestures = false;
     config.gesture_quality_damage = false;
     config.fog_of_war = false;

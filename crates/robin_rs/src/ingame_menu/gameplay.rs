@@ -117,10 +117,11 @@ pub(crate) enum GameplaySetting {
     PlanQuickActions,
     FogOfWar,
     EnableSpellforgeMissions,
+    ReversibleBackgroundPatches,
 }
 
 impl GameplaySetting {
-    pub(crate) const ALL: [Self; 45] = [
+    pub(crate) const ALL: [Self; 46] = [
         Self::FixHardReactionTimes,
         Self::ControlTacticalUnits,
         Self::EnableUnbinding,
@@ -166,6 +167,7 @@ impl GameplaySetting {
         Self::PlanQuickActions,
         Self::FogOfWar,
         Self::EnableSpellforgeMissions,
+        Self::ReversibleBackgroundPatches,
     ];
 
     pub(crate) const fn index(self) -> usize {
@@ -249,6 +251,7 @@ pub(crate) const OPTION_LABELS: &[&str] = &[
     "Plan Quick Actions",
     "Fog of War",
     "Allow Spellforge Missions (Next Launch)",
+    "Reversible Background Patches (Next Launch)",
 ];
 
 const OPTION_TOOLTIPS: &[&str] = &[
@@ -297,6 +300,7 @@ const OPTION_TOOLTIPS: &[&str] = &[
     "Allow the rebindable Plan modifier and touch HUD to queue quick actions.",
     "Enable shared allied sight, explored terrain, and temporary hostile intelligence.",
     "Allow executable Spellforge custom missions. This takes effect on the next mission launch.",
+    "Repeat animated terrain triggers to reverse their animation, obstacles and doors. Applies to newly launched missions; off preserves original one-shot patches.",
 ];
 
 pub(crate) fn option_tooltip(index: usize) -> &'static str {
@@ -852,6 +856,9 @@ pub(crate) fn apply_setting(config: &mut GameplayConfig, setting: GameplaySettin
         Setting::ShowProductionForecast => {
             config.show_production_forecast = !config.show_production_forecast
         }
+        Setting::ReversibleBackgroundPatches => {
+            config.reversible_background_patches = !config.reversible_background_patches
+        }
         Setting::ReusableCloaks => config.reusable_cloaks = !config.reusable_cloaks,
         Setting::CampaignPresentation => {
             config.campaign_presentation = config.campaign_presentation.next()
@@ -976,6 +983,7 @@ impl GameplaySetting {
             Setting::ControlTacticalUnits => config.control_tactical_units,
             Setting::EnableUnbinding => config.enable_unbinding,
             Setting::ShowProductionForecast => config.show_production_forecast,
+            Setting::ReversibleBackgroundPatches => config.reversible_background_patches,
             Setting::ReusableCloaks => config.reusable_cloaks,
             Setting::CampaignPresentation => {
                 config.campaign_presentation
@@ -1052,7 +1060,7 @@ mod tests {
         assert_eq!(standalone_visible_option_range(0), 0..12);
         assert_eq!(standalone_visible_option_range(1), 12..24);
         assert_eq!(standalone_visible_option_range(2), 24..36);
-        assert_eq!(standalone_visible_option_range(3), 36..45);
+        assert_eq!(standalone_visible_option_range(3), 36..46);
 
         let covered: Vec<_> = (0..standalone_page_count())
             .flat_map(standalone_visible_option_range)
@@ -1180,7 +1188,7 @@ mod tests {
 
         for local in [
             1, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 25, 26, 27, 28, 29, 30, 31, 32, 33, 40,
-            41, 42, 44,
+            41, 42, 44, 45,
         ] {
             assert!(
                 !option_requires_host_authority(local),
@@ -1239,6 +1247,7 @@ mod tests {
                 "Plan Quick Actions",
                 "Fog of War",
                 "Allow Spellforge Missions (Next Launch)",
+                "Reversible Background Patches (Next Launch)",
             ]
         );
         assert_eq!(OPTION_LABELS.len(), OPTION_TOOLTIPS.len());
