@@ -9,7 +9,9 @@ A list of which additional features we have added, which ones we might still wan
   resident while loading selected sprite pixels later. Rendering waits for actual
   frame residency; missing pixels are never replaced with placeholders. The
   default remains off: the tested partition saves 25.34% of initial eligible-part
-  bytes but adds 9,966,216 bytes overall. Initial shadow reclassification while
+  bytes but adds 9,966,216 bytes overall. At 16 Mbit/s the first image appears
+  2.2 seconds earlier, followed by roughly seven seconds of pixel-residency waits;
+  actual replay progress is slower. Initial shadow reclassification while
   pixels are pending fails explicitly; broader enablement remains experimental.
   See [the compression research log](COMPRESSION.md#replay-startup-and-boot-payload-reduction-2026-09-08).
 

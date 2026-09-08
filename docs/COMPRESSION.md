@@ -33,8 +33,10 @@ schema is now **v16**; mission parts grow 3.15% in this fixture.
 [Replay startup follow-up](#replay-startup-and-boot-payload-reduction-2026-09-08):
 the browser boot bundle falls from **7,968,036 B to 3,702,350 B** by removing
 verified source-audio duplicates. Replay admission overlaps runtime loading;
-playback skips unrelated menu audio and live Restart capture. Final matched
-replay timings remain pending. Sprite pixel deferral is an opt-in experiment.
+playback skips unrelated menu audio and live Restart capture. Five matched pairs
+improve replay first-present from **20.010 s to 17.137 s at 16 Mbit/s**, and
+**4.059 s to 3.930 s** on unlimited loopback. Sprite pixel deferral stays opt-in:
+it shows the first pose sooner but substantially delays playback progress.
 
 ## Initial findings (superseded by later implementation sections)
 
@@ -3848,7 +3850,7 @@ Baseline admission provenance and functional validation are in
 `replay-baseline-pkg/`. Its one-shot Node validation time is not a browser startup
 measurement.
 
-### Opt-in sprite pixel deferral: bandwidth tradeoff still under test
+### Opt-in sprite pixel deferral: rejected as the default
 
 The threaded-browser experiment `?sprite-residency=first-frame` retains complete
 simulation opacity masks in the initial payload and defers selected pixel data.
@@ -3861,19 +3863,140 @@ Across the 27 eligible parts, initial compressed bytes fall from **16,635,002 to
 12,419,123**, a **25.34%** reduction. Deferred tails add **14,182,095 B**, so the
 combined payload is 26,601,218 B: **9,966,216 B more** than the original. This is
 an initial eligible-parts saving, not a whole-startup or total-download saving.
-Exact grid hashes and initial-plus-tail metadata parity are checked. No final
-first-pose latency benefit is established by these byte counts.
+Exact grid hashes and initial-plus-tail metadata parity are checked. The browser
+comparison below confirms a faster first pose but substantially slower playback.
 
 Local corpus evidence is
 `/tmp/robin-startup-more/mission/first1-opacity/partition.jsonl` and its `Data/`
 payloads. Experimental publication validates conflicts and preserves failures;
 session ownership and asynchronous readiness remain required for deferred work.
 
+### Final validation and build provenance
+
+The integrated runtime is built from `c7244b5ddca81ebcafd92a9440cd3f553c369912`,
+after merging main's `92c95e04c` ownership and mission-stage refactors. Its
+optimized threaded WASM is 21,511,574 B (SHA-256
+`60d96a212aed25d59ec746c3b93314e86dd08f5eb86ba0c92eb7e6a05c8ce6f5`).
+The actual captured HTTP Brotli body is **6,639,157 B**; reproducible gzip is
+7,748,552 B, and offline Brotli quality 11 is 5,435,816 B. The module itself
+is slightly larger than the baseline; the measured transfer improvement comes
+from the transport selection. The isolated validator is 1,163,616 B, served as
+315,768 B of captured HTTP Brotli, with its matching build identity checked.
+Package/capture hashes are in `final-package-provenance.json`,
+`final-admission-check.json`, and `wasm/final-*-http.br.json` under the local
+evidence root `/tmp/robin-startup-more/`.
+
+The fixture was recorded by the actual baseline browser runtime using 300 manual
+forward steps, then exported with 306 replay records. The baseline and final
+build both play to record 306, pause at EOF, and retain the expected logical
+frame 305 without a hash mismatch. For the cross-build benchmark only the compact
+envelope build identifier is explicitly repinned; its compressed recorded payload
+is unchanged. Admission and simulation verification remain enabled. Provenance
+and the original payload are retained in `replay-fixture/`.
+
+The short Restart recording additionally exposed a baseline terminal bug: playback
+created a second local campaign update after consuming the recorded one. Playback
+now uses the recorded timestamp/nonce and terminal command, including pre-command
+or delayed multiplayer echoes. Live play still emits its single command. The
+original duplicate assertion remains. The final browser replay restores frame 0,
+consumes all six records, and displays Mission Lost without that panic.
+
+Validation includes the merged engine/replay/client suites (1,603 client tests
+before the two added terminal regressions), 166 asset tests, seven terminal tests,
+150 manifest-tool tests, 102 run-protocol tests, and 389 frontend tests. Native
+build, threaded release WASM build, Vulkan/OpenGL rendered ownership/capture gates,
+and the production frontend build pass. A frozen-source browser lifecycle gate
+also passes all **28** tests, including audio, multiplayer protocol, identity and
+persistence, with both audio-only and audio-plus-multiplayer WASM target checks.
+Evidence is `final-browser-lifecycle-frozen/summary.json`; the earlier gate attempt
+is retained as rejected because source changed during that attempt.
+
 ### Final replay comparison
 
-TODO: add the final matched production URL replay benchmark table after validation,
-including exact source/package/corpus hashes, captured transport bytes, replay
-admission and queue-acceptance endpoints, bootstrap, and first-present return.
-Retain every sample and report throughput/RTT, worker count, cache/profile state,
-and endpoint limitations. Do not substitute normal-demo, native microbenchmark,
-or offline compression numbers for this missing replay comparison.
+Five alternating baseline/candidate pairs at each rate (20 runs total) all pass;
+every candidate is faster than its paired baseline. All 279 input files remain
+unchanged across the series. Fresh Chrome 152 profiles, four decode workers,
+software SwiftShader, the production frontend and actual replay URL are used.
+No task builds or profiling run during the timing series. The 16 Mbit/s model
+shares 2,000,000 payload bytes/s across requests on loopback HTTP/1.1 with no added
+RTT, packet loss, or TCP/header cost. It is not a live-CDN latency estimate.
+
+| Rate | Endpoint | Baseline median | Candidate median | Median paired saving |
+|---|---|---:|---:|---:|
+| 16 Mbit/s | Bootstrap | 19.866 s | 16.998 s | 2.863 s |
+| 16 Mbit/s | First mission present returned | **20.010 s** | **17.137 s** | **2.874 s** |
+| Unlimited loopback | Bootstrap | 3.928 s | 3.800 s | 100 ms |
+| Unlimited loopback | First mission present returned | **4.059 s** | **3.930 s** | **93 ms** |
+
+The first-present medians improve by **14.36%** and **3.18%**, respectively.
+The median of paired savings differs from the difference of the two medians;
+the table labels that statistic explicitly. First-present return is a submission-
+side endpoint, not GPU/compositor or physical display completion. Screenshots
+and actual replay RPC state confirm the rendered mission and unpaused playback.
+
+Adjacent intervals for each arm's median-first-present **16 Mbit/s** run follow.
+These form an additive waterfall; overlapping worker, renderer and engine
+subspans must not be added to it. WASM boot start is inferred from its measured
+decode duration and log timestamp, with console-delivery rounding. Mission-stage
+refactors can move work between level-load and frontend-assembly intervals.
+
+| Interval | Baseline | Candidate |
+|---|---:|---:|
+| Navigation → inferred WASM boot | 8,244 ms | 5,769 ms |
+| Boot → mission streaming | 667 ms | 317 ms |
+| Streaming → all parts merged | 10,119 ms | 10,119 ms |
+| Remaining decode/install | 228 ms | 222 ms |
+| Installation → level loaded | 396 ms | 190 ms |
+| Level loaded → frontend assembled | 191 ms | 365 ms |
+| Remaining bootstrap | 22 ms | 16 ms |
+| Bootstrap → first present returned | 144 ms | 139 ms |
+
+Pre-present payload drops **37,153,972 → 31,095,658 B**, a **6,058,314 B** saving:
+4,265,686 B from boot, 1,082,054 B from main WASM transport, and 711,419 B from
+speculative menu audio, offset by small shell/admission changes. The baseline
+actually requests its 7,721,211-byte gzip WASM sidecar; the candidate requests the
+6,639,157-byte captured HTTP Brotli representation. Admission uses captured HTTP
+Brotli in both. Required audio metadata remains, while the candidate requests no
+Opus payload before first present. The remaining roughly ten-second mission
+stream is the dominant 16 Mbit/s cost; CPU-side gains are much smaller than the
+transfer savings in the whole replay path.
+
+The baseline frontend did not expose admission/module-ready timing marks. Those
+endpoints remain unavailable rather than being inferred from transfer completion.
+Candidate admission/queue marks, per-run overlapping spans, exact byte categories,
+all paired samples and input hashes are retained in
+`/tmp/robin-startup-more/replay-matched/{summary.json,inputs-before.json,inputs-after.json}`.
+The adjacent harness documentation explains reproduction. Final normal and Restart
+EOF evidence is in `replay-fixture/final-eof.*` and `final-restart-terminal.*`.
+Main's subsequent `7be45078e` follow-up was merged as `0423e45e9`; game, engine,
+assets, replay, frontend and Cargo inputs remain byte-identical to the measured
+`c7244b5dd` source. Only parity tooling and audit documentation changed.
+
+The sprite-deferral follow-up uses two sequential samples per mode at 16 Mbit/s,
+with the same final package, replay and HTTP captures. Ordinary-corpus controls
+bookend the series; eager/deferred partitioned runs alternate. Both partitioned
+modes use the same complete simulation masks and tail references, with identical
+trimmed audio and unchanged source corpora.
+
+| Mode | Median first present returned | Median first observation of replay record 10 |
+|---|---:|---:|
+| Normal corpus (selected default) | **17.151 s** | **17.894 s** |
+| Partitioned corpus, eager pixels | 22.071 s | 22.831 s |
+| Partitioned corpus, deferred pixels | 14.971 s | 22.842 s |
+
+Deferral shows the first pose 2.179 s earlier, but reaches record 10 **4.947 s
+later** than the ordinary corpus. Both deferred runs stall behind required sprite
+pixels for about 3.3 s and then 3.8 s. Eight seconds after first presentation,
+deferred playback is only at record 14, versus 152–154 for the controls. RPC
+samples record their real delayed reply times; these waits are not treated as
+on-time playback. All runs preserve correctness, and the experimental path also
+passes all 306 records to EOF, but this transfers latency into playback stalls.
+**Keep the normal corpus and eager pixel path as the default.**
+
+The partitioned boot retains tail references and is 3,702,731 B (381 B larger
+than the ordinary trimmed boot). The opt-in experiment remains available for
+research; reduce mask/total payload and improve demand-aware tail scheduling
+before reconsidering it. Full input hashes, six samples, wait logs and delayed
+RPC measurements are retained under
+`/tmp/robin-startup-more/experimental-final-progress/`; the matched corpus is
+`/tmp/robin-startup-more/corpus-first-frame/Data`.
