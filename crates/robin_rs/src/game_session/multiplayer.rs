@@ -108,7 +108,7 @@ fn attach_snapshot_spellforge_runtime(
             .map_err(|error| format!("host package validation failed: {error}"))?,
     );
     runtime.set_name_bindings(assets.scripts.names.as_ref().clone());
-    Arc::make_mut(assets).spellforge_runtime = Some(runtime);
+    Arc::make_mut(assets).attachments.spellforge_runtime = Some(runtime);
     Ok(())
 }
 
