@@ -63,3 +63,36 @@ On source `1d8d3f09c`, with `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`:
 The parent integration track owns the combined native executable build and
 runtime gates; no duplicate binary build was started here. Browser transport
 ownership is unchanged in this native-only track.
+
+## Validation-found graphical rollback boundary correction
+
+The unchanged baseline (`34bb3fb2d`, source-equivalent to `cc36f8d75`) crashed
+during the live graphical multiplayer gate after a late input rolled back seven
+frames: `TimelineHistory::commit_frame_input` had no matching pending capture.
+Evidence is in `/tmp/robin-architecture-baseline.f9o2Nq/multiplayer-graphical/`.
+The combined refactors alone did not change this pre-existing path.
+
+The graphical driver's second network drain happens after `open_frame`.
+Appending a late historical input invalidates both pending snapshot tiers;
+rollback reconstructs the current engine but previously did not reopen the
+pending transaction. Headless ingress precedes `open_frame`, so it did not
+exhibit this particular ordering failure.
+
+Commit `42e29ceec` explicitly reopens the corrected pre-tick capture only when
+the current drain reports a rollback. It preserves queued local/current-frame
+network commands, external facts, frame clock and replay ordinal, and resamples
+the recorder hash before applying those commands. Existing history assertions
+remain strict; neither invalid history nor queued input is discarded.
+
+Two production `drain_pre_tick_network` regressions first reproduced the exact
+baseline panic (recent checkpoint path and sparse fallback), then passed with
+the correction. They verify command/fact retention, corrected checkpoint/hash,
+successful commit and no reopening on a later empty drain with stale telemetry.
+The broader command below passed **131 tests**, no failures/ignored, in 7.59s
+on `42e29ceec` with `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`:
+
+```sh
+cargo test --locked -p robin_rs --lib --no-default-features --features multiplayer -- multiplayer:: game_session::frame_prepare:: game_session::runtime::
+```
+
+Full live graphical revalidation remains owned by the parent integration gate.
