@@ -556,7 +556,7 @@ fn begin_synchronized_step_resync(
     net.reconnect_all_for_snapshot(format!(
         "host synchronized automation adopted timeline frame {frame}"
     ))?;
-    net.send_ready_to_sim(frame);
+    net.send_ready_to_sim(frame)?;
     host.transport.reconnecting = true;
     Ok(())
 }

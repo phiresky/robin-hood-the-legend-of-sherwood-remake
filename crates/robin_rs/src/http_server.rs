@@ -1278,7 +1278,7 @@ fn dispatch_in_engine(
             // engine doesn't mutate here; the echo lands via
             // `drain_net_inputs` at `sim_frame + INPUT_DELAY_FRAMES`.
             if let Some(net) = net {
-                net.send_input(cmd);
+                net.send_input(cmd)?;
             } else {
                 frame_commands.push(cmd);
             }

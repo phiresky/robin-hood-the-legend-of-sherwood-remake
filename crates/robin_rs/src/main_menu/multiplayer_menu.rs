@@ -103,6 +103,12 @@ enum MenuMode {
     },
 }
 
+fn discard_disconnected_matchmaking_state(games: &mut Vec<GameListing>, mode: &mut MenuMode) {
+    // Signed direct invites are independently dialable without discovery.
+    games.retain(|game| game.state == "direct_invite");
+    *mode = MenuMode::Games;
+}
+
 pub(crate) async fn show_multiplayer_menu(
     event_pump: &mut crate::window::GameWindow,
     renderer: &mut Renderer,
@@ -134,7 +140,7 @@ pub(crate) async fn show_multiplayer_menu(
         None
     };
     let mut prepared_host_content: Option<crate::distributed_mod::PreparedDistributedMod> = None;
-    let (matchmaking_client, mut matchmaking_label) =
+    let (mut matchmaking_client, mut matchmaking_label) =
         match matchmaking::MatchmakingSession::open(nickname.clone()) {
             Ok(session) => (
                 Some(session),
@@ -192,9 +198,13 @@ pub(crate) async fn show_multiplayer_menu(
         scroll_offset = clamp_scroll_offset(scroll_offset, rows_len);
         ensure_selected_visible(selected, &mut scroll_offset, rows_len);
 
-        while let Some(event) = matchmaking_client
-            .as_ref()
-            .and_then(|client| client.try_recv())
+        while let Some(event) =
+            matchmaking_client
+                .as_ref()
+                .and_then(|client| match client.try_recv() {
+                    Ok(event) => event,
+                    Err(error) => Some(matchmaking::MatchmakingEvent::Disconnected(error)),
+                })
         {
             match event {
                 matchmaking::MatchmakingEvent::Games(next) => {
@@ -353,7 +363,16 @@ pub(crate) async fn show_multiplayer_menu(
                     }
                 }
                 matchmaking::MatchmakingEvent::Error(err) => status = err,
-                matchmaking::MatchmakingEvent::Disconnected(err) => status = err,
+                matchmaking::MatchmakingEvent::Disconnected(err) => {
+                    status = err;
+                    matchmaking_client = None;
+                    // Discovery listings and hosted/joined controls are no longer
+                    // actionable. Signed direct invites use a different transport.
+                    discard_disconnected_matchmaking_state(&mut games, &mut mode);
+                    selected = 0;
+                    scroll_offset = 0;
+                    prepared_host_content = None;
+                }
             }
         }
 
@@ -362,7 +381,7 @@ pub(crate) async fn show_multiplayer_menu(
             && games
                 .get(selected)
                 .is_some_and(|game| matchmaking_connected || game.state == "direct_invite");
-        let can_start = matches!(mode, MenuMode::Hosted { .. });
+        let can_start = matchmaking_connected && matches!(mode, MenuMode::Hosted { .. });
         set_button(&mut frame, ID_JOIN, "Join", can_join);
         set_button(
             &mut frame,
@@ -1544,6 +1563,36 @@ fn fill_virtual_rect(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn disconnected_discovery_removes_stale_host_and_join_controls() {
+        use super::*;
+        let listing = |state: &str| GameListing {
+            id: "host".into(),
+            mission_id: 1,
+            mission_name: "Mission".into(),
+            host_content: None,
+            host: "Host".into(),
+            players: 1,
+            max_players: 2,
+            state: state.into(),
+            start_at_epoch_ms: None,
+        };
+        let mut games = vec![listing("waiting"), listing("direct_invite")];
+        let mut mode = MenuMode::Hosted {
+            game: games[0].clone(),
+        };
+        discard_disconnected_matchmaking_state(&mut games, &mut mode);
+        assert!(matches!(mode, MenuMode::Games));
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].state, "direct_invite");
+        mode = MenuMode::Joined {
+            game: selected(),
+            listing: None,
+        };
+        discard_disconnected_matchmaking_state(&mut games, &mut mode);
+        assert!(matches!(mode, MenuMode::Games));
+    }
+
     use super::{signed_direct_listing, validate_started_game};
     use crate::multiplayer::matchmaking::JoinedGame;
 

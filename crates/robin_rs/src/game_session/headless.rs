@@ -253,12 +253,14 @@ impl HeadlessMission {
             && world_view.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
         {
             net.publish_frame(self.runtime.timeline.frame_number());
-            net.send_state_hash(
+            if let Err(error) = net.send_state_hash(
                 hash_frame,
                 hash,
                 self.runtime.timeline.frame_number(),
                 sleep_ms,
-            );
+            ) {
+                tracing::error!(%error, "multiplayer state hash send failed");
+            }
         }
 
         let result = HeadlessFrameResult {
@@ -295,7 +297,9 @@ impl HeadlessMission {
                     )
                 {
                     if let Some(net) = host.transport.net.as_ref() {
-                        net.send_input(PlayerCommand::QuitMissionRequested);
+                        if let Err(error) = net.send_input(PlayerCommand::QuitMissionRequested) {
+                            tracing::error!(%error, "multiplayer quit request send failed");
+                        }
                     }
                     frame.post_commands.push(PlayerInput::new(
                         host.transport.local_seat,

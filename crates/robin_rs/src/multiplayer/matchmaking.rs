@@ -185,8 +185,14 @@ impl MatchmakingSession {
         self.send(Command::Start)
     }
 
-    pub fn try_recv(&self) -> Option<MatchmakingEvent> {
-        self.events.try_recv().ok()
+    pub fn try_recv(&self) -> Result<Option<MatchmakingEvent>, String> {
+        match self.events.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("matchmaking worker is closed".to_string())
+            }
+        }
     }
 
     fn send(&self, command: Command) -> Result<(), String> {
@@ -233,7 +239,7 @@ impl MatchmakingSession {
         match *self {}
     }
 
-    pub fn try_recv(&self) -> Option<MatchmakingEvent> {
+    pub fn try_recv(&self) -> Result<Option<MatchmakingEvent>, String> {
         match *self {}
     }
 }
@@ -814,6 +820,25 @@ mod native {
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn worker_closure_is_distinct_from_idle_and_commands_fail() {
+        let (commands, receiver) = std::sync::mpsc::channel();
+        let (sender, events) = std::sync::mpsc::channel();
+        let session = super::MatchmakingSession { commands, events };
+        assert!(session.try_recv().unwrap().is_none());
+        sender.send(super::MatchmakingEvent::Neighbors(1)).unwrap();
+        drop(sender);
+        assert!(matches!(
+            session.try_recv().unwrap(),
+            Some(super::MatchmakingEvent::Neighbors(1))
+        ));
+        assert!(session.try_recv().is_err());
+        drop(receiver);
+        assert!(session.start_game().is_err());
+        assert!(session.leave_game().is_err());
+    }
+
     use super::*;
 
     #[test]

@@ -9,6 +9,8 @@
 
 #[cfg(feature = "multiplayer")]
 mod client_protocol;
+#[cfg(feature = "multiplayer")]
+pub use client_protocol::ClientSessionMetadata;
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub(crate) use robin_engine::multiplayer::INPUT_DELAY_FRAMES;
