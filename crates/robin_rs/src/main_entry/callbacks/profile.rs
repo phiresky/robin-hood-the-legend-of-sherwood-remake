@@ -41,6 +41,19 @@ impl ProfileClockCredits {
     }
 }
 
+/// Import only records that already exist in the authoritative campaign.
+/// In particular, a pre-terminal synchronization cannot create the pending
+/// attempt. The terminal path calls this again after append and attestation.
+fn promote_recorded_history(
+    profile: &mut robin_engine::player_profile::PlayerProfile,
+    campaign: &Campaign,
+    profiles: &ProfileManager,
+) {
+    profile
+        .promote_campaign_history(campaign, profiles)
+        .unwrap_or_else(|error| panic!("campaign-history promotion failed: {error}"));
+}
+
 pub(super) fn synchronize_metrics(
     application: &ApplicationContext,
     credits: &mut ProfileClockCredits,
@@ -58,6 +71,9 @@ pub(super) fn synchronize_metrics(
             robin_engine::player_profile::synchronize_with_campaign(
                 profile, campaign, profiles, credit,
             );
+            // Loading an existing campaign then quitting may never enter
+            // terminal debriefing. Preserve its already-recorded history here.
+            promote_recorded_history(profile, campaign, profiles);
             // Always retry persistence, even if this invocation added no time.
             // The receipt tracks the in-memory application, not disk success.
             application.persist_player_profiles(manager)
@@ -67,7 +83,7 @@ pub(super) fn synchronize_metrics(
         });
     if let Err(error) = result {
         tracing::error!(
-            "Profile metrics persistence failed; retained in memory and retried on the next profile save/synchronization: {error}"
+            "Profile synchronization persistence failed; retained in memory and retried on the next profile save/synchronization: {error}"
         );
     }
 }
@@ -89,9 +105,11 @@ impl RustCallbacks {
         profiles: &ProfileManager,
     ) {
         application.with_player_profiles_mut(|manager| {
-            manager.get_active_mut().expect("terminal promotion requires an active profile")
-                .promote_campaign_history(campaign, profiles)
-                .unwrap_or_else(|error| panic!("campaign-history promotion failed: {error}"));
+            promote_recorded_history(
+                manager.get_active_mut().expect("terminal promotion requires an active profile"),
+                campaign,
+                profiles,
+            );
             if let Err(error) = application.persist_player_profiles(manager) {
                 #[cfg(not(target_arch = "wasm32"))]
                 panic!("failed to persist campaign history: {error}");
@@ -115,6 +133,77 @@ mod tests {
         assert_eq!(credits.credit(1, 17, 70), 10);
         assert_eq!(credits.credit(2, 17, 70), 70);
         assert_eq!(credits.credit(1, 18, 70), 70);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn loaded_campaign_history_survives_quit_sync_and_persistence_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut callbacks, _host, engine, _assets, _game, profiles) =
+            super::super::operation_outcome_tests::diagnostic_callback_fixture(directory.path());
+        let mut loaded = engine.campaign().clone();
+        let append_attempt = |campaign: &mut Campaign| {
+            campaign.record_mission_attempt(
+                0,
+                robin_engine::campaign_history::MissionAttemptOutcome::Won,
+                Some(100),
+                Some(0xbeef),
+                70,
+                engine_api::SimConfig::default(),
+                &robin_engine::mission_stat::MissionStat::default(),
+                None,
+            );
+        };
+        append_attempt(&mut loaded);
+        // This is the callback used by Game::handle_quit; it must import
+        // pre-existing attempts even though no new terminal command runs.
+        let target = directory.path().join("profiles.json");
+        std::fs::create_dir(&target).unwrap();
+        crate::game::GameCallbacks::synchronize_profile_with_campaign(
+            &mut callbacks,
+            &loaded,
+            &profiles,
+        );
+        assert_eq!(
+            callbacks
+                .application_context
+                .with_player_profiles_mut(|manager| manager
+                    .get_active_mut()
+                    .unwrap()
+                    .lifetime_campaign_totals()
+                    .attempts)
+                .unwrap(),
+            1,
+        );
+        std::fs::remove_dir(&target).unwrap();
+        crate::game::GameCallbacks::synchronize_profile_with_campaign(
+            &mut callbacks,
+            &loaded,
+            &profiles,
+        );
+        let store = crate::player_profile_store::PlayerProfileStore::for_directory(
+            directory.path().to_str().unwrap(),
+        );
+        assert_eq!(
+            store.load().unwrap().profiles[0]
+                .lifetime_campaign_totals()
+                .attempts,
+            1
+        );
+        assert_eq!(
+            loaded.latest_mission_attempt().unwrap().sequence(),
+            1,
+            "synchronization never invents the pending terminal attempt"
+        );
+        append_attempt(&mut loaded);
+        RustCallbacks::promote_terminal_profile(&callbacks.application_context, &loaded, &profiles);
+        RustCallbacks::promote_terminal_profile(&callbacks.application_context, &loaded, &profiles);
+        assert_eq!(
+            store.load().unwrap().profiles[0]
+                .lifetime_campaign_totals()
+                .attempts,
+            2
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
