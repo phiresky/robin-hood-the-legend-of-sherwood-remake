@@ -542,7 +542,8 @@ async function finish(code) {
 server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
     profile = mkdtempSync(join(tmpdir(), 'robin-e2e-chrome-'));
-    const query = new URLSearchParams({ mission, 'wasm-log': wasmLog });
+    const query = new URLSearchParams({ 'wasm-log': wasmLog });
+    if (mission !== 'auto') query.set('mission', mission);
     for (const [key, value] of runtimeOptions) query.set(key, value);
     if (restartReplay) query.set('start-paused', 'true');
     const pageUrl = `http://127.0.0.1:${port}/?${query}`;
