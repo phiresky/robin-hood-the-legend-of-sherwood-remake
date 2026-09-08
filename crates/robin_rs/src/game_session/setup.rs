@@ -15,7 +15,7 @@ use crate::input_translator::{GameKey, InputTranslator};
 use crate::main_entry::{current_mission_id, picture_to_surface};
 use crate::markers::SelectionMarkRenderer;
 use crate::mouse_trail::MouseTrailRenderer;
-use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
+use crate::renderer::Renderer;
 use crate::sound::{NUM_CHANNELS, SoundMode};
 use crate::titbit_renderer::TitbitRenderer;
 use crate::ui_panel::{PortraitCache, load_localized_character_names};
@@ -30,7 +30,6 @@ use robin_engine::coordinates::{
 };
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::minimap::HitMask;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
@@ -717,9 +716,9 @@ pub(super) fn setup_mission_audio(
             location == MissionLocation::Sherwood,
             &engine.sound_sim().sources,
         );
-        // Switch from menu music to mission music during the final loading
-        // stage. Entering mission mode halts the menu stream and
-        // re-raises load_music so mission music starts from the pool.
+        // Enter mission mode during the final loading stage, including
+        // replay viewers that skipped loading-screen menu music. This raises
+        // load_music so normal mission music starts from the pool.
         host.audio.sound.set_mode(SoundMode::Mission, backend);
         timer.step("mixer activation");
     }
@@ -1337,8 +1336,12 @@ impl HeadlessEngineResources {
 }
 
 impl MissionProcessResources {
-    pub(super) fn load(host: &mut Host, game: &Game) -> Result<Self, String> {
-        let audio_backend = init_audio_backend(host, game);
+    pub(super) fn load(
+        host: &mut Host,
+        game: &Game,
+        play_loading_menu_music: bool,
+    ) -> Result<Self, String> {
+        let audio_backend = init_audio_backend(host, game, play_loading_menu_music);
 
         let mut text = ResourceManager::with_files(host.preparation_files()?.clone());
         if let Err(error) =
@@ -1870,26 +1873,19 @@ pub(super) fn load_mission_sprites(
 pub(super) fn extract_minimap_widget_setup(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::MinimapWidgetSetup> {
+    if !cursor_res.has_picture_resource(resource_ids::RHMAP_CORNER) {
+        return None;
+    }
+    let metadata = cursor_res
+        .get_picture_opacity_metadata(resource_ids::RHMAP_CORNER)
+        .unwrap_or_else(|error| panic!("minimap engine picture metadata: {error:#}"));
     let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
-    let mut button_hit_mask = None;
-    if let Ok(pics) = cursor_res.get_pictures(resource_ids::RHMAP_CORNER)
-        && let Some(Some(pic)) = pics.get(1)
-    {
-        let pixels: Vec<u16> = pic
-            .data
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        button_hit_mask = Some(HitMask::from_pixels_u16(
-            pic.width,
-            pic.height,
-            &pixels,
-            TRANSPARENT_COLOR_KEY_16,
-        ));
-    }
+    let button_hit_mask = metadata.get(1).and_then(Clone::clone).map(|metadata| {
+        metadata
+            .into_hit_mask()
+            .expect("validated minimap hit mask")
+    });
     Some(engine_api::MinimapWidgetSetup {
         corner_size,
         button_hit_mask,
@@ -1906,34 +1902,28 @@ pub(super) fn extract_minimap_widget_setup(
 pub(super) fn extract_ground_mark_sprite_data(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::GroundMarkSpriteData> {
-    let pics = cursor_res
-        .get_pictures(resource_ids::RHID_GROUND_FOCUS)
-        .ok()?;
-    let first_pic = pics.iter().find_map(|opt| opt.as_ref())?;
-    let frame_sizes: Vec<(u16, u16)> = pics
-        .iter()
-        .filter_map(|opt| opt.as_ref().map(|p| (p.width, p.height)))
-        .collect();
-    if frame_sizes.is_empty() {
+    if !cursor_res.has_picture_resource(resource_ids::RHID_GROUND_FOCUS) {
         return None;
     }
-    // The destination marker uses the auto-cropped tight bounds of
-    // frame 0; we store the uncropped Picture, so scan for the opaque
-    // bounds and fall back to the raw size when the scan can't run.
-    let (cw, ch) = first_pic
-        .opaque_bounds_16()
-        .map(|(_, _, cw, ch)| (cw, ch))
-        .unwrap_or((frame_sizes[0].0, frame_sizes[0].1));
-    // Per-frame offset = (x_min, y_min) of the opaque region.  Used
-    // by visibility and blit-box calculations so the cull AABB tracks the
-    // opaque region instead of the full uncropped surface.  Defaults
-    // to (0, 0) for any frame whose opaque-bounds scan can't run
-    // (non-16-bit or fully transparent).
-    let per_frame_offsets: Vec<(i16, i16)> = pics
+    let pics = cursor_res
+        .get_picture_opacity_metadata(resource_ids::RHID_GROUND_FOCUS)
+        .unwrap_or_else(|error| panic!("ground marker engine picture metadata: {error:#}"));
+    let first_pic = pics.iter().flatten().next()?;
+    let frame_sizes: Vec<(u16, u16)> = pics
         .iter()
-        .map(|opt| {
-            opt.as_ref()
-                .and_then(|p| p.opaque_bounds_16())
+        .flatten()
+        .map(|pic| (pic.width, pic.height))
+        .collect();
+    // Fully transparent frames keep the historical raw-size / zero-offset rule.
+    let (cw, ch) = first_pic
+        .opaque_bounds
+        .map(|(_, _, width, height)| (width, height))
+        .unwrap_or((first_pic.width, first_pic.height));
+    let per_frame_offsets = pics
+        .iter()
+        .map(|pic| {
+            pic.as_ref()
+                .and_then(|pic| pic.opaque_bounds)
                 .map(|(x, y, _, _)| (x as i16, y as i16))
                 .unwrap_or((0, 0))
         })
@@ -1956,13 +1946,12 @@ pub(super) fn extract_titbit_row_frame_counts(cursor_res: &mut ResourceManager) 
     let mut counts = vec![0u16; num_rows];
     for &(row, res_id) in titbit_sprite_row_resources() {
         let n = cursor_res
-            .get_pictures(res_id)
-            .map(|pics| {
-                pics.iter()
-                    .filter(|o| o.as_ref().is_some_and(|p| p.width > 0 && p.height > 0))
-                    .count() as u16
-            })
-            .unwrap_or(0);
+            .get_nonempty_picture_count(res_id)
+            .map(|count| count as u16)
+            .unwrap_or_else(|error| {
+                tracing::warn!("titbit resource {res_id}: frame count unavailable: {error:#}");
+                0
+            });
         let idx = row as usize;
         if idx < counts.len() {
             counts[idx] = n;
@@ -2115,7 +2104,7 @@ pub(super) struct LoadedMissionCore {
     pub(super) pre_decoded_background: Option<engine_api::level_loading::PreDecodedBackground>,
     pub(super) pre_decoded_minimap: Option<engine_api::level_loading::PreDecodedMinimap>,
     /// Still-running background+minimap decode for interactive missions
-    /// (`defer_terrain_join`): joined during frontend assembly, right before
+    /// (`TerrainJoinPoint::BeforePresentationUpload`): joined during frontend assembly, right before
     /// the GPU upload needs the pixels.
     pub(super) pending_terrain: Option<crate::level_loading_host::PendingTerrainDecode>,
     /// Grid dimensions the engine was constructed with, for the divergence
@@ -2331,27 +2320,6 @@ pub(super) fn prepare_mission(
             .mission_filename
             .clone()
     });
-    let resources = match host.frontend.shipping.as_ref() {
-        Some(shipping) => match mission_name
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("shipping launch has no current mission"))
-            .and_then(|name| shipping.mission_resource_environment(name))
-        {
-            Ok(resources) => resources,
-            Err(error) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("prepare shipping mission resources: {error:#}"),
-                ));
-            }
-        },
-        None => std::sync::Arc::new(
-            engine_sprite_script::MissionResourceEnvironment::from_files(&files),
-        ),
-    };
-    assets.sprite_scriptor = std::sync::Arc::new(
-        engine_sprite_script::SpriteScriptor::with_resources(resources.clone()),
-    );
     assets.attachments.spellforge_runtime = host
         .scripting
         .lua_session
@@ -2422,14 +2390,78 @@ pub(super) fn prepare_mission(
     // the `wasm-threads` build initialized one, and otherwise decodes
     // synchronously right here (single-threaded browser fallback — the
     // progress closure keeps feeding the loading bar in that case).
-    let pending_terrain = crate::level_loading_host::PendingTerrainDecode::start_with_files(
-        &map_name,
-        &ambiance_dir,
-        &level_directory,
-        host.frontend.shipping.clone(),
-        files.clone(),
-    );
+    let early_terrain = match (mission_name.as_deref(), host.frontend.shipping.as_ref()) {
+        (Some(mission), Some(shipping)) => {
+            let cache = match host.application_context().asset_cache() {
+                Ok(cache) => cache,
+                Err(message) => return Err(MissionLoadError::new(campaign, message)),
+            };
+            match cache.take_early_terrain(shipping, mission, &map_name, &ambiance_dir) {
+                Some(job) => match job.matches_source(shipping, &files, &level_directory) {
+                    Ok(true) => Some(job),
+                    Ok(false) => {
+                        tracing::debug!(
+                            "discarding early terrain overridden by preparation reader"
+                        );
+                        None
+                    }
+                    Err(message) => return Err(MissionLoadError::new(campaign, message)),
+                },
+                None => None,
+            }
+        }
+        _ => None,
+    };
+    let pending_terrain = if let Some(job) = early_terrain {
+        tracing::info!("early terrain decode handed to mission setup");
+        crate::level_loading_host::PendingTerrainDecode::Early {
+            job,
+            level_directory: level_directory.clone(),
+            shipping: host
+                .frontend
+                .shipping
+                .clone()
+                .expect("early terrain requires shipping"),
+            files: files.clone(),
+        }
+    } else {
+        crate::level_loading_host::PendingTerrainDecode::start_with_files(
+            &map_name,
+            &ambiance_dir,
+            &level_directory,
+            host.frontend.shipping.clone(),
+            files.clone(),
+        )
+    };
     timer.step("terrain decode start");
+
+    // Shipping may already have decoded pixels alongside the VQ tail. The
+    // handoff above validates those immutable bytes against this reader;
+    // remaining occlusion/minimap reads retain this preparation snapshot.
+    // Resource environments clone/validate mission RHS and scripts. Start the
+    // independent terrain job first so this work overlaps pixel decoding.
+    let resources = match host.frontend.shipping.as_ref() {
+        Some(shipping) => match mission_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("shipping launch has no current mission"))
+            .and_then(|name| shipping.mission_resource_environment(name))
+        {
+            Ok(resources) => resources,
+            Err(error) => {
+                return Err(MissionLoadError::new(
+                    campaign,
+                    format!("prepare shipping mission resources: {error:#}"),
+                ));
+            }
+        },
+        None => std::sync::Arc::new(
+            engine_sprite_script::MissionResourceEnvironment::from_files(&files),
+        ),
+    };
+    assets.sprite_scriptor = std::sync::Arc::new(
+        engine_sprite_script::SpriteScriptor::with_resources(resources.clone()),
+    );
+    timer.step("mission resource environment");
 
     // Install the sprite bank — must happen before entity sprite
     // loading in initialize_for_mission. The parsed bank comes from the
@@ -2584,13 +2616,15 @@ pub(super) fn prepare_mission(
                 Err(message) => return Err(MissionLoadError::new(campaign, message)),
             }
         }
-        Err(pending) => match crate::level_loading_host::probe_background_map_dims_with_files(
-            &map_name,
-            &ambiance_dir,
-            &level_directory,
-            host.frontend.shipping.as_deref(),
-            &files,
-        ) {
+        Err(pending) => match pending.known_dimensions().or_else(|| {
+            crate::level_loading_host::probe_background_map_dims_with_files(
+                &map_name,
+                &ambiance_dir,
+                &level_directory,
+                host.frontend.shipping.as_deref(),
+                &files,
+            )
+        }) {
             Some((w, h)) => ((w as f32, h as f32), Some(pending)),
             None => {
                 let decoded = pending.join_now_or_redecode(&mut |_| {});
@@ -2754,6 +2788,8 @@ pub(super) fn prepare_mission(
         }
     }
 
+    timer.step("scheduled ambiance preparation");
+
     // Resolve the engine's initial RNG seed before construction so
     // `Engine::new` is the only site that touches RNG state during
     // setup. Campaign selection has already advanced the single-player /
@@ -2799,12 +2835,14 @@ pub(super) fn prepare_mission(
         presentation_initial_ambiance,
         sim_config.bypass_fog_sprites_crash,
     );
+    timer.step("initial sprite variants");
     let (night_r, night_g, night_b) = presentation_initial_ambiance.night_color_rgb();
     let initial_shadow_key = robin_util::color::rgb565(night_r, night_g, night_b);
     host.frontend
         .frame_holder_mut()
         .apply_arno_law(initial_shadow_key);
     assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    timer.step("initial sprite shadow and opacity publication");
 
     Ok(PreparedMission {
         campaign,
@@ -2870,7 +2908,7 @@ impl PreparedMission {
             let mut progress = |delta: f32| {
                 tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
             };
-            match Engine::prepare_preserving_campaign(engine_api::EngineArgs {
+            let engine_args = engine_api::EngineArgs {
                 campaign,
                 level: engine_api::LevelLoadArgs {
                     assets: &mut assets,
@@ -2884,55 +2922,81 @@ impl PreparedMission {
                 rng_seed,
                 original_rng_replay: None,
                 sim_config,
-            }) {
-                Ok(prepared) => {
-                    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-                    if let Some(request) = args.simulation_content_export.as_ref() {
-                        let exact_mission = match mission_name.as_deref() {
-                            Some(mission) => mission,
-                            None => {
-                                let campaign = Engine::from_prepared(prepared).into_campaign();
-                                return Err(MissionLoadError::new(
-                                    campaign,
-                                    "simulation-content export has no prepared mission identity"
-                                        .to_owned(),
-                                ));
-                            }
-                        };
-                        let components = prepared
-                            .static_projection()
-                            .components()
-                            .iter()
-                            .map(|component| {
-                                crate::official_projection_export::CanonicalProjectionComponent {
-                                    document: component.document.clone(),
-                                    canonical_bytes: component.canonical_bytes.clone(),
-                                    sha256: component.sha256,
+            };
+            let needs_projection = matches!(
+                ranked_plan,
+                super::leaderboard_runtime::RankedPreFramePlan::Authority(_)
+            );
+            #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+            let needs_projection = needs_projection || args.simulation_content_export.is_some();
+            if !needs_projection {
+                // Ordinary play has no consumer for the verification projection.
+                // Construct the same engine without cloning/serializing its inputs
+                // or hashing the sprite opacity surface.
+                let super::leaderboard_runtime::RankedPreFramePlan::BrowseOnly { reason } =
+                    ranked_plan
+                else {
+                    unreachable!("authority sessions require a prepared projection");
+                };
+                let engine =
+                    Engine::new_preserving_campaign(engine_args).map_err(|(error, campaign)| {
+                        MissionLoadError::new(campaign, format!("Level init failed: {error}"))
+                    })?;
+                (
+                    engine,
+                    super::leaderboard_runtime::PreparedRankedAdmission::BrowseOnly { reason },
+                )
+            } else {
+                match Engine::prepare_preserving_campaign(engine_args) {
+                    Ok(prepared) => {
+                        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+                        if let Some(request) = args.simulation_content_export.as_ref() {
+                            let exact_mission = match mission_name.as_deref() {
+                                Some(mission) => mission,
+                                None => {
+                                    let campaign = Engine::from_prepared(prepared).into_campaign();
+                                    return Err(MissionLoadError::new(
+                                        campaign,
+                                        "simulation-content export has no prepared mission identity"
+                                            .to_owned(),
+                                    ));
                                 }
-                            })
-                            .collect::<Vec<_>>();
-                        if let Err(error) =
-                        crate::official_projection_export::write_simulation_content_projection(
-                            request,
-                            exact_mission,
-                            &robin_engine::simulation_inputs::SIMULATION_CONTENT_COMPONENT_ORDER_V1,
-                            &components,
-                        )
-                    {
-                        let campaign = Engine::from_prepared(prepared).into_campaign();
+                            };
+                            let components = prepared
+                                .static_projection()
+                                .components()
+                                .iter()
+                                .map(|component| {
+                                    crate::official_projection_export::CanonicalProjectionComponent {
+                                        document: component.document.clone(),
+                                        canonical_bytes: component.canonical_bytes.clone(),
+                                        sha256: component.sha256,
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            if let Err(error) =
+                            crate::official_projection_export::write_simulation_content_projection(
+                                request,
+                                exact_mission,
+                                &robin_engine::simulation_inputs::SIMULATION_CONTENT_COMPONENT_ORDER_V1,
+                                &components,
+                            )
+                        {
+                            let campaign = Engine::from_prepared(prepared).into_campaign();
+                            return Err(MissionLoadError::new(
+                                campaign,
+                                format!("simulation-content export failed: {error:#}"),
+                            ));
+                        }
+                        }
+                        ranked_plan.consume_prepared(prepared)
+                    }
+                    Err((error, campaign)) => {
                         return Err(MissionLoadError::new(
                             campaign,
-                            format!("simulation-content export failed: {error:#}"),
+                            format!("Level init failed: {error}"),
                         ));
                     }
-                    }
-                    ranked_plan.consume_prepared(prepared)
-                }
-                Err((error, campaign)) => {
-                    return Err(MissionLoadError::new(
-                        campaign,
-                        format!("Level init failed: {error}"),
-                    ));
                 }
             }
         };
@@ -3264,10 +3328,14 @@ fn spectator_actor_centroid(
         .then(|| engine_coordinates::MapPoint::new(sum_x / count as f32, sum_y / count as f32))
 }
 
-/// Initialize the Kira audio backend and switch the host sound
-/// manager into `SoundMode::Menu` so menu music plays during the
-/// loading screen.
-pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAudioBackend> {
+/// Initialize the mission mixer and optionally play loading-screen menu
+/// music. Replay startup skips that unrelated track; `prepare_audio` still
+/// enters mission mode and supplies the recorded mission's normal audio.
+pub(super) fn init_audio_backend(
+    host: &mut Host,
+    game: &Game,
+    play_loading_menu_music: bool,
+) -> Option<KiraAudioBackend> {
     if !game.global_options.sound_enabled {
         tracing::info!("sound disabled via `-NOSOUND`; skipping audio backend init");
         return None;
@@ -3302,7 +3370,9 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAud
         }
         // Apply volumes before set_mode(Menu) so menu music isn't silent.
         host.audio.sound.apply_volumes(&sound_config);
-        host.audio.sound.set_mode(SoundMode::Menu, backend);
+        if play_loading_menu_music {
+            host.audio.sound.set_mode(SoundMode::Menu, backend);
+        }
     }
     audio_backend
 }

@@ -15,11 +15,23 @@ name = "wasm_decode_bench"
 crate-type = ["cdylib"]
 
 [[example]]
+name = "boot_inventory"
+required-features = ["engine-adapters"]
+
+[[example]]
+name = "trim_browser_boot"
+required-features = ["engine-adapters"]
+
+[[example]]
 name = "jxl_sprite_probe"
 required-features = ["engine-adapters"]
 
 [[example]]
 name = "asset_decode_bench"
+required-features = ["engine-adapters"]
+
+[[example]]
+name = "rechunk_sprite_groups"
 required-features = ["engine-adapters"]
 
 [[test]]
@@ -128,3 +140,15 @@ wasm-threads = [
 
 [lints]
 workspace = true
+
+[[example]]
+name = "migrate_picture_metadata"
+required-features = ["engine-adapters"]
+
+[[example]]
+name = "partition_sprite_startup"
+required-features = ["engine-adapters"]
+
+[[example]]
+name = "mission_sprite_audit"
+required-features = ["engine-adapters"]

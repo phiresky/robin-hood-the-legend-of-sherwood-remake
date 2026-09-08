@@ -90,6 +90,8 @@ pub(super) struct MissionBootstrap {
     pub(super) game: Game,
     pub(super) loaded: LoadedMissionCore,
     lifecycle: MissionBootstrapLifecycle,
+    restart_save_started: bool,
+    restart_save_identity: Option<crate::save_file::ReplaySaveIdentity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +181,8 @@ impl MissionBootstrap {
             game,
             loaded,
             lifecycle: MissionBootstrapLifecycle::new(),
+            restart_save_started: false,
+            restart_save_identity: None,
         };
         bootstrap.install_mission_assets(args);
         bootstrap
@@ -250,10 +254,14 @@ impl MissionBootstrap {
     ) {
         self.lifecycle
             .require(MissionBootstrapPhase::CampaignClockStarted);
-        if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
+        let playing_back = args.replay_data.is_some() || args.replay.is_some();
+        // Playback pins its frame-0 save markers in TimelineRuntime and replays
+        // load-back records from those immutable snapshots. It must not create
+        // a live disk Restart save or replace the user's previous recovery point.
+        if !playing_back && !self.game.is_sherwood && args.mission_start_map_output.is_none() {
             let campaign = self.loaded.engine.campaign();
             let mission_id = current_mission_id(campaign, &self.loaded.assets.profile_manager);
-            if let Err(error) = callbacks.save_manager.write_restart_save_background(
+            self.restart_save_started = match callbacks.save_manager.write_restart_save_background(
                 &mut self.host,
                 &self.game,
                 &self.loaded.engine,
@@ -261,8 +269,15 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                tracing::error!("Restart save could not start: {error:#}");
-            }
+                Ok(()) => {
+                    self.restart_save_identity = callbacks.save_manager.restart_session_identity();
+                    true
+                }
+                Err(error) => {
+                    tracing::error!("Restart save could not start: {error:#}");
+                    false
+                }
+            };
         }
         self.lifecycle.advance(
             MissionBootstrapPhase::CampaignClockStarted,
@@ -466,12 +481,16 @@ impl MissionBootstrap {
             self.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
-        // Mirror of the `setup_restart_or_sherwood` write condition: those
-        // missions captured a Restart auto-save of this exact pre-frame-0
-        // engine state, so mark frame 0 as its save marker.
-        if !self.game.is_sherwood && args.mission_start_map_output.is_none() {
-            timeline.register_bootstrap_save(&self.loaded.engine, &self.host, &self.game);
-        }
+        // Entry eligibility is insufficient: capture/indexing can fail, and
+        // headless startup can skip restart creation entirely. Only an admitted
+        // background save represents a frame-0 payload that can later be loaded.
+        timeline.register_bootstrap_save(
+            &self.loaded.engine,
+            &self.host,
+            &self.game,
+            self.restart_save_started,
+            self.restart_save_identity,
+        );
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
             .host
@@ -504,11 +523,37 @@ impl MissionBootstrap {
     }
 }
 
+/// Diagnostic control for same-package startup measurements.
+fn prepare_renderer_early() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    let value = {
+        let window = web_sys::window().expect("interactive renderer requires a browser window");
+        let search = window
+            .location()
+            .search()
+            .expect("read renderer preparation query");
+        web_sys::UrlSearchParams::new_with_str(&search)
+            .expect("parse renderer preparation query")
+            .get("renderer-preparation")
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let value = std::env::var("ROBIN_RENDERER_PREPARATION").ok();
+    match value.as_deref() {
+        None | Some("early") => true,
+        Some("late") => false,
+        Some(value) => panic!("unknown renderer-preparation policy {value:?}"),
+    }
+}
+
 /// Owns the temporary loading renderer and the presentation configuration it
 /// resolved. Consuming [`Self::close_before_renderer`] is the only way to
 /// obtain that configuration for the game renderer.
 struct MissionLoadingScreen {
     renderer: Option<LoadingScreenRenderer>,
+    /// When no loading artwork exists, prepare the GPU pipelines after mission
+    /// downloads have started so construction overlaps their worker/network work.
+    prepared_renderer: Option<crate::renderer::Renderer>,
+    prepare_renderer_early: bool,
     renderer_config: MissionRendererConfig,
 }
 
@@ -568,6 +613,8 @@ impl MissionLoadingScreen {
         });
         let mut stage = Self {
             renderer,
+            prepared_renderer: None,
+            prepare_renderer_early: prepare_renderer_early(),
             renderer_config,
         };
         stage.status("Preparing mission data...", 0.02);
@@ -589,6 +636,20 @@ impl MissionLoadingScreen {
         window: &mut GameWindow,
         progress: crate::shipping_mission::MissionLoadProgress<'_>,
     ) {
+        if self.prepare_renderer_early
+            && self.renderer.is_none()
+            && self.prepared_renderer.is_none()
+            && progress.completed > 0
+        {
+            let mut timer = super::setup::PhaseTimer::new("streaming frontend preparation");
+            self.prepared_renderer = Some(crate::renderer::Renderer::new(
+                window,
+                window.width as u16,
+                window.height as u16,
+                self.renderer_config.scale_mode,
+            ));
+            timer.step("prepare game renderer");
+        }
         let fraction = if progress.total == 0 {
             1.0
         } else {
@@ -620,12 +681,15 @@ impl MissionLoadingScreen {
         }
     }
 
-    fn close_before_renderer(mut self) -> MissionRendererConfig {
-        if let Some(renderer) = self.renderer.take() {
-            renderer.close();
+    fn close_before_renderer(self) -> (MissionRendererConfig, Option<crate::renderer::Renderer>) {
+        if !self.prepare_renderer_early {
+            return (self.renderer_config, None);
         }
-        drop(self.renderer);
-        self.renderer_config
+        let renderer = self
+            .renderer
+            .map(LoadingScreenRenderer::into_mission_renderer)
+            .or(self.prepared_renderer);
+        (self.renderer_config, renderer)
     }
 }
 
@@ -720,7 +784,11 @@ impl InteractiveLoadStage {
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
         loading.status("Loading process resources...", 0.11);
-        let process = MissionProcessResources::load(&mut host, &game)?;
+        let process = MissionProcessResources::load(
+            &mut host,
+            &game,
+            args.replay.is_none() && args.replay_data.is_none(),
+        )?;
         Ok(InteractiveLoadStart::Ready(Self {
             loading,
             host,
@@ -847,13 +915,16 @@ impl LoadedInteractiveStage {
             .resolve_short_briefings(level_descriptors.as_ref());
 
         let mut timer = super::setup::PhaseTimer::new("frontend assembly");
-        let renderer_config = self
+        let (renderer_config, prepared_renderer) = self
             .loading
             .take()
             .expect("interactive loading screen must close before renderer construction")
             .close_before_renderer();
-        let mut renderer =
-            InteractiveRendererAssembly::new_after_loading_screen(window, renderer_config);
+        let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
+            window,
+            renderer_config,
+            prepared_renderer,
+        );
         timer.step("game renderer construction");
 
         // Deferred-terrain join: this is the first point that needs the
@@ -933,6 +1004,8 @@ impl LoadedInteractiveStage {
 /// engine until consuming finalization returns it in [`MissionOutcome`].
 pub(super) struct BuiltInteractiveMission {
     mission: InteractiveMission,
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    startup_audio_pause: Option<crate::web_audio_backend::StartupWarmupPause>,
 }
 
 impl BuiltInteractiveMission {
@@ -944,6 +1017,8 @@ impl BuiltInteractiveMission {
         args: &crate::main_entry::CliArgs,
     ) -> Result<GameCode, String> {
         let mut services = MissionServices {
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause: &mut self.startup_audio_pause,
             window,
             callbacks,
             profiles,
@@ -1275,6 +1350,10 @@ impl InteractiveMissionBuilder {
         sim_config: engine_api::SimConfig,
         multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
     ) -> InteractiveBuildOutcome {
+        // A checkpoint belongs to one running mission, including when entry
+        // into the next mission fails or takes the lost-Sherwood shortcut.
+        callbacks.save_manager.clear_session_restart();
+
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
             crate::http_server::peek_pending_replay_mission_id().is_some(),
@@ -1290,6 +1369,27 @@ impl InteractiveMissionBuilder {
             !args.headless,
             "interactive builder cannot construct headless shims"
         );
+
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        let startup_audio_pause = if args.global_options.sound_enabled {
+            match args
+                .global_options
+                .browser_audio()
+                .and_then(|audio| audio.pause_warmup_until_first_frame())
+            {
+                Ok(pause) => pause,
+                Err(error) => {
+                    return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                        campaign,
+                        rng_seed,
+                        sim_config,
+                        Err(error),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
 
         let graphic_config = args
             .global_options
@@ -1489,7 +1589,11 @@ impl InteractiveMissionBuilder {
         let mission = bootstrap.finish_interactive(frontend, args);
         timer.step("runtime + replay init");
         timer.total();
-        InteractiveBuildOutcome::Ready(BuiltInteractiveMission { mission })
+        InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
+            mission,
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause,
+        })
     }
 }
 
@@ -1554,8 +1658,7 @@ mod tests {
         assert_eq!(spec.frontend, MissionFrontendKind::Headless);
     }
 
-    #[test]
-    fn bootstrap_installs_save_assets_before_entry_preparation() {
+    fn scratch_bootstrap_fixture() -> super::MissionBootstrap {
         use super::{LoadedMissionCore, MissionBootstrap};
         use robin_engine::engine::{Engine, EngineArgs, LevelAssets, LevelLoadArgs};
 
@@ -1591,7 +1694,7 @@ mod tests {
             sim_config,
         })
         .expect("fixture level");
-        let bootstrap = MissionBootstrap::new(
+        MissionBootstrap::new(
             MissionSpec::interactive(0, MissionLocation::Lincoln, 1024.0, 768.0),
             crate::host::Host::scratch(1024.0, 768.0),
             crate::game::Game::new(MissionLocation::Lincoln),
@@ -1614,7 +1717,12 @@ mod tests {
                     },
             },
             &crate::main_entry::CliArgs::default(),
-        );
+        )
+    }
+
+    #[test]
+    fn bootstrap_installs_save_assets_and_tracks_failed_restart_creation() {
+        let mut bootstrap = scratch_bootstrap_fixture();
         assert_eq!(
             bootstrap.lifecycle.phase(),
             MissionBootstrapPhase::LevelInitialized
@@ -1625,6 +1733,128 @@ mod tests {
                 .mission_assets()
                 .expect("assets available before restart save"),
             &built_in_mission_assets_for_loaded_level("Mission", "ProtoLevel", "TerrainMap"),
+        );
+        // Scratch hosts have no active player profile, so the real background
+        // save path must reject capture. Mission startup still advances, but
+        // must not claim a frame-0 restart snapshot exists.
+        let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Bootstrap Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let application_context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            robin_engine::engine::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
+        let mut callbacks = crate::main_entry::RustCallbacks::new(application_context);
+        bootstrap.start_required_spellforge().unwrap();
+        bootstrap.lifecycle.advance(
+            MissionBootstrapPhase::SpellforgeStarted,
+            MissionBootstrapPhase::AudioPrepared,
+        );
+        bootstrap.start_campaign_clock();
+        bootstrap.setup_restart_or_sherwood(&mut callbacks, &crate::main_entry::CliArgs::default());
+        assert!(!bootstrap.restart_save_started);
+        assert_eq!(
+            bootstrap.lifecycle.phase(),
+            MissionBootstrapPhase::EntryPrepared
+        );
+    }
+
+    #[test]
+    fn replay_bootstrap_creates_no_restart_recording_or_autosave() {
+        let _spool = crate::http_server::replay_spool_test_lock();
+        let mut bootstrap = scratch_bootstrap_fixture();
+        let directory = tempfile::tempdir().unwrap();
+        let save_root = directory.path().to_string_lossy().into_owned();
+        let mut players =
+            robin_engine::player_profile::PlayerProfileManager::new(save_root.clone());
+        let player = players.create_profile(
+            "Replay Test".into(),
+            robin_engine::player_profile::DifficultyLevel::Medium,
+        );
+        players.set_active(player);
+        let context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&save_root),
+            robin_engine::engine::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(save_root),
+            None,
+        )
+        .unwrap();
+        bootstrap.host =
+            crate::host::Host::new(context.clone().try_into().unwrap(), 1024.0, 768.0).unwrap();
+        let mut callbacks = crate::main_entry::RustCallbacks::new(context);
+        let descriptor = bootstrap.game.mission_assets().unwrap().clone();
+        let replay: robin_engine::replay::ReplayData = robin_engine::replay::ReplayFile {
+            header: robin_engine::replay::ReplayHeader {
+                mission_id: descriptor.mission_basename.clone(),
+                mission_assets: descriptor.clone(),
+                rng_seed: 0,
+                sim_config: bootstrap.loaded.engine_sim_config,
+                spellforge_package: None,
+                version: robin_engine::replay::REPLAY_SCHEMA_VERSION,
+                total_frames: 0,
+                rankability: robin_engine::replay_rankability::ReplayRankability::rankable(),
+                campaign: bitcode::encode(&bootstrap.loaded.replay_campaign),
+            },
+            frames: Default::default(),
+            hashes: Default::default(),
+            save_markers: Default::default(),
+            load_backs: Default::default(),
+        }
+        .try_into()
+        .unwrap();
+        let args = crate::main_entry::CliArgs {
+            replay_data: Some(replay),
+            ..Default::default()
+        };
+        bootstrap.start_required_spellforge().unwrap();
+        bootstrap.lifecycle.advance(
+            MissionBootstrapPhase::SpellforgeStarted,
+            MissionBootstrapPhase::AudioPrepared,
+        );
+        bootstrap.start_campaign_clock();
+        let files_before = std::fs::read_dir(directory.path()).unwrap().count();
+        bootstrap.setup_restart_or_sherwood(&mut callbacks, &args);
+        assert!(!bootstrap.restart_save_started);
+        assert!(!callbacks.save_manager.has_restart_save());
+        assert_eq!(
+            bootstrap.lifecycle.phase(),
+            MissionBootstrapPhase::EntryPrepared
+        );
+        let replay = super::super::replay_init::init_replay_and_rollback(
+            &bootstrap.loaded.replay_campaign,
+            std::sync::Arc::new(bootstrap.loaded.assets),
+            &args,
+            0,
+            &descriptor.mission_basename,
+            descriptor.clone(),
+            0,
+            bootstrap.loaded.engine_sim_config,
+            false,
+        );
+        assert!(replay.player.is_some());
+        assert!(replay.recorder.is_none());
+        assert!(replay.rollback_checker.is_none());
+        let allowed =
+            crate::autosave::session_allows_autosave(true, false, replay.player.is_some(), false);
+        assert!(
+            callbacks
+                .plan_autosave(allowed, true, 1, 0, false, false)
+                .is_none()
+        );
+        assert_eq!(
+            std::fs::read_dir(directory.path()).unwrap().count(),
+            files_before
         );
     }
 

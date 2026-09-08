@@ -677,7 +677,8 @@ impl Ctx {
         // level for marginal probability-mass savings. Skipping those
         // contexts must match on both coder sides (it does: this is the
         // single exclusion entry point).
-        if self.distinct() > excl_source_cap() {
+        let cap = excl_source_cap();
+        if cap == 0 || self.distinct() > cap {
             return;
         }
         match self {
@@ -831,6 +832,7 @@ enum LevelCode {
 /// resolve the symbol from the context's plain frequency interval or record
 /// the escape (feeding the exclusion set). Shared by all three decoder
 /// chains; mirrors `Ctx::code_for` + the encode loops exactly.
+#[inline(always)]
 fn decode_level(
     ctx: &Ctx,
     level: usize,
@@ -838,51 +840,63 @@ fn decode_level(
     see: &mut See,
     excl: &mut Excl,
 ) -> LevelCode {
-    if excl.is_empty() {
-        // Fast path: the escape decision is one adaptive bit (no division),
-        // and on a hit the symbol scan stops at the target (hot symbols sit
-        // at the front).
-        if ctx.is_empty() {
-            return LevelCode::Miss;
-        }
-        let sum = ctx.sum();
-        let distinct = ctx.distinct();
-        let key = See::key(level, sum, distinct, ctx.top());
-        if dec.decode_bit(see.esc_prob(key)) {
-            ctx.exclude_into(excl);
-            return LevelCode::Miss;
-        }
-        // Hit. A single-candidate context codes no interval at all (it
-        // would span the whole range; the encoder skips it identically via
-        // the `freq == sum` check), so the division disappears too.
-        let (i, s, _, _) = if distinct == 1 {
-            ctx.find_by_target(0)
-        } else {
-            let target = dec.decode_target(sum);
-            let f = ctx.find_by_target(target);
-            dec.commit(f.2, f.3, sum);
-            f
-        };
-        LevelCode::Hit(i, s)
-    } else {
-        let (sum, distinct, key) = ctx.excl_stats(excl, level);
-        if distinct == 0 {
-            return LevelCode::Miss;
-        }
-        if dec.decode_bit(see.esc_prob(key)) {
-            ctx.exclude_into(excl);
-            return LevelCode::Miss;
-        }
-        let (i, s, _, _) = if distinct == 1 {
-            ctx.find_by_target_excl(excl, 0)
-        } else {
-            let target = dec.decode_target(sum);
-            let f = ctx.find_by_target_excl(excl, target);
-            dec.commit(f.2, f.3, sum);
-            f
-        };
-        LevelCode::Hit(i, s)
+    if !excl.is_empty() {
+        return decode_level_excluded(ctx, level, dec, see, excl);
     }
+    // Fast path: the escape decision is one adaptive bit (no division),
+    // and on a hit the symbol scan stops at the target (hot symbols sit
+    // at the front).
+    if ctx.is_empty() {
+        return LevelCode::Miss;
+    }
+    let sum = ctx.sum();
+    let distinct = ctx.distinct();
+    let key = See::key(level, sum, distinct, ctx.top());
+    if dec.decode_bit(see.esc_prob(key)) {
+        ctx.exclude_into(excl);
+        return LevelCode::Miss;
+    }
+    // Hit. A single-candidate context codes no interval at all (it
+    // would span the whole range; the encoder skips it identically via
+    // the `freq == sum` check), so the division disappears too.
+    let (i, s, _, _) = if distinct == 1 {
+        ctx.find_by_target(0)
+    } else {
+        let target = dec.decode_target(sum);
+        let f = ctx.find_by_target(target);
+        dec.commit(f.2, f.3, sum);
+        f
+    };
+    LevelCode::Hit(i, s)
+}
+
+// Shipping chunks disable exclusion. Keep the research-only filtered path
+// separate so the ordinary level can inline without copying these scans.
+#[inline(never)]
+fn decode_level_excluded(
+    ctx: &Ctx,
+    level: usize,
+    dec: &mut RangeDecoder,
+    see: &mut See,
+    excl: &mut Excl,
+) -> LevelCode {
+    let (sum, distinct, key) = ctx.excl_stats(excl, level);
+    if distinct == 0 {
+        return LevelCode::Miss;
+    }
+    if dec.decode_bit(see.esc_prob(key)) {
+        ctx.exclude_into(excl);
+        return LevelCode::Miss;
+    }
+    let (i, s, _, _) = if distinct == 1 {
+        ctx.find_by_target_excl(excl, 0)
+    } else {
+        let target = dec.decode_target(sum);
+        let f = ctx.find_by_target_excl(excl, target);
+        dec.commit(f.2, f.3, sum);
+        f
+    };
+    LevelCode::Hit(i, s)
 }
 
 /// Shared tail of every `Small` bump: account the increment and halve the
@@ -934,11 +948,9 @@ const SEE_LEVEL_AUX: usize = 5;
 /// so exclusion is off.
 const EXCL_SOURCE_CAP: u32 = 0;
 
-/// TEMPORARY experiment override for [`EXCL_SOURCE_CAP`] via the
-/// `ROBIN_EXCL_CAP` env var, to measure the size/decode-time ladder without
-/// rebuilding per value. Bitstream contract still applies: encode and decode
-/// must run with the same value. TODO: bake the chosen value back into the
-/// const and delete this before shipping chunks encoded with it.
+/// Native-only experiment override. Encode and decode must use the same cap;
+/// browser shipping builds always use the schema's fixed value.
+#[cfg(not(target_arch = "wasm32"))]
 fn excl_source_cap() -> u32 {
     static CAP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *CAP.get_or_init(|| {
@@ -947,6 +959,14 @@ fn excl_source_cap() -> u32 {
             .and_then(|v| v.parse().ok())
             .unwrap_or(EXCL_SOURCE_CAP)
     })
+}
+
+// Expose the schema value to the optimizer, so browser decoding has no
+// OnceLock reads, exclusion scans, or optional dense-mirror allocations.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+const fn excl_source_cap() -> u32 {
+    EXCL_SOURCE_CAP
 }
 
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
@@ -962,13 +982,20 @@ struct Excl {
 impl Excl {
     fn new(alphabet: u16) -> Self {
         Self {
-            stamp: vec![0; alphabet as usize],
+            stamp: if cfg!(target_arch = "wasm32") && EXCL_SOURCE_CAP == 0 {
+                Vec::new()
+            } else {
+                vec![0; alphabet as usize]
+            },
             generation: 0,
             list: Vec::new(),
         }
     }
 
     fn begin(&mut self) {
+        if cfg!(target_arch = "wasm32") && EXCL_SOURCE_CAP == 0 {
+            return;
+        }
         self.generation += 1;
         self.list.clear();
         if self.generation == u32::MAX {
@@ -979,7 +1006,7 @@ impl Excl {
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        (cfg!(target_arch = "wasm32") && EXCL_SOURCE_CAP == 0) || self.list.is_empty()
     }
 
     #[inline]
@@ -1028,14 +1055,23 @@ struct Model {
 }
 
 impl Model {
-    fn new(alphabet: u16) -> Self {
+    fn new(alphabet: u16, has_pair: bool, has_aux: bool) -> Self {
         Self {
             // Pre-size the context maps: models routinely end with tens of
             // thousands of order-2 contexts, and growing there from empty
             // shows up as rehash churn in decode profiles.
             c2: HashMap::with_capacity_and_hasher(1 << 15, Default::default()),
-            c2pair: HashMap::with_capacity_and_hasher(1 << 14, Default::default()),
-            c2aux: HashMap::with_capacity_and_hasher(1 << 14, Default::default()),
+            // Reserve only model levels this stream can visit. An unused
+            // order-2 map otherwise allocates thousands of empty contexts
+            // for every chunk, including chunks decoding concurrently.
+            c2pair: HashMap::with_capacity_and_hasher(
+                if has_pair { 1 << 14 } else { 0 },
+                Default::default(),
+            ),
+            c2aux: HashMap::with_capacity_and_hasher(
+                if has_aux { 1 << 14 } else { 0 },
+                Default::default(),
+            ),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
@@ -1382,7 +1418,11 @@ pub fn encode_grids_multi(
         }
     }
     let mut enc = RangeEncoder::new();
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        false,
+    );
     for (gi, g) in grids.iter().enumerate() {
         let cols = g.cols as usize;
         if g.indices.len() != cols * g.rows as usize {
@@ -1466,7 +1506,7 @@ pub fn encode_grids_auxref(
         ));
     }
     let mut enc = RangeEncoder::new();
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(alphabet, false, aux.iter().any(Option::is_some));
     for (gi, g) in grids.iter().enumerate() {
         let cols = g.cols as usize;
         if g.indices.len() != cols * g.rows as usize {
@@ -1510,7 +1550,7 @@ pub fn decode_grids_auxref(
         ));
     }
     let mut dec = RangeDecoder::new(blob);
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(alphabet, false, aux.iter().any(Option::is_some));
     let mut out = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
@@ -1573,7 +1613,11 @@ pub fn encode_grids_shipping(
         }
     }
     let mut enc = RangeEncoder::new();
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        selfref.iter().any(Option::is_some),
+    );
     for (gi, g) in grids.iter().enumerate() {
         let cols = g.cols as usize;
         if g.indices.len() != cols * g.rows as usize {
@@ -1669,7 +1713,11 @@ pub fn decode_grids_shipping(
         }
     }
     let mut dec = RangeDecoder::new(blob);
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        selfref.iter().any(Option::is_some),
+    );
     let mut out: Vec<Vec<u16>> = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
@@ -1775,7 +1823,11 @@ pub fn decode_grids_multi(
         }
     }
     let mut dec = RangeDecoder::new(blob);
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        false,
+    );
     let mut out = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
@@ -1811,6 +1863,51 @@ pub fn decode_grids_multi(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn singleton_hit_and_escape_preserve_the_following_range_interval() {
+        // Use the encoder's generic SEE formula and interleave uniform
+        // intervals, so a wrong bucket or an extra singleton interval also
+        // corrupts subsequent values instead of merely returning the same
+        // sole symbol.
+        let counts = [1u16, 2, 3, 15, 16, 255, 256, 4095, 8192, 16383];
+        for level in 0..6 {
+            let mut enc = RangeEncoder::new();
+            let mut encode_see = See::new();
+            for &count in &counts {
+                for escaped in [false, true, true, false] {
+                    enc.encode_bit(
+                        encode_see.esc_prob(See::key(level, count as u32, 1, count as u32)),
+                        escaped,
+                    );
+                    enc.encode(count as u32 % 251, 1, 251);
+                }
+            }
+            let blob = enc.finish();
+            let mut dec = RangeDecoder::new(&blob);
+            let mut decode_see = See::new();
+            let mut excl = Excl::new(4096);
+            for &count in &counts {
+                let ctx = Ctx::Small {
+                    syms: smallvec::smallvec![SymbolCount(1234, count)],
+                    sum: count as u32,
+                    dense: None,
+                };
+                for escaped in [false, true, true, false] {
+                    excl.begin();
+                    let result = decode_level(&ctx, level, &mut dec, &mut decode_see, &mut excl);
+                    assert!(matches!(
+                        (escaped, result),
+                        (true, LevelCode::Miss) | (false, LevelCode::Hit(0, 1234))
+                    ));
+                    let next = dec.decode_target(251);
+                    assert_eq!(next, count as u32 % 251);
+                    dec.commit(next, 1, 251);
+                }
+            }
+            assert_eq!(encode_see.prob, decode_see.prob);
+        }
+    }
 
     #[test]
     fn grouped_symbol_search_preserves_every_frequency_interval() {
@@ -2152,6 +2249,19 @@ mod tests {
         ];
         let blob =
             encode_grids_shipping(4096, &grids, Some(&base), Some(&base2), &selfref).unwrap();
+        use sha2::{Digest, Sha256};
+        // Freeze the shipping stream produced before exclusion specialization
+        // and conditional model allocation. Roundtrips alone would not catch
+        // an encoder/decoder pair that accidentally changes the format.
+        if excl_source_cap() == 0 {
+            assert_eq!(
+                Sha256::digest(&blob).as_slice(),
+                &[
+                    38, 62, 236, 102, 222, 253, 119, 108, 131, 62, 110, 69, 95, 191, 198, 154, 88,
+                    108, 6, 164, 149, 150, 87, 0, 142, 116, 36, 27, 22, 76, 59, 76
+                ],
+            );
+        }
         let dims: Vec<(u16, u16)> = grids.iter().map(|g| (g.cols, g.rows)).collect();
         let decoded =
             decode_grids_shipping(4096, &dims, Some(&base), Some(&base2), &selfref, &blob).unwrap();

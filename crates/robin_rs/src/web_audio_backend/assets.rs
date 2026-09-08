@@ -400,6 +400,30 @@ mod browser_ownership_tests {
     }
 
     #[wasm_bindgen_test]
+    async fn foreground_music_decodes_while_speculative_warmup_is_paused() {
+        use futures::FutureExt as _;
+        let session = session(wav(8192));
+        let pause = session.pause_warmup().unwrap();
+        let mut speculative = Box::pin(session.wait_for_warmup_bandwidth());
+        assert!(speculative.as_mut().now_or_never().is_none());
+        let mut backend =
+            crate::web_audio_backend::KiraAudioBackend::new_with_session("", 2, session.clone())
+                .unwrap();
+        assert!(crate::sound::AudioBackend::play_music(
+            &mut backend,
+            "Data/Sounds/tone.wav",
+            false,
+        ));
+        // Join the real foreground request: fetch/decode must complete while
+        // the speculative waiter and its mission reservation remain live.
+        assert!(decode(&session).await.get_channel_data(0).unwrap()[100] > 0.2);
+        assert!(speculative.as_mut().now_or_never().is_none());
+        drop(pause);
+        assert!(speculative.now_or_never().unwrap().is_ok());
+        session.retire();
+    }
+
+    #[wasm_bindgen_test]
     async fn encoded_budget_eviction_preserves_shared_results_and_oversized_decode() {
         let session = session(wav(8192));
         let asset = resolve_asset(&session, "Data/Sounds/tone.wav").unwrap();

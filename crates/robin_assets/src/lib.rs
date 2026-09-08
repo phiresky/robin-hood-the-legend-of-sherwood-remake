@@ -29,8 +29,13 @@ pub mod sb3d;
 pub mod scb;
 pub mod serialize;
 #[cfg(feature = "engine-adapters")]
+pub mod shipping_boot_trim;
+#[cfg(feature = "engine-adapters")]
 pub mod shipping_datadir;
 pub mod sprite_codec;
+#[cfg(feature = "engine-adapters")]
+pub mod sprite_groups;
+pub mod sprite_residency;
 #[cfg(target_arch = "wasm32")]
 mod wasm_alloc;
 #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]

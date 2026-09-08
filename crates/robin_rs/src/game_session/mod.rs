@@ -21,6 +21,7 @@ mod replay_init;
 mod runtime;
 mod session_policy;
 mod setup;
+mod sprite_readiness;
 pub(crate) use setup::PhaseTimer;
 mod sherwood_flow;
 pub(crate) use setup::initial_sim_config;
@@ -83,9 +84,9 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    RenderCadence, capture_save_thumbnail, capture_screenshot_to_path,
-    drain_presented_ui_screenshots, drain_print_screen_request, drain_screenshot_requests,
-    drain_screenshots, drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
+    RenderCadence, capture_screenshot_to_path, drain_presented_ui_screenshots,
+    drain_print_screen_request, drain_screenshot_requests, drain_screenshots,
+    drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
     update_mouse_and_cursor,
 };
 use robin_engine::coordinates as engine_coordinates;
@@ -942,7 +943,7 @@ pub(crate) async fn run_session(
         callbacks.queue_operation(SaveLoadRequest::Load {
             slot: Some(slot),
             mission_id,
-            save: Some(save),
+            save: Some(save.into_payload()),
         });
     }
     let mut replay_restart: Option<crate::http_server::PendingReplay> = None;
@@ -1473,7 +1474,7 @@ fn prepare_quickload_cross_mission(
         callbacks.queue_operation(SaveLoadRequest::Load {
             slot: Some(idx),
             mission_id: current,
-            save: Some(save),
+            save: Some(save.into_payload()),
         });
         return None;
     }
@@ -1484,7 +1485,13 @@ fn prepare_quickload_cross_mission(
     callbacks.clear_operation();
     Some(ui_task_state::ActiveUiTask::QuickLoad(
         ui_task_state::QuickLoadTaskState::new(
-            event_pump, renderer, resources, msg, idx, current, save,
+            event_pump,
+            renderer,
+            resources,
+            msg,
+            idx,
+            current,
+            save.into_payload(),
         ),
     ))
 }

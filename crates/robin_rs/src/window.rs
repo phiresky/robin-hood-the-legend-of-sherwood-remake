@@ -539,10 +539,26 @@ impl GameWindow {
                     }
                 }
                 HostMsg::Resized { width, height } => {
-                    self.surface_config.width = width.max(1);
-                    self.surface_config.height = height.max(1);
-                    self.surface
-                        .configure(&self.gpu.device, &self.surface_config);
+                    let resize_start = web_time::Instant::now();
+                    let changed = self.surface_config.width != width.max(1)
+                        || self.surface_config.height != height.max(1);
+                    // A resize notification may repeat the configured extent.
+                    // Preserve the event and logical-resolution handling, but
+                    // avoid recreating an identical swapchain. SurfaceReady
+                    // still configures unconditionally after surface replacement.
+                    if changed {
+                        self.surface_config.width = width.max(1);
+                        self.surface_config.height = height.max(1);
+                        self.surface
+                            .configure(&self.gpu.device, &self.surface_config);
+                    }
+                    tracing::debug!(
+                        width,
+                        height,
+                        configured = changed,
+                        elapsed_ms = resize_start.elapsed().as_secs_f64() * 1000.0,
+                        "window resize configuration"
+                    );
                     // A minimized native window commonly reports 0x0. Keep
                     // the last usable logical canvas until it is restored;
                     // the 1x1 swapchain is only a presentation placeholder.

@@ -1,3 +1,4 @@
+import { withAbort } from './cancellation.ts';
 import { runReplayValidation } from './replay-worker.ts';
 
 export const REPLAY_QUERY_KEY = 'replay';
@@ -10,8 +11,10 @@ export type IsolatedReplayAdmission = {
     readonly markValidated: (content: string) => void;
 };
 
-export function replayFromQuery(): { content: string; paused: boolean } | null {
-    const params = new URLSearchParams(window.location.search);
+export type ReplayQuery = { readonly content: string; readonly paused: boolean };
+export type PreparedReplay = ReplayQuery & { readonly buildBase: string };
+
+export function replayFromQuery(params = new URLSearchParams(window.location.search)): ReplayQuery | null {
     const content = params.get(REPLAY_QUERY_KEY);
     if (content === null || content.length === 0) {
         return null;
@@ -29,15 +32,56 @@ export async function applyReplayFromQuery(
     if (replay === null) {
         return false;
     }
-    // The worker owns a separate wasm linear memory. A malformed bitcode graph
-    // can trap/exhaust that worker, but is never decoded in the live game's
-    // wasm instance until the exact one-shot digest has been installed.
-    await admission.validate(replay.content);
-    admission.markValidated(replay.content);
-    await rpc('load-replay', {
-        data: replay.content,
-        paused: replay.paused,
-    });
+    const prepared = await prepareReplay(replay, '', admission.validate);
+    return applyPreparedReplay(rpc, admission.markValidated, prepared, '');
+}
+
+/** Validation is bound to this exact query snapshot and selected artifact. */
+export async function prepareReplay(
+    replay: ReplayQuery | null,
+    buildBase: string,
+    validate: (content: string) => Promise<void>,
+): Promise<PreparedReplay | null> {
+    if (replay === null) return null;
+    const snapshot = Object.freeze({ content: replay.content, paused: replay.paused, buildBase });
+    // Untrusted bitcode parsing stays in a worker with separate linear memory.
+    await validate(snapshot.content);
+    return snapshot;
+}
+
+/** Join independent runtime/admission work before boot; abort siblings on failure. */
+export async function prepareReplayWithRuntime<T>(
+    replay: ReplayQuery | null,
+    buildBase: string,
+    loadRuntime: (signal: AbortSignal) => Promise<T>,
+    validate: (content: string, signal: AbortSignal) => Promise<void>,
+    signal: AbortSignal,
+): Promise<{ readonly runtime: T; readonly replay: PreparedReplay | null }> {
+    const failed = new AbortController();
+    const loadingSignal = AbortSignal.any([signal, failed.signal]);
+    try {
+        const [runtime, prepared] = await Promise.all([
+            withAbort(loadingSignal, () => loadRuntime(loadingSignal)),
+            prepareReplay(replay, buildBase, content => withAbort(loadingSignal, () => validate(content, loadingSignal))),
+        ]);
+        loadingSignal.throwIfAborted();
+        return { runtime, replay: prepared };
+    } catch (error) {
+        failed.abort(error);
+        throw error;
+    }
+}
+
+export async function applyPreparedReplay(
+    rpc: RobinRpc,
+    markValidated: (content: string) => void,
+    replay: PreparedReplay | null,
+    buildBase: string,
+): Promise<boolean> {
+    if (replay === null) return false;
+    if (replay.buildBase !== buildBase) throw new Error('prepared replay belongs to a different browser artifact');
+    markValidated(replay.content);
+    await rpc('load-replay', { data: replay.content, paused: replay.paused });
     return true;
 }
 

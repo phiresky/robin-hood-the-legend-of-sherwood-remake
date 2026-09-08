@@ -16,7 +16,6 @@ use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
 use std::collections::HashMap;
 
-use crate::main_entry::picture_to_surface;
 use crate::native_font::{self, Font};
 use crate::renderer::{OwnedSurface, Renderer, SurfaceHandle, SurfaceOwnershipError};
 use robin_assets::resource_manager::{ResourceCacheIdentity, ResourceManager};
@@ -1768,6 +1767,25 @@ impl IngameMenuResources {
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 
+/// Decode and validate menu pictures during startup, but upload only surfaces
+/// actually drawn. Startup modals therefore retain their normal first frame.
+fn deferred_picture_surface(renderer: &mut Renderer, pic: &robin_assets::picture::Picture) -> u32 {
+    assert_eq!(
+        pic.data.len(),
+        pic.width as usize * pic.height as usize * 2,
+        "menu picture RGB565 payload must match dimensions"
+    );
+    let pixels = pic
+        .data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    renderer.create_deferred_surface_from_rgb565(pic.width, pic.height, pixels)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 struct PictureCacheKey {
     source: ResourceCacheIdentity,
@@ -1868,7 +1886,7 @@ fn adopt_picture(
     picture: &robin_assets::picture::Picture,
     button_shadow: bool,
 ) -> SurfaceHandle {
-    let id = picture_to_surface(renderer, picture);
+    let id = deferred_picture_surface(renderer, picture);
     if button_shadow {
         renderer.set_shadow_alpha(id, crate::renderer::MENU_BUTTON_SHADOW_ALPHA);
     }
@@ -1929,7 +1947,7 @@ fn try_load_surface_sub(
     }))
 }
 
-/// Load a multi-frame sprite pack and upload every frame as a surface.
+/// Register every sprite frame, deferring conversion and GPU upload until drawn.
 fn load_sprite_pack(
     res: &mut ResourceManager,
     renderer: &mut Renderer,
@@ -2066,9 +2084,10 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         let mut bytes = b"SRES".to_vec();
         bytes.extend_from_slice(&0x0100u32.to_le_bytes());
         bytes.extend_from_slice(&1u32.to_le_bytes());
-        bytes.extend_from_slice(b"PIC ");
-        bytes.extend_from_slice(&id.to_le_bytes());
+        bytes.extend_from_slice(b"BTTN");
+        bytes.extend_from_slice(&(id as u32).to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
         bytes.extend(
             picture
                 .write_sixteen_to_bytes(SixteenPacking::None)
@@ -2076,11 +2095,11 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         );
         let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
         assets
-            .install_preloaded_asset("fixture.res", bytes)
+            .install_preloaded_asset("Data/fixture.res", bytes)
             .unwrap();
-        let files = Arc::new(robin_engine::sbfile::SbFileSystem::new(assets));
-        let mut manager = ResourceManager::with_files(files);
-        manager.attach_resource_file("fixture.res").unwrap();
+        let mut manager =
+            ResourceManager::with_files(Arc::new(robin_engine::sbfile::SbFileSystem::new(assets)));
+        manager.attach_resource_file("Data/fixture.res").unwrap();
         manager
     }
     let mut external = picture_manager(42, &picture);
@@ -2100,13 +2119,13 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         "generation changes retain queued-draw owners until retirement"
     );
 
-    let mut broken = picture_manager(42, &picture);
-    broken
+    cache.res = picture_manager(42, &picture);
+    cache
+        .res
         .encode_pictures_for_shipping(|_| {
             Ok(robin_assets::resource_manager::EncodedPicture::jxl_rgba565_keyed(vec![0, 1, 2]))
         })
         .unwrap();
-    cache.res = broken;
     assert!(
         cache.picture_from(renderer, &mut external, 42).is_none(),
         "broken local picture must not silently fall back to an external source"

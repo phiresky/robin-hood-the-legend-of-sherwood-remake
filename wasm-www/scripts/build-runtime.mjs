@@ -20,6 +20,27 @@ export function runtimeBuildPlan({ outDir = 'wasm-www/pkg', profile = 'wasm-rele
         optimize: optimize ? ['wasm-www/scripts/optimize-wasm.mjs', outDir] : null };
 }
 
+export function replayAdmissionBuildPlan({ outDir = 'wasm-www/pkg', bindgen = 'wasm-bindgen' } = {}) {
+    const wasm = 'target/wasm32-unknown-unknown/wasm-release/robin_replay_admission_wasm.wasm';
+    return {
+        cargo: ['build', '--locked', '--target', 'wasm32-unknown-unknown', '--profile', 'wasm-release',
+            '--config', 'scripts/replay-admission-wasm.cargo-config.toml', '-p', 'robin_replay_admission_wasm', '-j2'],
+        bindgen,
+        bindgenArgs: ['--target', 'web', '--out-dir', outDir, '--out-name', 'replay_admission', wasm],
+        optimizedWasm: resolve(outDir, 'replay_admission_bg.wasm'),
+    };
+}
+
+export function buildReplayAdmission(options) {
+    const plan = replayAdmissionBuildPlan(options);
+    run('cargo', plan.cargo, options?.requireIdentity
+        ? { env: { ...process.env, ROBIN_REQUIRE_BUILD_IDENTITY: '1' } } : {});
+    run(plan.bindgen, plan.bindgenArgs);
+    // Optimize only the validator; never re-optimize the already staged game.
+    run(process.execPath, ['wasm-www/scripts/optimize-wasm.mjs', plan.optimizedWasm]);
+    run('bash', ['scripts/assert-replay-admission-wasm-memory.sh', plan.optimizedWasm]);
+}
+
 export function run(command, args, options = {}) {
     const result = spawnSync(command, args, { stdio: 'inherit', ...options });
     if (result.error) throw result.error;

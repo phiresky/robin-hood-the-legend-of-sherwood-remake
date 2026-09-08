@@ -3353,6 +3353,9 @@ impl Engine {
         // spawns) so that beam-me sector validation and downstream
         // sector-handle resolution see the populated grid.
         let mut staging = LevelLoadStaging::default();
+        // Process-only diagnostic timing: never retained in engine state or
+        // consulted by deterministic initialization.
+        let load_started = web_time::Instant::now();
         if let Err(error) = inner.with_simulation_context(|inner, sim| {
             inner.initialize_from_campaign(
                 sim,
@@ -3367,6 +3370,11 @@ impl Engine {
             let campaign = inner.into_campaign();
             return Err((error, campaign));
         }
+        tracing::debug!(
+            elapsed_ms = load_started.elapsed().as_secs_f64() * 1000.0,
+            "engine construction: mission level stages"
+        );
+        let topology_started = web_time::Instant::now();
         inner.populate_sector_gates_from_doors();
         let original_topology =
             match crate::legacy_save::topology_adapter::derive_static_element_topology(
@@ -3392,7 +3400,16 @@ impl Engine {
         // grid are fully populated. This preserves engine initialization's
         // script-before-AI order while still letting TestIfPathIsFine /
         // is_position_authorized see the real map and motion lines.
+        tracing::debug!(
+            elapsed_ms = topology_started.elapsed().as_secs_f64() * 1000.0,
+            "engine construction: gate and Original topology"
+        );
+        let initialize_started = web_time::Instant::now();
         inner.initialize(assets);
+        tracing::debug!(
+            elapsed_ms = initialize_started.elapsed().as_secs_f64() * 1000.0,
+            "engine construction: script and AI initialization"
+        );
         assets.navigation.level_grid = inner.world.fast_grid.level.clone();
         assets.entities.mobile_element_count = inner.world.mobile_elements.len();
         assets.scripts.mission_name = inner

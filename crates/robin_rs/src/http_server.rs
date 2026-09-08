@@ -2161,6 +2161,18 @@ pub fn reset_replay_buffer() -> ReplaySpoolWriter {
     replay_spool_slot().begin()
 }
 
+/// A restored attempt without a valid recorder must not export the preceding
+/// terminal attempt. Frozen leaderboard snapshots own their chunks and survive.
+pub(crate) fn invalidate_replay_buffer(reason: impl Into<String>) {
+    reset_replay_buffer().poison(reason);
+}
+
+#[cfg(test)]
+pub(crate) fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().expect("replay spool test lock poisoned")
+}
+
 /// Materialize the exact committed JSONL bytes for canonical compact export.
 /// A poisoned or overflowed spool returns an explicit error; it never returns
 /// a plausible truncated replay.

@@ -41,3 +41,28 @@ export async function runReplayValidation(
         worker.terminate();
     }
 }
+
+export type ReplayValidatorModule = {
+    readonly default: (init: { module_or_path: Response }) => Promise<unknown>;
+    readonly validate_compact_replay?: (compact: string) => void;
+};
+
+/** Runs only inside the disposable worker; the live game never parses here. */
+export async function validateReplayModule(
+    request: ReplayValidationRequest,
+    deps: {
+        readonly importModule: (url: string) => Promise<ReplayValidatorModule>;
+        readonly fetchModule: (url: string) => Promise<Response>;
+    },
+): Promise<void> {
+    const [module, response] = await Promise.all([
+        deps.importModule(request.jsUrl),
+        deps.fetchModule(request.wasmUrl),
+    ]);
+    if (!response.ok) throw new Error(`fetch replay validator: HTTP ${response.status}`);
+    await module.default({ module_or_path: response });
+    if (module.validate_compact_replay === undefined) {
+        throw new Error('selected wasm build has no isolated replay validator');
+    }
+    module.validate_compact_replay(request.compact);
+}

@@ -287,6 +287,18 @@ impl HitMask {
         }
     }
 
+    /// Build a hit mask from exported opacity bits, rejecting malformed payloads.
+    pub fn from_opacity(width: u16, height: u16, opaque: Vec<bool>) -> Result<Self, &'static str> {
+        if opaque.len() != usize::from(width) * usize::from(height) {
+            return Err("hit mask length disagrees with dimensions");
+        }
+        Ok(Self {
+            width,
+            height,
+            opaque,
+        })
+    }
+
     /// Check if the pixel at `(x, y)` is opaque (non-transparent).
     pub fn is_opaque(&self, x: u16, y: u16) -> bool {
         if x >= self.width || y >= self.height {

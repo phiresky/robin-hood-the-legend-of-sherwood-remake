@@ -703,7 +703,13 @@ impl EngineInner {
         // its move-box intersects an obstacle.  Shipped data never trips
         // these, but a malformed mission file would otherwise slide
         // through silently and leave actors in unreachable positions.
+        let startup_started = web_time::Instant::now();
         self.validate_actor_placement();
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine init: validate placement"
+        );
+        let startup_started = web_time::Instant::now();
 
         // Pathfinder obstacle states now that the graph is loaded.
         if !assets
@@ -720,6 +726,12 @@ impl EngineInner {
                 .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
 
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine init: pathfinder defaults"
+        );
+        let startup_started = web_time::Instant::now();
+
         // Original-game initialization runs script initialization before AI
         // initialization. This ordering is required
         // now that AI initialization's typed state changes synchronously dispatch
@@ -727,6 +739,11 @@ impl EngineInner {
         if self.scripts.mission.is_some() {
             self.initialize_mission_script_with(sim, assets, 0, &assets.navigation.hiking_paths);
         }
+
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine init: mission script"
+        );
 
         // The original initializes scrolls immediately after the engine
         // script and before AI. Random sprite-frame selection is the remaining
@@ -745,7 +762,12 @@ impl EngineInner {
         // populated so `spawn_soldier`'s move_box ends up at the real
         // profile-sized pathfinder box instead of the `(-1,-1,1,1)`
         // fallback.
+        let startup_started = web_time::Instant::now();
         self.init_ai(sim, assets);
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine init: AI"
+        );
 
         // Original closes mission loading by centering on and selecting the
         // playable PC with the greatest character-profile priority. This is

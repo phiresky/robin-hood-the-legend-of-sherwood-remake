@@ -53,6 +53,21 @@ pub(super) enum FramePreparation {
 
 /// Apply multiplayer ingress and capture the deterministic pre-command
 /// snapshot before any interactive input mutates the engine.
+#[cfg(any(target_arch = "wasm32", test))]
+fn can_defer_initial_autosave(
+    frame: u32,
+    reason: Option<crate::autosave::AutosaveReason>,
+    pending_save_load: bool,
+    backgrounded: bool,
+    exiting: bool,
+) -> bool {
+    frame == 0
+        && reason == Some(crate::autosave::AutosaveReason::MissionTransition)
+        && !pending_save_load
+        && !backgrounded
+        && !exiting
+}
+
 fn begin_interactive_frame(mission: &mut InteractiveMission) -> FrameStart {
     let InteractiveMission {
         runtime, frontend, ..
@@ -1086,6 +1101,25 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             lifecycle_autosave,
             exit_code.is_some(),
         );
+        #[cfg(target_arch = "wasm32")]
+        let defer_initial_thumbnail = can_defer_initial_autosave(
+            runtime.frame_number(),
+            autosave_reason,
+            callbacks.pending_request().is_some(),
+            lifecycle_autosave,
+            exit_code.is_some(),
+        ) && {
+            let search = web_sys::window()
+                .expect("browser window")
+                .location()
+                .search()
+                .expect("startup save query");
+            let query = web_sys::UrlSearchParams::new_with_str(&search)
+                .expect("startup save query parameters");
+            query.get("startup-save").as_deref() != Some("blocking")
+        };
+        #[cfg(target_arch = "wasm32")]
+        let mut deferred_thumbnail = None;
         let pending_thumbnail = if (callbacks
             .pending_request()
             .is_some_and(|request| request.writes_save_payload())
@@ -1125,18 +1159,52 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                         ),
                 },
             );
-            capture_save_thumbnail(
+            super::sprite_readiness::wait_for_render_sprites(&manager.engine)
+                .await
+                .map_err(|error| format!("save thumbnail sprite preflight failed: {error}"))?;
+            let thumbnail = super::render::begin_save_thumbnail(
                 &manager.engine,
                 &display_snapshot,
                 &mut host.presentation(),
                 assets,
                 dev,
                 &mut render_ctx,
-            )
+            );
+            #[cfg(target_arch = "wasm32")]
+            if defer_initial_thumbnail {
+                deferred_thumbnail = Some(thumbnail);
+                None
+            } else {
+                thumbnail.await
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            thumbnail.await
         } else {
             None
         };
         if let Some(reason) = autosave_reason {
+            #[cfg(target_arch = "wasm32")]
+            let accepted = if let Some(thumbnail) = deferred_thumbnail {
+                callbacks.enqueue_initial_autosave_with_thumbnail(
+                    host,
+                    game,
+                    &manager.engine,
+                    mission_id,
+                    profiles,
+                    thumbnail,
+                )
+            } else {
+                callbacks.enqueue_autosave(
+                    host,
+                    game,
+                    &manager.engine,
+                    mission_id,
+                    profiles,
+                    pending_thumbnail.clone(),
+                    reason,
+                )
+            };
+            #[cfg(not(target_arch = "wasm32"))]
             let accepted = callbacks.enqueue_autosave(
                 host,
                 game,
@@ -1203,6 +1271,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 ))));
             }
             if let Some(sync) = save_load.restore {
+                runtime.note_state_restored();
                 game.apply_post_load_sync(sync.is_continue);
                 game.post_load_resolution_resync();
             }
@@ -1263,6 +1332,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         // variant succeeds, threading the slot type back out of the
         // save-I/O layer.
         if let Some(sync) = save_load.restore {
+            runtime.note_state_restored();
             game.apply_post_load_sync(sync.is_continue);
             game.post_load_resolution_resync();
         }
@@ -1309,7 +1379,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             world,
             timeline: runtime,
             control,
-            leaderboard: _,
+            leaderboard,
         } = runtime;
         let MissionPreTickPhase {
             host,
@@ -1395,6 +1465,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             paused,
             replay_cursor_paused,
         )?;
+
+        if runtime.take_state_restored()
+            && let Some(leaderboard) = leaderboard.as_mut()
+        {
+            leaderboard.after_state_restore(manager.engine.campaign());
+        }
 
         dispatch_pre_tick_pointer_commands(
             runtime,
@@ -1596,6 +1672,46 @@ mod tests {
             false,
         );
         assert_eq!(next_frame.recorder_hash, Some(0x55aa));
+    }
+
+    #[test]
+    fn only_initial_nonurgent_autosave_can_defer_thumbnail_completion() {
+        use super::can_defer_initial_autosave;
+        use crate::autosave::AutosaveReason;
+        assert!(can_defer_initial_autosave(
+            0,
+            Some(AutosaveReason::MissionTransition),
+            false,
+            false,
+            false
+        ));
+        for reason in [
+            None,
+            Some(AutosaveReason::Periodic),
+            Some(AutosaveReason::Backgrounded),
+        ] {
+            assert!(!can_defer_initial_autosave(0, reason, false, false, false));
+        }
+        assert!(!can_defer_initial_autosave(
+            1,
+            Some(AutosaveReason::MissionTransition),
+            false,
+            false,
+            false
+        ));
+        for (pending, backgrounded, exiting) in [
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            assert!(!can_defer_initial_autosave(
+                0,
+                Some(AutosaveReason::MissionTransition),
+                pending,
+                backgrounded,
+                exiting
+            ));
+        }
     }
 
     #[test]

@@ -172,8 +172,8 @@ impl FrameState {
         gpu: &GpuContext,
         pipelines: &mut PipelineStore,
         resources: &GpuResources,
-    ) {
-        let _ = self.present_impl(gpu, pipelines, resources, true);
+    ) -> bool {
+        self.present_impl(gpu, pipelines, resources, true)
     }
 
     /// Present the already-composited logical render target again without
@@ -900,6 +900,41 @@ impl FrameState {
             "frame tex bg",
         );
         self.queue_cached_bg(bind_group)
+    }
+
+    pub(super) fn finish_loading_screen(&mut self, gpu: &GpuContext) {
+        self.clear_recording();
+        self.clear_frozen_scene();
+        self.cached_present = None;
+        self.presentation_frame_count = 0;
+        self.vertex_scratch.clear();
+        // Lost-Sherwood debriefing can freeze the target before any world
+        // composition. Match freshly allocated targets instead of preserving
+        // loading artwork underneath that first modal.
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("loading renderer handoff clear"),
+            });
+        for view in [&self.render_target_view, &self.ui_target_view] {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("loading renderer handoff clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        }
+        gpu.queue.submit(Some(encoder.finish()));
     }
 
     pub(super) fn clear_recording(&mut self) {

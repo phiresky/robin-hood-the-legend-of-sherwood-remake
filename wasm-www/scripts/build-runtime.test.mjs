@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runtimeBuildPlan } from './build-runtime.mjs';
+import { runtimeBuildPlan, replayAdmissionBuildPlan } from './build-runtime.mjs';
 
 test('game and benchmark plans preserve profile, feature and output boundaries', () => {
     const plain = runtimeBuildPlan();
@@ -15,4 +15,13 @@ test('game and benchmark plans preserve profile, feature and output boundaries',
     assert(!threaded.bindgenArgs.includes('--out-name'));
     assert.equal(threaded.optimize, null);
     assert.throws(() => runtimeBuildPlan({ profile: 'release' }), /unsupported/u);
+});
+
+test('replay admission has its own capped non-threaded build and never overwrites game outputs', () => {
+    const plan = replayAdmissionBuildPlan({ outDir: '/tmp/test-admission' });
+    assert(plan.cargo.includes('scripts/replay-admission-wasm.cargo-config.toml'));
+    assert(plan.cargo.includes('robin_replay_admission_wasm'));
+    assert(!plan.cargo.includes('wasm-threads'));
+    assert(plan.bindgenArgs.includes('replay_admission'));
+    assert.equal(plan.optimizedWasm, '/tmp/test-admission/replay_admission_bg.wasm');
 });

@@ -622,8 +622,8 @@ impl AudioBackend for KiraAudioBackend {
 
 #[cfg(all(feature = "audio", target_arch = "wasm32"))]
 pub use crate::web_audio_backend::{
-    AudioWarmProgress, KiraAudioBackend, clear_mission, preload_active_mission, preload_boot,
-    preload_boot_catalog, replace_mission,
+    AudioWarmProgress, KiraAudioBackend, clear_mission, preload_active_mission,
+    preload_active_mission_in_background, preload_boot, preload_boot_catalog, replace_mission,
 };
 
 impl KiraAudioBackend {

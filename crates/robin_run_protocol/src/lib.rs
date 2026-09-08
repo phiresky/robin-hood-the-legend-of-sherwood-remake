@@ -6,6 +6,7 @@
 //! never treats a client claim as a verified game result.
 
 mod authentication;
+pub mod bitcode_value;
 mod canonical;
 mod digest;
 mod envelope;

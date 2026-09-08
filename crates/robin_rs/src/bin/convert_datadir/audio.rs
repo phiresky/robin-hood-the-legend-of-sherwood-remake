@@ -73,6 +73,28 @@ static AUDIO_ASSET_GROUPS: std::sync::LazyLock<
     std::sync::Mutex<std::collections::BTreeMap<String, std::collections::BTreeSet<String>>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
 
+// Converter-only provenance: remember the exact source used for each catalog
+// entry, rather than inferring it from a WAV/OGG alias during boot cleanup.
+static AUDIO_ASSET_SOURCES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<(PathBuf, String), PathBuf>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+
+pub(super) fn catalog_source_bytes(assets_dir: &Path, relative: &str) -> Result<Option<Vec<u8>>> {
+    let source = AUDIO_ASSET_SOURCES
+        .lock()
+        .expect("audio source map poisoned")
+        .get(&(
+            assets_dir.to_owned(),
+            standalone_audio_logical_key(relative),
+        ))
+        .cloned();
+    source
+        .map(|path| {
+            fs::read(&path).with_context(|| format!("read catalog source {}", path.display()))
+        })
+        .transpose()
+}
+
 pub(super) fn insert_shipping_audio(
     payload: &mut ShippingMission,
     catalog: &mut std::collections::BTreeMap<String, ShippingAudioAsset>,
@@ -133,6 +155,10 @@ pub(super) fn insert_shipping_audio(
                 let bytes =
                     transcode_audio_to_opus(encode_source.as_deref().unwrap_or(path), kind)?;
                 insert_standalone_audio(catalog, assets_dir, group, relative, &bytes, duration_ms)?;
+                AUDIO_ASSET_SOURCES
+                    .lock()
+                    .expect("audio source map poisoned")
+                    .insert((assets_dir.to_owned(), logical.clone()), path.to_owned());
             }
             // Opus bytes live only in the standalone catalog, but each boot
             // or mission payload retains this tiny exact-membership index.
@@ -538,4 +564,72 @@ pub(super) fn write_shipping_dependency(
         "wrote shipping audio dependency"
     );
     Ok(Some(format!("audio/{filename}")))
+}
+
+#[cfg(test)]
+mod boot_trim_tests {
+    use super::*;
+
+    #[test]
+    fn boot_trim_uses_actual_catalog_source_when_aliases_collide() {
+        let mut wav = b"RIFF".to_vec();
+        wav.extend_from_slice(&1636u32.to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes());
+        wav.extend_from_slice(&8000u32.to_le_bytes());
+        wav.extend_from_slice(&16000u32.to_le_bytes());
+        wav.extend_from_slice(&2u16.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&1600u32.to_le_bytes());
+        wav.resize(1644, 0);
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first.wav");
+        let second = temp.path().join("second.wav");
+        fs::write(&first, &wav).unwrap();
+        let mut translated = wav.clone();
+        translated[44] = 17;
+        fs::write(&second, &translated).unwrap();
+        let assets = temp.path().join("audio/assets");
+        fs::create_dir_all(&assets).unwrap();
+        let mut datadir = ShippingDatadir::default();
+        for path in [&first, &second] {
+            insert_shipping_audio(
+                &mut ShippingMission::default(),
+                &mut datadir.audio_assets,
+                &assets,
+                "test",
+                "Sounds/Voice.wav",
+                path,
+                AudioKind::Voice,
+                AudioFormat::Opus,
+            )
+            .unwrap();
+        }
+        for (name, bytes) in [("en-US", wav.clone()), ("de-DE", translated.clone())] {
+            datadir.locales.insert(
+                name.into(),
+                ShippingLocale {
+                    raw: [("sounds/voice.wav".into(), bytes)].into_iter().collect(),
+                    ..Default::default()
+                },
+            );
+        }
+        assert_eq!(
+            catalog_source_bytes(&assets, "sounds/voice.wav")
+                .unwrap()
+                .unwrap(),
+            wav
+        );
+        let report =
+            robin_assets::shipping_boot_trim::trim_browser_locale_audio(&mut datadir, |key| {
+                catalog_source_bytes(&assets, key)
+            })
+            .unwrap();
+        assert_eq!(report.removed_files, 1);
+        assert_eq!(datadir.locales["de-DE"].raw["sounds/voice.wav"], translated);
+        assert!(datadir.locales["en-US"].raw.is_empty());
+    }
 }

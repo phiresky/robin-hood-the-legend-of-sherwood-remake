@@ -401,28 +401,34 @@ impl Picture {
     /// Lets level setup hand `Engine::new` its grid dimensions while the
     /// full bitmap decode still runs on a worker thread.
     pub fn terrain_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
-        use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
-
         if is_jxl_signature(bytes) {
-            let mut input: &[u8] = bytes;
-            let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-            let dec_with_image = match dec.process(&mut input, None) {
-                Ok(ProcessingResult::Complete { result }) => result,
-                Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                    bail!("jxl: decoder requested more input but we provided the whole blob")
-                }
-                Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
-            };
-            let (w, h) = dec_with_image.basic_info().size;
-            return Ok((
-                u16::try_from(w).context("jxl terrain width exceeds u16")?,
-                u16::try_from(h).context("jxl terrain height exceeds u16")?,
-            ));
+            return Self::jxl_dimensions(bytes);
         }
         let mut reader = Reader::new(bytes);
         let x_size = reader.u16("Sixteen frame width")?;
         let y_size = reader.u16("Sixteen frame height")?;
         Ok((x_size, y_size))
+    }
+
+    /// Read JPEG XL image dimensions without decoding its frame pixels.
+    /// Works for both RGB terrain and keyed RGBA interface pictures.
+    pub fn jxl_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
+        use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
+
+        let mut input = bytes;
+        let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
+        let dec_with_image = match dec.process(&mut input, None) {
+            Ok(ProcessingResult::Complete { result }) => result,
+            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
+                bail!("jxl: decoder requested more input but we provided the whole blob")
+            }
+            Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
+        };
+        let (w, h) = dec_with_image.basic_info().size;
+        Ok((
+            u16::try_from(w).context("jxl picture width exceeds u16")?,
+            u16::try_from(h).context("jxl picture height exceeds u16")?,
+        ))
     }
 
     /// Same dispatch as [`Self::load_terrain_from_stream`] but on an

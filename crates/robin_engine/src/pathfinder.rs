@@ -1174,17 +1174,47 @@ impl PathFinder {
         // The memoized query workspace belongs to the previous level graph;
         // a fresh level with coincidentally equal `states` must not reuse it.
         self.cache = None;
-        let mut runtime = PathFinderRuntime::new();
-        runtime.graph = graph.clone();
-        runtime.initialize();
-        self.states = runtime.graph.states.clone();
-        self.number_of_attempts = runtime.number_of_attempts;
-
-        for layer in &runtime.graph.static_data.move_layers {
-            for area in layer {
+        // Only the default words and perimeter flags survive initialization.
+        // Partitioning a temporary runtime copied every node/link/geometry
+        // array and immediately discarded it. Build the query partition lazily
+        // in runtime_from_graph, exactly as the first query already does.
+        const DEFAULT_STATE: u32 = 0x5555_5555;
+        self.states = graph
+            .states
+            .iter()
+            .map(|layer| vec![DEFAULT_STATE; layer.len()])
+            .collect();
+        self.number_of_attempts = 1;
+        for (layer_index, layer) in graph.layers.iter().enumerate() {
+            assert!(
+                self.states
+                    .get(layer_index)
+                    .is_some_and(|states| states.len() >= layer.len()),
+                "pathfinder graph hierarchy has no corresponding area state"
+            );
+        }
+        for (layer_index, layer) in graph.static_data.move_layers.iter().enumerate() {
+            for (area_index, area) in layer.iter().enumerate() {
+                // The runtime partitions only areas present in its hierarchy;
+                // geometry without a graph area retains its authored activity.
+                let partitioned = graph
+                    .layers
+                    .get(layer_index)
+                    .is_some_and(|areas| area_index < areas.len());
                 for obstacle in &area.motion_obstacles {
+                    let active = if partitioned {
+                        obstacle.state_id & DEFAULT_STATE == obstacle.state_id
+                    } else {
+                        obstacle.active
+                    };
+                    if active != obstacle.active {
+                        assert!(
+                            obstacle.grid_sector_index.is_some(),
+                            "pathfinder motion obstacle on layer {layer_index}, area {area_index} has no fast-grid sector binding"
+                        );
+                    }
                     for &line_idx in &obstacle.grid_line_indices {
-                        grid.set_line_active(line_idx, obstacle.active);
+                        grid.set_line_active(line_idx, active);
                     }
                 }
             }
@@ -2845,6 +2875,71 @@ mod tests {
         assert!(grid.is_line_active(active_line));
         assert!(!grid.is_line_active(inactive_line));
         assert_eq!(grid.sector_active, [true, false]);
+    }
+
+    #[test]
+    fn default_initialization_matches_runtime_partition_and_retires_query_cache() {
+        let masks = [0, 1, 2, 3, 0x4000_0000, 0x8000_0000, u32::MAX];
+        let mut graph = PathGraph::new();
+        let mut grid = FastFindGrid::new();
+        grid.line_active = vec![false; masks.len()];
+        graph.states = vec![vec![u32::MAX]];
+        graph.layers = vec![vec![vec![Vec::new()]]];
+        graph.alternative_layers = graph.layers.clone();
+        let mut obstacles = Vec::new();
+        for (index, state_id) in masks.into_iter().enumerate() {
+            let mut node = goal_reachable_test_node(MapPoint::new(index as f32, 0.0), 0.0);
+            node.required_state = state_id;
+            graph.nodes.push(node);
+            graph.layers[0][0][0].push(NodeIdx(index as u32));
+            obstacles.push(MotionObstacle {
+                state_id,
+                active: index % 2 == 0,
+                bounding_box: MapBBox::default(),
+                polygon: Vec::new(),
+                grid_sector_index: crate::fast_find_grid::SectorIndex::new(index as u32),
+                grid_line_indices: vec![
+                    crate::fast_find_grid::LineIndex::new(index as u32).unwrap(),
+                ],
+            });
+        }
+        graph.static_mut().move_layers = vec![vec![MotionArea {
+            polygon: Vec::new(),
+            skeleton: Vec::new(),
+            motion_obstacles: obstacles,
+        }]];
+        let original = serde_json::to_value(&graph).unwrap();
+        // Independent reference: the previous initializer fully partitions a
+        // temporary runtime graph before retaining only states and line flags.
+        let mut reference = PathFinderRuntime::new();
+        reference.graph = graph.clone();
+        reference.initialize();
+        let expected_lines: Vec<_> = reference.graph.static_data.move_layers[0][0]
+            .motion_obstacles
+            .iter()
+            .map(|obstacle| obstacle.active)
+            .collect();
+        let mut pathfinder = PathFinder::new();
+        pathfinder.number_of_attempts = 99;
+        pathfinder.states = vec![vec![0]];
+        pathfinder.cache = Some(Box::new(PathFinderCache {
+            runtime: reference.clone(),
+            states_key: vec![vec![0]],
+        }));
+        pathfinder.initialize_from_graph(&graph, &mut grid);
+        assert!(
+            pathfinder.cache.is_none(),
+            "a new level must retire its query workspace"
+        );
+        assert_eq!(pathfinder.number_of_attempts, reference.number_of_attempts);
+        assert_eq!(pathfinder.states, reference.graph.states);
+        assert_eq!(grid.line_active, expected_lines);
+        assert_eq!(serde_json::to_value(&graph).unwrap(), original);
+        assert_eq!(
+            serde_json::to_value(&pathfinder.runtime_from_graph(&graph).graph).unwrap(),
+            serde_json::to_value(&reference.graph).unwrap(),
+            "lazy query partitioning must preserve node ordering and state exactly"
+        );
     }
 
     #[test]

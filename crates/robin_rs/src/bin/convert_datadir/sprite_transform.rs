@@ -545,6 +545,8 @@ pub(super) fn build_rhs_chunk_payload(
     rel: &str,
     prep: &RhsChunkPrep,
     rle_format: RleSpriteFormat,
+    vq_group_tiles: usize,
+    rle_group_blobs: usize,
     multi_chunk_ids: &std::collections::HashSet<u32>,
 ) -> Result<(ShippingMission, RleJxlChunkStats)> {
     let mut payload = ShippingMission::default();
@@ -690,19 +692,10 @@ pub(super) fn build_rhs_chunk_payload(
                 _ => vec![None; blob_ids.len()],
             };
         let has_self_refs = selfrefs.iter().any(Option::is_some);
-        let blob = robin_assets::sprite_codec::encode_grids_shipping(
-            alphabet,
-            &grids,
-            Some(&bases),
-            Some(&base2s),
-            &selfrefs,
-        )
-        .with_context(|| format!("encode VQ sprite grids for {rel}"))?;
-        blob_bytes = blob.len();
         if has_base2 && prep.base2_rel.is_none() {
             bail!("RHS {rel} coded base2 sprites without a planned base2 chunk");
         }
-        vq_chunks.push(SpriteVqChunk {
+        let template = SpriteVqChunk {
             rhs: rel.to_owned(),
             base_rhs: prep.base_rel.clone(),
             base2_rhs: if has_base2 {
@@ -719,8 +712,18 @@ pub(super) fn build_rhs_chunk_payload(
                 Vec::new()
             },
             self_refs: has_self_refs,
-            blob,
-        });
+            blob: Vec::new(),
+        };
+        vq_chunks = robin_assets::sprite_groups::encode_vq_groups(
+            &template,
+            &grids,
+            &bases,
+            &base2s,
+            prep.rhs_data.as_ref(),
+            vq_group_tiles,
+        )
+        .with_context(|| format!("encode VQ groups for {rel}"))?;
+        blob_bytes = vq_chunks.iter().map(|chunk| chunk.blob.len()).sum();
     }
     payload.sprite_bank = Some(ShippingSpriteBank {
         signature: holder.signature(),
@@ -728,7 +731,13 @@ pub(super) fn build_rhs_chunk_payload(
         sprite_count: holder.sprites().len() as u32,
         sprites,
         vq_chunks,
-        rle_jxl_chunks: rle_jxl_chunk.into_iter().collect(),
+        rle_jxl_chunks: rle_jxl_chunk
+            .into_iter()
+            .map(|chunk| robin_assets::sprite_groups::split_rle_jxl_chunk(chunk, rle_group_blobs))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect(),
     });
     tracing::info!(
         rhs = rel,

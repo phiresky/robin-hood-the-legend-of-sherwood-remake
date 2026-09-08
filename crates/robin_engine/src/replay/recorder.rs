@@ -11,6 +11,8 @@ use std::io::Write;
 /// last completed frame.
 pub struct ReplayRecorder {
     writer: std::io::BufWriter<Box<dyn std::io::Write + Send>>,
+    initial_header: ReplayHeader,
+    bootstrap_marker_written: bool,
     next_expected_ordinal: u32,
     boundary_metadata_pending: bool,
     observed_taints: BTreeSet<InputTaintKind>,
@@ -93,24 +95,6 @@ impl ReplayRecorder {
         campaign: &crate::campaign::Campaign,
         spellforge_package: Option<crate::spellforge::SpellforgePackage>,
     ) -> std::io::Result<Self> {
-        mission_assets
-            .validate_spellforge_package(spellforge_package.as_ref())
-            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-        if !mission_id.eq_ignore_ascii_case(&mission_assets.mission_basename) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!(
-                    "replay mission ID `{mission_id}` does not match asset descriptor mission `{}`",
-                    mission_assets.mission_basename
-                ),
-            ));
-        }
-        if let Some(package) = &spellforge_package {
-            package
-                .validate_wire()
-                .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-        }
-        let mut writer = std::io::BufWriter::new(writer);
         let campaign = bitcode::encode(campaign);
         let header = ReplayHeader {
             mission_id,
@@ -123,15 +107,56 @@ impl ReplayRecorder {
             rankability: ReplayRankability::rankable(),
             campaign,
         };
+        Self::from_recording_header(writer, header)
+    }
+
+    /// Reopen the exact construction-time authority of a completed recording.
+    /// The caller must also record any snapshot restoration at the new boundary.
+    pub fn from_recording_header(
+        writer: Box<dyn std::io::Write + Send>,
+        header: ReplayHeader,
+    ) -> std::io::Result<Self> {
+        let invalid = |error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error);
+        if header.version != REPLAY_SCHEMA_VERSION || header.total_frames != 0 {
+            return Err(invalid(
+                "recorder requires a current construction-time header".to_string(),
+            ));
+        }
+        header
+            .mission_assets
+            .validate_spellforge_package(header.spellforge_package.as_ref())
+            .map_err(|error| invalid(error.to_string()))?;
+        if !header
+            .mission_id
+            .eq_ignore_ascii_case(&header.mission_assets.mission_basename)
+        {
+            return Err(invalid(
+                "replay mission ID does not match asset descriptor".to_string(),
+            ));
+        }
+        if let Some(package) = &header.spellforge_package {
+            package
+                .validate_wire()
+                .map_err(|error| invalid(error.to_string()))?;
+        }
+        let mut writer = std::io::BufWriter::new(writer);
         serde_json::to_writer(&mut writer, &header).map_err(std::io::Error::other)?;
         writeln!(writer)?;
         writer.flush()?;
         Ok(Self {
             writer,
+            initial_header: header,
+            bootstrap_marker_written: false,
             next_expected_ordinal: 0,
             boundary_metadata_pending: false,
             observed_taints: BTreeSet::new(),
         })
+    }
+
+    /// Close the old writer and retain its original pre-engine campaign, seed,
+    /// configuration and mission authority for a pristine Restart recording.
+    pub fn into_recording_header(self) -> ReplayHeader {
+        self.initial_header
     }
 
     /// Finalize the current frame with its complete authoritative input and
@@ -202,6 +227,9 @@ impl ReplayRecorder {
     /// pre-command boundary.  Flushed immediately.
     pub fn write_save_marker(&mut self, ordinal: u32, marker: ReplaySaveMarker) {
         assert_eq!(ordinal, self.next_expected_ordinal);
+        if ordinal == 0 && marker.timeline_frame == 0 {
+            self.bootstrap_marker_written = true;
+        }
         self.boundary_metadata_pending = true;
         self.write_record(&FrameRecord {
             f: ordinal,
@@ -215,12 +243,14 @@ impl ReplayRecorder {
 
     /// Write a load-back record for the current frame: the engine state was
     /// replaced with the state captured by the save marker at `to_frame`.
-    /// `to_frame` must be strictly earlier than the current frame.  Flushed
+    /// The sole same-ordinal case is a pristine Restart: marker 0 is pinned
+    /// before load-back 0, reproducing post-load fixups before the first input.
+    /// All other targets must be strictly earlier. Flushed
     /// immediately.
     pub fn write_load_back(&mut self, ordinal: u32, to_frame: u32, is_continue: bool) {
         assert_eq!(ordinal, self.next_expected_ordinal);
         assert!(
-            to_frame < ordinal,
+            to_frame < ordinal || (ordinal == 0 && to_frame == 0 && self.bootstrap_marker_written),
             "load-back target {to_frame} must precede the current replay ordinal {ordinal}",
         );
         self.boundary_metadata_pending = true;

@@ -9,7 +9,9 @@
 //!   `<save_dir>/saves.json`       → slot index / metadata
 //!
 //! Special slot filenames (Continue/QuickSave/Restart/Sherwood) are
-//! defined in [`save_file::special_slots`].
+//! defined in [`save_file::special_slots`]. Browser Restart is an in-memory
+//! checkpoint owned by the running mission; durable browser autosaves have
+//! their separate storage backend in [`crate::autosave`].
 
 use crate::host::Host;
 use robin_engine::campaign as engine_campaign;
@@ -24,7 +26,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::save_file::{self, GameSaveFile, SaveHeader, SaveProvenance, Thumbnail};
+use crate::save_file::{
+    self, GameSaveFile, PreparedGameSave, ReplaySaveIdentity, SaveHeader, SaveProvenance, Thumbnail,
+};
 
 /// A portable basename, never a path. Deserialization applies the same checks
 /// as runtime construction so persisted identities cannot escape their store.
@@ -310,6 +314,9 @@ pub struct SaveGameManager {
     pub saves: Vec<SaveGame>,
     save_directory: String,
     next_id: u32,
+    /// Browser Restart is a session checkpoint, not a durable/manual save.
+    /// Its metadata and payload are published together after successful capture.
+    session_restart: Option<std::sync::Arc<PreparedGameSave>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,6 +344,7 @@ impl SaveGameManager {
             saves: Vec::new(),
             save_directory,
             next_id: 0,
+            session_restart: None,
         }
     }
 
@@ -529,15 +537,23 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point");
-        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
-        self.save_index_anyhow()
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = thumbnail;
+            return self.write_session_restart(host, game, engine, mission_id, profiles);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point");
+            self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
+            self.save_index_anyhow()
+        }
     }
 
     /// Like [`write_restart_save`](Self::write_restart_save), but captures
     /// the engine state on the calling thread and moves the expensive JSON
-    /// serialization + disk write to a background thread.  Returns
-    /// immediately so the game loop can start without blocking.
+    /// serialization + disk write to a background thread. Browser builds
+    /// publish an immediately loadable session checkpoint without serialization.
     pub fn write_restart_save_background(
         &mut self,
         host: &mut Host,
@@ -547,18 +563,26 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        self.write_special_save_background(
-            save_file::special_slots::RESTART,
-            "Restart Point",
-            "restart-save",
-            "Background restart save",
-            host,
-            game,
-            engine,
-            mission_id,
-            profiles,
-            thumbnail,
-        )
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = thumbnail;
+            return self.write_session_restart(host, game, engine, mission_id, profiles);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.write_special_save_background(
+                save_file::special_slots::RESTART,
+                "Restart Point",
+                "restart-save",
+                "Background restart save",
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            )
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -633,7 +657,60 @@ impl SaveGameManager {
         Ok(())
     }
 
-    /// Whether a "Restart" auto-save snapshot exists on disk.  The
+    /// Capture and publish a session-only Restart atomically. No disk index is
+    /// written: this checkpoint is intentionally gone with its owning manager.
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn write_session_restart(
+        &mut self,
+        host: &Host,
+        game: &crate::game::Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: Option<&ProfileManager>,
+    ) -> Result<()> {
+        // Invalidate the previous mission's checkpoint even if capture fails.
+        self.session_restart = None;
+        let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
+        let header = SaveHeader::new(
+            mission_id,
+            game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
+            "Restart Point".into(),
+            provenance,
+        )?;
+        let save = PreparedGameSave::capture_session_restart(engine, host, game, header)?;
+        let mut slot = SaveGame::new(
+            save_file::special_slots::RESTART.into(),
+            "Restart Point".into(),
+            mission_id,
+        );
+        Self::sync_slot_metadata_from_header(&mut slot, &save.header)?;
+        Self::sync_slot_campaign_metadata(
+            &mut slot,
+            save.engine.campaign(),
+            profiles.context("restart requires mission profiles")?,
+        );
+        // This runtime-only checkpoint must not consult a filesystem receipt
+        // or require a writable desktop save root.
+        if let Some(idx) = self.find_by_filename(save_file::special_slots::RESTART) {
+            self.saves[idx] = slot;
+        } else {
+            self.saves.push(slot);
+        }
+        self.session_restart = Some(std::sync::Arc::new(save));
+        Ok(())
+    }
+
+    pub(crate) fn clear_session_restart(&mut self) {
+        self.session_restart = None;
+    }
+
+    pub(crate) fn restart_session_identity(&self) -> Option<ReplaySaveIdentity> {
+        self.session_restart
+            .as_ref()
+            .and_then(|save| save.session_identity())
+    }
+
+    /// Whether a Restart snapshot exists on disk or in session memory. The
     /// debriefing UI uses this to decide whether the Restart click
     /// should queue a load or fall through to the stat panel.
     pub fn has_restart_save(&self) -> bool {
@@ -646,7 +723,7 @@ impl SaveGameManager {
     /// Decode the Restart auto-save without applying it. The caller must run
     /// the shared strict mission validation before choosing whether the
     /// payload can use the current mission's immutable assets.
-    pub(crate) fn preflight_restart_save(&self) -> Result<Option<(usize, GameSaveFile)>> {
+    pub(crate) fn preflight_restart_save(&self) -> Result<Option<(usize, PreparedGameSave)>> {
         let Some(idx) = self.find_by_filename(save_file::special_slots::RESTART) else {
             return Ok(None);
         };
@@ -694,7 +771,7 @@ impl SaveGameManager {
     pub(crate) fn preflight_load(
         &self,
         explicit: Option<usize>,
-    ) -> Result<Option<(usize, GameSaveFile)>> {
+    ) -> Result<Option<(usize, PreparedGameSave)>> {
         let Some(index) = self.find_load_target(explicit) else {
             return Ok(None);
         };
@@ -705,13 +782,21 @@ impl SaveGameManager {
     /// Decode exactly the requested slot without falling back to Continue.
     /// This is used when a UI decision and the later apply must refer to the
     /// same selected file even if the directory changes concurrently.
-    pub(crate) fn preflight_exact_slot(&self, index: usize) -> Result<GameSaveFile> {
+    pub(crate) fn preflight_exact_slot(&self, index: usize) -> Result<PreparedGameSave> {
         let slot = self
             .saves
             .get(index)
             .ok_or_else(|| anyhow::anyhow!("save slot index {index} is out of range"))?;
+        if slot.is_restart() {
+            if let Some(save) = &self.session_restart {
+                return Ok(save.as_ref().clone());
+            }
+            #[cfg(target_arch = "wasm32")]
+            anyhow::bail!("session Restart checkpoint is unavailable");
+        }
         if slot.is_autosave() {
             return crate::autosave::read_payload(&self.save_directory, &slot.filename)
+                .map(PreparedGameSave::from)
                 .with_context(|| {
                     format!(
                         "failed to decode exact autosave slot {index} ({})",
@@ -720,12 +805,14 @@ impl SaveGameManager {
                 });
         }
         let path = self.save_path(index);
-        GameSaveFile::read_from(&path).with_context(|| {
-            format!(
-                "failed to decode exact save slot {index} ({})",
-                slot.filename
-            )
-        })
+        GameSaveFile::read_from(&path)
+            .map(PreparedGameSave::from)
+            .with_context(|| {
+                format!(
+                    "failed to decode exact save slot {index} ({})",
+                    slot.filename
+                )
+            })
     }
 
     fn save_index_anyhow(&self) -> Result<()> {
@@ -845,6 +932,11 @@ impl SaveGameManager {
             .saves
             .get(index)
             .context("delete slot no longer exists")?;
+        if slot.is_restart() && (self.session_restart.is_some() || cfg!(target_arch = "wasm32")) {
+            self.session_restart = None;
+            self.saves.remove(index);
+            return Ok(());
+        }
         anyhow::ensure!(
             !slot.is_autosave(),
             "cannot manually delete an auto-managed autosave"
@@ -1193,14 +1285,21 @@ impl SaveGameManager {
         game: &mut crate::game::Game,
         assets: &engine_api::LevelAssets,
     ) -> Result<()> {
-        let path = self.save_path(index);
-        let save = GameSaveFile::read_from(&path)?;
+        let save = self.preflight_exact_slot(index)?;
         save.apply_to_with_game(engine, host, game, assets)?;
         Ok(())
     }
 
-    /// Does the save file on disk for this slot exist?
+    /// Does this slot have a stored payload, including a session checkpoint?
     pub fn slot_file_exists(&self, index: usize) -> bool {
+        if self.saves.get(index).is_some_and(SaveGame::is_restart) {
+            if self.session_restart.is_some() {
+                return true;
+            }
+            #[cfg(target_arch = "wasm32")]
+            return false;
+        }
+
         if let Some(slot) = self.saves.get(index)
             && slot.is_autosave()
         {
@@ -1276,6 +1375,7 @@ impl SaveGameManager {
                     saves: index.saves,
                     next_id: index.next_id,
                     save_directory: save_directory.to_owned(),
+                    session_restart: None,
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1931,6 +2031,138 @@ mod tests {
             mgr.thumb_path(0),
             PathBuf::from("/saves/profile_1/Continue_thumb.png")
         );
+    }
+
+    #[test]
+    fn session_restart_restores_persisted_state_without_filesystem_or_json_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        let blocked_root = directory.path().join("not-a-directory");
+        std::fs::write(&blocked_root, b"filesystem writes must fail here").unwrap();
+        let mut manager = SaveGameManager::new(blocked_root.to_string_lossy().into_owned());
+        let (mut engine, assets, profiles, mut host) = fresh_save_session("Session Restart");
+        let mut game = game_for_save(&profiles, 17);
+        host.frontend.input.draw_hidden = true;
+        game.persistent.campaign_map_displayed = true;
+        engine.test_set_frame_counter(42);
+        manager
+            .write_session_restart(&host, &game, &engine, 17, Some(&profiles))
+            .unwrap();
+        assert!(manager.has_restart_save());
+        let (index, prepared) = manager.preflight_restart_save().unwrap().unwrap();
+        assert_eq!(manager.get(index).unwrap().player_name, "Session Restart");
+        assert!(matches!(
+            prepared.replay_identity().unwrap(),
+            ReplaySaveIdentity::SessionRestart(_)
+        ));
+        assert_eq!(
+            prepared.session_identity(),
+            manager.restart_session_identity()
+        );
+        assert_eq!(
+            manager
+                .preflight_load(Some(index))
+                .unwrap()
+                .unwrap()
+                .1
+                .replay_identity()
+                .unwrap(),
+            prepared.replay_identity().unwrap()
+        );
+        assert!(!manager.save_path(index).exists());
+
+        // A real disk round-trip provides the reference persisted projection.
+        let disk_path = directory.path().join("reference.json");
+        prepared.write_to(&disk_path).unwrap();
+        let disk = GameSaveFile::read_from(&disk_path).unwrap();
+        assert_eq!(
+            prepared.clone().into_payload().replay_identity().unwrap(),
+            disk.replay_identity().unwrap()
+        );
+        let decoded: PreparedGameSave =
+            serde_json::from_str(&serde_json::to_string(&prepared).unwrap()).unwrap();
+        assert_eq!(decoded.session_identity(), None);
+        assert_eq!(
+            decoded.replay_identity().unwrap(),
+            disk.replay_identity().unwrap()
+        );
+
+        engine.test_set_frame_counter(99);
+        host.frontend.input.draw_hidden = false;
+        game.persistent.campaign_map_displayed = false;
+        let mut disk_engine = engine.clone();
+        let mut disk_host = Host::scratch(800.0, 600.0);
+        let mut disk_game = Game::default();
+        disk.apply_to_with_game(&mut disk_engine, &mut disk_host, &mut disk_game, &assets)
+            .unwrap();
+        prepared
+            .clone()
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        assert!(host.frontend.input.draw_hidden);
+        assert!(game.persistent.campaign_map_displayed);
+        assert_eq!(
+            crate::save_file::GameRuntimeSnapshot::identity_of_live(&engine, &host, &game).unwrap(),
+            crate::save_file::GameRuntimeSnapshot::identity_of_live(
+                &disk_engine,
+                &disk_host,
+                &disk_game
+            )
+            .unwrap()
+        );
+
+        // Index serialization and new profile managers cannot resurrect memory
+        // checkpoints or their process-local identity authority.
+        let index = SaveIndex {
+            saves: manager.saves.clone(),
+            next_id: manager.next_id,
+        };
+        let index: SaveIndex =
+            serde_json::from_str(&serde_json::to_string(&index).unwrap()).unwrap();
+        let reopened = SaveGameManager {
+            saves: index.saves,
+            next_id: index.next_id,
+            save_directory: blocked_root.to_str().unwrap().into(),
+            session_restart: None,
+        };
+        assert!(!reopened.has_restart_save());
+        assert_eq!(reopened.restart_session_identity(), None);
+        let other_profile = SaveGameManager::new(
+            directory
+                .path()
+                .join("other-profile")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        assert!(!other_profile.has_restart_save());
+
+        let old_identity = prepared.replay_identity().unwrap();
+        manager
+            .write_session_restart(&host, &game, &engine, 17, Some(&profiles))
+            .unwrap();
+        assert_ne!(manager.restart_session_identity(), Some(old_identity));
+        assert_eq!(prepared.replay_identity().unwrap(), old_identity);
+        manager.remove(index).unwrap();
+        assert!(!manager.has_restart_save());
+    }
+
+    #[test]
+    fn failed_session_restart_capture_invalidates_previous_checkpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
+        let (engine, _, profiles, host) = fresh_save_session("Failed Session Restart");
+        let game = game_for_save(&profiles, 17);
+        manager
+            .write_session_restart(&host, &game, &engine, 17, Some(&profiles))
+            .unwrap();
+        let missing_profile_host = Host::scratch(800.0, 600.0);
+        assert!(
+            manager
+                .write_session_restart(&missing_profile_host, &game, &engine, 17, Some(&profiles))
+                .is_err()
+        );
+        assert!(!manager.has_restart_save());
+        assert!(manager.preflight_restart_save().unwrap().is_none());
+        assert_eq!(manager.restart_session_identity(), None);
     }
 
     #[test]

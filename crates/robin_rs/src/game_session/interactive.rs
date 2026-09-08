@@ -449,12 +449,23 @@ impl InteractiveRendererAssembly {
     pub(super) fn new_after_loading_screen(
         window: &mut crate::window::GameWindow,
         config: MissionRendererConfig,
+        prepared_renderer: Option<Renderer>,
     ) -> Self {
         window.set_native_refresh_presentation(config.native_refresh_presentation);
         let render_w = window.width as u16;
         let render_h = window.height as u16;
         window.set_logical_size(u32::from(render_w), u32::from(render_h));
-        let mut renderer = Renderer::new(window, render_w, render_h, config.scale_mode);
+        let mut renderer = prepared_renderer
+            .unwrap_or_else(|| Renderer::new(window, render_w, render_h, config.scale_mode));
+        if (renderer.screen_width(), renderer.screen_height()) != (render_w, render_h) {
+            renderer.resize(render_w, render_h);
+        }
+        let (surface_width, surface_height) = window.surface_size();
+        renderer.configure_native_refresh_presentation(
+            config.native_refresh_presentation,
+            surface_width,
+            surface_height,
+        );
         renderer.apply_upscale_config(&robin_engine::graphic_config::GraphicConfig {
             scale_mode: config.scale_mode,
             shader_preset: config.shader_preset,
@@ -490,19 +501,18 @@ impl InteractiveRendererAssembly {
     ) {
         let initial_ambiance = engine.weather().ambiance;
         if let Some(decoded) = background {
-            self.ambience_backgrounds
-                .push((initial_ambiance, decoded.clone()));
             crate::level_loading_host::apply_background_map(
                 engine,
                 host,
                 &mut self.renderer,
-                decoded,
+                &decoded,
             );
+            self.ambience_backgrounds.push((initial_ambiance, decoded));
         }
         if let Some(map) = minimap.map(|decoded| {
-            self.ambience_minimaps
-                .push((initial_ambiance, decoded.clone()));
-            crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded)
+            let map = crate::level_loading_host::apply_minimap(host, &mut self.renderer, &decoded);
+            self.ambience_minimaps.push((initial_ambiance, decoded));
+            map
         }) {
             host.frontend.engine_display.setup_minimap_map(
                 map.hit_mask,
@@ -531,7 +541,7 @@ impl InteractiveRendererAssembly {
                     engine,
                     host,
                     &mut self.renderer,
-                    decoded.clone(),
+                    decoded,
                 );
             }
             if let Some((_, decoded)) = self
@@ -539,11 +549,8 @@ impl InteractiveRendererAssembly {
                 .iter()
                 .find(|(ambiance, _)| *ambiance == desired)
             {
-                let map = crate::level_loading_host::apply_minimap(
-                    host,
-                    &mut self.renderer,
-                    decoded.clone(),
-                );
+                let map =
+                    crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded);
                 host.frontend.engine_display.setup_minimap_map(
                     map.hit_mask,
                     map.map_size,
@@ -765,7 +772,7 @@ impl MissionPresentation {
                 engine,
                 host,
                 &mut self.renderer,
-                decoded.clone(),
+                decoded,
             );
         } else {
             tracing::warn!(?ambiance, "runtime ambience has no predecoded background");
@@ -775,8 +782,7 @@ impl MissionPresentation {
             .iter()
             .find(|(candidate, _)| *candidate == ambiance)
         {
-            let map =
-                crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded.clone());
+            let map = crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded);
             host.frontend.engine_display.setup_minimap_map(
                 map.hit_mask,
                 map.map_size,
@@ -842,6 +848,7 @@ impl MissionPresentation {
         ambiance: robin_engine::engine::Ambiance,
         bypass_fog_sprites_crash: bool,
     ) {
+        super::sprite_readiness::assert_all_sprites_ready();
         host.frontend.rebind_frame_holder_ambiance(
             ambiance,
             bypass_fog_sprites_crash,

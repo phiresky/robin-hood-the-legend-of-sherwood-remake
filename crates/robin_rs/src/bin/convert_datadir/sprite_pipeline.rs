@@ -530,6 +530,8 @@ pub(super) fn transform_rhs(
                     rel,
                     prep,
                     opts.rle_sprite_format,
+                    opts.vq_group_tiles,
+                    opts.rle_group_blobs,
                     &multi_chunk_ids,
                 )?;
                 Ok((rel.clone(), payload, rle_stats))
