@@ -579,7 +579,12 @@ impl EngineInner {
                 }
             });
             let Some(gate_path) = gate_path else {
-                tracing::warn!(
+                // RHSequence::AppendMoveToSequence returns false when FindPathGates
+                // rejects a candidate. AI escape/defense searches deliberately
+                // try several destinations, so this is an ordinary negative
+                // routing result, not corrupt or missing topology. Keep the
+                // failure verdict and diagnostic for the caller retry logic.
+                tracing::debug!(
                     ?entity_id,
                     source_sector = u16::from(source_sector),
                     source_layer,
