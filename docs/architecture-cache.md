@@ -32,7 +32,9 @@ CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_rs --lib pro
 Tests cover concurrent callers, unlocked builders, invalidation during a blocked
 worker, wakeup and stale completion rejection, owner destruction, failed worker
 cleanup/retry, generation changes, stable-bank reuse, reader confinement and
-prepared-snapshot identity. Validation is pending the isolated worktree build.
+prepared-snapshot identity. On source commit `f108c7c2b`, the focused suite passed:
+14 passed, 0 failed, 1 ignored (the explicitly selected LLVM case below). The cold
+isolated build took 20m49s; tests completed in 0.02s.
 
 The real panic/retry test is explicitly ignored in the default Cranelift suite:
 `cfg(panic = "unwind")` alone does not guarantee destructor unwinding with this
@@ -42,3 +44,7 @@ failure completion path; run the real panic case with LLVM:
 ```sh
 CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo --config 'profile.test.package.robin_rs.codegen-backend="llvm"' test --locked -p robin_rs --lib process_asset_cache::lifecycle_tests::panicking_worker_does_not_poison_owner_and_next_caller_retries -- --ignored --exact
 ```
+
+The exact real panic/retry command also passed on `f108c7c2b`: 1 passed, 0 failed,
+0 ignored; LLVM package rebuild took 1m14s. No lower-level read cancellation or
+performance benchmark is claimed by these lifecycle regressions.
