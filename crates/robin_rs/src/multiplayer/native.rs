@@ -348,6 +348,8 @@ fn spawn_outgoing_bridge(
 /// close the iroh endpoint (which ends the accept loop and every peer
 /// connection), the outgoing pump stops, and the runtime thread plus
 /// its bridge thread are joined before `shutdown` returns.
+/// Drop the handle before creating the next mission transport: retained
+/// handles keep the campaign lease so they cannot publish stale handoffs.
 pub struct ServerHandle {
     /// `(local_seat, mission_seed)` the server is operating with.
     pub local_seat: PlayerId,
@@ -363,6 +365,7 @@ pub struct ServerHandle {
     cancellation: Arc<AtomicBool>,
     shutdown_tx: tokio::sync::watch::Sender<bool>,
     runtime_thread: Option<JoinHandle<()>>,
+    bridge_thread: Option<JoinHandle<()>>,
 }
 
 impl ServerHandle {
@@ -492,6 +495,11 @@ impl ServerHandle {
             && handle.join().is_err()
         {
             tracing::error!("multiplayer server runtime panicked during shutdown");
+        }
+        if let Some(handle) = self.bridge_thread.take()
+            && handle.join().is_err()
+        {
+            tracing::error!("multiplayer server outgoing bridge panicked during shutdown");
         }
     }
 
@@ -1231,23 +1239,32 @@ fn start_server_inner(
             {
                 Ok(rt) => rt,
                 Err(e) => {
+                    context.cancellation.store(true, Ordering::Release);
                     let _ = startup_tx.send(Err(format!("build tokio runtime: {e}")));
                     return;
                 }
             };
             rt.block_on(run_server(
                 key,
-                context,
+                Arc::clone(&context),
                 outgoing_async_rx,
                 startup_tx,
                 shutdown_rx,
                 browser_join_enabled,
             ));
-            if bridge_thread.join().is_err() {
-                tracing::error!("multiplayer server outgoing bridge panicked");
-            }
+            context.cancellation.store(true, Ordering::Release);
         }
-    })?;
+    });
+    let runtime_thread = match runtime_thread {
+        Ok(handle) => handle,
+        Err(error) => {
+            cancellation.store(true, Ordering::Release);
+            if bridge_thread.join().is_err() {
+                tracing::error!("multiplayer server outgoing bridge panicked after failed startup");
+            }
+            return Err(error);
+        }
+    };
 
     let (endpoint_id, endpoint_addr) = match startup_rx.recv() {
         Ok(Ok(result)) => result,
@@ -1255,12 +1272,14 @@ fn start_server_inner(
             cancellation.store(true, Ordering::Release);
             let _ = shutdown_tx.send(true);
             let _ = runtime_thread.join();
+            let _ = bridge_thread.join();
             return Err(std::io::Error::other(err));
         }
         Err(e) => {
             cancellation.store(true, Ordering::Release);
             let _ = shutdown_tx.send(true);
             let _ = runtime_thread.join();
+            let _ = bridge_thread.join();
             return Err(std::io::Error::other(format!(
                 "server startup channel closed: {e}"
             )));
@@ -1289,6 +1308,7 @@ fn start_server_inner(
         cancellation,
         shutdown_tx,
         runtime_thread: Some(runtime_thread),
+        bridge_thread: Some(bridge_thread),
     })
 }
 
@@ -5946,6 +5966,21 @@ mod tests {
         // Reading for replacement preparation is transactional: failure before
         // successful endpoint publication leaves the handoff intact.
         assert!(b.state().continuation.lock().is_some());
+    }
+
+    #[test]
+    fn failed_startup_cancellation_joins_bridge_with_sender_still_alive() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (bridge, _async_receiver) = super::spawn_outgoing_bridge(
+            "test-campaign-failed-startup",
+            receiver,
+            cancellation.clone(),
+        )
+        .unwrap();
+        cancellation.store(true, std::sync::atomic::Ordering::Release);
+        bridge.join().unwrap();
+        drop(sender);
     }
 
     #[test]
