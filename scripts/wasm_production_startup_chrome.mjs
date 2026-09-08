@@ -13,7 +13,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve, join, extname, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { gzipSync } from 'node:zlib';
+import { gzipSync, brotliDecompressSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
 import { SharedBandwidth } from './startup_throttle.mjs';
@@ -23,6 +23,7 @@ const { values } = parseArgs({ options: {
     mbit: { type: 'string', default: '16' }, chrome: { type: 'string', default: 'google-chrome' },
     mission: { type: 'string', default: 'auto' }, 'require-present': { type: 'boolean', default: false },
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
+    'http-wasm-br': { type: 'string' },
     query: { type: 'string', multiple: true, default: [] },
 } });
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
@@ -33,6 +34,10 @@ const throttle = rate === null ? null : new SharedBandwidth(rate);
 const records = [], logs = [], errors = [];
 const cache = new Map();
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+const httpWasmBr = values['http-wasm-br'] ? await readFile(resolve(values['http-wasm-br'])) : undefined;
+if (httpWasmBr && !brotliDecompressSync(httpWasmBr).equals(await readFile(join(pkg, 'robin_bg.wasm')))) {
+    throw new Error('--http-wasm-br does not decode to the supplied package WASM');
+}
 const hash = '000000000000'; // Local fixture name, not a claim about the supplied binary's source.
 const runtimePrefix = `/wasm/${hash}/`;
 const dataPrefix = '/datadirs/demo-leicester/';
@@ -43,7 +48,7 @@ for (const name of (await readdir(join(core, 'Data/Interface/UI'))).sort()) {
     if (name.endsWith('.png')) preload.push({ path: `Data/Interface/UI/${name}`, url: `Data/Interface/UI/${name}` });
 }
 function category(path) {
-    if (path.endsWith('.wasm.gz') || path.endsWith('.wasm')) return 'wasm';
+    if (path.endsWith('.wasm.gz') || path.endsWith('.wasm.br') || path.endsWith('.wasm')) return 'wasm';
     if (path.endsWith('.rhdata.zst')) return 'boot';
     if (path.includes('/audio/')) return 'audio';
     if (path.includes('/terrain/')) return 'terrain';
@@ -70,6 +75,7 @@ async function asset(path) {
             const suffix = path.slice(runtimePrefix.length);
             file = safePath(suffix.startsWith('Data/') ? core : pkg, suffix);
             if (suffix === 'robin_bg.wasm.gz') body = execFileSync('gzip', ['-9', '-n', '-c', join(pkg, 'robin_bg.wasm')], { maxBuffer: 256 * 1024 * 1024 });
+            if (suffix === 'robin_bg.wasm' && httpWasmBr) { body = httpWasmBr; encoding = 'br'; }
         } else if (path.startsWith(dataPrefix)) {
             const suffix = path.slice(dataPrefix.length);
             file = safePath(datadir, suffix === 'v8-web-opus-q80.rhdata.zst' ? 'Data/datadir.bin' : `Data/${suffix}`);
@@ -77,8 +83,9 @@ async function asset(path) {
         body ??= await readFile(file);
         type = ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.wasm': 'application/wasm', '.png': 'image/png', '.svg': 'image/svg+xml' })[extname(file)] ?? type;
     }
-    // Production's explicit .wasm.gz sibling is a raw gzip object; JS/HTML/CSS
-    // use HTTP content encoding. Other already-compressed assets stay intact.
+    // Explicit .wasm.{gz,br} siblings are raw compressed objects. Ordinary
+    // .wasm optionally uses a captured, hash-verified HTTP Brotli response.
+    // JS/HTML/CSS use HTTP content encoding; other compressed assets stay intact.
     if (['text/html', 'text/javascript', 'text/css', 'application/json', 'image/svg+xml'].includes(type)) {
         body = gzipSync(body, { level: 9 }); encoding = 'gzip';
     }
@@ -200,6 +207,7 @@ try {
     const navigationServerAt = page.timeOrigin - performance.timeOrigin;
     const result = {
         inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
+        httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
         pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
         diagnostics: { trace: values.trace, cpuProfile: values['cpu-profile'], caveat: 'Optional profiling adds overhead; use uninstrumented runs for timing comparisons.' },
         network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: 'fresh browser profile; normal intra-navigation HTTP caching', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },

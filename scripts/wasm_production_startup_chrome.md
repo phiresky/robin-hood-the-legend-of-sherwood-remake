@@ -73,3 +73,13 @@ Use `--trace` to retain a Chrome trace (`.trace.json`) with timeline, GPU and V8
 CPU sampling events, and `--cpu-profile` for the page-thread `.cpuprofile`.
 Both cover navigation through the settled screenshot. Profiling adds overhead;
 these are attribution diagnostics, not the uninstrumented timing comparisons.
+
+Use `--http-wasm-br PATH` to serve ordinary `.wasm` requests with a captured
+HTTP Brotli response. The harness verifies the supplied bytes decode exactly to
+the selected package before starting Chrome and records their size and hash.
+Without this option ordinary WASM is served with identity encoding, exercising
+the loader's static-host fallback. Explicit `.wasm.br` remains a raw sidecar.
+Retain compression-capture provenance: local Wrangler and deployed Cloudflare
+can produce different compressed sizes for the same content. Do not substitute
+offline Brotli quality 11 for the platform's actual HTTP response in Chrome
+measurements.
