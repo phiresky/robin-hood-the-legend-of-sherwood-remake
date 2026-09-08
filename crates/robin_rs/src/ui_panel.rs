@@ -3908,7 +3908,7 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
     // The queued portrait remains renderable after its owner was retired.
     assert_eq!(
         &renderer.try_capture_frame_rgba().unwrap().2[..4],
-        &[255, 255, 255, 255]
+        &[248, 252, 248, 255] // Native RGB565 channel expansion uses left shifts.
     );
 }
 
