@@ -412,6 +412,100 @@ pub(super) fn finalize_pre_tick(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn final_boundary_preserves_handoff_without_advancing_simulation() {
+        use super::*;
+        use crate::game_session::replay_init::ReplayAndRollback;
+        use crate::game_session::runtime::FrameContract;
+        use robin_engine::engine::LevelAssets;
+        use robin_engine::engine_manager::EngineManager;
+        use robin_engine::replay::state_hash;
+        use std::sync::Arc;
+
+        // Exercise the production boundary without a window, renderer, audio,
+        // or callback store: none is part of its capability set anymore.
+        for (manual, network, rewind_active) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+            (true, true, true),
+        ] {
+            let mut assets = LevelAssets::new();
+            let mut manager = EngineManager::new(
+                Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap(),
+            );
+            let mut assets = Arc::new(assets);
+            let mut host = Host::scratch(640.0, 480.0);
+            let mut game = crate::game::Game::new(engine_profiles::MissionLocation::Lincoln);
+            let mut timeline = TimelineRuntime::new(
+                ReplayAndRollback {
+                    recorder: None,
+                    player: None,
+                    rollback_checker: None,
+                    rewind_buffer: crate::rewind::RewindBuffer::new(),
+                    start_paused: false,
+                },
+                FrameContract::Graphical,
+                false,
+                true,
+            );
+            let mut frame = MissionFrame::new(123);
+            timeline.open_frame(&mut frame, &manager.engine, &assets);
+            frame
+                .commands
+                .commands
+                .push(robin_engine::player_command::PlayerInput::host(
+                    PlayerCommand::CrouchDown,
+                ));
+            let hash_before = state_hash(&manager.engine);
+            let mut manual_pause = manual;
+            let input = MissionInput::new(
+                crate::input::ThreadedInput::new(),
+                crate::input_translator::InputTranslator::new(640.0, 480.0),
+            );
+            let prepared = finalize_pre_tick(
+                MissionPreTickPhase {
+                    host: &mut host,
+                    game: &mut game,
+                    manager: &mut manager,
+                    assets: &mut assets,
+                },
+                &mut timeline,
+                &mut manual_pause,
+                &mut None,
+                &input,
+                &MissionUi::new(true),
+                SavesPrepared(PreparationPhaseState {
+                    frame,
+                    mp_clock_pause: network,
+                    pause_closed_this_frame: true,
+                    rewind_active,
+                    shift_held: true,
+                    step_forward_pressed: true,
+                    step_back_pressed: true,
+                    modal_rendered_this_frame: true,
+                }),
+            )
+            .unwrap();
+            let FramePreparation::Ready(prepared) = prepared else {
+                panic!("pre-tick boundary unexpectedly requested mission control");
+            };
+            assert_eq!(prepared.paused, manual || network);
+            assert_eq!(prepared.rewind_active, rewind_active);
+            assert!(prepared.shift_held);
+            assert!(prepared.step_forward_pressed);
+            assert!(prepared.step_back_pressed);
+            assert!(prepared.modal_rendered);
+            assert!(!prepared.consumed_buffered);
+            assert_eq!(prepared.frame.started_at_ms, 123);
+            assert_eq!(prepared.frame.commands.commands.len(), 1);
+            assert_eq!(manual_pause, manual);
+            assert_eq!(timeline.frame_number(), 0);
+            assert_eq!(state_hash(&manager.engine), hash_before);
+        }
+    }
+
     fn second_drain_rollback_reopens_current_frame(use_recent_history: bool) {
         use crate::game_session::replay_init::ReplayAndRollback;
         use crate::game_session::runtime::{
