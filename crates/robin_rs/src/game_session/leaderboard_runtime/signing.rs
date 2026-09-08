@@ -1126,7 +1126,15 @@ mod tests {
             schema_version: SCHEMA_VERSION_V1,
             upload_challenge_id: OpaqueId::new("driver-offer").unwrap(),
             upload_challenge_nonce: ChallengeNonce32::from_bytes([2; 32]),
-            expires_at_unix_ms: 1_800_000_000_000,
+            expires_at_unix_ms: input
+                .offer_request
+                .session_genesis
+                .claim
+                .fresh_run_preflight_grant
+                .as_ref()
+                .expect("single-player fixture carries a signed fresh-run grant")
+                .claim
+                .expires_at_unix_ms,
             max_concurrent_players: 1,
             participant_instance_count: 1,
             participant_claims: input.offer_request.participant_claims.clone(),
