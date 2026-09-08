@@ -1524,34 +1524,15 @@ pub(super) fn pre_decode_maps_and_resources(
     }
 
     // Level descriptors (`.red` file) and HUD fonts — file I/O only.
-    let mut level_descriptors = (|| {
+    let mut level_descriptors = {
         let campaign = engine.campaign();
         let mission_id = descriptor_mission_id(campaign, profiles, files);
-        let filename = assets_res_descr::red_filename(mission_id);
-        if let Some(dd) = host.frontend.shipping.as_deref()
-            && let Some(desc) = dd.localized_level_descriptors(&filename)
-        {
-            tracing::info!(
-                "Level descriptors {filename}: loaded from shipping datadir ({} dialogues)",
-                desc.dialogues.len()
-            );
-            return Some(desc.clone());
-        }
-        let path = format!("Data/Text/{filename}");
-        match assets_res_descr::load_with_files(&path, files) {
-            Ok(desc) => {
-                tracing::info!(
-                    "Loaded level descriptors from {path}: {} dialogues",
-                    desc.dialogues.len()
-                );
-                Some(desc)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load level descriptors from {path}: {e}");
-                None
-            }
-        }
-    })();
+        crate::mission_descriptors::for_presentation(
+            host.application_context(),
+            host.frontend.shipping.as_deref(),
+            mission_id,
+        )
+    };
     if let Some(descriptors) = level_descriptors.as_mut() {
         apply_custom_mission_text_patch(engine.campaign(), profiles, descriptors, files);
     }
