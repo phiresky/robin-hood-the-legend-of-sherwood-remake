@@ -465,6 +465,7 @@ impl SaveGameManager {
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         self.ensure_no_pending_delete()?;
+        self.reconcile_quick_slots()?;
         // Validate and serialize before touching either published quick slot.
         // A failed capture must not rotate a player's recoverable saves.
         let mut current = self
@@ -1183,6 +1184,7 @@ impl SaveGameManager {
         multiplayer_diagnostic: bool,
     ) -> Result<()> {
         self.ensure_no_pending_delete()?;
+        self.reconcile_quick_slots()?;
         let display_text = self
             .saves
             .get(index)
