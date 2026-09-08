@@ -37,6 +37,12 @@ uses the engine's forced-mission campaign path; it is **not equivalent** and the
 historical fixture immediately loses with that team's missing required characters.
 The existing direct harness also accepts `--mission auto`, retaining its old default.
 `--query KEY=VALUE` supports repeated experimental switches without changing the shell.
+Useful same-package controls are `mission-downloads=ordered` (default prioritized
+all-at-once admission), `mission-downloads=unbounded` (alphabetical all-at-once),
+`mission-downloads=prioritized` (eight-request admission), `audio-downloads=eager`
+(disable the speculative-audio pause), and `renderer-preparation=late` (disable
+renderer preparation/reuse during loading). Download admission is separate from
+the bounded decode-worker scheduler; these switches do not omit required content.
 
 The 1024×768 viewport uses production CSS unchanged; its canvas currently measures
 1008×752 because of page margins. Hardware concurrency is fixed to four, with
