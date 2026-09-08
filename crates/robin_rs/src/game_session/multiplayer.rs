@@ -1404,6 +1404,7 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
     Ok(())
 }
 
+#[cfg(any(feature = "multiplayer", test))]
 fn validate_preflighted_content(
     expected_bytes: Option<&[u8]>,
     offered: Option<&robin_engine::multiplayer::DistributedModOffer>,

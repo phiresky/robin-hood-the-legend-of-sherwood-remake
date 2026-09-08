@@ -1,9 +1,12 @@
+#[cfg(feature = "audio")]
 use std::path::PathBuf;
+#[cfg(feature = "audio")]
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "audio")]
 use kira::sound::{static_sound::StaticSoundData, streaming::StreamingSoundData};
 
+#[cfg(feature = "audio")]
 fn time_it<T>(f: impl FnOnce() -> T) -> (T, Duration) {
     let start = Instant::now();
     let value = f();
