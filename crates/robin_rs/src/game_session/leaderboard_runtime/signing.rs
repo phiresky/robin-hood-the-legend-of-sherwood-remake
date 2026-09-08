@@ -157,10 +157,56 @@ enum MultiplayerHostAuthorizationPhase {
 }
 
 struct MultiplayerHostAuthorizationTask {
-    port: crate::multiplayer::RankedMultiplayerPort,
+    port: HostAuthorizationPort,
     request: SubmissionAuthorizationRequest,
     expected: Vec<robin_run_protocol::PublicKey32>,
     phase: MultiplayerHostAuthorizationPhase,
+}
+
+// A closed adapter keeps deterministic tests on the actual task driver. Normal
+// builds contain only the authenticated transport variant, not a second lane.
+enum HostAuthorizationPort {
+    Transport(crate::multiplayer::RankedMultiplayerPort),
+    #[cfg(test)]
+    Fixture(std::rc::Rc<std::cell::RefCell<tests::HostIo>>),
+}
+
+impl HostAuthorizationPort {
+    fn host_publish_co_sign_operation(
+        &self,
+        seat: robin_engine::player_command::PlayerId,
+        context: &crate::leaderboard_ranked_session::RankedCoSignContextV1,
+    ) -> Result<robin_run_protocol::LeaderboardCoSignRequestV1, String> {
+        match self {
+            Self::Transport(port) => port.host_publish_co_sign_operation(seat, context),
+            #[cfg(test)]
+            Self::Fixture(io) => {
+                let mut io = io.borrow_mut();
+                io.publications.push(seat);
+                if io.fail_publication == Some(io.publications.len()) {
+                    return Err("injected publication failure".to_owned());
+                }
+                Ok(io
+                    .published_request
+                    .clone()
+                    .expect("publication fixture needs a request"))
+            }
+        }
+    }
+
+    fn try_recv_authorization_event(
+        &self,
+    ) -> Result<Option<crate::multiplayer::RankedAuthorizationEvent>, String> {
+        match self {
+            Self::Transport(port) => port.try_recv_authorization_event(),
+            #[cfg(test)]
+            Self::Fixture(io) => {
+                let mut io = io.borrow_mut();
+                io.polls += 1;
+                Ok(io.events.pop_front())
+            }
+        }
+    }
 }
 
 impl MultiplayerHostAuthorizationTask {
@@ -188,7 +234,7 @@ impl MultiplayerHostAuthorizationTask {
             return Err("ranked host identity is absent from the final participant set".to_owned());
         }
         let mut task = Self {
-            port,
+            port: HostAuthorizationPort::Transport(port),
             request,
             expected,
             phase: MultiplayerHostAuthorizationPhase::Finished { signed: Vec::new() },
@@ -1025,7 +1071,317 @@ fn install_signer_if_idle<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer as _;
+    use robin_engine::player_command::PlayerId;
+    use robin_run_protocol::*;
+    use std::collections::VecDeque;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::{cell::RefCell, rc::Rc};
+
+    #[derive(Default, serde::Serialize, serde::Deserialize)]
+    pub(super) struct HostIo {
+        #[serde(skip)]
+        pub(super) events: VecDeque<crate::multiplayer::RankedAuthorizationEvent>,
+        pub(super) polls: usize,
+        pub(super) publications: Vec<PlayerId>,
+        pub(super) fail_publication: Option<usize>,
+        pub(super) published_request: Option<LeaderboardCoSignRequestV1>,
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct DelayedSigner {
+        #[serde(skip)]
+        result: Option<Result<HostLocalSignature, String>>,
+        pending: bool,
+    }
+
+    impl MissionEndTask<HostLocalSignature> for DelayedSigner {
+        fn try_take(&mut self) -> Option<Result<HostLocalSignature, String>> {
+            if std::mem::take(&mut self.pending) {
+                None
+            } else {
+                self.result.take()
+            }
+        }
+    }
+
+    fn authorization_fixture() -> (SubmissionAuthorizationRequest, ed25519_dalek::SigningKey) {
+        let campaign = bitcode::encode(&Campaign::default());
+        let (mut admission, replay) =
+            super::super::tests::signed_single_player_admission(&campaign);
+        admission
+            .materialize_terminal_from_replay("Dem_Lei_MP", campaign.clone().into(), &replay)
+            .unwrap();
+        let RankedMissionAdmission::Authorized(input) = admission else {
+            panic!("fixture must be authorized")
+        };
+        let ranked = &input.offer_request.session_genesis.claim.ranked_session;
+        let offer = SubmissionOfferV1 {
+            schema_version: SCHEMA_VERSION_V1,
+            upload_challenge_id: OpaqueId::new("driver-offer").unwrap(),
+            upload_challenge_nonce: ChallengeNonce32::from_bytes([2; 32]),
+            expires_at_unix_ms: 1_800_000_000_000,
+            max_concurrent_players: 1,
+            participant_instance_count: 1,
+            participant_claims: input.offer_request.participant_claims.clone(),
+            session_genesis: input.offer_request.session_genesis.clone(),
+            mission_id: ranked.mission_id.clone(),
+            competition_manifest_sha256: ranked.competition_manifest_sha256,
+            build_manifest_sha256: ranked.build_manifest_sha256,
+            content_manifest_sha256: ranked.content_manifest_sha256,
+            rules_config_sha256: ranked.rules_config_sha256,
+            ruleset_manifest_sha256: ranked.ruleset_manifest_sha256,
+            starting_state: InitialStateExpectationV1::IndividualLevel {
+                template_id: OpaqueId::new("driver-template").unwrap(),
+                campaign_state_requirement: CanonicalCampaignStateRequirementV1 {
+                    edition: OfficialContentEditionV1::Demo,
+                    kind: CanonicalCampaignStateKindV1::IndividualTemplate,
+                    rules_config_sha256: ranked.rules_config_sha256,
+                },
+                campaign_sha256: Digest32::digest_bytes(&campaign),
+                starting_campaign_byte_length: campaign.len() as u64,
+            },
+            allowed_metrics: input.requested_metrics.clone(),
+        };
+        let request = SubmissionAuthorizationRequest {
+            offer_request: input.offer_request,
+            offer,
+            replay_session_transcript: input.replay_session_transcript,
+            artifacts: SubmissionArtifactsV1 {
+                replay: ReplayArtifactV1 {
+                    artifact: ArtifactRefV1 {
+                        sha256: Digest32::from_bytes([3; 32]),
+                        byte_length: 100,
+                        media_type: RANKED_REPLAY_MEDIA_TYPE_V1.to_owned(),
+                    },
+                    replay_schema_version: CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1,
+                },
+                starting_campaign: ArtifactRefV1 {
+                    sha256: Digest32::digest_bytes(&campaign),
+                    byte_length: campaign.len() as u64,
+                    media_type: RANKED_CAMPAIGN_MEDIA_TYPE_V1.to_owned(),
+                },
+            },
+            requested_metrics: input.requested_metrics,
+            campaign_controller_public_key: None,
+        };
+        request.validate_exact_context().unwrap();
+        request.envelope(None).validate().unwrap();
+        (request, ed25519_dalek::SigningKey::from_bytes(&[0x44; 32]))
+    }
+
+    fn signature(
+        request: &SubmissionAuthorizationRequest,
+        key: &ed25519_dalek::SigningKey,
+    ) -> ParticipantSignatureV1 {
+        ParticipantSignatureV1 {
+            public_key: PublicKey32::from_bytes(key.verifying_key().to_bytes()),
+            signature: Signature64::from_bytes(
+                key.sign(&request.envelope(None).signing_bytes().unwrap())
+                    .to_bytes(),
+            ),
+        }
+    }
+
+    fn host_task(
+        request: SubmissionAuthorizationRequest,
+        phase: MultiplayerHostAuthorizationPhase,
+    ) -> (MultiplayerHostAuthorizationTask, Rc<RefCell<HostIo>>) {
+        let io = Rc::new(RefCell::new(HostIo {
+            published_request: Some(request.envelope(None).co_sign_request().unwrap()),
+            ..HostIo::default()
+        }));
+        (
+            MultiplayerHostAuthorizationTask {
+                expected: request.expected_participants(),
+                request,
+                phase,
+                port: HostAuthorizationPort::Fixture(io.clone()),
+            },
+            io,
+        )
+    }
+
+    fn response_event(
+        request: &SubmissionAuthorizationRequest,
+        key: &ed25519_dalek::SigningKey,
+    ) -> crate::multiplayer::RankedAuthorizationEvent {
+        let signature = signature(request, key);
+        crate::multiplayer::RankedAuthorizationEvent::CoSignResponse {
+            from: PlayerId::HOST,
+            response: robin_engine::multiplayer::LeaderboardCoSignResponse {
+                instance: request.envelope(None).co_sign_request().unwrap().instance,
+                signer_public_key: *signature.public_key.as_bytes(),
+                signature: *signature.signature.as_bytes(),
+            },
+        }
+    }
+
+    #[test]
+    fn host_delayed_wrong_local_kind_and_signer_error_are_terminal_without_consuming_events() {
+        for wrong_kind in [false, true] {
+            let (request, key) = authorization_fixture();
+            let result = if wrong_kind {
+                Ok(HostLocalSignature::Submission(signature(&request, &key)))
+            } else {
+                Err("signer failed".to_owned())
+            };
+            let event = response_event(&request, &key);
+            let (mut task, io) = host_task(
+                request,
+                MultiplayerHostAuthorizationPhase::AwaitingLocalContinuation {
+                    task: Box::new(DelayedSigner {
+                        pending: true,
+                        result: Some(result),
+                    }),
+                },
+            );
+            assert!(task.try_take().is_none());
+            io.borrow_mut().events.push_back(event);
+            let polls = io.borrow().polls;
+            assert!(task.try_take().unwrap().is_err());
+            assert!(task.try_take().is_none());
+            assert_eq!(io.borrow().polls, polls);
+            assert_eq!(io.borrow().events.len(), 1);
+        }
+    }
+
+    #[test]
+    fn host_final_response_and_queued_duplicate_retire_success_in_same_poll() {
+        for duplicate in [false, true] {
+            let (request, key) = authorization_fixture();
+            let local = signature(&request, &key);
+            let envelope = request.envelope(None);
+            let instance = envelope.co_sign_request().unwrap().instance;
+            let event = response_event(&request, &key);
+            let duplicate_event = response_event(&request, &key);
+            let (mut task, io) = host_task(
+                request,
+                MultiplayerHostAuthorizationPhase::AwaitingSubmission {
+                    envelope,
+                    signatures: BTreeMap::new(),
+                    pending: BTreeMap::from([(local.public_key, (PlayerId::HOST, instance))]),
+                },
+            );
+            io.borrow_mut().events.push_back(event);
+            if duplicate {
+                io.borrow_mut().events.push_back(duplicate_event);
+            }
+            let result = task.try_take().unwrap();
+            if duplicate {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .contains("after authorization completed")
+                );
+            } else {
+                let signed = result.unwrap();
+                crate::leaderboard_mission_end::validate_authorized_submission(
+                    &task.request,
+                    &signed,
+                )
+                .unwrap();
+            }
+            let polls = io.borrow().polls;
+            assert!(task.try_take().is_none());
+            assert_eq!(io.borrow().polls, polls);
+        }
+    }
+
+    #[test]
+    fn host_wrong_instance_is_terminal_and_preserves_later_inbox_events() {
+        let (request, key) = authorization_fixture();
+        let local = signature(&request, &key);
+        let envelope = request.envelope(None);
+        let instance = envelope.co_sign_request().unwrap().instance;
+        let mut wrong = response_event(&request, &key);
+        let crate::multiplayer::RankedAuthorizationEvent::CoSignResponse { response, .. } =
+            &mut wrong
+        else {
+            unreachable!()
+        };
+        response.instance.submission_offer_sha256 = Digest32::from_bytes([99; 32]);
+        let valid = response_event(&request, &key);
+        let (mut task, io) = host_task(
+            request,
+            MultiplayerHostAuthorizationPhase::AwaitingSubmission {
+                envelope,
+                signatures: BTreeMap::new(),
+                pending: BTreeMap::from([(local.public_key, (PlayerId::HOST, instance))]),
+            },
+        );
+        io.borrow_mut().events.extend([wrong, valid]);
+        assert!(
+            task.try_take()
+                .unwrap()
+                .unwrap_err()
+                .contains("authenticated seat or request")
+        );
+        assert!(task.try_take().is_none());
+        assert_eq!(io.borrow().events.len(), 1);
+        assert_eq!(io.borrow().polls, 1);
+    }
+
+    #[test]
+    fn host_wrong_local_identity_fails_final_validation_and_stays_terminal() {
+        let (request, key) = authorization_fixture();
+        let envelope = request.envelope(None);
+        let event = response_event(&request, &key);
+        let other_key = ed25519_dalek::SigningKey::from_bytes(&[0x55; 32]);
+        let local = signature(&request, &other_key);
+        let (mut task, io) = host_task(
+            request,
+            MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission {
+                envelope,
+                task: Box::new(DelayedSigner {
+                    pending: false,
+                    result: Some(Ok(HostLocalSignature::Submission(local))),
+                }),
+            },
+        );
+        io.borrow_mut().events.push_back(event);
+        assert!(task.try_take().unwrap().is_err());
+        assert!(task.try_take().is_none());
+        assert_eq!(io.borrow().polls, 0);
+        assert_eq!(io.borrow().events.len(), 1);
+    }
+
+    #[test]
+    fn host_partial_publication_failure_is_never_retried() {
+        let (request, key) = authorization_fixture();
+        let local = signature(&request, &key);
+        let envelope = request.envelope(None);
+        let (mut task, io) = host_task(
+            request,
+            MultiplayerHostAuthorizationPhase::AwaitingLocalSubmission {
+                envelope,
+                task: Box::new(DelayedSigner {
+                    pending: false,
+                    result: Some(Ok(HostLocalSignature::Submission(local))),
+                }),
+            },
+        );
+        // Inject only the publication itinerary, after the validated fixture was
+        // built. Fake I/O does not replace production crypto/context validation;
+        // this test isolates failure between two already-authorized operations.
+        for seat in [1, 2] {
+            let mut claim = task.request.offer_request.participant_claims[0].clone();
+            claim.seat = seat;
+            claim.public_key = PublicKey32::from_bytes([seat as u8; 32]);
+            task.request.offer_request.participant_claims.push(claim);
+        }
+        io.borrow_mut().fail_publication = Some(2);
+        assert!(
+            task.try_take()
+                .unwrap()
+                .unwrap_err()
+                .contains("publication failure")
+        );
+        assert_eq!(io.borrow().publications, [PlayerId(1), PlayerId(2)]);
+        assert!(task.try_take().is_none());
+        assert_eq!(io.borrow().publications.len(), 2);
+        assert_eq!(io.borrow().polls, 0);
+    }
 
     #[derive(serde::Serialize, serde::Deserialize)]
     struct PendingSigner {

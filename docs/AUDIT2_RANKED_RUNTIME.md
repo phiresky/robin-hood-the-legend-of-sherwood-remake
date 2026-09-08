@@ -24,6 +24,8 @@ The host retains its existing bounded 64-event drain, including rejection of an 
 
 Added focused tests for delayed signer ownership and retirement, duplicate peer requests rejected before starting/replacing a signer, and wrong seat/key/session/offer responses leaving pending evidence untouched, followed by valid acceptance and duplicate rejection.
 
+The actual host `try_take` driver additionally has deterministic tests for delayed signer error/wrong operation, wrong local identity, wrong response instance, terminal re-poll without inbox consumption, valid final response with and without a queued duplicate, and failure after one successful remote publication without retry. The success test reaches the existing complete cryptographic validator. A closed transport adapter has a fixture variant only under `cfg(test)`; normal builds retain only the authenticated transport.
+
 `cargo fmt --all` and `git diff --check` pass. No Cargo build or test suite was run in this isolated worktree: the coordinator requested shared integration validation to avoid multiple cold frontend targets.
 
 Required integration checks:
@@ -32,7 +34,7 @@ Required integration checks:
 - Release-feature library suite, especially `game_session::leaderboard_runtime`, `leaderboard_mission_end`, ranked lifecycle and multiplayer authorization suites.
 - Browser audio/multiplayer compile and browser tests to compile the relocated asynchronous signing adapters.
 
-TODO: add a transport-injected end-to-end host authorization harness covering failure after the first remote publication, failed-task re-poll, wrong local result kind, and duplicate queued after final completion. Current new tests exercise production correlation/ownership helpers, not that complete transport/signing sequence.
+The partial-publication regression injects an itinerary after constructing validated single-player evidence, to isolate the task's non-retry boundary; it does not assert multiplayer roster/admission validity. These tests do not run real network I/O or durable browser signing. Existing transport and browser suites remain required.
 
 ## Concurrent work seam
 

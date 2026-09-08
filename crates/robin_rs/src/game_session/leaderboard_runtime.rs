@@ -870,7 +870,7 @@ mod tests {
         }
     }
 
-    fn signed_single_player_admission(
+    pub(super) fn signed_single_player_admission(
         campaign_bytes: &[u8],
     ) -> (RankedMissionAdmission, robin_engine::replay::ReplayData) {
         let mission_id = "Dem_Lei_MP";
