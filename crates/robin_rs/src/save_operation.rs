@@ -71,15 +71,20 @@ mod tests {
         let (started_tx, started_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let (retired_tx, retired_rx) = mpsc::channel();
+        let (entered_tx, entered_rx) = mpsc::channel();
         let mut owner = SaveOperationOwner::default();
         owner
             .start(SlotName::new("Continue").unwrap(), move || {
                 started_tx.send(()).unwrap();
-                release_rx.recv().unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .context("release latch timed out")?;
                 Ok(SaveGame::new("Continue".into(), "Complete".into(), 1))
             })
             .unwrap();
-        started_rx.recv().unwrap();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
         assert!(!owner.is_finished());
         assert!(
             owner
@@ -87,15 +92,24 @@ mod tests {
                 .is_err()
         );
         let retirement = std::thread::spawn(move || {
+            entered_tx.send(()).unwrap();
             let completed = owner.finish().unwrap().unwrap();
             retired_tx.send(completed).unwrap();
         });
-        assert!(matches!(
-            retired_rx.try_recv(),
-            Err(mpsc::TryRecvError::Empty)
-        ));
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let pending = retired_rx.recv_timeout(std::time::Duration::from_millis(50));
         release_tx.send(()).unwrap();
-        assert_eq!(retired_rx.recv().unwrap().0.as_str(), "Continue");
+        assert!(matches!(pending, Err(mpsc::RecvTimeoutError::Timeout)));
+        assert_eq!(
+            retired_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+                .0
+                .as_str(),
+            "Continue"
+        );
         retirement.join().unwrap();
     }
 

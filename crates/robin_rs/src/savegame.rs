@@ -1627,6 +1627,19 @@ impl SaveGameManager {
 
     /// Does this slot have a stored payload, including a session checkpoint?
     pub fn slot_file_exists(&self, index: usize) -> bool {
+        if let Some(slot) = self.saves.get(index) {
+            if self
+                .operations
+                .pending_name()
+                .is_some_and(|name| name.as_str() == slot.filename)
+            {
+                return false; // A queued publication is explicitly not loadable yet.
+            }
+            let name = SlotName::new(slot.filename.clone()).expect("validated runtime slot");
+            if self.states.get(&name) == Some(&SlotState::Draft) {
+                return false;
+            }
+        }
         if self.saves.get(index).is_some_and(SaveGame::is_restart) {
             if self.session_restart.is_some() {
                 return true;
@@ -1963,6 +1976,364 @@ mod tests {
         }
         manager.save_index().unwrap();
         manager
+    }
+
+    #[test]
+    fn stable_handles_reject_retired_generations_other_owners_and_serde() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        let first = manager.create_draft("Draft".into(), 17).unwrap();
+        assert_eq!(manager.slot_state(first.name()).unwrap(), SlotState::Draft);
+        let decoded: SlotHandle =
+            serde_json::from_str(&serde_json::to_string(&first).unwrap()).unwrap();
+        assert!(manager.resolve_handle(&decoded).is_err());
+        let mut other = SaveGameManager::new(root.path().to_str().unwrap().into());
+        other.create_draft("Other owner".into(), 17).unwrap();
+        assert!(other.resolve_handle(&first).is_err());
+        let index = manager.resolve_handle(&first).unwrap();
+        manager.remove(index).unwrap();
+        let replacement = manager
+            .allocate_named_draft(first.name().as_str().into(), "Replacement".into(), 17)
+            .unwrap();
+        assert!(manager.resolve_handle(&first).is_err());
+        assert_ne!(manager.slot_handle(replacement).unwrap(), first);
+    }
+
+    #[test]
+    fn explicit_draft_state_cannot_be_promoted_by_filling_timestamp() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        let handle = manager.create_draft("Draft".into(), 17).unwrap();
+        let index = manager.resolve_handle(&handle).unwrap();
+        manager.saves[index] = published_slot(handle.name().as_str());
+        manager.save_index().unwrap();
+        assert!(
+            SaveGameManager::load_index(root.path().to_str().unwrap())
+                .unwrap()
+                .saves()
+                .is_empty()
+        );
+        std::fs::write(manager.save_path(index), b"unrelated writer").unwrap();
+        manager.remove(index).unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join(format!("{}.json", handle.name().as_str()))).unwrap(),
+            b"unrelated writer"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn queued_special_save_publishes_payload_then_owned_metadata_and_index() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        let (engine, _, profiles, mut host) = fresh_save_session("Owned completion");
+        let game = game_for_save(&profiles, 17);
+        assert_eq!(
+            manager
+                .write_continue_save_background(
+                    &mut host,
+                    &game,
+                    &engine,
+                    17,
+                    Some(&profiles),
+                    None
+                )
+                .unwrap(),
+            SaveWriteStatus::Queued
+        );
+        let slot = manager.find_by_filename("Continue").unwrap();
+        assert_eq!(
+            manager
+                .slot_state(&SlotName::new("Continue").unwrap())
+                .unwrap(),
+            SlotState::Draft
+        );
+        assert!(manager.preflight_exact_slot(slot).is_err());
+        assert!(manager.save_index().is_err());
+        manager.finish_background().unwrap();
+        assert_eq!(
+            manager
+                .slot_state(&SlotName::new("Continue").unwrap())
+                .unwrap(),
+            SlotState::Published
+        );
+        let reopened = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        let decoded = reopened
+            .preflight_exact_slot(reopened.find_by_filename("Continue").unwrap())
+            .unwrap();
+        assert_eq!(decoded.header.provenance.player_name, "Owned completion");
+        assert!(!manager.owned_recovery_path().exists());
+        assert!(!manager.poll_background().unwrap());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn payload_failure_preserves_old_metadata_and_error_is_sticky_but_notice_once() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Continue"]);
+        let before = manager.saves()[0].clone();
+        std::fs::create_dir(manager.save_path(0)).unwrap();
+        let (engine, _, profiles, mut host) = fresh_save_session("Failed owner");
+        let game = game_for_save(&profiles, 17);
+        manager
+            .write_continue_save_background(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        assert!(manager.finish_background().is_err());
+        assert_eq!(&manager.saves()[0], &before);
+        assert!(manager.poll_background().is_err());
+        assert!(!manager.poll_background().unwrap());
+        assert!(
+            manager
+                .create_draft("Must remain blocked".into(), 17)
+                .is_err()
+        );
+        assert!(manager.finish_background().is_err());
+        std::fs::remove_dir(manager.save_path(0)).unwrap();
+        let recovered = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(&recovered.saves()[0], &before);
+        assert!(!manager.owned_recovery_path().exists());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn completed_payload_index_failure_is_recoverable_after_store_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Continue"]);
+        let index_path = root.path().join("saves.json");
+        let old_index = std::fs::read(&index_path).unwrap();
+        std::fs::remove_file(&index_path).unwrap();
+        std::fs::create_dir(&index_path).unwrap();
+        let (engine, _, profiles, mut host) = fresh_save_session("Recover owned metadata");
+        let game = game_for_save(&profiles, 17);
+        manager
+            .write_continue_save_background(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        assert!(manager.finish_background().is_err());
+        assert!(manager.owned_recovery_path().exists());
+        assert_eq!(
+            GameSaveFile::read_from(&manager.save_path(0))
+                .unwrap()
+                .header
+                .provenance
+                .player_name,
+            "Recover owned metadata"
+        );
+        std::fs::remove_dir(&index_path).unwrap();
+        std::fs::write(&index_path, old_index).unwrap();
+        let recovered = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(recovered.saves()[0].player_name, "Recover owned metadata");
+        assert_eq!(recovered.saves()[0].mission_id, 17);
+        assert!(!manager.owned_recovery_path().exists());
+    }
+
+    #[test]
+    fn owned_receipt_cannot_publish_arbitrary_or_control_slots() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = indexed_store(root.path(), &["Continue"]);
+        let before = std::fs::read(root.path().join("saves.json")).unwrap();
+        for name in [
+            "Savegame_000",
+            "autosaves",
+            "../escape",
+            "owned-save-recovery",
+        ] {
+            let mut slot = published_slot("Continue");
+            slot.filename = name.into();
+            slot.special = SpecialSlot::from_filename(name);
+            let receipt = SpecialSaveRecovery {
+                slot,
+                digest: Sha256::digest(b"payload").into(),
+            };
+            std::fs::write(
+                manager.owned_recovery_path(),
+                serde_json::to_vec(&receipt).unwrap(),
+            )
+            .unwrap();
+            assert!(SaveGameManager::load_index(root.path().to_str().unwrap()).is_err());
+            assert_eq!(
+                std::fs::read(root.path().join("saves.json")).unwrap(),
+                before
+            );
+            assert!(manager.owned_recovery_path().exists());
+        }
+    }
+
+    #[test]
+    fn quick_owned_and_delete_recovery_preserve_each_others_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = indexed_store(root.path(), &["Continue", "Savegame_000"]);
+        let quick_bytes = b"quick recovery payload";
+        let owned_bytes = b"owned recovery payload";
+        std::fs::write(root.path().join("QuickSave.json"), quick_bytes).unwrap();
+        std::fs::write(root.path().join("Continue.json"), owned_bytes).unwrap();
+        let quick = QuickSaveRecovery {
+            slots: vec![(
+                published_slot("QuickSave"),
+                Sha256::digest(quick_bytes).into(),
+            )],
+        };
+        let mut owned_slot = published_slot("Continue");
+        owned_slot.player_name = "Recovered owned player".into();
+        let owned = SpecialSaveRecovery {
+            slot: owned_slot,
+            digest: Sha256::digest(owned_bytes).into(),
+        };
+        let delete = DeleteRecovery {
+            filename: SlotName::new("Savegame_000").unwrap(),
+        };
+        std::fs::write(
+            manager.quick_recovery_path(),
+            serde_json::to_vec(&quick).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            manager.owned_recovery_path(),
+            serde_json::to_vec(&owned).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            manager.delete_recovery_path(),
+            serde_json::to_vec(&delete).unwrap(),
+        )
+        .unwrap();
+        let reopened = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(reopened.count(), 2);
+        assert!(reopened.find_by_filename("QuickSave").is_some());
+        assert_eq!(
+            reopened
+                .get(reopened.find_by_filename("Continue").unwrap())
+                .unwrap()
+                .player_name,
+            "Recovered owned player"
+        );
+        assert!(!manager.quick_recovery_path().exists());
+        assert!(!manager.owned_recovery_path().exists());
+        assert!(!manager.delete_recovery_path().exists());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn delayed_old_write_is_drained_before_delete_and_cannot_resurrect_slot() {
+        use std::sync::mpsc;
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Continue"]);
+        let path = manager.save_path(0);
+        std::fs::write(&path, b"old payload").unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        manager
+            .operations
+            .start(SlotName::new("Continue").unwrap(), move || {
+                started_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .context("release latch timed out")?;
+                std::fs::write(path, b"late old write")?;
+                Ok(published_slot("Continue"))
+            })
+            .unwrap();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let deletion = std::thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            let result = manager.remove(0);
+            done_tx.send(result).unwrap();
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let pending = done_rx.recv_timeout(std::time::Duration::from_millis(50));
+        release_tx.send(()).unwrap();
+        assert!(matches!(pending, Err(mpsc::RecvTimeoutError::Timeout)));
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        deletion.join().unwrap();
+        assert!(!root.path().join("Continue.json").exists());
+        assert!(
+            SaveGameManager::load_index(root.path().to_str().unwrap())
+                .unwrap()
+                .saves()
+                .is_empty()
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn queued_writes_complete_in_order_and_retirement_cannot_touch_next_profile() {
+        let first_root = tempfile::tempdir().unwrap();
+        let second_root = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(first_root.path().to_str().unwrap().into());
+        let (mut engine, _, profiles, mut host) = fresh_save_session("Ordered save");
+        let game = game_for_save(&profiles, 17);
+        engine.test_set_frame_counter(10);
+        manager
+            .write_continue_save_background(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        engine.test_set_frame_counter(20);
+        manager
+            .write_continue_save_background(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap();
+        manager.finish_background().unwrap();
+        drop(manager);
+        let successor = indexed_store(second_root.path(), &["Continue"]);
+        std::fs::write(successor.save_path(0), b"successor profile").unwrap();
+        let recovered = SaveGameManager::load_index(first_root.path().to_str().unwrap()).unwrap();
+        assert_eq!(
+            recovered
+                .preflight_exact_slot(0)
+                .unwrap()
+                .engine
+                .frame_counter(),
+            20
+        );
+        assert_eq!(
+            std::fs::read(successor.save_path(0)).unwrap(),
+            b"successor profile"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
+    fn llvm_owned_worker_panic_is_joined_and_reported_once() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Continue"]);
+        let before = manager.saves()[0].clone();
+        let path = manager.save_path(0);
+        manager
+            .operations
+            .start(SlotName::new("Continue").unwrap(), move || {
+                struct TerminalMarker(PathBuf);
+                impl Drop for TerminalMarker {
+                    fn drop(&mut self) {
+                        std::fs::write(&self.0, b"unwind completed").unwrap();
+                    }
+                }
+                let _terminal = TerminalMarker(path);
+                panic!("injected owned worker panic");
+            })
+            .unwrap();
+        assert!(
+            manager
+                .finish_background()
+                .unwrap_err()
+                .to_string()
+                .contains("panicked")
+        );
+        assert!(manager.operations.pending_name().is_none());
+        assert_eq!(
+            std::fs::read(manager.save_path(0)).unwrap(),
+            b"unwind completed"
+        );
+        assert_eq!(&manager.saves()[0], &before);
+        assert!(manager.poll_background().is_err());
+        assert!(!manager.poll_background().unwrap());
+        assert!(manager.create_draft("blocked".into(), 1).is_err());
     }
 
     #[test]

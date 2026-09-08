@@ -459,7 +459,39 @@ impl RustCallbacks {
     }
 
     pub(crate) fn poll_autosaves(&mut self) -> Vec<AutosavePollResult> {
+        if let Err(error) = self.save_manager.poll_background() {
+            self.autosave_notices
+                .enqueue_save_failed(format!("{error:#}"));
+        }
         self.autosave.poll(&mut self.save_manager)
+    }
+
+    /// Retire every accepted filesystem operation before returning to a menu,
+    /// changing profiles, or reporting session completion. Always drain both
+    /// owners even when one reports failure.
+    pub(crate) fn finish_save_operations(&mut self) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if let Err(error) = self.save_manager.finish_background() {
+            let error = format!("{error:#}");
+            self.autosave_notices.enqueue_save_failed(error.clone());
+            errors.push(error);
+        }
+        for result in self.autosave.shutdown_and_poll(&mut self.save_manager) {
+            if let AutosavePollResult::Failed {
+                filename, error, ..
+            } = result
+            {
+                self.autosave_notices.enqueue_failed();
+                errors.push(format!(
+                    "autosave {filename} failed during retirement: {error}"
+                ));
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
     }
 }
 
@@ -927,6 +959,17 @@ pub(crate) fn perform_pending_save_load(
     else {
         return OperationOutcome::NOT_PENDING;
     };
+    // A load/restart must observe the completed payload and its matching index,
+    // never a physical replacement that the owner has not committed yet.
+    if let Err(error) = callbacks.save_manager.finish_background() {
+        callbacks
+            .autosave_notices
+            .enqueue_save_failed(format!("{error:#}"));
+        return OperationOutcome {
+            banner: Some(SaveBannerKind::SaveFailed),
+            ..OperationOutcome::NO_EVENT
+        };
+    }
     let mut outcome = OperationOutcome::NO_EVENT;
     let thumb_ref = thumbnail.as_ref();
     let mut event = None;

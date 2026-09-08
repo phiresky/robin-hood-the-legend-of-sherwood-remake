@@ -769,90 +769,100 @@ pub(crate) async fn run_mission_headless(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
-    // Direct headless restart must carry launch policy without mutating the
-    // caller's original arguments.
-    let mut session_args = args.clone();
-    let args = &mut session_args;
-    if let Some(error) = unprepared_replay_launch_error(args) {
-        return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
-    }
-    let mission_name = campaign.missions[mission_idx]
-        .profile(profiles)
-        .mission_filename
-        .clone();
-    let has_decoded_saved_world = pending_decoded_saved_world(callbacks);
-    let archive_restored = args
-        .resolved_mission_assets
-        .as_ref()
-        .is_some_and(|resolved| resolved.is_archive());
-    if !archive_restored
-        && let Err(error) = ensure_shipping_mission(
-            args,
-            &mission_name,
-            &campaign,
-            profiles,
-            has_decoded_saved_world,
-            |_| {},
-        )
-        .await
-    {
-        return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
-    }
-    let replay_restart = args
-        .replay_data
-        .as_ref()
-        .map(|_| (campaign.clone(), rng_seed, sim_config));
-    loop {
-        campaign = establish_mission_restart_boundary(campaign, rng_seed, sim_config);
-        let outcome = match HeadlessMissionBuilder::build(
-            callbacks,
-            campaign,
-            profiles,
-            mission_idx,
-            location,
-            args,
-            rng_seed,
-            sim_config,
-        )
-        .await
+    let mut outcome = async {
+        // Direct headless restart must carry launch policy without mutating the
+        // caller's original arguments.
+        let mut session_args = args.clone();
+        let args = &mut session_args;
+        if let Some(error) = unprepared_replay_launch_error(args) {
+            return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+        }
+        let mission_name = campaign.missions[mission_idx]
+            .profile(profiles)
+            .mission_filename
+            .clone();
+        let has_decoded_saved_world = pending_decoded_saved_world(callbacks);
+        let archive_restored = args
+            .resolved_mission_assets
+            .as_ref()
+            .is_some_and(|resolved| resolved.is_archive());
+        if !archive_restored
+            && let Err(error) = ensure_shipping_mission(
+                args,
+                &mission_name,
+                &campaign,
+                profiles,
+                has_decoded_saved_world,
+                |_| {},
+            )
+            .await
         {
-            HeadlessBuildOutcome::Ready(mut mission) => {
-                let outcome = mission.run(args).await;
-                mission.finish(outcome)
-            }
-            HeadlessBuildOutcome::Finished(outcome) => outcome,
-        };
-        if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
-            return outcome;
+            return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
         }
-        replay_init::carry_replay_taint_to_next_mission(
-            robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-        );
-        let outcome_sim_config = outcome.sim_config;
-        campaign = outcome.campaign;
-        if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
-            campaign = replay_campaign.clone();
-            rng_seed = *replay_seed;
-            sim_config =
-                simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
-        } else {
-            if !restore_direct_restart_boundary(&mut campaign, args) {
-                return MissionOutcome::new(
-                    campaign,
-                    rng_seed,
-                    sim_config,
-                    Err(
-                        "direct LevelRestart is missing its preselected mission checkpoint"
-                            .to_string(),
-                    ),
-                );
+        let replay_restart = args
+            .replay_data
+            .as_ref()
+            .map(|_| (campaign.clone(), rng_seed, sim_config));
+        loop {
+            campaign = establish_mission_restart_boundary(campaign, rng_seed, sim_config);
+            let outcome = match HeadlessMissionBuilder::build(
+                callbacks,
+                campaign,
+                profiles,
+                mission_idx,
+                location,
+                args,
+                rng_seed,
+                sim_config,
+            )
+            .await
+            {
+                HeadlessBuildOutcome::Ready(mut mission) => {
+                    let outcome = mission.run(args).await;
+                    mission.finish(outcome)
+                }
+                HeadlessBuildOutcome::Finished(outcome) => outcome,
+            };
+            if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
+                return outcome;
             }
-            let checkpoint = campaign.restart_simulation_checkpoint();
-            rng_seed = checkpoint.0;
-            sim_config =
-                simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
+            replay_init::carry_replay_taint_to_next_mission(
+                robin_engine::replay_rankability::InputTaintKind::MissionRestart,
+            );
+            let outcome_sim_config = outcome.sim_config;
+            campaign = outcome.campaign;
+            if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
+                campaign = replay_campaign.clone();
+                rng_seed = *replay_seed;
+                sim_config =
+                    simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
+            } else {
+                if !restore_direct_restart_boundary(&mut campaign, args) {
+                    return MissionOutcome::new(
+                        campaign,
+                        rng_seed,
+                        sim_config,
+                        Err(
+                            "direct LevelRestart is missing its preselected mission checkpoint"
+                                .to_string(),
+                        ),
+                    );
+                }
+                let checkpoint = campaign.restart_simulation_checkpoint();
+                rng_seed = checkpoint.0;
+                sim_config =
+                    simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
+            }
         }
     }
+    .await;
+    if let Err(error) = callbacks.finish_save_operations() {
+        outcome.result = Err(format!(
+            "mission save retirement failed: {error}; mission result: {:?}",
+            outcome.result
+        ));
+    }
+    outcome
 }
 
 /// Run the outer mission loop.
@@ -889,6 +899,7 @@ pub(crate) async fn run_session(
                 };
             }
         };
+    let mut outcome = async {
     if let Some((name, mission_id)) = initial_load {
         let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
             return SessionOutcome {
@@ -1220,6 +1231,14 @@ pub(crate) async fn run_session(
         session_args.resolved_mission_assets = None;
         session_args.mp_continue_session = session_args.server;
     }
+    }.await;
+    if let Err(error) = callbacks.finish_save_operations() {
+        outcome.result = Err(format!(
+            "session save retirement failed: {error}; session result: {:?}",
+            outcome.result
+        ));
+    }
+    outcome
 }
 
 fn clear_ambient_custom_launch(args: &mut crate::main_entry::CliArgs) {
@@ -1552,80 +1571,92 @@ pub(crate) async fn run_mission(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
-    if let Some(error) = unprepared_replay_launch_error(&args) {
-        return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
-    }
-    let mut replay_restart = args
-        .replay_data
-        .as_ref()
-        .map(|_| (campaign.clone(), rng_seed, sim_config));
-    let mut pending_replay = crate::http_server::take_pending_replay();
-    loop {
-        match prepare_pending_direct_replay(
-            &mut pending_replay,
-            &callbacks.application_context(),
-            profiles,
-            &mut args,
-        )
-        .await
-        {
-            Ok(Some(prepared)) => {
-                (campaign, mission_idx, location, rng_seed, sim_config) = prepared;
-                replay_restart = Some((campaign.clone(), rng_seed, sim_config));
+    let mut outcome = async {
+        if let Some(error) = unprepared_replay_launch_error(&args) {
+            return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+        }
+        let mut replay_restart = args
+            .replay_data
+            .as_ref()
+            .map(|_| (campaign.clone(), rng_seed, sim_config));
+        let mut pending_replay = crate::http_server::take_pending_replay();
+        loop {
+            match prepare_pending_direct_replay(
+                &mut pending_replay,
+                &callbacks.application_context(),
+                profiles,
+                &mut args,
+            )
+            .await
+            {
+                Ok(Some(prepared)) => {
+                    (campaign, mission_idx, location, rng_seed, sim_config) = prepared;
+                    replay_restart = Some((campaign.clone(), rng_seed, sim_config));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
+                }
             }
-            Ok(None) => {}
-            Err(error) => return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error)),
-        }
-        let outcome = run_mission_with_seed(
-            window,
-            callbacks,
-            campaign,
-            profiles,
-            mission_idx,
-            location,
-            &args,
-            rng_seed,
-            sim_config,
-            MultiplayerSetupFailurePolicy::Fatal,
-        )
-        .await;
-        if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
-            return outcome;
-        }
-        replay_init::carry_replay_taint_to_next_mission(
-            robin_engine::replay_rankability::InputTaintKind::MissionRestart,
-        );
-        let outcome_sim_config = outcome.sim_config;
-        campaign = outcome.campaign;
-        pending_replay = crate::http_server::take_pending_replay();
-        if pending_replay.is_some() {
-            // A newly admitted replay owns the next cold construction. Do not
-            // restore the previous mission checkpoint or reuse its selection.
-            continue;
-        }
-        if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
-            campaign = replay_campaign.clone();
-            rng_seed = *replay_seed;
-            sim_config =
-                simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
-        } else {
-            if !restore_direct_restart_boundary(&mut campaign, &mut args) {
-                return MissionOutcome::new(
-                    campaign,
-                    rng_seed,
-                    sim_config,
-                    Err(
-                        "direct LevelRestart is missing its preselected mission checkpoint"
-                            .to_string(),
-                    ),
-                );
+            let outcome = run_mission_with_seed(
+                window,
+                callbacks,
+                campaign,
+                profiles,
+                mission_idx,
+                location,
+                &args,
+                rng_seed,
+                sim_config,
+                MultiplayerSetupFailurePolicy::Fatal,
+            )
+            .await;
+            if !matches!(&outcome.result, Ok(GameCode::LevelRestart)) {
+                return outcome;
             }
-            let checkpoint = campaign.restart_simulation_checkpoint();
-            rng_seed = checkpoint.0;
-            sim_config =
-                simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
+            replay_init::carry_replay_taint_to_next_mission(
+                robin_engine::replay_rankability::InputTaintKind::MissionRestart,
+            );
+            let outcome_sim_config = outcome.sim_config;
+            campaign = outcome.campaign;
+            pending_replay = crate::http_server::take_pending_replay();
+            if pending_replay.is_some() {
+                // A newly admitted replay owns the next cold construction. Do not
+                // restore the previous mission checkpoint or reuse its selection.
+                continue;
+            }
+            if let Some((replay_campaign, replay_seed, replay_config)) = &replay_restart {
+                campaign = replay_campaign.clone();
+                rng_seed = *replay_seed;
+                sim_config =
+                    simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
+            } else {
+                if !restore_direct_restart_boundary(&mut campaign, &mut args) {
+                    return MissionOutcome::new(
+                        campaign,
+                        rng_seed,
+                        sim_config,
+                        Err(
+                            "direct LevelRestart is missing its preselected mission checkpoint"
+                                .to_string(),
+                        ),
+                    );
+                }
+                let checkpoint = campaign.restart_simulation_checkpoint();
+                rng_seed = checkpoint.0;
+                sim_config =
+                    simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
+            }
         }
     }
+    .await;
+    if let Err(error) = callbacks.finish_save_operations() {
+        outcome.result = Err(format!(
+            "mission save retirement failed: {error}; mission result: {:?}",
+            outcome.result
+        ));
+    }
+    outcome
 }
 
 /// Match campaign-loop handoff policy only after a direct, non-replay host
