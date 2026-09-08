@@ -64,7 +64,7 @@ pub(crate) enum MainMenuChoice {
     /// Player chose a save slot to load — the caller should start a
     /// session seeded with a `SaveLoadRequest::Load` for that slot.
     Load {
-        slot: usize,
+        slot: crate::savegame::SlotName,
         mission_id: u32,
     },
     /// Player picked a custom mission to launch.  For mod packs the
@@ -397,7 +397,8 @@ pub(crate) async fn show_main_menu(
     // profile/key-config transition so it can never retain Profile_000 as a
     // stale target. The session layer follows the same rule by constructing
     // callbacks only after the menu returns.
-    let mut save_manager = SaveGameManager::open_for_context(application_context);
+    let mut save_manager = SaveGameManager::open_for_context(application_context)
+        .unwrap_or_else(|error| panic!("Cannot open save store: {error}"));
 
     if open_options_initially
         && options::show_main_menu_options(
@@ -751,7 +752,8 @@ async fn dispatch_click(
             // Active profile may have changed — reopen the save manager so
             // subsequent "Load Game" clicks read the new profile's
             // `Profile_NNN/saves.json` index rather than the prior one.
-            *save_manager = SaveGameManager::open_for_context(application_context);
+            *save_manager = SaveGameManager::open_for_context(application_context)
+                .unwrap_or_else(|error| panic!("Cannot open selected profile save store: {error}"));
             // If the new active profile carries a different resolution,
             // resize so the surrounding menu re-lays out at the new size
             // on the next frame. `MenuTransform::centered` picks up the

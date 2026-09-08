@@ -10,7 +10,6 @@ use robin_engine::campaign::Campaign;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
 
-use super::SaveLoadRequest;
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
 use super::cli::{CliArgs, requested_replay_data};
 
@@ -362,18 +361,17 @@ pub async fn run_rust_game(
                 // first decodes the selected current-schema payload, restores
                 // and mounts its exact mission descriptor, and only then
                 // validates/reconstructs the saved profile index.
-                tracing::info!("Main menu Load: slot={slot}, mission_id={mission_id}");
+                tracing::info!(
+                    "Main menu Load: slot={}, mission_id={mission_id}",
+                    slot.as_str()
+                );
                 let outcome = Box::pin(run_session(
                     window,
                     campaign,
                     std::sync::Arc::make_mut(&mut profiles),
                     &application_context,
                     args,
-                    Some(SaveLoadRequest::Load {
-                        slot: Some(slot),
-                        mission_id,
-                        save: None,
-                    }),
+                    Some((slot, mission_id)),
                 ))
                 .await;
                 campaign = outcome.campaign;

@@ -147,7 +147,9 @@ impl LoadPickerModalState {
             let slot = *slot;
             self.delete_confirmation = None;
             if confirmed {
-                save_manager.remove(slot);
+                if let Err(error) = save_manager.remove(slot) {
+                    tracing::error!("Delete save failed (cleanup may be pending): {error:#}");
+                }
                 save_manager.sort_by_time();
                 self.visible = collect_visible_slots(save_manager, SaveLoadMode::Load)
                     .into_iter()
@@ -1152,7 +1154,11 @@ pub async fn show_save_load(
                         )
                         .await
                         {
-                            save_manager.remove(slot);
+                            if let Err(error) = save_manager.remove(slot) {
+                                tracing::error!(
+                                    "Delete save failed (cleanup may be pending): {error:#}"
+                                );
+                            }
                             // Sort before rebuilding the list, including
                             // post-delete refreshes.
                             save_manager.sort_by_time();

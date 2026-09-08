@@ -299,7 +299,8 @@ impl RustCallbacks {
     }
 
     pub fn new(application_context: ApplicationContext) -> Self {
-        let save_manager = SaveGameManager::open_for_context(&application_context);
+        let save_manager = SaveGameManager::open_for_context(&application_context)
+            .unwrap_or_else(|error| panic!("Cannot open session save store: {error}"));
         Self {
             #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             multiplayer_campaign: crate::multiplayer::MultiplayerCampaignSession::default(),

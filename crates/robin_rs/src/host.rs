@@ -3192,15 +3192,15 @@ mod application_context_tests {
             custom_keys.key_type
         );
 
-        let mut saves = crate::savegame::SaveGameManager::open_for_context(&context);
+        let mut saves = crate::savegame::SaveGameManager::open_for_context(&context).unwrap();
         let slot = saves.create("First save".into(), 7);
         let expected_save_root = root.path().join("Profile_001");
         assert_eq!(
-            std::path::Path::new(&saves.save_directory),
+            std::path::Path::new(saves.save_directory()),
             expected_save_root
         );
         assert!(saves.save_path(slot).starts_with(&expected_save_root));
-        assert!(!std::path::Path::new(&saves.save_directory).ends_with("Profile_000"));
+        assert!(!std::path::Path::new(saves.save_directory()).ends_with("Profile_000"));
     }
 
     #[test]
