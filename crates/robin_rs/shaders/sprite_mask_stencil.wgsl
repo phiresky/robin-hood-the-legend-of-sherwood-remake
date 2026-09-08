@@ -75,6 +75,12 @@ fn fs_main(in: VsOut) {
         let bottom = mix(dot(round(d01 * 255.0), weights), dot(round(d11 * 255.0), weights), fraction.x);
         value = mix(top, bottom, fraction.y);
     }
+    if (in.params.y <= 0.5) {
+        // Binary uploads retain their original 0/nonzero bytes. Nearest
+        // sampling and textureLoad preserve that predicate exactly; white
+        // stencil clear also remains one. Continuous RG8 depth is unchanged.
+        value = select(0.0, 1.0, value > 0.0);
+    }
     if (value <= in.params.x) {
         discard;
     }

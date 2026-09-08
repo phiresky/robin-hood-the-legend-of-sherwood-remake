@@ -224,6 +224,8 @@ impl GpuResources {
             }
         }
         let mut pages = 0;
+        let mut occupied_texels = 0u64;
+        let mut uploaded_texels = 0u64;
         while !pending.is_empty() {
             let mut packer = super::atlas::ShelfPacker::new(edge);
             let mut slots = Vec::new();
@@ -249,10 +251,12 @@ impl GpuResources {
                 !slots.is_empty(),
                 "validated mask must fit an empty atlas page"
             );
+            uploaded_texels += u64::from(extent[0]) * u64::from(extent[1]);
             let mut pixels = vec![0; (extent[0] * extent[1]) as usize];
             for &(_, bytes, bounds) in &slots {
                 let [x, y] = bounds.origin;
                 let [w, h] = bounds.size;
+                occupied_texels += u64::from(w) * u64::from(h);
                 // Replicate edge texels in the one-pixel gutter. Shader clamps
                 // before textureLoad too, including far outside local 0..1 UV.
                 for dy in 0..h + 2 {
@@ -294,7 +298,13 @@ impl GpuResources {
             }
             pages += 1;
         }
-        tracing::debug!(pages, enabled, "Uploaded binary mask atlas pages");
+        tracing::debug!(
+            pages,
+            enabled,
+            occupied_texels,
+            uploaded_texels,
+            "Uploaded binary mask atlas pages"
+        );
         Ok(())
     }
 
@@ -313,13 +323,9 @@ impl GpuResources {
         if bitmap.len() < pixels {
             return false;
         }
-        // Spread the binary bitmap (`0` / `1`) into R8 (`0` / `255`) so
-        // the sampler returns full 0..1, matching the alpha falloff of
-        // the original RGBA compose at building edges.
-        let mut r8 = Vec::with_capacity(pixels);
-        for &b in &bitmap[..pixels] {
-            r8.push(if b != 0 { 0xFFu8 } else { 0x00 });
-        }
+        // Preserve original binary bytes. The nearest-sampled binary shader
+        // tests nonzero, so expanding every byte to 255 would only add a full
+        // bitmap allocation/pass (including unused atlas page space).
         upload_counter::inc("mask alpha");
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&format!("mask alpha {mask_index}")),
@@ -342,7 +348,7 @@ impl GpuResources {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &r8,
+            &bitmap[..pixels],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(mask_w as u32),

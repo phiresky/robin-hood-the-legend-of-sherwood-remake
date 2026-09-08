@@ -3129,7 +3129,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
         .create_rgba_gpu_image(3, 2, &pixels, "capture contract")
         .unwrap();
     renderer
-        .upload_mask_alphas([(7, &[1, 0, 0, 1, 0, 0][..], 3, 2)])
+        .upload_mask_alphas([(7, &[2, 0, 0, 255, 0, 0][..], 3, 2)])
         .unwrap();
     let checkpoint = renderer.draw_queue_checkpoint();
     renderer.render_gpu_image(&image, None, None, BlendMode::None);
