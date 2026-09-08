@@ -3147,7 +3147,7 @@ mod tests {
         prepared.write_to(&disk_path).unwrap();
         let disk = GameSaveFile::read_from(&disk_path).unwrap();
         assert_eq!(
-            prepared.clone().into_payload().replay_identity().unwrap(),
+            GameSaveFile::replay_identity(&prepared).unwrap(),
             disk.replay_identity().unwrap()
         );
         let decoded: PreparedGameSave =
