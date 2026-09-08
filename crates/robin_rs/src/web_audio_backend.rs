@@ -131,9 +131,14 @@ fn platform_context() -> Result<AudioContext, String> {
         if let Some(context) = slot.as_ref() {
             return Ok(context.clone());
         }
+        let context_start = web_time::Instant::now();
         let context =
             AudioContext::new().map_err(|error| format!("create AudioContext: {error:?}"))?;
         install_autoplay_unlock(&context)?;
+        tracing::info!(
+            elapsed_ms = context_start.elapsed().as_secs_f64() * 1000.0,
+            "startup timing: audio device initialization"
+        );
         *slot = Some(context.clone());
         Ok(context)
     })
@@ -1438,6 +1443,39 @@ mod browser_lifecycle_tests {
             other_backend.state.borrow().channels[other_index],
             ChannelSlot::Empty
         ));
+    }
+
+    #[wasm_bindgen_test]
+    fn mission_warmup_cancellation_is_session_owned() {
+        let first = session();
+        let other = session();
+        let (first_abort, _) = futures::future::AbortHandle::new_pair();
+        let (other_abort, _) = futures::future::AbortHandle::new_pair();
+        first
+            .with_audio(|audio| audio.mission_warmup = Some(first_abort.clone()))
+            .unwrap();
+        other
+            .with_audio(|audio| audio.mission_warmup = Some(other_abort.clone()))
+            .unwrap();
+
+        clear_mission(&first).unwrap();
+        assert!(first_abort.is_aborted());
+        assert!(!other_abort.is_aborted());
+        assert!(
+            first
+                .with_audio(|audio| audio.mission_warmup.is_none())
+                .unwrap()
+        );
+
+        let (replacement, _) = futures::future::AbortHandle::new_pair();
+        first
+            .with_audio(|audio| audio.mission_warmup = Some(replacement.clone()))
+            .unwrap();
+        first.retire();
+        assert!(replacement.is_aborted());
+        assert!(!other_abort.is_aborted());
+        other.retire();
+        assert!(other_abort.is_aborted());
     }
 
     #[wasm_bindgen_test]

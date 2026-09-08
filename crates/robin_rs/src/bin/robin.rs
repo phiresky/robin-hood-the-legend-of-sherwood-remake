@@ -409,13 +409,24 @@ fn wasm_query_thread_override() -> Option<usize> {
 async fn wasm_main(
     shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
 ) -> anyhow::Result<()> {
-    let pool_start = web_time::Instant::now();
-    #[cfg(feature = "wasm-threads")]
-    wasm_init_thread_pool().await;
-    tracing::info!(
-        elapsed_ms = pool_start.elapsed().as_secs_f64() * 1000.0,
-        "startup timing: worker pool"
-    );
+    use futures::FutureExt as _;
+
+    // Start worker creation before synchronous initialization and async GPU
+    // bring-up. Poll once here so the browser can load workers while the main
+    // thread prepares the window; merely constructing a future starts no work.
+    let pool_init = async {
+        let pool_start = web_time::Instant::now();
+        #[cfg(feature = "wasm-threads")]
+        wasm_init_thread_pool().await;
+        tracing::info!(
+            elapsed_ms = pool_start.elapsed().as_secs_f64() * 1000.0,
+            "startup timing: worker pool"
+        );
+    }
+    .boxed_local()
+    .shared();
+    let _ = pool_init.clone().now_or_never();
+    wasm_bindgen_futures::spawn_local(pool_init.clone());
     let args = robin_rs::main_entry::parse_cli();
     let init_start = web_time::Instant::now();
     let (campaign, profiles, shipping) =
@@ -435,6 +446,14 @@ async fn wasm_main(
             tracing::info!(
                 elapsed_ms = window_start.elapsed().as_secs_f64() * 1000.0,
                 "startup timing: window ready"
+            );
+            // Mission streaming chooses its serial/threaded path once. Keep
+            // that decision behind pool completion, including failure fallback.
+            let pool_join_start = web_time::Instant::now();
+            pool_init.await;
+            tracing::info!(
+                elapsed_ms = pool_join_start.elapsed().as_secs_f64() * 1000.0,
+                "startup timing: worker pool remaining wait"
             );
             match robin_rs::main_entry::run_rust_game(
                 &mut window,
