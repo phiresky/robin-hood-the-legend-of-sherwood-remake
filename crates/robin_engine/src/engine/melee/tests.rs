@@ -1242,11 +1242,11 @@ fn purse_brawl_knocks_out_allied_soldier_independently_of_diplomacy() {
             .mission_domain
             .diplomacy
             .set_npc_faction_wars(faction_wars);
-        let _null_slot = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let null_slot = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
         let victim = engine.add_entity(make_soldier(WorldPoint3D::new(20.0, 0.0, 0.0), None));
         let assets = assets_with_sword_profile(1, 50);
-        for id in [attacker, victim] {
+        for id in [null_slot, attacker, victim] {
             engine
                 .get_entity_mut(id)
                 .unwrap()
