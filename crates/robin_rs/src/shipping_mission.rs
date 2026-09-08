@@ -478,7 +478,11 @@ fn spawn_experimental_sprite_downloads(
                     late_sprites::experimental_epoch() == Some(epoch),
                     "sprite tail generation superseded"
                 );
-                let compressed = fetch(datadir, &file)
+                // Threaded builds expose the streaming reader with byte
+                // accounting; keep tail progress separate from the completed
+                // initial mission-loading progress model.
+                let fetch_progress = FetchByteProgress::default();
+                let compressed = fetch_counted(datadir, &file, &fetch_progress)
                     .await
                     .with_context(|| format!("fetch experimental sprite tail {file}"))?;
                 let part =
