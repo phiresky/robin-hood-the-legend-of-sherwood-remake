@@ -401,6 +401,7 @@ impl Default for FrameDictionary {
 }
 
 impl FrameDictionary {
+    #[cfg(any(feature = "engine-adapters", test))]
     pub(crate) fn resident_bytes(&self) -> usize {
         self.values.len() * std::mem::size_of::<u16>()
     }
