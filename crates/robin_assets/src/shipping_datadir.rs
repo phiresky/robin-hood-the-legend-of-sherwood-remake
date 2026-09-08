@@ -505,32 +505,30 @@ pub fn derive_chunk_self_refs(
         .map(|(index, &id)| (id, index as u32))
         .collect();
     let mut refs: Vec<Option<crate::sprite_codec::SelfRef>> = vec![None; sprite_ids.len()];
-    let mut try_pair =
-        |cur: u32,
-         r: u32,
-         oc: (i32, i32),
-         or_: (i32, i32),
-         refs: &mut Vec<Option<crate::sprite_codec::SelfRef>>| {
-            if r >= cur {
-                return;
-            }
-            let (Some(&cur_pos), Some(&ref_pos)) = (batch_index.get(&cur), batch_index.get(&r))
-            else {
-                return;
-            };
-            if refs[cur_pos as usize].is_some() {
-                return;
-            }
-            let (dx, dy) = (oc.0 - or_.0, oc.1 - or_.1);
-            if dx % 4 != 0 {
-                return;
-            }
-            refs[cur_pos as usize] = Some(crate::sprite_codec::SelfRef {
-                grid: ref_pos,
-                dtx: dx / 4,
-                dy,
-            });
+    let try_pair = |cur: u32,
+                    r: u32,
+                    oc: (i32, i32),
+                    or_: (i32, i32),
+                    refs: &mut Vec<Option<crate::sprite_codec::SelfRef>>| {
+        if r >= cur {
+            return;
+        }
+        let (Some(&cur_pos), Some(&ref_pos)) = (batch_index.get(&cur), batch_index.get(&r)) else {
+            return;
         };
+        if refs[cur_pos as usize].is_some() {
+            return;
+        }
+        let (dx, dy) = (oc.0 - or_.0, oc.1 - or_.1);
+        if dx % 4 != 0 {
+            return;
+        }
+        refs[cur_pos as usize] = Some(crate::sprite_codec::SelfRef {
+            grid: ref_pos,
+            dtx: dx / 4,
+            dy,
+        });
+    };
     let off = |s: &robin_engine::sprite_script::SpriteScript, k: usize| {
         s.offsets
             .get(k)

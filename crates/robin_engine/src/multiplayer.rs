@@ -338,8 +338,9 @@ macro_rules! ranked_wire_document {
             /// Wrap bytes produced by
             /// `leaderboard_ranked_session::encode_ranked_wire_document`.
             pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
-                validate_ranked_wire_document_bytes(&bytes)?;
-                Ok(Self(bytes))
+                let document = Self(bytes);
+                document.validate()?;
+                Ok(document)
             }
 
             pub fn as_bytes(&self) -> &[u8] {

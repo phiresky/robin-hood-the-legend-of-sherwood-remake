@@ -376,17 +376,6 @@ pub struct NativeContext<'ctx, 'owners: 'ctx> {
 }
 
 impl<'ctx, 'owners: 'ctx> NativeContext<'ctx, 'owners> {
-    pub(crate) fn relationship(
-        &self,
-        first: crate::element::Camp,
-        second: crate::element::Camp,
-    ) -> crate::diplomacy::Relationship {
-        self.diplomacy.as_deref().map_or_else(
-            || crate::diplomacy::DiplomacyState::default().relationship(first, second),
-            |diplomacy| diplomacy.relationship(first, second),
-        )
-    }
-
     pub(crate) fn is_player_aligned_camp(&self, camp: crate::element::Camp) -> bool {
         self.diplomacy.as_deref().map_or_else(
             || crate::diplomacy::DiplomacyState::default().is_player_aligned(camp),

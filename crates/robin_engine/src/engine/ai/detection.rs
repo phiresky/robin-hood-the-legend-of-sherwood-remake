@@ -600,12 +600,6 @@ fn optical_target_is_passing_door(
     selected_actor_is_passing_door(sequence_manager, target)
 }
 
-/// Original's forest-wide rear-view exception is camp-based. Mounted
-/// Royalists take the same 180-degree detection path as every other Royalist.
-fn forest_180_degree_view_enabled(is_forest_level: bool, viewer_camp: Camp) -> bool {
-    is_forest_level && viewer_camp == Camp::Royalists
-}
-
 fn forest_180_degree_view_enabled_with_relationship(
     is_forest_level: bool,
     viewer_player_aligned: bool,
@@ -823,14 +817,6 @@ fn refresh_detection_scans_target(
         && (target_position.y - viewer_position.y).abs() <= radius_y
 }
 
-fn non_enemy_visibility_blocked_before_cadence(
-    eye_status: crate::element::EyeStatus,
-    viewer_camp: Camp,
-    type_gate_blocked: bool,
-) -> bool {
-    eye_status.is_blind() || !viewer_camp.is_hostile_to(Camp::Royalists) || type_gate_blocked
-}
-
 fn non_enemy_visibility_blocked_with_relationship(
     eye_status: crate::element::EyeStatus,
     viewer_hostile_to_player: bool,
@@ -841,32 +827,6 @@ fn non_enemy_visibility_blocked_with_relationship(
 
 fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool {
     dead || unconscious
-}
-
-fn apply_enemy_beggar_disguise(
-    viewer_camp: Camp,
-    target_is_pc: bool,
-    got_beggar_trick: &mut bool,
-    order_type: crate::order::OrderType,
-    visibility: f32,
-) -> f32 {
-    if !viewer_camp.is_hostile_to(Camp::Royalists)
-        || !target_is_pc
-        || *got_beggar_trick
-        || visibility <= 0.0
-    {
-        return visibility;
-    }
-
-    match order_type {
-        crate::order::OrderType::SimulatingBeggar => 0.0,
-        crate::order::OrderType::TransitionWaitingUprightSimulatingBeggar
-        | crate::order::OrderType::TransitionSimulatingBeggarWaitingUpright => {
-            *got_beggar_trick = true;
-            visibility
-        }
-        _ => visibility,
-    }
 }
 
 fn apply_enemy_beggar_disguise_with_relationship(
@@ -4740,7 +4700,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4780,7 +4739,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4836,7 +4794,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4889,7 +4846,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4996,7 +4952,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -5754,7 +5709,6 @@ struct ViewContext<'a> {
     /// Original-game inside-building test: building sector or active door transit.
     /// Used only by detection refresh's outer scan-entry alternative.
     viewer_inside_building: bool,
-    camp: Camp,
     hostile_to_player: bool,
     eye: MapPoint,
     eye_world: crate::coordinates::WorldPoint3D,
@@ -5940,8 +5894,8 @@ mod tests {
     #[test]
     fn closed_cadence_beggar_disguise_turns_reused_visibility_into_cached_zero() {
         let mut got_beggar_trick = false;
-        let visibility = apply_enemy_beggar_disguise(
-            Camp::Lacklandists,
+        let visibility = apply_enemy_beggar_disguise_with_relationship(
+            Camp::Lacklandists.is_hostile_to(Camp::Royalists),
             true,
             &mut got_beggar_trick,
             crate::order::OrderType::SimulatingBeggar,
@@ -5950,8 +5904,8 @@ mod tests {
         assert_eq!(visibility, 0.0);
         assert!(!got_beggar_trick);
 
-        let visibility = apply_enemy_beggar_disguise(
-            Camp::Lacklandists,
+        let visibility = apply_enemy_beggar_disguise_with_relationship(
+            Camp::Lacklandists.is_hostile_to(Camp::Royalists),
             true,
             &mut got_beggar_trick,
             crate::order::OrderType::TransitionWaitingUprightSimulatingBeggar,
@@ -5971,24 +5925,24 @@ mod tests {
 
     #[test]
     fn blind_type_gate_and_royalist_block_non_enemy_visibility_before_cadence() {
-        assert!(non_enemy_visibility_blocked_before_cadence(
+        assert!(non_enemy_visibility_blocked_with_relationship(
             crate::element::EyeStatus::Closed,
-            Camp::Lacklandists,
+            Camp::Lacklandists.is_hostile_to(Camp::Royalists),
             false,
         ));
-        assert!(non_enemy_visibility_blocked_before_cadence(
+        assert!(non_enemy_visibility_blocked_with_relationship(
             crate::element::EyeStatus::LookForward,
-            Camp::Lacklandists,
+            Camp::Lacklandists.is_hostile_to(Camp::Royalists),
             true,
         ));
-        assert!(non_enemy_visibility_blocked_before_cadence(
+        assert!(non_enemy_visibility_blocked_with_relationship(
             crate::element::EyeStatus::LookForward,
-            Camp::Royalists,
+            Camp::Royalists.is_hostile_to(Camp::Royalists),
             false,
         ));
-        assert!(!non_enemy_visibility_blocked_before_cadence(
+        assert!(!non_enemy_visibility_blocked_with_relationship(
             crate::element::EyeStatus::LookForward,
-            Camp::Lacklandists,
+            Camp::Lacklandists.is_hostile_to(Camp::Royalists),
             false,
         ));
     }
@@ -6344,10 +6298,14 @@ mod tests {
     }
 
     #[test]
-    fn forest_180_degree_view_depends_only_on_level_and_royalist_camp() {
-        assert!(forest_180_degree_view_enabled(true, Camp::Royalists));
-        assert!(!forest_180_degree_view_enabled(false, Camp::Royalists));
-        assert!(!forest_180_degree_view_enabled(true, Camp::Lacklandists));
+    fn forest_180_degree_view_depends_only_on_level_and_player_alignment() {
+        assert!(forest_180_degree_view_enabled_with_relationship(true, true));
+        assert!(!forest_180_degree_view_enabled_with_relationship(
+            false, true
+        ));
+        assert!(!forest_180_degree_view_enabled_with_relationship(
+            true, false
+        ));
     }
 
     #[test]
