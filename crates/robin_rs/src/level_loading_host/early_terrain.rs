@@ -86,7 +86,9 @@ impl EarlyTerrainDecode {
             let worker_cancelled = cancelled.clone();
             let worker_finished = finished.clone();
             // One serial decoder occupies exactly one scheduler slot.
-            robin_assets::wasm_threads::start_on_pool(move || {
+            // Dispatch is eager; EarlyTerrainDecode owns the separate result
+            // channel above, so this unit-completion receiver is unnecessary.
+            let _ = robin_assets::wasm_threads::start_on_pool(move || {
                 let _finished = FinishOnDrop(worker_finished);
                 if !worker_cancelled.load(Ordering::Acquire) {
                     let started = web_time::Instant::now();
