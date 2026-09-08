@@ -1,6 +1,8 @@
 //! Game session: mission selection loop and the per-mission game loop.
 
 mod bootstrap;
+#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+pub(crate) use bootstrap::export_official_mission_headless;
 mod debriefing;
 mod dispatch;
 mod event_hud;
