@@ -68,3 +68,8 @@ it saves `.failure.json` with logs, served requests and Chrome diagnostics.
 ```sh
 node --test scripts/startup_throttle.test.mjs
 ```
+
+Use `--trace` to retain a Chrome trace (`.trace.json`) with timeline, GPU and V8
+CPU sampling events, and `--cpu-profile` for the page-thread `.cpuprofile`.
+Both cover navigation through the settled screenshot. Profiling adds overhead;
+these are attribution diagnostics, not the uninstrumented timing comparisons.

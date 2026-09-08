@@ -22,6 +22,7 @@ const { values } = parseArgs({ options: {
     site: { type: 'string', default: 'wasm-www/dist' }, core: { type: 'string', default: 'assets/core-datadir' },
     mbit: { type: 'string', default: '16' }, chrome: { type: 'string', default: 'google-chrome' },
     mission: { type: 'string', default: 'auto' }, 'require-present': { type: 'boolean', default: false },
+    trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
     query: { type: 'string', multiple: true, default: [] },
 } });
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
@@ -130,12 +131,15 @@ try {
     const send = (method, params = {}) => new Promise((resolve, reject) => {
         pending.set(++id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params }));
     });
-    let bootstrapEpoch, presentEpoch;
+    let bootstrapEpoch, presentEpoch, finishTrace;
+    const traceComplete = new Promise(resolve => { finishTrace = resolve; });
     socket.addEventListener('message', event => {
         const message = JSON.parse(event.data);
         if (message.id) {
             const request = pending.get(message.id); pending.delete(message.id);
             if (message.error) request.reject(new Error(JSON.stringify(message.error))); else request.resolve(message.result);
+        } else if (message.method === 'Tracing.tracingComplete') {
+            finishTrace(message.params);
         } else if (message.method === 'Runtime.consoleAPICalled') {
             const p = message.params;
             const line = p.args.map(arg => arg.value ?? arg.description ?? '').join(' ').replaceAll('%c', '');
@@ -151,6 +155,14 @@ try {
     const query = new URLSearchParams({ mission: values.mission, 'wasm-threads': '4', 'wasm-log': 'info' });
     if (values.mission === 'auto') query.delete('mission');
     for (const value of values.query) { const at = value.indexOf('='); if (at < 1) throw new Error('--query requires KEY=VALUE'); query.set(value.slice(0, at), value.slice(at + 1)); }
+    if (values.trace) await send('Tracing.start', {
+        categories: 'devtools.timeline,blink.user_timing,v8,gpu,disabled-by-default-v8.cpu_profiler',
+        transferMode: 'ReturnAsStream',
+    });
+    if (values['cpu-profile']) {
+        await send('Profiler.enable');
+        await send('Profiler.start');
+    }
     
     await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/?${query}` });
     const deadline = Date.now() + 180000;
@@ -164,10 +176,32 @@ try {
     const screenshotEnd = performance.now();
     await writeFile(output + '.png', Buffer.from(screenshot.data, 'base64'));
     if (errors.length) throw new Error('Browser exception during startup/capture: ' + JSON.stringify(errors));
+    if (values['cpu-profile']) {
+        const { profile } = await send('Profiler.stop');
+        await writeFile(output + '.cpuprofile', JSON.stringify(profile));
+    }
+    if (values.trace) {
+        await send('Tracing.end');
+        let timer;
+        const { stream } = await Promise.race([
+            traceComplete,
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Chrome trace completion timed out')), 30000); }),
+        ]).finally(() => clearTimeout(timer));
+        if (!stream) throw new Error('Chrome trace completed without a stream');
+        const chunks = [];
+        for (;;) {
+            const chunk = await send('IO.read', { handle: stream });
+            chunks.push(Buffer.from(chunk.data, chunk.base64Encoded ? 'base64' : 'utf8'));
+            if (chunk.eof) break;
+        }
+        await send('IO.close', { handle: stream });
+        await writeFile(output + '.trace.json', Buffer.concat(chunks));
+    }
     const navigationServerAt = page.timeOrigin - performance.timeOrigin;
     const result = {
         inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
         pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
+        diagnostics: { trace: values.trace, cpuProfile: values['cpu-profile'], caveat: 'Optional profiling adds overhead; use uninstrumented runs for timing comparisons.' },
         network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: 'fresh browser profile; normal intra-navigation HTTP caching', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },
         endpoints: { bootstrapMs: bootstrapEpoch - page.timeOrigin, firstMissionPresentReturnedMs: presentEpoch ? presentEpoch - page.timeOrigin : null, afterTwoRafMs: page.screenshotRequestAt, screenshotRequestMs: screenshotStart - navigationServerAt, screenshotCompleteMs: screenshotEnd - navigationServerAt, screenshotSettleMs: 500, screenshotServerDurationMs: screenshotEnd - screenshotStart, caveat: 'Screenshot after bootstrap, two animation callbacks and 500ms settle is an inspectable image, not a physical display presentation timestamp. present returned is submission-side only.' },
         page, errors, logs: logs.map(({ epochMs, line }) => ({ pageMs: epochMs - page.timeOrigin, line })),
