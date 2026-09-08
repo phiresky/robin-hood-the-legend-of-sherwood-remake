@@ -360,7 +360,7 @@ impl SlotHandle {
 
 fn next_store_owner() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT.fetch_update(
+    NEXT.try_update(
         std::sync::atomic::Ordering::Relaxed,
         std::sync::atomic::Ordering::Relaxed,
         |value| value.checked_add(1),

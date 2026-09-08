@@ -988,11 +988,19 @@ pub(crate) fn perform_pending_save_load(
                 }
             };
             if host.transport.net.is_some() {
-                let idx = slot.unwrap_or_else(|| {
-                    callbacks
+                let idx = match slot.map(Ok).unwrap_or_else(|| {
+                    let handle = callbacks
                         .save_manager
-                        .create("Multiplayer diagnostic".to_string(), mission_id)
-                });
+                        .create_draft("Multiplayer diagnostic".to_string(), mission_id)?;
+                    callbacks.save_manager.resolve_handle(&handle)
+                }) {
+                    Ok(idx) => idx,
+                    Err(error) => {
+                        tracing::error!("Multiplayer diagnostic draft failed: {error:#}");
+                        outcome.banner = Some(SaveBannerKind::SaveFailed);
+                        return outcome;
+                    }
+                };
                 let result = callbacks
                     .save_manager
                     .write_multiplayer_diagnostic_from_engine(
@@ -1366,9 +1374,18 @@ pub(crate) fn perform_pending_save_load(
         }
         SaveLoadRequest::QuickSave { mission_id } => {
             if host.transport.net.is_some() {
-                let idx = callbacks
+                let idx = match callbacks
                     .save_manager
-                    .create("Multiplayer quick diagnostic".to_string(), mission_id);
+                    .create_draft("Multiplayer quick diagnostic".to_string(), mission_id)
+                    .and_then(|handle| callbacks.save_manager.resolve_handle(&handle))
+                {
+                    Ok(idx) => idx,
+                    Err(error) => {
+                        tracing::error!("Multiplayer quick diagnostic draft failed: {error:#}");
+                        outcome.banner = Some(SaveBannerKind::SaveFailed);
+                        return outcome;
+                    }
+                };
                 let result = callbacks
                     .save_manager
                     .write_multiplayer_diagnostic_from_engine(
