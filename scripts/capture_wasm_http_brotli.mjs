@@ -7,15 +7,15 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { brotliDecompressSync } from 'node:zlib';
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const { values } = parseArgs({ options: {
     worktree: { type: 'string' }, pkg: { type: 'string' }, wasm: { type: 'string' },
-    output: { type: 'string' }, 'timeout-ms': { type: 'string', default: '60000' },
+    output: { type: 'string' }, 'precompressed-worker': { type: 'boolean', default: false }, 'accept-encoding': { type: 'string', default: 'br' }, 'timeout-ms': { type: 'string', default: '60000' },
 } });
 if (!values.worktree || !values.output || Boolean(values.pkg) === Boolean(values.wasm)) {
-    throw new Error('Usage: node scripts/capture_wasm_http_brotli.mjs --worktree REPO (--pkg PACKAGE | --wasm RAW_WASM) --output FILE.br [--timeout-ms 60000]');
+    throw new Error('Usage: node scripts/capture_wasm_http_brotli.mjs --worktree REPO (--pkg PACKAGE | --wasm RAW_WASM) --output FILE.br [--timeout-ms 60000] [--precompressed-worker] [--accept-encoding ENCODINGS]');
 }
 const timeoutMs = Number(values['timeout-ms']);
 if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('--timeout-ms must be a positive integer');
@@ -67,7 +67,7 @@ async function reservePort() {
 function request(port) {
     return new Promise((resolve, reject) => {
         const req = get({ hostname: '127.0.0.1', port, path: '/wasm/test/robin_bg.wasm',
-            headers: { 'Accept-Encoding': 'br' }, signal,
+            headers: { 'Accept-Encoding': values['accept-encoding'] }, signal,
         }, response => {
             const chunks = [];
             response.on('data', chunk => chunks.push(chunk));
@@ -104,6 +104,13 @@ try {
     await writeFile(join(scratch, 'assets/_headers'), runtimeHeaders);
     const config = { name: 'robin-http-brotli-capture', compatibility_date: runtimeConfig.compatibility_date,
         assets: { directory: './assets', html_handling: 'none' } };
+    if (values['precompressed-worker']) {
+        await copyFile(`${input}.br`, join(scratch, 'assets/wasm/test/robin_bg.wasm.br'));
+        await copyFile(join(tree, 'scripts/wasm-precompressed-worker.mjs'), join(scratch, 'runtime-worker.mjs'));
+        config.main = './runtime-worker.mjs';
+        config.assets.binding = 'ASSETS';
+        config.assets.run_worker_first = ['/wasm/*.wasm'];
+    }
     await writeFile(join(scratch, 'wrangler.json'), JSON.stringify(config));
     const port = await reservePort();
     signal.throwIfAborted();
@@ -132,20 +139,20 @@ try {
             await delay(100, undefined, { signal });
         }
     }
-    if (response.status !== 200 || response.headers['content-encoding'] !== 'br') {
-        throw new Error(`Expected HTTP 200 Brotli: status=${response.status}, headers=${JSON.stringify(response.headers)}`);
+    if (response.status !== 200 || !['br', 'gzip'].includes(response.headers['content-encoding'])) {
+        throw new Error(`Expected HTTP 200 compressed WASM: status=${response.status}, headers=${JSON.stringify(response.headers)}`);
     }
-    const decoded = brotliDecompressSync(response.body);
-    if (!decoded.equals(raw)) throw new Error('HTTP Brotli body does not decode to the exact input WASM');
+    const decoded = response.headers['content-encoding'] === 'br' ? brotliDecompressSync(response.body) : gunzipSync(response.body);
+    if (!decoded.equals(raw)) throw new Error('HTTP body does not decode to the exact input WASM');
     signal.throwIfAborted();
-    const facts = { input, worktree: tree, capturedAt: new Date().toISOString(),
+    const facts = { input, worktree: tree, capturedAt: new Date().toISOString(), acceptEncoding: values['accept-encoding'],
         rawBytes: raw.length, rawSha256: sha256(raw),
         encodedBytes: response.body.length, encodedSha256: sha256(response.body),
         decodedSha256: sha256(decoded), headers: response.headers,
         runtimeHeadersPath: headerPath, runtimeHeadersSha256: sha256(runtimeHeaders),
         node: process.version, wrangler: wranglerPackage.version, wranglerRepositoryPin: pinnedVersion,
         compatibilityDate: runtimeConfig.compatibility_date,
-        method: 'Local Wrangler static-assets HTTP response with Accept-Encoding: br; no deployment',
+        method: values['precompressed-worker'] ? 'Local Wrangler runtime Worker with offline sidecar; no deployment' : 'Local Wrangler static-assets HTTP response; no deployment',
     };
     // Exclusive creates prevent silently replacing an earlier measurement.
     await writeFile(output, response.body, { flag: 'wx' }); wroteOutput = true;

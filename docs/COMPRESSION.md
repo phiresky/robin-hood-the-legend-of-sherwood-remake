@@ -4,6 +4,14 @@ Summary of a benchmark sweep looking at whether we can shrink the shipping datad
 
 ## Latest recorded outcome
 
+Transport qualification from the [follow-up investigation](perf/replay-wasm-transport-next.md):
+the earlier 6,639,157-byte HTTP Brotli capture used a forced Brotli request. Local
+Wrangler with Chrome's normal mixed encoding header returned 7,822,465-byte gzip
+for both routes. The earlier replay benchmark explicitly served the captured
+Brotli representation; its measured timings remain valid for that fixture, but
+do not establish normal browser/CDN encoding negotiation. No new transport win
+was verified.
+
 This document is a chronological research log. Later implementation sections
 supersede the early recommendations: VQ sprites now use `sprite_codec` with
 cross-variant contexts, and web RLE sprites use quality-gated lossy JXL atlases.

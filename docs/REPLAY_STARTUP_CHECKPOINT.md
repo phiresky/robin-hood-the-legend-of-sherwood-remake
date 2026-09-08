@@ -52,3 +52,22 @@ current repository path when resuming; retain original evidence/provenance.
 
 These validate the removal; the browser timings above are the retained earlier
 measurements, not a fresh benchmark of this cleanup.
+
+## Four-track follow-up completed
+
+All four investigations are integrated as reports and reusable probes; no new
+production speedup was verified. [Payload audit](perf/replay-payload-next.md)
+found no safe large closure reduction. [Early-fetch diagnostics](perf/replay-early-fetch-next.md)
+rejected admission-time bulk fetch because it delayed WASM; historical traces
+leave roughly 350 ms for post-WASM transfer overlap.
+
+[Cache measurements](perf/replay-cache-next.md) confirm existing required-asset
+reuse: about 31.10 MB cold versus 2,008 shell bytes warm. Warm first-present
+medians were 5.04 s for the same replay and 4.80 s for a different recording of
+the same mission; concurrent CPU activity limits timing comparisons.
+
+[Transport investigation](perf/replay-wasm-transport-next.md) corrects the prior
+Brotli assumption: 6.64 MB was a forced-Brotli capture; normal Chrome encoding
+negotiation in local Wrangler produced 7.82 MB gzip for both candidates. The
+historical startup harness used the captured representation explicitly.
+Production deployment is unchanged. Integrated probe tests and syntax checks pass.
