@@ -3,6 +3,7 @@
 // shell and the actual /wasm/<hash> and /datadirs/... URL layout locally.
 // Example: node scripts/wasm_production_startup_chrome.mjs --pkg /tmp/pkg \
 //   --datadir /tmp/corpus --output /tmp/startup --mbit 16
+// Repeat warm loads with --repeat-replay FILE (repeatable; same package build).
 // Default mission=auto exercises normal production demo launch (correct demo team).
 // Explicit Dem_Lei_MP takes a different forced-mission path with a different team.
 // Endpoint: bootstrap and screenshot-after-two-rAF plus 500ms capture settle, NOT physical presentation.
@@ -25,15 +26,30 @@ const { values } = parseArgs({ options: {
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
     'http-wasm-br': { type: 'string' }, 'http-admission-br': { type: 'string' },
     replay: { type: 'string' },
+    'repeat-replay': { type: 'string', multiple: true, default: [] },
     query: { type: 'string', multiple: true, default: [] },
 } });
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
 const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resolve(values.site), core = resolve(values.core);
-const output = resolve(values.output);
+const outputBase = resolve(values.output);
+let output = outputBase;
 const replayContent = values.replay ? (await readFile(resolve(values.replay), 'utf8')).trim() : undefined;
 const replayBuild = replayContent?.match(/^rhrec-([0-9a-f]{12})-/)?.[1];
 if (replayContent !== undefined && !replayBuild) throw new Error('--replay must contain a compact rhrec replay');
 if (replayContent !== undefined && values.mission !== 'auto') throw new Error('Replay header must select the mission; omit --mission');
+// Reuse one origin and Chrome profile: query changes must not change asset identity.
+// Each repeat is an actual admitted replay, not a synthetic asset-only request.
+const replayRuns = [{ path: values.replay, content: replayContent }];
+for (const path of values['repeat-replay']) {
+    if (!replayBuild) throw new Error('--repeat-replay requires --replay');
+    const content = (await readFile(resolve(path), 'utf8')).trim();
+    if (content.match(/^rhrec-([0-9a-f]{12})-/)?.[1] !== replayBuild) {
+        throw new Error('Repeated replay must use the supplied package build identity');
+    }
+    replayRuns.push({ path, content });
+}
+if (replayRuns.length > 1 && values.trace) throw new Error('--trace cannot be combined with --repeat-replay');
+const repeatResults = [];
 const rate = values.mbit === 'unlimited' ? null : Number(values.mbit) * 1_000_000 / 8;
 const throttle = rate === null ? null : new SharedBandwidth(rate);
 const records = [], logs = [], errors = [];
@@ -110,7 +126,8 @@ const server = createServer(async (req, res) => {
     records.push(record);
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
     res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    const immutable = path.startsWith(runtimePrefix) || path.startsWith(dataPrefix) || path.startsWith('/assets/');
+    res.setHeader('Cache-Control', immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=0, must-revalidate');
     try {
         const { body, type, encoding } = await asset(path);
         record.payloadBytes = body.length;
@@ -170,84 +187,99 @@ try {
     await send('Runtime.enable'); await send('Page.enable');
     await send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false });
     await send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: 4 });
-    const query = new URLSearchParams({ mission: values.mission, 'wasm-threads': '4', 'wasm-log': 'info' });
-    if (values.mission === 'auto') query.delete('mission');
-    for (const value of values.query) { const at = value.indexOf('='); if (at < 1) throw new Error('--query requires KEY=VALUE'); query.set(value.slice(0, at), value.slice(at + 1)); }
-    if (replayContent !== undefined) { query.set('replay', replayContent); query.set('paused', '0'); }
-    if (values.trace) await send('Tracing.start', {
-        categories: 'devtools.timeline,blink.user_timing,v8,gpu,disabled-by-default-v8.cpu_profiler',
-        transferMode: 'ReturnAsStream',
-    });
-    if (values['cpu-profile']) {
-        await send('Profiler.enable');
-        await send('Profiler.start');
-    }
-    
-    await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/?${query}` });
-    const deadline = Date.now() + 180000;
-    while ((!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) && Date.now() < deadline && !errors.length) await sleep(20);
-    if (!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) throw new Error('Startup did not reach required endpoint: ' + JSON.stringify(errors));
-    if (replayContent !== undefined) {
-        if (!logs.some(({ line }) => line.includes('Loaded replay (decoded):'))) {
-            throw new Error('Bootstrap completed without decoded replay playback');
+    for (const [runIndex, replayRun] of replayRuns.entries()) {
+        if (runIndex > 0) {
+            await send('Page.navigate', { url: 'about:blank' });
+            await sleep(500); // Dispose the prior game's workers before resetting observations.
         }
-        const state = await send('Runtime.evaluate', {
-            expression: 'globalThis.robinRpc("state")', awaitPromise: true, returnByValue: true,
+        output = replayRuns.length === 1 ? outputBase : `${outputBase}-${runIndex}`;
+        records.length = 0; logs.length = 0; errors.length = 0;
+        bootstrapEpoch = undefined; presentEpoch = undefined; replayState = undefined;
+        const query = new URLSearchParams({ mission: values.mission, 'wasm-threads': '4', 'wasm-log': 'info' });
+        if (values.mission === 'auto') query.delete('mission');
+        for (const value of values.query) { const at = value.indexOf('='); if (at < 1) throw new Error('--query requires KEY=VALUE'); query.set(value.slice(0, at), value.slice(at + 1)); }
+        if (replayContent !== undefined) { query.set('replay', replayRun.content); query.set('paused', '0'); }
+        if (values.trace) await send('Tracing.start', {
+            categories: 'devtools.timeline,blink.user_timing,v8,gpu,disabled-by-default-v8.cpu_profiler',
+            transferMode: 'ReturnAsStream',
         });
-        if (state.exceptionDetails) throw new Error('Replay state RPC failed: ' + JSON.stringify(state.exceptionDetails));
-        replayState = state.result.value;
-        if (!replayState?.replay) throw new Error('Replay playback state is missing: ' + JSON.stringify(replayState));
-    }
-    const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
-    const page = probe.result.value;
-    await sleep(500);
-    const screenshotStart = performance.now();
-    const screenshot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
-    const screenshotEnd = performance.now();
-    await writeFile(output + '.png', Buffer.from(screenshot.data, 'base64'));
-    if (errors.length) throw new Error('Browser exception during startup/capture: ' + JSON.stringify(errors));
-    if (values['cpu-profile']) {
-        const { profile } = await send('Profiler.stop');
-        await writeFile(output + '.cpuprofile', JSON.stringify(profile));
-    }
-    if (values.trace) {
-        await send('Tracing.end');
-        let timer;
-        const { stream } = await Promise.race([
-            traceComplete,
-            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Chrome trace completion timed out')), 30000); }),
-        ]).finally(() => clearTimeout(timer));
-        if (!stream) throw new Error('Chrome trace completed without a stream');
-        const chunks = [];
-        for (;;) {
-            const chunk = await send('IO.read', { handle: stream });
-            chunks.push(Buffer.from(chunk.data, chunk.base64Encoded ? 'base64' : 'utf8'));
-            if (chunk.eof) break;
+        if (values['cpu-profile']) {
+            await send('Profiler.enable');
+            await send('Profiler.start');
         }
-        await send('IO.close', { handle: stream });
-        await writeFile(output + '.trace.json', Buffer.concat(chunks));
+
+        await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/?${query}` });
+        const deadline = Date.now() + 180000;
+        while ((!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) && Date.now() < deadline && !errors.length) await sleep(20);
+        if (!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) throw new Error('Startup did not reach required endpoint: ' + JSON.stringify(errors));
+        if (replayContent !== undefined) {
+            if (!logs.some(({ line }) => line.includes('Loaded replay (decoded):'))) {
+                throw new Error('Bootstrap completed without decoded replay playback');
+            }
+            const state = await send('Runtime.evaluate', {
+                expression: 'globalThis.robinRpc("state")', awaitPromise: true, returnByValue: true,
+            });
+            if (state.exceptionDetails) throw new Error('Replay state RPC failed: ' + JSON.stringify(state.exceptionDetails));
+            replayState = state.result.value;
+            if (!replayState?.replay) throw new Error('Replay playback state is missing: ' + JSON.stringify(replayState));
+        }
+        const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
+        const page = probe.result.value;
+        await sleep(500);
+        const screenshotStart = performance.now();
+        const screenshot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+        const screenshotEnd = performance.now();
+        await writeFile(output + '.png', Buffer.from(screenshot.data, 'base64'));
+        if (errors.length) throw new Error('Browser exception during startup/capture: ' + JSON.stringify(errors));
+        if (values['cpu-profile']) {
+            const { profile } = await send('Profiler.stop');
+            await writeFile(output + '.cpuprofile', JSON.stringify(profile));
+        }
+        if (values.trace) {
+            await send('Tracing.end');
+            let timer;
+            const { stream } = await Promise.race([
+                traceComplete,
+                new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Chrome trace completion timed out')), 30000); }),
+            ]).finally(() => clearTimeout(timer));
+            if (!stream) throw new Error('Chrome trace completed without a stream');
+            const chunks = [];
+            for (;;) {
+                const chunk = await send('IO.read', { handle: stream });
+                chunks.push(Buffer.from(chunk.data, chunk.base64Encoded ? 'base64' : 'utf8'));
+                if (chunk.eof) break;
+            }
+            await send('IO.close', { handle: stream });
+            await writeFile(output + '.trace.json', Buffer.concat(chunks));
+        }
+        const navigationServerAt = page.timeOrigin - performance.timeOrigin;
+        const result = {
+            inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
+            httpAdmissionBrotli: httpAdmissionBr ? { path: resolve(values['http-admission-br']), bytes: httpAdmissionBr.length, sha256: sha256(httpAdmissionBr), rawSha256: sha256(await readFile(join(pkg, 'replay_admission_bg.wasm'))), caveat: 'Supplied encoded fixture is verified against admission package bytes; retain capture provenance separately.' } : null,
+            httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
+            replay: replayContent === undefined ? null : { path: resolve(replayRun.path), sha256: sha256(Buffer.from(replayRun.content)), build: replayBuild, state: replayState },
+            pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
+            diagnostics: { trace: values.trace, cpuProfile: values['cpu-profile'], caveat: 'Optional profiling adds overhead; use uninstrumented runs for timing comparisons.' },
+            network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: runIndex === 0 ? 'fresh browser profile; normal intra-navigation HTTP caching' : 'same browser profile and origin; normal HTTP cache reuse', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },
+            endpoints: { bootstrapMs: bootstrapEpoch - page.timeOrigin, firstMissionPresentReturnedMs: presentEpoch ? presentEpoch - page.timeOrigin : null, afterTwoRafMs: page.screenshotRequestAt, screenshotRequestMs: screenshotStart - navigationServerAt, screenshotCompleteMs: screenshotEnd - navigationServerAt, screenshotSettleMs: 500, screenshotServerDurationMs: screenshotEnd - screenshotStart, caveat: 'Screenshot after bootstrap, two animation callbacks and 500ms settle is an inspectable image, not a physical display presentation timestamp. present returned is submission-side only.' },
+            page, errors, logs: logs.map(({ epochMs, line }) => ({ pageMs: epochMs - page.timeOrigin, line })),
+            requests: records.map(record => ({ ...record, requestedAt: record.requestedAt - navigationServerAt, finishedAt: record.finishedAt === undefined ? null : record.finishedAt - navigationServerAt, category: category(record.path), chunks: record.chunks.map(chunk => ({ ...chunk, at: chunk.at - navigationServerAt })) })),
+        };
+        result.payloadBytesAtBootstrap = {};
+        for (const request of result.requests) {
+            const bytes = request.chunks.filter(chunk => chunk.at <= result.endpoints.bootstrapMs).reduce((n, chunk) => n + chunk.bytes, 0);
+            result.payloadBytesAtBootstrap[request.category] = (result.payloadBytesAtBootstrap[request.category] ?? 0) + bytes;
+        }
+        result.bytesAtBootstrap = Object.values(result.payloadBytesAtBootstrap).reduce((sum, n) => sum + n, 0);
+        await writeFile(output + '.json', JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(result.endpoints));
+        repeatResults.push({ runIndex, output, replayPath: replayRun.path,
+            endpoints: result.endpoints, payloadBytesAtBootstrap: result.payloadBytesAtBootstrap,
+            bytesAtBootstrap: result.bytesAtBootstrap, serverRequests: result.requests.length,
+            resources: result.page.resources.map(({ name, transferSize, encodedBodySize, decodedBodySize }) => ({ name, transferSize, encodedBodySize, decodedBodySize })),
+        });
     }
-    const navigationServerAt = page.timeOrigin - performance.timeOrigin;
-    const result = {
-        inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
-        httpAdmissionBrotli: httpAdmissionBr ? { path: resolve(values['http-admission-br']), bytes: httpAdmissionBr.length, sha256: sha256(httpAdmissionBr), rawSha256: sha256(await readFile(join(pkg, 'replay_admission_bg.wasm'))), caveat: 'Supplied encoded fixture is verified against admission package bytes; retain capture provenance separately.' } : null,
-        httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
-        replay: replayContent === undefined ? null : { path: resolve(values.replay), sha256: sha256(Buffer.from(replayContent)), build: replayBuild, state: replayState },
-        pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
-        diagnostics: { trace: values.trace, cpuProfile: values['cpu-profile'], caveat: 'Optional profiling adds overhead; use uninstrumented runs for timing comparisons.' },
-        network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: 'fresh browser profile; normal intra-navigation HTTP caching', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },
-        endpoints: { bootstrapMs: bootstrapEpoch - page.timeOrigin, firstMissionPresentReturnedMs: presentEpoch ? presentEpoch - page.timeOrigin : null, afterTwoRafMs: page.screenshotRequestAt, screenshotRequestMs: screenshotStart - navigationServerAt, screenshotCompleteMs: screenshotEnd - navigationServerAt, screenshotSettleMs: 500, screenshotServerDurationMs: screenshotEnd - screenshotStart, caveat: 'Screenshot after bootstrap, two animation callbacks and 500ms settle is an inspectable image, not a physical display presentation timestamp. present returned is submission-side only.' },
-        page, errors, logs: logs.map(({ epochMs, line }) => ({ pageMs: epochMs - page.timeOrigin, line })),
-        requests: records.map(record => ({ ...record, requestedAt: record.requestedAt - navigationServerAt, finishedAt: record.finishedAt === undefined ? null : record.finishedAt - navigationServerAt, category: category(record.path), chunks: record.chunks.map(chunk => ({ ...chunk, at: chunk.at - navigationServerAt })) })),
-    };
-    result.payloadBytesAtBootstrap = {};
-    for (const request of result.requests) {
-        const bytes = request.chunks.filter(chunk => chunk.at <= result.endpoints.bootstrapMs).reduce((n, chunk) => n + chunk.bytes, 0);
-        result.payloadBytesAtBootstrap[request.category] = (result.payloadBytesAtBootstrap[request.category] ?? 0) + bytes;
-    }
-    result.bytesAtBootstrap = Object.values(result.payloadBytesAtBootstrap).reduce((sum, n) => sum + n, 0);
-    await writeFile(output + '.json', JSON.stringify(result, null, 2));
-    console.log(JSON.stringify(result.endpoints));
+    if (replayRuns.length > 1) await writeFile(outputBase + '.repeat.json', JSON.stringify(repeatResults, null, 2));
 } catch (error) {
     await writeFile(output + '.failure.json', JSON.stringify({ error: String(error), errors, logs, records, browserErrors, bootstrapEpoch, presentEpoch, replayState, replayPath: values.replay ? resolve(values.replay) : null }, null, 2));
     throw error;
