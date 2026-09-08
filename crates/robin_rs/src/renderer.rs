@@ -881,6 +881,22 @@ impl Renderer {
             .expect("retirement requires the originating renderer and a live owned upload");
     }
 
+    pub(crate) fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    /// Preflight a whole owner bank before retiring any member.
+    pub(crate) fn validate_surface_retirement(
+        &self,
+        surface: &OwnedSurface,
+    ) -> Result<(), SurfaceOwnershipError> {
+        self.surface_dimensions(surface.handle)?;
+        if !self.owned_surfaces.contains(&surface.handle.id) {
+            return Err(SurfaceOwnershipError::NotOwned(surface.handle.id));
+        }
+        Ok(())
+    }
+
     /// On rejection the caller retains its token and can retire it with the correct renderer.
     pub fn try_retire_surface(
         &mut self,
@@ -3125,6 +3141,23 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
         .unwrap();
     assert_ne!(id, replacement, "deleted surface IDs must not be reused");
     crate::mission_render_resources::verify_gpu_lifecycle(&mut renderer);
+    let mut portrait_renderer = Renderer::with_optional_surface(
+        renderer.gpu.clone(),
+        None,
+        None,
+        3,
+        2,
+        TextureScaleMode::Nearest,
+    );
+    let mut portrait_peer = Renderer::with_optional_surface(
+        renderer.gpu.clone(),
+        None,
+        None,
+        3,
+        2,
+        TextureScaleMode::Nearest,
+    );
+    crate::ui_panel::verify_portrait_gpu_ownership(&mut portrait_renderer, &mut portrait_peer);
 }
 
 #[cfg(test)]
