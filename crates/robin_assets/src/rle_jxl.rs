@@ -220,6 +220,7 @@ pub fn decode_jxl_rgba8(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
 /// Decode independent sections on the existing pool, including when a
 /// single large atlas dominates its chunk. Browser main-thread calls stay
 /// serial because blocking rayon joins are only legal on workers there.
+#[cfg(feature = "engine-adapters")]
 pub(crate) fn decode_jxl_rgba8_parallel(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
     #[cfg(not(target_arch = "wasm32"))]
     let parallel = true;

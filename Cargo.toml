@@ -3,6 +3,7 @@ cargo-features = ["codegen-backend"]
 [workspace]
 resolver = "2"
 members = [
+    "crates/robin_content",
     "crates/robin_identity_signer",
     "crates/robin_data_io",
     "crates/robin_highscores",
@@ -53,6 +54,7 @@ result_large_err = "allow"
 
 [workspace.dependencies]
 # Workspace crates
+robin_content = { path = "crates/robin_content" }
 robin_data_io = { path = "crates/robin_data_io" }
 robin_assets = { path = "crates/robin_assets" }
 robin_engine = { path = "crates/robin_engine" }
@@ -191,6 +193,8 @@ opt-level = 0
 opt-level = 0
 [profile.dev.package.robin_assets]
 opt-level = 0
+[profile.dev.package.robin_content]
+opt-level = 0
 [profile.dev.package.robin_state_hash_derive]
 opt-level = 0
 
@@ -245,6 +249,8 @@ opt-level = 1
 [profile.dev-opt1.package.robin_util]
 opt-level = 1
 [profile.dev-opt1.package.robin_assets]
+opt-level = 1
+[profile.dev-opt1.package.robin_content]
 opt-level = 1
 [profile.dev-opt1.package.robin_state_hash_derive]
 opt-level = 1
