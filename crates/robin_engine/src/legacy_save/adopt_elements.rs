@@ -1939,9 +1939,14 @@ fn convert_local_ai_common(
     view_alert_status: AlertLevel,
     assets: &LevelAssets,
 ) -> Result<ConvertedLocalAiCommon, LegacyElementAdoptError> {
-    let macro_cursor = convert_macro_command(saved, creation_order, &assets.hiking_paths)?;
-    let (patrol_path, detached_patrol_path_status) =
-        convert_patrol_path(&saved.path, creation_order, topology, &assets.hiking_paths)?;
+    let macro_cursor =
+        convert_macro_command(saved, creation_order, &assets.navigation.hiking_paths)?;
+    let (patrol_path, detached_patrol_path_status) = convert_patrol_path(
+        &saved.path,
+        creation_order,
+        topology,
+        &assets.navigation.hiking_paths,
+    )?;
     let saved_current_remark = remark(
         saved.current_remark,
         creation_order,

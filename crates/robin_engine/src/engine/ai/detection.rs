@@ -1044,8 +1044,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -1396,7 +1396,7 @@ impl EngineInner {
             sim.config().difficulty.rules().blip_detection_range_percent,
         );
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
@@ -1891,8 +1891,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -2549,7 +2549,7 @@ impl EngineInner {
             // through `engine.sight_obstacles(assets)` would be a
             // method-level borrow of `self`, not field-level.
             let sight_obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };
@@ -4451,7 +4451,7 @@ impl EngineInner {
             crate::engine::types::Ambiance::Night | crate::engine::types::Ambiance::Fog
         );
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
@@ -4688,7 +4688,7 @@ impl EngineInner {
         // function. Detection refresh belongs to NPC actors and is
         // therefore shared by soldiers and civilians in the Original.
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };

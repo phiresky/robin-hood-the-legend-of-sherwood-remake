@@ -911,8 +911,8 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );

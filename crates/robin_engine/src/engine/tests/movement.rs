@@ -1246,7 +1246,7 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     // The fixture graph has no nodes, so every A* search fails; it still needs
     // the request's sector in its conversion table to be searched at all.
     {
-        let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+        let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
         graph.layers.push(vec![Vec::new()]);
         graph.alternative_layers.push(vec![Vec::new()]);
         graph.states.push(vec![0]);

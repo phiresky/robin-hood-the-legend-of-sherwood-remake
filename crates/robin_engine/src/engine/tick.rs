@@ -420,7 +420,10 @@ mod mobile_owner_boundary_tests {
             .mobile_elements
             .push(mobile(vec![first, second]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -481,7 +484,10 @@ mod mobile_owner_boundary_tests {
         }
         engine.world.mobile_elements.push(mobile(vec![child]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut observations = Vec::new();
@@ -524,7 +530,10 @@ mod mobile_owner_boundary_tests {
         engine.world.mobile_elements.push(mobile(vec![first]));
         engine.world.mobile_elements.push(mobile(vec![second]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let visited = std::cell::RefCell::new(Vec::new());
@@ -570,7 +579,10 @@ mod mobile_owner_boundary_tests {
         }));
         engine.world.mobile_elements.push(mobile(vec![child]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -633,24 +645,27 @@ mod mobile_owner_boundary_tests {
             owner.current_waypoint = 1;
             engine.world.mobile_elements.push(owner);
             let assets = LevelAssets {
-                hiking_paths: std::sync::Arc::new(vec![RawHikingPath {
-                    waypoints: vec![
-                        RawWaypoint {
-                            x: 0,
-                            y: 0,
-                            sector: 0,
-                            level: 0,
-                            command: WaypointCommand::None,
-                        },
-                        RawWaypoint {
-                            x: 2,
-                            y: 0,
-                            sector: 0,
-                            level: 0,
-                            command: speed_macro(3.0),
-                        },
-                    ],
-                }]),
+                navigation: crate::engine::LevelNavigationAssets {
+                    hiking_paths: std::sync::Arc::new(vec![RawHikingPath {
+                        waypoints: vec![
+                            RawWaypoint {
+                                x: 0,
+                                y: 0,
+                                sector: 0,
+                                level: 0,
+                                command: WaypointCommand::None,
+                            },
+                            RawWaypoint {
+                                x: 2,
+                                y: 0,
+                                sector: 0,
+                                level: 0,
+                                command: speed_macro(3.0),
+                            },
+                        ],
+                    }]),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -707,7 +722,10 @@ mod mobile_owner_boundary_tests {
         owner.stopped = true;
         engine.world.mobile_elements.push(owner);
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let _ = super::super::movement::take_last_mobile_crossing_increment();
@@ -758,7 +776,10 @@ mod mobile_owner_boundary_tests {
             .mobile_elements
             .push(mobile(vec![first, second]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -2655,7 +2676,12 @@ impl EngineInner {
                 {
                     continue;
                 }
-                let duration = assets.source_durations.get(&src.id).copied().unwrap_or(0);
+                let duration = assets
+                    .audio
+                    .source_durations
+                    .get(&src.id)
+                    .copied()
+                    .unwrap_or(0);
                 self.feedback
                     .sound_sim
                     .playing_sources
@@ -3072,6 +3098,7 @@ impl EngineInner {
     ) -> Result<(), String> {
         let identifier = (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id);
         let group = assets
+            .audio
             .speech_timing_catalog
             .groups
             .get(&identifier)
@@ -4054,7 +4081,7 @@ impl EngineInner {
         // coordinator applies cross-owner consequences.
         self.trace_path_barrier("enter");
         let completed = self.path_schedule_context().process_requests(
-            assets.pathfinder_graph.as_ref(),
+            assets.navigation.pathfinder_graph.as_ref(),
             sim.config().synchronous_pathfinding,
         );
         self.trace_path_barrier("after_schedule");
@@ -4470,6 +4497,7 @@ impl EngineInner {
 
             let path_index = self.world.mobile_elements[mobile_index].path_index;
             let path = assets
+                .navigation
                 .hiking_paths
                 .get(usize::from(path_index))
                 .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));

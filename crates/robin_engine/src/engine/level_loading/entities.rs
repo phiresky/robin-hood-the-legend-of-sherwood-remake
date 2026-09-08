@@ -259,7 +259,7 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::from_serialized_pointer(
                         raw.obstacle_index,
                     ),
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             prime_mission_start_sprite(
@@ -408,6 +408,7 @@ impl EngineInner {
             // stream still loads.
             if raw.obstacle_index != 0xFFFF {
                 match assets
+                    .environment
                     .static_sight_obstacles
                     .get(raw.obstacle_index as usize)
                 {
@@ -454,7 +455,7 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::from_serialized_pointer(
                         raw.obstacle_index,
                     ),
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             prime_mission_start_sprite(
@@ -906,7 +907,7 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::from_serialized_pointer(
                         raw.obstacle_index,
                     ),
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             prime_mission_start_sprite(
@@ -1091,7 +1092,7 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::from_serialized_pointer(
                         raw.obstacle_index,
                     ),
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
 
@@ -1300,7 +1301,7 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::from_serialized_pointer(
                         raw.obstacle_index,
                     ),
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             // Original-game bonus loading computes the placed 3D
@@ -1423,7 +1424,7 @@ impl EngineInner {
                     crate::position_interface::ObstacleHandle::from_serialized_pointer(
                         raw.obstacle_index,
                     ),
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             // Original-game scroll loading performs the same

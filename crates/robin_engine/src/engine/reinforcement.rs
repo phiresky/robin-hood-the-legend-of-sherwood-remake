@@ -204,7 +204,7 @@ impl EngineInner {
             // the plane here.
             let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 Some(obs),
-                assets.static_sight_obstacles.as_slice(),
+                assets.environment.static_sight_obstacles.as_slice(),
             );
             element.sprite.position_iface.set_obstacle(Some(obs), plane);
         }

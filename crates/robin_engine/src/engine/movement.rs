@@ -5354,7 +5354,7 @@ impl EngineInner {
                 ),
             ];
             let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };

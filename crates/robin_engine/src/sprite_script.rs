@@ -25,6 +25,7 @@ pub fn original_mission_program_required(
     original_program_requirement(
         script_enabled,
         assets
+            .attachments
             .spellforge_runtime
             .as_ref()
             .map(|runtime| runtime.package().script_mode),

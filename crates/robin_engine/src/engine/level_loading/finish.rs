@@ -31,6 +31,7 @@ impl EngineInner {
                     reason: format!("mobile index {mobile_index} does not fit in u16"),
                 })?;
             let path = assets
+                .navigation
                 .hiking_paths
                 .get(usize::from(raw_mobile.path_index))
                 .ok_or_else(|| EngineError::MissionLevelStage {

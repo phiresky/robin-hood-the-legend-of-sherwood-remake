@@ -3433,7 +3433,7 @@ mod application_context_tests {
         let published = host.frontend.publish_frame_holder_opacity();
 
         let mut assets = engine_api::LevelAssets::new();
-        assets.pixel_opacity = Some(published.clone());
+        assets.attachments.pixel_opacity = Some(published.clone());
         let engine =
             engine_api::Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
                 .expect("construct sprite-hit-test engine");

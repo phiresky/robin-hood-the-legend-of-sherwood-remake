@@ -688,12 +688,13 @@ impl EngineInner {
             (None, None) => Some(0.001),
             (Some(_), Some(idx)) => Some(
                 assets
+                    .environment
                     .static_sight_obstacles
                     .get(idx)
                     .or_else(|| {
                         self.world
                             .dynamic_sight_obstacles
-                            .get(idx - assets.static_sight_obstacles.len())
+                            .get(idx - assets.environment.static_sight_obstacles.len())
                     })
                     .map(|o| o.compute_top_z(landing_xy.0, landing_xy.1) + 0.001)
                     .unwrap_or(0.001),
@@ -856,12 +857,13 @@ impl EngineInner {
         // Slope check.
         if let Some(idx) = obstacle_idx {
             let nz = assets
+                .environment
                 .static_sight_obstacles
                 .get(idx)
                 .or_else(|| {
                     self.world
                         .dynamic_sight_obstacles
-                        .get(idx - assets.static_sight_obstacles.len())
+                        .get(idx - assets.environment.static_sight_obstacles.len())
                 })
                 .map(top_plane_normal_z)
                 .unwrap_or(1.0);
@@ -887,12 +889,13 @@ impl EngineInner {
             // keeps its world Y and the projected Z is 0.
             let (test_proj_y, test_proj_z) = if let Some(idx) = obstacle_idx {
                 let proj_z = assets
+                    .environment
                     .static_sight_obstacles
                     .get(idx)
                     .or_else(|| {
                         self.world
                             .dynamic_sight_obstacles
-                            .get(idx - assets.static_sight_obstacles.len())
+                            .get(idx - assets.environment.static_sight_obstacles.len())
                     })
                     .map(|o| o.compute_top_z(test_x, test_y))
                     .unwrap_or(0.0);
@@ -951,12 +954,12 @@ impl EngineInner {
         assets: &LevelAssets,
         landing: crate::coordinates::WorldPoint3D,
     ) -> Option<usize> {
-        for (i, o) in assets.static_sight_obstacles.iter().enumerate() {
+        for (i, o) in assets.environment.static_sight_obstacles.iter().enumerate() {
             if obstacle_bbox_contains(o, landing.x, landing.y) {
                 return Some(i);
             }
         }
-        let base = assets.static_sight_obstacles.len();
+        let base = assets.environment.static_sight_obstacles.len();
         for (i, o) in self.world.dynamic_sight_obstacles.iter().enumerate() {
             if obstacle_bbox_contains(o, landing.x, landing.y) {
                 return Some(base + i);

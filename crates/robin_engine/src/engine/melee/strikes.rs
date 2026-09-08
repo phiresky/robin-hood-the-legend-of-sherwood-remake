@@ -3331,7 +3331,7 @@ impl EngineInner {
             // disabled for sword-fight math.
             let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
             let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };
@@ -4459,7 +4459,10 @@ mod tests {
         let plane =
             crate::position_interface::PlaneZCoeffs::from_plane_points(&obstacle.top_plane_points);
         let assets = LevelAssets {
-            static_sight_obstacles: std::sync::Arc::new(vec![obstacle]),
+            environment: crate::engine::LevelEnvironmentAssets {
+                static_sight_obstacles: std::sync::Arc::new(vec![obstacle]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 

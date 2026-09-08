@@ -679,7 +679,7 @@ mod suite {
             [690.0, 1450.0, 5.0],
         ];
         let mut assets = LevelAssets::new();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
         engine.world.static_sight_obstacle_active = vec![true];
 
         crate::movement_diagnostics::begin_parity_movement_capture();

@@ -274,10 +274,10 @@ fn preflight_waypoints(
     entities: &LegacyEntityFixups,
     vm_arena: &LegacyVmArenaPlan,
 ) -> Result<Vec<(PathId, u8, Vec<u8>)>, LegacyHikingTailAdoptError> {
-    if hiking.paths.len() != assets.hiking_paths.len() {
+    if hiking.paths.len() != assets.navigation.hiking_paths.len() {
         return Err(LegacyHikingTailAdoptError::PathCountMismatch {
             saved: hiking.paths.len(),
-            runtime: assets.hiking_paths.len(),
+            runtime: assets.navigation.hiking_paths.len(),
         });
     }
     let mission = engine.scripts.mission.as_ref();
@@ -285,7 +285,7 @@ fn preflight_waypoints(
     for (path_index, (saved_path, runtime_path)) in hiking
         .paths
         .iter()
-        .zip(assets.hiking_paths.iter())
+        .zip(assets.navigation.hiking_paths.iter())
         .enumerate()
     {
         if saved_path.waypoints.len() != runtime_path.waypoints.len() {
@@ -484,6 +484,7 @@ fn convert_member(
             )?;
             let bits = if let Some(location) = location {
                 let sector_count = assets
+                    .navigation
                     .legacy_grid_topology
                     .as_ref()
                     .map_or(engine.world.fast_grid.level.sectors.len(), |topology| {

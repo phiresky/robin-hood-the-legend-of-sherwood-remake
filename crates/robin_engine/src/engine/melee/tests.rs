@@ -300,7 +300,7 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
             &assets.profile_manager,
             &engine.world.fast_grid,
             crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &engine.world.dynamic_sight_obstacles,
                 static_active: &engine.world.static_sight_obstacle_active,
             },
@@ -5161,7 +5161,7 @@ fn slope_translate_roll_order_keeps_its_source_authored_direction_recompute() {
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
     let mut assets = LevelAssets::new();
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     {
         let victim = engine.get_entity_mut(victim).unwrap();
         victim.element_data_mut().set_obstacle_index(
@@ -5977,7 +5977,7 @@ fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
     let mut assets = assets_with_sword_profile_effects(1, 50, 4, 100);
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     let victim_entity = engine.get_entity_mut(victim).unwrap();
     victim_entity.element_data_mut().set_obstacle_index(
         crate::position_interface::ObstacleHandle::new(0),
@@ -7499,7 +7499,7 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         SwordStrike::H,
         crate::profiles::WeaponThrustKind::TrueCircle,
     );
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
 
     let mut damage =
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
@@ -7668,7 +7668,7 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
     ];
     obstacle.rebuild_geometry();
     let mut assets = LevelAssets::new();
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
 
     let mut damage = crate::sequence::SequenceElement::new_damage(
         1,
@@ -8637,7 +8637,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
     let mut assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     {
         let victim = engine.get_entity_mut(victim).unwrap();
         victim.element_data_mut().set_obstacle_index(

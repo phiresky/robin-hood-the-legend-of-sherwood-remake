@@ -964,7 +964,10 @@ fn write_custom_mission_save(
         SpellforgeRuntime51::new(package.clone()).expect("bootstrap save fixture Spellforge VM"),
     );
     let mut assets = LevelAssets {
-        spellforge_runtime: Some(runtime),
+        attachments: robin_engine::engine::LevelRuntimeAttachments {
+            spellforge_runtime: Some(runtime),
+            ..Default::default()
+        },
         ..LevelAssets::default()
     };
     let engine = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)

@@ -649,7 +649,7 @@ pub fn derive_grid_topology(
 ) -> Result<LegacyGridTopology, LegacyTopologyAdapterError> {
     use crate::engine::{LegacyGridGateAsset, LegacyGridScriptObjectAsset, LegacyGridSectorAsset};
 
-    let retained = assets.legacy_grid_topology.as_ref().ok_or(
+    let retained = assets.navigation.legacy_grid_topology.as_ref().ok_or(
         LegacyTopologyAdapterError::MissingRetainedFact {
             fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
             original_owner: "spatial-grid construction-time arrays",
@@ -874,7 +874,10 @@ pub fn derive_hiking_guide_topology(
         });
     }
 
-    Ok(map_hiking_paths(&assets.hiking_paths, script_enabled))
+    Ok(map_hiking_paths(
+        &assets.navigation.hiking_paths,
+        script_enabled,
+    ))
 }
 
 fn map_hiking_paths(
@@ -942,6 +945,7 @@ pub fn derive_post_tail_topology(
         .map(Vec::len)
         .collect();
     let asset_area_counts: Vec<usize> = assets
+        .navigation
         .pathfinder_graph
         .layers
         .iter()
@@ -997,7 +1001,7 @@ mod tests {
     fn hiking_mapping_preserves_path_waypoint_order_and_script_gate() {
         let engine = EngineInner::new();
         let mut assets = LevelAssets::new();
-        assets.hiking_paths = Arc::new(vec![
+        assets.navigation.hiking_paths = Arc::new(vec![
             RawHikingPath {
                 waypoints: vec![
                     waypoint(WaypointCommand::Macro(vec![1, 2])),
@@ -1021,7 +1025,7 @@ mod tests {
         );
         assert_eq!(topology.paths[1].waypoints[0].script_class, None);
 
-        let scripted = map_hiking_paths(&assets.hiking_paths, true);
+        let scripted = map_hiking_paths(&assets.navigation.hiking_paths, true);
         assert_eq!(
             scripted.paths[0].waypoints[1].script_class.as_deref(),
             Some("PatrolTurn"),
@@ -1054,7 +1058,7 @@ mod tests {
 
         let mut graph = PathGraph::new();
         graph.layers = vec![vec![Vec::new(); 2], vec![Vec::new(); 1]];
-        assets.pathfinder_graph = Arc::new(graph);
+        assets.navigation.pathfinder_graph = Arc::new(graph);
 
         let topology = derive_post_tail_topology(&engine, &assets, 9_999).unwrap();
         assert_eq!(topology.global_script_class, None);
@@ -1198,7 +1202,8 @@ mod tests {
             })
         ));
 
-        assets.legacy_grid_topology = Some(crate::engine::LegacyGridTopologyAssets::default());
+        assets.navigation.legacy_grid_topology =
+            Some(crate::engine::LegacyGridTopologyAssets::default());
         assert_eq!(
             derive_grid_topology(&engine, &assets).unwrap(),
             LegacyGridTopology {

@@ -221,8 +221,8 @@ impl EngineInner {
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
+                    &assets.navigation.hiking_paths,
+                    &assets.navigation.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 );
@@ -499,8 +499,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -603,8 +603,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -686,8 +686,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -790,8 +790,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -854,8 +854,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -1369,8 +1369,8 @@ impl EngineInner {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -1557,8 +1557,8 @@ impl EngineInner {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -1719,8 +1719,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -1731,7 +1731,7 @@ impl EngineInner {
         // so the borrow checker can split it from the mut borrow
         // on `self.world.entities` below.
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
@@ -1816,8 +1816,8 @@ impl EngineInner {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );
@@ -2038,8 +2038,8 @@ impl EngineInner {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );

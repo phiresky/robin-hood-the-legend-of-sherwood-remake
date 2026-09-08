@@ -5020,8 +5020,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -5121,8 +5121,8 @@ impl EngineInner {
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
+                    &assets.navigation.hiking_paths,
+                    &assets.navigation.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -5291,8 +5291,8 @@ impl EngineInner {
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
+                    &assets.navigation.hiking_paths,
+                    &assets.navigation.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -5372,13 +5372,13 @@ impl EngineInner {
             let Some(path) = ai.patrol_path.as_ref() else {
                 return;
             };
-            let Some(wp) = path.current_waypoint(&assets.hiking_paths) else {
+            let Some(wp) = path.current_waypoint(&assets.navigation.hiking_paths) else {
                 return;
             };
             crate::ai::Position {
                 x: wp.x as f32,
                 y: wp.y as f32,
-                sector: assets.hiking_waypoint_sector(
+                sector: assets.navigation.hiking_waypoint_sector(
                     usize::from(path.hiking_path_index),
                     usize::from(path.current_waypoint_index),
                     wp.sector,
@@ -5405,8 +5405,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -5422,7 +5422,7 @@ impl EngineInner {
         };
         let will_stop = ai.will_stop_at_next_waypoint_debug(
             sim,
-            &assets.hiking_paths,
+            &assets.navigation.hiking_paths,
             &ctx,
             crate::ai::WillStopCaller::SetPathWalkingFlags,
         );
@@ -6126,8 +6126,8 @@ impl EngineInner {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );

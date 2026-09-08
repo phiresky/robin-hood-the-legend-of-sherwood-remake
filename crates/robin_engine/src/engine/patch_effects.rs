@@ -240,7 +240,10 @@ impl EngineInner {
             let area = self
                 .world
                 .pathfinder
-                .try_convert_sector(assets.pathfinder_graph.as_ref(), ctx.pathfinder_sector)
+                .try_convert_sector(
+                    assets.navigation.pathfinder_graph.as_ref(),
+                    ctx.pathfinder_sector,
+                )
                 .unwrap_or_else(|| {
                     panic!(
                         "patch_effects: ConvertSector failed — no area mapping \
@@ -252,7 +255,7 @@ impl EngineInner {
             let mut line_toggles = Vec::new();
             let mut sector_toggles = Vec::new();
             self.world.pathfinder.toggle_obstacle_state(
-                assets.pathfinder_graph.as_ref(),
+                assets.navigation.pathfinder_graph.as_ref(),
                 ctx.pathfinder_layer as usize,
                 area as usize,
                 ctx.pathfinder_changing_obstacles as u16,

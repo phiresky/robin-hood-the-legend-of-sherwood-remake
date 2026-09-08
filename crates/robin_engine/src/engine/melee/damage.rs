@@ -1378,7 +1378,7 @@ impl EngineInner {
             // held and copies the carrier's plane Z onto the carried;
             // reading it from the carrier's already-resolved
             // `PositionInterface` here mirrors that path and avoids
-            // re-resolving from `assets.static_sight_obstacles`.
+            // re-resolving from `assets.environment.static_sight_obstacles`.
             let plane = carrier.position_iface().get_plane().copied();
             (
                 elem.position_map(),

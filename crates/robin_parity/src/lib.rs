@@ -348,7 +348,7 @@ pub fn populate_sound_duration_tables(
     }
 
     let mut source_cache = SoundCache::new();
-    source_cache.initialize_sound_source_cache(&assets.sound_source_required_ids);
+    source_cache.initialize_sound_source_cache(&assets.audio.sound_source_required_ids);
     let mut source_durations = BTreeMap::new();
     for (&id, entry) in &source_cache.source_cache.entries {
         if let Some(milliseconds) = sample_duration_ms(sound_directory, &entry.file_name) {
@@ -360,7 +360,13 @@ pub fn populate_sound_duration_tables(
         sources = source_durations.len(),
         "populated headless parity sound durations"
     );
-    assets.exclamation_durations = Arc::new(exclamation_durations);
-    assets.source_durations = Arc::new(source_durations);
+    assets
+        .audio
+        .publish_timing(
+            Arc::new(exclamation_durations),
+            assets.audio.speech_timing_catalog().clone(),
+            Arc::new(source_durations),
+        )
+        .map_err(|error| error.to_string())?;
     Ok(())
 }

@@ -528,7 +528,7 @@ impl EngineInner {
                 obstacle,
                 crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                     obstacle,
-                    assets.static_sight_obstacles.as_slice(),
+                    assets.environment.static_sight_obstacles.as_slice(),
                 ),
             );
             let ale = crate::element::Entity::Bonus(crate::element::ElementBonus {

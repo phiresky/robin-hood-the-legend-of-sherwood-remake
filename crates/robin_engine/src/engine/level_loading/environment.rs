@@ -98,7 +98,7 @@ impl EngineInner {
         // Water/hole zones for projectile splash detection. Material
         // WATER/HOLE sectors used by projectile splash detection go
         // through sound-sector queries, so the filter above applies.
-        assets.water_zones =
+        assets.environment.water_zones =
             crate::water_zones::WaterZones::build_from_raw(&filtered_material_sectors);
 
         // SECTOR_SOUND registry for footstep material lookup.
@@ -111,11 +111,12 @@ impl EngineInner {
             .map(|m| m.default_material)
             .unwrap_or(0);
         let raw_material_default = crate::element::GameMaterial::from_u32(default_material_code);
-        assets.material_sectors = crate::material_sectors::MaterialSectors::build_from_raw(
-            &filtered_material_sectors,
-            default_material_code,
-        );
-        assets.all_material_sectors = loaded
+        assets.environment.material_sectors =
+            crate::material_sectors::MaterialSectors::build_from_raw(
+                &filtered_material_sectors,
+                default_material_code,
+            );
+        assets.environment.all_material_sectors = loaded
             .proto
             .material_sectors
             .iter()
@@ -131,12 +132,13 @@ impl EngineInner {
         // layer — `0xFFFF` when the obstacle is not a projection area.
         // Obstacle/material assignment's no-obstacle branch queries the grid at the
         // actor's own layer, so the registrations must keep their layer.
-        assets.material_sectors.registrations.clear();
+        assets.environment.material_sectors.registrations.clear();
         for raw in &filtered_material_sectors {
             if let Some(sector) =
                 crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default)
             {
                 assets
+                    .environment
                     .material_sectors
                     .register(Some(crate::position_interface::Layer::ZERO), sector);
             }
@@ -157,7 +159,7 @@ impl EngineInner {
                 if let Some(sector) =
                     crate::material_sectors::MaterialSector::from_raw(raw, raw_material_default)
                 {
-                    assets.material_sectors.register(layer, sector);
+                    assets.environment.material_sectors.register(layer, sector);
                 }
             }
         }
@@ -256,7 +258,8 @@ impl EngineInner {
 
         // Store hiking paths for patrol route lookups by AI.
         assets.scripts.hiking_path_count = loaded.mission.hiking_paths.len();
-        assets.hiking_paths = std::sync::Arc::new(std::mem::take(&mut loaded.mission.hiking_paths));
+        assets.navigation.hiking_paths =
+            std::sync::Arc::new(std::mem::take(&mut loaded.mission.hiking_paths));
 
         // Build the global SeekPoint / AmbushPoint / Archery arrays from
         // raw tactic data: reset the existing lists, then fan out to the
@@ -392,7 +395,7 @@ impl EngineInner {
         // CHUNK_MATERIAL list, which holds every CHUNK_MATERIAL entry
         // regardless of SIGHT-list inclusion.  The SIGHT filter only
         // gates the global SECTOR_SOUND fast-find registry (already
-        // applied above for `assets.material_sectors`).
+        // applied above for `assets.environment.material_sectors`).
         let all_material_sectors = &loaded.proto.material_sectors;
         let static_obstacles: Vec<crate::sight_obstacle::SightObstacle> = loaded
             .proto
@@ -550,7 +553,7 @@ impl EngineInner {
         let n = static_obstacles.len();
         self.world.dynamic_sight_obstacles.clear();
         self.world.static_sight_obstacle_active = vec![true; n];
-        assets.static_sight_obstacles = std::sync::Arc::new(static_obstacles);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(static_obstacles);
         tracing::info!("Loaded {} sight obstacles for AI line-of-sight", n);
     }
 
@@ -948,7 +951,7 @@ impl EngineInner {
 
             // Store on level assets for host-side `setup_mission_audio`
             // to populate the sound-cache source map.
-            assets.sound_source_required_ids = required_ids;
+            assets.audio.sound_source_required_ids = required_ids;
         }
         Ok(())
     }
@@ -992,7 +995,7 @@ impl EngineInner {
         // and skips re-pushing.
         if let Some(ref motion_data) = staging.motion.motion_data
             && !motion_data.graph_bytes.is_empty()
-            && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
+            && let Err(e) = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
                 .preload_half_diagonals_from_proto(
                     self.world.fast_grid_mut(),
                     &motion_data.graph_bytes,
@@ -1064,6 +1067,7 @@ impl EngineInner {
         let mut register =
             |grid: &mut crate::fast_find_grid::FastFindGrid, raw_index: u16, layer: u16| {
                 let Some(sector) = assets
+                    .environment
                     .all_material_sectors
                     .get(usize::from(raw_index))
                     .and_then(Option::as_ref)

@@ -1265,6 +1265,7 @@ pub(crate) fn preflight_vm(
 
                 if let Some(location) = location {
                     let sector_count = assets
+                        .navigation
                         .legacy_grid_topology
                         .as_ref()
                         .map_or(engine.world.fast_grid.level.sectors.len(), |topology| {

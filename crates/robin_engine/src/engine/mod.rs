@@ -708,7 +708,7 @@ impl EngineInner {
         assets: &mut LevelAssets,
         sim: &crate::sim_rng::SimulationContext,
     ) {
-        if let Some(runtime) = assets.spellforge_runtime.as_ref() {
+        if let Some(runtime) = assets.attachments.spellforge_runtime.as_ref() {
             runtime.set_name_bindings(assets.scripts.names.as_ref().clone());
         }
         self.scripts
@@ -729,12 +729,18 @@ impl EngineInner {
         self.validate_actor_placement();
 
         // Pathfinder obstacle states now that the graph is loaded.
-        if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
+        if !assets
+            .navigation
+            .pathfinder_graph
+            .static_data
+            .move_layers
+            .is_empty()
+        {
             let world = &mut self.world;
             let grid = std::sync::Arc::make_mut(&mut world.fast_grid);
             world
                 .pathfinder
-                .initialize_from_graph(assets.pathfinder_graph.as_ref(), grid);
+                .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
 
         // Original-game initialization runs script initialization before AI
@@ -742,7 +748,7 @@ impl EngineInner {
         // now that AI initialization's typed state changes synchronously dispatch
         // FilterAIEvent through the bound actor VMs.
         if self.scripts.mission.is_some() {
-            self.initialize_mission_script_with(sim, assets, 0, &assets.hiking_paths);
+            self.initialize_mission_script_with(sim, assets, 0, &assets.navigation.hiking_paths);
         }
 
         // The original initializes scrolls immediately after the engine
@@ -1603,6 +1609,7 @@ impl EngineInner {
     /// they are lowered into runtime movement sequences.
     pub fn legacy_gate_order(&self, assets: &LevelAssets) -> Vec<crate::gate::DoorIndex> {
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("Original gate translation requires retained grid topology");
@@ -4323,6 +4330,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> bool {
         let waypoint = assets
+            .navigation
             .hiking_paths
             .get(usize::from(path_id))
             .and_then(|path| path.waypoints.get(usize::from(waypoint_index)))
@@ -4885,7 +4893,7 @@ impl EngineInner {
         assets: &'a LevelAssets,
     ) -> crate::sight_obstacle::ObstacleList<'a> {
         crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         }

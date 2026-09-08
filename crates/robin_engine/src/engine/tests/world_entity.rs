@@ -5702,8 +5702,8 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -5944,8 +5944,8 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6144,8 +6144,8 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6310,8 +6310,8 @@ fn run_synchronous_civilian_alert(
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6420,8 +6420,8 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &accepted.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &accepted.ai.global.all_soldier_handles,
             accepted.control.sim_config.difficulty,
         )
@@ -6588,8 +6588,8 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6647,8 +6647,8 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6744,8 +6744,8 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6849,8 +6849,8 @@ fn review2_context_and_tick(
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -7927,7 +7927,7 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     wall.bottom_plane_points = [[95.0, -10.0, 0.0], [105.0, -10.0, 0.0], [105.0, 10.0, 0.0]];
     wall.rebuild_geometry();
     let mut assets = LevelAssets::new();
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
     engine.world.static_sight_obstacle_active = vec![true];
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
