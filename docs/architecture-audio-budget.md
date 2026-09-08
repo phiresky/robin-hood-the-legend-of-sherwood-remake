@@ -32,5 +32,7 @@ Validation:
 - A browser test uses actual preloaded WAV data to verify shared-request retention
   promotion, eviction while a shared result remains usable, and successful audio
   decoding when the encoded bundle exceeds the configured budget.
-- Tests are pending at initial source handoff; final integration verification is
+- `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_rs --lib
+  audio_bundle_cache::tests` passed all four policy tests on source `d45ef8864`
+  (cold build: 20m 38s). Browser execution and final combined verification are
   recorded by the browser-audio gate and integration report.
