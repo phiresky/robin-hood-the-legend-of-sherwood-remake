@@ -601,6 +601,56 @@ pub struct ShippingSprite {
     pub raster: Option<crate::frame_holder::SpriteRaster>,
 }
 
+/// Byte-weighted downstream paths among the chunks currently known to the
+/// loader. Sprite IDs, rather than RHS names, distinguish restart groups.
+/// Missing providers can still be in flight or not fetched yet. This only
+/// chooses dispatch order; the bank's readiness checks remain authoritative.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn vq_downstream_costs(chunks: &[SpriteVqChunk]) -> Vec<u64> {
+    use std::collections::{HashMap, HashSet};
+    let mut providers: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (index, chunk) in chunks.iter().enumerate() {
+        for &id in &chunk.sprite_ids {
+            providers.entry(id).or_default().push(index);
+        }
+    }
+    let mut parents = vec![Vec::new(); chunks.len()];
+    let mut children_left = vec![0usize; chunks.len()];
+    for (child, chunk) in chunks.iter().enumerate() {
+        let mut unique = HashSet::new();
+        for id in chunk.base_ids.iter().chain(&chunk.base2_ids).flatten() {
+            if let Some(indices) = providers.get(id) {
+                for &parent in indices {
+                    if parent != child && unique.insert(parent) {
+                        parents[child].push(parent);
+                        children_left[parent] += 1;
+                    }
+                }
+            }
+        }
+    }
+    let weights: Vec<u64> = chunks.iter().map(|chunk| chunk.blob.len() as u64).collect();
+    let mut costs = weights.clone();
+    let mut leaves: Vec<usize> = children_left
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &count)| (count == 0).then_some(index))
+        .collect();
+    while let Some(child) = leaves.pop() {
+        for &parent in &parents[child] {
+            costs[parent] = costs[parent].max(weights[parent].saturating_add(costs[child]));
+            children_left[parent] -= 1;
+            if children_left[parent] == 0 {
+                leaves.push(parent);
+            }
+        }
+    }
+    // Duplicate providers can overapproximate the dependency graph. Keep a
+    // finite priority for any cycle rather than rejecting otherwise valid
+    // alternative providers; actual unresolved bases still fail at install.
+    costs
+}
+
 /// Dispatcher state for worker-pool VQ chunk decode (wasm-threads builds).
 ///
 /// Owns the set of in-flight decodes. The dispatching thread alternates
@@ -637,13 +687,48 @@ impl VqDecodeScheduler {
         rhs_files: &BTreeMap<String, RhsData>,
         strict: bool,
     ) -> Result<()> {
+        self.dispatch_ready_with_limit(bank, pending, rhs_files, strict, None)
+    }
+
+    /// Admit at most `max_in_flight` total jobs, keeping undispatched chunks
+    /// available for reprioritization when another dependency part arrives.
+    pub fn dispatch_ready_bounded(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteVqChunk>,
+        rhs_files: &BTreeMap<String, RhsData>,
+        strict: bool,
+        max_in_flight: usize,
+    ) -> Result<()> {
+        self.dispatch_ready_with_limit(bank, pending, rhs_files, strict, Some(max_in_flight))
+    }
+
+    fn dispatch_ready_with_limit(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteVqChunk>,
+        rhs_files: &BTreeMap<String, RhsData>,
+        strict: bool,
+        limit: Option<usize>,
+    ) -> Result<()> {
+        let max_in_flight = limit.unwrap_or(usize::MAX);
+        if self.in_flight.len() >= max_in_flight {
+            return Ok(());
+        }
         // Longest-first dispatch: rayon's injected queue is FIFO, so this
         // starts the biggest blobs (family hubs — the heads of the longest
         // dependency chains) before the small variants pile onto the
         // workers. Chunk decode time tracks blob size closely.
-        pending.sort_by_key(|chunk| std::cmp::Reverse(chunk.blob.len()));
+        if limit.is_some() {
+            let costs = vq_downstream_costs(pending);
+            let mut ranked: Vec<_> = pending.drain(..).zip(costs).collect();
+            ranked.sort_by_key(|(chunk, cost)| std::cmp::Reverse((*cost, chunk.blob.len())));
+            pending.extend(ranked.into_iter().map(|(chunk, _)| chunk));
+        } else {
+            pending.sort_by_key(|chunk| std::cmp::Reverse(chunk.blob.len()));
+        }
         let mut index = 0;
-        while index < pending.len() {
+        while index < pending.len() && self.in_flight.len() < max_in_flight {
             let ready = if strict {
                 bank.vq_chunk_bases_ready(&pending[index])?
             } else {
@@ -712,6 +797,11 @@ impl VqDecodeScheduler {
         };
         bank.apply_decoded_vq_chunk(&chunk, grids)?;
         Ok(true)
+    }
+
+    /// Includes completed results until the caller consumes them.
+    pub fn in_flight_count(&self) -> usize {
+        self.in_flight.len()
     }
 
     /// True while at least one decode is running on the pool.
@@ -1279,10 +1369,22 @@ impl ShippingSpriteBank {
         chunk: &SpriteRleJxlChunk,
         dims: &[(u16, u16)],
     ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
+        Self::run_rle_jxl_chunk_decode_with_parallelism(chunk, dims, true)
+    }
+
+    fn run_rle_jxl_chunk_decode_with_parallelism(
+        chunk: &SpriteRleJxlChunk,
+        dims: &[(u16, u16)],
+        parallel: bool,
+    ) -> Result<Vec<(u32, crate::frame_holder::SpriteRaster)>> {
         use crate::rle_jxl;
         let decode_atlas = |(index, blob): (usize, &Vec<u8>)| {
-            let (width, height, rgba) = rle_jxl::decode_jxl_rgba8_parallel(blob)
-                .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
+            let (width, height, rgba) = if parallel {
+                rle_jxl::decode_jxl_rgba8_parallel(blob)
+            } else {
+                rle_jxl::decode_jxl_rgba8(blob)
+            }
+            .with_context(|| format!("RLE-JXL blob {index} of {}", chunk.rhs))?;
             let canvas = rle_jxl::canvas_from_rgba(&rgba).with_context(|| {
                 format!("RLE-JXL blob {index} of {} has invalid classes", chunk.rhs)
             })?;
@@ -1292,10 +1394,11 @@ impl ShippingSpriteBank {
         // one chunk. Let idle workers steal individual atlas decodes too.
         // On wasm, blocking rayon joins are only legal on pool workers.
         #[cfg(not(target_arch = "wasm32"))]
-        let use_pool = true;
+        let use_pool = parallel;
         #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-        let use_pool =
-            crate::wasm_threads::pool_threads() > 0 && rayon::current_thread_index().is_some();
+        let use_pool = parallel
+            && crate::wasm_threads::pool_threads() > 0
+            && rayon::current_thread_index().is_some();
         #[cfg(all(target_arch = "wasm32", not(feature = "wasm-threads")))]
         let use_pool = false;
         let atlases: Vec<(usize, usize, Arc<Vec<u16>>)> = if use_pool {
@@ -1463,8 +1566,29 @@ impl RleJxlDecodeScheduler {
         bank: &ShippingSpriteBank,
         pending: &mut Vec<SpriteRleJxlChunk>,
     ) -> Result<()> {
+        self.dispatch_ready_with_limit(bank, pending, None)
+    }
+
+    /// Bounded jobs decode atlases serially on their assigned worker, so
+    /// nested Rayon work cannot consume the worker reserved for part decode.
+    pub fn dispatch_ready_bounded(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteRleJxlChunk>,
+        max_in_flight: usize,
+    ) -> Result<()> {
+        self.dispatch_ready_with_limit(bank, pending, Some(max_in_flight))
+    }
+
+    fn dispatch_ready_with_limit(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteRleJxlChunk>,
+        limit: Option<usize>,
+    ) -> Result<()> {
+        let max_in_flight = limit.unwrap_or(usize::MAX);
         let mut index = 0;
-        while index < pending.len() {
+        while index < pending.len() && self.in_flight.len() < max_in_flight {
             if !bank.rle_jxl_chunk_ready_lenient(&pending[index]) {
                 index += 1;
                 continue;
@@ -1478,7 +1602,11 @@ impl RleJxlDecodeScheduler {
             let enqueued = ready.map(|_| js_sys::Date::now());
             rayon::spawn(move || {
                 let started = ready.map(|_| js_sys::Date::now());
-                let packed = ShippingSpriteBank::run_rle_jxl_chunk_decode(&chunk, &dims);
+                let packed = ShippingSpriteBank::run_rle_jxl_chunk_decode_with_parallelism(
+                    &chunk,
+                    &dims,
+                    limit.is_none(),
+                );
                 let timing =
                     ready
                         .zip(enqueued)
@@ -1517,6 +1645,11 @@ impl RleJxlDecodeScheduler {
                 "RLE-JXL sprite chunk decoded on worker");
         }
         Ok(Some((chunk, packed)))
+    }
+
+    /// Includes completed results until the caller consumes them.
+    pub fn in_flight_count(&self) -> usize {
+        self.in_flight.len()
     }
 
     /// True while at least one decode is running on the pool.
@@ -3328,6 +3461,51 @@ mod tests {
     }
 
     /// Chunk mission for the family base: sprite 0 coded standalone.
+    fn priority_chunk(id: u32, bases: &[u32], bytes: usize) -> SpriteVqChunk {
+        SpriteVqChunk {
+            rhs: "same.rhs".into(),
+            base_rhs: None,
+            base2_rhs: String::new(),
+            alphabet: 1,
+            sprite_ids: vec![id],
+            base_ids: bases.iter().copied().map(Some).collect(),
+            base2_ids: Vec::new(),
+            self_refs: false,
+            blob: vec![0; bytes],
+        }
+    }
+
+    #[test]
+    fn downstream_priority_distinguishes_groups_and_uses_longest_path() {
+        let mut second = priority_chunk(2, &[0, 0], 30);
+        second.base2_ids = vec![Some(1)];
+        let chunks = vec![
+            priority_chunk(0, &[], 2),
+            priority_chunk(1, &[], 3),
+            second,
+            priority_chunk(3, &[2], 40),
+            priority_chunk(4, &[0], 20),
+            priority_chunk(5, &[999], 50),
+        ];
+        assert_eq!(vq_downstream_costs(&chunks), [72, 73, 70, 40, 20, 50]);
+        let reversed: Vec<_> = chunks.into_iter().rev().collect();
+        assert_eq!(vq_downstream_costs(&reversed), [50, 20, 40, 70, 73, 72]);
+    }
+
+    #[test]
+    fn downstream_priority_allows_duplicate_providers_and_leaves_validation_to_bank() {
+        let chunks = vec![
+            priority_chunk(0, &[1], 2),
+            priority_chunk(1, &[0], 3),
+            priority_chunk(0, &[], 4),
+            priority_chunk(2, &[1], 5),
+        ];
+        let costs = vq_downstream_costs(&chunks);
+        assert_eq!(costs.len(), chunks.len());
+        assert_eq!(costs[1], 8);
+        assert_eq!(costs[3], 5);
+    }
+
     fn base_chunk_mission() -> ShippingMission {
         use crate::sprite_codec::{SpriteGrid, encode_grids};
         let blob = encode_grids(
@@ -3493,13 +3671,17 @@ mod tests {
             ],
         };
         let dims = [(4, 4), (4, 2)];
-        for threads in [1, 4] {
+        for (threads, parallel) in [(1, true), (4, true), (4, false)] {
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
                 .unwrap();
             let rasters = pool
-                .install(|| ShippingSpriteBank::run_rle_jxl_chunk_decode(&chunk, &dims))
+                .install(|| {
+                    ShippingSpriteBank::run_rle_jxl_chunk_decode_with_parallelism(
+                        &chunk, &dims, parallel,
+                    )
+                })
                 .unwrap();
             assert_eq!(
                 rasters.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
@@ -3521,8 +3703,13 @@ mod tests {
         // Even an unreferenced atlas must be validated. Parallel collection
         // must propagate its error rather than silently dropping it.
         chunk.jxl_blobs[1] = vec![0];
-        let error = ShippingSpriteBank::run_rle_jxl_chunk_decode(&chunk, &dims).unwrap_err();
-        assert!(format!("{error:#}").contains("RLE-JXL blob 1 of Animations/Day/parallel.rhs"));
+        for parallel in [false, true] {
+            let error = ShippingSpriteBank::run_rle_jxl_chunk_decode_with_parallelism(
+                &chunk, &dims, parallel,
+            )
+            .unwrap_err();
+            assert!(format!("{error:#}").contains("RLE-JXL blob 1 of Animations/Day/parallel.rhs"));
+        }
     }
 
     #[test]

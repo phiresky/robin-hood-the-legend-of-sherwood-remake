@@ -654,14 +654,59 @@ impl SpriteDeferral {
     }
 }
 
+/// Leave one pool worker available to short part decompression jobs. A
+/// one-worker pool cannot reserve a worker and still make sprite progress.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn streaming_worker_budget(threads: usize, fetching: bool, reserved: usize) -> usize {
+    threads
+        .saturating_sub(usize::from(fetching))
+        .max(usize::from(threads > 0))
+        .saturating_sub(reserved)
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+fn dispatch_streaming_chunks(
+    bank: &robin_assets::shipping_datadir::ShippingSpriteBank,
+    pending: &mut Vec<robin_assets::shipping_datadir::SpriteVqChunk>,
+    scheduler: &mut robin_assets::shipping_datadir::VqDecodeScheduler,
+    pending_rle: &mut Vec<robin_assets::shipping_datadir::SpriteRleJxlChunk>,
+    rle_scheduler: &mut robin_assets::shipping_datadir::RleJxlDecodeScheduler,
+    rhs_files: &std::collections::BTreeMap<String, robin_assets::shipping_datadir::RhsData>,
+    bounded: bool,
+    fetching: bool,
+    reserved_workers: usize,
+) -> Result<()> {
+    if !bounded {
+        rle_scheduler.dispatch_ready(bank, pending_rle)?;
+        return scheduler.dispatch_ready(bank, pending, rhs_files, !fetching);
+    }
+    let budget = streaming_worker_budget(
+        robin_assets::wasm_threads::pool_threads(),
+        fetching,
+        reserved_workers,
+    );
+    scheduler.dispatch_ready_bounded(
+        bank,
+        pending,
+        rhs_files,
+        !fetching,
+        budget.saturating_sub(rle_scheduler.in_flight_count()),
+    )?;
+    rle_scheduler.dispatch_ready_bounded(
+        bank,
+        pending_rle,
+        budget.saturating_sub(scheduler.in_flight_count()),
+    )
+}
+
 /// Streaming mission load for the browser worker-pool build.
 ///
 /// Every part request is issued simultaneously — the browser's network stack
 /// multiplexes the actual transfers — and each response is processed the
 /// moment it arrives: the zstd+bitcode part decode runs on a rayon worker
 /// (inline on the serial fallback), the decoded part merges immediately, and
-/// every dependency-ready *critical* VQ sprite chunk is dispatched to the
-/// pool right away. The main thread never blocks: it awaits whichever event
+/// dependency-ready *critical* VQ sprite chunks are admitted within the
+/// worker budget. The main thread never blocks: it awaits whichever event
 /// completes next (a part arrival, a finished chunk decode, or a progress
 /// tick) via `futures::select!`.
 ///
@@ -694,6 +739,26 @@ where
     tracing::info!(mission, "startup timing: mission streaming begin");
     let total = files.len();
     let pooled = wasm_threads::pool_threads() > 0;
+    // Diagnostic switch for paired browser measurements, without rebuilding.
+    let window =
+        web_sys::window().ok_or_else(|| anyhow!("mission streaming requires a browser window"))?;
+    let query = web_sys::UrlSearchParams::new_with_str(
+        &window
+            .location()
+            .search()
+            .map_err(|error| anyhow!("read startup query: {error:?}"))?,
+    )
+    .map_err(|error| anyhow!("parse startup query: {error:?}"))?;
+    let bounded = match query.get("streaming-scheduler").as_deref() {
+        None | Some("bounded") => true,
+        Some("unbounded") => false,
+        Some(value) => return Err(anyhow!("unknown streaming-scheduler policy {value:?}")),
+    };
+    tracing::info!(
+        bounded,
+        workers = wasm_threads::pool_threads(),
+        "mission worker scheduling policy"
+    );
     let fetch_progress = Arc::new(FetchByteProgress::default());
     let mut work = InstallWorkModel {
         files_total: total,
@@ -757,6 +822,14 @@ where
     enum Event {
         Part(Option<Result<(String, usize, ShippingMission)>>),
         Decoded(Result<Option<(SpriteVqChunk, Vec<(u32, Vec<u16>)>)>>),
+        RleDecoded(
+            Result<
+                Option<(
+                    SpriteRleJxlChunk,
+                    Vec<(u32, robin_assets::frame_holder::SpriteRaster)>,
+                )>,
+            >,
+        ),
         Tick,
     }
 
@@ -776,16 +849,27 @@ where
         // `async fn` future is not. One small allocation per event is noise
         // next to a network fetch or chunk decode.
         let mut tick = Box::pin(crate::window::sleep_ms(150)).fuse();
-        let event = if pooled && scheduler.has_in_flight() {
-            let mut next_decoded = Box::pin(scheduler.next_decoded()).fuse();
+        let event = {
+            let mut next_decoded = Box::pin(async {
+                if pooled && scheduler.has_in_flight() {
+                    scheduler.next_decoded().await
+                } else {
+                    futures::future::pending().await
+                }
+            })
+            .fuse();
+            let mut next_rle = Box::pin(async {
+                if bounded && pooled && rle_scheduler.has_in_flight() {
+                    rle_scheduler.next_decoded().await
+                } else {
+                    futures::future::pending().await
+                }
+            })
+            .fuse();
             futures::select! {
                 part = fetched.next() => Event::Part(part),
                 decoded = next_decoded => Event::Decoded(decoded),
-                _ = tick => Event::Tick,
-            }
-        } else {
-            futures::select! {
-                part = fetched.next() => Event::Part(part),
+                decoded = next_rle => Event::RleDecoded(decoded),
                 _ = tick => Event::Tick,
             }
         };
@@ -831,10 +915,17 @@ where
                     let rhs_files = &merged.payload.rhs_files;
                     if pooled {
                         pending_rle.append(&mut bank.rle_jxl_chunks);
-                        rle_scheduler.dispatch_ready(bank, &mut pending_rle)?;
-                        // Lenient readiness: a missing row/base only means
-                        // its part has not arrived yet.
-                        scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                        dispatch_streaming_chunks(
+                            bank,
+                            &mut pending_chunks,
+                            &mut scheduler,
+                            &mut pending_rle,
+                            &mut rle_scheduler,
+                            rhs_files,
+                            bounded,
+                            true,
+                            0,
+                        )?;
                     } else {
                         // Serial fallback: no pool, but decode still overlaps
                         // the network by draining ready chunks between
@@ -866,14 +957,62 @@ where
                 bank.apply_decoded_vq_chunk(&chunk, grids)?;
                 work.decode_done += chunk.blob.len() as u64;
                 let rhs_files = &merged.payload.rhs_files;
-                scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                dispatch_streaming_chunks(
+                    bank,
+                    &mut pending_chunks,
+                    &mut scheduler,
+                    &mut pending_rle,
+                    &mut rle_scheduler,
+                    rhs_files,
+                    bounded,
+                    true,
+                    0,
+                )?;
                 work.emit(progress, &chunk.rhs);
+            }
+            Event::RleDecoded(item) => {
+                let Some((chunk, rasters)) = item? else {
+                    continue;
+                };
+                let bank = merged
+                    .payload
+                    .sprite_bank
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("decoded RLE chunk without a sprite bank"))?;
+                bank.apply_decoded_rle_jxl_chunk(&chunk, rasters)?;
+                dispatch_streaming_chunks(
+                    bank,
+                    &mut pending_chunks,
+                    &mut scheduler,
+                    &mut pending_rle,
+                    &mut rle_scheduler,
+                    &merged.payload.rhs_files,
+                    bounded,
+                    true,
+                    0,
+                )?;
             }
             Event::Tick => {
                 // Real byte progress accrued inside the concurrent body
                 // reads; surface it even while no part has completed.
                 work.emit(progress, &label);
                 crate::window::yield_to_runtime().await;
+                if bounded
+                    && pooled
+                    && let Some(bank) = merged.payload.sprite_bank.as_ref()
+                {
+                    dispatch_streaming_chunks(
+                        bank,
+                        &mut pending_chunks,
+                        &mut scheduler,
+                        &mut pending_rle,
+                        &mut rle_scheduler,
+                        &merged.payload.rhs_files,
+                        bounded,
+                        true,
+                        0,
+                    )?;
+                }
             }
         }
     }
@@ -899,19 +1038,75 @@ where
             );
         }
         let rhs_files = &merged.payload.rhs_files;
-        // Drain outstanding worker decodes; each applied chunk can unlock
-        // dependents that were still pending.
-        while let Some((chunk, grids)) = scheduler.next_decoded().await? {
-            bank.apply_decoded_vq_chunk(&chunk, grids)?;
-            work.decode_done += chunk.blob.len() as u64;
-            scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
-            work.emit(progress, &chunk.rhs);
+        if bounded && pooled {
+            loop {
+                dispatch_streaming_chunks(
+                    bank,
+                    &mut pending_chunks,
+                    &mut scheduler,
+                    &mut pending_rle,
+                    &mut rle_scheduler,
+                    rhs_files,
+                    true,
+                    false,
+                    0,
+                )?;
+                if !scheduler.has_in_flight() && !rle_scheduler.has_in_flight() {
+                    break;
+                }
+                let event = {
+                    let mut next_vq = Box::pin(async {
+                        if scheduler.has_in_flight() {
+                            scheduler.next_decoded().await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    })
+                    .fuse();
+                    let mut next_rle = Box::pin(async {
+                        if rle_scheduler.has_in_flight() {
+                            rle_scheduler.next_decoded().await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    })
+                    .fuse();
+                    futures::select! {
+                        item = next_vq => Event::Decoded(item),
+                        item = next_rle => Event::RleDecoded(item),
+                    }
+                };
+                match event {
+                    Event::Decoded(item) => {
+                        if let Some((chunk, grids)) = item? {
+                            bank.apply_decoded_vq_chunk(&chunk, grids)?;
+                            work.decode_done += chunk.blob.len() as u64;
+                            work.emit(progress, &chunk.rhs);
+                        }
+                    }
+                    Event::RleDecoded(item) => {
+                        if let Some((chunk, rasters)) = item? {
+                            bank.apply_decoded_rle_jxl_chunk(&chunk, rasters)?;
+                        }
+                    }
+                    _ => unreachable!("drain only polls sprite worker results"),
+                }
+            }
+        } else {
+            // Drain outstanding worker decodes; each applied chunk can unlock
+            // dependents that were still pending.
+            while let Some((chunk, grids)) = scheduler.next_decoded().await? {
+                bank.apply_decoded_vq_chunk(&chunk, grids)?;
+                work.decode_done += chunk.blob.len() as u64;
+                scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                work.emit(progress, &chunk.rhs);
+            }
         }
         // Strict pass for the critical remainder: with the whole payload
         // merged, "not fetched yet" is no longer an excuse, so unresolved
         // dependencies now surface as real manifest errors.
         if pooled {
-            loop {
+            while !bounded {
                 scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, true)?;
                 let Some((chunk, grids)) = scheduler.next_decoded().await? else {
                     break;
@@ -940,6 +1135,7 @@ where
         tracing::info!(
             mission,
             elapsed_ms = vq_drain_start.elapsed().as_secs_f64() * 1000.0,
+            includes_rle = bounded,
             "startup timing: VQ tail wait and apply"
         );
         let rle_drain_start = web_time::Instant::now();
@@ -1416,6 +1612,17 @@ mod tests {
     };
     use robin_engine::campaign::{Campaign, PcDescription};
     use robin_engine::profiles::{CharacterProfile, CharacterProfileIdx, ProfileManager};
+
+    #[test]
+    fn streaming_budget_reserves_part_and_terrain_capacity() {
+        assert_eq!(super::streaming_worker_budget(8, true, 0), 7);
+        assert_eq!(super::streaming_worker_budget(8, true, 1), 6);
+        assert_eq!(super::streaming_worker_budget(8, false, 1), 7);
+        assert_eq!(super::streaming_worker_budget(8, false, 0), 8);
+        assert_eq!(super::streaming_worker_budget(1, true, 0), 1);
+        assert_eq!(super::streaming_worker_budget(1, true, 1), 0);
+        assert_eq!(super::streaming_worker_budget(0, false, 0), 0);
+    }
 
     fn description(profile: u32, instanced: bool) -> PcDescription {
         PcDescription {
