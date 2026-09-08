@@ -16,6 +16,9 @@ paths retain their explicit raw-ID bridge; this does not change engine schemas.
 old cache when DEFAULT.RES is unavailable. Successful replacement retires the old
 uploads, including lazily loaded pictures. `retire` preflights the complete owner
 bank before mutation, clears borrowed slots, and permits repeated retirement.
+Lazy picture lookup checks one private owner in constant time, since all upload
+insertions enforce a single renderer binding; individual draws still validate their
+own handles. Full-bank validation is reserved for reload and retirement.
 The integration owner installs mission teardown; renderer destruction still frees
 uploads on assembly failures and standalone menu exits.
 

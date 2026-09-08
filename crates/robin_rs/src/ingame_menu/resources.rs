@@ -1032,6 +1032,17 @@ pub(crate) struct PreparedMenuLocalization {
 }
 
 impl IngameMenuResources {
+    /// All uploads enter this private bank through renderer-checked loading or
+    /// lazy lookup. One live owner therefore identifies its renderer in O(1);
+    /// individual borrowed handles are checked again at draw time. An empty bank
+    /// has no renderer binding and may accept its first upload from any renderer.
+    fn validate_lookup_renderer(&self, renderer: &Renderer) -> Result<(), SurfaceOwnershipError> {
+        if let Some(owner) = self.owners.first() {
+            renderer.validate_surface_retirement(owner)?;
+        }
+        Ok(())
+    }
+
     /// Reject a foreign renderer before uploads or destructive cache changes.
     pub fn validate_renderer(&self, renderer: &Renderer) -> Result<(), SurfaceOwnershipError> {
         for owner in &self.owners {
@@ -1677,7 +1688,7 @@ impl IngameMenuResources {
 
     /// Load a dialogue portrait sprite, caching it on first access.
     pub fn portrait(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
-        self.validate_renderer(renderer)
+        self.validate_lookup_renderer(renderer)
             .expect("menu cache renderer mismatch");
         if let Some(s) = self.portrait_cache.get(&id) {
             return Some(*s);
@@ -1699,7 +1710,7 @@ impl IngameMenuResources {
         external: &mut ResourceManager,
         id: i32,
     ) -> Option<MenuSurface> {
-        self.validate_renderer(renderer)
+        self.validate_lookup_renderer(renderer)
             .expect("menu cache renderer mismatch");
         // A picture id of 0 means "no picture widget", so a popup-text
         // entry whose picture id is intentionally 0 renders picture-
@@ -1724,7 +1735,7 @@ impl IngameMenuResources {
     /// renderer surface. Used by small modal screens that need resource
     /// sprites not preloaded by the shared menu cache.
     pub fn default_picture(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
-        self.validate_renderer(renderer)
+        self.validate_lookup_renderer(renderer)
             .expect("menu cache renderer mismatch");
         if let Some(s) = self.portrait_cache.get(&id) {
             return Some(*s);
@@ -1742,7 +1753,7 @@ impl IngameMenuResources {
         id: i32,
         sub_id: usize,
     ) -> Option<MenuSurface> {
-        self.validate_renderer(renderer)
+        self.validate_lookup_renderer(renderer)
             .expect("menu cache renderer mismatch");
         let key = id.saturating_mul(1000).saturating_add(sub_id as i32);
         if let Some(s) = self.portrait_cache.get(&key) {
@@ -1901,6 +1912,8 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         "gate supplies fresh renderers"
     );
     assert_ne!(first, foreign);
+    assert!(cache.validate_lookup_renderer(renderer).is_ok());
+    assert!(cache.validate_lookup_renderer(other).is_err());
     assert_eq!(cache.button_surface(1), Some(first));
     assert_ne!(cache.button_surface(3), Some(first));
     assert_eq!(cache.ok_button_surface(3), cache.button_surface(3));
@@ -1946,6 +1959,10 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
     assert!(renderer.surface_dimensions(last).is_err());
     assert!(renderer.surface_dimensions(lazy.id).is_err());
     assert!(cache.button_surface(0).is_none());
+    assert!(
+        cache.validate_lookup_renderer(other).is_ok(),
+        "empty bank is unbound"
+    );
     cache.retire(renderer).unwrap();
     assert_eq!(
         &renderer.try_capture_frame_rgba().unwrap().2[..4],
