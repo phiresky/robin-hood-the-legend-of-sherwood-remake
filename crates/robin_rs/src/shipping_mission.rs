@@ -245,7 +245,7 @@ where
     // runs its own (now no-op for the critical set) materialization pass —
     // deferred chunks are held out of the bank's chunk list entirely.
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-    let (merged, fetched_bytes, deferred_tail) = fetch_merge_materialize_streaming(
+    let (merged, fetched_bytes, deferred_tail, early_terrain) = fetch_merge_materialize_streaming(
         datadir,
         mission,
         campaign,
@@ -264,6 +264,15 @@ where
         elapsed_ms = install_start.elapsed().as_secs_f64() * 1000.0,
         "startup timing: mission install"
     );
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if let Some(job) = early_terrain {
+        _application
+            .asset_cache()
+            .map_err(anyhow::Error::msg)?
+            .publish_early_terrain(job, datadir)
+            .map_err(anyhow::Error::msg)
+            .context("publish early terrain decode for installed mission")?;
+    }
     datadir.set_active_exclamation_ids(exclamation_ids);
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
     if let Some(tail) = deferred_tail {
@@ -724,7 +733,12 @@ async fn fetch_merge_materialize_streaming<F>(
     has_decoded_saved_world: bool,
     files: &[String],
     progress: &mut F,
-) -> Result<(ShippingMission, usize, Option<DeferredSpriteTail>)>
+) -> Result<(
+    ShippingMission,
+    usize,
+    Option<DeferredSpriteTail>,
+    Option<crate::level_loading_host::EarlyTerrainDecode>,
+)>
 where
     F: FnMut(MissionLoadProgress<'_>),
 {
@@ -834,6 +848,7 @@ where
     }
 
     let mut merged = ShippingMission::default();
+    let mut early_terrain: Option<crate::level_loading_host::EarlyTerrainDecode> = None;
     let mut fetched_bytes = 0usize;
     let mut pending_chunks: Vec<SpriteVqChunk> = Vec::new();
     let mut scheduler = VqDecodeScheduler::default();
@@ -892,6 +907,11 @@ where
                     );
                 }
                 label = file;
+                if pooled && early_terrain.is_none() {
+                    early_terrain = crate::level_loading_host::EarlyTerrainDecode::try_start(
+                        mission, datadir, &merged,
+                    );
+                }
                 if let Some(bank) = merged.payload.sprite_bank.as_mut() {
                     let mut incoming = std::mem::take(&mut bank.vq_chunks);
                     if let Some(deferral) = deferral.as_mut() {
@@ -924,7 +944,9 @@ where
                             rhs_files,
                             bounded,
                             true,
-                            0,
+                            usize::from(
+                                early_terrain.as_ref().is_some_and(|job| !job.is_finished()),
+                            ),
                         )?;
                     } else {
                         // Serial fallback: no pool, but decode still overlaps
@@ -966,7 +988,7 @@ where
                     rhs_files,
                     bounded,
                     true,
-                    0,
+                    usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                 )?;
                 work.emit(progress, &chunk.rhs);
             }
@@ -989,7 +1011,7 @@ where
                     &merged.payload.rhs_files,
                     bounded,
                     true,
-                    0,
+                    usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                 )?;
             }
             Event::Tick => {
@@ -1010,7 +1032,7 @@ where
                         &merged.payload.rhs_files,
                         bounded,
                         true,
-                        0,
+                        usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                     )?;
                 }
             }
@@ -1049,12 +1071,26 @@ where
                     rhs_files,
                     true,
                     false,
-                    0,
+                    usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                 )?;
                 if !scheduler.has_in_flight() && !rle_scheduler.has_in_flight() {
+                    if (!pending_chunks.is_empty() || !pending_rle.is_empty())
+                        && early_terrain.as_ref().is_some_and(|job| !job.is_finished())
+                    {
+                        crate::window::sleep_ms(10).await;
+                        continue;
+                    }
                     break;
                 }
                 let event = {
+                    let mut terrain_tick = Box::pin(async {
+                        if early_terrain.as_ref().is_some_and(|job| !job.is_finished()) {
+                            crate::window::sleep_ms(10).await;
+                        } else {
+                            futures::future::pending().await
+                        }
+                    })
+                    .fuse();
                     let mut next_vq = Box::pin(async {
                         if scheduler.has_in_flight() {
                             scheduler.next_decoded().await
@@ -1074,6 +1110,7 @@ where
                     futures::select! {
                         item = next_vq => Event::Decoded(item),
                         item = next_rle => Event::RleDecoded(item),
+                        _ = terrain_tick => Event::Tick,
                     }
                 };
                 match event {
@@ -1089,7 +1126,10 @@ where
                             bank.apply_decoded_rle_jxl_chunk(&chunk, rasters)?;
                         }
                     }
-                    _ => unreachable!("drain only polls sprite worker results"),
+                    Event::Tick => {}
+                    _ => {
+                        unreachable!("drain only polls sprite worker results and terrain readiness")
+                    }
                 }
             }
         } else {
@@ -1187,7 +1227,7 @@ where
         }
         _ => None,
     };
-    Ok((merged, fetched_bytes, tail))
+    Ok((merged, fetched_bytes, tail, early_terrain))
 }
 
 /// Stream the deferred (reinforcement-only) sprite chunks on the worker
