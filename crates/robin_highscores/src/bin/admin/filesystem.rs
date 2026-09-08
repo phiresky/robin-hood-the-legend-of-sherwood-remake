@@ -598,6 +598,12 @@ pub(super) struct FileIdentity {
 }
 
 impl FileIdentity {
+    /// Compare recorded journal data without letting consumers fabricate an
+    /// observed filesystem identity. Journal authentication remains the caller's job.
+    pub(super) fn matches_parts(self, device: u64, inode: u64, owner: u32) -> bool {
+        self.device == device && self.inode == inode && self.owner == owner
+    }
+
     pub(super) fn device(self) -> u64 {
         self.device
     }
