@@ -156,7 +156,14 @@ pub(crate) fn drain_net_inputs(
     let mut latest_host_clock_sample: Option<(u32, u32)> = None;
     let mut rollback_telemetry = None;
     let mut effective_frame = current_frame;
-    while let Ok(event) = net.try_recv_event() {
+    loop {
+        let event = match net.try_recv_event() {
+            Ok(event) => event,
+            Err(std::sync::mpsc::TryRecvError::Empty) => break,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                panic!("fatal multiplayer session error: transport worker closed its event channel")
+            }
+        };
         match event {
             NetEvent::Input {
                 server_frame,
@@ -291,7 +298,9 @@ pub(crate) fn drain_net_inputs(
                                      local engine already matches host"
                                 );
                                 if let Some(net) = host.transport.net.as_ref() {
-                                    net.send_ready_to_sim(frame);
+                                    net.send_ready_to_sim(frame).unwrap_or_else(|error| {
+                                        panic!("fatal multiplayer readiness publication failure: {error}")
+                                    });
                                 }
                                 if replacing_prediction_future {
                                     *rewind_buffer = RewindBuffer::new();
@@ -346,7 +355,9 @@ pub(crate) fn drain_net_inputs(
                                         }
                                         rewrote_sim_state = true;
                                         if let Some(net) = host.transport.net.as_ref() {
-                                            net.send_ready_to_sim(frame);
+                                            net.send_ready_to_sim(frame).unwrap_or_else(|error| {
+                                        panic!("fatal multiplayer readiness publication failure: {error}")
+                                    });
                                         }
                                     }
                                     Err(error) => panic!(
@@ -395,7 +406,9 @@ pub(crate) fn drain_net_inputs(
                                 );
                                 effective_frame = frame;
                                 if let Some(net) = host.transport.net.as_ref() {
-                                    net.send_ready_to_sim(frame);
+                                    net.send_ready_to_sim(frame).unwrap_or_else(|error| {
+                                        panic!("fatal multiplayer readiness publication failure: {error}")
+                                    });
                                 }
                                 *rewind_buffer = RewindBuffer::new();
                                 rewind_buffer.seed_initial_anchor(frame, &manager.engine);
@@ -746,7 +759,10 @@ pub(crate) fn drain_net_inputs(
                 });
             // ReconnectAll resets host readiness as well as peer readiness.
             // Publish this exact held boundary into the replacement barrier.
-            net.send_ready_to_sim(effective_frame);
+            net.send_ready_to_sim(effective_frame)
+                .unwrap_or_else(|error| {
+                    panic!("fatal multiplayer readiness publication failure: {error}")
+                });
             host.transport.reconnecting = true;
             pending_inputs.clear();
         }
@@ -1177,12 +1193,12 @@ pub(super) async fn setup_multiplayer_session(
                 let offered_content = {
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(15);
                     while handle.content_offer().is_none()
-                        && handle.mission_id().is_none()
+                        && handle.session_metadata().is_none()
                         && web_time::Instant::now() < deadline
                     {
                         crate::window::sleep_ms(10).await;
                     }
-                    if handle.content_offer().is_none() && handle.mission_id().is_none() {
+                    if handle.content_offer().is_none() && handle.session_metadata().is_none() {
                         return Err(
                             "multiplayer: timed out awaiting browser Welcome/content offer"
                                 .to_owned(),
@@ -1215,19 +1231,11 @@ pub(super) async fn setup_multiplayer_session(
                     })?;
                     host.transport.distributed_mod = Some(admitted);
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(15);
-                    while (handle.mission_id().is_none()
-                        || handle.mission_seed().is_none()
-                        || handle.mission_sim_config().is_none()
-                        || handle.speech_timing_authority().is_none())
-                        && web_time::Instant::now() < deadline
+                    while handle.session_metadata().is_none() && web_time::Instant::now() < deadline
                     {
                         crate::window::sleep_ms(10).await;
                     }
-                    if handle.mission_id().is_none()
-                        || handle.mission_seed().is_none()
-                        || handle.mission_sim_config().is_none()
-                        || handle.speech_timing_authority().is_none()
-                    {
+                    if handle.session_metadata().is_none() {
                         return Err(
                             "multiplayer: timed out awaiting Welcome after verified host-content admission"
                                 .to_owned(),
@@ -1243,13 +1251,7 @@ pub(super) async fn setup_multiplayer_session(
                 #[cfg(target_arch = "wasm32")]
                 {
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(10);
-                    while (handle.mission_id().is_none()
-                        || handle.mission_seed().is_none()
-                        || handle.mission_sim_config().is_none()
-                        || handle.assigned_seat().is_none()
-                        || handle.session_id().is_none()
-                        || handle.speech_timing_authority().is_none())
-                        && web_time::Instant::now() < deadline
+                    while handle.session_metadata().is_none() && web_time::Instant::now() < deadline
                     {
                         if let Some(error) = handle.startup_error() {
                             return Err(format!(
@@ -1263,40 +1265,27 @@ pub(super) async fn setup_multiplayer_session(
                             "multiplayer: browser relay startup failed: {error}"
                         ));
                     }
-                    if handle.mission_id().is_none()
-                        || handle.mission_seed().is_none()
-                        || handle.mission_sim_config().is_none()
-                        || handle.assigned_seat().is_none()
-                        || handle.session_id().is_none()
-                        || handle.speech_timing_authority().is_none()
-                    {
+                    if handle.session_metadata().is_none() {
                         return Err(
                             "multiplayer: timed out awaiting authoritative Welcome before Engine construction"
                                 .to_string(),
                         );
                     }
                 }
-                let session_id = handle.session_id().ok_or_else(|| {
-                    "multiplayer: Welcome omitted the required session identity".to_string()
+                let session = handle.session_metadata().ok_or_else(|| {
+                    "multiplayer: authoritative Welcome is not available".to_string()
                 })?;
                 channels
-                    .install_session_id(session_id)
+                    .install_session_id(session.session_id)
                     .map_err(|error| format!("multiplayer: {error}"))?;
-                let welcomed_mission = handle
-                    .mission_id()
-                    .expect("successful Welcome must include a mission id");
-                let assigned_seat = handle
-                    .assigned_seat()
-                    .expect("successful Welcome must assign a local seat");
-                host.transport.local_seat = assigned_seat;
+                let welcomed_mission = session.mission_id;
+                host.transport.local_seat = session.seat;
                 if welcomed_mission != authoritative_mission_id {
                     return Err(format!(
                         "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
                     ));
                 }
-                let speech_timing_locale = handle
-                    .speech_timing_authority()
-                    .expect("successful Welcome must publish speech timing authority");
+                let speech_timing_locale = session.speech_timing_locale;
                 if let Some(authoritative_locale) = speech_timing_locale.as_deref() {
                     let has_timing_pack = host
                         .application_context()
@@ -1313,10 +1302,8 @@ pub(super) async fn setup_multiplayer_session(
                     }
                 }
                 host.transport.mission_id = Some(welcomed_mission.to_string());
-                if let Some(seed) = handle.mission_seed() {
-                    host.transport.mission_seed = Some(seed);
-                }
-                host.transport.mission_sim_config = handle.mission_sim_config();
+                host.transport.mission_seed = Some(session.mission_seed);
+                host.transport.mission_sim_config = Some(session.sim_config);
                 host.transport.speech_timing_locale = speech_timing_locale;
                 tracing::info!(
                     server = %addr,
@@ -1830,6 +1817,22 @@ mod tests {
             &mut hashes,
         );
         assert!(!host.transport.reconnecting);
+    }
+
+    #[test]
+    #[should_panic(expected = "transport worker closed its event channel")]
+    fn closed_worker_fails_the_mission_drain_instead_of_waiting_for_reconnect() {
+        let (mut host, mut manager, mut assets, incoming, _outgoing) = network_drain_fixture();
+        drop(incoming);
+        let _ = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            0,
+            &mut std::collections::BTreeMap::new(),
+            &mut assets,
+            &mut RewindBuffer::new(),
+            &mut std::collections::BTreeMap::new(),
+        );
     }
 
     #[test]

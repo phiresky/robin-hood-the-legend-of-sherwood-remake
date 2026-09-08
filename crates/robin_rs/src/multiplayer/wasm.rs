@@ -90,50 +90,51 @@ impl Default for BrowserRankedTransportState {
 
 /// Browser-side handle to the live single-threaded iroh task.
 pub struct ClientHandle {
-    pub assigned_seat: Rc<RefCell<Option<PlayerId>>>,
-    pub session_id: Rc<RefCell<Option<robin_engine::multiplayer::MultiplayerSessionId>>>,
-    pub mission_seed: Rc<RefCell<Option<u64>>>,
-    pub mission_sim_config: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
-    pub speech_timing_locale: Rc<RefCell<Option<Option<String>>>>,
-    pub mission_id: Rc<RefCell<Option<String>>>,
+    session_metadata: Rc<RefCell<Option<super::ClientSessionMetadata>>>,
     ranked_setup_tx: async_channel::Sender<Option<OfficialRankedSessionSetupV1>>,
     ranked_lifecycle: SharedRankedSessionLifecycle,
     ranked_local_public_key: Rc<Cell<Option<PublicKey32>>>,
     ranked_authenticated_host_public_key: PublicKey32,
-    pub content_offer: Rc<RefCell<Option<robin_engine::multiplayer::DistributedModOffer>>>,
+    content_offer: Rc<RefCell<Option<robin_engine::multiplayer::DistributedModOffer>>>,
     startup_error: Rc<RefCell<Option<String>>>,
     cancellation: Rc<Cell<bool>>,
 }
 
 impl ClientHandle {
+    pub fn session_metadata(&self) -> Option<super::ClientSessionMetadata> {
+        self.session_metadata.borrow().clone()
+    }
+
     pub fn session_id(&self) -> Option<robin_engine::multiplayer::MultiplayerSessionId> {
-        *self.session_id.borrow()
+        self.session_metadata().map(|session| session.session_id)
     }
 
     pub fn assigned_seat(&self) -> Option<PlayerId> {
-        *self.assigned_seat.borrow()
+        self.session_metadata().map(|session| session.seat)
     }
 
     pub fn mission_seed(&self) -> Option<u64> {
-        *self.mission_seed.borrow()
+        self.session_metadata().map(|session| session.mission_seed)
     }
 
     pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
-        *self.mission_sim_config.borrow()
+        self.session_metadata().map(|session| session.sim_config)
     }
 
     pub fn mission_id(&self) -> Option<String> {
-        self.mission_id.borrow().clone()
+        self.session_metadata().map(|session| session.mission_id)
     }
 
     pub fn speech_timing_locale(&self) -> Option<String> {
-        self.speech_timing_locale.borrow().clone().flatten()
+        self.session_metadata()
+            .and_then(|session| session.speech_timing_locale)
     }
 
     /// The outer option distinguishes a pending handshake from an explicit
     /// `None`, which authoritatively selects base `Data/Sounds` timing.
     pub fn speech_timing_authority(&self) -> Option<Option<String>> {
-        self.speech_timing_locale.borrow().clone()
+        self.session_metadata()
+            .map(|session| session.speech_timing_locale)
     }
 
     pub fn content_offer(&self) -> Option<robin_engine::multiplayer::DistributedModOffer> {
@@ -210,12 +211,7 @@ pub fn connect_client(
     let server_addr = ticket.endpoint_addr().map_err(std::io::Error::other)?;
     let ranked_authenticated_host_public_key = PublicKey32::from_bytes(*server_addr.id.as_bytes());
     let ranked_local_public_key = Rc::new(Cell::new(None));
-    let assigned_seat = Rc::new(RefCell::new(None));
-    let session_id = Rc::new(RefCell::new(None));
-    let mission_seed = Rc::new(RefCell::new(None));
-    let mission_sim_config = Rc::new(RefCell::new(None));
-    let speech_timing_locale = Rc::new(RefCell::new(None));
-    let mission_id = Rc::new(RefCell::new(None));
+    let session_metadata = Rc::new(RefCell::new(None));
     let content_offer = Rc::new(RefCell::new(None));
     let startup_error = Rc::new(RefCell::new(None));
     let cancellation = Rc::new(Cell::new(false));
@@ -229,12 +225,7 @@ pub fn connect_client(
         nickname,
         incoming_tx,
         outgoing_rx,
-        Rc::clone(&assigned_seat),
-        Rc::clone(&session_id),
-        Rc::clone(&mission_seed),
-        Rc::clone(&mission_sim_config),
-        Rc::clone(&speech_timing_locale),
-        Rc::clone(&mission_id),
+        Rc::clone(&session_metadata),
         Rc::clone(&ranked_local_public_key),
         ranked_setup_rx,
         Arc::clone(&ranked_lifecycle),
@@ -244,12 +235,7 @@ pub fn connect_client(
     ));
 
     Ok(ClientHandle {
-        assigned_seat,
-        session_id,
-        mission_seed,
-        mission_sim_config,
-        speech_timing_locale,
-        mission_id,
+        session_metadata,
         ranked_setup_tx,
         ranked_lifecycle,
         ranked_local_public_key,
@@ -304,12 +290,7 @@ async fn run_client_io(
     nickname: String,
     incoming_tx: Sender<NetEvent>,
     mut outgoing_rx: Receiver<NetOutbound>,
-    assigned: Rc<RefCell<Option<PlayerId>>>,
-    session_id_slot: Rc<RefCell<Option<robin_engine::multiplayer::MultiplayerSessionId>>>,
-    mission_seed_slot: Rc<RefCell<Option<u64>>>,
-    sim_config_slot: Rc<RefCell<Option<robin_engine::engine::SimConfig>>>,
-    speech_timing_locale_slot: Rc<RefCell<Option<Option<String>>>>,
-    mission_id_slot: Rc<RefCell<Option<String>>>,
+    session_metadata: Rc<RefCell<Option<super::ClientSessionMetadata>>>,
     ranked_local_public_key_slot: Rc<Cell<Option<PublicKey32>>>,
     ranked_setup_rx: async_channel::Receiver<Option<OfficialRankedSessionSetupV1>>,
     ranked_lifecycle: SharedRankedSessionLifecycle,
@@ -453,19 +434,32 @@ async fn run_client_io(
         }
     };
     *content_offer_slot.borrow_mut() = admitted_offer.clone();
+    let admitted_session = super::ClientSessionMetadata::from_welcome(
+        &super::client_protocol::WelcomeData {
+            seat: your_seat,
+            mission_id: mission_id.clone(),
+            mission_seed,
+            sim_config,
+            speech_timing_locale: speech_timing_locale.clone(),
+            session_id,
+        },
+        admitted_offer.clone(),
+    );
+    let admitted_session = match admitted_session {
+        Ok(session) => session,
+        Err(error) => {
+            publish_startup_error(&startup_error, &incoming_tx, error);
+            endpoint.close().await;
+            return;
+        }
+    };
     if let Err(error) = mark_invitation_redeemed(ticket.payload().session_id.as_str()).await {
         publish_startup_error(&startup_error, &incoming_tx, error);
         endpoint.close().await;
         return;
     }
-
     ranked_state.welcomed_seat.set(Some(your_seat));
-    *assigned.borrow_mut() = Some(your_seat);
-    *session_id_slot.borrow_mut() = Some(session_id);
-    *mission_seed_slot.borrow_mut() = Some(mission_seed);
-    *sim_config_slot.borrow_mut() = Some(sim_config);
-    *speech_timing_locale_slot.borrow_mut() = Some(speech_timing_locale.clone());
-    *mission_id_slot.borrow_mut() = Some(mission_id.clone());
+    *session_metadata.borrow_mut() = Some(admitted_session);
     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
     let _ = incoming_tx.send(NetEvent::MissionConfig {
         mission_id: mission_id.clone(),
@@ -576,10 +570,8 @@ async fn run_client_io(
                                 "discarded browser commands queued for the abandoned prediction future"
                             );
                         }
-                        *assigned.borrow_mut() = Some(next_seat);
+                        // The validated reconnect keeps the published session identity.
                         ranked_state.welcomed_seat.set(Some(next_seat));
-                        *speech_timing_locale_slot.borrow_mut() =
-                            Some(next_speech_timing_locale.clone());
                         let _ = incoming_tx.send(NetEvent::Reconnected);
                         let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(next_seat));
                         let _ = incoming_tx.send(NetEvent::MissionConfig {
