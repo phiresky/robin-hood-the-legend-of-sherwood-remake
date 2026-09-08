@@ -811,14 +811,18 @@ fn plan_interactive_pacing(
     engine: &Engine,
     frame: &MissionFrame,
     args: &crate::main_entry::CliArgs,
-) -> (u32, u32) {
+) -> (u32, u64) {
     runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
     // `--fast-forward` CLI flag skips the pacing sleep entirely so
     // the loop runs at full host speed (tests / profiling).  The
     // in-game fast-forward engine flag uses a 1 ms floor instead so
     // other host timers don't starve.
-    let frame_end_ms = crate::window::process_uptime_ms();
+    // Presentation deadlines use the wide process clock. Simulation/wire
+    // timestamps retain their existing u32 contract, but a presentation wait
+    // must not turn into a multi-day sleep when that clock wraps.
+    let presentation_now_ms = crate::window::process_uptime_us() / 1_000;
+    let frame_end_ms = presentation_now_ms as u32;
     let elapsed = frame_end_ms.saturating_sub(frame.started_at_ms);
     let target = if args.fast_forward {
         0
@@ -891,17 +895,20 @@ fn plan_interactive_pacing(
     // Preserve the absolute deadline across the capability handoff. Hash
     // publication and preparing the presentation borrow both consume this
     // budget; neither may turn it into a fresh relative sleep.
-    (target, frame_end_ms.saturating_add(remaining_sleep_ms))
+    (
+        target,
+        presentation_now_ms.saturating_add(u64::from(remaining_sleep_ms)),
+    )
 }
 
 async fn pace_interactive_frame(
     host: &mut crate::host::HostPresentation<'_>,
     target: u32,
-    presentation_deadline_ms: u32,
+    presentation_deadline_ms: u64,
     mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u32) -> bool,
 ) {
     let remaining_wait_ms =
-        presentation_deadline_ms.saturating_sub(crate::window::process_uptime_ms());
+        presentation_wait_ms(presentation_deadline_ms, crate::window::process_uptime_us());
     if remaining_wait_ms > 0 {
         let refresh_presentation = host.frontend.native_refresh_presentation
             && target >= engine_api::FRAME_TIME_MS
@@ -944,10 +951,28 @@ async fn pace_interactive_frame(
     }
 }
 
+fn presentation_wait_ms(deadline_ms: u64, now_us: u64) -> u64 {
+    deadline_ms.saturating_sub(now_us / 1_000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FrameControl, MissionExit, RefreshPresentationSchedule};
     use robin_engine::game_operation::GameCode;
+
+    #[test]
+    fn presentation_deadline_charges_handoff_time_and_survives_u32_clock_wrap() {
+        let start = u64::from(u32::MAX) - 10;
+        let deadline = start + 40;
+        assert_eq!(
+            super::presentation_wait_ms(deadline, (start + 25) * 1_000),
+            15
+        );
+        assert_eq!(
+            super::presentation_wait_ms(deadline, (start + 45) * 1_000),
+            0
+        );
+    }
 
     #[test]
     fn frame_control_keeps_restart_and_exit_distinct() {
