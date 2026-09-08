@@ -20,7 +20,7 @@ fixture directory name. Record source commits separately; the harness records in
 paths, runtime options and Chrome version. It stages no files into either input.
 
 The frontend exercises the production compressed WASM fetch/decompression/streaming
-compile path. WASM uses `gzip -9 -n`, exactly as deployment staging; text uses Node
+compile path. The fixture compresses WASM reproducibly with `gzip -9 -n`; text uses Node
 zlib level 9 HTTP Content-Encoding. The recorded payload byte lengths are authoritative.
 This is a local HTTP/1.1 model with zero added RTT, no packet loss or TCP/header overhead,
 not a simulation of Cloudflare's HTTP/2 or HTTP/3 scheduler. All response bodies,
