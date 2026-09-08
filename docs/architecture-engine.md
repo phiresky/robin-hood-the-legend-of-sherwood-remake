@@ -42,6 +42,14 @@ and movement preparation versus synchronous advancement/classification. Existing
 corpse guard, posture transition, callback ownership, lazy door allocation,
 movement and snapshot tests remain the broad acceptance suite.
 
-TODO: record completed explicit engine/client validation below. Broader engine
-domain privacy remains incremental work; this change does not pretend that
-every `EngineInner` subsystem now has restricted mutation authority.
+Final combined validation at `43ab1f43280ac11ea305a72886109ce2e8e8eda6`:
+`CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_engine -p robin_lua`
+passed. Engine: 4,461 unit tests, 15 integration tests, and 22 doctests passed;
+four unit tests and one doctest retained their existing ignores. The new
+`ElementData::posture` private-field compile-fail doctest passed explicitly.
+Lua: 12 unit tests and 23 integration tests passed. Client validation belongs
+to the integrated client acceptance lanes, not this engine-only result.
+
+TODO: continue narrowing broader engine domain privacy incrementally; this
+change does not claim every `EngineInner` subsystem has restricted mutation
+authority.
