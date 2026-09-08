@@ -46,3 +46,10 @@ must distinguish structural improvements, second-audit fixes, tests and limits.
 Reconcile concurrent main updates without modifying the user's performance work.
 After successful local merge, remove only this pass's clean, fully merged
 worktrees/branches, with a verified recovery bundle first. No push.
+
+## Completion
+
+All five structural tracks and all seven findings of the second audit are
+implemented and reviewed. See [final acceptance](CLEANUP5_ACCEPTANCE.md) for
+the exact tested source, package/browser/native results, retained failed runs,
+coverage limits and recoverable cleanup procedure.

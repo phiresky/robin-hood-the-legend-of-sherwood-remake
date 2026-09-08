@@ -110,3 +110,11 @@ S3/S6/S7. Native client tests remain consolidated in integration; service tests
 remain in the warmed admin lane; the protocol lane runs its explicit pure suite.
 Do not change source or HEAD during builds or provenance-bound runtime gates.
 Final outcomes and exact acceptance evidence are recorded separately.
+
+## Disposition
+
+S1–S7 are implemented and independently reviewed. The implementation reports
+and combined validation results are linked from
+[final acceptance](CLEANUP5_ACCEPTANCE.md), including the two intermittent UI
+attempts that passed unchanged reruns and remain documented rather than being
+claimed as fixed.
