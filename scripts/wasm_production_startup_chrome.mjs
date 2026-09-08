@@ -14,7 +14,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve, join, extname, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { gzipSync, brotliDecompressSync } from 'node:zlib';
+import { gzipSync, brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
 import { SharedBandwidth } from './startup_throttle.mjs';
@@ -25,7 +25,8 @@ const { values } = parseArgs({ options: {
     mission: { type: 'string', default: 'auto' }, 'require-present': { type: 'boolean', default: false },
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
     'http-wasm-br': { type: 'string' }, 'http-admission-br': { type: 'string' },
-    replay: { type: 'string' },
+    'http-wasm-gzip': { type: 'string' }, 'http-admission-gzip': { type: 'string' },
+    replay: { type: 'string' }, 'replay-eof': { type: 'boolean', default: false },
     'repeat-replay': { type: 'string', multiple: true, default: [] },
     query: { type: 'string', multiple: true, default: [] },
 } });
@@ -34,6 +35,7 @@ const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resol
 const outputBase = resolve(values.output);
 let output = outputBase;
 const replayContent = values.replay ? (await readFile(resolve(values.replay), 'utf8')).trim() : undefined;
+if (values['replay-eof'] && !replayContent) throw new Error('--replay-eof requires --replay');
 const replayBuild = replayContent?.match(/^rhrec-([0-9a-f]{12})-/)?.[1];
 if (replayContent !== undefined && !replayBuild) throw new Error('--replay must contain a compact rhrec replay');
 if (replayContent !== undefined && values.mission !== 'auto') throw new Error('Replay header must select the mission; omit --mission');
@@ -62,6 +64,18 @@ if (httpWasmBr && !brotliDecompressSync(httpWasmBr).equals(await readFile(join(p
 const httpAdmissionBr = values['http-admission-br'] ? await readFile(resolve(values['http-admission-br'])) : undefined;
 if (httpAdmissionBr && !brotliDecompressSync(httpAdmissionBr).equals(await readFile(join(pkg, 'replay_admission_bg.wasm')))) {
     throw new Error('--http-admission-br does not decode to the supplied package admission WASM');
+}
+const gzipFixtures = new Map();
+for (const [kind, file] of [['wasm', 'robin_bg.wasm'], ['admission', 'replay_admission_bg.wasm']]) {
+    const option = `http-${kind}-gzip`;
+    if (!values[option]) continue;
+    if (values[`http-${kind}-br`]) throw new Error(`--${option} conflicts with --http-${kind}-br`);
+    const path = resolve(values[option]);
+    const bytes = await readFile(path);
+    if (!gunzipSync(bytes).equals(await readFile(join(pkg, file)))) {
+        throw new Error(`--${option} does not decode to the supplied package WASM`);
+    }
+    gzipFixtures.set(file, { path, bytes });
 }
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
@@ -100,6 +114,7 @@ async function asset(path) {
             const suffix = path.slice(runtimePrefix.length);
             file = safePath(suffix.startsWith('Data/') ? core : pkg, suffix);
             if (suffix === 'robin_bg.wasm.gz') body = execFileSync('gzip', ['-9', '-n', '-c', join(pkg, 'robin_bg.wasm')], { maxBuffer: 256 * 1024 * 1024 });
+            if (gzipFixtures.has(suffix)) { body = gzipFixtures.get(suffix).bytes; encoding = 'gzip'; }
             if (suffix === 'robin_bg.wasm' && httpWasmBr) { body = httpWasmBr; encoding = 'br'; }
             if (suffix === 'replay_admission_bg.wasm' && httpAdmissionBr) { body = httpAdmissionBr; encoding = 'br'; }
         } else if (path.startsWith(dataPrefix)) {
@@ -223,6 +238,26 @@ try {
             replayState = state.result.value;
             if (!replayState?.replay) throw new Error('Replay playback state is missing: ' + JSON.stringify(replayState));
         }
+        if (values['replay-eof']) {
+            const states = [];
+            const deadline = Date.now() + 120000;
+            while (Date.now() < deadline && !errors.length) {
+                const reply = await send('Runtime.evaluate', {
+                    expression: 'globalThis.robinRpc("state")', awaitPromise: true, returnByValue: true,
+                });
+                if (reply.exceptionDetails) throw new Error('Replay EOF RPC failed: ' + JSON.stringify(reply.exceptionDetails));
+                const state = reply.result.value;
+                if (!state?.replay) throw new Error('Playback disappeared before EOF: ' + JSON.stringify(state));
+                states.push(state);
+                if (state.replay.frame >= state.replay.total) break;
+                await sleep(250);
+            }
+            const finalPlayback = states.at(-1);
+            if (errors.length || !finalPlayback || finalPlayback.replay.frame < finalPlayback.replay.total) {
+                throw new Error('Replay did not reach EOF: ' + JSON.stringify({ finalPlayback, errors }));
+            }
+            await writeFile(output + '.eof.json', JSON.stringify({ states, finalPlayback }, null, 2));
+        }
         const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
         const page = probe.result.value;
         await sleep(500);
@@ -255,6 +290,7 @@ try {
         const navigationServerAt = page.timeOrigin - performance.timeOrigin;
         const result = {
             inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
+            httpGzip: Object.fromEntries([...gzipFixtures].map(([file, { path, bytes }]) => [file, { path, bytes: bytes.length, sha256: sha256(bytes), caveat: 'Explicit verified HTTP gzip fixture; retain capture provenance separately.' }])),
             httpAdmissionBrotli: httpAdmissionBr ? { path: resolve(values['http-admission-br']), bytes: httpAdmissionBr.length, sha256: sha256(httpAdmissionBr), rawSha256: sha256(await readFile(join(pkg, 'replay_admission_bg.wasm'))), caveat: 'Supplied encoded fixture is verified against admission package bytes; retain capture provenance separately.' } : null,
             httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
             replay: replayContent === undefined ? null : { path: resolve(replayRun.path), sha256: sha256(Buffer.from(replayRun.content)), build: replayBuild, state: replayState },

@@ -71,3 +71,12 @@ Brotli assumption: 6.64 MB was a forced-Brotli capture; normal Chrome encoding
 negotiation in local Wrangler produced 7.82 MB gzip for both candidates. The
 historical startup harness used the captured representation explicitly.
 Production deployment is unchanged. Integrated probe tests and syntax checks pass.
+
+## Implemented follow-up: earlier authoritative replay loading
+
+The next scheduling investigation produced a bounded, reused fetch batch after
+normal replay admission. It is enabled for browser replay URLs; `replay-preparation=late`
+retains the comparison path. Five 16 Mbit/s pairs all improved (median paired
+saving 172 ms); loopback had no demonstrated gain. Required download bytes and
+request sets matched. See [the complete report](perf/replay-plan-earlier.md) for
+source identities, corrected HTTP gzip methodology, ownership, and validation.

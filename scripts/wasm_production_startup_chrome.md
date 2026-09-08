@@ -99,3 +99,15 @@ The harness verifies it against the admission module and records both hashes.
 Capture it with `scripts/capture_wasm_http_brotli.mjs --worktree REPO
 --wasm PACKAGE/replay_admission_bg.wasm --output /tmp/admission.br`; retain its
 JSON provenance. Main-engine and admission modules require different captures.
+
+Use `--http-wasm-gzip PATH` and `--http-admission-gzip PATH` to replay captured
+HTTP gzip bodies at their canonical `.wasm` URLs. Each fixture must decompress
+to its package module exactly; Brotli and gzip options for the same module are
+mutually exclusive. Output records the encoded bytes and hashes. These options
+model known responses explicitly; the local server does not reproduce CDN
+encoding negotiation. Retain the capture request headers and provenance.
+
+`--replay-eof` keeps each replay running until its recorded frame cursor reaches
+EOF (120-second bound), rejects missing playback or browser errors, and saves
+`.eof.json` state samples. It preserves the first-present timestamp but takes
+the screenshot at EOF; use ordinary runs for startup screenshots and timings.
