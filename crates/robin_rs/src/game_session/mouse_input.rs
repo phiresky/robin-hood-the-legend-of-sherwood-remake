@@ -273,7 +273,7 @@ fn on_left_mouse_down(
                         .hero_selection(local_seat)
                         .first()
                         .and_then(|&id| engine.get_entity(id))
-                        .map(|e| e.element_data().posture)
+                        .map(|e| e.element_data().posture())
                         == Some(Posture::HelpingToClimb);
                     if posture_ok && !is_swordfighting {
                         host.frontend.input.start_multi_selection(map_pt);

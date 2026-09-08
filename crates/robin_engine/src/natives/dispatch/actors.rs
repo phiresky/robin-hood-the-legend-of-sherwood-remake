@@ -206,7 +206,7 @@ impl NativeContext<'_, '_> {
                     tracing::error!("Script Error: GetActorPosture target {actor} is not human");
                     return -1;
                 }
-                let posture = entity.element_data().posture;
+                let posture = entity.element_data().posture();
                 let unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
                 let is_dead = entity.is_dead();
                 match posture {
@@ -829,7 +829,7 @@ impl NativeContext<'_, '_> {
                     return 0;
                 };
                 let tgt_layer = tgt_layer.get();
-                let tgt_posture = target_entity.element_data().posture;
+                let tgt_posture = target_entity.element_data().posture();
                 let tgt_action_state = target_entity
                     .actor_data()
                     .expect("Sees validated a human target, which must have actor data")

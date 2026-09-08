@@ -523,13 +523,14 @@ impl EngineInner {
         }
         sprite.force_random_sprite_frame(sim, crate::sim_rng::RngSite::ScrollRevealFrame);
 
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ObjectBonus,
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectBonus;
             // Default `blipped` flag is false in forest levels — same
             // treatment as the mission-stream bonus path.
-            blipped: !self.world.weather.is_forest_level,
-            sprite,
-            ..Default::default()
+            initial_element.blipped = !self.world.weather.is_forest_level;
+            initial_element.sprite = sprite;
+            initial_element
         };
         // Copy obstacle+plane, layer, sector, direction, position_map,
         // and material onto the spawned amulet. `apply_placement` is

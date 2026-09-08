@@ -243,9 +243,10 @@ fn sprite_serialization_surface_matches_v2_contract() {
     use crate::order::OrderType;
     use std::sync::Arc;
     let mut engine = EngineInner::new();
-    let mut element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        ..Default::default()
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     {
         let s = &mut element.sprite;
@@ -400,9 +401,10 @@ fn measure_engine_size() {
     // Create an engine with entities similar to a real level
     let mut engine = EngineInner::new();
     for i in 0..100u32 {
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element
         };
         element.set_position_map(MapPoint::new(i as f32 * 10.0, i as f32 * 10.0));
         let entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
@@ -415,9 +417,10 @@ fn measure_engine_size() {
         engine.add_entity(entity);
     }
     for i in 0..4u32 {
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         };
         element.set_position_map(MapPoint::new(100.0 + i as f32 * 20.0, 100.0));
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {

@@ -329,7 +329,7 @@ impl EngineInner {
                 TitbitKind::Hidden => {
                     // Entity position with a per-posture Z offset:
                     // Spy → +74, Tree → +35.
-                    let z_add = match elem.posture {
+                    let z_add = match elem.posture() {
                         Posture::Spy | Posture::Cloaked => 74.0,
                         Posture::Tree => 35.0,
                         _ => 35.0,
@@ -495,7 +495,7 @@ impl EngineInner {
                         sorrow_level: sorrow,
                         current_state: s.npc.ai_state(),
                         blipped: s.element.blipped,
-                        posture: s.element.posture,
+                        posture: s.element.posture(),
                         position: s.element.position_map(),
                         layer: s.element.layer(),
                         active: s.element.active,
@@ -535,7 +535,7 @@ impl EngineInner {
                         sorrow_level: sorrow,
                         current_state: c.npc.ai_state(),
                         blipped: c.element.blipped,
-                        posture: c.element.posture,
+                        posture: c.element.posture(),
                         position: c.element.position_map(),
                         layer: c.element.layer(),
                         active: c.element.active,
@@ -762,7 +762,7 @@ impl EngineInner {
             // (the cape postures, set when the waiting animation
             // initializes).
             let is_hidden = matches!(
-                pc.element.posture,
+                pc.element.posture(),
                 Posture::Spy | Posture::Cloaked | Posture::Tree | Posture::AnonymousArcher
             );
             let profile = assets

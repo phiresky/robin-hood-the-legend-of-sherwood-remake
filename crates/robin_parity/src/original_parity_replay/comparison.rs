@@ -305,12 +305,12 @@ pub(super) fn compare_frame(
                 expected.unreachable,
                 element.unreachable,
             );
-            if expected.posture != element.posture as u32 {
+            if expected.posture != element.posture() as u32 {
                 let ai = actual.ai_controller();
                 differences.push(format!(
                     "{id:?}.posture: original={} rust={} (rust initial_action={:?} stay_home={:?} likes_to_sit={:?} sector={:?})",
                     expected.posture,
-                    element.posture as u32,
+                    element.posture() as u32,
                     ai.map(|ai| ai.initial_action),
                     ai.map(|ai| ai.is_stay_at_home),
                     ai.map(|ai| ai.likes_to_sit_around),

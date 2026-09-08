@@ -709,11 +709,12 @@ mod tests {
 
         let mut engine = EngineInner::new();
         let entity_id = engine.add_entity(Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                active: false,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element.active = false;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: FxData::default(),
         }));
@@ -754,11 +755,12 @@ mod tests {
 
         let mut engine = EngineInner::new();
         let entity_id = engine.add_entity(Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                active: true,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element.active = true;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: FxData::default(),
         }));
@@ -783,11 +785,11 @@ mod tests {
 
         let start = MapPoint::new(130.0, 130.0);
         let destination = MapPoint::new(220.0, 220.0);
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(start);
         element.set_layer(0);

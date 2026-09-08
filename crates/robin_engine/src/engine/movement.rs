@@ -14,6 +14,7 @@ mod diagnostics;
 mod door_traversal;
 mod elevation;
 mod formation;
+mod order_advancement;
 mod path_scheduling;
 mod rider_charge;
 mod routing;
@@ -283,9 +284,10 @@ mod group_move_authorization_tests {
         sector: crate::position_interface::SectorHandle,
         layer: u16,
     ) -> crate::element::ElementData {
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         };
         element.set_position_map(point);
         element.set_sector(Some(sector));
@@ -1380,7 +1382,7 @@ pub(super) fn determine_lift_movement_animation_for(
 
     let elem = entity.element_data();
     let posture = if posture_after == Posture::Undefined {
-        elem.posture
+        elem.posture()
     } else {
         posture_after
     };
@@ -1466,10 +1468,11 @@ mod exact_lift_sector_tests {
     }
 
     fn pc126(sector: crate::position_interface::SectorHandle) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            posture: crate::element::Posture::OnWall,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element =
+                ElementData::from_initial_posture(crate::element::Posture::OnWall);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element
         };
         element.set_position_map(MapPoint::new(2_278.88, 1257.0005));
         element.sprite.position_iface.set_sector_topology(
@@ -4568,7 +4571,7 @@ pub(in crate::engine) fn line_jump_approach_owner(
     selected_pc: EntityId,
 ) -> EntityId {
     let selected = engine.expect_entity(selected_pc, "line-jump selected PC");
-    if selected.element_data().posture != crate::element::Posture::OnShoulders {
+    if selected.element_data().posture() != crate::element::Posture::OnShoulders {
         return selected_pc;
     }
     let carrier = selected
@@ -5058,7 +5061,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(entity_id) else {
                 panic!("delayed-position owner {entity_id:?} disappeared before actor update");
             };
-            let posture = entity.element_data().posture;
+            let posture = entity.element_data().posture();
             let is_carried = entity
                 .human_data()
                 .is_some_and(|human| human.carrier.is_some());
@@ -5555,7 +5558,7 @@ impl EngineInner {
                 .as_mut()
                 .expect("rider remained present after charge motion");
             assert_eq!(
-                entity.element_data().posture,
+                entity.element_data().posture(),
                 Posture::Upright,
                 "rider charge must start upright"
             );
@@ -5563,7 +5566,9 @@ impl EngineInner {
                 .actor_data_mut()
                 .expect("RiderCharging soldier must have actor data");
             actor.action_state = ActionState::MovingFast;
-            entity.element_data_mut().posture = Posture::Upright;
+            entity
+                .element_data_mut()
+                .publish_order_posture(Posture::Upright);
         }
 
         let back_length = (5.0 * f32::from(actual_frame)).min(50.0);
@@ -6333,7 +6338,9 @@ impl EngineInner {
                     .entities
                     .get_mut(owner)
                     .unwrap_or_else(|| panic!("globally frozen runner {owner:?} disappeared"));
-                entity.element_data_mut().posture = crate::element::Posture::Upright;
+                entity
+                    .element_data_mut()
+                    .publish_order_posture(crate::element::Posture::Upright);
                 entity
                     .actor_data_mut()
                     .expect("globally frozen runner is not an actor")
@@ -6648,7 +6655,7 @@ impl EngineInner {
             .actors()
             .filter(|(id, _)| EntityId::from(*id) == owner)
         {
-            let posture = entity.element_data().posture;
+            let posture = entity.element_data().posture();
             let door_pass = entity
                 .actor_data()
                 .and_then(|actor| actor.active_door_pass.as_ref());
@@ -6999,7 +7006,7 @@ impl EngineInner {
                     let in_bounds = self.world.fast_grid.level.map_bbox.contains_point(new_pos);
                     let eligible = old_pos != new_pos
                         && actor_line_crossing_eligible(
-                            entity.element_data().posture,
+                            entity.element_data().posture(),
                             entity
                                 .human_data()
                                 .is_some_and(|human| human.carrier.is_some()),
@@ -7034,7 +7041,7 @@ impl EngineInner {
                     old_pos,
                     new_pos,
                     entity.element_data().layer(),
-                    entity.element_data().posture,
+                    entity.element_data().posture(),
                     entity
                         .human_data()
                         .is_some_and(|human| human.carrier.is_some()),
@@ -8505,11 +8512,11 @@ impl EngineInner {
             execute_order_initialising,
             prepass.decorative_building_trap_at_destination,
         ) {
-            elem.posture = posture;
+            elem.publish_order_posture(posture);
         }
         if execute_order_initialising && let Some(climb_dir) = prepass.door_pass_climb_direction {
             let dir = if matches!(
-                (anim, elem.posture),
+                (anim, elem.posture()),
                 (
                     OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel,
                     crate::element::Posture::Flying
@@ -9202,7 +9209,7 @@ impl EngineInner {
             tracing::debug!(
                 entity = ?entity_id,
                 ?anim,
-                posture = ?elem.posture,
+                posture = ?elem.posture(),
                 action_state = ?action_state,
                 dir = elem.direction(),
                 goal_dir,
@@ -9269,7 +9276,7 @@ impl EngineInner {
                 let old_pos = entity.element_data().position_map();
                 let layer = entity.element_data().layer();
                 let eligible = actor_line_crossing_eligible(
-                    entity.element_data().posture,
+                    entity.element_data().posture(),
                     human_is_carried,
                     self.world.fast_grid.level.map_bbox.contains_point(old_pos),
                 );
@@ -10082,7 +10089,7 @@ impl EngineInner {
             old_pos
         };
         let entity_layer = elem.layer();
-        let entity_posture = elem.posture;
+        let entity_posture = elem.posture();
         let eligible_for_crossing = actor_line_crossing_eligible(
             entity_posture,
             human_is_carried,
@@ -11881,7 +11888,7 @@ impl EngineInner {
             if elem.posture_after_transition == crate::element::Posture::Undefined
                 && let Some(entity) = self.world.entities.get(owner)
             {
-                elem.posture_after_transition = entity.element_data().posture;
+                elem.posture_after_transition = entity.element_data().posture();
             }
         }
 
@@ -11913,7 +11920,7 @@ impl EngineInner {
         // and the hero complains instead of walking away.
         if owner_is_pc
             && self.world.entities.get(owner).is_some_and(|e| {
-                e.element_data().posture == crate::element::Posture::AnonymousArcher
+                e.element_data().posture() == crate::element::Posture::AnonymousArcher
             })
         {
             tracing::debug!(
@@ -12537,39 +12544,14 @@ impl EngineInner {
         seq_id: crate::sequence::SequenceId,
         elem_idx: usize,
     ) -> Option<TerminalMovementOrderPop> {
-        let selection = self
-            .orders
-            .sequence_manager
-            .get_element(seq_id, elem_idx)
-            .and_then(|element| {
-                let owner = element.owner?;
-                let selected = (element.state == crate::sequence::SequenceState::InProgress
-                    && element.data.is_movement()
-                    && self
-                        .orders
-                        .sequence_manager
-                        .current_element_for_actor(owner)
-                        == Some((seq_id, elem_idx)))
-                .then(|| {
-                    let order = element
-                        .current_order()
-                        .expect("selected movement has no current order");
-                    (
-                        owner,
-                        element.orders.len() == 1,
-                        order.order_id,
-                        order.order_type,
-                    )
-                });
-                Some((owner, selected))
-            });
+        let selection =
+            order_advancement::capture_selection(&self.orders.sequence_manager, seq_id, elem_idx);
         let diagnostic_owner = selection.map(|(owner, _)| owner);
         if let Some(owner) = diagnostic_owner {
             self.trace_selected_movement_order_pop("entry", owner, seq_id, elem_idx, "pending");
         }
         let selected = selection.and_then(|(_, selected)| selected);
-        let Some((owner, final_order_will_exhaust, popped_order_id, popped_order_type)) = selected
-        else {
+        let Some(selected) = selected else {
             if let Some(owner) = diagnostic_owner {
                 let manager = &self.orders.sequence_manager;
                 let result = match manager.get_element(seq_id, elem_idx) {
@@ -12591,73 +12573,12 @@ impl EngineInner {
             return None;
         };
 
-        if final_order_will_exhaust {
-            // Advancing orders exhausts the selected Move, and
-            // its synchronous removal notification clears the map goal
-            // before a postponed replacement is instructed. Rust's
-            // `do_next_order` drives that same synchronous promotion.
-            // Invalidate the replacement's queue-time snapshot first, or a
-            // promoted MoveWaiting can restore the outgoing goal during the
-            // callback and hide the selected-element clear until its first
-            // Execute.
-            self.orders
-                .sequence_manager
-                .clear_retained_movement_goals_for_actor(owner);
-        }
-        let mut live_following_before_pop = Vec::new();
-        if final_order_will_exhaust {
-            let mut cursor = (seq_id, elem_idx);
-            let mut visited = Vec::new();
-            while let Some(following_ref) = self
-                .orders
-                .sequence_manager
-                .following_element_ref(cursor.0, cursor.1)
-            {
-                assert!(
-                    !visited.contains(&following_ref),
-                    "cycle in terminal movement chain rooted at {seq_id:?}:{elem_idx}"
-                );
-                visited.push(following_ref);
-                let following = self
-                    .orders
-                    .sequence_manager
-                    .get_element(following_ref.0, following_ref.1)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "terminal movement following element {:?}:{} disappeared",
-                            following_ref.0, following_ref.1
-                        )
-                    });
-                if matches!(
-                    following.state,
-                    crate::sequence::SequenceState::Todo
-                        | crate::sequence::SequenceState::Postponed
-                        | crate::sequence::SequenceState::InProgress
-                ) {
-                    live_following_before_pop.push(following_ref);
-                }
-                cursor = following_ref;
-            }
-        }
+        let owner = selected.owner;
+        let prepared = selected.prepare(&mut self.orders.sequence_manager);
+        // Keep synchronous callbacks in the coordinator, outside the limited
+        // sequence borrow. No actor/script effects can run during preparation.
         self.do_next_order(seq_id, elem_idx);
-        let terminal_pop = (final_order_will_exhaust
-            && self
-                .orders
-                .sequence_manager
-                .get_element(seq_id, elem_idx)
-                .is_some_and(|element| {
-                    element.owner == Some(owner)
-                        && element.data.is_movement()
-                        && element.state == crate::sequence::SequenceState::Terminated
-                }))
-        .then_some(TerminalMovementOrderPop {
-            owner,
-            sequence_id: seq_id,
-            element_index: elem_idx,
-            order_id: popped_order_id,
-            order_type: popped_order_type,
-            live_following_before_pop,
-        });
+        let terminal_pop = prepared.finish(&self.orders.sequence_manager);
         self.trace_selected_movement_order_pop("return", owner, seq_id, elem_idx, "accepted");
         terminal_pop
     }

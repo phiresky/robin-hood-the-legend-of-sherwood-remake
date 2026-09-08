@@ -848,7 +848,7 @@ fn make_action_transition_actor(
         tracing::warn!(?owner, "make_action_transition: entity gone");
         return false;
     };
-    let posture = entity.element_data().posture;
+    let posture = entity.element_data().posture();
     let Some(actor) = entity.actor_data() else {
         tracing::warn!(?owner, "make_action_transition: owner has no actor data");
         return false;
@@ -985,7 +985,7 @@ fn make_action_transition_human(
         return false;
     };
     let action_state = actor.action_state;
-    let posture = entity.element_data().posture;
+    let posture = entity.element_data().posture();
     let is_anonymous_archer = posture == Posture::AnonymousArcher;
 
     match action_state {
@@ -1399,7 +1399,7 @@ fn make_posture_transition_human(
 ) -> bool {
     let posture = engine
         .get_entity(owner)
-        .map(|e| e.element_data().posture)
+        .map(|e| e.element_data().posture())
         .unwrap_or(Posture::Upright);
 
     if posture == Posture::Leisure
@@ -1430,7 +1430,7 @@ fn make_posture_transition_npc(
 ) -> bool {
     let posture = engine
         .get_entity(owner)
-        .map(|e| e.element_data().posture)
+        .map(|e| e.element_data().posture())
         .unwrap_or(Posture::Upright);
 
     if posture == Posture::Sitting && flags.contains(CP::MUST_BE_UPRIGHT) {
@@ -1456,7 +1456,7 @@ fn make_posture_transition_soldier(
 ) -> bool {
     let posture = engine
         .get_entity(owner)
-        .map(|e| e.element_data().posture)
+        .map(|e| e.element_data().posture())
         .unwrap_or(Posture::Upright);
 
     if posture == Posture::LeaningOut {
@@ -1849,7 +1849,7 @@ fn make_final_action_transition_human(
     // variants.
     let is_anonymous = owner
         .and_then(|e| engine.get_entity(e))
-        .map(|e| e.element_data().posture == Posture::AnonymousArcher)
+        .map(|e| e.element_data().posture() == Posture::AnonymousArcher)
         .unwrap_or(false);
     let (equip_bow, loading_bow) = if is_anonymous {
         (
@@ -2069,7 +2069,7 @@ impl EngineInner {
     ) -> bool {
         let Some((actor_posture, actor_action_state)) = self.get_entity(owner).map(|entity| {
             (
-                entity.element_data().posture,
+                entity.element_data().posture(),
                 entity
                     .actor_data()
                     .map(|a| a.action_state)
@@ -2162,10 +2162,11 @@ mod tests {
         // alerted soldier has both true.  Mirror that for tests.
         enemy_ai.will_be_attentive = attentive;
         Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    crate::element::ElementData::from_initial_posture(posture);
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: ActorData {
                 action_state,
@@ -2188,10 +2189,11 @@ mod tests {
 
     fn make_pc(posture: P, action_state: AS) -> Entity {
         Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    crate::element::ElementData::from_initial_posture(posture);
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData {
                 action_state,
@@ -2211,7 +2213,7 @@ mod tests {
         // would, so transition helpers see a live "after_transition"
         // value instead of Posture::default().
         if let Some(ent) = engine.get_entity(owner) {
-            elem.posture_after_transition = ent.element_data().posture;
+            elem.posture_after_transition = ent.element_data().posture();
             elem.action_state_after_transition =
                 ent.actor_data().map(|a| a.action_state).unwrap_or_default();
         }
@@ -2228,7 +2230,7 @@ mod tests {
         let mut elem = SequenceElement::new_movement(1, command, Some(owner), action);
         elem.priority = SequencePriority::Preference;
         if let Some(ent) = engine.get_entity(owner) {
-            elem.posture_after_transition = ent.element_data().posture;
+            elem.posture_after_transition = ent.element_data().posture();
             elem.action_state_after_transition =
                 ent.actor_data().map(|a| a.action_state).unwrap_or_default();
         }
@@ -2566,9 +2568,10 @@ mod tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(make_pc(P::Crouched, AS::Waiting));
         let bonus_net = engine.add_entity(Entity::Bonus(crate::element::ElementBonus {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ObjectBonus,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectBonus;
+                initial_element
             },
             object: crate::element::ObjectData {
                 object_type: crate::element::ObjectType::BonusNet,

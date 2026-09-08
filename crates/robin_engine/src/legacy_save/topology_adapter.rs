@@ -1212,9 +1212,10 @@ mod tests {
 
     fn fx(mobile_index: Option<u16>) -> Entity {
         Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: crate::element::ElementKind::Fx,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element
             },
             fx: FxData {
                 mobile_index,
@@ -1225,9 +1226,10 @@ mod tests {
 
     fn soldier(script_class: &str, ai_brain: AiBrain) -> Entity {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: ActorData {
                 script_class: script_class.to_owned(),
@@ -1247,9 +1249,10 @@ mod tests {
 
     fn target(script_class: &str) -> Entity {
         Entity::Target(ElementTarget {
-            element: ElementData {
-                kind: crate::element::ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Target;
+                initial_element
             },
             fx: FxData::default(),
             target: TargetData {
@@ -1261,9 +1264,10 @@ mod tests {
 
     fn bonus(object_type: ObjectType) -> Entity {
         Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: crate::element::ElementKind::ObjectBonus,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectBonus;
+                initial_element
             },
             object: ObjectData {
                 object_type,
@@ -1274,9 +1278,10 @@ mod tests {
 
     fn pc(script_class: &str, beam_me_index: i16) -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData {
                 script_class: script_class.to_owned(),

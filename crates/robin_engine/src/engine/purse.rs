@@ -1200,10 +1200,11 @@ mod tests {
     ) -> EntityId {
         let thrower = thrower.or_else(|| {
             Some(engine.add_entity(Entity::Pc(crate::element::ActorPc {
-                element: ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -1216,10 +1217,11 @@ mod tests {
             ..ProjectileData::default()
         };
         projectile.purse.number_of_coins = NUMBER_OF_COINS_IN_PURSE;
-        let mut element = ElementData {
-            kind: crate::element::ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(pos);
         element.set_position_map(MapPoint { x: pos.x, y: pos.y });
@@ -1240,10 +1242,11 @@ mod tests {
 
     fn landing_coin(material: crate::element::GameMaterial, dive: bool, disappear: bool) -> Entity {
         let pos = WorldPoint3D::new(100.0, 200.0, 0.0);
-        let mut element = ElementData {
-            kind: crate::element::ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(pos);
         element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
@@ -1277,9 +1280,10 @@ mod tests {
 
         let engine = EngineInner::new();
         let mut projectile = ElementProjectile {
-            element: ElementData {
-                kind: crate::element::ElementKind::ObjectProjectile,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Coin,

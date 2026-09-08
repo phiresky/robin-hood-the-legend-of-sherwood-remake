@@ -570,7 +570,7 @@ impl EngineInner {
 
         // ── PC entities ──
         if entity.is_pc() {
-            let posture = entity.element_data().posture;
+            let posture = entity.element_data().posture();
             return match focus {
                 // SELECT requires: is-active, selectable, and either
                 // not on a HelpingToClimb posture or the selected PC
@@ -849,7 +849,7 @@ impl EngineInner {
         };
         let same_camp_as_selector = self.camps_are_allied(camp, interaction_camp);
         let hostile_to_selector = self.camps_are_hostile(camp, interaction_camp);
-        let posture = entity.element_data().posture;
+        let posture = entity.element_data().posture();
         let is_tied = posture == Posture::Tied;
         let is_vip = self.is_entity_vip(assets, entity);
         let is_rider = matches!(entity, Entity::Soldier(s) if s.soldier.rider);
@@ -1416,7 +1416,7 @@ impl EngineInner {
 
         let dead = entity.is_dead();
         let unconscious = entity.human_data().is_some_and(|h| h.unconscious);
-        let posture = entity.element_data().posture;
+        let posture = entity.element_data().posture();
         let interaction_camp = match selected_pc_id {
             Some(id) => self
                 .get_entity(id)
@@ -1574,7 +1574,7 @@ impl EngineInner {
             None => return RHMOUSE_DEFAULT,
         };
 
-        if entity.element_data().posture == Posture::HelpingToClimb
+        if entity.element_data().posture() == Posture::HelpingToClimb
             && self.selected_pc_has_contextual_action(assets, selected_pc_id, PA::Jump)
         {
             return RHMOUSE_SHORT_LEG;
@@ -1683,7 +1683,7 @@ impl EngineInner {
         };
 
         if target.is_human() {
-            let target_posture = target.element_data().posture;
+            let target_posture = target.element_data().posture();
             let Some(belt) = target.compute_belt_point() else {
                 tracing::warn!(
                     ?target_id,
@@ -1841,7 +1841,7 @@ impl EngineInner {
         let mut shoot_mode = bow_state.get_shoot_mode_for_distance(bow_profile, dist_3d);
 
         // Leaning-out shooter forces a DownShoot.
-        let shooter_posture = shooter.element_data().posture;
+        let shooter_posture = shooter.element_data().posture();
         if shooter_posture == crate::element::Posture::LeaningOut {
             shoot_mode = ShootMode::Down;
         }
@@ -3199,7 +3199,7 @@ impl EngineInner {
         if dx == 0.0 && dy == 0.0 {
             return;
         }
-        let posture = pc.element.posture;
+        let posture = pc.element.posture();
         let action_state = pc.actor.action_state;
         let raw_dir = vector_to_sector_0_to_15(dx, dy);
         // The posture under test is the carrier's (`CarryingOnShoulders`),
@@ -3241,7 +3241,7 @@ impl EngineInner {
         if dx == 0.0 && dy == 0.0 {
             return;
         }
-        if pc.element.posture == Posture::Upright
+        if pc.element.posture() == Posture::Upright
             && matches!(
                 pc.actor.action_state,
                 ActionState::Waiting | ActionState::Bored

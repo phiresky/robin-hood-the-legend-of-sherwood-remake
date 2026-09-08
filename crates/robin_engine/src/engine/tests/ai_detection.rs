@@ -322,9 +322,10 @@ fn listen_fires_on_25th_owner_invocation_with_strict_3d_cross_layer_scan() {
     let near = engine.add_entity(make_discovery_bonus(450.0));
     let exact = engine.add_entity(make_discovery_bonus(450.0));
     let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -633,9 +634,10 @@ fn production_listen_creation_order_runs_heard_before_later_reveal_and_excludes_
                 .blipped,
         );
         let appended_id = engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: crate::element::TargetData {
@@ -1666,7 +1668,7 @@ fn post_detection_tail_preserves_ladder_threshold_and_macro_stop_semantics() {
     else {
         panic!("ladder owner changed kind")
     };
-    soldier.element.posture = Posture::OnLadder;
+    soldier.element.publish_order_posture(Posture::OnLadder);
     soldier.npc.stuck_on_ladder_emergency_counter = 25;
     let ai = soldier
         .npc
@@ -1777,7 +1779,7 @@ fn retained_fifo_stops_when_first_think_acquires_busy_lock() {
     let Entity::Soldier(soldier) = engine.get_entity_mut(npc_id).expect("FIFO owner exists") else {
         panic!("FIFO owner changed kind")
     };
-    soldier.element.posture = Posture::OnLadder;
+    soldier.element.publish_order_posture(Posture::OnLadder);
     let ai = soldier.npc.ai_brain.base_mut().expect("FIFO owner has AI");
     ai.locks_flag_field = AiLockFlags::empty();
     ai.stimulus_queue = vec![
@@ -2384,9 +2386,10 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
         // Keep both NPCs away from the slot-zero special value used by a few
         // legacy AI handles, without introducing another detectable human.
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -2434,7 +2437,7 @@ fn npc_body_broadcast_respects_swapped_creation_order_boundary() {
             panic!("body changed kind")
         };
         body.human.unconscious = true;
-        body.element.posture = Posture::Lying;
+        body.element.publish_order_posture(Posture::Lying);
         body.npc.inform_my_friends = true;
 
         let mut assets = LevelAssets::new();
@@ -3197,11 +3200,11 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
             panic!("fixture changed entity kind")
         };
         soldier.element.active = active;
-        soldier.element.posture = if unconscious {
+        soldier.element.publish_order_posture(if unconscious {
             Posture::Lying
         } else {
             Posture::Upright
-        };
+        });
         soldier.element.set_position_map(position);
         soldier.npc.life_points = life_points;
         soldier.human.unconscious = unconscious;
@@ -3351,7 +3354,9 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
             std::sync::Arc::make_mut(&mut assets.profile_manager).soldiers[0].wake_up = 1;
         }
         let entity = engine.get_entity_mut(npc_id).unwrap();
-        entity.element_data_mut().posture = Posture::Lying;
+        entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Lying);
         let human = entity.human_data_mut().unwrap();
         human.unconscious = true;
         human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
@@ -3373,7 +3378,7 @@ fn queued_fit_again_dispatches_at_owner_slot_for_soldiers_and_civilians() {
 
         let entity = engine.get_entity(npc_id).unwrap();
         assert!(!entity.human_data().unwrap().unconscious);
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(entity.npc_data().unwrap().eye_status, EyeStatus::Closed);
         assert_eq!(entity.npc_data().unwrap().view_radius, 0);
         assert_eq!(
@@ -3435,7 +3440,7 @@ fn frozen_all_does_not_defer_fit_again_recovery_effects() {
     let Entity::Soldier(npc) = engine.get_entity_mut(npc_id).unwrap() else {
         unreachable!()
     };
-    npc.element.posture = Posture::Lying;
+    npc.element.publish_order_posture(Posture::Lying);
     npc.human.unconscious = true;
     npc.human.concussion_of_the_brain = crate::combat::CONCUSSION_WAKEUP_THRESHOLD;
     npc.human.concussion_healing_timeout = 0;
@@ -3498,9 +3503,10 @@ fn optical_detection_uses_owner_relative_positions_and_spawned_current_fallback(
     fn observed(observer_before_target: bool, spawn_after_snapshot: bool) -> bool {
         let mut engine = EngineInner::new();
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -3749,7 +3755,7 @@ fn wake_blinks_apply_inline_at_the_waker_slot_for_both_producers() {
             unreachable!()
         };
         waker.element.active = true;
-        waker.element.posture = Posture::Lying;
+        waker.element.publish_order_posture(Posture::Lying);
         waker.npc.life_points = 100;
         waker.npc.eye_status = EyeStatus::Closed;
         let ai = waker.npc.ai_brain.base_mut().unwrap();
@@ -3847,9 +3853,10 @@ fn npc_detection_observes_friend_state_at_creation_order_boundary() {
         // Keep the relevant NPCs in slots 1/2 in both arrangements so the
         // swapped oracle is not confounded by a slot-zero special case.
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -4009,9 +4016,10 @@ fn npc_hearing_thinks_before_same_slot_optical_detection() {
     // Keep the NPC out of legacy slot zero and choose the frame so its
     // `(frame + creation_order) % DETECTION_FREQUENCY_SOUNDS` gate is open.
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -4223,9 +4231,10 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
 
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -4243,10 +4252,11 @@ fn lackland_detection_scans_and_retains_full_fifo_while_ai_locked() {
     let last_visible_id = engine.add_entity(make_test_pc(crate::element::Posture::Upright));
     let body_id = engine.add_entity(make_test_pc(crate::element::Posture::Dead));
     let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
-        element: ElementData {
-            kind: ElementKind::ObjectBonus,
-            active: true,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectBonus;
+            initial_element.active = true;
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type: ObjectType::Coin,
@@ -5258,9 +5268,10 @@ fn npc_out_of_view_precedes_same_slot_body_fifo() {
 
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -5389,9 +5400,10 @@ fn npc_detection_queues_every_rising_enemy_in_detectable_order() {
     fn observe(far_first: bool) -> (Vec<u32>, Vec<bool>, Vec<u32>) {
         let mut engine = EngineInner::new();
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -5527,9 +5539,10 @@ fn npc_detection_view_rebinds_combat_data_to_the_queued_target() {
 
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -5648,9 +5661,10 @@ fn royalist_detection_alert_does_not_bypass_strict_cadence() {
     fn observe(source_before_listener: bool) -> (bool, AiState, bool) {
         let mut engine = EngineInner::new();
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -6831,7 +6845,7 @@ fn persisted_lean_out_flag_controls_detection_sharpness_after_posture_changes() 
     else {
         panic!("lean-out observer changed kind")
     };
-    observer.element.posture = Posture::Upright;
+    observer.element.publish_order_posture(Posture::Upright);
     observer.npc.eye_status = EyeStatus::LookForward;
     // The original game clears the lean-out state only while replacing
     // EYES_LOOK_DOWNWARDS. If another path already selected LookForward, the
@@ -6865,7 +6879,7 @@ fn persisted_lean_out_flag_controls_detection_sharpness_after_posture_changes() 
     else {
         panic!("lean-out observer changed kind")
     };
-    assert_eq!(observer.element.posture, Posture::Upright);
+    assert_eq!(observer.element.posture(), Posture::Upright);
     assert!(observer.npc.view_lean_out);
     assert_eq!(
         observer
@@ -6896,7 +6910,7 @@ fn persisted_lean_out_flag_controls_non_enemy_detection_sharpness() {
     else {
         panic!("non-Enemy lean-out observer changed kind")
     };
-    observer.element.posture = Posture::Upright;
+    observer.element.publish_order_posture(Posture::Upright);
     observer.npc.eye_status = EyeStatus::LookForward;
     observer.npc.view_lean_out = true;
     observer
@@ -6925,7 +6939,7 @@ fn persisted_lean_out_flag_controls_non_enemy_detection_sharpness() {
     else {
         panic!("non-Enemy lean-out observer changed kind")
     };
-    assert_eq!(observer.element.posture, Posture::Upright);
+    assert_eq!(observer.element.posture(), Posture::Upright);
     assert!(observer.npc.view_lean_out);
     assert_eq!(
         observer
@@ -7085,7 +7099,7 @@ fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
         .set_position(crate::coordinates::WorldPoint3D::new(15.0, 0.0, 20.0));
     pc.element
         .set_position_map_preserving_3d(MapPoint::new(15.0, -20.0));
-    pc.element.posture = Posture::Upright;
+    pc.element.publish_order_posture(Posture::Upright);
 
     let observer = engine
         .get_entity_mut(observer_id)
@@ -7106,7 +7120,7 @@ fn enemy_optics_reads_pc_detection_z_from_live_creation_slot_posture() {
             else {
                 panic!("live-Z target changed kind after snapshot")
             };
-            pc.element.posture = Posture::Crouched;
+            pc.element.publish_order_posture(Posture::Crouched);
         });
     });
 
@@ -7258,11 +7272,12 @@ fn civilian_enemy_optics_uses_the_common_npc_walk() {
 }
 
 fn make_discovery_bonus(x: f32) -> Entity {
-    let mut element = crate::element::ElementData {
-        kind: crate::element::ElementKind::ObjectBonus,
-        active: true,
-        blipped: true,
-        ..Default::default()
+    let mut element = {
+        let mut initial_element = crate::element::ElementData::default();
+        initial_element.kind = crate::element::ElementKind::ObjectBonus;
+        initial_element.active = true;
+        initial_element.blipped = true;
+        initial_element
     };
     element.set_position(crate::coordinates::WorldPoint3D::new(x, 0.0, 0.0));
     element.set_position_map(MapPoint::new(x, 0.0));
@@ -7276,11 +7291,12 @@ fn make_discovery_bonus(x: f32) -> Entity {
 }
 
 fn make_blipped_non_bonus(kind: crate::element::ElementKind) -> Entity {
-    let mut element = crate::element::ElementData {
-        kind,
-        active: true,
-        blipped: true,
-        ..Default::default()
+    let mut element = {
+        let mut initial_element = crate::element::ElementData::default();
+        initial_element.kind = kind;
+        initial_element.active = true;
+        initial_element.blipped = true;
+        initial_element
     };
     element.set_position(crate::coordinates::WorldPoint3D::new(10.0, 0.0, 0.0));
     element.set_position_map(MapPoint::new(10.0, 0.0));
@@ -7506,7 +7522,8 @@ fn bonus_refresh_discovered_observes_owner_callback_order_and_spawned_later_slot
                         unreachable!()
                     };
                     pc.element.active = true;
-                    pc.element.posture = crate::element::Posture::OnShoulders;
+                    pc.element
+                        .publish_order_posture(crate::element::Posture::OnShoulders);
                     pc.element
                         .set_position(crate::coordinates::WorldPoint3D::new(0.0, 0.0, 0.0));
                     pc.element.set_position_map(MapPoint::new(0.0, 0.0));

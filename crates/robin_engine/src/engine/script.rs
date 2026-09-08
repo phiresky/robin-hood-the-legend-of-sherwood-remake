@@ -1690,7 +1690,7 @@ impl EngineInner {
         let (current, is_npc) = self
             .get_entity(actor)
             .filter(|entity| entity.is_human())
-            .map(|entity| (entity.element_data().posture, entity.is_npc()))
+            .map(|entity| (entity.element_data().posture(), entity.is_npc()))
             .ok_or_else(|| format!("SetActorPosture target {actor_handle} is not human"))?;
 
         let set_posture = |engine: &mut Self, posture| {
@@ -6937,9 +6937,10 @@ mod owner_boundary_position_tests {
     use crate::element::{ElementData, ElementProjectile, ObjectData, ProjectileData};
 
     fn projectile_with_layer(layer: Option<u16>) -> Entity {
-        let mut element = ElementData {
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
         match layer {
@@ -7057,10 +7058,11 @@ mod script_context_tests {
             ..Default::default()
         });
 
-        let mut carried_element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorCivilian,
-            active: true,
-            ..Default::default()
+        let mut carried_element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorCivilian;
+            initial_element.active = true;
+            initial_element
         };
         carried_element.set_layer(2);
         carried_element.set_sector(crate::position_interface::SectorHandle::new(12));
@@ -7075,10 +7077,11 @@ mod script_context_tests {
             },
         ));
         let actor_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -7177,10 +7180,11 @@ mod script_context_tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorCivilian,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorCivilian;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -7190,10 +7194,11 @@ mod script_context_tests {
         ));
         let target = engine.add_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorCivilian,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorCivilian;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -7336,9 +7341,10 @@ mod script_context_tests {
             .entities
             .push(Some(crate::element::Entity::Soldier(
                 crate::element::ActorSoldier {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::ActorSoldier,
-                        ..Default::default()
+                    element: {
+                        let mut initial_element = crate::element::ElementData::default();
+                        initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                        initial_element
                     },
                     actor: crate::element::ActorData::default(),
                     human: crate::element::HumanData::default(),
@@ -7348,10 +7354,12 @@ mod script_context_tests {
             )));
         engine.world.entities.push(Some(crate::element::Entity::Fx(
             crate::element::ElementFx {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::Fx,
-                    custom_minimap_dot: crate::minimap::CustomDot::NotCustomized as u16,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::Fx;
+                    initial_element.custom_minimap_dot =
+                        crate::minimap::CustomDot::NotCustomized as u16;
+                    initial_element
                 },
                 fx: crate::element::FxData::default(),
             },
@@ -7502,10 +7510,11 @@ mod script_context_tests {
                 static_sight_obstacles: std::sync::Arc::new(vec![replacement]),
                 ..LevelAssets::default()
             };
-            let mut element = crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            let mut element = {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             };
             element.set_obstacle_index(Some(obstacle), Some(plane));
             element.set_material(crate::element::GameMaterial::Stone);
@@ -7564,10 +7573,11 @@ mod script_context_tests {
         let mut engine = EngineInner::new();
         engine.control.frame_counter = 48479;
 
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D::ZERO);
         let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
@@ -7679,9 +7689,10 @@ mod script_context_tests {
     fn external_remove_all_subordinates_finishes_clear_before_returning() {
         fn soldier() -> crate::element::Entity {
             crate::element::Entity::Soldier(crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: crate::element::ActorData::default(),
                 human: crate::element::HumanData::default(),

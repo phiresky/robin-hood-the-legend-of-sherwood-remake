@@ -519,7 +519,7 @@ impl EngineInner {
         };
 
         // On-ladder soldiers fall off the ladder before the struggle begins.
-        let on_ladder = entity.element_data().posture == crate::element::Posture::OnLadder;
+        let on_ladder = entity.element_data().posture() == crate::element::Posture::OnLadder;
 
         // bee_time struggle cycles, doubled when apple-smelling.  Each
         // cycle is one `GettingFreeFromWasp` animation; the sequence
@@ -1585,7 +1585,7 @@ impl EngineInner {
                         .world
                         .entities
                         .get(carried_id)
-                        .map(|e| e.element_data().posture == crate::element::Posture::Carried)
+                        .map(|e| e.element_data().posture() == crate::element::Posture::Carried)
                         .unwrap_or(false);
                     (carried_id, posture_is_carried)
                 };
@@ -2156,11 +2156,13 @@ mod tests {
         let mut engine = EngineInner::new();
         let mut assets = LevelAssets::new();
         let owner = engine.add_entity(Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2288,10 +2290,11 @@ mod tests {
             });
         }
 
-        let mut element = ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            posture: crate::element::Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element =
+                ElementData::from_initial_posture(crate::element::Posture::Upright);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         };
         element.set_position_map(point_in);
         element.set_sector(crate::position_interface::SectorHandle::new(118));

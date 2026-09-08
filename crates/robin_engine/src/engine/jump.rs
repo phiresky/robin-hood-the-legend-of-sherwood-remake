@@ -896,7 +896,7 @@ impl EngineInner {
             };
             let elem_data = entity.element_data();
             let pos = elem_data.position_map();
-            let posture = elem_data.posture;
+            let posture = elem_data.posture();
             let action_state = entity
                 .actor_data()
                 .map(|actor| actor.action_state)

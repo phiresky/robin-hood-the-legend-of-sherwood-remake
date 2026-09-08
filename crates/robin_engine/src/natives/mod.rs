@@ -635,7 +635,7 @@ impl NativeContext<'_, '_> {
         let Some(Entity::Pc(pc)) = self.entities.get(id) else {
             return false;
         };
-        let posture = pc.element.posture;
+        let posture = pc.element.posture();
         let in_coma = self
             .campaign
             .as_deref()

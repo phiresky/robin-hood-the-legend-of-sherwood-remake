@@ -1414,10 +1414,10 @@ mod exact_ai_goto_source_tests {
         });
 
         let mut soldier = ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1538,10 +1538,10 @@ mod exact_ai_goto_source_tests {
         assert_ne!(wrong_source, source);
 
         let mut soldier = ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

@@ -993,9 +993,10 @@ mod tests {
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
         let owner = live.add_entity(crate::element::Entity::Soldier(
             crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),

@@ -516,7 +516,7 @@ pub fn choose_mouse_pointer_for_no_action(
                             continue;
                         };
                         jumper_on_shoulders =
-                            entity.element_data().posture == engine_element::Posture::OnShoulders;
+                            entity.element_data().posture() == engine_element::Posture::OnShoulders;
                         let pc_pos_map = entity.element_data().position_map();
                         jump_line_idx = engine.get_nearest_jumpable_jump_line(
                             pc_id,
@@ -1534,7 +1534,7 @@ fn cursor_for_help_to_climb(
             .hero_selection(host.transport.local_seat)
             .first()
             .and_then(|&id| engine.get_entity(id))
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or(Posture::Undefined);
 
         // If not in building/lift AND carrying on shoulders.
@@ -1847,7 +1847,7 @@ fn cursor_for_beggar(
             .hero_selection(host.transport.local_seat)
             .first()
             .and_then(|&id| engine.get_entity(id))
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or(Posture::Undefined);
         if posture == Posture::SimulatingBeggar {
             choose_mouse_pointer_for_no_action(engine, host, assets, mouse_map_pt, shift_held)
@@ -1906,11 +1906,11 @@ mod tests {
         engine: &mut Engine,
         assets: &LevelAssets,
     ) -> robin_engine::element::EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(10.0, 10.0));
         element.sprite.position_iface.settle_current_position();

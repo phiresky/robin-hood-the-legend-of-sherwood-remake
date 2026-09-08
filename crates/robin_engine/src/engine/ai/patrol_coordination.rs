@@ -239,7 +239,7 @@ impl EngineInner {
                     detection_position_world,
                     direction: dir as u16,
                     ground_z: entity.element_data().position().z,
-                    posture: entity.element_data().posture,
+                    posture: entity.element_data().posture(),
                     is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                     in_building: self.entity_data_in_building_sector(entity.element_data()),
                     ai_state,

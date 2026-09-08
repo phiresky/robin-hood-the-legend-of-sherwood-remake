@@ -131,10 +131,8 @@ pub struct ElementData {
 
     /// Current posture. Runtime writes must go through
     /// [`ElementData::set_posture`] or an entity-level helper so the
-    /// corpse-transition guard stays centralized. TODO: the field is
-    /// still public for broad read compatibility; narrow that once the
-    /// remaining read churn is practical.
-    pub posture: Posture,
+    /// corpse-transition guard stays centralized.
+    posture: Posture,
 
     // -- Cross-module references --
     /// The entity's sprite animation/rendering state + embedded
@@ -522,6 +520,44 @@ impl ElementData {
             self.posture = p;
             self.sprite.position_iface.set_posture(p);
         }
+    }
+
+    /// Gameplay posture, read without exposing mutation authority.
+    pub fn posture(&self) -> Posture {
+        self.posture
+    }
+
+    /// Publish a logical animation/order posture without rewriting the sprite
+    /// position's independently retained posture. Unlike a requested posture
+    /// transition, an executing order publishes this value unconditionally.
+    /// The animation and damage coordinators historically publish these at
+    /// different callback barriers, including frozen RunningUpright execution.
+    /// TODO: unify the two posture sources only with replay/hash evidence for
+    /// those barriers; synchronizing them here changes saved simulation state.
+    pub(crate) fn publish_order_posture(&mut self, posture: Posture) {
+        self.posture = posture;
+    }
+
+    /// Construct an element's initial gameplay posture before attaching its
+    /// independently prepared sprite. This is initialization, not a runtime
+    /// transition: the sprite's saved posture must not be overwritten here.
+    pub fn from_initial_posture(posture: Posture) -> Self {
+        Self {
+            posture,
+            ..Self::default()
+        }
+    }
+
+    /// Restore the original save's single authoritative position/posture
+    /// record without applying the live corpse-transition guard.
+    pub(crate) fn restore_v48_position_and_posture(
+        &mut self,
+        position: crate::position_interface::PositionInterfaceV48State,
+    ) {
+        self.posture = position.posture;
+        self.sprite
+            .position_iface
+            .restore_v48_serialized_state(position);
     }
 
     /// Recompute the cached grid cell from the current map position.
@@ -7288,6 +7324,86 @@ mod tests {
         // lock.
         dead_back.set_posture(Posture::Dead);
         assert_eq!(dead_back.posture, Posture::Dead);
+    }
+
+    #[test]
+    fn order_posture_publication_preserves_sprite_and_unconditional_semantics() {
+        let mut element = ElementData::from_initial_posture(Posture::Upright);
+        let sprite_before = element.sprite.position_iface.v48_serialized_state();
+        element.publish_order_posture(Posture::Dead);
+        assert_eq!(element.posture(), Posture::Dead);
+        let sprite_after = element.sprite.position_iface.v48_serialized_state();
+        assert_eq!(sprite_after.posture, sprite_before.posture);
+        assert_eq!(sprite_after.old_posture, sprite_before.old_posture);
+        element.publish_order_posture(Posture::Upright);
+        assert_eq!(element.posture(), Posture::Upright);
+        element.publish_order_posture(Posture::Carried);
+        assert_eq!(element.posture(), Posture::Carried);
+        assert_eq!(
+            element.sprite.position_iface.v48_serialized_state().posture,
+            sprite_before.posture
+        );
+    }
+
+    #[test]
+    fn explicit_posture_apis_preserve_legacy_state_hash_and_wire_bytes() {
+        use robin_util::state_hash::StateHash;
+        use std::hash::Hasher;
+
+        let mut legacy = ElementData {
+            posture: Posture::DeadBack,
+            ..Default::default()
+        };
+        let mut explicit = ElementData::from_initial_posture(Posture::DeadBack);
+        for posture in [
+            Posture::Upright,
+            Posture::Lying,
+            Posture::Dead,
+            Posture::Carried,
+        ] {
+            // Historical order publication changed only this field, even
+            // when the source posture was a corpse. Keep the exact encoding.
+            legacy.posture = posture;
+            explicit.publish_order_posture(posture);
+            assert_eq!(bitcode::encode(&legacy), bitcode::encode(&explicit));
+            let mut legacy_hash = std::collections::hash_map::DefaultHasher::new();
+            let mut explicit_hash = std::collections::hash_map::DefaultHasher::new();
+            legacy.state_hash(&mut legacy_hash);
+            explicit.state_hash(&mut explicit_hash);
+            assert_eq!(legacy_hash.finish(), explicit_hash.finish());
+        }
+    }
+
+    #[test]
+    fn saved_posture_sources_remain_independent_until_explicit_v48_restore() {
+        let element = ElementData::from_initial_posture(Posture::Dead);
+        let sprite_posture = element.sprite.position_iface.v48_serialized_state().posture;
+        let saved = PersistedElementData::capture(&element);
+        let encoded = serde_json::to_vec(&saved).expect("encode element save projection");
+        let saved: PersistedElementData =
+            serde_json::from_slice(&encoded).expect("decode element save projection");
+        let mut restored = saved.into_runtime();
+        assert_eq!(restored.posture(), Posture::Dead);
+        assert_eq!(
+            restored
+                .sprite
+                .position_iface
+                .v48_serialized_state()
+                .posture,
+            sprite_posture
+        );
+        let mut position = restored.sprite.position_iface.v48_serialized_state();
+        position.posture = Posture::Upright;
+        restored.restore_v48_position_and_posture(position);
+        assert_eq!(restored.posture(), Posture::Upright);
+        assert_eq!(
+            restored
+                .sprite
+                .position_iface
+                .v48_serialized_state()
+                .posture,
+            Posture::Upright
+        );
     }
 
     #[test]

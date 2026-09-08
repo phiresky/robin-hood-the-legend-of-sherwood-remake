@@ -503,7 +503,7 @@ pub fn entity_view_from_entity(
         level: elem.layer(),
     };
     let direction = elem.direction() as u16;
-    let posture = elem.posture;
+    let posture = elem.posture();
     // Swordfighting is based on the opponent list, not the current
     // action state. During enter/approach transitions an engaged actor
     // can still be Moving/MovingFast.
@@ -616,7 +616,7 @@ pub fn entity_view_from_entity(
             let human_ok = !s.human.unconscious
                 && s.element.active
                 && s.npc.life_points > 0
-                && s.element.posture != Posture::Tied
+                && s.element.posture() != Posture::Tied
                 && s.human.carrier.is_none();
             if !human_ok {
                 false
@@ -638,7 +638,7 @@ pub fn entity_view_from_entity(
             !pc.human.unconscious
                 && pc.element.active
                 && pc.pc.life_points > 0
-                && !matches!(pc.element.posture, Posture::Tree | Posture::Spy)
+                && !matches!(pc.element.posture(), Posture::Tree | Posture::Spy)
         }
         _ => false,
     };
@@ -1008,10 +1008,11 @@ mod tests {
     #[test]
     fn pc_view_preserves_authored_allegiance() {
         let entity = Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

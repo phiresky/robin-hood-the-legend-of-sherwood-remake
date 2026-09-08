@@ -967,7 +967,7 @@ impl EngineInner {
                 raw_position_world: entity.element_data().position(),
                 detection_position_world: view.detection_position_world,
                 direction: entity.element_data().direction() as u16,
-                posture: entity.element_data().posture,
+                posture: entity.element_data().posture(),
                 is_rider: entity.soldier_data().is_some_and(|soldier| soldier.rider),
                 in_building: self.entity_data_in_building_sector(entity.element_data()),
                 ai_state: entity
@@ -1967,7 +1967,7 @@ impl EngineInner {
             .entities
             .get(npc_id)
             .unwrap_or_else(|| panic!("ladder-tail NPC {} disappeared", npc_id.index()));
-        let on_ladder = entity.element_data().posture == crate::element::Posture::OnLadder;
+        let on_ladder = entity.element_data().posture() == crate::element::Posture::OnLadder;
         let cmd = self.actor_command(npc_id);
         let in_wait_or_move_waiting = matches!(
             cmd,

@@ -2026,11 +2026,11 @@ mod tests {
     };
 
     fn make_soldier(sector: Option<u16>) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         if let Some(sector) = sector {
             element.set_sector(crate::position_interface::SectorHandle::new(sector));
@@ -2045,11 +2045,11 @@ mod tests {
     }
 
     fn make_pc(sector: u16) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_sector(crate::position_interface::SectorHandle::new(sector));
         Entity::Pc(ActorPc {
@@ -2071,7 +2071,7 @@ mod tests {
             .get(owner)
             .map(|entity| {
                 (
-                    entity.element_data().posture,
+                    entity.element_data().posture(),
                     entity.actor_data().unwrap().action_state,
                 )
             })
@@ -2427,7 +2427,7 @@ mod tests {
                 .get(owner)
                 .unwrap()
                 .element_data()
-                .posture,
+                .posture(),
             Posture::Lying,
             "actor waiting must preserve live posture even when a fallen actor remains in a lift sector"
         );
@@ -2986,7 +2986,7 @@ mod tests {
 
         let entity = engine.world.entities.get(owner).unwrap();
         assert_eq!(
-            entity.element_data().posture,
+            entity.element_data().posture(),
             crate::element::Posture::OnWall
         );
         assert_eq!(
@@ -3245,7 +3245,7 @@ mod tests {
 
             let entity = engine.world.entities.get(owner).unwrap();
             let pi = entity.position_iface();
-            assert_eq!(entity.element_data().posture, Posture::OnWall);
+            assert_eq!(entity.element_data().posture(), Posture::OnWall);
             assert_eq!(
                 entity.actor_data().unwrap().action_state,
                 crate::element::ActionState::Moving,
@@ -3317,7 +3317,7 @@ mod tests {
             );
 
             let entity = engine.world.entities.get(owner).unwrap();
-            assert_eq!(entity.element_data().posture, expected_posture);
+            assert_eq!(entity.element_data().posture(), expected_posture);
             assert_eq!(entity.actor_data().unwrap().action_state, expected_state);
             if action == OrderType::TransitionWaitingCrouchedClimbingLadderDown {
                 assert_eq!(
@@ -3575,7 +3575,7 @@ mod tests {
         );
 
         let entity = engine.get_entity(owner).unwrap();
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(entity.element_data().direction(), 0);
         assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 0);
         assert_eq!(entity.element_data().sprite.current_row, 0);
@@ -3648,7 +3648,7 @@ mod tests {
         );
 
         let entity = engine.get_entity(owner).unwrap();
-        assert_eq!(entity.element_data().posture, Posture::OnLadder);
+        assert_eq!(entity.element_data().posture(), Posture::OnLadder);
         assert_eq!(entity.position_iface().get_direction_goal().as_u8(), 5);
         assert_eq!(
             engine

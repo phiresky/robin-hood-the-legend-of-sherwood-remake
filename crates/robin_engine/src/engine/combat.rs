@@ -560,7 +560,7 @@ impl EngineInner {
             };
             let target_is_fx_target = target_entity.kind().is_fx_target();
             let target_is_human = target_entity.is_human();
-            let target_posture = target_entity.element_data().posture;
+            let target_posture = target_entity.element_data().posture();
 
             // ── Determine shoot mode from action state ───────────
             let shoot_mode = result.shoot_mode;
@@ -2320,10 +2320,10 @@ mod tests {
 
     fn make_pc(posture: Posture) -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(posture);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::Waiting,
@@ -2348,9 +2348,10 @@ mod tests {
     fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
         let mut engine = EngineInner::new();
         let mut projectile = Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element
             },
             object: ObjectData {
                 object_type: crate::element::ObjectType::Stone,
@@ -2381,10 +2382,11 @@ mod tests {
     #[test]
     fn water_splash_accepts_original_no_layer_sentinel() {
         let mut engine = EngineInner::new();
-        let mut element = ElementData {
-            active: true,
-            kind: ElementKind::ObjectProjectile,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element
         };
         element.clear_layer();
         element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 120.0, 2.0));
@@ -2701,11 +2703,11 @@ mod tests {
 
     fn make_arrow_warning_soldier() -> Entity {
         let mut soldier = crate::element::ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2759,9 +2761,10 @@ mod tests {
         // Legacy human handles reserve zero as missing; production has a hidden
         // pre-level prefix, so keep the test shooter on a nonzero handle too.
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -3215,9 +3218,10 @@ mod tests {
     fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
         let exact_sector = crate::fast_find_grid::SectorIndex::new(41).unwrap();
         let mut projectile = Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element
             },
             object: ObjectData::default(),
             projectile: ProjectileData {
@@ -4557,7 +4561,7 @@ impl EngineInner {
         });
 
         if let Some(target) = self.get_entity_mut(target_id) {
-            let was_lying = target.element_data().posture.is_lying();
+            let was_lying = target.element_data().posture().is_lying();
             if let Some(human) = target.human_data_mut()
                 && human.last_is_lying_for_corpse_intersection.is_none()
             {

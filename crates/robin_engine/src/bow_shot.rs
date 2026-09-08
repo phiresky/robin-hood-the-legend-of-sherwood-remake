@@ -296,8 +296,10 @@ fn apply_bow_transition_state_side_effect(
         OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
             if motion == SpriteMotionState::Start =>
         {
-            if entity.element_data().posture != Posture::AnonymousArcher {
-                entity.element_data_mut().posture = Posture::Upright;
+            if entity.element_data().posture() != Posture::AnonymousArcher {
+                entity
+                    .element_data_mut()
+                    .publish_order_posture(Posture::Upright);
             }
             Some(ActionState::AimingWithBow)
         }
@@ -323,7 +325,9 @@ fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            entity.element_data_mut().posture = Posture::LeaningOut;
+            entity
+                .element_data_mut()
+                .publish_order_posture(Posture::LeaningOut);
             Some(ActionState::AimingWithBowDown)
         }
         OrderType::TransitionRaisingBowLeaningOut
@@ -332,7 +336,9 @@ fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            entity.element_data_mut().posture = Posture::Upright;
+            entity
+                .element_data_mut()
+                .publish_order_posture(Posture::Upright);
             Some(ActionState::AimingWithBow)
         }
         OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
@@ -341,8 +347,10 @@ fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Start | SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            if entity.element_data().posture != Posture::AnonymousArcher {
-                entity.element_data_mut().posture = Posture::Upright;
+            if entity.element_data().posture() != Posture::AnonymousArcher {
+                entity
+                    .element_data_mut()
+                    .publish_order_posture(Posture::Upright);
             }
             Some(ActionState::Waiting)
         }
@@ -564,7 +572,7 @@ pub fn begin_bow_shot(
     // Validate shooter.  Read posture before the mutable borrow.
     let (shooter_valid, shooter_posture, current_state) = match entities.get(shooter_id) {
         Some(e) if e.is_human() && !e.is_dead() => {
-            let posture = e.element_data().posture;
+            let posture = e.element_data().posture();
             let Some(actor) = e.actor_data() else {
                 tracing::warn!(
                     shooter = ?shooter_id,
@@ -1107,9 +1115,13 @@ fn tick_bow_shots_matching(
             };
             actor.action_state = ActionState::AimingWithBow;
             if current_order_type == OrderType::ShootingWithBowLeaningOut {
-                entity.element_data_mut().posture = Posture::LeaningOut;
-            } else if entity.element_data().posture != Posture::AnonymousArcher {
-                entity.element_data_mut().posture = Posture::Upright;
+                entity
+                    .element_data_mut()
+                    .publish_order_posture(Posture::LeaningOut);
+            } else if entity.element_data().posture() != Posture::AnonymousArcher {
+                entity
+                    .element_data_mut()
+                    .publish_order_posture(Posture::Upright);
             }
 
             let Some(sprite_hand_point) = bow_sprite_hand_point(entity, shot_mode, direction)

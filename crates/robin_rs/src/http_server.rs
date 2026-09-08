@@ -1686,7 +1686,7 @@ fn bow_range_debug(
             "position_map": shooter.element_data().position_map(),
             "hand_point": hand_point,
             "direction": shooter.element_data().direction(),
-            "posture": shooter.element_data().posture,
+            "posture": shooter.element_data().posture(),
             "pc_current_action": shooter.pc_data().map(|pc| pc.current_action),
             "actor_action_state": shooter.actor_data().map(|actor| actor.action_state),
         },
