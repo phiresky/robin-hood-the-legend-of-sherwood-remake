@@ -8,7 +8,6 @@
 
 use crate::gfx_types::Keycode;
 use robin_engine::sound_cache::SampleLoader;
-use robin_engine::sprite as engine_sprite;
 
 use crate::gfx_types::GameEvent;
 use crate::key_config::{KeyConfig, PLAN_QUICK_ACTIONS_INDEX, REAL_KEY_COUNT, TOGGLE_CLOAK_INDEX};
@@ -18,8 +17,8 @@ use crate::widget::FrameWnd;
 use winit::keyboard::KeyCode;
 
 use super::layout::{
-    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_background,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
+    MenuRect, MenuTransform, align_bottom_right, dim_screen, draw_screen_background,
+    enter_modal_gpu_phase, render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DEFAULT_1, MT_BTN_DEFAULT_2, MT_BTN_OK,
@@ -321,36 +320,9 @@ pub async fn show_shortcuts(
             draw_screen_background(renderer, &bg);
         }
 
-        // List box frame.
-        if let Some(list_frame) = resources.list_box {
-            draw_background(
-                renderer,
-                transform,
-                &list_frame,
-                LIST_RECT.x,
-                LIST_RECT.y,
-                LIST_RECT.w,
-                LIST_RECT.h,
-            );
-        } else {
-            let (sx, sy) = transform.to_screen(LIST_RECT.x, LIST_RECT.y);
-            renderer.fill_screen(
-                Some(&engine_sprite::BBox::from_coords(
-                    sx as f32,
-                    sy as f32,
-                    (sx + LIST_RECT.w) as f32,
-                    (sy + LIST_RECT.h) as f32,
-                )),
-                Renderer::create_color_16(30, 25, 15),
-            );
-            renderer.draw_rect_outline_screen(
-                sx,
-                sy,
-                sx + LIST_RECT.w,
-                sy + LIST_RECT.h,
-                Renderer::create_color_16(180, 160, 100),
-            );
-        }
+        // RHMenuShortcuts uses BACKGROUND_3 directly. RHID_MENU_LIST_BOX
+        // contains only scrollbar pieces; subresource zero is a tiny thumb
+        // cap, not a background to stretch across the key list.
 
         // Key binding rows.  Each row is split into a 70% key-name column
         // (left-aligned, " : " suffix) and a 30% key-value column

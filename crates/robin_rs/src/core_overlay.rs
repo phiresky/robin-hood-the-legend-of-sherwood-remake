@@ -34,6 +34,9 @@ pub const EXPECTED_CORE_OVERLAY_PATHS: &[&str] = &[
     "Data/Interface/Fonts/Debrief.bfn",
     "Data/Interface/Fonts/EditFields.bfn",
     "Data/Interface/Fonts/InfoScroll.bfn",
+    "Data/Interface/Fonts/ListDefault.tfn",
+    "Data/Interface/Fonts/ListFocused.tfn",
+    "Data/Interface/Fonts/ListSelected.tfn",
     "Data/Interface/Fonts/MenuButtonDisabled.bfn",
     "Data/Interface/Fonts/MenuButtonEnabled.bfn",
     "Data/Interface/Fonts/Scroll.bfn",
@@ -511,6 +514,25 @@ mod tests {
             vfs.read("Data/Interface/Fonts/manager.cfg").unwrap(),
             files["Data/Interface/Fonts/manager.cfg"]
         );
+    }
+
+    #[test]
+    fn core_overlay_loads_original_list_fonts_without_shipping_assets() {
+        let (manifest_bytes, files) = load_repo_overlay();
+        let (manifest, bundle) =
+            load_validated_bundle(&manifest_bytes, |path| Ok(files[path].clone())).unwrap();
+        let vfs = Arc::new(AssetVfs::new());
+        install_validated_bundle(&vfs, &manifest, bundle).unwrap();
+        let reader = robin_engine::sbfile::SbFileSystem::new(vfs);
+        let fonts = crate::ingame_menu::resources::MenuFonts::load(&reader);
+        for font in [fonts.list_default, fonts.list_focused, fonts.list_selected] {
+            let Some(crate::native_font::Font::TrueType(font)) = font else {
+                panic!("list fonts must resolve to their original TrueType descriptors");
+            };
+            assert!(font.has_loaded_face());
+            assert_eq!(font.truetype_name_str(), "Arial");
+            assert_eq!(font.get_height(), 15);
+        }
     }
 
     #[test]
