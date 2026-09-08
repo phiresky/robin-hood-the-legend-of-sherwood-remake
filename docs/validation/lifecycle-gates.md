@@ -8,7 +8,7 @@ data, Chrome, or deployments and is included in the tooling allowlist.
 
 ## Browser audio
 
-Requires Python 3.11+, the pinned Rust toolchain, the
+Requires Linux, Python 3.11+, the pinned Rust toolchain, the
 `wasm32-unknown-unknown` target, Chrome, matching ChromeDriver, and a
 `wasm-bindgen-test-runner` matching the **wasm-bindgen package in Cargo.lock**.
 Do not assume the first runner on PATH matches the crate. The wrapper checks

@@ -18,7 +18,8 @@ Only the shared fixture helper included by test macros needs a direct pass.
 
 ## Crate-to-gate matrix
 
-The Rust quality workflow runs each row as a separate job on Linux. All Cargo
+The Rust quality workflow runs the fixture-free Rust rows as separate Linux
+jobs; `native-lifecycle` is local/provisioned only. All Cargo
 commands use `--locked`. `scripts/test_quality_suites.py` checks that every
 workspace member has an explicit gate, so adding a crate requires assigning it.
 

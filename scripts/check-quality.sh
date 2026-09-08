@@ -65,7 +65,9 @@ case "$1" in
         cargo check --locked --profile wasm-dev --target wasm32-unknown-unknown -p robin_rs --bin robin --no-default-features
         ;;
     browser-audio|native-lifecycle)
-        python3 scripts/validation/lifecycle_gate.py "$1"
+        # This delegated gate is the entire suite. Do not retain a suspended
+        # shell reader while a long compilation/runtime command is executing.
+        exec python3 scripts/validation/lifecycle_gate.py "$1"
         ;;
     gpu)
         # This test also invokes renderer::verify_offscreen_gpu_contract.
