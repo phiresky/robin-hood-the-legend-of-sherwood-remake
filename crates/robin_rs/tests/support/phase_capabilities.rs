@@ -146,6 +146,19 @@ fn production_render_and_audio_capabilities_exclude_broad_authority() {
         );
         for field in &view.fields {
             let field_name = field.ident.as_ref().unwrap().to_string();
+            if let Some(expected_owner) = match field_name.as_str() {
+                "audio" => Some("HostAudio"),
+                "frontend" => Some("HostFrontend"),
+                _ => None,
+            } {
+                assert!(
+                    matches!(&field.ty, syn::Type::Reference(reference)
+                    if reference.mutability.is_some()
+                    && matches!(reference.elem.as_ref(), syn::Type::Path(path)
+                        if path.path.segments.last().is_some_and(|segment| segment.ident == expected_owner))),
+                    "{name}.{field_name} must borrow only {expected_owner}"
+                );
+            }
             let expected_type = match field_name.as_str() {
                 "engine" => Some("Engine"),
                 "viewport" => Some("ViewportState"),
