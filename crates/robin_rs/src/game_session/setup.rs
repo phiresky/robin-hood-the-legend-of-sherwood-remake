@@ -2341,9 +2341,9 @@ pub(super) fn load_level_and_sprite_bank(
     };
     timer.step("terrain decode start");
 
-    // TODO: To overlap the VQ tail as well, streaming install must hand off
-    // immutable terrain inputs; retaining its still-mutating shipping datadir
-    // here would violate the assembly ownership boundary.
+    // Shipping may already have decoded pixels alongside the VQ tail. The
+    // handoff above validates those immutable bytes against this reader;
+    // remaining occlusion/minimap reads retain this preparation snapshot.
     // Resource environments clone/validate mission RHS and scripts. Start the
     // independent terrain job first so this work overlaps pixel decoding.
     let resources = match host.frontend.shipping.as_ref() {

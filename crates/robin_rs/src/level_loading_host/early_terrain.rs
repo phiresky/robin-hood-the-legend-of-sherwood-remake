@@ -11,6 +11,17 @@ struct TerrainKey {
     generation: u64,
 }
 
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FinishOnDrop(#[serde(skip)] Arc<AtomicBool>);
+
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+impl Drop for FinishOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 /// Transient worker result, deliberately excluded from persisted asset state.
 /// Dropping an unconsumed handoff cancels queued work and discards late output.
 pub struct EarlyTerrainDecode {
@@ -76,6 +87,7 @@ impl EarlyTerrainDecode {
             let worker_finished = finished.clone();
             // One serial decoder occupies exactly one scheduler slot.
             robin_assets::wasm_threads::start_on_pool(move || {
+                let _finished = FinishOnDrop(worker_finished);
                 if !worker_cancelled.load(Ordering::Acquire) {
                     let started = web_time::Instant::now();
                     let result = Picture::load_terrain_from_bytes(&bytes)
@@ -88,7 +100,6 @@ impl EarlyTerrainDecode {
                         let _ = sender.send(result);
                     }
                 }
-                worker_finished.store(true, Ordering::Release);
             });
             tracing::info!(mission, "early terrain decode started");
             return Some(Self {
@@ -275,6 +286,18 @@ mod tests {
             cancelled: Arc::new(AtomicBool::new(false)),
             finished: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    #[test]
+    fn completed_or_unwound_worker_releases_scheduler_reservation() {
+        let finished = Arc::new(AtomicBool::new(false));
+        let completion = FinishOnDrop(finished.clone());
+        let result = std::panic::catch_unwind(move || {
+            let _completion = completion;
+            panic!("injected worker failure");
+        });
+        assert!(result.is_err());
+        assert!(finished.load(Ordering::Acquire));
     }
 
     #[test]
