@@ -668,9 +668,10 @@ impl NativeContext<'_, '_> {
                 // a narrowly scoped script correction mechanism becomes available.
                 if let (Some(chief_id), Some(sub_id)) =
                     (self.actor_id(actor), self.actor_id(subordinate))
-                    && sub_entity
-                        .ai_controller()
-                        .is_some_and(|ai| ai.patrol_chief == Some(chief_id))
+                    && chief_id != sub_id
+                    && sub_entity.ai_controller().is_some_and(|ai| {
+                        ai.patrol_chief == Some(chief_id) && ai.theoretical_patrol.is_empty()
+                    })
                     && self.get_entity(actor).is_some_and(|chief| {
                         chief.is_npc()
                             && chief.ai_controller().is_some_and(|ai| {

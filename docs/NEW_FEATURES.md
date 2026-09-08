@@ -929,7 +929,6 @@ unless the project goals change.
   quirks, or obviously unused systems solely because an older implementation
   had them.
 
-
 ## Reversible background patch animations
 
 Gameplay options includes **Reversible Background Patches (Next Launch)**
@@ -950,3 +949,7 @@ guards without repeating mission messages or rewards. Locks and transitions
 prevent repeated activation while a mechanism is unavailable or still moving.
 TODO: patches applied later by delayed script commands need authored trigger
 metadata; only patch changes made during the target callback are captured.
+
+This state changes the native formats to save 73, replay 31 and multiplayer
+protocol 40. Earlier Rust saves/replays retain their original files but are
+rejected by the existing strict schema checks; they are not silently migrated.

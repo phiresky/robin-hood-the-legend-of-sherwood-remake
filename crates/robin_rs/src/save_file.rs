@@ -615,7 +615,10 @@ pub const SAVE_MAGIC: &str = "RHSG";
 /// - **v72** (2026-09-02, vector fog projection state): current and explored
 ///   gameplay visibility plus their presentation projections are stored as
 ///   exact polygon regions rather than a low-resolution cell bitmap.
-pub const SAVE_FORMAT_VERSION: u32 = 72;
+/// - **v73** (2026-09-08, reversible background patches): adds the opt-in
+///   simulation rule and remembered activation targets needed to reverse
+///   animated patches after saving, loading, or rewinding.
+pub const SAVE_FORMAT_VERSION: u32 = 73;
 
 /// Human-facing provenance captured when a save is written.
 ///
@@ -1084,8 +1087,8 @@ mod tests {
     }
 
     #[test]
-    fn save_format_version_includes_diplomacy_and_vector_fog_state() {
-        assert_eq!(SAVE_FORMAT_VERSION, 72);
+    fn save_format_version_includes_reversible_background_patches() {
+        assert_eq!(SAVE_FORMAT_VERSION, 73);
     }
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
