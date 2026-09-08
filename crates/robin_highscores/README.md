@@ -1022,7 +1022,7 @@ The input is canonical JSON for `VpsReleasePlanV2`. It contains schema version
 four configs, nineteen reviewed host files, and two external raw-root
 declarations. Every source file is an `ArtifactRefV1` pin. Typed lists must be
 in enum order; unknown, duplicate, missing, reordered, zero-digest,
-placeholder, noncanonical, or changed inputs fail closed.
+unset, noncanonical, or changed inputs fail closed.
 
 For deployment, the plan is retained as the mode-`0400` file
 `incoming/.sources-COMMIT/vps-release-plan-v2.json`, and every source path in
