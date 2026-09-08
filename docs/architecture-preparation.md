@@ -65,4 +65,18 @@ deserialized missing metadata, attachment absence, and Arc sharing across
 snapshots. Existing projection/speech and load/snapshot tests cover the
 unchanged deterministic consumers.
 
-Commands/results will be recorded after the isolated package suites finish.
+Isolated source `73416413c` verification:
+
+- `CARGO_BUILD_JOBS=1 cargo check --locked -p robin_engine --tests`: passed
+  (7m06s cold check on the initial implementation).
+- `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_engine
+  -p robin_ranked_verification -p robin_parity`: passed (16m13s cold build).
+  Engine: 4,455 unit tests passed, four ignored; 15 integration tests passed;
+  21 doctests passed, one ignored. Parity: 151 unit tests and one dependency
+  closure integration test passed. Ranked verification: 23 passed, four
+  operator-data tests explicitly ignored. All six new preparation tests passed.
+- `cargo fmt --all` and `git diff --check`: passed.
+
+These results cover this isolated track; final combined-source acceptance is
+recorded separately by the integration coordinator. No client/device build was
+duplicated in this lane; integrated native validation owns those consumers.
