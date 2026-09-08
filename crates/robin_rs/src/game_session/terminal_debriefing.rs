@@ -896,8 +896,10 @@ mod tests {
             } else {
                 frame.post_commands.push(command.clone());
             }
-            let before =
-                bitcode::encode(&(&frame.commands.commands, &frame.post_commands.commands));
+            let before = (
+                bitcode::encode(&frame.commands.commands),
+                bitcode::encode(&frame.post_commands.commands),
+            );
             let current = if pre_command { 42 } else { 41 };
             let previous = stage_terminal_campaign_update(
                 true,
@@ -909,7 +911,10 @@ mod tests {
             );
             assert_eq!(previous, 41);
             assert_eq!(
-                bitcode::encode(&(&frame.commands.commands, &frame.post_commands.commands)),
+                (
+                    bitcode::encode(&frame.commands.commands),
+                    bitcode::encode(&frame.post_commands.commands)
+                ),
                 before,
                 "playback must retain exactly the recorded command, timestamp and nonce"
             );
