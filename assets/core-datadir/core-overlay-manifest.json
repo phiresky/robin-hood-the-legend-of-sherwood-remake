@@ -18,6 +18,21 @@
       "sha256": "bd48088be36accfaf5d31767985c0753519f423f85428914e244e4dab8ba5729"
     },
     {
+      "path": "Data/Interface/Fonts/ListDefault.tfn",
+      "size": 90,
+      "sha256": "5b68f2a796fdc8e25f94295445f2b8a73612401cc28600e5539514718c5d2603"
+    },
+    {
+      "path": "Data/Interface/Fonts/ListFocused.tfn",
+      "size": 90,
+      "sha256": "33007aab7a3d0b030a384abfdcb5ac999ea1c691391f2155902e0a053d7eb534"
+    },
+    {
+      "path": "Data/Interface/Fonts/ListSelected.tfn",
+      "size": 90,
+      "sha256": "3e65aaa388ef4e884a096e0210f1584041ea0345b1b34a9530b075f3a6cc9da1"
+    },
+    {
       "path": "Data/Interface/Fonts/MenuButtonDisabled.bfn",
       "size": 24061,
       "sha256": "4f8527e3bccc773ecf95a11820127a607444f8ccb041de324b8dbb56d4e107f6"
