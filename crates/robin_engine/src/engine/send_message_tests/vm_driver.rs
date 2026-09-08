@@ -58,6 +58,72 @@ fn animated_target(progression: crate::sprite::FrameProgression) -> Entity {
     })
 }
 
+#[test]
+fn reversible_patch_target_keeps_clickable_visual_through_queued_spent_animation() {
+    use crate::order::OrderType;
+    use crate::sequence::{Field, FieldValue, Sequence, SequenceElement};
+
+    for enabled in [false, true] {
+        for bound in [false, true] {
+            let mut engine = EngineInner::new();
+            engine.control.sim_config.reversible_background_patches = enabled;
+            let mut target = animated_target(crate::sprite::FrameProgression::Default);
+            let spent = OrderType::TransitionSittingWaitingUpright;
+            let initial = animated_sprite();
+            let mut rows = initial.current_scripts().to_vec();
+            let mut spent_row = rows[0].clone();
+            spent_row.action_id = spent as u16;
+            spent_row.frame_ids = vec![4457; 3];
+            rows.push(spent_row);
+            let mut conversion = vec![0; crate::sprite_script::NONANIMATION_END];
+            conversion[spent as usize] = 1;
+            target.element_data_mut().sprite = crate::sprite::Sprite::new(
+                std::sync::Arc::new(rows),
+                std::sync::Arc::new(conversion),
+            );
+            let owner = engine.add_entity(target);
+            if bound {
+                let mut patch = crate::patch::Patch::new();
+                patch.repeat_activation = Some((
+                    ScriptHandleCodec::actor_handle(owner),
+                    "ActivatedBySword".into(),
+                ));
+                engine.script_domains.interactables.patches.push(patch);
+            }
+            // Actual Lincoln queues this after applying its two patches.
+            let mut sequence = Sequence::new();
+            let mut freeze = SequenceElement::new_generic(1, Command::PlayAnimFreeze, Some(owner));
+            freeze.set_property(Field::AnimationId, FieldValue::Animation(spent));
+            sequence.append_element(freeze);
+            let mut timer = SequenceElement::new_generic(2, Command::Timer, None);
+            timer.set_property(Field::Timer, FieldValue::Integer(100));
+            sequence.append_element(timer);
+            engine.orders.sequence_manager.launch_sequence(sequence);
+            engine.hourglass_phase_sequences(
+                &crate::sim_rng::test_context(),
+                &mut crate::engine::HostDisplayState::default(),
+                &LevelAssets::new(),
+            );
+            let Entity::Target(target) = engine.get_entity(owner).unwrap() else {
+                unreachable!()
+            };
+            assert_eq!(
+                target.element.sprite.current_row,
+                if enabled && bound { 0 } else { 1 }
+            );
+            assert_eq!(
+                target.target.progression,
+                if enabled && bound { 0 } else { 8 }
+            );
+            assert_eq!(
+                engine.orders.timer_elements.len(),
+                1,
+                "spent command must release its successor"
+            );
+        }
+    }
+}
+
 fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Entity {
     Entity::Bonus(crate::element::ElementBonus {
         element: {
