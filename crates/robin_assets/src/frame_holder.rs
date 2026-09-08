@@ -104,6 +104,9 @@ pub struct PackedSprite {
     /// pixels appear without republishing. `None` for everything else.
     #[serde(skip)]
     pub late_grid: Option<crate::late_sprites::LateGridCell>,
+    /// Exact eager opacity for the experimental deferred-grid path.
+    #[serde(skip)]
+    pub resident_opacity: Option<Arc<crate::sprite_residency::SpriteOpacity>>,
     /// Original runtime-loaded RGBA pixels, when this sprite came from a PNG
     /// overlay instead of the legacy bank.
     #[serde(skip)]
@@ -290,6 +293,7 @@ impl Default for PackedSprite {
             packed_data: None,
             bank_span: None,
             late_grid: None,
+            resident_opacity: None,
             rgba_data: None,
             raster: None,
             dictionary_index: UNMAPPED_DICT,
@@ -860,6 +864,7 @@ impl FrameHolder {
             packed_data: Some(Arc::new(sprite.packed_data)),
             bank_span: None,
             late_grid: None,
+            resident_opacity: None,
             rgba_data: sprite.rgba_data,
             raster: None,
             dictionary_index: UNMAPPED_DICT,
@@ -942,8 +947,52 @@ impl FrameHolder {
 
     /// Apply Arno law shadow color to all dictionaries.
     pub fn apply_arno_law(&mut self, shadow_color: u16) {
-        for d in &mut self.dictionaries {
-            d.apply_arno_law(shadow_color);
+        // Masks normally survive Arno-law rebinding. Check the actual
+        // dictionary entries: collision bumps can change classifications for
+        // unusual scripted colors. Never keep stale simulation opacity.
+        let has_resident_opacity = self
+            .sprites
+            .iter()
+            .any(|sprite| sprite.resident_opacity.is_some());
+        for dictionary_index in 0..self.dictionaries.len() {
+            if !has_resident_opacity {
+                self.dictionaries[dictionary_index].apply_arno_law(shadow_color);
+                continue;
+            }
+            let dictionary = &self.dictionaries[dictionary_index];
+            let mut rebound = dictionary.clone();
+            rebound.apply_arno_law(shadow_color);
+            let classify = |pixel: u16, shadow: u16| {
+                (
+                    pixel != TRANSPARENT_COLOR_16 && pixel != shadow,
+                    pixel != TRANSPARENT_COLOR_16,
+                )
+            };
+            let changed = dictionary
+                .values
+                .iter()
+                .zip(&rebound.values)
+                .any(|(&old, &new)| {
+                    classify(old, dictionary.shadow_color())
+                        != classify(new, rebound.shadow_color())
+                });
+            if changed {
+                for sprite in &mut self.sprites {
+                    if usize::from(sprite.dictionary_index) == dictionary_index
+                        && sprite.resident_opacity.is_some()
+                    {
+                        assert!(
+                            sprite
+                                .late_grid
+                                .as_ref()
+                                .is_none_or(|cell| cell.get().is_some()),
+                            "shadow rebinding changes resident opacity while dictionary {dictionary_index} grids are pending"
+                        );
+                        sprite.resident_opacity = None;
+                    }
+                }
+            }
+            self.dictionaries[dictionary_index] = rebound;
         }
         for d in &mut self.dictionaries_fog {
             d.apply_arno_law(shadow_color);
@@ -1073,6 +1122,21 @@ impl FrameHolder {
             } else {
                 (Some(Arc::clone(&sprite.packed_data)), None)
             };
+            let resident_opacity = crate::late_sprites::opacity(*index);
+            if let Some(opacity) = &resident_opacity {
+                anyhow::ensure!(
+                    opacity.width == sprite.width
+                        && opacity.height == sprite.height
+                        && opacity.dictionary_index == sprite.dictionary_index,
+                    "sprite {index} resident opacity metadata disagrees with bank"
+                );
+            }
+            anyhow::ensure!(
+                late_grid.is_none()
+                    || crate::late_sprites::experimental_epoch().is_none()
+                    || resident_opacity.is_some(),
+                "experimental deferred sprite {index} has no exact resident opacity"
+            );
             *slot = PackedSprite {
                 validation: Default::default(),
                 width: sprite.width,
@@ -1088,6 +1152,7 @@ impl FrameHolder {
                 packed_data,
                 bank_span: None,
                 late_grid,
+                resident_opacity,
                 rgba_data: None,
                 raster: sprite.raster.clone(),
                 dictionary_index: sprite.dictionary_index,
@@ -1284,6 +1349,7 @@ impl FrameHolder {
                 packed_data: None,
                 bank_span,
                 late_grid: None,
+                resident_opacity: None,
                 rgba_data: None,
                 raster: None,
                 dictionary_index: dict_index,
@@ -1482,6 +1548,10 @@ impl FrameHolder {
             return false;
         }
 
+        if let Some(opacity) = &sprite.resident_opacity {
+            return opacity.is_opaque(x, y, blue_pixels_are_in);
+        }
+
         // Web-lossy RLE sprites answer from their decoded raster: a direct
         // index instead of walking scanlines to reach one pixel.
         let pixel = if let Some(raster) = sprite.raster.as_ref() {
@@ -1550,6 +1620,14 @@ impl robin_content::PixelOpacityLookup for FrameHolder {
             hash.update(bank_id.to_le_bytes());
             hash.update(sprite.width.to_le_bytes());
             hash.update(sprite.height.to_le_bytes());
+
+            if let Some(opacity) = &sprite.resident_opacity {
+                hash.update([0]);
+                hash.update(&opacity.ordinary);
+                hash.update([1]);
+                hash.update(&opacity.blipped);
+                continue;
+            }
 
             let width = usize::from(sprite.width);
             let height = usize::from(sprite.height);
@@ -2583,6 +2661,7 @@ mod tests {
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
             late_grid: None,
+            resident_opacity: None,
             rgba_data: None,
             raster: None,
             dictionary_index: UNMAPPED_DICT,
@@ -2617,6 +2696,7 @@ mod tests {
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
             late_grid: None,
+            resident_opacity: None,
             rgba_data: None,
             raster: None,
             dictionary_index: UNMAPPED_DICT,
@@ -2654,6 +2734,7 @@ mod tests {
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
             late_grid: None,
+            resident_opacity: None,
             rgba_data: None,
             raster: None,
             dictionary_index: 0,
@@ -2668,6 +2749,85 @@ mod tests {
                 0x0001, 0x0002, 0x0003, 0x0004, 0x0005, 0x0006, 0x0007, 0x0008
             ]
         );
+    }
+
+    #[test]
+    fn resident_opacity_matches_grid_hash_and_survives_normal_shadow_rebind() {
+        use robin_content::PixelOpacityLookup;
+        let mut holder = FrameHolder::new();
+        let dictionary_index = holder.add_dictionary(FrameDictionary::from_raw(
+            1,
+            vec![TRANSPARENT_COLOR_16, SHADOW_KEY, 0x2468, 0x1357],
+        ));
+        holder.sprites.push(PackedSprite {
+            width: 4,
+            height: 1,
+            dictionary_index,
+            packed_data: Some(Arc::new(vec![0])),
+            ..Default::default()
+        });
+        let expected = holder.simulation_opacity_sha256(&[0]);
+        let opacity = Arc::new(crate::sprite_residency::SpriteOpacity {
+            bank_id: 0,
+            width: 4,
+            height: 1,
+            dictionary_index,
+            ordinary: vec![12],
+            blipped: vec![14],
+        });
+        holder.sprites[0].resident_opacity = Some(opacity);
+        holder.sprites[0].packed_data = None;
+        holder.sprites[0].late_grid = Some(Arc::new(std::sync::OnceLock::new()));
+        assert_eq!(holder.simulation_opacity_sha256(&[0]), expected);
+        for (x, ordinary, blipped) in [
+            (0, false, false),
+            (1, false, true),
+            (2, true, true),
+            (3, true, true),
+        ] {
+            assert_eq!(holder.is_pixel_opaque(0, x, 0, false), ordinary);
+            assert_eq!(holder.is_pixel_opaque(0, x, 0, true), blipped);
+        }
+        holder.apply_arno_law(0x0040);
+        assert!(holder.sprites[0].resident_opacity.is_some());
+        assert_eq!(holder.simulation_opacity_sha256(&[0]), expected);
+    }
+
+    #[test]
+    fn shadow_collision_requires_grid_and_discards_stale_opacity() {
+        let mut holder = FrameHolder::new();
+        let dictionary_index = holder.add_dictionary(FrameDictionary::from_raw(
+            1,
+            vec![SHADOW_KEY - 1, SHADOW_KEY, TRANSPARENT_COLOR_16, 0x1234],
+        ));
+        let cell = Arc::new(std::sync::OnceLock::new());
+        holder.sprites.push(PackedSprite {
+            width: 4,
+            height: 1,
+            dictionary_index,
+            late_grid: Some(Arc::clone(&cell)),
+            resident_opacity: Some(Arc::new(crate::sprite_residency::SpriteOpacity {
+                bank_id: 0,
+                width: 4,
+                height: 1,
+                dictionary_index,
+                ordinary: vec![9],
+                blipped: vec![11],
+            })),
+            ..Default::default()
+        });
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+                || holder.apply_arno_law(SHADOW_KEY - 1)
+            ))
+            .is_err()
+        );
+        assert!(holder.sprites[0].resident_opacity.is_some());
+        cell.set(Arc::new(vec![0])).unwrap();
+        holder.apply_arno_law(SHADOW_KEY - 1);
+        assert!(holder.sprites[0].resident_opacity.is_none());
+        assert!(!holder.is_pixel_opaque(0, 0, 0, false));
+        assert!(holder.is_pixel_opaque(0, 0, 0, true));
     }
 
     #[test]
@@ -2748,6 +2908,7 @@ mod tests {
             packed_data: Some(Arc::new(packed)),
             bank_span: None,
             late_grid: None,
+            resident_opacity: None,
             rgba_data: None,
             raster: None,
             dictionary_index: UNMAPPED_DICT,
