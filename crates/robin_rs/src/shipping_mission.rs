@@ -718,13 +718,35 @@ where
                 .await
                 .with_context(|| format!("fetch shipping file {file}"))?;
             let bytes = compressed.len();
+            let ready = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
             // Pure compute; overlap it with the remaining downloads when the
-            // pool exists.
-            let payload = if wasm_threads::pool_threads() > 0 {
-                wasm_threads::run_on_pool(move || decode_mission_compressed(&compressed)).await?
-            } else {
-                decode_mission_compressed(&compressed)
+            // pool exists. Carry worker timestamps back to the main thread;
+            // the browser workers do not necessarily have a log subscriber.
+            let decode = move || {
+                let worker_start = ready.map(|_| js_sys::Date::now());
+                let payload = decode_mission_compressed(&compressed);
+                let worker_end = ready.map(|_| js_sys::Date::now());
+                (payload, worker_start.zip(worker_end))
             };
+            let enqueued = ready.map(|_| js_sys::Date::now());
+            let (payload, timing) = if wasm_threads::pool_threads() > 0 {
+                wasm_threads::run_on_pool(decode).await?
+            } else {
+                decode()
+            };
+            if let Some(((ready_ms, enqueued_ms), (worker_start_ms, worker_end_ms))) =
+                ready.zip(enqueued).zip(timing)
+            {
+                tracing::debug!(
+                    file,
+                    ready_ms,
+                    enqueued_ms,
+                    worker_start_ms,
+                    worker_end_ms,
+                    received_ms = js_sys::Date::now(),
+                    "shipping part decoded on worker"
+                );
+            }
             let payload = payload.with_context(|| format!("decode shipping file {file}"))?;
             Ok::<_, anyhow::Error>((file, bytes, payload))
         }
@@ -773,9 +795,18 @@ where
                 let (file, bytes, payload) = part?;
                 fetched_bytes += bytes;
                 tracing::debug!(mission, file, bytes, "shipping mission dependency fetched");
+                let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
                 merged
                     .merge_part(payload)
                     .with_context(|| format!("merge shipping file {file}"))?;
+                if let Some(apply_start_ms) = apply_start {
+                    tracing::debug!(
+                        file,
+                        apply_start_ms,
+                        apply_end_ms = js_sys::Date::now(),
+                        "shipping part merged"
+                    );
+                }
                 label = file;
                 if let Some(bank) = merged.payload.sprite_bank.as_mut() {
                     let mut incoming = std::mem::take(&mut bank.vq_chunks);

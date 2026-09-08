@@ -615,7 +615,11 @@ pub struct ShippingSprite {
 #[derive(Default)]
 pub struct VqDecodeScheduler {
     in_flight: futures_util::stream::FuturesUnordered<
-        futures_channel::oneshot::Receiver<(SpriteVqChunk, Result<Vec<(u32, Vec<u16>)>>, f64)>,
+        futures_channel::oneshot::Receiver<(
+            SpriteVqChunk,
+            Result<Vec<(u32, Vec<u16>)>>,
+            Option<[f64; 4]>,
+        )>,
     >,
 }
 
@@ -652,20 +656,28 @@ impl VqDecodeScheduler {
             // Order-preserving removal (`swap_remove` would drag the
             // smallest chunk into the just-vacated slot and dispatch it
             // second). The list is tens of entries; O(n) shifting is noise.
+            let ready = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
             let chunk = pending.remove(index);
             let inputs = bank
                 .prepare_vq_chunk_inputs(&chunk, rhs_files)
                 .with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
             let (sender, receiver) = futures_channel::oneshot::channel();
+            let enqueued = ready.map(|_| js_sys::Date::now());
             rayon::spawn(move || {
-                // Workers can call JS imports of their own instantiation;
-                // Date.now is the cheap cross-thread clock here.
-                let started = js_sys::Date::now();
+                // Date.now shares an epoch across browser workers, unlike
+                // performance.now whose time origin belongs to each worker.
+                let started = ready.map(|_| js_sys::Date::now());
                 let grids = ShippingSpriteBank::run_vq_chunk_decode(&chunk, &inputs);
-                let elapsed = js_sys::Date::now() - started;
+                let timing =
+                    ready
+                        .zip(enqueued)
+                        .zip(started)
+                        .map(|((ready, enqueued), started)| {
+                            [ready, enqueued, started, js_sys::Date::now()]
+                        });
                 // An unreceived result only means the dispatcher bailed out
                 // on an earlier chunk's error; nothing to report.
-                let _ = sender.send((chunk, grids, elapsed));
+                let _ = sender.send((chunk, grids, timing));
             });
             self.in_flight.push(receiver);
         }
@@ -680,10 +692,15 @@ impl VqDecodeScheduler {
         let Some(result) = self.in_flight.next().await else {
             return Ok(None);
         };
-        let (chunk, grids, decode_ms) =
+        let (chunk, grids, timing) =
             result.map_err(|_| anyhow!("VQ decode worker dropped its result"))?;
         let grids = grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
-        tracing::debug!(chunk = %chunk.rhs, decode_ms, "VQ sprite chunk decoded on worker");
+        if let Some([ready_ms, enqueued_ms, worker_start_ms, worker_end_ms]) = timing {
+            let received_ms = js_sys::Date::now();
+            tracing::debug!(chunk = %chunk.rhs, ready_ms, enqueued_ms, worker_start_ms,
+                worker_end_ms, received_ms, decode_ms = worker_end_ms - worker_start_ms,
+                "VQ sprite chunk decoded on worker");
+        }
         Ok(Some((chunk, grids)))
     }
 
@@ -1170,6 +1187,8 @@ impl ShippingSpriteBank {
         _chunk: &SpriteVqChunk,
         grids: Vec<(u32, Vec<u16>)>,
     ) -> Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
         for (sprite_id, grid) in grids {
             let sprite_id = &sprite_id;
             let position = self
@@ -1188,6 +1207,11 @@ impl ShippingSpriteBank {
                 continue;
             }
             sprite.packed_data = Arc::new(grid);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(apply_start_ms) = apply_start {
+            tracing::debug!(chunk = %_chunk.rhs, apply_start_ms, apply_end_ms = js_sys::Date::now(),
+                "vq sprite chunk applied");
         }
         Ok(())
     }
@@ -1343,6 +1367,8 @@ impl ShippingSpriteBank {
         chunk: &SpriteRleJxlChunk,
         rasters: Vec<(u32, crate::frame_holder::SpriteRaster)>,
     ) -> Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
         for (sprite_id, raster) in rasters {
             let position = self
                 .sprites
@@ -1364,6 +1390,11 @@ impl ShippingSpriteBank {
                 ));
             }
             sprite.raster = Some(raster);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(apply_start_ms) = apply_start {
+            tracing::debug!(chunk = %chunk.rhs, apply_start_ms, apply_end_ms = js_sys::Date::now(),
+                "rle_jxl sprite chunk applied");
         }
         Ok(())
     }
@@ -1419,7 +1450,7 @@ pub struct RleJxlDecodeScheduler {
         futures_channel::oneshot::Receiver<(
             SpriteRleJxlChunk,
             Result<Vec<(u32, crate::frame_holder::SpriteRaster)>>,
-            f64,
+            Option<[f64; 4]>,
         )>,
     >,
 }
@@ -1438,16 +1469,24 @@ impl RleJxlDecodeScheduler {
                 index += 1;
                 continue;
             }
+            let ready = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
             let chunk = pending.swap_remove(index);
             let dims = bank
                 .prepare_rle_jxl_chunk_dims(&chunk)
                 .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
             let (sender, receiver) = futures_channel::oneshot::channel();
+            let enqueued = ready.map(|_| js_sys::Date::now());
             rayon::spawn(move || {
-                let started = js_sys::Date::now();
+                let started = ready.map(|_| js_sys::Date::now());
                 let packed = ShippingSpriteBank::run_rle_jxl_chunk_decode(&chunk, &dims);
-                let elapsed = js_sys::Date::now() - started;
-                let _ = sender.send((chunk, packed, elapsed));
+                let timing =
+                    ready
+                        .zip(enqueued)
+                        .zip(started)
+                        .map(|((ready, enqueued), started)| {
+                            [ready, enqueued, started, js_sys::Date::now()]
+                        });
+                let _ = sender.send((chunk, packed, timing));
             });
             self.in_flight.push(receiver);
         }
@@ -1467,11 +1506,16 @@ impl RleJxlDecodeScheduler {
         let Some(result) = self.in_flight.next().await else {
             return Ok(None);
         };
-        let (chunk, packed, decode_ms) =
+        let (chunk, packed, timing) =
             result.map_err(|_| anyhow!("RLE-JXL decode worker dropped its result"))?;
         let packed =
             packed.with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
-        tracing::debug!(chunk = %chunk.rhs, decode_ms, "RLE-JXL sprite chunk decoded on worker");
+        if let Some([ready_ms, enqueued_ms, worker_start_ms, worker_end_ms]) = timing {
+            let received_ms = js_sys::Date::now();
+            tracing::debug!(chunk = %chunk.rhs, ready_ms, enqueued_ms, worker_start_ms,
+                worker_end_ms, received_ms, decode_ms = worker_end_ms - worker_start_ms,
+                "RLE-JXL sprite chunk decoded on worker");
+        }
         Ok(Some((chunk, packed)))
     }
 
