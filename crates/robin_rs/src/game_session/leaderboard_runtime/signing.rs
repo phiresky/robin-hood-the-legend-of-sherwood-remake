@@ -1,7 +1,7 @@
 //! Post-mission host authorization and peer co-signing, independent of modal presentation.
 
 use super::*;
-use robin_run_protocol::{CanonicalDocument as _, Validate as _};
+use robin_run_protocol::Validate as _;
 
 /// Host-side coordinator for the only ranked multiplayer upload. Remote
 /// peers receive a typed, locally checkable context followed by the fixed
