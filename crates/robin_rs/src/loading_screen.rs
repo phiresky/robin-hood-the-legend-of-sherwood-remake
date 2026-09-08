@@ -829,6 +829,14 @@ impl LoadingScreenRenderer {
         }
     }
 
+    /// Consume the loading screen and transfer its already-created pipelines
+    /// to the mission renderer. Loading artwork and fonts are released here.
+    pub(crate) fn into_mission_renderer(mut self) -> Renderer {
+        self.state.close();
+        self.renderer.finish_loading_screen();
+        self.renderer
+    }
+
     /// Close and consume the loading screen, dropping the renderer.
     pub fn close(mut self) {
         self.state.close();

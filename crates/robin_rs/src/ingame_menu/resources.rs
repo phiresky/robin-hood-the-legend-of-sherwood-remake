@@ -16,7 +16,6 @@ use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::sherwood_stat as engine_sherwood_stat;
 use std::collections::HashMap;
 
-use crate::main_entry::picture_to_surface;
 use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
 use robin_assets::resource_manager::ResourceManager;
@@ -1633,6 +1632,25 @@ impl IngameMenuResources {
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 
+/// Decode and validate menu pictures during startup, but upload only surfaces
+/// actually drawn. Startup modals therefore retain their normal first frame.
+fn deferred_picture_surface(renderer: &mut Renderer, pic: &robin_assets::picture::Picture) -> u32 {
+    assert_eq!(
+        pic.data.len(),
+        pic.width as usize * pic.height as usize * 2,
+        "menu picture RGB565 payload must match dimensions"
+    );
+    let pixels = pic
+        .data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    renderer.create_deferred_surface_from_rgb565(pic.width, pic.height, pixels)
+}
+
 fn load_surface(
     res: &mut ResourceManager,
     renderer: &mut Renderer,
@@ -1646,7 +1664,7 @@ fn load_surface(
     let pic = res.get_picture(id, 0).ok()?;
     let width = pic.width as i32;
     let height = pic.height as i32;
-    let surface_id = picture_to_surface(renderer, pic);
+    let surface_id = deferred_picture_surface(renderer, pic);
     Some(MenuSurface {
         id: surface_id,
         width,
@@ -1666,7 +1684,7 @@ fn load_surface_sub(
     let pic = res.get_picture(id, sub_id).ok()?;
     let width = pic.width as i32;
     let height = pic.height as i32;
-    let surface_id = picture_to_surface(renderer, pic);
+    let surface_id = deferred_picture_surface(renderer, pic);
     Some(MenuSurface {
         id: surface_id,
         width,
@@ -1674,7 +1692,7 @@ fn load_surface_sub(
     })
 }
 
-/// Load a multi-frame sprite pack and upload every frame as a surface.
+/// Register every sprite frame, deferring conversion and GPU upload until drawn.
 fn load_sprite_pack(
     res: &mut ResourceManager,
     renderer: &mut Renderer,
@@ -1684,7 +1702,7 @@ fn load_sprite_pack(
     let surfaces: Vec<Option<u32>> = match res.get_pictures(id) {
         Ok(pics) => pics
             .iter()
-            .map(|opt| opt.as_ref().map(|p| picture_to_surface(renderer, p)))
+            .map(|opt| opt.as_ref().map(|p| deferred_picture_surface(renderer, p)))
             .collect(),
         Err(_) => Vec::new(),
     };

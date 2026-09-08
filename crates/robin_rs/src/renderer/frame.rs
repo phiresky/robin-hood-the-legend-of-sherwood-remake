@@ -902,6 +902,14 @@ impl FrameState {
         self.queue_cached_bg(bind_group)
     }
 
+    pub(super) fn finish_loading_screen(&mut self) {
+        self.clear_recording();
+        self.clear_frozen_scene();
+        self.cached_present = None;
+        self.presentation_frame_count = 0;
+        self.vertex_scratch.clear();
+    }
+
     pub(super) fn clear_recording(&mut self) {
         self.queued.clear();
         self.frame_texture_bgs.clear();

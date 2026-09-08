@@ -518,11 +518,37 @@ impl MissionBootstrap {
     }
 }
 
+/// Diagnostic control for same-package startup measurements.
+fn prepare_renderer_early() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    let value = {
+        let window = web_sys::window().expect("interactive renderer requires a browser window");
+        let search = window
+            .location()
+            .search()
+            .expect("read renderer preparation query");
+        web_sys::UrlSearchParams::new_with_str(&search)
+            .expect("parse renderer preparation query")
+            .get("renderer-preparation")
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let value = std::env::var("ROBIN_RENDERER_PREPARATION").ok();
+    match value.as_deref() {
+        None | Some("early") => true,
+        Some("late") => false,
+        Some(value) => panic!("unknown renderer-preparation policy {value:?}"),
+    }
+}
+
 /// Owns the temporary loading renderer and the presentation configuration it
 /// resolved. Consuming [`Self::close_before_renderer`] is the only way to
 /// obtain that configuration for the game renderer.
 struct MissionLoadingScreen {
     renderer: Option<LoadingScreenRenderer>,
+    /// When no loading artwork exists, prepare the GPU pipelines after mission
+    /// downloads have started so construction overlaps their worker/network work.
+    prepared_renderer: Option<crate::renderer::Renderer>,
+    prepare_renderer_early: bool,
     renderer_config: MissionRendererConfig,
 }
 
@@ -582,6 +608,8 @@ impl MissionLoadingScreen {
         });
         let mut stage = Self {
             renderer,
+            prepared_renderer: None,
+            prepare_renderer_early: prepare_renderer_early(),
             renderer_config,
         };
         stage.status("Preparing mission data...", 0.02);
@@ -603,6 +631,20 @@ impl MissionLoadingScreen {
         window: &mut GameWindow,
         progress: crate::shipping_mission::MissionLoadProgress<'_>,
     ) {
+        if self.prepare_renderer_early
+            && self.renderer.is_none()
+            && self.prepared_renderer.is_none()
+            && progress.completed > 0
+        {
+            let mut timer = super::setup::PhaseTimer::new("streaming frontend preparation");
+            self.prepared_renderer = Some(crate::renderer::Renderer::new(
+                window,
+                window.width as u16,
+                window.height as u16,
+                self.renderer_config.scale_mode,
+            ));
+            timer.step("prepare game renderer");
+        }
         let fraction = if progress.total == 0 {
             1.0
         } else {
@@ -634,12 +676,15 @@ impl MissionLoadingScreen {
         }
     }
 
-    fn close_before_renderer(mut self) -> MissionRendererConfig {
-        if let Some(renderer) = self.renderer.take() {
-            renderer.close();
+    fn close_before_renderer(self) -> (MissionRendererConfig, Option<crate::renderer::Renderer>) {
+        if !self.prepare_renderer_early {
+            return (self.renderer_config, None);
         }
-        drop(self.renderer);
-        self.renderer_config
+        let renderer = self
+            .renderer
+            .map(LoadingScreenRenderer::into_mission_renderer)
+            .or(self.prepared_renderer);
+        (self.renderer_config, renderer)
     }
 }
 
@@ -852,13 +897,16 @@ impl LoadedInteractiveStage {
             .resolve_short_briefings(level_descriptors.as_ref());
 
         let mut timer = super::setup::PhaseTimer::new("frontend assembly");
-        let renderer_config = self
+        let (renderer_config, prepared_renderer) = self
             .loading
             .take()
             .expect("interactive loading screen must close before renderer construction")
             .close_before_renderer();
-        let mut renderer =
-            InteractiveRendererAssembly::new_after_loading_screen(window, renderer_config);
+        let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
+            window,
+            renderer_config,
+            prepared_renderer,
+        );
         timer.step("game renderer construction");
 
         // Deferred-terrain join: this is the first point that needs the

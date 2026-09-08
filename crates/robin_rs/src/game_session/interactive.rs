@@ -449,12 +449,23 @@ impl InteractiveRendererAssembly {
     pub(super) fn new_after_loading_screen(
         window: &mut crate::window::GameWindow,
         config: MissionRendererConfig,
+        prepared_renderer: Option<Renderer>,
     ) -> Self {
         window.set_native_refresh_presentation(config.native_refresh_presentation);
         let render_w = window.width as u16;
         let render_h = window.height as u16;
         window.set_logical_size(u32::from(render_w), u32::from(render_h));
-        let mut renderer = Renderer::new(window, render_w, render_h, config.scale_mode);
+        let mut renderer = prepared_renderer
+            .unwrap_or_else(|| Renderer::new(window, render_w, render_h, config.scale_mode));
+        if (renderer.screen_width(), renderer.screen_height()) != (render_w, render_h) {
+            renderer.resize(render_w, render_h);
+        }
+        let (surface_width, surface_height) = window.surface_size();
+        renderer.configure_native_refresh_presentation(
+            config.native_refresh_presentation,
+            surface_width,
+            surface_height,
+        );
         renderer.apply_upscale_config(&robin_engine::graphic_config::GraphicConfig {
             scale_mode: config.scale_mode,
             shader_preset: config.shader_preset,

@@ -81,6 +81,15 @@ impl GpuUpscale {
         }
     }
 
+    /// Drop presentation history and scratch images at the loading/mission
+    /// boundary while retaining built-in compiled shaders and pipelines.
+    pub(crate) fn finish_loading_screen(&mut self) {
+        self.preset_renderer = ShaderPresetRenderer::new(self.gpu.clone());
+        self.builtin_runner.source_intermediate = None;
+        self.builtin_runner.output_intermediates = [None, None];
+        self.builtin_runner.foreign_intermediate = None;
+    }
+
     pub fn is_multipass_mode(mode: TextureScaleMode, effect: TextureEffect) -> bool {
         matches!(mode, TextureScaleMode::Linear | TextureScaleMode::PixelArt)
             || mode.uses_builtin_chain()

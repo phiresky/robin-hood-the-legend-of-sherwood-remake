@@ -227,6 +227,17 @@ struct BackgroundTexture {
 struct ManagedSurface {
     width: u16,
     height: u16,
+    pixels: ManagedSurfacePixels,
+    alpha_mask: AlphaMask,
+    shadow_alpha: u8,
+}
+
+enum ManagedSurfacePixels {
+    Pending(Box<[u16]>),
+    Resident(ManagedSurfaceTextures),
+}
+
+struct ManagedSurfaceTextures {
     _opaque_texture: wgpu::Texture,
     _opaque_view: wgpu::TextureView,
     opaque_bg: wgpu::BindGroup,
@@ -236,8 +247,17 @@ struct ManagedSurface {
     _shadow_texture: Option<wgpu::Texture>,
     _shadow_view: Option<wgpu::TextureView>,
     shadow_bg: Option<wgpu::BindGroup>,
-    alpha_mask: AlphaMask,
-    shadow_alpha: u8,
+}
+
+impl ManagedSurface {
+    fn textures(&self) -> &ManagedSurfaceTextures {
+        match &self.pixels {
+            ManagedSurfacePixels::Resident(textures) => textures,
+            ManagedSurfacePixels::Pending(_) => {
+                panic!("managed surface must be uploaded before drawing")
+            }
+        }
+    }
 }
 
 /// Persistent GPU texture for decoded RGB565 assets that never need the
@@ -663,6 +683,13 @@ impl Renderer {
         }
     }
 
+    /// Retain compiled pipelines while releasing loading-screen frame state.
+    pub(crate) fn finish_loading_screen(&mut self) {
+        self.frame.finish_loading_screen();
+        self.pipelines.gpu_upscale.finish_loading_screen();
+        self.clear_font_atlas_cache();
+    }
+
     // ----- accessors that stayed compatible -----
 
     pub fn screen_width(&self) -> u16 {
@@ -774,17 +801,86 @@ impl Renderer {
             return None;
         }
 
-        let opaque_rgba = rgb565_to_rgba_opaque(pixels, w, h);
-        let (color_rgba, shadow_rgba, has_shadow) =
-            rgb565_to_color_shadow_rgba(pixels, TRANSPARENT_COLOR_KEY_16);
+        Some(ManagedSurface {
+            width,
+            height,
+            pixels: ManagedSurfacePixels::Resident(
+                self.upload_managed_surface(width, height, pixels),
+            ),
+            alpha_mask: AlphaMask::from_pixels(
+                width,
+                height,
+                width as u32,
+                pixels,
+                TRANSPARENT_COLOR_KEY_16,
+            ),
+            shadow_alpha,
+        })
+    }
+
+    /// Validate and register a surface immediately, retaining its RGB565 pixels
+    /// until its first draw. Hit testing and dimensions are available before
+    /// GPU residency, so unopened menus need no texture conversion or upload.
+    pub(crate) fn create_deferred_surface_from_rgb565(
+        &mut self,
+        width: u16,
+        height: u16,
+        pixels: Box<[u16]>,
+    ) -> u32 {
+        assert!(
+            width > 0 && height > 0,
+            "deferred surface requires nonzero dimensions"
+        );
+        assert_eq!(
+            pixels.len(),
+            width as usize * height as usize,
+            "deferred surface RGB565 payload must match dimensions"
+        );
+        let max_dimension = self.gpu.device.limits().max_texture_dimension_2d;
+        assert!(
+            u32::from(width) <= max_dimension && u32::from(height) <= max_dimension,
+            "deferred surface dimensions exceed GPU texture limit {max_dimension}"
+        );
         let alpha_mask = AlphaMask::from_pixels(
             width,
             height,
             width as u32,
-            pixels,
+            &pixels,
             TRANSPARENT_COLOR_KEY_16,
         );
+        self.resources.insert_managed_surface(ManagedSurface {
+            width,
+            height,
+            pixels: ManagedSurfacePixels::Pending(pixels),
+            alpha_mask,
+            shadow_alpha: DEFAULT_SHADOW_ALPHA,
+        })
+    }
 
+    fn ensure_managed_surface_resident(&mut self, id: u32) {
+        let Some(surface) = self.resources.managed_surfaces.get(&id) else {
+            return;
+        };
+        let ManagedSurfacePixels::Pending(pixels) = &surface.pixels else {
+            return;
+        };
+        let textures = self.upload_managed_surface(surface.width, surface.height, pixels);
+        self.resources
+            .managed_surfaces
+            .get_mut(&id)
+            .expect("surface remains registered during upload")
+            .pixels = ManagedSurfacePixels::Resident(textures);
+    }
+
+    fn upload_managed_surface(
+        &self,
+        width: u16,
+        height: u16,
+        pixels: &[u16],
+    ) -> ManagedSurfaceTextures {
+        let opaque_rgba = rgb565_to_rgba_opaque(pixels, width as usize, height as usize);
+        let (color_rgba, shadow_rgba, has_shadow) =
+            rgb565_to_color_shadow_rgba(pixels, TRANSPARENT_COLOR_KEY_16);
         let (opaque_texture, opaque_view) = upload_rgba_texture(
             &self.gpu,
             &opaque_rgba,
@@ -833,9 +929,7 @@ impl Renderer {
             (None, None, None)
         };
 
-        Some(ManagedSurface {
-            width,
-            height,
+        ManagedSurfaceTextures {
             _opaque_texture: opaque_texture,
             _opaque_view: opaque_view,
             opaque_bg,
@@ -845,9 +939,7 @@ impl Renderer {
             _shadow_texture: shadow_texture,
             _shadow_view: shadow_view,
             shadow_bg,
-            alpha_mask,
-            shadow_alpha,
-        })
+        }
     }
 
     pub fn delete_surface(&mut self, id: u32) -> bool {
@@ -1373,6 +1465,7 @@ impl Renderer {
         if flags & BLIT_SOURCE_TRANSPARENT == 0 {
             return self.blit_to_screen(src_id, src_rect, dst_rect, flags);
         }
+        self.ensure_managed_surface_resident(src_id);
         let Some(src_surface) = self.resources.managed_surfaces.get(&src_id) else {
             return false;
         };
@@ -1385,8 +1478,8 @@ impl Renderer {
             (src_y + blit_h) as f32 / sh,
         ];
         self.queue_transparent_managed_bgs(
-            src_surface.color_bg.clone(),
-            src_surface.shadow_bg.clone(),
+            src_surface.textures().color_bg.clone(),
+            src_surface.textures().shadow_bg.clone(),
             shadow_alpha,
             dst,
             uv,
@@ -1421,6 +1514,7 @@ impl Renderer {
     ) -> bool {
         let id = self.resolve_id(src_id);
         let transparent = flags & BLIT_SOURCE_TRANSPARENT != 0;
+        self.ensure_managed_surface_resident(id);
         let Some(surface) = self.resources.managed_surfaces.get(&id) else {
             return false;
         };
@@ -1428,15 +1522,15 @@ impl Renderer {
         let (sub_dst, sub_uv) = src_dst_uv(src_rect, dst_rect, sw, sh);
         if transparent {
             self.queue_transparent_managed_bgs(
-                surface.color_bg.clone(),
-                surface.shadow_bg.clone(),
+                surface.textures().color_bg.clone(),
+                surface.textures().shadow_bg.clone(),
                 surface.shadow_alpha,
                 sub_dst,
                 sub_uv,
                 1.0,
             );
         } else {
-            let tex_idx = self.queue_cached_bg(surface.opaque_bg.clone());
+            let tex_idx = self.queue_cached_bg(surface.textures().opaque_bg.clone());
             self.frame.queued.push(QueuedDraw {
                 dst: sub_dst,
                 corners: None,
@@ -1463,6 +1557,7 @@ impl Renderer {
     ) -> bool {
         let id = self.resolve_id(src_id);
         let transparent = flags & BLIT_SOURCE_TRANSPARENT != 0;
+        self.ensure_managed_surface_resident(id);
         let Some(surface) = self.resources.managed_surfaces.get(&id) else {
             return false;
         };
@@ -1473,15 +1568,15 @@ impl Renderer {
         let alpha = ((100u16.saturating_sub(alpha_level)) as f32 / 100.0).clamp(0.0, 1.0);
         if transparent {
             self.queue_transparent_managed_bgs(
-                surface.color_bg.clone(),
-                surface.shadow_bg.clone(),
+                surface.textures().color_bg.clone(),
+                surface.textures().shadow_bg.clone(),
                 surface.shadow_alpha,
                 sub_dst,
                 sub_uv,
                 alpha,
             );
         } else {
-            let tex_idx = self.queue_cached_bg(surface.opaque_bg.clone());
+            let tex_idx = self.queue_cached_bg(surface.textures().opaque_bg.clone());
             self.frame.queued.push(QueuedDraw {
                 dst: sub_dst,
                 corners: None,
@@ -3197,6 +3292,98 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
         TextureScaleMode::Nearest,
     );
     crate::ui_panel::verify_portrait_gpu_ownership(&mut portrait_renderer, &mut portrait_peer);
+    verify_deferred_menu_surfaces(&mut renderer);
+}
+
+#[cfg(test)]
+fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
+    let pixels = [
+        0xf800,
+        TRANSPARENT_COLOR_KEY_16,
+        SHADOW_KEY,
+        0x07e0,
+        0x001f,
+        0xffff,
+    ];
+    // Every rendering entry point must realize a deferred surface, including
+    // the shadow override and whole-widget fade paths used by modal menus.
+    for mode in 0..5 {
+        let eager = renderer.create_surface_from_rgb565(3, 2, &pixels).unwrap();
+        let deferred = renderer.create_deferred_surface_from_rgb565(3, 2, Box::new(pixels));
+        let owned = renderer.adopt_surface(deferred);
+        let handle = owned.handle();
+        assert_eq!(renderer.surface_dimensions(handle).unwrap(), (3, 2));
+        let mask = renderer.build_alpha_mask(deferred).unwrap();
+        assert!(mask.is_opaque(0, 0));
+        assert!(!mask.is_opaque(1, 0));
+        assert!(
+            matches!(
+                renderer.resources.managed_surfaces[&deferred].pixels,
+                ManagedSurfacePixels::Pending(_)
+            ),
+            "metadata access must not upload unopened menus"
+        );
+        renderer.set_shadow_alpha(eager, MENU_BUTTON_SHADOW_ALPHA);
+        renderer.set_shadow_alpha(deferred, MENU_BUTTON_SHADOW_ALPHA);
+        let mut captured = Vec::new();
+        for id in [eager, deferred, deferred] {
+            renderer.finish_loading_screen();
+            renderer.render_gpu_rect(0, 0, 3, 2, 255, 255, 255, 255);
+            let drawn = match mode {
+                0 => renderer.blit_to_screen(id, None, None, 0),
+                1 => renderer.blit_to_screen(id, None, None, BLIT_SOURCE_TRANSPARENT),
+                2 => renderer.blit_to_screen_alpha(id, None, None, 35, 0),
+                3 => renderer.blit_to_screen_alpha(id, None, None, 35, BLIT_SOURCE_TRANSPARENT),
+                4 => renderer.blit_with_shadow(id, None, 0, None, 0, 50, BLIT_SOURCE_TRANSPARENT),
+                _ => unreachable!(),
+            };
+            assert!(drawn);
+            captured.push(renderer.try_capture_frame_rgba().unwrap());
+        }
+        assert_eq!(
+            captured[0], captured[1],
+            "deferred first draw differs for mode {mode}"
+        );
+        assert_eq!(
+            captured[1], captured[2],
+            "reopening menu differs for mode {mode}"
+        );
+        assert!(matches!(
+            renderer.resources.managed_surfaces[&deferred].pixels,
+            ManagedSurfacePixels::Resident(_)
+        ));
+        renderer.retire_surface(owned);
+        assert!(renderer.surface_dimensions(handle).is_err());
+        assert!(renderer.delete_surface(eager));
+    }
+    let never_opened = renderer.create_deferred_surface_from_rgb565(1, 1, Box::new([0xffff]));
+    let owned = renderer.adopt_surface(never_opened);
+    renderer.retire_surface(owned);
+    assert!(
+        !renderer
+            .resources
+            .managed_surfaces
+            .contains_key(&never_opened)
+    );
+
+    // The loading renderer may have queued geometry, a frozen scene and a
+    // UI-only presentation policy. Handoff must not carry its pixels into the
+    // first mission frame, even when logical dimensions do not change.
+    renderer.freeze_scene_for_modal();
+    renderer.begin_ui_only_frame();
+    renderer.render_gpu_rect(0, 0, 3, 2, 255, 0, 0, 255);
+    let identity = renderer.identity;
+    renderer.finish_loading_screen();
+    assert_eq!(
+        renderer.identity, identity,
+        "handoff must retain renderer ownership"
+    );
+    assert_eq!(renderer.draw_queue_checkpoint(), 0);
+    assert!(renderer.frame.frozen_scene.is_none());
+    assert_eq!(
+        renderer.try_capture_frame_rgba().unwrap().2,
+        [0, 0, 0, 255].repeat(6)
+    );
 }
 
 #[cfg(test)]
