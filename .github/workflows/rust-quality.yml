@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [core, scripting-llvm, engine, assets, protocols, services, parity, client, client-release, tools, wasm, gpu, gpu-gl, host]
+        suite: [core, scripting-llvm, engine, assets, protocols, services, parity, client, client-release, tools, wasm, browser-audio, gpu, gpu-gl, host]
 
     steps:
       - uses: actions/checkout@v5
@@ -84,8 +84,26 @@ jobs:
           key: tests-${{ matrix.suite }}
 
       - name: Install wasm target
-        if: matrix.suite == 'wasm'
+        if: matrix.suite == 'wasm' || matrix.suite == 'browser-audio'
         run: rustup target add wasm32-unknown-unknown
+
+      - name: Provision matched Chrome and ChromeDriver
+        if: matrix.suite == 'browser-audio'
+        id: audio-chrome
+        uses: browser-actions/setup-chrome@48483d551c22a1fe6154c6a195ccc6d5773dc8c4 # v2
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+
+      - name: Install lockfile-matched browser test runner
+        if: matrix.suite == 'browser-audio'
+        run: |
+          bindgen_version=$(python3 -c 'import tomllib; p=tomllib.load(open("Cargo.lock", "rb"))["package"]; v={x["version"] for x in p if x["name"] == "wasm-bindgen"}; assert len(v)==1; print(v.pop())')
+          cargo install wasm-bindgen-cli --version "$bindgen_version" --locked --root "${RUNNER_TEMP}/audio-bindgen"
+          echo "WASM_BINDGEN_TEST_RUNNER=${RUNNER_TEMP}/audio-bindgen/bin/wasm-bindgen-test-runner" >> "$GITHUB_ENV"
+          echo "CHROME=${{ steps.audio-chrome.outputs.chrome-path }}" >> "$GITHUB_ENV"
+          echo "CHROMEDRIVER=${{ steps.audio-chrome.outputs.chromedriver-path }}" >> "$GITHUB_ENV"
+          echo "ROBIN_LIFECYCLE_EVIDENCE=${RUNNER_TEMP}/browser-audio-evidence" >> "$GITHUB_ENV"
 
       - name: Prepare software GPU runtime
         if: matrix.suite == 'gpu' || matrix.suite == 'gpu-gl'
@@ -96,6 +114,14 @@ jobs:
 
       - name: Run named suite
         run: bash scripts/check-quality.sh "${{ matrix.suite }}"
+
+      - name: Retain browser acceptance evidence
+        if: always() && matrix.suite == 'browser-audio'
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-audio-evidence
+          path: ${{ runner.temp }}/browser-audio-evidence
+          if-no-files-found: warn
 
       - name: Check compiled runtime contract
         if: matrix.suite == 'client'

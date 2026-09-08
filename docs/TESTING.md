@@ -35,6 +35,8 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `client-release` | `robin_rs`, `release` features | Client library tests and binary build with desktop/audio/Lua/multiplayer/updates; audio example check |
 | `tools` | `robin_rs`, `tools` and `projection-export` | Explicit converter/dump tests; minimal export example tests; check tool binaries and examples |
 | `wasm` | `robin_replay_admission_wasm`, `robin_rs`, `robin_identity_signer` | Target checks for `wasm32-unknown-unknown` using `wasm-dev` |
+| `browser-audio` | `robin_rs`, WASM `audio` | Target check, actual test-module link, real Chrome browser tests including ownership and residency |
+| `native-lifecycle` | Provisioned prebuilt native `robin` and Leicester demo | Ordinary live/export plus save/load-back, each replayed headlessly and graphically to EOF |
 | `gpu` | `robin_rs` Vulkan execution | Explicit ignored GPU test; missing adapter is an error |
 | `gpu-gl` | `robin_rs` GL execution under Xvfb | Same required execution contract using the browser runtime's GL backend family |
 | `host` | `robin_rs`, `hardware-info` | Explicit ignored real-memory query; requires an accessible host backend |
@@ -42,6 +44,9 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 Feature choices are deliberate. Do not substitute `--all-features`; video,
 Android, browser threads, and shader tooling have distinct dependencies.
 The wasm gate is a compile check, not a browser execution or memory-cap test.
+The separate browser-audio gate runs synthetic browser tests, not full-game
+browser rendering or audible-output acceptance. Native-lifecycle is a local
+provisioned gate, not public CI: it needs licensed data and a compatible host.
 Runtime publication retains its existing emitted-artifact checks. Consult the
 platform runbooks for native packaging and Android checks; this matrix does
 not claim Android or Windows execution coverage.
@@ -170,6 +175,24 @@ built resources, and owns Chromium plus its temporary profile. CI uses the
 hosted `google-chrome` executable when available; otherwise it explicitly
 installs Google's stable Debian package and prints the browser version. A
 missing browser is an error, not a skipped test.
+
+## Provisioned lifecycle acceptance
+
+See [the lifecycle gate runbook](validation/lifecycle-gates.md) for exact inputs,
+isolation, retained evidence and limitations. Both explicit gates fail when
+prerequisites are missing; neither silently skips, installs system tools, edits
+goldens, publishes artifacts remotely, or uses the real player profile.
+
+```sh
+CHROME=/absolute/path/to/chrome \
+CHROMEDRIVER=/absolute/path/to/matching/chromedriver \
+WASM_BINDGEN_TEST_RUNNER=/absolute/path/to/matching/wasm-bindgen-test-runner \
+bash scripts/check-quality.sh browser-audio
+```
+
+The browser CI matrix provisions a matching browser/driver and installs the
+test runner version selected by Cargo.lock. It retains machine-readable
+results, the tested WASM module, and runner output even on failure.
 
 ## Interpreting a refactor baseline
 

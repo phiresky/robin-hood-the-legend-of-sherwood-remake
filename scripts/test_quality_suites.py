@@ -144,6 +144,19 @@ class QualitySuitesTests(unittest.TestCase):
         self.environment.pop("CHROME", None)
         self.run_suite("editor-browser", expected=1)
 
+    def test_lifecycle_suites_fail_for_missing_provisioning_without_cargo(self):
+        self.environment["ROBIN_LIFECYCLE_EVIDENCE"] = str(self.directory / "browser-evidence")
+        self.environment.pop("CHROME", None)
+        self.run_suite("browser-audio", expected=1)
+        self.environment["ROBIN_LIFECYCLE_EVIDENCE"] = str(self.directory / "native-evidence")
+        self.environment.pop("ROBIN_LIFECYCLE_BINARY", None)
+        self.run_suite("native-lifecycle", expected=1)
+        self.assertFalse(self.log.exists())
+        for name in ("browser-evidence", "native-evidence"):
+            result = json.loads((self.directory / name / "summary.json").read_text())
+            self.assertFalse(result["completed"])
+            self.assertIn("error", result)
+
     def test_browser_failure_stops_even_an_uncooperative_preview(self):
         preview_pid_file = self.directory / "preview.pid"
         self.environment["QUALITY_TEST_PREVIEW_PID"] = str(preview_pid_file)
