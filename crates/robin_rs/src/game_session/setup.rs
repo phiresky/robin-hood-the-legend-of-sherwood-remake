@@ -15,7 +15,7 @@ use crate::input_translator::{GameKey, InputTranslator};
 use crate::main_entry::{current_mission_id, picture_to_surface};
 use crate::markers::SelectionMarkRenderer;
 use crate::mouse_trail::MouseTrailRenderer;
-use crate::renderer::{Renderer, TRANSPARENT_COLOR_KEY_16};
+use crate::renderer::Renderer;
 use crate::sound::{NUM_CHANNELS, SoundMode};
 use crate::titbit_renderer::TitbitRenderer;
 use crate::ui_panel::{PortraitCache, load_localized_character_names};
