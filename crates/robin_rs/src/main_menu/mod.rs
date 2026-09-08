@@ -397,8 +397,23 @@ pub(crate) async fn show_main_menu(
     // profile/key-config transition so it can never retain Profile_000 as a
     // stale target. The session layer follows the same rule by constructing
     // callbacks only after the menu returns.
-    let mut save_manager = SaveGameManager::open_for_context(application_context)
-        .unwrap_or_else(|error| panic!("Cannot open save store: {error}"));
+    let mut save_manager = match crate::save_recovery::open_with_recovery(
+        application_context,
+        window,
+        &mut renderer,
+        &menu_resources,
+        Some(&ModalCursor::new(
+            &mut cursor_renderer,
+            MOUSE_OPACITY_DEFAULT,
+            0,
+        )),
+    )
+    .await
+    {
+        crate::save_recovery::OpenedSaveStore::Ready(manager) => manager,
+        crate::save_recovery::OpenedSaveStore::Cancelled
+        | crate::save_recovery::OpenedSaveStore::ExitRequested => return Ok(MainMenuChoice::Exit),
+    };
 
     if open_options_initially
         && options::show_main_menu_options(
@@ -752,8 +767,21 @@ async fn dispatch_click(
             // Active profile may have changed — reopen the save manager so
             // subsequent "Load Game" clicks read the new profile's
             // `Profile_NNN/saves.json` index rather than the prior one.
-            *save_manager = SaveGameManager::open_for_context(application_context)
-                .unwrap_or_else(|error| panic!("Cannot open selected profile save store: {error}"));
+            match crate::save_recovery::open_with_recovery(
+                application_context,
+                event_pump,
+                renderer,
+                menu_resources,
+                Some(&ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0)),
+            )
+            .await
+            {
+                crate::save_recovery::OpenedSaveStore::Ready(manager) => *save_manager = manager,
+                crate::save_recovery::OpenedSaveStore::Cancelled
+                | crate::save_recovery::OpenedSaveStore::ExitRequested => {
+                    return Some(MainMenuChoice::Exit);
+                }
+            }
             // If the new active profile carries a different resolution,
             // resize so the surrounding menu re-lays out at the new size
             // on the next frame. `MenuTransform::centered` picks up the

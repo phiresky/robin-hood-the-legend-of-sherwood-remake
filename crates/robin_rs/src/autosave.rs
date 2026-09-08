@@ -389,7 +389,7 @@ impl AutosaveCoordinator {
         let manifest_seed = AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
             saves: manager
-                .saves
+                .saves()
                 .iter()
                 .filter(|save| save.is_autosave())
                 .cloned()
@@ -564,7 +564,16 @@ impl AutosaveCoordinator {
                     filename,
                     reason,
                 } => {
-                    manager.replace_autosaves(manifest.saves);
+                    if let Err(error) = manager.replace_autosaves(manifest.saves) {
+                        results.push(AutosavePollResult::Failed {
+                            filename,
+                            reason,
+                            error: format!(
+                                "committed autosave metadata could not be integrated: {error:#}"
+                            ),
+                        });
+                        continue;
+                    }
                     tracing::info!(filename, ?reason, "Autosave committed");
                     results.push(AutosavePollResult::Saved { filename, reason });
                 }
@@ -814,18 +823,18 @@ pub(crate) fn load_into_manager(manager: &mut SaveGameManager) -> Result<()> {
     let legacy_seed = AutosaveManifest {
         version: AUTOSAVE_MANIFEST_VERSION,
         saves: manager
-            .saves
+            .saves()
             .iter()
             .filter(|save| save.is_autosave())
             .cloned()
             .collect(),
     };
-    manager.replace_autosaves(Vec::new());
+    manager.replace_autosaves(Vec::new())?;
     let manifest = load_manifest(manager.save_directory())?.unwrap_or(legacy_seed);
     manifest.validate()?;
     garbage_collect_orphans(manager.save_directory(), &manifest)?;
     validate_manifest_payloads(manager.save_directory(), &manifest)?;
-    manager.replace_autosaves(manifest.saves);
+    manager.replace_autosaves(manifest.saves)?;
     Ok(())
 }
 
@@ -1452,15 +1461,15 @@ mod tests {
     fn staged_manifest_evicts_oldest_generation_and_retains_three() {
         let mut manager = SaveGameManager::new("unused".into());
         for ordinal in 0..3 {
-            manager.saves.push(published_autosave(
-                format!("Autosave_100_{ordinal:04}"),
-                100 + ordinal,
-            ));
+            manager.insert_test_slot(
+                published_autosave(format!("Autosave_100_{ordinal:04}"), 100 + ordinal),
+                crate::savegame::SlotState::Published,
+            );
         }
         let newest = published_autosave("Autosave_200_0000", 200);
         let existing = AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
-            saves: manager.saves.clone(),
+            saves: manager.saves().to_vec(),
         };
         let (manifest, evicted) = staged_manifest(existing, newest);
         assert_eq!(manifest.saves.len(), AUTOSAVE_SLOT_COUNT);
@@ -1590,7 +1599,7 @@ mod tests {
         let mut manager = SaveGameManager::new(save_directory.clone());
         let results = coordinator.shutdown_and_poll(&mut manager);
         assert_eq!(results.len(), 4);
-        assert_eq!(manager.saves.len(), AUTOSAVE_SLOT_COUNT);
+        assert_eq!(manager.saves().len(), AUTOSAVE_SLOT_COUNT);
         assert!(!payload_exists(&save_directory, "Autosave_1_0000").unwrap());
         for ordinal in 1..4 {
             assert!(payload_exists(&save_directory, &format!("Autosave_1_{ordinal:04}")).unwrap());
@@ -1790,10 +1799,11 @@ mod tests {
         .unwrap();
         let manual = SaveGame::new("Savegame_001".into(), "Manual".into(), 1);
         let mut manager = SaveGameManager::new(save_directory.to_owned());
-        manager.saves = vec![manual.clone(), autosave];
+        manager.insert_test_slot(manual.clone(), crate::savegame::SlotState::Published);
+        manager.insert_test_slot(autosave, crate::savegame::SlotState::Published);
 
         let error = load_into_manager(&mut manager).unwrap_err();
         assert!(error.to_string().contains("validating published autosave"));
-        assert_eq!(manager.saves, vec![manual]);
+        assert_eq!(manager.saves(), &[manual]);
     }
 }
