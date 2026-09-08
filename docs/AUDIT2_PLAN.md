@@ -51,5 +51,54 @@ coverage and remaining limitations. Final integration needs affected native,
 editor, release-tool and parity suites, plus relevant GPU/browser/runtime gates.
 Previous-pass green results are a baseline, not evidence for changed sources.
 
-TODO: record the implementation commits, independent review, combined validation
-and any findings that cannot be completed without broader authority.
+## Integrated implementation
+
+All eight reviewed branches merged without conflicts at `dad3bea0e`:
+
+| Track | Source checkpoint | Report |
+| --- | --- | --- |
+| Menu cache | `dba8a1c00` | [Menu identity and lookup](AUDIT2_MENU_CACHE.md) |
+| Ranked runtime | `c779dd717` | [Ranked workflow ownership](AUDIT2_RANKED_RUNTIME.md) |
+| Persistence/upload | `3836962b8` | [Persistence and upload](AUDIT2_PERSISTENCE.md) |
+| Editor | `20ff4c59d` | [Editor ownership](AUDIT2_EDITOR.md) |
+| Release tools | `4087de29b`, cleanup `0fb2912a1` | [Release authority](AUDIT2_RELEASE.md) |
+| Commands | `7f0cea099` | [Command families](AUDIT2_COMMANDS.md) |
+| Diagnostics | `823cbd5c0` | [Observational diagnostics](AUDIT2_DIAGNOSTICS.md) |
+| Historical schemas | `c493068a4` | [Historical trace compatibility](AUDIT2_PARITY_SCHEMA.md) |
+
+Two independent read-only reviewers checked command/ranked/parity behavior and
+persistence/release security boundaries. No source blockers remained after adding
+five actual host-task polling regressions. Historical extraction additionally
+matched all 42 declarations/conversion implementations against baseline, including
+attributes, after removing only visibility additions, comments and formatting.
+The coordinator separately reviewed menu mutation/identity/error boundaries and
+editor publication/disposal ordering.
+
+Menu identity invalidates on binding, attachment (including partial failure),
+shipping merge, dismissal (including reference-driven dismissal), and encoding.
+Clones/duplicates and serde/bitcode decode receive fresh process-local identity.
+Lazy recovery and eager decode change residency, not logical content identity.
+There is no public mutable `ResourceData` access. Old-generation GPU owners remain
+alive until menu retirement to protect already queued draws.
+
+## Validation progress
+
+- Baseline `c67186407`: explicit engine/assets/parity/highscores/manifest package
+  suites and doctests passed; cold compilation took 13m04s.
+- Editor source `20ff4c59d`: full pnpm verification passed (26 shared/app/runner
+  tests, 11 pipeline tests, both typechecks, production build); actual Chrome
+  lifecycle passed four mounts/32 loads with no retained tracked resources.
+  Exact bundle provenance and limits are in its track report.
+- First integrated native checkpoint `dad3bea0e`: all selected packages compiled;
+  assets passed, including unchanged binary/JSON wire contracts. Engine reported
+  4471 passed, one failed, four ignored. The only failure was a new test relying
+  on `catch_unwind` under the repository's Cranelift test backend; the expected
+  preflight panic occurred. Correcting this to the supported panic-test contract
+  does not alter production behavior. Later suites were not executed by that
+  failed command and are not claimed as passed.
+- New atomic API deprecation and obsolete release wrapper are cleaned separately;
+  unrelated baseline warnings are intentionally untouched.
+
+TODO: record final corrected native suites, pure-assets boundary, client feature
+lanes, GPU, browser and replay/runtime acceptance. Retained runtime evidence root:
+`/tmp/robin-audit2-final.rhlV3O` (temporary local storage, not a durable publication).
