@@ -141,6 +141,7 @@ enum Command {
 pub struct MatchmakingSession {
     commands: Sender<Command>,
     events: Receiver<MatchmakingEvent>,
+    command_worker_closed: std::cell::Cell<bool>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -186,6 +187,9 @@ impl MatchmakingSession {
     }
 
     pub fn try_recv(&self) -> Result<Option<MatchmakingEvent>, String> {
+        if self.command_worker_closed.get() {
+            return Err("matchmaking command worker is closed".to_string());
+        }
         match self.events.try_recv() {
             Ok(event) => Ok(Some(event)),
             Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
@@ -196,9 +200,10 @@ impl MatchmakingSession {
     }
 
     fn send(&self, command: Command) -> Result<(), String> {
-        self.commands
-            .send(command)
-            .map_err(|_| "matchmaking session is closed".to_string())
+        self.commands.send(command).map_err(|_| {
+            self.command_worker_closed.set(true);
+            "matchmaking session is closed".to_string()
+        })
     }
 }
 
@@ -314,6 +319,7 @@ fn open_native(nickname: String) -> Result<MatchmakingSession, String> {
         .map_err(|e| format!("spawn matchmaking worker: {e}"))?;
 
     Ok(MatchmakingSession {
+        command_worker_closed: std::cell::Cell::new(false),
         commands: cmd_tx,
         events: event_rx,
     })
@@ -825,7 +831,11 @@ mod tests {
     fn worker_closure_is_distinct_from_idle_and_commands_fail() {
         let (commands, receiver) = std::sync::mpsc::channel();
         let (sender, events) = std::sync::mpsc::channel();
-        let session = super::MatchmakingSession { commands, events };
+        let session = super::MatchmakingSession {
+            commands,
+            events,
+            command_worker_closed: std::cell::Cell::new(false),
+        };
         assert!(session.try_recv().unwrap().is_none());
         sender.send(super::MatchmakingEvent::Neighbors(1)).unwrap();
         drop(sender);
@@ -837,6 +847,22 @@ mod tests {
         drop(receiver);
         assert!(session.start_game().is_err());
         assert!(session.leave_game().is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn failed_command_closes_poll_even_if_event_sender_stays_alive() {
+        let (commands, receiver) = std::sync::mpsc::channel();
+        let (_sender, events) = std::sync::mpsc::channel();
+        let session = super::MatchmakingSession {
+            commands,
+            events,
+            command_worker_closed: std::cell::Cell::new(false),
+        };
+        assert!(session.try_recv().unwrap().is_none());
+        drop(receiver);
+        assert!(session.start_game().is_err());
+        assert!(session.try_recv().is_err());
     }
 
     use super::*;
