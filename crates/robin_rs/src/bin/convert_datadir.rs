@@ -150,10 +150,10 @@ struct Args {
     rle_sprite_format: RleSpriteFormat,
     /// Shipping: maximum VQ tiles per independent decoder job (whole grids).
     /// Zero preserves one adaptive stream per RHS for compression comparisons.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 1_048_576)]
     vq_group_tiles: usize,
     /// Shipping: independent JXL atlases per decoder job; zero keeps each RHS together.
-    #[arg(long, default_value_t = 0)]
+    #[arg(long, default_value_t = 1)]
     rle_group_blobs: usize,
 }
 
