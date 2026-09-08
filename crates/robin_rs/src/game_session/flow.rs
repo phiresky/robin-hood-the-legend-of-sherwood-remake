@@ -175,6 +175,7 @@ impl InteractiveMission {
                 host.frontend.input.mouse_opacity = 0;
             }
             let display_snapshot = host.frontend.engine_display.clone();
+            super::sprite_readiness::wait_for_render_sprites(engine).await?;
             let capture_result = {
                 let mut render_ctx = presentation.render_context(
                     resources,
@@ -346,6 +347,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // screenshot is rendered once immediately after the target frame.
         let mut fixed_tick_presented = false;
         if should_draw {
+            super::sprite_readiness::wait_for_render_sprites(engine)
+                .await
+                .unwrap_or_else(|error| panic!("frame sprite preflight failed: {error}"));
             let mut render_ctx = presentation.render_context(
                 resources,
                 hud,
@@ -412,6 +416,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 .unwrap_or(saved_camera);
             sampled_camera.apply(&mut host.frontend);
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
+            super::sprite_readiness::wait_for_render_sprites(render_engine)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("interpolated frame sprite preflight failed: {error}")
+                });
             host.frontend.draw_order = render_engine.compute_display_order();
             sync_render_camera(&mut host.frontend);
             render_frame(
@@ -540,6 +549,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     engine.campaign(),
                 ),
         };
+        if let Some(render_engine) = native_refresh_interpolation.engine() {
+            super::sprite_readiness::wait_for_render_sprites(render_engine)
+                .await
+                .unwrap_or_else(|error| panic!("display refresh sprite preflight failed: {error}"));
+        }
         pace_interactive_frame(host, target, presentation_deadline_ms, |host, now_ms| {
             let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
                 return presentation.renderer.present_cached();

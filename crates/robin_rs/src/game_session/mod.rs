@@ -21,6 +21,7 @@ mod replay_init;
 mod runtime;
 mod session_policy;
 mod setup;
+mod sprite_readiness;
 pub(crate) use setup::PhaseTimer;
 mod sherwood_flow;
 pub(crate) use setup::initial_sim_config;

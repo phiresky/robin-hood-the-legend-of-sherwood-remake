@@ -848,6 +848,7 @@ impl MissionPresentation {
         ambiance: robin_engine::engine::Ambiance,
         bypass_fog_sprites_crash: bool,
     ) {
+        super::sprite_readiness::assert_all_sprites_ready();
         host.frontend.rebind_frame_holder_ambiance(
             ambiance,
             bypass_fog_sprites_crash,
