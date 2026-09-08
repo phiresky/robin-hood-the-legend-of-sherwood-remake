@@ -95,6 +95,11 @@ the checkout will later be deleted; the wrapper hashes it but does not copy it.
 Each of four runs receives a fresh loopback-only network namespace and isolated
 save/config/cache/data/runtime roots via the existing `frame_steps_live.py`:
 
+Python X11 input helpers must use `namespace_x11.open_display`, not raw
+`Xlib.display.Display`: filesystem X sockets are shared between network
+namespaces and can point at another concurrent driver's server. The adapter
+connects only to the namespace-local abstract socket and fails without fallback.
+
 1. Ordinary graphical input, pause and manual steps; export; headless EOF.
 2. Graphical EOF on that same immutable export.
 3. Actual quicksave, advance, load-back, compare restored engine state, continue;

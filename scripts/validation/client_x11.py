@@ -10,10 +10,12 @@ import ctypes as c
 import sys
 import time
 
+from namespace_x11 import open_display
+
 if sys.argv[1] in ("xtest-click", "close"):
-    from Xlib import X, display, protocol
+    from Xlib import X, protocol
     from Xlib.ext import xtest
-    connection = display.Display()
+    connection = open_display()
     if sys.argv[1] == "close":
         for window in connection.screen().root.query_tree().children:
             if "robin" in (window.get_wm_name() or "").lower():
