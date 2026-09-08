@@ -1008,6 +1008,7 @@ pub fn apply_minimap(
     let surface = renderer
         .upload_rgb565(decoded.width, decoded.height, &decoded.pixels)
         .expect("apply_minimap: decoded minimap dimensions must match RGB565 payload");
+    let surface_handle = surface.handle();
     host.frontend
         .mission_surfaces
         .replace_map(renderer, surface);
@@ -1038,7 +1039,7 @@ pub fn apply_minimap(
         "Minimap loaded: {}x{} pixels, surface {:?}, saved position ({:.0}, {:.0})",
         decoded.width,
         decoded.height,
-        surface,
+        surface_handle,
         saved_position.x,
         saved_position.y,
     );
