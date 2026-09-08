@@ -747,7 +747,7 @@ impl InteractiveFrameSimulation {
                     dev,
                     &mut render_context,
                 );
-                post_render_engine_cleanup(&mut frame, host);
+                post_render_engine_cleanup(&mut frame, host.transport.local_seat);
             }
             let menu_resources =
                 required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");

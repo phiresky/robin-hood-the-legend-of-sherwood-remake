@@ -189,10 +189,10 @@ pub(super) fn sync_render_camera(frontend: &mut crate::host::HostFrontend) {
 /// NPC flag after `render_combat_status_bars` has observed it.
 pub(super) fn post_render_engine_cleanup(
     frame: &mut super::runtime::MissionFrame,
-    host: &mut Host,
+    local_seat: robin_engine::player_command::PlayerId,
 ) {
     frame.post_commands.push(PlayerInput::new(
-        host.transport.local_seat,
+        local_seat,
         PlayerCommand::ClearNpcDoubleStatusBarFlags,
     ));
 }

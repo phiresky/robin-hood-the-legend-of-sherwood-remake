@@ -431,12 +431,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             saved_camera.apply(&mut host.frontend);
             host.frontend.draw_order = saved_draw_order;
             sync_render_camera(&mut host.frontend);
-            frame
-                .post_commands
-                .push(engine_player_command::PlayerInput::new(
-                    host.local_seat,
-                    engine_player_command::PlayerCommand::ClearNpcDoubleStatusBarFlags,
-                ));
+            post_render_engine_cleanup(&mut frame, host.local_seat);
         } else {
             native_refresh_interpolation.clear();
         }
