@@ -320,6 +320,7 @@ fn main() -> Result<()> {
                 data_in,
                 &data_out,
                 ShippingOpts {
+                    browser_publication: args.web_content_manifest,
                     map_format: args.map_format,
                     interface_image_format: args.interface_image_format,
                     audio_format: args.audio_format,
@@ -345,6 +346,7 @@ fn main() -> Result<()> {
 
 #[derive(Debug, Clone, Copy)]
 struct ShippingOpts {
+    browser_publication: bool,
     map_format: MapFormat,
     interface_image_format: InterfaceImageFormat,
     audio_format: AudioFormat,
@@ -2914,6 +2916,14 @@ fn convert_shipping(data_in: PathBuf, data_out: &Path, opts: ShippingOpts) -> Re
     }
 
     bundle_grouped_audio(&mut dd, &data_out)?;
+    if opts.browser_publication && opts.audio_format == AudioFormat::Opus {
+        let trimmed =
+            robin_assets::shipping_boot_trim::trim_browser_locale_audio(&mut dd, |key| {
+                audio::catalog_source_bytes(&audio_assets_dir, key)
+            })?;
+        tracing::info!(?trimmed, "removed redundant browser locale source audio");
+    }
+
     for (mission, planned) in &mut dependency_plan.missions {
         planned.destination_payloads = dd
             .missions

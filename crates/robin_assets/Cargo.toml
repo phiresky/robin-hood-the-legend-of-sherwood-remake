@@ -15,6 +15,14 @@ name = "wasm_decode_bench"
 crate-type = ["cdylib"]
 
 [[example]]
+name = "boot_inventory"
+required-features = ["engine-adapters"]
+
+[[example]]
+name = "trim_browser_boot"
+required-features = ["engine-adapters"]
+
+[[example]]
 name = "jxl_sprite_probe"
 required-features = ["engine-adapters"]
 

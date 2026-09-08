@@ -29,6 +29,8 @@ pub mod sb3d;
 pub mod scb;
 pub mod serialize;
 #[cfg(feature = "engine-adapters")]
+pub mod shipping_boot_trim;
+#[cfg(feature = "engine-adapters")]
 pub mod shipping_datadir;
 pub mod sprite_codec;
 #[cfg(feature = "engine-adapters")]
