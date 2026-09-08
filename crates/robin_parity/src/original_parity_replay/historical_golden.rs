@@ -1,6 +1,12 @@
 //! Fixed bytes emitted from the unchanged layouts at commit
 //! 53e36bdc46542b51a5358674e663961de9f25d1b using bitcode 0.6.9.
-//! See docs/AUDIT2_PARITY_SCHEMA.md for provenance and fixture construction.
+//! Fixed bytes were generated independently with bitcode 0.6.9 from declarations
+//! at pre-refactor commit 53e36bdc46542b51a5358674e663961de9f25d1b, not from the
+//! decoder under test. The generator preserved transitive wire fields/variants
+//! and omitted only serde-specific annotations. Assertions below document the
+//! nonzero fixture values. Do not regenerate these bytes to accommodate a schema
+//! edit; the full construction record remains in Git history at d4fc606a7,
+//! docs/AUDIT2_PARITY_SCHEMA.md.
 //! Do not regenerate these from the decoder under test.
 use super::*;
 

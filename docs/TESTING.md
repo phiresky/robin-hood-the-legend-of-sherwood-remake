@@ -63,6 +63,21 @@ without proving that cleanup ran, and poison recovery cannot continue through
 `catch_unwind` there. The gate does not activate every ignored script corpus
 test or change normal build profiles.
 
+Client worker/window unwind regressions likewise require an explicit LLVM
+override. Select one ignored test at a time and verify that it actually runs:
+
+```sh
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_rs --lib \
+  --config 'profile.test.package.robin_rs.codegen-backend="llvm"' \
+  panicking_worker_does_not_poison_owner_and_next_caller_retries -- --ignored
+```
+
+Use the same command with `unwound_worker_releases_scheduler_reservation`,
+`unwinding_panic_disconnects_before_waking_the_loop`, or
+`llvm_owned_worker_panic_is_joined_and_reported_once` as the filter to check
+terrain scheduling, window exit publication, or save-worker retirement. Do not
+select every ignored test: other cases require different fixtures/backends.
+
 The client CI job also compares the browser runtime contract to compiled Rust
 constants. Run the same contract check locally after changing protocol/schema
 versions:

@@ -296,7 +296,7 @@ mod lifecycle_tests {
 
     #[test]
     #[cfg(panic = "unwind")]
-    #[ignore = "requires LLVM codegen to exercise unwind cleanup; see docs/architecture-cache.md"]
+    #[ignore = "requires LLVM codegen to exercise unwind cleanup; see docs/TESTING.md"]
     fn panicking_worker_does_not_poison_owner_and_next_caller_retries() {
         let owner = Arc::new(ApplicationAssetCache::default());
         let worker_owner = owner.clone();

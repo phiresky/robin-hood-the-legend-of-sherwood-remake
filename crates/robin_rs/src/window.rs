@@ -2001,7 +2001,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires LLVM unwind support; see docs/repairs/window-close.md"]
+    #[ignore = "requires LLVM unwind support; see docs/TESTING.md"]
     fn unwinding_panic_disconnects_before_waking_the_loop() {
         let (tx, rx) = std::sync::mpsc::channel();
         let (wake_tx, wake_rx) = std::sync::mpsc::channel();
