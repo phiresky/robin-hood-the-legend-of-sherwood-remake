@@ -26,7 +26,7 @@ const { values } = parseArgs({ options: {
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
     'http-wasm-br': { type: 'string' }, 'http-admission-br': { type: 'string' },
     'http-wasm-gzip': { type: 'string' }, 'http-admission-gzip': { type: 'string' },
-    replay: { type: 'string' },
+    replay: { type: 'string' }, 'replay-eof': { type: 'boolean', default: false },
     'repeat-replay': { type: 'string', multiple: true, default: [] },
     query: { type: 'string', multiple: true, default: [] },
 } });
@@ -35,6 +35,7 @@ const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resol
 const outputBase = resolve(values.output);
 let output = outputBase;
 const replayContent = values.replay ? (await readFile(resolve(values.replay), 'utf8')).trim() : undefined;
+if (values['replay-eof'] && !replayContent) throw new Error('--replay-eof requires --replay');
 const replayBuild = replayContent?.match(/^rhrec-([0-9a-f]{12})-/)?.[1];
 if (replayContent !== undefined && !replayBuild) throw new Error('--replay must contain a compact rhrec replay');
 if (replayContent !== undefined && values.mission !== 'auto') throw new Error('Replay header must select the mission; omit --mission');
@@ -236,6 +237,26 @@ try {
             if (state.exceptionDetails) throw new Error('Replay state RPC failed: ' + JSON.stringify(state.exceptionDetails));
             replayState = state.result.value;
             if (!replayState?.replay) throw new Error('Replay playback state is missing: ' + JSON.stringify(replayState));
+        }
+        if (values['replay-eof']) {
+            const states = [];
+            const deadline = Date.now() + 120000;
+            while (Date.now() < deadline && !errors.length) {
+                const reply = await send('Runtime.evaluate', {
+                    expression: 'globalThis.robinRpc("state")', awaitPromise: true, returnByValue: true,
+                });
+                if (reply.exceptionDetails) throw new Error('Replay EOF RPC failed: ' + JSON.stringify(reply.exceptionDetails));
+                const state = reply.result.value;
+                if (!state?.replay) throw new Error('Playback disappeared before EOF: ' + JSON.stringify(state));
+                states.push(state);
+                if (state.replay.frame >= state.replay.total) break;
+                await sleep(250);
+            }
+            const finalPlayback = states.at(-1);
+            if (errors.length || !finalPlayback || finalPlayback.replay.frame < finalPlayback.replay.total) {
+                throw new Error('Replay did not reach EOF: ' + JSON.stringify({ finalPlayback, errors }));
+            }
+            await writeFile(output + '.eof.json', JSON.stringify({ states, finalPlayback }, null, 2));
         }
         const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
         const page = probe.result.value;
