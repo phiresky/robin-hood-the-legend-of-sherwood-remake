@@ -9,14 +9,25 @@ import publish_native_release as release
 
 
 class NativeReleaseTests(unittest.TestCase):
-    def test_unique_retryable_nightly_tags(self):
-        self.assertEqual(release.release_tag("schedule", "main", "42", "2026-09-07"),
-                         ("nightly-2026-09-07-42", True))
-        self.assertEqual(release.release_tag("push", "v1.2.3", "42", "2026-09-07"), ("v1.2.3", False))
+    def test_timestamp_nightly_tags_keep_commit_hash(self):
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertEqual(release.release_tag(event, "main", "202609072359", "d01eb1295003abcdef"),
+                             ("nightly-202609072359-d01eb1295003", True))
+        self.assertEqual(release.release_tag("push", "v1.2.3", "", "commit"), ("v1.2.3", False))
 
-    def test_retry_date_comes_from_original_workflow_run(self):
-        with patch.object(release, "gh", return_value='{"created_at":"2026-09-07T23:59:00Z"}'):
-            self.assertEqual(release.run_date("owner/repo", "42"), "2026-09-07")
+    def test_retry_timestamp_comes_from_original_workflow_run(self):
+        with patch.object(release, "gh", return_value='{"created_at":"2026-09-07T23:59:42Z"}') as gh:
+            self.assertEqual(release.run_timestamp("owner/repo", "42"), "202609072359")
+        gh.assert_called_once_with("api", "repos/owner/repo/actions/runs/42")
+
+    def test_timestamp_normalizes_timezone_and_preserves_zeroes(self):
+        with patch.object(release, "gh", return_value='{"created_at":"2026-09-08T02:05:00+02:00"}'):
+            self.assertEqual(release.run_timestamp("owner/repo", "42"), "202609080005")
+
+    def test_timestamp_requires_timezone(self):
+        with patch.object(release, "gh", return_value='{"created_at":"2026-09-08T02:05:00"}'):
+            with self.assertRaisesRegex(ValueError, "timezone"):
+                release.run_timestamp("owner/repo", "42")
 
     def test_inventory_requires_update_closure(self):
         with tempfile.TemporaryDirectory() as directory:
