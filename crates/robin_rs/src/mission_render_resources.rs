@@ -302,6 +302,33 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         .unwrap()
         .parts()
         .0;
+    renderer
+        .draw_surface_alpha(
+            borrowed_dot,
+            None,
+            None,
+            0,
+            crate::renderer::BLIT_SOURCE_TRANSPARENT,
+        )
+        .unwrap();
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255]
+    );
+    renderer
+        .draw_surface_with_shadow(
+            borrowed_dot,
+            None,
+            None,
+            0,
+            40,
+            crate::renderer::BLIT_SOURCE_TRANSPARENT,
+        )
+        .unwrap();
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255]
+    );
     let candidate = upload(renderer);
     assert!(
         host.frontend
