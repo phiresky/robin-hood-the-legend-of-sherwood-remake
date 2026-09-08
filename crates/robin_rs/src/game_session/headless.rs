@@ -375,6 +375,7 @@ impl HeadlessMission {
             &mut active_modal,
             None,
             None,
+            None,
             Some(&mut self.modals),
             |_| Ok(()),
         );

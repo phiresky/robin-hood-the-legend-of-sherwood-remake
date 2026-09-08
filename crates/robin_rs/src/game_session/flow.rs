@@ -695,6 +695,7 @@ impl InteractiveMission {
                 let terminal_pending = self.frontend.ui.terminal_flow_active();
                 InteractiveFrameSimulation::drive_manual_steps(
                     timeline,
+                    &services.callbacks.save_manager,
                     host,
                     game,
                     manager,

@@ -1447,6 +1447,7 @@ impl InteractiveFrameSimulation {
     /// tick/PostInitialize boundary, while step-back replaces the live engine.
     pub(super) fn drive_manual_steps(
         runtime: &mut super::runtime::TimelineRuntime,
+        save_manager: &crate::savegame::SaveGameManager,
         host: &mut Host,
         game: &mut crate::game::Game,
         manager: &mut robin_engine::engine_manager::EngineManager,
@@ -1490,6 +1491,7 @@ impl InteractiveFrameSimulation {
             manual_pause,
             &mut ui.active_modal,
             ui.terminal_debriefing.as_mut(),
+            Some(save_manager),
             mission_ui_block_reason,
             None,
             |policy| {
