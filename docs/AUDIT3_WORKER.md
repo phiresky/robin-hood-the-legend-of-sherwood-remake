@@ -83,4 +83,33 @@ First frozen full package suite at `6b51dfb5f` passed: 166 library, 31 admin,
 5 server, 14 worker and 12 router tests, plus doctests. Worker had two ignored
 cases (process helper and explicit LLVM panic). This baseline run preceded the
 narrow refresh-panic catch and stronger pending assertions above; final validation
-results will be appended after those changes run.
+at `0f3781732` passed the same full package suite again (166 library, 31 admin,
+5 server, 14 worker, 12 router, doctests; worker now has four ignored tests).
+Both runs include existing real bubblewrap/process-group cleanup, SQL lease-loss,
+API cancellation, canonical object-publication and admin exclusive-fence tests.
+
+Commands used `RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`, with the
+worktree's unchanged local target directory:
+
+```sh
+cargo test --locked -p robin_highscores
+cargo test --locked -p robin_highscores --bin robin-highscores-worker \
+  --config 'profile.test.package.robin_highscores.codegen-backend="llvm"' \
+  physical_work_is_drained -- --ignored
+```
+
+The LLVM command executed all three panic regressions successfully, including
+their post-unwind assertions (3 passed, 0 failed, 0 ignored; 0.51 seconds).
+
+Regression sensitivity was checked with a temporary, uncommitted substitution
+of `let drained: anyhow::Result<()> = Ok(());` for the heartbeat error path's
+`let drained = (&mut operation).await;`. This reproduces the old release-before-
+join policy. The exact heartbeat-loss test failed with exit 101 and
+`worker owner returned while physical mutation was still blocked` (0.14 seconds).
+The substitution was restored with `apply_patch`; `git diff --exit-code` proved
+the source exactly matched `0f3781732` before the LLVM run. A final ordinary
+focused worker matrix passed 5 tests, with the 3 LLVM-only tests ignored. No
+negative-policy code remains in the branch.
+
+Formatting and whitespace checks passed. This report's final evidence update
+is documentation-only; no source changed after the verified snapshot above.
