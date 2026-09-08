@@ -20,6 +20,7 @@ mod mouse_input;
 mod multiplayer;
 mod render;
 mod replay_init;
+mod retirement;
 mod runtime;
 mod session_policy;
 mod setup;
@@ -771,7 +772,7 @@ pub(crate) async fn run_mission_headless(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
-    let mut outcome = async {
+    retirement::run(callbacks, async move |callbacks| {
         // Direct headless restart must carry launch policy without mutating the
         // caller's original arguments.
         let mut session_args = args.clone();
@@ -856,15 +857,8 @@ pub(crate) async fn run_mission_headless(
                     simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
             }
         }
-    }
-    .await;
-    if let Err(error) = callbacks.finish_save_operations() {
-        outcome.result = Err(format!(
-            "mission save retirement failed: {error}; mission result: {:?}",
-            outcome.result
-        ));
-    }
-    outcome
+    })
+    .await
 }
 
 /// Run the outer mission loop.
@@ -901,7 +895,7 @@ pub(crate) async fn run_session(
                 };
             }
         };
-    let mut outcome = async {
+    retirement::run(&mut callbacks, async move |mut callbacks| {
     if let Some((name, mission_id)) = initial_load {
         let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
             return SessionOutcome {
@@ -1233,14 +1227,7 @@ pub(crate) async fn run_session(
         session_args.resolved_mission_assets = None;
         session_args.mp_continue_session = session_args.server;
     }
-    }.await;
-    if let Err(error) = callbacks.finish_save_operations() {
-        outcome.result = Err(format!(
-            "session save retirement failed: {error}; session result: {:?}",
-            outcome.result
-        ));
-    }
-    outcome
+    }).await
 }
 
 fn clear_ambient_custom_launch(args: &mut crate::main_entry::CliArgs) {
@@ -1573,7 +1560,7 @@ pub(crate) async fn run_mission(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
-    let mut outcome = async {
+    retirement::run(callbacks, async move |callbacks| {
         if let Some(error) = unprepared_replay_launch_error(&args) {
             return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
         }
@@ -1650,15 +1637,8 @@ pub(crate) async fn run_mission(
                     simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
             }
         }
-    }
-    .await;
-    if let Err(error) = callbacks.finish_save_operations() {
-        outcome.result = Err(format!(
-            "mission save retirement failed: {error}; mission result: {:?}",
-            outcome.result
-        ));
-    }
-    outcome
+    })
+    .await
 }
 
 /// Match campaign-loop handoff policy only after a direct, non-replay host
