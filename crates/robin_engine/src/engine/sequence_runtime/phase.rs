@@ -1051,7 +1051,10 @@ impl EngineInner {
                                     .map(|entity| entity.position_iface().get_position())
                             {
                                 let obstacles = crate::sight_obstacle::ObstacleList {
-                                    static_obstacles: assets.static_sight_obstacles.as_slice(),
+                                    static_obstacles: assets
+                                        .environment
+                                        .static_sight_obstacles
+                                        .as_slice(),
                                     dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                                     static_active: &self.world.static_sight_obstacle_active,
                                 };
@@ -2488,7 +2491,10 @@ impl EngineInner {
                                 // can run alongside the `&mut self.world.entities`
                                 // borrow.
                                 let obstacles = crate::sight_obstacle::ObstacleList {
-                                    static_obstacles: assets.static_sight_obstacles.as_slice(),
+                                    static_obstacles: assets
+                                        .environment
+                                        .static_sight_obstacles
+                                        .as_slice(),
                                     dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                                     static_active: &self.world.static_sight_obstacle_active,
                                 };
@@ -2831,7 +2837,7 @@ impl EngineInner {
                                     obstacle,
                                     crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                                         obstacle,
-                                        assets.static_sight_obstacles.as_slice(),
+                                        assets.environment.static_sight_obstacles.as_slice(),
                                     ),
                                 );
                                     let bonus = crate::element::Entity::Bonus(

@@ -2232,7 +2232,7 @@ mod tests {
         let mut assets = LevelAssets::default();
         let wall = opaque_wall_between_pc_and_enemy();
         let wall_bbox = wall.box_ground;
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 16);
@@ -2302,7 +2302,7 @@ mod tests {
         wall.rebuild_geometry();
         let wall_bbox = wall.box_ground;
         let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 32);
@@ -2370,7 +2370,7 @@ mod tests {
         bridge.rebuild_geometry();
         let bbox = bridge.box_ground;
         let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![bridge]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![bridge]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 32);
@@ -2552,7 +2552,7 @@ mod tests {
         wall.rebuild_geometry();
         let wall_bbox = wall.box_ground;
         let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 16);

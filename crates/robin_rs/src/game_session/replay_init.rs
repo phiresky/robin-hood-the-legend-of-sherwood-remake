@@ -252,6 +252,7 @@ pub(super) fn init_replay_and_rollback(
                     mirror: rpc_spool,
                 });
                 let spellforge_package = assets
+                    .attachments
                     .spellforge_runtime
                     .as_ref()
                     .map(|runtime| runtime.package().clone());
@@ -299,6 +300,7 @@ pub(super) fn init_replay_and_rollback(
             "replay mission asset descriptor does not match the assets mounted for playback"
         );
         let local_spellforge_package = assets
+            .attachments
             .spellforge_runtime
             .as_ref()
             .map(|runtime| runtime.package());

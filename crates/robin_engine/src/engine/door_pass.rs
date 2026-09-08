@@ -1846,8 +1846,12 @@ impl EngineInner {
                 let probe = self
                     .get_entity(entity_id)
                     .map(|e| (e.position_iface().map_position(), e.element_data().layer()));
-                let material = probe
-                    .map(|(point, layer)| assets.material_sectors.material_at_layer(point, layer));
+                let material = probe.map(|(point, layer)| {
+                    assets
+                        .environment
+                        .material_sectors
+                        .material_at_layer(point, layer)
+                });
                 (material, None)
             }
         };
@@ -3188,7 +3192,7 @@ mod tests {
             let mut installed_rail = SightObstacle::new_default(2);
             installed_rail.material = 1;
             let mut assets = LevelAssets::new();
-            assets.static_sight_obstacles =
+            assets.environment.static_sight_obstacles =
                 std::sync::Arc::new(vec![flat_projection, installed_rail]);
             engine.world.static_sight_obstacle_active = vec![true, true];
             assert_eq!(

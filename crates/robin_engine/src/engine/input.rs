@@ -311,7 +311,7 @@ impl EngineInner {
         // Decision 1), so we reach the packed sprite data through the
         // host-installed `PixelOpacityLookup`. If it's not wired up yet
         // (e.g. early boot, tests), keep the bbox-only hit.
-        let Some(lookup) = assets.pixel_opacity.as_ref() else {
+        let Some(lookup) = assets.attachments.pixel_opacity.as_ref() else {
             return true;
         };
 
@@ -2437,7 +2437,7 @@ impl EngineInner {
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let bow_fx_forest_magic_preview = selected_action == crate::profiles::Action::Bow
             && self.world.weather.is_forest_level

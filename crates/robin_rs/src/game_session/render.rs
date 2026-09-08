@@ -138,7 +138,7 @@ fn selected_allied_patrol_routes(
             ai.patrol_path.as_ref(),
             &ai.detached_patrol_path_status,
             ai.has_patrol_path,
-            &assets.hiking_paths,
+            &assets.navigation.hiking_paths,
         ) else {
             continue;
         };

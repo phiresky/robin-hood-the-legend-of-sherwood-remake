@@ -337,7 +337,7 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     }
 
     let mut assets = LevelAssets::new();
-    assets.hiking_paths = std::sync::Arc::new(paths);
+    assets.navigation.hiking_paths = std::sync::Arc::new(paths);
     complete_test_runtime_fixture(&mut engine, &mut assets);
     engine.drain_ai_owner_work_for(sim, &assets, soldier);
 

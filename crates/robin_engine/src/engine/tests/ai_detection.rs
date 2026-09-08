@@ -3257,8 +3257,8 @@ fn sequence_completion_money_victim_scan_uses_live_off_detection_ko_registry() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );

@@ -119,7 +119,7 @@ pub(super) fn tick_audio(
                     )
                 });
             let duration_frames = assets
-                .exclamation_durations
+                .audio.exclamation_durations()
                 .get(&(pending.group, pending.profile_id, pending.exclamation_id))
                 .copied()
                 .unwrap_or_else(|| {

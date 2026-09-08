@@ -99,7 +99,7 @@ impl ScriptRuntime {
         self.spellforge.validate_snapshot()?;
         match (
             self.spellforge.package.as_deref(),
-            assets.spellforge_runtime.as_ref(),
+            assets.attachments.spellforge_runtime.as_ref(),
         ) {
             (Some(package), Some(runtime)) if runtime.package() != package => {
                 return Err(format!(
@@ -184,7 +184,7 @@ impl ScriptRuntime {
         &mut self,
         assets: &LevelAssets,
     ) -> Result<(), String> {
-        if let Some(runtime) = assets.spellforge_runtime.as_ref() {
+        if let Some(runtime) = assets.attachments.spellforge_runtime.as_ref() {
             self.spellforge.initialize(runtime.package().clone())?;
         }
         Ok(())
@@ -204,7 +204,7 @@ impl ScriptRuntime {
     fn attach_native_bindings(script: &mut MissionScript, assets: &LevelAssets) {
         script.attach_bindings(crate::natives::AttachedScriptBindings {
             profile_manager: assets.profile_manager.clone(),
-            hiking_paths: assets.hiking_paths.clone(),
+            hiking_paths: assets.navigation.hiking_paths.clone(),
             script_location_count: assets.scripts.location_count,
             script_point_count: assets.scripts.point_count,
             script_building_count: assets.scripts.building_count,

@@ -202,7 +202,7 @@ pub(crate) fn render_debug_motion_graph(
     let pathfinder = engine.pathfinder();
 
     pathfinder.draw_graph(
-        assets.pathfinder_graph.as_ref(),
+        assets.navigation.pathfinder_graph.as_ref(),
         view_rect,
         half_diagonal_idx,
         |a, b, color| {
@@ -214,7 +214,7 @@ pub(crate) fn render_debug_motion_graph(
     );
 
     pathfinder.draw_nodes(
-        assets.pathfinder_graph.as_ref(),
+        assets.navigation.pathfinder_graph.as_ref(),
         view_rect,
         half_diagonal_idx,
         |a, b, color| {
@@ -363,7 +363,7 @@ pub(crate) fn render_debug_surfaces_fill(
     }
     let to_screen_f =
         move |p: MapPoint| -> (f32, f32) { ((p.x - view.x) * zoom, (p.y - view.y) * zoom) };
-    let graph = assets.pathfinder_graph.as_ref();
+    let graph = assets.navigation.pathfinder_graph.as_ref();
     let Some((sel_layer, sel_area)) = selected_surface(host, engine, graph) else {
         return;
     };
@@ -405,7 +405,7 @@ pub(crate) fn render_debug_surfaces_outline(
         (sx.round() as i32, sy.round() as i32)
     };
 
-    let graph = assets.pathfinder_graph.as_ref();
+    let graph = assets.navigation.pathfinder_graph.as_ref();
     let move_layers = &graph.static_data.move_layers;
     let selected_layer_area = selected_surface(host, engine, graph);
     let selected_id = engine
@@ -559,7 +559,7 @@ pub(crate) fn render_noise_display(
     // ── (0) Sound-sector polygon outlines ────────────────────────
     // Iterate material sectors registered as sound sectors and draw
     // each polygon outline in dark teal.
-    for sector in &assets.material_sectors.sectors {
+    for sector in &assets.environment.material_sectors.sectors {
         if sector.points.len() < 2 {
             continue;
         }

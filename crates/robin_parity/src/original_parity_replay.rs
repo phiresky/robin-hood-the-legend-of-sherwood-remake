@@ -1233,7 +1233,7 @@ fn apply_legacy_interactive_chain_macro_fallback(
         .elements
     {
         let Some((path_id, waypoint, offset)) =
-            terminal_macro_waypoint(element, &assets.hiking_paths)
+            terminal_macro_waypoint(element, &assets.navigation.hiking_paths)
         else {
             continue;
         };
@@ -7045,7 +7045,7 @@ fn initialize_headless_engine(
     .expect("initialize engine");
     crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
         .expect("load deterministic sound duration tables");
-    assets.pixel_opacity = Some(Arc::new(frame_holder));
+    assets.attachments.pixel_opacity = Some(Arc::new(frame_holder));
     (engine, assets, scb)
 }
 
@@ -7180,7 +7180,7 @@ fn initialize_engine(
     // dimensions into the serialized sprite frontier. The parity engine is
     // intentionally headless, so publish the immutable frame metadata used
     // to project that post-render state without mutating the simulation.
-    assets.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
     (engine, assets, host, background, scb, menu_text)
 }
 
@@ -7271,6 +7271,7 @@ impl EntityMap {
             );
         }
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("parity replay requires retained Original fast-grid topology");

@@ -611,7 +611,7 @@ impl EngineInner {
             )
         });
         let legacy_collapsed_simple_route = legacy_unmapped_jump_goal_matches_spatial_source(
-            assets.legacy_grid_topology.as_ref(),
+            assets.navigation.legacy_grid_topology.as_ref(),
             goal_override,
             goal_sector_index_override,
             !recorded_gate_routes.is_empty() || !recorded_failed_gate_routes.is_empty(),
@@ -1481,6 +1481,7 @@ impl EngineInner {
                 let angle = dir as f32 * std::f32::consts::FRAC_PI_8;
                 let candidate = MapPoint::new(click.x + angle.sin() * r, click.y - angle.cos() * r);
                 if assets
+                    .navigation
                     .pathfinder_graph
                     .find_area_at_point(layer as usize, candidate)
                     .is_some()

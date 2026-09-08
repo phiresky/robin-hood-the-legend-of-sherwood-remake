@@ -242,7 +242,7 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(projectile_id) {
             let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 resolution.obstacle_index,
-                assets.static_sight_obstacles.as_slice(),
+                assets.environment.static_sight_obstacles.as_slice(),
             );
             bow_shot::apply_projectile_landing_resolution(
                 entity.element_data_mut(),
@@ -714,7 +714,7 @@ impl EngineInner {
             let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                 fast_find_grid: &self.world.fast_grid,
                 sight_obstacles: obstacle_list,
-                water_zones: Some(&assets.water_zones),
+                water_zones: Some(&assets.environment.water_zones),
             };
             let collision_debug_identity =
                 crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
@@ -943,6 +943,7 @@ impl EngineInner {
                         (obstacle.material, sectors)
                     });
                     let ground_material_inputs = assets
+                        .environment
                         .water_zones
                         .zones
                         .iter()
@@ -957,7 +958,7 @@ impl EngineInner {
                         })
                         .collect::<Vec<_>>();
                     let scoped_material = crate::water_zones::determine_water_hole_scoped(
-                        &assets.water_zones,
+                        &assets.environment.water_zones,
                         terminal_obstacle_ref,
                         landing,
                     )
@@ -1122,14 +1123,14 @@ impl EngineInner {
         arrow_id: EntityId,
     ) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles,
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let Some(entity) = self.world.entities.get_mut(arrow_id) else {
             return;
@@ -1638,7 +1639,7 @@ impl EngineInner {
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let mut projectile = match object_type {
             crate::element::ObjectType::Apple => crate::bow_shot::spawn_apple(
@@ -1705,7 +1706,7 @@ impl EngineInner {
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let mut projectile = crate::bow_shot::spawn_stone(
             actor_id,
@@ -3343,7 +3344,7 @@ mod tests {
         ceiling.rebuild_geometry();
 
         let mut assets = LevelAssets::new();
-        assets.static_sight_obstacles = Arc::new(vec![ceiling]);
+        assets.environment.static_sight_obstacles = Arc::new(vec![ceiling]);
         (engine, assets, carrier_id, victim_id)
     }
 
@@ -3564,14 +3565,14 @@ impl EngineInner {
         projectile_id: EntityId,
     ) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles,
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_existing_projectile_in_actor_order(
@@ -3593,14 +3594,14 @@ impl EngineInner {
         arrow_id: EntityId,
     ) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles,
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
@@ -4372,7 +4373,7 @@ impl EngineInner {
             Some(crate::sound_cache::Material::Water)
         } else {
             crate::water_zones::determine_water_hole_scoped(
-                &assets.water_zones,
+                &assets.environment.water_zones,
                 landing_obstacle,
                 landing_map,
             )
@@ -5746,7 +5747,7 @@ impl EngineInner {
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
                         sight_obstacles: self.sight_obstacles(assets),
-                        water_zones: Some(&assets.water_zones),
+                        water_zones: Some(&assets.environment.water_zones),
                     };
                     let net_entity = crate::bow_shot::spawn_net(
                         actor_id,
@@ -5792,7 +5793,7 @@ impl EngineInner {
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
                         sight_obstacles: self.sight_obstacles(assets),
-                        water_zones: Some(&assets.water_zones),
+                        water_zones: Some(&assets.environment.water_zones),
                     };
                     let purse_entity = crate::bow_shot::spawn_purse(
                         actor_id,
@@ -5837,7 +5838,7 @@ impl EngineInner {
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
                         sight_obstacles: self.sight_obstacles(assets),
-                        water_zones: Some(&assets.water_zones),
+                        water_zones: Some(&assets.environment.water_zones),
                     };
                     let wasp_entity = crate::bow_shot::spawn_wasp_nest(
                         actor_id,

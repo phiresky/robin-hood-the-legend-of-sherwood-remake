@@ -319,6 +319,7 @@ impl EngineInner {
             crate::element::GameMaterial::Hole
         } else {
             assets
+                .environment
                 .material_sectors
                 .material_at_with_obstacle(obstacle, raw_impact)
         };
@@ -516,7 +517,7 @@ impl EngineInner {
                 let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                     fast_find_grid: &self.world.fast_grid,
                     sight_obstacles: self.sight_obstacles(assets),
-                    water_zones: Some(&assets.water_zones),
+                    water_zones: Some(&assets.environment.water_zones),
                 };
                 bow_shot::spawn_coin(
                     Some(future_purse_id),
@@ -997,7 +998,7 @@ impl EngineInner {
                 let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                     fast_find_grid: &self.world.fast_grid,
                     sight_obstacles: self.sight_obstacles(assets),
-                    water_zones: Some(&assets.water_zones),
+                    water_zones: Some(&assets.environment.water_zones),
                 };
                 bow_shot::spawn_coin(
                     Some(purse_id),

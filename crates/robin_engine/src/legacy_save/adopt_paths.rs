@@ -329,16 +329,22 @@ fn convert_request(
     validate_point(queue, index, "goal", saved.goal)?;
 
     let layer = usize::from(saved.layer);
-    let graph_layer = assets.pathfinder_graph.states.get(layer).ok_or_else(|| {
-        invalid(
-            queue,
-            index,
-            "layer",
-            saved.layer,
-            "an initialized path-graph layer",
-        )
-    })?;
+    let graph_layer = assets
+        .navigation
+        .pathfinder_graph
+        .states
+        .get(layer)
+        .ok_or_else(|| {
+            invalid(
+                queue,
+                index,
+                "layer",
+                saved.layer,
+                "an initialized path-graph layer",
+            )
+        })?;
     let area = assets
+        .navigation
         .pathfinder_graph
         .try_convert_sector(saved.area)
         .ok_or_else(|| {
@@ -360,7 +366,12 @@ fn convert_request(
         ));
     }
     if usize::from(saved.half_diagonal_index)
-        >= assets.pathfinder_graph.static_data.half_diagonals.len()
+        >= assets
+            .navigation
+            .pathfinder_graph
+            .static_data
+            .half_diagonals
+            .len()
     {
         return Err(invalid(
             queue,
@@ -480,7 +491,7 @@ fn preflight_graph_states(
     assets: &LevelAssets,
     saved: &[Vec<u32>],
 ) -> Result<(Vec<Vec<u32>>, Vec<(usize, bool)>, Vec<(usize, bool)>), LegacyPathAdoptError> {
-    let graph = assets.pathfinder_graph.as_ref();
+    let graph = assets.navigation.pathfinder_graph.as_ref();
     if saved.len() != graph.states.len() || saved.len() != engine.world.pathfinder.states.len() {
         return Err(LegacyPathAdoptError::StateShape {
             layer: None,
@@ -684,7 +695,7 @@ mod tests {
             ],
         }]];
         let mut assets = LevelAssets::new();
-        assets.pathfinder_graph = std::sync::Arc::new(graph);
+        assets.navigation.pathfinder_graph = std::sync::Arc::new(graph);
 
         let (states, line_updates, sector_updates) =
             preflight_graph_states(&engine, &assets, &[vec![1]]).expect("valid graph state");
@@ -730,7 +741,7 @@ mod tests {
             motion_obstacles: Vec::new(),
         }]];
         let mut assets = LevelAssets::new();
-        assets.pathfinder_graph = std::sync::Arc::new(graph);
+        assets.navigation.pathfinder_graph = std::sync::Arc::new(graph);
 
         assert!(matches!(
             preflight_graph_states(&engine, &assets, &[vec![1, 2]]),

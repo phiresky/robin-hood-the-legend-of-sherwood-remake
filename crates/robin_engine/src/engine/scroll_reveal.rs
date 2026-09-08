@@ -537,7 +537,7 @@ impl EngineInner {
         // pre-resolved plane.
         let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
             req.obstacle_index,
-            assets.static_sight_obstacles.as_slice(),
+            assets.environment.static_sight_obstacles.as_slice(),
         );
         element.sprite.apply_placement(
             req.position_map,

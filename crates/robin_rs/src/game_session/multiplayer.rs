@@ -93,7 +93,7 @@ fn attach_snapshot_spellforge_runtime(
     let Some(package) = snapshot.spellforge_package() else {
         return Ok(());
     };
-    if assets.spellforge_runtime.is_some() {
+    if assets.attachments.spellforge_runtime.is_some() {
         return Ok(());
     }
     if !spellforge_enabled()? {
@@ -1638,7 +1638,7 @@ mod tests {
             robin_spellforge::SpellforgeRuntime51::new(package.clone()).unwrap(),
         );
         let mut host_assets = LevelAssets::new();
-        host_assets.spellforge_runtime = Some(runtime);
+        host_assets.attachments.spellforge_runtime = Some(runtime);
         let snapshot = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut host_assets)
             .expect("Spellforge host snapshot");
 
@@ -1646,6 +1646,7 @@ mod tests {
         attach_snapshot_spellforge_runtime(&snapshot, &mut peer_assets, || Ok(true)).unwrap();
 
         let attached = peer_assets
+            .attachments
             .spellforge_runtime
             .as_ref()
             .expect("peer runtime attached");
@@ -1662,7 +1663,7 @@ mod tests {
             robin_spellforge::SpellforgeRuntime51::new(package.clone()).unwrap(),
         );
         let mut host_assets = LevelAssets::new();
-        host_assets.spellforge_runtime = Some(runtime);
+        host_assets.attachments.spellforge_runtime = Some(runtime);
         let snapshot = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut host_assets)
             .expect("Spellforge host snapshot");
 
@@ -1670,7 +1671,7 @@ mod tests {
         let error = attach_snapshot_spellforge_runtime(&snapshot, &mut peer_assets, || Ok(false))
             .expect_err("disabled Spellforge must reject host package");
         assert!(error.contains("disabled in Gameplay settings"));
-        assert!(peer_assets.spellforge_runtime.is_none());
+        assert!(peer_assets.attachments.spellforge_runtime.is_none());
     }
 
     #[test]

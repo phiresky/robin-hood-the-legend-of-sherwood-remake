@@ -336,7 +336,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> crate::sight_obstacle::SharedSightObstacles {
         crate::sight_obstacle::SharedSightObstacles {
-            static_obstacles: assets.static_sight_obstacles.clone(),
+            static_obstacles: assets.environment.static_sight_obstacles.clone(),
             dynamic_obstacles: std::sync::Arc::new(self.world.dynamic_sight_obstacles.clone()),
             static_active: std::sync::Arc::new(self.world.static_sight_obstacle_active.clone()),
         }

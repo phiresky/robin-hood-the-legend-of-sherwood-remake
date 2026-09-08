@@ -72,6 +72,7 @@ impl EngineInner {
         );
 
         assets
+            .environment
             .static_sight_obstacles
             .iter()
             .enumerate()
@@ -921,13 +922,14 @@ impl EngineInner {
                     .material
             })
             .map(|raw| crate::element::GameMaterial::from_u32(raw as u32))
-            .unwrap_or(assets.material_sectors.default_material);
+            .unwrap_or(assets.environment.material_sectors.default_material);
 
         let line = &self.world.fast_grid.level.lines[usize::from(line_index)];
         let raw_index = line
             .sound_material_sector_index
             .unwrap_or_else(|| panic!("LINE_SOUND {line_index:?} has no owning material sector"));
         let sector = assets
+            .environment
             .all_material_sectors
             .get(usize::from(raw_index))
             .and_then(Option::as_ref)
@@ -1007,7 +1009,10 @@ mod tests {
         let last_authored = projection_obstacle(11, 0.0);
         let dynamic = projection_obstacle(12, 0.0);
         let assets = LevelAssets {
-            static_sight_obstacles: std::sync::Arc::new(vec![first, last_authored]),
+            environment: crate::engine::LevelEnvironmentAssets {
+                static_sight_obstacles: std::sync::Arc::new(vec![first, last_authored]),
+                ..Default::default()
+            },
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
@@ -1064,7 +1069,13 @@ mod tests {
         .collect();
         absent_from_probe_block.rebuild_geometry();
         let assets = LevelAssets {
-            static_sight_obstacles: std::sync::Arc::new(vec![registered, absent_from_probe_block]),
+            environment: crate::engine::LevelEnvironmentAssets {
+                static_sight_obstacles: std::sync::Arc::new(vec![
+                    registered,
+                    absent_from_probe_block,
+                ]),
+                ..Default::default()
+            },
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
@@ -1086,7 +1097,10 @@ mod tests {
     #[should_panic(expected = "resolves outside the fast-find grid")]
     fn elevation_emergency_does_not_clamp_an_outside_probe_to_the_edge_block() {
         let assets = LevelAssets {
-            static_sight_obstacles: std::sync::Arc::new(vec![projection_obstacle(30, 0.0)]),
+            environment: crate::engine::LevelEnvironmentAssets {
+                static_sight_obstacles: std::sync::Arc::new(vec![projection_obstacle(30, 0.0)]),
+                ..Default::default()
+            },
             ..LevelAssets::default()
         };
         let mut engine = EngineInner::new();
