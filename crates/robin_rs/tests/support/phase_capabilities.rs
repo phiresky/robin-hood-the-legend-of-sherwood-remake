@@ -224,6 +224,55 @@ fn render_consumers_cannot_request_a_whole_host() {
     }
 }
 
+#[test]
+fn hud_draw_context_receives_decisions_not_mutable_hover_clocks() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
+    let context = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(view) if view.ident == "RenderContext" => Some(view),
+            _ => None,
+        })
+        .expect("production draw context exists");
+    let field = |name: &str| {
+        context
+            .fields
+            .iter()
+            .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+            .unwrap_or_else(|| panic!("missing draw context field {name}"))
+    };
+    assert!(readonly_reference_to(
+        &field("console_overlay").ty,
+        "ConsoleOverlay"
+    ));
+    assert!(matches!(&field("hud_tooltips").ty, syn::Type::Path(path)
+        if path.path.is_ident("HudTooltipPresentation")));
+    // Zoom has a separate update boundary. The six other hover clocks must
+    // stay behind the fixed-tick update rather than return to the draw bundle.
+    struct HoverClock(bool);
+    impl<'ast> Visit<'ast> for HoverClock {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            self.0 |= path.path.segments.iter().any(|segment| {
+                [
+                    "CornerTooltipTracker",
+                    "RequirementsTooltipTracker",
+                    "BlazonTooltipTracker",
+                    "StatureTooltipTracker",
+                    "SherwoodTooltipTracker",
+                    "PcActionTooltipTracker",
+                ]
+                .iter()
+                .any(|name| segment.ident == name)
+            });
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut clocks = HoverClock(false);
+    clocks.visit_item_struct(context);
+    assert!(!clocks.0, "draw context must not own live hover clocks");
+}
+
 pub(super) fn assert_production_views_are_readonly() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/game_session");
     for (file, name, presentation) in [
