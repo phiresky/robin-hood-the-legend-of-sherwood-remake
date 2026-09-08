@@ -156,7 +156,7 @@ impl MissionLuaState {
         let interrupt_budget = Arc::clone(&execution_budget);
         lua.set_interrupt(move |_| {
             let had_budget = interrupt_budget
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok();

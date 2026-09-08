@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 /// Structural validation shared by protocol documents.
 pub trait Validate {
     fn validate(&self) -> Result<(), ValidationError>;
@@ -176,22 +174,6 @@ pub(crate) fn canonical_relative_path(
 
 pub(crate) fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
     values.windows(2).all(|pair| pair[0] < pair[1])
-}
-
-pub(crate) fn unique_text<'a>(
-    field: &'static str,
-    values: impl IntoIterator<Item = &'a str>,
-) -> Result<(), ValidationError> {
-    let mut seen = BTreeSet::new();
-    for value in values {
-        if !seen.insert(value) {
-            return Err(ValidationError::Duplicate {
-                field,
-                value: value.to_owned(),
-            });
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
