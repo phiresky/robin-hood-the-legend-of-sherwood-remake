@@ -954,6 +954,16 @@ impl Renderer {
         self.resources.alpha_mask(id)
     }
 
+    /// A live upload may lack retained CPU pixels for a mask. A foreign or
+    /// retired handle is an error, not an absent optional mask.
+    pub fn surface_alpha_mask(
+        &self,
+        handle: SurfaceHandle,
+    ) -> Result<Option<AlphaMask>, MissingSurface> {
+        self.surface_dimensions(handle)?;
+        Ok(self.resources.alpha_mask(handle.id))
+    }
+
     /// Override the shadow alpha baked into `SHADOW_KEY` pixels at
     /// upload time. Set to `MENU_BUTTON_SHADOW_ALPHA` (50%) for
     /// menu-button packs, leave at the default `DEFAULT_SHADOW_ALPHA`
@@ -3108,6 +3118,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
             .is_err()
     );
     assert_eq!(other_renderer.draw_queue_checkpoint(), before_foreign_draw);
+    assert!(other_renderer.surface_alpha_mask(owned.handle()).is_err());
     let restored: OwnedSurface =
         serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
     assert!(renderer.surface_dimensions(restored.handle()).is_err());
