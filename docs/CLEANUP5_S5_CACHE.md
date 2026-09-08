@@ -15,7 +15,8 @@ thread creation failures are also retained outcomes.
 
 Physical clear implementations are unchanged: native work uses the context's
 `DistributedModCache::clear`, and browser work uses its existing async cache clear.
-Their mounted-content and pin protections remain in force. Workers retain an
+Native mounted-content and pin protections remain in force; browser clearing
+retains its existing semantics. Workers retain an
 application clone until sending their completion. No new cancellation or shutdown
 join guarantee is claimed for process termination or browser runtime destruction.
 
