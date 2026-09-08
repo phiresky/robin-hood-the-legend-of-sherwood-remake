@@ -315,7 +315,7 @@ impl Default for ResourceCacheIdentity {
     fn default() -> Self {
         static NEXT_SOURCE: AtomicUsize = AtomicUsize::new(1);
         let source = NEXT_SOURCE
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
             .expect("resource cache identity exhausted");
         Self {
             source,
