@@ -3393,8 +3393,40 @@ async fn verify_pinned_database_leaf(
 ) -> Result<(), DbError> {
     let opened_parent = Arc::clone(parent);
     let opened_leaf = leaf.to_owned();
-    let current = tokio::task::spawn_blocking(move || {
-        crate::secure_fs::open_regular_file(&opened_parent, std::path::Path::new(&opened_leaf))
+    let current = tokio::task::spawn_blocking(move || -> std::io::Result<std::fs::File> {
+        #[cfg(target_os = "linux")]
+        {
+            use rustix::fs::{Mode, OFlags, ResolveFlags, openat2};
+            use std::os::fd::AsFd as _;
+
+            // Closing any ordinary descriptor for this inode would discard
+            // SQLite's process-wide POSIX locks, even on another thread. An
+            // O_PATH descriptor can authenticate the leaf without that close
+            // side effect. Keep the same beneath/no-symlink path confinement.
+            let fd = openat2(
+                opened_parent.as_fd(),
+                std::path::Path::new(&opened_leaf),
+                OFlags::PATH | OFlags::CLOEXEC,
+                Mode::empty(),
+                ResolveFlags::BENEATH | ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
+            )
+            .map_err(std::io::Error::from)?;
+            let file = std::fs::File::from(fd);
+            if !file.metadata()?.is_file() {
+                return Err(std::io::Error::other("database is not a regular file"));
+            }
+            Ok(file)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            // TODO: provide a lock-preserving identity check before supporting
+            // production database operation on other platforms.
+            let _ = (opened_parent, opened_leaf);
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "lock-preserving database identity verification requires Linux O_PATH",
+            ))
+        }
     })
     .await
     .map_err(|error| sqlx::Error::Io(std::io::Error::other(error)))?
@@ -3928,6 +3960,85 @@ mod tests {
         config.database_path = directory.path().join("highscores.sqlite3");
         let database = Database::migrate(&config).await.unwrap();
         (directory, database)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "subprocess helper for the POSIX database lock regression"]
+    fn database_posix_lock_probe_child() {
+        use rustix::fs::{FlockOperation, fcntl_lock};
+        let path = std::env::var_os("ROBIN_TEST_POSIX_LOCK_PROBE_PATH").unwrap();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+            .unwrap();
+        let error = fcntl_lock(&file, FlockOperation::NonBlockingLockExclusive)
+            .expect_err("another process acquired the supposedly held database lock");
+        assert!(matches!(
+            error,
+            rustix::io::Errno::AGAIN | rustix::io::Errno::ACCESS
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn database_leaf_identity_check_preserves_posix_locks() {
+        use rustix::fs::{FlockOperation, fcntl_lock};
+
+        let directory = tempfile::tempdir().unwrap();
+        let parent = Arc::new(
+            cap_std::fs::Dir::open_ambient_dir(directory.path(), cap_std::ambient_authority())
+                .unwrap(),
+        );
+        let pinned = Arc::new(std::fs::File::create(directory.path().join("database")).unwrap());
+        let holds_lock = || {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "db::tests::database_posix_lock_probe_child",
+                    "--ignored",
+                ])
+                .env(
+                    "ROBIN_TEST_POSIX_LOCK_PROBE_PATH",
+                    directory.path().join("database"),
+                )
+                .output()
+                .unwrap();
+            output.status.success()
+        };
+        fcntl_lock(&*pinned, FlockOperation::NonBlockingLockExclusive).unwrap();
+        assert!(
+            holds_lock(),
+            "the test POSIX lock did not exclude another process"
+        );
+        verify_pinned_database_leaf(&parent, "database", &pinned)
+            .await
+            .unwrap();
+        assert!(
+            holds_lock(),
+            "identity verification discarded the process's SQLite-style POSIX lock"
+        );
+        fcntl_lock(&*pinned, FlockOperation::Unlock).unwrap();
+
+        std::fs::rename(
+            directory.path().join("database"),
+            directory.path().join("original"),
+        )
+        .unwrap();
+        std::fs::write(directory.path().join("database"), b"replacement").unwrap();
+        assert!(
+            verify_pinned_database_leaf(&parent, "database", &pinned)
+                .await
+                .is_err()
+        );
+        std::fs::remove_file(directory.path().join("database")).unwrap();
+        std::os::unix::fs::symlink("original", directory.path().join("database")).unwrap();
+        assert!(
+            verify_pinned_database_leaf(&parent, "database", &pinned)
+                .await
+                .is_err()
+        );
     }
 
     #[test]
