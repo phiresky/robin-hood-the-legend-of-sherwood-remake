@@ -1,0 +1,86 @@
+# Build-speed tweaks for this workspace.
+#
+# - Wild linker: debug/validation link time is usually the bottleneck in Rust;
+#   Wild cuts it dramatically versus the default GNU bfd linker.
+#
+# Machine-local settings like `rustc-wrapper = sccache` or `jobs = N` belong in
+# your user-level ~/.cargo/config.toml, not here.
+
+# Shared CPU baseline for every x86-64 target (native Linux, the MinGW Windows
+# cross build, CI): modern portable x86_64 (AVX2/FMA/BMI), without tying
+# builds to the exact local CPU the way `target-cpu=native` would. Defined
+# once here: cargo JOINS all matching target.<cfg>/target.<triple> rustflags
+# sources, including the CARGO_TARGET_<triple>_RUSTFLAGS env vars CI sets, so
+# this reaches every x86-64 build. Only a plain RUSTFLAGS env var replaces it
+# (full replacement, no merging) — never set one, in CI or locally.
+[target.'cfg(target_arch = "x86_64")']
+rustflags = ["-C", "target-cpu=x86-64-v3"]
+
+# The Wild reference lives in a linker-driver script rather than in rustflags
+# so that CI can drop it with the scalar CARGO_TARGET_*_LINKER=cc override
+# (rustflags env vars merge with — never replace — the entries above).
+[target.x86_64-unknown-linux-gnu]
+linker = "scripts/clang-wild-linker.sh"
+
+# Static MinGW runtime so native dependencies (vendored Luau via mlua; glslang/SPIRV-Cross
+# when `retroarch-shaders` is on) don't make the exe depend on libstdc++-6.dll.
+# The link-args cover the g++ driver's implicit runtime libs; the CXXSTDLIB env
+# below covers build scripts (luau0-src, cc) that emit an explicit
+# `cargo:rustc-link-lib=stdc++`, which those driver flags do not affect —
+# `static=stdc++` makes rustc wrap it in -Bstatic so ld picks libstdc++.a over
+# the DLL import library.
+[target.x86_64-pc-windows-gnu]
+rustflags = [
+    "-C", "link-args=-static-libstdc++ -static-libgcc",
+    # rustc verifies `-l static=stdc++` against its own search paths, which do
+    # not include the mingw toolchain's lib dir (standard location for the
+    # mingw-w64 distro packages).
+    "-L", "native=/usr/x86_64-w64-mingw32/lib",
+]
+
+[env]
+"CXXSTDLIB_x86_64-pc-windows-gnu" = "static=stdc++"
+
+[unstable]
+codegen-backend = true
+
+# -----------------------------------------------------------------------------
+# wasm32-unknown-unknown (single-threaded, wasm-bindgen)
+# -----------------------------------------------------------------------------
+#
+# We target plain `wasm32-unknown-unknown` and bind to the browser via
+# `wasm-bindgen` (winit + wgpu both support this directly).  No
+# emscripten, no native window-system port, no pthreads — single-threaded. The game's
+# imperative loop is async; on wasm it runs as a `spawn_local` future
+# on the main JS thread, while winit's `ApplicationHandler` also lives
+# on the main thread and forwards events through an `async_channel`.
+#
+# The `--cfg=getrandom_backend="wasm_js"` flag tells `getrandom` to
+# resolve `js-sys`-backed entropy (`crypto.getRandomValues`).  Required
+# for any crate that depends transitively on `getrandom` ≥ 0.3.
+
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "--cfg=getrandom_backend=\"wasm_js\"",
+    # Wasm SIMD, baseline in all major browsers since Safari 16.4 (2023).
+    # Lets LLVM auto-vectorize. The other post-MVP features this toolchain
+    # supports (bulk-memory, nontrapping-fptoint, sign-ext, multivalue,
+    # reference-types, mutable-globals) are already default-on for this
+    # target. relaxed-simd is deliberately absent: not yet browser-baseline.
+    "-C", "target-feature=+simd128",
+    # Append the vectorizers (plus their standard cleanup passes) to every
+    # LLVM pipeline. The wasm-release profile optimizes at "z", whose
+    # pipeline contains no vectorizer passes at all — this injection is what
+    # lets the O3 robin_assets override actually vectorize under fat LTO
+    # (see the wasm-release notes in the workspace Cargo.toml). Safe for
+    # everything else: the passes respect per-function optsize/minsize
+    # attributes ("z" code stays size-guarded) and skip optnone (wasm-dev)
+    # functions entirely. The standalone instcombine needs
+    # no-verify-fixpoint — pipeline-scheduled instcombine relaxes that
+    # check, a bare injected one asserts on some wasm-bindgen shims.
+    "-C", "passes=loop-vectorize,slp-vectorizer,instcombine<no-verify-fixpoint>,simplifycfg",
+    # Rust async poll functions can retain large game/session values across
+    # await points. Keep a practical guard margin above the 1 MiB wasm-ld
+    # default even though the largest child futures are heap-boxed.
+    "-C", "link-arg=-zstack-size=4194304",
+]

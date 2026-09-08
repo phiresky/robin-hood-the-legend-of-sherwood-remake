@@ -1,0 +1,173 @@
+//! Motion-area sector helpers.
+//!
+//! Currently exposes `get_projection_area_index`: given a motion-area
+//! sector, a layer, and a point (screen-space for screen-coord callers,
+//! ground-space for ground-coord callers — for ground-level projection
+//! areas the two coincide since `z == 0`), it returns the obstacle
+//! index of the projection area containing the point, or `None` if no
+//! projection area matches.
+
+use super::{EngineInner, LevelAssets};
+
+impl EngineInner {
+    /// Look up the projection-area obstacle containing `point` for the
+    /// given motion-area sector + layer.
+    ///
+    /// Iterates the sight-obstacle table, restricts to projection-area
+    /// obstacles whose `(sector, layer)` match, then returns the
+    /// obstacle whose projected bbox **and** projected polygon
+    /// (vertices `(x, y - z_top)`) both contain `point`.  When several
+    /// candidates match, picks the one with the greatest `box_3d_max.z`
+    /// ("highest obstacle" rule).
+    ///
+    /// `point` is treated as screen-space — the obstacle's top polygon
+    /// is already screen-projected.  Callers pass ground `(x, y)`
+    /// because for ground-level entities (`z == 0`) screen-Y equals
+    /// ground-Y; lifted entities should subtract their own z before
+    /// calling.
+    pub fn get_projection_area_index(
+        &self,
+        assets: &LevelAssets,
+        sector: crate::position_interface::SectorHandle,
+        layer: u16,
+        point: crate::coordinates::MapPoint,
+    ) -> Option<crate::sight_obstacle::SightObstacleIndex> {
+        let sector_index = sector.arena_index().unwrap_or_else(|| {
+            panic!(
+                "projection-area lookup for sector {} lacks exact arena identity",
+                sector.get()
+            )
+        });
+        let layer = crate::position_interface::Layer::new(layer)
+            .expect("projection-area lookup cannot use the absent-layer sentinel");
+        let topology = crate::sight_obstacle::ProjectionAreaRef {
+            layer,
+            sector: sector_index,
+        };
+        let mut best: Option<(crate::sight_obstacle::SightObstacleIndex, f32)> = None;
+        for (oi, obs) in self.sight_obstacles(assets).iter_indexed() {
+            if obs.projection_area_ref() != Some(topology) {
+                continue;
+            }
+            if !obs.box_projection.contains_point(point) {
+                continue;
+            }
+            if !obs.contains_point_projection(point) {
+                continue;
+            }
+            let z_max = obs.box_3d_max[2];
+            let oi = crate::sight_obstacle::SightObstacleIndex::new(oi)
+                .expect("runtime obstacle index uses reserved value");
+            match best {
+                None => best = Some((oi, z_max)),
+                Some((_, prev_z)) if z_max > prev_z => best = Some((oi, z_max)),
+                _ => {}
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+
+    /// Resolve a 3D point from a motion-sector membership + map-space
+    /// `(x, y)`.  Returns `(x, y + z, z)` where `z` is the top-plane
+    /// altitude of the projection-area obstacle containing `(x, y)`
+    /// under the named motion sector.  Callers:
+    ///
+    /// - Purse scatter goal elevation (`engine/purse.rs::burst_purse`),
+    ///   replacing the naive "reuse source z" approximation.
+    /// - `RecordEnterGame` native (`natives/mod.rs`), to compute the
+    ///   spawn elevation matching the destination sector.
+    ///
+    /// `sector` is the motion-area `sector_number` (u16) that the point
+    /// belongs to; passing an unrelated sector returns `None` for the
+    /// projection-area lookup and the result falls back to `z = 0`.
+    /// We panic when the sector is present but flagged non-motion (per
+    /// the project "No fake data" rule); a missing sector yields
+    /// `z = 0` + `y + z = y`.
+    pub fn position_to_point_3d(
+        &self,
+        assets: &LevelAssets,
+        sector: Option<crate::position_interface::SectorHandle>,
+        layer: u16,
+        x: f32,
+        y: f32,
+    ) -> crate::coordinates::WorldPoint3D {
+        let z = match sector {
+            None => 0.0,
+            Some(handle) => {
+                let sn = crate::sector::SectorNumber::new(handle.get() as i16);
+                let grid_idx = self
+                    .world
+                    .fast_grid
+                    .level
+                    .sector_number_map
+                    .get(&sn)
+                    .copied();
+                let grid_sector =
+                    grid_idx.and_then(|gi| self.world.fast_grid.level.sectors.get(gi));
+                let is_motion = grid_sector.is_some_and(|gs| gs.sector_type.is_motion());
+                if grid_idx.is_some() && !is_motion {
+                    panic!(
+                        "position_to_point_3d: sector {} is not a motion sector",
+                        handle.get()
+                    );
+                }
+                let (projection_sector, projection_layer, projection_point) = if grid_sector
+                    .is_some_and(|sector| sector.sector_type.is_building())
+                {
+                    let sector = grid_sector.expect("building sector disappeared");
+                    let door = sector
+                            .gate_indices
+                            .iter()
+                            .filter_map(|index| {
+                                self.world
+                                    .fast_grid
+                                    .level
+                                    .door_projection_infos
+                                    .get(usize::from(*index))
+                            })
+                            .find(|door| {
+                                (door.point_in.x - x)
+                                    .abs()
+                                    .max((door.point_in.y - y).abs())
+                                    < 20.0
+                            })
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "position_to_point_3d: building sector {} has no door near ({x}, {y})",
+                                    handle.get()
+                                )
+                            });
+                    (
+                        crate::position_interface::SectorHandle::from_number(door.sector_out)
+                            .with_arena_index(door.sector_out_index.unwrap_or_else(|| {
+                                panic!("building exit door has no exact outside sector identity")
+                            })),
+                        door.layer_out,
+                        door.point_out,
+                    )
+                } else {
+                    (handle, layer, crate::coordinates::MapPoint::new(x, y))
+                };
+                match self.get_projection_area_index(
+                    assets,
+                    projection_sector,
+                    projection_layer,
+                    projection_point,
+                ) {
+                    Some(obs_idx) => self
+                        .sight_obstacles(assets)
+                        .get(usize::from(obs_idx))
+                        .map(|obs| {
+                            obs.compute_top_z_from_projection(
+                                projection_point.x,
+                                projection_point.y,
+                            )
+                        })
+                        .unwrap_or(0.0),
+                    None => 0.0,
+                }
+            }
+        };
+        crate::coordinates::WorldPoint3D { x, y: y + z, z }
+    }
+}

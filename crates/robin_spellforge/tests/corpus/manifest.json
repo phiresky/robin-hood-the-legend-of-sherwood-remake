@@ -1,0 +1,131 @@
+{
+  "source_page": "https://rhmods.com/missions/",
+  "archives": [
+    {
+      "file": "lib_2026_01_25.zip",
+      "url": "https://rhmods.com/content/uploads/lib_2026_01_25_.zip",
+      "sha256": "64884ed1b0f02cf0e08e0c03c71f0cf1b6da714cd5236f845c5649ff092ba18b"
+    },
+    {
+      "file": "escape_lincoln.zip",
+      "page_url": "https://rhmods.com/missions/escape-from-lincoln-i-first-mission-remake/",
+      "url": "https://rhmods.com/content/uploads/usercontent/4/67824426e9263.zip",
+      "sha256": "de2f7b2d7679a2fe7f928b2b78dd33ea3d27a73159817162f952b54e5a7a264a"
+    },
+    {
+      "file": "first_lincoln.zip",
+      "page_url": "https://rhmods.com/missions/first-lincoln-mission/",
+      "url": "https://rhmods.com/content/uploads/usercontent/5/67a1cb1f0f10a.zip",
+      "sha256": "69ab3383e43333236fa395e56657a908c19943df6a4af9fbb0c6e1c6e1b9506e"
+    },
+    {
+      "file": "first_lincoln_2025.zip",
+      "page_url": "https://rhmods.com/missions/first-lincoln-mission/",
+      "url": "https://rhmods.com/content/uploads/usercontent/5/67825fa941490.zip",
+      "sha256": "69ab3383e43333236fa395e56657a908c19943df6a4af9fbb0c6e1c6e1b9506e"
+    },
+    {
+      "file": "meet_spy_en.zip",
+      "page_url": "https://rhmods.com/missions/meet-the-spy/",
+      "url": "https://rhmods.com/content/uploads/usercontent/10/69d281ba78e90.zip",
+      "sha256": "6bb38a317fe075d126ca49964f6134b9c3fe58435c33a4120a4c1660c0afdd68"
+    },
+    {
+      "file": "meet_spy_de.zip",
+      "page_url": "https://rhmods.com/missions/meet-the-spy/",
+      "url": "https://rhmods.com/content/uploads/usercontent/10/69d28197570bf.zip",
+      "sha256": "142ec02481e8e328611db30e95e00e2a4970d3723d247de81c9f3630436f6b20"
+    },
+    {
+      "file": "rescue_allan.zip",
+      "page_url": "https://rhmods.com/missions/rescue-allan-the-dale/",
+      "url": "https://rhmods.com/content/uploads/usercontent/9/698dde0c88b6c.zip",
+      "sha256": "02ebbe3ac68abbe520b80b6234ee657993789e02dcbe9bae7fd84744281c8b92"
+    }
+  ],
+  "cases": [
+    {
+      "name": "escape_from_lincoln",
+      "mission_archive": "escape_lincoln.zip",
+      "rhm_entry": "H01_Lin_VL.rhm",
+      "shared_library_archive": "lib_2026_01_25.zip",
+      "expected_package_sha256": "24d3f71e88566de53c1202a02072db5e52ee3dc827cf84d0578e10d6f5241c72",
+      "expected_source_files": 8,
+      "expected_source_bytes": 126645
+    },
+    {
+      "name": "first_lincoln",
+      "mission_archive": "first_lincoln.zip",
+      "rhm_entry": "H01_Lin_VL/H01_Lin_VL.rhm",
+      "shared_library_archive": "lib_2026_01_25.zip",
+      "expected_package_sha256": "b5168c72d1bee3ab19dec2a17caea6493647c2604ab97ab92d21d38014d3bd3e",
+      "expected_source_files": 9,
+      "expected_source_bytes": 147922
+    },
+    {
+      "name": "first_lincoln_2025",
+      "mission_archive": "first_lincoln_2025.zip",
+      "rhm_entry": "H01_Lin_VL/H01_Lin_VL.rhm",
+      "shared_library_archive": "lib_2026_01_25.zip",
+      "expected_package_sha256": "b5168c72d1bee3ab19dec2a17caea6493647c2604ab97ab92d21d38014d3bd3e",
+      "expected_source_files": 9,
+      "expected_source_bytes": 147922
+    },
+    {
+      "name": "meet_the_spy",
+      "mission_archive": "meet_spy_en.zip",
+      "rhm_entry": "English/DATA/Levels/CR02_Yrk_VL.rhm",
+      "expected_package_sha256": "aca80468c56e1bd1a1b5c9d8699beeae70816fd8a953fc6e50f3a18f16033af8",
+      "expected_source_files": 8,
+      "expected_source_bytes": 149586
+    },
+    {
+      "name": "meet_the_spy_bundled_rescue",
+      "mission_archive": "meet_spy_en.zip",
+      "rhm_entry": "English/DATA/Levels/H06_Lin_VL.rhm",
+      "expected_package_sha256": "4eaeeec663d742e26d5206a352a352e1efddc92f2ac896d1bf5fd262864f449f",
+      "expected_source_files": 8,
+      "expected_source_bytes": 128931
+    },
+    {
+      "name": "meet_the_spy_german",
+      "mission_archive": "meet_spy_de.zip",
+      "rhm_entry": "German/DATA/Levels/CR02_Yrk_VL.rhm",
+      "expected_package_sha256": "aca80468c56e1bd1a1b5c9d8699beeae70816fd8a953fc6e50f3a18f16033af8",
+      "expected_source_files": 8,
+      "expected_source_bytes": 149586
+    },
+    {
+      "name": "meet_the_spy_german_bundled_rescue",
+      "mission_archive": "meet_spy_de.zip",
+      "rhm_entry": "German/DATA/Levels/H06_Lin_VL.rhm",
+      "expected_package_sha256": "4eaeeec663d742e26d5206a352a352e1efddc92f2ac896d1bf5fd262864f449f",
+      "expected_source_files": 8,
+      "expected_source_bytes": 128931
+    },
+    {
+      "name": "rescue_allan_english",
+      "mission_archive": "rescue_allan.zip",
+      "rhm_entry": "English/DATA/Levels/H06_Lin_VL.rhm",
+      "expected_package_sha256": "4eaeeec663d742e26d5206a352a352e1efddc92f2ac896d1bf5fd262864f449f",
+      "expected_source_files": 8,
+      "expected_source_bytes": 128931
+    },
+    {
+      "name": "rescue_allan_german",
+      "mission_archive": "rescue_allan.zip",
+      "rhm_entry": "German/DATA/Levels/H06_Lin_VL.rhm",
+      "expected_package_sha256": "4eaeeec663d742e26d5206a352a352e1efddc92f2ac896d1bf5fd262864f449f",
+      "expected_source_files": 8,
+      "expected_source_bytes": 128931
+    },
+    {
+      "name": "rescue_allan_polish",
+      "mission_archive": "rescue_allan.zip",
+      "rhm_entry": "Polish/DATA/Levels/H06_Lin_VL.rhm",
+      "expected_package_sha256": "4eaeeec663d742e26d5206a352a352e1efddc92f2ac896d1bf5fd262864f449f",
+      "expected_source_files": 8,
+      "expected_source_bytes": 128931
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+//! The private production views must actually carry the shared Engine borrow
+//! exercised by the public compiler-negative tests. This structural assertion
+//! avoids pretending that an inaccessible private type is a capability proof.
+
+use syn::visit::{self, Visit};
+
+fn readonly_reference_to(ty: &syn::Type, expected: &str) -> bool {
+    matches!(ty, syn::Type::Reference(reference)
+        if reference.mutability.is_none()
+        && matches!(reference.elem.as_ref(), syn::Type::Path(path)
+            if path.path.segments.last().is_some_and(|segment| segment.ident == expected)))
+}
+
+#[derive(Default)]
+struct BroadAuthority {
+    found: bool,
+}
+
+impl<'ast> Visit<'ast> for BroadAuthority {
+    fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+        self.found |= path.path.segments.iter().any(|segment| {
+            [
+                "Engine",
+                "EngineManager",
+                "MissionRuntime",
+                "MissionWorld",
+                "MissionFrame",
+                "MissionMutation",
+                "MissionIngress",
+                "MissionPreTickPhase",
+                "MissionAudioPhase",
+            ]
+            .iter()
+            .any(|name| segment.ident == name)
+        });
+        visit::visit_type_path(self, path);
+    }
+}
+
+fn violations(view: &syn::ItemStruct, presentation: bool) -> Vec<String> {
+    let mut problems = Vec::new();
+    let mut engine_count = 0;
+    let mut dev_count = 0;
+    for field in &view.fields {
+        let name = field.ident.as_ref().expect("phase views have named fields");
+        if name == "engine" {
+            engine_count += 1;
+            if !readonly_reference_to(&field.ty, "Engine") {
+                problems.push("engine must be &Engine".into());
+            }
+        } else {
+            let mut broad = BroadAuthority::default();
+            broad.visit_type(&field.ty);
+            if broad.found {
+                problems.push(format!("{name} exposes a broad simulation owner"));
+            }
+        }
+        if presentation && name == "dev" {
+            dev_count += 1;
+            if !readonly_reference_to(&field.ty, "DevState") {
+                problems.push("presentation dev must be &DevState".into());
+            }
+        }
+    }
+    if engine_count != 1 {
+        problems.push("view needs exactly one engine query borrow".into());
+    }
+    if presentation && dev_count != 1 {
+        problems.push("presentation needs exactly one developer query borrow".into());
+    }
+    problems
+}
+
+#[test]
+fn phase_guard_distinguishes_shared_queries_from_mutation_escapes() {
+    let good = syn::parse_str::<syn::ItemStruct>(
+        "struct View<'a> { engine: &'a Engine, host: &'a mut Host, dev: &'a DevState }",
+    )
+    .unwrap();
+    assert!(violations(&good, true).is_empty());
+    let mutable = syn::parse_str::<syn::ItemStruct>(
+        "struct View<'a> { engine: &'a mut Engine, dev: &'a mut DevState }",
+    )
+    .unwrap();
+    assert_eq!(violations(&mutable, true).len(), 2);
+    let wrapped = syn::parse_str::<syn::ItemStruct>(
+        "struct View<'a> { engine: &'a Engine, owner: Option<&'a mut EngineManager>, frame: &'a mut MissionFrame }",
+    ).unwrap();
+    assert_eq!(violations(&wrapped, false).len(), 2);
+}
+
+pub(super) fn assert_production_views_are_readonly() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/game_session");
+    for (file, name, presentation) in [
+        ("runtime.rs", "MissionInputPhase", false),
+        ("runtime.rs", "MissionPresentationPhase", true),
+        ("live_gameplay.rs", "LiveGameplayContext", false),
+    ] {
+        let source = std::fs::read_to_string(root.join(file)).expect("read phase definition");
+        let syntax = syn::parse_file(&source).expect("parse phase definition");
+        let view = syntax
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(view) if view.ident == name => Some(view),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing production phase {name}"));
+        assert!(
+            violations(view, presentation).is_empty(),
+            "{name}: {:?}",
+            violations(view, presentation)
+        );
+    }
+}

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 1,
+  "description": "Historical schema16 August 24 campaign. Hashes intentionally refer to the audited deployment, not current working-tree scripts.",
+  "profiles": {
+    "existing_corpora": {
+      "expected_prepass_script_sha": "d2b7fd1eb29a921655a3aec49617ca5c48e70cbf990f94593490ba17631a074b",
+      "expected_final_script_sha": "229146eebcf0e3b09bf2987d2af17917e3addaa813697a905893ce935549c6b9",
+      "expected_sweep_script_sha": "e7a1c769a18b76a69c3473f68caa38a6b741c002e826bff97c106e7fdf746cfb"
+    },
+    "onward_handoff": {
+      "expected_controller_sha": "1b7d16f416a19fdcfce68feecce524deb0e0c97ef66331d852cffd292736efa9",
+      "expected_helper_sha": "79c0d5c9d770812be5ae541ca12d017f21dbb2b9c30e480bde56cfb90a8d27a7",
+      "expected_capture_sha": "0e99a6a935335761eef740faee097708282e7bd4584c0d1275f07beb539442d6",
+      "expected_prepass_sha": "d2b7fd1eb29a921655a3aec49617ca5c48e70cbf990f94593490ba17631a074b",
+      "expected_final_sha": "229146eebcf0e3b09bf2987d2af17917e3addaa813697a905893ce935549c6b9",
+      "expected_sweep_sha": "e7a1c769a18b76a69c3473f68caa38a6b741c002e826bff97c106e7fdf746cfb"
+    }
+  }
+}

@@ -1,0 +1,24 @@
+[package]
+name = "robin_ranked_verification"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_ranked_verification"
+
+[dependencies]
+bitcode.workspace = true
+bytemuck.workspace = true
+robin_assets.workspace = true
+robin_engine.workspace = true
+robin_replay_format.workspace = true
+robin_run_protocol.workspace = true
+robin_util.workspace = true
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

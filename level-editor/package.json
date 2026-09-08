@@ -1,0 +1,13 @@
+{
+  "name": "robin-level-editor-workspace",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter app dev",
+    "build": "pnpm --filter app build",
+    "test": "pnpm --filter pipeline exec tsx --test ../shared/src/*.test.ts ../app/src/*.test.ts ../app/tests/*.test.mjs",
+    "test:browser": "node app/tests/run-lifecycle.mjs",
+    "build:browser": "pnpm --filter app exec vite build --config vite.lifecycle.config.ts",
+    "serve:browser": "pnpm --filter app exec vite preview --config vite.lifecycle.config.ts --host 127.0.0.1 --strictPort",
+    "verify": "pnpm test && pnpm --filter pipeline test && pnpm --filter app typecheck && pnpm --filter pipeline typecheck && pnpm build"
+  }
+}

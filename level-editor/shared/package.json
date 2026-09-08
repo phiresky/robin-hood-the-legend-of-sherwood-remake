@@ -1,0 +1,12 @@
+{
+  "name": "@rle/shared",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "polygon-clipping": "^0.15.7"
+  }
+}

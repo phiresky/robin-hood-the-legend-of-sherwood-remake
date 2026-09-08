@@ -1,0 +1,4235 @@
+{
+  "version": 1,
+  "preset": "legendary",
+  "missions": [
+    {
+      "mission": "Emb01_FoA_EC",
+      "authored_soldier_count": 27,
+      "selected_proposal_ids": [
+        "P1",
+        "P3",
+        "P4"
+      ],
+      "additions": [
+        {
+          "source_index": 15,
+          "position_x": 937,
+          "position_y": 280,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 15,
+          "position_x": 909,
+          "position_y": 246,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 15,
+          "position_x": 857,
+          "position_y": 332,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 15,
+          "position_x": 830,
+          "position_y": 297,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 15,
+          "position_x": 995,
+          "position_y": 141,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 15,
+          "position_x": 965,
+          "position_y": 109,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Emb02_FoC_MK",
+      "authored_soldier_count": 27,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3"
+      ],
+      "additions": [
+        {
+          "source_index": 10,
+          "position_x": 1203,
+          "position_y": 832,
+          "layer": 0,
+          "direction": 14,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 10,
+          "position_x": 1172,
+          "position_y": 848,
+          "layer": 0,
+          "direction": 14,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 2,
+          "position_x": 135,
+          "position_y": 311,
+          "layer": 1,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 0,
+          "position_x": 393,
+          "position_y": 311,
+          "layer": 1,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 24,
+          "position_x": 1236,
+          "position_y": 868,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 24,
+          "position_x": 1245,
+          "position_y": 825,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 9,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Emb03_FoC_MP",
+      "authored_soldier_count": 34,
+      "selected_proposal_ids": [
+        "P1",
+        "P2"
+      ],
+      "additions": [
+        {
+          "source_index": 8,
+          "position_x": 491,
+          "position_y": 275,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 5,
+          "position_x": 149,
+          "position_y": 299,
+          "layer": 1,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 23,
+          "position_x": 77,
+          "position_y": 730,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 23,
+          "position_x": 96,
+          "position_y": 769,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Emb04_FoA_MP",
+      "authored_soldier_count": 30,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 14,
+          "position_x": 1164,
+          "position_y": 195,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1127,
+          "position_y": 171,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Emb05_FoB_MP",
+      "authored_soldier_count": 38,
+      "selected_proposal_ids": [
+        "P1",
+        "P2"
+      ],
+      "additions": [
+        {
+          "source_index": 32,
+          "position_x": 620,
+          "position_y": 727,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 32,
+          "position_x": 634,
+          "position_y": 685,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 32,
+          "position_x": 675,
+          "position_y": 676,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 32,
+          "position_x": 687,
+          "position_y": 633,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Emb06_FoC_EC",
+      "authored_soldier_count": 33,
+      "selected_proposal_ids": [
+        "P1",
+        "P2"
+      ],
+      "additions": [
+        {
+          "source_index": 9,
+          "position_x": 238,
+          "position_y": 263,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 11,
+          "position_x": 490,
+          "position_y": 263,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 30,
+          "position_x": 1298,
+          "position_y": 191,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 30,
+          "position_x": 1277,
+          "position_y": 152,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Emb08_FoA_JMS",
+      "authored_soldier_count": 18,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3"
+      ],
+      "additions": [
+        {
+          "source_index": 3,
+          "position_x": 711,
+          "position_y": 433,
+          "layer": 0,
+          "direction": 12,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 3,
+          "position_x": 711,
+          "position_y": 402,
+          "layer": 0,
+          "direction": 12,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 6,
+          "position_x": 1156,
+          "position_y": 491,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 6,
+          "position_x": 1194,
+          "position_y": 469,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 4,
+          "position_x": 184,
+          "position_y": 421,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 4,
+          "position_x": 199,
+          "position_y": 462,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "EmbTut_FoC_EC",
+      "authored_soldier_count": 22,
+      "selected_proposal_ids": [
+        "P1",
+        "P2"
+      ],
+      "additions": [
+        {
+          "source_index": 3,
+          "position_x": 238,
+          "position_y": 263,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 5,
+          "position_x": 490,
+          "position_y": 263,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 17,
+          "position_x": 77,
+          "position_y": 730,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 17,
+          "position_x": 96,
+          "position_y": 769,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H01_Lin_VL",
+      "authored_soldier_count": 38,
+      "selected_proposal_ids": [
+        "P3",
+        "P4"
+      ],
+      "additions": [
+        {
+          "source_index": 27,
+          "position_x": 2616,
+          "position_y": 1929,
+          "layer": 0,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 27,
+          "position_x": 2641,
+          "position_y": 1965,
+          "layer": 0,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 29,
+          "position_x": 129,
+          "position_y": 1888,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 29,
+          "position_x": 142,
+          "position_y": 1846,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H02_Not_EC",
+      "authored_soldier_count": 111,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P6",
+        "P8",
+        "P10",
+        "P11",
+        "P12",
+        "P14",
+        "P17",
+        "P18"
+      ],
+      "additions": [
+        {
+          "source_index": 88,
+          "position_x": 2136,
+          "position_y": 2008,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 86,
+          "position_x": 1596,
+          "position_y": 2098,
+          "layer": 2,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 38,
+          "position_x": 1014,
+          "position_y": 779,
+          "layer": 4,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 38,
+          "position_x": 1158,
+          "position_y": 791,
+          "layer": 4,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 44,
+          "position_x": 231,
+          "position_y": 1227,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 42,
+          "position_x": 753,
+          "position_y": 1371,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 81,
+          "position_x": 735,
+          "position_y": 1727,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 81,
+          "position_x": 807,
+          "position_y": 1871,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 30,
+          "position_x": 1332,
+          "position_y": 391,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 30,
+          "position_x": 1355,
+          "position_y": 382,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 51,
+          "position_x": 979,
+          "position_y": 1554,
+          "layer": 1,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 51,
+          "position_x": 997,
+          "position_y": 1536,
+          "layer": 1,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 64,
+          "position_x": 726,
+          "position_y": 2904,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 64,
+          "position_x": 726,
+          "position_y": 2880,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 68,
+          "position_x": 1361,
+          "position_y": 2370,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 68,
+          "position_x": 1374,
+          "position_y": 2340,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 72,
+          "position_x": 1374,
+          "position_y": 3075,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 72,
+          "position_x": 1374,
+          "position_y": 3051,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 79,
+          "position_x": 1463,
+          "position_y": 2107,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 79,
+          "position_x": 1453,
+          "position_y": 2085,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 104,
+          "position_x": 1823,
+          "position_y": 1649,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 104,
+          "position_x": 1809,
+          "position_y": 1615,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 71,
+          "position_x": 1601,
+          "position_y": 2501,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 71,
+          "position_x": 1601,
+          "position_y": 2457,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H03_Der_MK",
+      "authored_soldier_count": 96,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P8",
+        "P9",
+        "P14",
+        "P18"
+      ],
+      "additions": [
+        {
+          "source_index": 19,
+          "position_x": 710,
+          "position_y": 2044,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 19,
+          "position_x": 708,
+          "position_y": 2014,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 80,
+          "position_x": 1257,
+          "position_y": 1098,
+          "layer": 2,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 79,
+          "position_x": 1155,
+          "position_y": 1098,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 27,
+          "position_x": 419,
+          "position_y": 2112,
+          "layer": 2,
+          "direction": 12,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 27,
+          "position_x": 371,
+          "position_y": 1536,
+          "layer": 2,
+          "direction": 12,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 60,
+          "position_x": 742,
+          "position_y": 873,
+          "layer": 2,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 60,
+          "position_x": 759,
+          "position_y": 856,
+          "layer": 2,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 53,
+          "position_x": 764,
+          "position_y": 1135,
+          "layer": 1,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 53,
+          "position_x": 755,
+          "position_y": 1113,
+          "layer": 1,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 50,
+          "position_x": 112,
+          "position_y": 1101,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 50,
+          "position_x": 112,
+          "position_y": 1077,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 63,
+          "position_x": 1026,
+          "position_y": 262,
+          "layer": 11,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 63,
+          "position_x": 1017,
+          "position_y": 240,
+          "layer": 11,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 28,
+          "position_x": 671,
+          "position_y": 1817,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 28,
+          "position_x": 714,
+          "position_y": 1807,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 18,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H04_Lei_VL",
+      "authored_soldier_count": 56,
+      "selected_proposal_ids": [
+        "P1",
+        "P3",
+        "P8",
+        "P12"
+      ],
+      "additions": [
+        {
+          "source_index": 5,
+          "position_x": 647,
+          "position_y": 1606,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 5,
+          "position_x": 621,
+          "position_y": 1634,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 12,
+          "position_x": 1480,
+          "position_y": 1872,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 13,
+          "position_x": 1391,
+          "position_y": 1862,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1383,
+          "position_y": 1898,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 15,
+          "position_x": 1430,
+          "position_y": 1864,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 16,
+          "position_x": 1414,
+          "position_y": 1896,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 51,
+          "position_x": 591,
+          "position_y": 980,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 51,
+          "position_x": 602,
+          "position_y": 954,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 2,
+          "position_x": 1448,
+          "position_y": 961,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 2,
+          "position_x": 1439,
+          "position_y": 1004,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 4,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": [
+        {
+          "addition_indices": [
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        }
+      ]
+    },
+    {
+      "mission": "H05_Lin_EC",
+      "authored_soldier_count": 91,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P11",
+        "P13",
+        "P14",
+        "P18",
+        "P19",
+        "P20"
+      ],
+      "additions": [
+        {
+          "source_index": 32,
+          "position_x": 1527,
+          "position_y": 1618,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 32,
+          "position_x": 1275,
+          "position_y": 1588,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 60,
+          "position_x": 710,
+          "position_y": 1540,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 60,
+          "position_x": 506,
+          "position_y": 1570,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 88,
+          "position_x": 1845,
+          "position_y": 539,
+          "layer": 2,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 52,
+          "position_x": 2247,
+          "position_y": 389,
+          "layer": 2,
+          "direction": 14,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 66,
+          "position_x": 1490,
+          "position_y": 529,
+          "layer": 6,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 66,
+          "position_x": 1628,
+          "position_y": 523,
+          "layer": 6,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 35,
+          "position_x": 1386,
+          "position_y": 1190,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 63,
+          "position_x": 1222,
+          "position_y": 1055,
+          "layer": 6,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 0,
+          "position_x": 1637,
+          "position_y": 649,
+          "layer": 6,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 0,
+          "position_x": 1607,
+          "position_y": 649,
+          "layer": 6,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 18,
+          "position_x": 436,
+          "position_y": 1566,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 18,
+          "position_x": 453,
+          "position_y": 1549,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 16,
+          "position_x": 1124,
+          "position_y": 839,
+          "layer": 6,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P13"
+        },
+        {
+          "source_index": 16,
+          "position_x": 1141,
+          "position_y": 822,
+          "layer": 6,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P13"
+        },
+        {
+          "source_index": 24,
+          "position_x": 2034,
+          "position_y": 849,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 24,
+          "position_x": 2047,
+          "position_y": 815,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 41,
+          "position_x": 727,
+          "position_y": 2147,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 41,
+          "position_x": 719,
+          "position_y": 2104,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 19,
+          "position_x": 658,
+          "position_y": 1463,
+          "layer": 0,
+          "direction": 14,
+          "path_behavior": "stationary",
+          "proposal_id": "P19"
+        },
+        {
+          "source_index": 19,
+          "position_x": 625,
+          "position_y": 1491,
+          "layer": 0,
+          "direction": 14,
+          "path_behavior": "stationary",
+          "proposal_id": "P19"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1455,
+          "position_y": 934,
+          "layer": 6,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1413,
+          "position_y": 922,
+          "layer": 6,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 31,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H07_Not_MK",
+      "authored_soldier_count": 108,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P7",
+        "P8",
+        "P10",
+        "P18",
+        "P19",
+        "P20"
+      ],
+      "additions": [
+        {
+          "source_index": 52,
+          "position_x": 1402,
+          "position_y": 1618,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 52,
+          "position_x": 1402,
+          "position_y": 1660,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 74,
+          "position_x": 1344,
+          "position_y": 859,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 74,
+          "position_x": 1290,
+          "position_y": 853,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 3,
+          "position_x": 595,
+          "position_y": 831,
+          "layer": 6,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 3,
+          "position_x": 612,
+          "position_y": 814,
+          "layer": 6,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 92,
+          "position_x": 1351,
+          "position_y": 2267,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 92,
+          "position_x": 1317,
+          "position_y": 2267,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 70,
+          "position_x": 1955,
+          "position_y": 845,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 70,
+          "position_x": 1973,
+          "position_y": 827,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 66,
+          "position_x": 1651,
+          "position_y": 1023,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 66,
+          "position_x": 1610,
+          "position_y": 1040,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 93,
+          "position_x": 2005,
+          "position_y": 3456,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P19"
+        },
+        {
+          "source_index": 93,
+          "position_x": 2041,
+          "position_y": 3431,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P19"
+        },
+        {
+          "source_index": 94,
+          "position_x": 2208,
+          "position_y": 2335,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 94,
+          "position_x": 2183,
+          "position_y": 2299,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 51,
+          "addition_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "officer_index": 73,
+          "addition_indices": [
+            2,
+            3
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H09_Not_VL",
+      "authored_soldier_count": 117,
+      "selected_proposal_ids": [
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P8",
+        "P14",
+        "P16",
+        "P17",
+        "P20",
+        "P21"
+      ],
+      "additions": [
+        {
+          "source_index": 56,
+          "position_x": 2092,
+          "position_y": 922,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 56,
+          "position_x": 2086,
+          "position_y": 963,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 82,
+          "position_x": 518,
+          "position_y": 1826,
+          "layer": 4,
+          "direction": 12,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 82,
+          "position_x": 517,
+          "position_y": 1854,
+          "layer": 4,
+          "direction": 12,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 99,
+          "position_x": 1457,
+          "position_y": 3100,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "inherit",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 99,
+          "position_x": 1475,
+          "position_y": 3130,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "inherit",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 103,
+          "position_x": 170,
+          "position_y": 2370,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 103,
+          "position_x": 177,
+          "position_y": 2343,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 38,
+          "position_x": 1981,
+          "position_y": 270,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 39,
+          "position_x": 1918,
+          "position_y": 247,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 40,
+          "position_x": 1918,
+          "position_y": 271,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 41,
+          "position_x": 1938,
+          "position_y": 296,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 42,
+          "position_x": 1958,
+          "position_y": 233,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 36,
+          "position_x": 1031,
+          "position_y": 572,
+          "layer": 2,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 24,
+          "position_x": 987,
+          "position_y": 1558,
+          "layer": 1,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 24,
+          "position_x": 1005,
+          "position_y": 1540,
+          "layer": 1,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 32,
+          "position_x": 1343,
+          "position_y": 439,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P16"
+        },
+        {
+          "source_index": 32,
+          "position_x": 1366,
+          "position_y": 430,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P16"
+        },
+        {
+          "source_index": 63,
+          "position_x": 1665,
+          "position_y": 1648,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 63,
+          "position_x": 1678,
+          "position_y": 1617,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 68,
+          "position_x": 2145,
+          "position_y": 1184,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 68,
+          "position_x": 2169,
+          "position_y": 1161,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 71,
+          "position_x": 1297,
+          "position_y": 2190,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P21"
+        },
+        {
+          "source_index": 71,
+          "position_x": 1325,
+          "position_y": 2178,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P21"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 54,
+          "addition_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "officer_index": 81,
+          "addition_indices": [
+            2,
+            3
+          ]
+        },
+        {
+          "officer_index": 97,
+          "addition_indices": [
+            4,
+            5
+          ]
+        },
+        {
+          "officer_index": 100,
+          "addition_indices": [
+            6,
+            7
+          ]
+        }
+      ],
+      "new_patrol_groups": [
+        {
+          "addition_indices": [
+            8,
+            9,
+            10,
+            11,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "mission": "H10_Yor_VL",
+      "authored_soldier_count": 106,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P9",
+        "P10",
+        "P15",
+        "P16",
+        "P17"
+      ],
+      "additions": [
+        {
+          "source_index": 39,
+          "position_x": 2416,
+          "position_y": 1289,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 39,
+          "position_x": 2425,
+          "position_y": 1259,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 61,
+          "position_x": 374,
+          "position_y": 1258,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 61,
+          "position_x": 284,
+          "position_y": 1324,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 84,
+          "position_x": 1118,
+          "position_y": 1282,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 84,
+          "position_x": 1088,
+          "position_y": 1299,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 100,
+          "position_x": 877,
+          "position_y": 1133,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "inherit",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 100,
+          "position_x": 793,
+          "position_y": 1061,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "inherit",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 10,
+          "position_x": 1964,
+          "position_y": 1099,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 11,
+          "position_x": 2360,
+          "position_y": 925,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 5,
+          "position_x": 2500,
+          "position_y": 128,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 5,
+          "position_x": 2284,
+          "position_y": 8,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 19,
+          "position_x": 2449,
+          "position_y": 1405,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 18,
+          "position_x": 1971,
+          "position_y": 2158,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 18,
+          "position_x": 2307,
+          "position_y": 1790,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 19,
+          "position_x": 2401,
+          "position_y": 1638,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 19,
+          "position_x": 2889,
+          "position_y": 1230,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 0,
+          "position_x": 2729,
+          "position_y": 591,
+          "layer": 4,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        },
+        {
+          "source_index": 0,
+          "position_x": 2751,
+          "position_y": 581,
+          "layer": 4,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        },
+        {
+          "source_index": 28,
+          "position_x": 2617,
+          "position_y": 829,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P16"
+        },
+        {
+          "source_index": 28,
+          "position_x": 2602,
+          "position_y": 793,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P16"
+        },
+        {
+          "source_index": 53,
+          "position_x": 629,
+          "position_y": 722,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 53,
+          "position_x": 605,
+          "position_y": 699,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 40,
+          "addition_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "officer_index": 60,
+          "addition_indices": [
+            2,
+            3
+          ]
+        },
+        {
+          "officer_index": 83,
+          "addition_indices": [
+            4,
+            5
+          ]
+        },
+        {
+          "officer_index": 99,
+          "addition_indices": [
+            6,
+            7
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "H12_Not_MP",
+      "authored_soldier_count": 159,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P9",
+        "P10",
+        "P11",
+        "P12",
+        "P14",
+        "P17"
+      ],
+      "additions": [
+        {
+          "source_index": 3,
+          "position_x": 1614,
+          "position_y": 842,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 3,
+          "position_x": 1593,
+          "position_y": 820,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 25,
+          "position_x": 1840,
+          "position_y": 2080,
+          "layer": 2,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 26,
+          "position_x": 2170,
+          "position_y": 1996,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 29,
+          "position_x": 835,
+          "position_y": 1927,
+          "layer": 2,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 28,
+          "position_x": 1087,
+          "position_y": 2071,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 90,
+          "position_x": 962,
+          "position_y": 1284,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 90,
+          "position_x": 1106,
+          "position_y": 1272,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 89,
+          "position_x": 430,
+          "position_y": 1375,
+          "layer": 4,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 87,
+          "position_x": 742,
+          "position_y": 1381,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 97,
+          "position_x": 921,
+          "position_y": 729,
+          "layer": 6,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 97,
+          "position_x": 945,
+          "position_y": 669,
+          "layer": 6,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 42,
+          "position_x": 1380,
+          "position_y": 459,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 42,
+          "position_x": 1352,
+          "position_y": 459,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 54,
+          "position_x": 360,
+          "position_y": 1367,
+          "layer": 2,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 54,
+          "position_x": 337,
+          "position_y": 1358,
+          "layer": 2,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 83,
+          "position_x": 396,
+          "position_y": 2456,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 83,
+          "position_x": 396,
+          "position_y": 2420,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 101,
+          "position_x": 1582,
+          "position_y": 3170,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 101,
+          "position_x": 1610,
+          "position_y": 3159,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 108,
+          "position_x": 213,
+          "position_y": 3106,
+          "layer": 0,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 108,
+          "position_x": 181,
+          "position_y": 3093,
+          "layer": 0,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 117,
+          "position_x": 1927,
+          "position_y": 3356,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 117,
+          "position_x": 1948,
+          "position_y": 3336,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 2,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "S01_Not_VL",
+      "authored_soldier_count": 88,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P9",
+        "P10",
+        "P19",
+        "P20",
+        "P21"
+      ],
+      "additions": [
+        {
+          "source_index": 18,
+          "position_x": 1540,
+          "position_y": 667,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 18,
+          "position_x": 1582,
+          "position_y": 751,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 22,
+          "position_x": 1715,
+          "position_y": 1192,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 22,
+          "position_x": 1716,
+          "position_y": 1214,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 44,
+          "position_x": 926,
+          "position_y": 1133,
+          "layer": 2,
+          "direction": 11,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 44,
+          "position_x": 948,
+          "position_y": 1165,
+          "layer": 2,
+          "direction": 11,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 51,
+          "position_x": 638,
+          "position_y": 2380,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 51,
+          "position_x": 635,
+          "position_y": 2350,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 78,
+          "position_x": 1853,
+          "position_y": 2501,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 78,
+          "position_x": 1866,
+          "position_y": 2528,
+          "layer": 0,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 85,
+          "position_x": 1879,
+          "position_y": 3332,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 85,
+          "position_x": 1902,
+          "position_y": 3298,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 41,
+          "position_x": 1894,
+          "position_y": 2070,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 41,
+          "position_x": 2054,
+          "position_y": 2046,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 1,
+          "position_x": 962,
+          "position_y": 1871,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 1,
+          "position_x": 971,
+          "position_y": 1849,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1369,
+          "position_y": 502,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1392,
+          "position_y": 493,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 75,
+          "position_x": 1536,
+          "position_y": 2720,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P19"
+        },
+        {
+          "source_index": 75,
+          "position_x": 1510,
+          "position_y": 2694,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P19"
+        },
+        {
+          "source_index": 12,
+          "position_x": 1820,
+          "position_y": 603,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 12,
+          "position_x": 1778,
+          "position_y": 591,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 44,
+          "position_x": 765,
+          "position_y": 1219,
+          "layer": 2,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P21"
+        },
+        {
+          "source_index": 44,
+          "position_x": 750,
+          "position_y": 1177,
+          "layer": 2,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P21"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 17,
+          "addition_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "officer_index": 21,
+          "addition_indices": [
+            2,
+            3
+          ]
+        },
+        {
+          "officer_index": 43,
+          "addition_indices": [
+            4,
+            5
+          ]
+        },
+        {
+          "officer_index": 50,
+          "addition_indices": [
+            6,
+            7
+          ]
+        },
+        {
+          "officer_index": 77,
+          "addition_indices": [
+            8,
+            9
+          ]
+        },
+        {
+          "officer_index": 87,
+          "addition_indices": [
+            10,
+            11
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "S02_Lei_MP",
+      "authored_soldier_count": 74,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P7",
+        "P8",
+        "P9",
+        "P10",
+        "P12",
+        "P17",
+        "P18",
+        "P20"
+      ],
+      "additions": [
+        {
+          "source_index": 7,
+          "position_x": 1775,
+          "position_y": 1764,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 7,
+          "position_x": 1799,
+          "position_y": 1790,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 13,
+          "position_x": 2248,
+          "position_y": 1399,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 13,
+          "position_x": 2290,
+          "position_y": 1416,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 29,
+          "position_x": 1065,
+          "position_y": 1159,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 29,
+          "position_x": 1023,
+          "position_y": 1201,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 55,
+          "position_x": 1328,
+          "position_y": 1150,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 55,
+          "position_x": 1328,
+          "position_y": 1176,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 70,
+          "position_x": 913,
+          "position_y": 960,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 70,
+          "position_x": 912,
+          "position_y": 938,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 22,
+          "position_x": 1735,
+          "position_y": 690,
+          "layer": 4,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 21,
+          "position_x": 1693,
+          "position_y": 636,
+          "layer": 4,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 2,
+          "position_x": 1200,
+          "position_y": 1402,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 3,
+          "position_x": 687,
+          "position_y": 1232,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 36,
+          "position_x": 496,
+          "position_y": 591,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 36,
+          "position_x": 792,
+          "position_y": 711,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 6,
+          "position_x": 1445,
+          "position_y": 869,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 6,
+          "position_x": 1428,
+          "position_y": 852,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P12"
+        },
+        {
+          "source_index": 44,
+          "position_x": 2791,
+          "position_y": 795,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 44,
+          "position_x": 2779,
+          "position_y": 765,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 17,
+          "position_x": 2439,
+          "position_y": 415,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 17,
+          "position_x": 2473,
+          "position_y": 387,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P18"
+        },
+        {
+          "source_index": 39,
+          "position_x": 699,
+          "position_y": 474,
+          "layer": 2,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        },
+        {
+          "source_index": 39,
+          "position_x": 669,
+          "position_y": 442,
+          "layer": 2,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P20"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 9,
+          "addition_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "officer_index": 12,
+          "addition_indices": [
+            2,
+            3
+          ]
+        },
+        {
+          "officer_index": 28,
+          "addition_indices": [
+            4,
+            5
+          ]
+        },
+        {
+          "officer_index": 59,
+          "addition_indices": [
+            6,
+            7
+          ]
+        },
+        {
+          "officer_index": 69,
+          "addition_indices": [
+            8,
+            9
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "S03_FoB_MP",
+      "authored_soldier_count": 60,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P6"
+      ],
+      "additions": [
+        {
+          "source_index": 51,
+          "position_x": 653,
+          "position_y": 247,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 51,
+          "position_x": 627,
+          "position_y": 219,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 35,
+          "position_x": 282,
+          "position_y": 1056,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 35,
+          "position_x": 282,
+          "position_y": 1032,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 15,
+          "position_x": 1003,
+          "position_y": 983,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 15,
+          "position_x": 1030,
+          "position_y": 955,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 29,
+          "position_x": 955,
+          "position_y": 477,
+          "layer": 0,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 29,
+          "position_x": 989,
+          "position_y": 505,
+          "layer": 0,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 50,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "S04_Der_EC",
+      "authored_soldier_count": 86,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P10",
+        "P14",
+        "P15"
+      ],
+      "additions": [
+        {
+          "source_index": 50,
+          "position_x": 1111,
+          "position_y": 1741,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 53,
+          "position_x": 1015,
+          "position_y": 2155,
+          "layer": 2,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 71,
+          "position_x": 869,
+          "position_y": 1128,
+          "layer": 2,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 71,
+          "position_x": 1259,
+          "position_y": 1128,
+          "layer": 2,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 54,
+          "position_x": 435,
+          "position_y": 1680,
+          "layer": 2,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 54,
+          "position_x": 547,
+          "position_y": 2240,
+          "layer": 2,
+          "direction": 11,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 74,
+          "position_x": 627,
+          "position_y": 1349,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 74,
+          "position_x": 636,
+          "position_y": 1326,
+          "layer": 4,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 2,
+          "position_x": 1322,
+          "position_y": 1419,
+          "layer": 0,
+          "direction": 14,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 2,
+          "position_x": 1286,
+          "position_y": 1445,
+          "layer": 0,
+          "direction": 14,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 49,
+          "position_x": 776,
+          "position_y": 2176,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        },
+        {
+          "source_index": 49,
+          "position_x": 817,
+          "position_y": 2161,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "S05_Yrk_EC",
+      "authored_soldier_count": 129,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P10",
+        "P11",
+        "P14",
+        "P15",
+        "P17"
+      ],
+      "additions": [
+        {
+          "source_index": 124,
+          "position_x": 2102,
+          "position_y": 1225,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 123,
+          "position_x": 2462,
+          "position_y": 1255,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 5,
+          "position_x": 2500,
+          "position_y": 128,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 5,
+          "position_x": 2284,
+          "position_y": 8,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 20,
+          "position_x": 2410,
+          "position_y": 2267,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 21,
+          "position_x": 2938,
+          "position_y": 1595,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 18,
+          "position_x": 1971,
+          "position_y": 2158,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 18,
+          "position_x": 2307,
+          "position_y": 1790,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 19,
+          "position_x": 2561,
+          "position_y": 1414,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 19,
+          "position_x": 3025,
+          "position_y": 1030,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 11,
+          "position_x": 2505,
+          "position_y": 1117,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 10,
+          "position_x": 1865,
+          "position_y": 1133,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 13,
+          "position_x": 583,
+          "position_y": 1932,
+          "layer": 4,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 12,
+          "position_x": 47,
+          "position_y": 1956,
+          "layer": 4,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 77,
+          "position_x": 1301,
+          "position_y": 1009,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 77,
+          "position_x": 1321,
+          "position_y": 989,
+          "layer": 0,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P10"
+        },
+        {
+          "source_index": 92,
+          "position_x": 311,
+          "position_y": 1836,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 92,
+          "position_x": 275,
+          "position_y": 1836,
+          "layer": 0,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 110,
+          "position_x": 1976,
+          "position_y": 1445,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 110,
+          "position_x": 1976,
+          "position_y": 1419,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P14"
+        },
+        {
+          "source_index": 67,
+          "position_x": 1800,
+          "position_y": 801,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        },
+        {
+          "source_index": 67,
+          "position_x": 1800,
+          "position_y": 771,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        },
+        {
+          "source_index": 77,
+          "position_x": 1219,
+          "position_y": 1383,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        },
+        {
+          "source_index": 77,
+          "position_x": 1200,
+          "position_y": 1423,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P17"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Str01_Lin_EC",
+      "authored_soldier_count": 134,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P11",
+        "P15"
+      ],
+      "additions": [
+        {
+          "source_index": 128,
+          "position_x": 1672,
+          "position_y": 397,
+          "layer": 8,
+          "direction": 7,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 128,
+          "position_x": 1498,
+          "position_y": 295,
+          "layer": 8,
+          "direction": 7,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 60,
+          "position_x": 868,
+          "position_y": 1176,
+          "layer": 2,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 60,
+          "position_x": 832,
+          "position_y": 1170,
+          "layer": 2,
+          "direction": 4,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 54,
+          "position_x": 2004,
+          "position_y": 1516,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 52,
+          "position_x": 2304,
+          "position_y": 1480,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 57,
+          "position_x": 1359,
+          "position_y": 1724,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 55,
+          "position_x": 1803,
+          "position_y": 1688,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 119,
+          "position_x": 1283,
+          "position_y": 1628,
+          "layer": 4,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 119,
+          "position_x": 1331,
+          "position_y": 1664,
+          "layer": 4,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 50,
+          "position_x": 824,
+          "position_y": 1266,
+          "layer": 4,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 51,
+          "position_x": 1076,
+          "position_y": 1140,
+          "layer": 4,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 23,
+          "position_x": 1104,
+          "position_y": 1336,
+          "layer": 4,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 19,
+          "position_x": 1098,
+          "position_y": 1372,
+          "layer": 4,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 19,
+          "position_x": 1386,
+          "position_y": 1190,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 24,
+          "position_x": 546,
+          "position_y": 1386,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 24,
+          "position_x": 563,
+          "position_y": 1369,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 25,
+          "position_x": 448,
+          "position_y": 1604,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        },
+        {
+          "source_index": 25,
+          "position_x": 448,
+          "position_y": 1580,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P15"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 123,
+          "addition_indices": [
+            0,
+            1
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Str02_Der_MP",
+      "authored_soldier_count": 130,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P9",
+        "P11"
+      ],
+      "additions": [
+        {
+          "source_index": 75,
+          "position_x": 425,
+          "position_y": 1666,
+          "layer": 2,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 35,
+          "position_x": 377,
+          "position_y": 1936,
+          "layer": 2,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 32,
+          "position_x": 1147,
+          "position_y": 1656,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 40,
+          "position_x": 1051,
+          "position_y": 1944,
+          "layer": 2,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 3,
+          "position_x": 266,
+          "position_y": 966,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 4,
+          "position_x": 374,
+          "position_y": 1314,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 18,
+          "position_x": 913,
+          "position_y": 1080,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 18,
+          "position_x": 1255,
+          "position_y": 1092,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 22,
+          "position_x": 761,
+          "position_y": 1368,
+          "layer": 4,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 22,
+          "position_x": 737,
+          "position_y": 1326,
+          "layer": 4,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 8,
+          "position_x": 1407,
+          "position_y": 851,
+          "layer": 6,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 9,
+          "position_x": 1563,
+          "position_y": 959,
+          "layer": 6,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 16,
+          "position_x": 1737,
+          "position_y": 1283,
+          "layer": 2,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 16,
+          "position_x": 1537,
+          "position_y": 1571,
+          "layer": 2,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 127,
+          "position_x": 237,
+          "position_y": 557,
+          "layer": 6,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 124,
+          "position_x": 829,
+          "position_y": 517,
+          "layer": 6,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 19,
+          "position_x": 947,
+          "position_y": 1831,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 19,
+          "position_x": 932,
+          "position_y": 1795,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P9"
+        },
+        {
+          "source_index": 100,
+          "position_x": 825,
+          "position_y": 2332,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 100,
+          "position_x": 799,
+          "position_y": 2332,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Str03_Yor_MK",
+      "authored_soldier_count": 184,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3",
+        "P4",
+        "P5",
+        "P6",
+        "P7",
+        "P8",
+        "P11",
+        "P22",
+        "P26",
+        "P28"
+      ],
+      "additions": [
+        {
+          "source_index": 77,
+          "position_x": 443,
+          "position_y": 1330,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 77,
+          "position_x": 299,
+          "position_y": 1222,
+          "layer": 0,
+          "direction": 8,
+          "path_behavior": "inherit",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 89,
+          "position_x": 1228,
+          "position_y": 1853,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 89,
+          "position_x": 1168,
+          "position_y": 1925,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "inherit",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 138,
+          "position_x": 1538,
+          "position_y": 1637,
+          "layer": 0,
+          "direction": 12,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 138,
+          "position_x": 1622,
+          "position_y": 1559,
+          "layer": 0,
+          "direction": 12,
+          "path_behavior": "inherit",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 120,
+          "position_x": 1930,
+          "position_y": 1051,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 121,
+          "position_x": 1924,
+          "position_y": 1111,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P4"
+        },
+        {
+          "source_index": 182,
+          "position_x": 2228,
+          "position_y": 1266,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 182,
+          "position_x": 2812,
+          "position_y": 1338,
+          "layer": 0,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P5"
+        },
+        {
+          "source_index": 172,
+          "position_x": 2548,
+          "position_y": 192,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 172,
+          "position_x": 2364,
+          "position_y": 8,
+          "layer": 0,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P6"
+        },
+        {
+          "source_index": 33,
+          "position_x": 3034,
+          "position_y": 1531,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 32,
+          "position_x": 2394,
+          "position_y": 2283,
+          "layer": 2,
+          "direction": 7,
+          "path_behavior": "stationary",
+          "proposal_id": "P7"
+        },
+        {
+          "source_index": 67,
+          "position_x": 81,
+          "position_y": 570,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 67,
+          "position_x": 585,
+          "position_y": 370,
+          "layer": 2,
+          "direction": 9,
+          "path_behavior": "stationary",
+          "proposal_id": "P8"
+        },
+        {
+          "source_index": 60,
+          "position_x": 620,
+          "position_y": 1440,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 60,
+          "position_x": 630,
+          "position_y": 1418,
+          "layer": 0,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P11"
+        },
+        {
+          "source_index": 128,
+          "position_x": 1128,
+          "position_y": 450,
+          "layer": 2,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P22"
+        },
+        {
+          "source_index": 128,
+          "position_x": 1128,
+          "position_y": 414,
+          "layer": 2,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P22"
+        },
+        {
+          "source_index": 153,
+          "position_x": 2664,
+          "position_y": 803,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P26"
+        },
+        {
+          "source_index": 153,
+          "position_x": 2649,
+          "position_y": 767,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P26"
+        },
+        {
+          "source_index": 154,
+          "position_x": 2334,
+          "position_y": 947,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P28"
+        },
+        {
+          "source_index": 154,
+          "position_x": 2362,
+          "position_y": 920,
+          "layer": 2,
+          "direction": 10,
+          "path_behavior": "stationary",
+          "proposal_id": "P28"
+        }
+      ],
+      "existing_officer_links": [
+        {
+          "officer_index": 76,
+          "addition_indices": [
+            0,
+            1
+          ]
+        },
+        {
+          "officer_index": 88,
+          "addition_indices": [
+            2,
+            3
+          ]
+        },
+        {
+          "officer_index": 136,
+          "addition_indices": [
+            4,
+            5
+          ]
+        }
+      ],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac01_FoA_MP",
+      "authored_soldier_count": 45,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 17,
+          "position_x": 832,
+          "position_y": 322,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 17,
+          "position_x": 804,
+          "position_y": 288,
+          "layer": 0,
+          "direction": 2,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac02_FoB_EC",
+      "authored_soldier_count": 77,
+      "selected_proposal_ids": [
+        "P1",
+        "P2"
+      ],
+      "additions": [
+        {
+          "source_index": 48,
+          "position_x": 1191,
+          "position_y": 824,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 48,
+          "position_x": 1179,
+          "position_y": 866,
+          "layer": 0,
+          "direction": 13,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 49,
+          "position_x": 1108,
+          "position_y": 514,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 49,
+          "position_x": 1069,
+          "position_y": 535,
+          "layer": 0,
+          "direction": 15,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac03_FoC_MP",
+      "authored_soldier_count": 58,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 8,
+          "position_x": 491,
+          "position_y": 275,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 5,
+          "position_x": 149,
+          "position_y": 299,
+          "layer": 1,
+          "direction": 6,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac05_FoC_MP",
+      "authored_soldier_count": 15,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 0,
+          "position_x": 604,
+          "position_y": 209,
+          "layer": 1,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 0,
+          "position_x": 140,
+          "position_y": 385,
+          "layer": 1,
+          "direction": 0,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac06_FoB_EC",
+      "authored_soldier_count": 47,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 17,
+          "position_x": 1470,
+          "position_y": 502,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 17,
+          "position_x": 1432,
+          "position_y": 479,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac17_FoC_EC",
+      "authored_soldier_count": 40,
+      "selected_proposal_ids": [
+        "P1",
+        "P2",
+        "P3"
+      ],
+      "additions": [
+        {
+          "source_index": 9,
+          "position_x": 238,
+          "position_y": 263,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 11,
+          "position_x": 490,
+          "position_y": 263,
+          "layer": 1,
+          "direction": 8,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 35,
+          "position_x": 1320,
+          "position_y": 194,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 35,
+          "position_x": 1299,
+          "position_y": 155,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 35,
+          "position_x": 1295,
+          "position_y": 222,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        },
+        {
+          "source_index": 35,
+          "position_x": 1275,
+          "position_y": 182,
+          "layer": 0,
+          "direction": 3,
+          "path_behavior": "stationary",
+          "proposal_id": "P3"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac18_FoA_EC",
+      "authored_soldier_count": 30,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 14,
+          "position_x": 1164,
+          "position_y": 195,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 14,
+          "position_x": 1127,
+          "position_y": 171,
+          "layer": 0,
+          "direction": 1,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac19_FoB_EC",
+      "authored_soldier_count": 32,
+      "selected_proposal_ids": [
+        "P1",
+        "P2"
+      ],
+      "additions": [
+        {
+          "source_index": 26,
+          "position_x": 620,
+          "position_y": 727,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 26,
+          "position_x": 634,
+          "position_y": 685,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 26,
+          "position_x": 675,
+          "position_y": 676,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        },
+        {
+          "source_index": 26,
+          "position_x": 687,
+          "position_y": 633,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P2"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    },
+    {
+      "mission": "Tac21_FoB_EC",
+      "authored_soldier_count": 28,
+      "selected_proposal_ids": [
+        "P1"
+      ],
+      "additions": [
+        {
+          "source_index": 23,
+          "position_x": 1664,
+          "position_y": 1028,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        },
+        {
+          "source_index": 23,
+          "position_x": 1676,
+          "position_y": 986,
+          "layer": 0,
+          "direction": 5,
+          "path_behavior": "stationary",
+          "proposal_id": "P1"
+        }
+      ],
+      "existing_officer_links": [],
+      "new_patrol_groups": []
+    }
+  ]
+}

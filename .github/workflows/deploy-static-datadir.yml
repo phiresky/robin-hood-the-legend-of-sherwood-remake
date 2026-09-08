@@ -1,0 +1,145 @@
+name: Deploy admitted Demo datadir corpus
+
+on:
+  workflow_dispatch:
+    inputs:
+      datadir_bundle_run_id:
+        description: Actions run containing datadir-dist plus its inventory and authority
+        required: true
+        type: string
+      datadir_bundle_name:
+        description: Exact approved standalone datadir artifact name
+        required: true
+        type: string
+      datadir_authority_sha256:
+        description: Approved SHA-256 of canonical datadir-authority.json
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: static-datadir-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate immutable artifact authority inputs
+        env:
+          BUNDLE_RUN_ID: ${{ inputs.datadir_bundle_run_id }}
+          BUNDLE_NAME: ${{ inputs.datadir_bundle_name }}
+          AUTHORITY_SHA256: ${{ inputs.datadir_authority_sha256 }}
+        run: |
+          [[ "${BUNDLE_RUN_ID}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${BUNDLE_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+          [[ "${AUTHORITY_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+      - working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: ${{ inputs.datadir_bundle_name }}
+          path: target/datadir-input
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.datadir_bundle_run_id }}
+      - name: Materialize and verify only the standalone Demo corpus
+        env:
+          AUTHORITY_SHA256: ${{ inputs.datadir_authority_sha256 }}
+        run: |
+          test ! -e wasm-www/datadir-dist
+          mv target/datadir-input/datadir-dist wasm-www/datadir-dist
+          mv target/datadir-input/datadir-inventory.json target/datadir-inventory.json
+          mv target/datadir-input/datadir-authority.json target/datadir-authority.json
+          test -z "$(find target/datadir-input -mindepth 1 -print -quit)"
+          node wasm-www/scripts/datadir-release-authority.mjs verify \
+            wasm-www/datadir-dist target/datadir-inventory.json target/datadir-authority.json \
+            "${AUTHORITY_SHA256}"
+          pnpm --dir wasm-www verify:datadir-wrangler
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: robinhood-verified-datadir-${{ github.run_id }}
+          path: |
+            wasm-www/datadir-dist
+            target/datadir-inventory.json
+            target/datadir-authority.json
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: cloudflare-production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+      - working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: robinhood-verified-datadir-${{ github.run_id }}
+          path: .
+      - name: Re-verify after approval and deploy without attaching routes
+        id: datadir
+        env:
+          AUTHORITY_SHA256: ${{ inputs.datadir_authority_sha256 }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-datadir-deploy.ndjson
+        run: |
+          node wasm-www/scripts/datadir-release-authority.mjs verify \
+            wasm-www/datadir-dist target/datadir-inventory.json target/datadir-authority.json \
+            "${AUTHORITY_SHA256}"
+          pnpm --dir wasm-www verify:datadir-wrangler
+          pnpm --dir wasm-www exec wrangler deploy --config deploy/wrangler-datadir.json
+          version_id="$(node wasm-www/scripts/extract-wrangler-deploy-version.mjs \
+            "${WRANGLER_OUTPUT_FILE_PATH}" robinhood-datadir-assets)"
+          echo "version_id=${version_id}" >> "${GITHUB_OUTPUT}"
+      - name: Prove current deployment and author its canonical receipt
+        env:
+          ROBINHOOD_DATADIR_VERSION_ID: ${{ steps.datadir.outputs.version_id }}
+        run: |
+          node wasm-www/scripts/sync-cloudflare-routes.mjs --prove-datadir
+          node wasm-www/scripts/datadir-release-authority.mjs receipt \
+            target/datadir-authority.json "${ROBINHOOD_DATADIR_VERSION_ID}" \
+            target/datadir-deployment.json
+          node wasm-www/scripts/datadir-release-authority.mjs verify-receipt \
+            target/datadir-authority.json target/datadir-deployment.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: robinhood-datadir-deployment-${{ github.run_id }}
+          path: |
+            target/datadir-inventory.json
+            target/datadir-authority.json
+            target/datadir-deployment.json
+          if-no-files-found: error
+          retention-days: 90

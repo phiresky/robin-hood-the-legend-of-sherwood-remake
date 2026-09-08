@@ -1,0 +1,172 @@
+{
+  "title": "All Heroes — Circle Free-for-All",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1500,
+    1700
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [],
+  "pcs": [
+    {
+      "position": [
+        1590,
+        1700
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 12,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1573,
+        1744
+      ],
+      "profile": 1,
+      "allegiance": 3,
+      "direction": 14,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1528,
+        1771
+      ],
+      "profile": 2,
+      "allegiance": 4,
+      "direction": 15,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1472,
+        1771
+      ],
+      "profile": 3,
+      "allegiance": 5,
+      "direction": 1,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1427,
+        1744
+      ],
+      "profile": 4,
+      "allegiance": 6,
+      "direction": 2,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1410,
+        1700
+      ],
+      "profile": 5,
+      "allegiance": 7,
+      "direction": 4,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1427,
+        1656
+      ],
+      "profile": 6,
+      "allegiance": 8,
+      "direction": 6,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1472,
+        1629
+      ],
+      "profile": 7,
+      "allegiance": 9,
+      "direction": 7,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1528,
+        1629
+      ],
+      "profile": 8,
+      "allegiance": 10,
+      "direction": 9,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1573,
+        1656
+      ],
+      "profile": 9,
+      "allegiance": 11,
+      "direction": 10,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    }
+  ]
+}

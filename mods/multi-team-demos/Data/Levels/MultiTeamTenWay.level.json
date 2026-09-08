@@ -1,0 +1,122 @@
+{
+  "title": "Ten-way Allegiance Arena",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1152,
+    1760
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        1312,
+        1760
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 12
+    },
+    {
+      "position": [
+        1281,
+        1854
+      ],
+      "profile": 1,
+      "allegiance": 3,
+      "direction": 14
+    },
+    {
+      "position": [
+        1201,
+        1912
+      ],
+      "profile": 2,
+      "allegiance": 4,
+      "direction": 15
+    },
+    {
+      "position": [
+        1103,
+        1912
+      ],
+      "profile": 3,
+      "allegiance": 5,
+      "direction": 1
+    },
+    {
+      "position": [
+        1023,
+        1854
+      ],
+      "profile": 4,
+      "allegiance": 6,
+      "direction": 2
+    },
+    {
+      "position": [
+        992,
+        1760
+      ],
+      "profile": 5,
+      "allegiance": 7,
+      "direction": 4
+    },
+    {
+      "position": [
+        1023,
+        1666
+      ],
+      "profile": 6,
+      "allegiance": 8,
+      "direction": 6
+    },
+    {
+      "position": [
+        1103,
+        1608
+      ],
+      "profile": 7,
+      "allegiance": 9,
+      "direction": 7
+    },
+    {
+      "position": [
+        1201,
+        1608
+      ],
+      "profile": 8,
+      "allegiance": 10,
+      "direction": 9
+    },
+    {
+      "position": [
+        1281,
+        1666
+      ],
+      "profile": 9,
+      "allegiance": 11,
+      "direction": 10
+    }
+  ],
+  "pcs": []
+}

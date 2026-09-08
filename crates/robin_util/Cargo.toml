@@ -1,0 +1,25 @@
+[package]
+name = "robin_util"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_util"
+
+[dependencies]
+geo.workspace = true
+fastrand.workspace = true
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+serde = { workspace = true, features = ["derive", "rc"] }
+thiserror.workspace = true
+nonmax.workspace = true
+enum-map.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,53 @@
+[Unit]
+Description=Robin Hood verified leaderboard API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/bin/robin-highscores-server --config /home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/config/highscores-server.toml
+EnvironmentFile=/home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/config/api.env
+WorkingDirectory=/home/robinhood/.local/share/robin-highscores
+Restart=on-failure
+RestartSec=5s
+# Startup reconciles and collects the complete replay and campaign stores
+# before binding its listener and announcing READY=1.
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+UMask=0077
+TasksMax=1024
+LimitNOFILE=16384
+MemoryMax=3G
+MemorySwapMax=0
+NoNewPrivileges=yes
+PrivateUsers=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@
+ReadOnlyPaths=/home/robinhood/.local/share/robin-highscores/api-secrets
+ReadOnlyPaths=/home/robinhood/.local/share/robin-highscores/status
+ReadOnlyPaths=/home/robinhood/.local/share/robin-highscores/runtime-fence
+ReadWritePaths=/home/robinhood/.local/share/robin-highscores/database
+ReadWritePaths=/home/robinhood/.local/share/robin-highscores/replays
+ReadWritePaths=/home/robinhood/.local/share/robin-highscores/campaign-states
+InaccessiblePaths=/home/robinhood/.local/share/robin-highscores/backups
+InaccessiblePaths=/home/robinhood/.local/share/robin-highscores/raw-content
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=robin-highscores.target

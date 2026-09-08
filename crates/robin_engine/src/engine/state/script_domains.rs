@@ -1,0 +1,241 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub(crate) struct ZoneState {
+    pub(crate) scripts: Vec<crate::sector::ScriptSectorData>,
+}
+
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub(crate) struct BuildingState {
+    pub(crate) occupants: Vec<Vec<i32>>,
+    pub(crate) arrow_reserves: Vec<bool>,
+    pub(crate) actor_building: BTreeMap<i32, i32>,
+    pub(crate) active: Vec<bool>,
+    pub(crate) gates: Vec<Vec<i32>>,
+}
+
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub(crate) struct InteractableState {
+    pub(crate) doors: Vec<crate::gate::Door>,
+    pub(crate) patches: Vec<crate::patch::Patch>,
+}
+
+/// Explicit save-owned projection; process-local state is reconstructed here,
+/// independently of raw rollback cloning and the native wire codec.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedInteractableState {
+    doors: Vec<crate::gate::Door>,
+
+    patches: Vec<crate::patch::PersistedPatch>,
+}
+
+impl PersistedInteractableState {
+    pub(crate) fn capture(value: &InteractableState) -> Self {
+        let InteractableState {
+            doors: _,
+            patches: _,
+        } = value;
+        Self {
+            doors: value.doors.clone(),
+            patches: value
+                .patches
+                .iter()
+                .map(crate::patch::PersistedPatch::capture)
+                .collect(),
+        }
+    }
+
+    pub(crate) fn into_runtime(self) -> InteractableState {
+        InteractableState {
+            doors: self.doors,
+            patches: self
+                .patches
+                .into_iter()
+                .map(crate::patch::PersistedPatch::into_runtime)
+                .collect(),
+        }
+    }
+}
+
+/// Deterministic mission UI controls and the script-requested victory latch.
+///
+/// These values are queried or mutated by both ordinary engine systems and
+/// script natives, so the native adapter only leases this single owner during
+/// a callback. Presentation changes derived from the values remain effects.
+#[derive(
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub(crate) struct MissionUiState {
+    pub(crate) outline_display: bool,
+    pub(crate) force_check: bool,
+    pub(crate) men_to_blazon_conversion_mode: bool,
+    /// Exact serialized game flow/widget latches. They remain simulation
+    /// state here; rendering and widget mutation are host-side consequences.
+    pub(crate) campaign_map: bool,
+    pub(crate) campaign_map_displayed: bool,
+    pub(crate) game_post_initialized: bool,
+    pub(crate) start_mission_disabled_temp: bool,
+    pub(crate) quit_mission_disabled_temp: bool,
+    pub(crate) start_mission_enabled: bool,
+    pub(crate) quit_mission_enabled: bool,
+    pub(crate) blinking_blazons: u32,
+    pub(crate) blink_expire_frame: u32,
+}
+
+impl Default for MissionUiState {
+    fn default() -> Self {
+        Self {
+            outline_display: false,
+            force_check: false,
+            men_to_blazon_conversion_mode: false,
+            campaign_map: false,
+            campaign_map_displayed: false,
+            game_post_initialized: false,
+            start_mission_disabled_temp: false,
+            quit_mission_disabled_temp: false,
+            start_mission_enabled: false,
+            quit_mission_enabled: false,
+            blinking_blazons: 0,
+            blink_expire_frame: u32::MAX,
+        }
+    }
+}
+
+impl MissionUiState {
+    const BLINK_TIMEOUT: u32 = 50;
+
+    pub(crate) fn set_blinking_blazons(&mut self, count: u32, frame_counter: u32) {
+        self.blinking_blazons = count;
+        self.blink_expire_frame = if count == 0 {
+            u32::MAX
+        } else {
+            frame_counter.saturating_add(Self::BLINK_TIMEOUT)
+        };
+    }
+
+    pub(crate) fn active_blinking_blazons(&self, frame_counter: u32) -> u32 {
+        if frame_counter < self.blink_expire_frame {
+            self.blinking_blazons
+        } else {
+            0
+        }
+    }
+}
+
+/// Deterministic scroll state shared by engine systems and script natives.
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub(crate) struct ScrollState {
+    pub(crate) status: BTreeMap<i32, i32>,
+    pub(crate) attachments: BTreeMap<i32, i32>,
+    pub(crate) attachment_dirty: BTreeSet<i32>,
+}
+
+/// Engine-owned deterministic state shared with mission-script natives.
+///
+/// `EngineInner` lends each native resume a typed mutable borrow. It is never
+/// copied or parked in `ScriptEffects`.
+#[derive(
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+/// Canonical deterministic state shared by the engine and script natives.
+///
+/// The fields remain engine-internal; the public type lets external native
+/// adapters hold and pass the typed capability without exposing domain
+/// implementation details.
+#[doc(hidden)]
+pub struct ScriptDomains {
+    pub(crate) buildings: BuildingState,
+    pub(crate) interactables: InteractableState,
+    pub(crate) mission_ui: MissionUiState,
+    pub(crate) scrolls: ScrollState,
+    pub(crate) zones: ZoneState,
+}
+
+/// Explicit save-owned projection; process-local state is reconstructed here,
+/// independently of raw rollback cloning and the native wire codec.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedScriptDomains {
+    buildings: BuildingState,
+
+    interactables: PersistedInteractableState,
+
+    mission_ui: MissionUiState,
+
+    scrolls: ScrollState,
+
+    zones: ZoneState,
+}
+
+impl PersistedScriptDomains {
+    pub(crate) fn capture(value: &ScriptDomains) -> Self {
+        let ScriptDomains {
+            buildings: _,
+            interactables: _,
+            mission_ui: _,
+            scrolls: _,
+            zones: _,
+        } = value;
+        Self {
+            buildings: value.buildings.clone(),
+            interactables: PersistedInteractableState::capture(&value.interactables),
+            mission_ui: value.mission_ui.clone(),
+            scrolls: value.scrolls.clone(),
+            zones: value.zones.clone(),
+        }
+    }
+
+    pub(crate) fn into_runtime(self) -> ScriptDomains {
+        ScriptDomains {
+            buildings: self.buildings,
+            interactables: self.interactables.into_runtime(),
+            mission_ui: self.mission_ui,
+            scrolls: self.scrolls,
+            zones: self.zones,
+        }
+    }
+}

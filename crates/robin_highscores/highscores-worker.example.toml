@@ -1,0 +1,45 @@
+server_config = "/home/robinhood/.local/opt/robin-highscores/releases/0000000000000000000000000000000000000000/config/highscores-server.toml"
+worker_id = "worker-01"
+campaign_state_directory = "/home/robinhood/.local/share/robin-highscores/campaign-states"
+verifier_job_config_catalog = "/home/robinhood/.local/opt/robin-highscores/releases/0000000000000000000000000000000000000000/private/verifier/operator-config/0000000000000000000000000000000000000000000000000000000000000000"
+verifier_job_config_catalog_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+demo_raw_content_manifest = "/home/robinhood/.local/opt/robin-highscores/releases/0000000000000000000000000000000000000000/private/source-tree-manifests-v2/0000000000000000000000000000000000000000000000000000000000000000.json"
+full_raw_content_manifest = "/home/robinhood/.local/opt/robin-highscores/releases/0000000000000000000000000000000000000000/private/source-tree-manifests-v2/0000000000000000000000000000000000000000000000000000000000000000.json"
+# The operator config and every content_catalog_root must resolve below the
+# same exact commit-named release tree shown above. Replace every all-zero
+# commit/digest placeholder from the validated release bundle before use.
+# Raw bytes are not bundled. Their selected publication manifests are bundled,
+# and startup hashes the exact separately installed Demo and Full roots at
+# /home/robinhood/.local/share/robin-highscores/raw-content/{demo,full}.
+
+poll_interval_ms = 500
+lease_seconds = 210
+retry_seconds = 30
+max_verifier_attempts = 3
+
+[verifier_launcher]
+bwrap_program = "/usr/bin/bwrap"
+bwrap_sha256 = "85580dd52ed366ece8844e90fa75ac7c4de8802963071344e123221fb9f6f11e"
+prlimit_program = "/usr/bin/prlimit"
+prlimit_sha256 = "663634070079386b7401ccc9fb92522ec3ece10f07f84a83fe96ec3ecb0bc74b"
+verifier_program = "/home/robinhood/.local/opt/robin-highscores/releases/0000000000000000000000000000000000000000/bin/robin-replay-verifier"
+verifier_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+wall_timeout_seconds = 120
+cpu_limit_seconds = 120
+address_space_limit_bytes = 1073741824
+process_limit = 32
+open_files_limit = 128
+file_size_limit_bytes = 134217728
+max_request_bytes = 1048576
+
+[limits]
+max_input_bytes = 16777216
+max_compressed_bytes = 16777216
+max_decompressed_bytes = 67108864
+max_base64_payload_bytes = 16777216
+max_campaign_bytes = 67108864
+max_frames = 2000000
+max_version_bytes = 256
+max_mission_id_bytes = 128
+max_metadata_records = 4096
+max_entries_per_frame = 1024

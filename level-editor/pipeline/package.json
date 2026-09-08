@@ -1,0 +1,40 @@
+{
+  "name": "pipeline",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "extract": "tsx src/extract.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
+    "detect": "tsx src/detect.ts",
+    "reconstruct": "tsx src/reconstruct.ts",
+    "scene": "tsx src/scene.ts",
+    "sweep": "tsx src/sweep.ts",
+    "contact-sheet": "tsx src/contact-sheet.ts",
+    "pose-diag": "tsx src/pose-diag.ts",
+    "merge-detections": "tsx src/merge-detections.ts",
+    "compare-backends": "tsx src/compare-backends.ts",
+    "glb-preview": "tsx src/glb-preview.ts",
+    "volumes": "tsx src/volumes.ts",
+    "bake": "tsx src/bake.ts"
+  },
+  "dependencies": {
+    "@fal-ai/client": "^1.10.1",
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "@rle/shared": "workspace:*",
+    "dotenv": "^17.2.1",
+    "earcut": "^3.2.3",
+    "gl-matrix": "^3.4.4",
+    "polygon-clipping": "^0.15.7",
+    "sharp": "^0.34.3"
+  },
+  "devDependencies": {
+    "@types/earcut": "^3.0.0",
+    "@types/node": "^24.3.0",
+    "tsx": "^4.20.4",
+    "typescript": "^5.9.2"
+  }
+}

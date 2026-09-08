@@ -1,0 +1,1 @@
+{"distribution":{"byte_length":52654,"media_type":"application/gzip","sha256":"6123f525ba36df42e57b67027637a78591e712a9f6a025ffd3d74298fa1c3f4c"},"distribution_url":"https://static.crates.io/crates/wasm-bindgen-cli/wasm-bindgen-cli-0.2.127.crate","executable_relative_path":"bin/wasm-bindgen","role":"wasm_bindgen_cli","schema_version":1,"version":"0.2.127"}

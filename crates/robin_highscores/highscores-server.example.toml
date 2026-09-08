@@ -1,0 +1,67 @@
+bind = "127.0.0.1:8787"
+database_path = "/home/robinhood/.local/share/robin-highscores/database/highscores.sqlite3"
+runtime_fence_directory = "/home/robinhood/.local/share/robin-highscores/runtime-fence"
+replay_directory = "/home/robinhood/.local/share/robin-highscores/replays"
+campaign_state_directory = "/home/robinhood/.local/share/robin-highscores/campaign-states"
+cursor_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/cursor-hmac.key"
+competition_run_grant_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/competition-run-grant.key"
+run_preflight_grant_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/run-preflight-grant.key"
+backup_authority_hmac_secret_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/backup-authority-hmac.key"
+# Optional. When configured, operator routes exist and require the exact
+# printable 32..128-byte token from this private regular file.
+moderation_bearer_token_path = "/home/robinhood/.local/share/robin-highscores/api-secrets/moderation-bearer.token"
+moderation_operator_id = "production-operator"
+
+# Production site and API are same-origin at https://robinhood.phiresky.xyz,
+# so production does not enable CORS. Add an exact loopback development origin
+# only when intentionally running a separate local frontend dev server.
+allowed_origins = []
+# The canonical VPS deployment trusts only its loopback nginx peer. A trusted
+# peer must send exactly one canonical X-Forwarded-For address; missing,
+# malformed, or chained values fail closed. nginx must derive it from
+# Cloudflare's CF-Connecting-IP after the host firewall excludes direct clients.
+trusted_proxy_cidrs = ["127.0.0.1/32", "::1/128"]
+challenge_requests_per_minute_per_ip = 120
+abuse_reports_per_hour_per_ip = 10
+abuse_reports_per_hour_per_key = 25
+abuse_reports_per_hour_per_target = 10
+
+max_replay_bytes = 16777216
+max_campaign_bytes = 16777216
+max_metadata_bytes = 65536
+max_pending_submissions = 10000
+max_concurrent_requests = 256
+max_concurrent_uploads = 32
+upload_timeout_seconds = 120
+# Exact signed retries may resume a crash-abandoned upload within this bounded
+# durable window. It must exceed upload_timeout_seconds by at least 30 seconds.
+upload_reservation_ttl_seconds = 1800
+max_page_size = 100
+challenge_ttl_seconds = 600
+run_preflight_ttl_seconds = 86400
+database_busy_timeout_ms = 5000
+tombstone_retention_days = 30
+rejected_replay_retention_hours = 24
+orphan_replay_retention_hours = 24
+minimum_storage_free_bytes = 1073741824
+# The backup job atomically installs the most recent authenticated readiness envelope here.
+# Configure both fields or neither; readiness fails closed when it is stale.
+backup_manifest_path = "/home/robinhood/.local/share/robin-highscores/status/backup-status.json"
+release_manifest_path = "/home/robinhood/.local/opt/robin-highscores/releases/SOURCE_COMMIT/vps-release-manifest-v2.json"
+maximum_backup_age_hours = 32
+
+# Empty is intentionally fail-closed. Populate these from canonical immutable
+# operator manifests; never point a public deployment at mutable development
+# data or bundle retail files.
+# When profiles are enabled, set manifest_directory to an absolute directory
+# containing builds/, content-manifests/, campaign-content-manifests/,
+# rules-configs/, immutable ruleset-manifests/, mutable published-rulesets/,
+# competitions/, and policies/ digest-named canonical JSON documents.
+# Active current-schema profiles require public BuildManifestV2 documents in
+# builds/. Projection authorities, exporters, receipts, and source trees are
+# private operator inputs and must never be placed below this served catalog.
+# Every canonical_campaign_state_path in a production profile must be the
+# digest-named file below one exact immutable release:
+# /home/robinhood/.local/opt/robin-highscores/releases/<40-lowercase-hex-source-commit>/private/campaign-states/<sha256>
+admission_profiles = []
+competitions = []

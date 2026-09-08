@@ -1,0 +1,2098 @@
+//! Falling-net capture sweep, per-victim release, and per-tick driver.
+//!
+//! - [`EngineInner::apply_net_falling_effect`]: sweeps every active human
+//!   inside `SQUARE_RADIUS_NET_CAPTURE` of the net's landing point,
+//!   classifies them as VIP/Rider/Stuteley → "crumple" (Classic) or
+//!   "skip" (selective immunity), and launches a `Command::ReceiveNet`
+//!   damage element per ordinary victim.
+//!
+//! - [`EngineInner::unapply_net_effect`]: per-victim, decrement the
+//!   stuck-under-nets counter, snap `StuckUnderNet` posture back to
+//!   `Lying`, abort lower-priority sequences, queue a wait, dispatch
+//!   `EventNetAway` (NPCs only), and remove the victim from every
+//!   NPC's `Body` detectable list, including its own.
+//!
+//! - [`EngineInner::tick_nets`]: per-frame driver. Advances the net's
+//!   ballistic trajectory (using the same waypoint loop as
+//!   `tick_arrows`) and fires `apply_net_falling_effect` on landing.
+//!   Release happens when a PC (or soldier) picks the net up via
+//!   `Command::Take` — see the `TakingNet` animation-Done handler in
+//!   [`engine/animation.rs`] and the `ObjectType::Net` pickup branch
+//!   in [`engine/tick.rs`] that calls `unapply_net_effect` + despawns
+//!   the net.
+
+use super::*;
+use crate::coordinates::MapPoint;
+use crate::coordinates::WorldVec3D;
+use crate::element::{Command, Entity, EntityId};
+
+// ─── Constants ───────────────────────────────────────────────────────
+
+/// Square radius (in isometric units) within which humans are caught
+/// by a falling net.
+const SQUARE_RADIUS_NET_CAPTURE: f32 = 1600.0;
+
+/// Vertical distance below which a falling net starts firing the
+/// capture sweep every frame, while still descending.
+const NET_DESCENT_APPLY_THRESHOLD: f32 = 60.0;
+
+#[cfg(test)]
+thread_local! {
+    static NET_SPRITE_PROGRESSIONS: std::cell::RefCell<Option<Vec<(EntityId, crate::sprite::FrameProgression)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn observe_net_sprite_progression(net: EntityId, progression: crate::sprite::FrameProgression) {
+    NET_SPRITE_PROGRESSIONS.with(|trace| {
+        if let Some(trace) = trace.borrow_mut().as_mut() {
+            trace.push((net, progression));
+        }
+    });
+}
+
+#[cfg(test)]
+fn capture_net_sprite_progressions<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<(EntityId, crate::sprite::FrameProgression)>) {
+    NET_SPRITE_PROGRESSIONS.with(|trace| {
+        assert!(
+            trace.borrow().is_none(),
+            "net sprite capture is not re-entrant"
+        );
+        *trace.borrow_mut() = Some(Vec::new());
+    });
+    let result = f();
+    let trace = NET_SPRITE_PROGRESSIONS.with(|trace| {
+        trace
+            .borrow_mut()
+            .take()
+            .expect("net sprite capture must remain active")
+    });
+    (result, trace)
+}
+
+/// Cosine threshold for the landing-slope crumple test in
+/// [`EngineInner::detect_initial_net_crumple`]: any obstacle with a
+/// top-plane normal tilted more than ~30° from vertical (cos ≈ 0.87)
+/// is too steep, so the net crumples on landing.
+const NET_LANDING_NORMAL_Z_THRESHOLD: f32 = 0.87;
+
+/// Test-radius for the 8-point reach-ring crumple check.
+const TEST_RADIUS_NET_CRUMPLED: f32 = 40.0;
+
+impl EngineInner {
+    // ════════════════════════════════════════════════════════════════
+    //  Falling-net capture sweep
+    // ════════════════════════════════════════════════════════════════
+
+    /// Sweep every active human within [`SQUARE_RADIUS_NET_CAPTURE`]
+    /// of the net's landing point and either capture them or crumple
+    /// the net on a VIP/Rider/Stuteley.
+    ///
+    /// ## Behaviour summary
+    ///
+    /// 1. If the net is already crumpled, return immediately.
+    /// 2. Iterate every `Entity::*` that `is_active() && is_human()`.
+    /// 3. For each, test 3D distance to the net's `projectile.end`
+    ///    landing point with Y stretched by [`INVERSE_ASPECT_RATIO`].
+    /// 4. Classify in-range humans:
+    ///    - **Soldier**: VIP from profile, Rider from `SoldierData`.
+    ///    - **Civilian**: VIP from `CivilianType::Vip` profile flag.
+    ///    - **PC**: "Stuteley" = has `Action::Net` slot (only Stuteley
+    ///      has it in the shipping campaigns).
+    /// 5. On a crumple-class victim:
+    ///    - If no victims yet: set `crumpled = true`, clear list, stop.
+    ///    - Otherwise: stop immediately ("new arrivants won't be
+    ///      caught"), keeping the existing victims.
+    /// 6. For every other victim not already in the list: append, call
+    ///    [`EngineInner::quit_swordfight`], and launch a `Command::ReceiveNet`
+    ///    damage element targeting them.
+    ///
+    /// The `stuck_under_nets_counter` is incremented **eagerly** here.
+    /// The posture snap to `StuckUnderNet`, `DetectableType::Body`
+    /// broadcast, and `EventNet` AI stimulus run on the next frame
+    /// inside [`EngineInner::apply_net`] (`engine/melee.rs`) when the
+    /// queued `Command::ReceiveNet` damage element dispatches.
+    pub(crate) fn apply_net_falling_effect(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
+        // ── Snapshot the net's state up front ──────────────────────
+        let (already_crumpled, landing_pos, mut victims_snapshot) = match self.get_entity(net_id) {
+            Some(Entity::Net(n)) => (n.net.crumpled, n.projectile.end, n.net.victims.clone()),
+            _ => {
+                tracing::warn!(?net_id, "apply_net_falling_effect: not a net entity");
+                return;
+            }
+        };
+        if already_crumpled {
+            return;
+        }
+
+        // ── Sweep candidates ───────────────────────────────────────
+        // Build a snapshot of (id, position) for every active human.
+        // 3D position with a Y-stretched isometric square-norm is used
+        // for the proximity test.
+        let candidates: Vec<EntityId> = self
+            .world
+            .entities
+            .humans()
+            .filter_map(|(id, e)| if e.is_active() { Some(id.into()) } else { None })
+            .collect();
+
+        let mut new_victims: Vec<EntityId> = Vec::new();
+        let mut should_crumple = false;
+
+        for actor_id in candidates {
+            let entity = match self.get_entity(actor_id) {
+                Some(e) => e,
+                None => continue,
+            };
+            let pos = entity.element_data().position();
+            let dx = pos.x - landing_pos.x;
+            let dz = pos.z - landing_pos.z;
+            let sq_xy =
+                crate::position_interface::vector_square_norm_iso(dx, pos.y - landing_pos.y);
+            if sq_xy + dz * dz >= SQUARE_RADIUS_NET_CAPTURE {
+                continue;
+            }
+
+            // Classify: VIP / Rider / Stuteley → crumple; else stick.
+            let (is_vip, is_rider, is_stuteley, is_soldier_vip) = match entity {
+                Entity::Soldier(s) => {
+                    let vip = assets
+                        .profile_manager
+                        .get_soldier(s.soldier.soldier_profile_index)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "net sweep requires missing soldier profile {:?} for {actor_id:?}",
+                                s.soldier.soldier_profile_index
+                            )
+                        })
+                        .vip;
+                    (vip, s.soldier.rider, false, vip)
+                }
+                Entity::Civilian(c) => {
+                    let vip = assets
+                        .profile_manager
+                        .civilians
+                        .get(usize::from(c.civilian.civilian_profile_index))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "net sweep requires missing civilian profile {} for {actor_id:?}",
+                                c.civilian.civilian_profile_index
+                            )
+                        })
+                        .civilian_type
+                        == crate::profiles::CivilianType::Vip;
+                    (vip, false, false, false)
+                }
+                Entity::Pc(pc) => {
+                    // In the shipping campaigns only Stuteley has the
+                    // Net action in his main action slots, so the
+                    // action check doubles as a Stuteley check.
+                    let stuteley = assets
+                        .profile_manager
+                        .get_character(pc.pc.profile_index)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "net sweep requires missing character profile {:?} for {actor_id:?}",
+                                pc.pc.profile_index
+                            )
+                        })
+                        .has_action(crate::profiles::Action::Net);
+                    (false, false, stuteley, false)
+                }
+                _ => (false, false, false, false),
+            };
+
+            if is_vip || is_rider || is_stuteley {
+                // VIP soldiers play the VipNetNo remark on the crumple
+                // path; this only fires for VIPs, not riders/Stuteley.
+                if is_soldier_vip
+                    && let Some(entity) = self.world.entities.get_mut(actor_id)
+                    && let Some(npc) = entity.npc_data_mut()
+                    && let Some(base) = npc.ai_brain.base_mut()
+                {
+                    base.say(crate::ai::Remark::VipNetNo);
+                }
+                if is_soldier_vip {
+                    self.drain_ai_owner_work_for(sim, assets, actor_id);
+                }
+                if self.control.sim_config.item_gameplay.net_selective_immunity {
+                    // Rebalanced behavior: resistant actors remain immune but
+                    // cannot invalidate ordinary captures elsewhere in the
+                    // original strict 40-unit landing circle.
+                    continue;
+                }
+                if victims_snapshot.is_empty() {
+                    should_crumple = true;
+                    break;
+                } else {
+                    // "New arrivants won't be caught": keep existing
+                    // victims, leave crumpled = false. The sprite still
+                    // flips to the crumple-unfold cycle unconditionally
+                    // on the VIP/Rider/Stuteley path — even when
+                    // existing victims prevent a full crumple.
+                    if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {
+                        n.object.animation = crate::element::Animation::NetUnfoldingCrumpled;
+                    }
+                    return;
+                }
+            } else {
+                new_victims.push(actor_id);
+            }
+        }
+
+        // ── Crumple branch ──────────────────────────────────────────
+        if should_crumple {
+            if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {
+                n.net.crumpled = true;
+                n.net.victims.clear();
+                // Switch the sprite into its crumple-unfold cycle the
+                // moment the crumple is decided.
+                n.object.animation = crate::element::Animation::NetUnfoldingCrumpled;
+            }
+            tracing::debug!(
+                ?net_id,
+                "Net crumpled on landing (VIP/Rider/Stuteley in radius)"
+            );
+            return;
+        }
+
+        // ── Capture branch ──────────────────────────────────────────
+        for victim_id in new_victims {
+            if victims_snapshot.contains(&victim_id) {
+                continue;
+            }
+            victims_snapshot.push(victim_id);
+
+            // Append to the net's persistent list.
+            if let Some(Entity::Net(n)) = self.get_entity_mut(net_id)
+                && !n.net.victims.contains(&victim_id)
+            {
+                n.net.victims.push(victim_id);
+            }
+
+            // Eager counter bump — posture is left alone;
+            // `EngineInner::apply_net` snaps it to StuckUnderNet next
+            // frame when the ReceiveNet element dispatches.
+            if let Some(entity) = self.world.entities.get_mut(victim_id)
+                && let Some(human) = entity.human_data_mut()
+            {
+                crate::combat::increment_stuck_under_net(human);
+            }
+
+            self.quit_swordfight(sim, assets, victim_id);
+
+            // Launch a ReceiveNet damage element (damage/concussion = 0
+            // — the handler reads only the origin pointer).
+            let elem = crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveNet,
+                Some(victim_id),
+                Some(net_id),
+                0,
+                0,
+            );
+            self.launch_element(elem);
+
+            // Set the victim's sprite to draw behind the net so the
+            // net visually covers them. The display-order pipeline is
+            // sprite-driven and only needs the reference + flag set
+            // once per capture.
+            if let Some(entity) = self.world.entities.get_mut(victim_id) {
+                let sprite = &mut entity.element_data_mut().sprite;
+                sprite.display_order_ref = Some(net_id);
+                sprite.behind_display_order_ref = true;
+            }
+        }
+
+        tracing::debug!(
+            ?net_id,
+            victim_count = victims_snapshot.len(),
+            "Net captured victims on landing"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  Per-victim release
+    // ════════════════════════════════════════════════════════════════
+
+    /// Release every human currently captured by `net_id`.
+    ///
+    /// Per victim:
+    /// 1. Decrement the stuck-under-nets counter via
+    ///    [`Entity::remove_net_from_human`] (which also clears
+    ///    `Posture::StuckUnderNet` back to `Lying` if no other net is
+    ///    still holding the victim down).
+    /// 2. Stop in-progress sequences with `Injury` priority.
+    /// 3. Launch a `Command::Wait` element so the actor parks idle.
+    /// 4. For NPCs, dispatch `StimulusType::EventNetAway` (their AI
+    ///    transitions out of the wondering-under-net substate) and
+    ///    remove the victim from every other NPC's `Body` detectable
+    ///    list.
+    /// 5. Clear the net's `victims` list.
+    pub(crate) fn unapply_net_effect(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
+        // Snapshot + drain the victim list and the repulsive-point IDs
+        // so we can iterate without re-borrowing the net entity.
+        let (victims, repulsive_ids): (Vec<EntityId>, Vec<i32>) = match self.get_entity_mut(net_id)
+        {
+            Some(Entity::Net(n)) => (
+                std::mem::take(&mut n.net.victims),
+                std::mem::take(&mut n.net.repulsive_point_ids),
+            ),
+            _ => {
+                tracing::warn!(?net_id, "unapply_net_effect: not a net entity");
+                return;
+            }
+        };
+
+        // Tear down the net's pathfinding repulsion points so the
+        // pathfinder stops seeing them next tick.
+        if !repulsive_ids.is_empty() {
+            self.ai
+                .global
+                .repulsive_points
+                .retain(|p| !repulsive_ids.contains(&p.id));
+        }
+
+        for victim_id in victims {
+            // ── 1. Decrement counter / unstick posture ─────────────
+            // `Entity::remove_net_from_human` decrements the counter and snaps
+            // posture out of StuckUnderNet atomically.
+            let was_stuck = match self.get_entity_mut(victim_id) {
+                Some(e) => e.remove_net_from_human(),
+                None => continue,
+            };
+
+            // The remaining steps only run when this was the last net
+            // holding the victim.
+            if !was_stuck {
+                continue;
+            }
+
+            // A netted human transitioning back from StuckUnderNet
+            // must not be dead or unconscious. Use `debug_assert!` so
+            // dev builds catch the violation but release builds
+            // tolerate unusual scripted states.
+            debug_assert!(
+                self.get_entity(victim_id)
+                    .map(|e| !e.is_dead() && !e.human_data().is_some_and(|h| h.unconscious))
+                    .unwrap_or(true),
+                "victim {victim_id:?} is dead or unconscious during net release"
+            );
+
+            // ── 2. Stop in-progress sequences (priority Injury) ─────
+            // Use the engine wrapper so the movement-element transition
+            // rewrite + path cancel runs (the bare
+            // `SequenceManager::stop_owner` skips both).
+            self.stop_owner(victim_id, crate::sequence::SequencePriority::Injury);
+
+            // ── 3. Park the victim with a Wait element ──────────────
+            self.actor_wait(victim_id);
+
+            // Clear the "behind net" sprite reference so the victim
+            // goes back to normal Y-sorting.
+            if let Some(entity) = self.world.entities.get_mut(victim_id) {
+                let sprite = &mut entity.element_data_mut().sprite;
+                sprite.display_order_ref = None;
+                sprite.behind_display_order_ref = false;
+            }
+
+            // ── 4. NPC-only AI + detectable cleanup ─────────────────
+            let victim_is_npc = self
+                .get_entity(victim_id)
+                .map(|e| e.is_npc())
+                .unwrap_or(false);
+            if victim_is_npc {
+                self.dispatch_ai_stimulus(
+                    victim_id,
+                    crate::ai::Stimulus::new(crate::ai::StimulusType::EventNetAway),
+                );
+                // Original-game net removal sends the net-away event
+                // synchronously, even when the victim's creation slot has
+                // already run this frame.
+                self.tick_enemy_ai_drain_pending_stimuli_for_npc(
+                    sim, victim_id, assets, None, None,
+                );
+
+                // Skip the body-detectable cleanup for dead/unconscious
+                // victims — their body is genuinely a body to detect.
+                let still_alive = self
+                    .get_entity(victim_id)
+                    .map(|e| !e.is_dead() && !e.human_data().is_some_and(|h| h.unconscious))
+                    .unwrap_or(false);
+                if still_alive {
+                    self.delete_body_detectable_for_all_npc(victim_id);
+                }
+            }
+        }
+
+        tracing::debug!(?net_id, "Net effect unapplied; victims released");
+    }
+
+    /// Remove `body_id` from every NPC's `DetectableType::Body` list.
+    ///
+    /// This is the inverse of
+    /// [`EngineInner::broadcast_body_detectable`] (`engine/ai.rs`).
+    fn delete_body_detectable_for_all_npc(&mut self, body_id: EntityId) {
+        use crate::element::DetectableType;
+        let det_idx = DetectableType::Body as usize;
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        for friend_id in npc_ids {
+            if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(friend_id)
+                && det_idx < s.npc.detectable_lists.len()
+            {
+                s.npc.delete_detectable(body_id, DetectableType::Body);
+            } else if let Some(Entity::Civilian(c)) = self.world.entities.get_mut(friend_id)
+                && det_idx < c.npc.detectable_lists.len()
+            {
+                c.npc.delete_detectable(body_id, DetectableType::Body);
+            }
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  Per-frame net driver
+    // ════════════════════════════════════════════════════════════════
+
+    /// Advance one active net by one frame at its creation-order position.
+    ///
+    /// * **In flight**: advance the ballistic trajectory; decrement
+    ///   `time_till_unfolding` and switch the sprite animation to
+    ///   `NetUnfolding`/`NetUnfoldingCrumpled` when it hits 0; fire
+    ///   [`EngineInner::apply_net_falling_effect`] every frame the
+    ///   net is within [`NET_DESCENT_APPLY_THRESHOLD`] of its landing
+    ///   point and still descending.
+    /// * **Landing transition** (`flying` → not flying with
+    ///   `was_flying = true`): snap Z to the landing obstacle's top
+    ///   plane and register the dual repulsive points so actors path
+    ///   around the net.
+    /// * **On the ground**: resolve the post-landing animation
+    ///   transition (`NetUnfolding` → `ObjectLying`/`NetMoving`,
+    ///   `NetUnfoldingCrumpled` → `NetLyingCrumpled`) without advancing the
+    ///   new row that tick. Stationary `NetMoving` stays on that row and uses
+    ///   frozen progression without transitioning back to a lying object. Release
+    ///   happens via `Command::Take` pickup — the `TakingNet`
+    ///   animation-Done handler in `engine/animation.rs` queues a
+    ///   net-antagonist pickup, and the pickup branch in
+    ///   `engine/tick.rs` calls [`EngineInner::unapply_net_effect`] +
+    ///   despawns the net.
+    pub(crate) fn tick_net(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
+        let was_flying = match self.get_entity(net_id) {
+            Some(Entity::Net(net)) => net.projectile.flying,
+            _ => return,
+        };
+        // Phase 1: advance trajectory + classify the net into
+        // (descending-near-landing, just-landed) and stamp the
+        // in-flight animation transitions on it directly.
+        let (apply, just_landed, skip_sprite_this_tick) = {
+            let Some(Entity::Net(net)) = self.world.entities.get_mut(net_id) else {
+                return;
+            };
+            let mut apply = false;
+            let mut just_landed = false;
+            let mut skip_sprite_this_tick = false;
+            if net.projectile.flying {
+                // Net ticking ignores the base projectile tick's false
+                // result and always continues/returns true. An inactive net
+                // therefore skips only the base movement body.
+                if net.element.active {
+                    advance_net_trajectory(net);
+                }
+
+                // `time_till_unfolding` countdown — when it hits 0,
+                // switch animation to NetUnfolding (or _Crumpled if the
+                // spawn-time crumple test flagged it). Subsequent
+                // frames leave the animation alone; the sprite plays
+                // out until the landing transition.
+                if net.net.time_till_unfolding > 0 {
+                    // The original game's nonzero unfolding-timer branch never
+                    // reaches either sprite increment, including when this
+                    // decrement changes the counter to zero and selects the
+                    // unfolding animation.
+                    skip_sprite_this_tick = true;
+                    net.net.time_till_unfolding -= 1;
+                    if net.net.time_till_unfolding == 0 {
+                        net.object.animation = if net.net.crumpled {
+                            crate::element::Animation::NetUnfoldingCrumpled
+                        } else {
+                            crate::element::Animation::NetUnfolding
+                        };
+                    }
+                }
+
+                // Multi-frame descent apply — fire the capture sweep
+                // each frame the net is within the descent threshold
+                // of its landing point and still descending. The sweep
+                // dedups against existing victims, so re-firing only
+                // adds late-arrivers.
+                let z_above_landing = net.element.position().z - net.projectile.end.z;
+                let descending = net.projectile.velocity_increment.z < 0.0;
+                if net.projectile.flying
+                    && z_above_landing <= NET_DESCENT_APPLY_THRESHOLD
+                    && descending
+                {
+                    apply = true;
+                }
+
+                if !net.projectile.flying && net.net.was_flying {
+                    // Just landed this frame — queue the landing-time
+                    // work for phase 2 (which holds `&mut self` so it
+                    // can register repulsive points + look up obstacles).
+                    apply = true;
+                    just_landed = true;
+                    net.net.was_flying = false;
+                }
+            } else {
+                // The two transition cases only assign animation and return;
+                // the newly selected row must not advance until next tick.
+                match net.object.animation {
+                    crate::element::Animation::NetUnfolding => {
+                        net.object.animation = if net.net.victims.is_empty() {
+                            crate::element::Animation::ObjectLying
+                        } else {
+                            crate::element::Animation::NetMoving
+                        };
+                        net.net.landed_animation_resolved = true;
+                        skip_sprite_this_tick = true;
+                    }
+                    crate::element::Animation::NetUnfoldingCrumpled => {
+                        net.object.animation = crate::element::Animation::NetLyingCrumpled;
+                        net.net.landed_animation_resolved = true;
+                        skip_sprite_this_tick = true;
+                    }
+                    _ => {}
+                }
+            }
+            (apply, just_landed, skip_sprite_this_tick)
+        };
+
+        // Phase 2: apply effects (mutable engine borrow released above).
+        if apply {
+            self.apply_net_falling_effect(sim, assets, net_id);
+        }
+        if just_landed {
+            self.apply_projectile_landing_resolution(assets, net_id);
+            self.snap_net_to_landing_obstacle(sim, assets, net_id);
+            self.register_net_repulsive_points(net_id);
+        }
+
+        // The net's sprite tail is inside its update. FreezeAll
+        // suppresses only this sprite operation; trajectory, capture, landing,
+        // and bookkeeping above continue.
+        let progression = if skip_sprite_this_tick {
+            None
+        } else if was_flying {
+            match self.get_entity(net_id) {
+                Some(Entity::Net(net))
+                    if net.object.animation == crate::element::Animation::ObjectFlying =>
+                {
+                    Some(crate::sprite::FrameProgression::SkipShadow)
+                }
+                Some(Entity::Net(_)) => {
+                    Some(crate::sprite::FrameProgression::SkipShadowFreezeWhenTerminated)
+                }
+                _ => None,
+            }
+        } else {
+            match self.get_entity(net_id) {
+                Some(Entity::Net(net)) => match net.object.animation {
+                    crate::element::Animation::ObjectLying
+                    | crate::element::Animation::NetLyingCrumpled => {
+                        Some(crate::sprite::FrameProgression::Default)
+                    }
+                    crate::element::Animation::NetMoving => {
+                        if self.any_victim_is_moving(&net.net.victims) {
+                            Some(crate::sprite::FrameProgression::Default)
+                        } else {
+                            Some(crate::sprite::FrameProgression::Frozen)
+                        }
+                    }
+                    crate::element::Animation::NetBeingTaken => {
+                        Some(crate::sprite::FrameProgression::FreezeWhenTerminated)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        if let Some(progression) = progression
+            && !self.actors_frozen()
+            && let Some(Entity::Net(net)) = self.get_entity_mut(net_id)
+        {
+            #[cfg(test)]
+            observe_net_sprite_progression(net_id, progression);
+            net.element
+                .sprite
+                .perform_virgin_increment(sim, progression);
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  Landing-time helpers
+    // ════════════════════════════════════════════════════════════════
+
+    /// Snap the net's elevation to the top plane of the obstacle it
+    /// lands on (with a small epsilon offset so it sits *on* rather
+    /// than *in* the obstacle).
+    ///
+    /// When the net lands on bare ground (no obstacle at the landing
+    /// 2D point) the elevation is also reset to a tiny positive
+    /// epsilon to avoid Z-fighting — that's the `0.001` offset below.
+    fn snap_net_to_landing_obstacle(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        net_id: EntityId,
+    ) {
+        let (landing_xy, layer) = match self.get_entity(net_id) {
+            Some(Entity::Net(n)) => (
+                (n.element.position().x, n.element.position().y),
+                n.element.optional_layer(),
+            ),
+            _ => return,
+        };
+
+        // Branch on `(layer, find_landing_obstacle)`:
+        //   - no obstacle           → 0.001 (we should already have
+        //                             arrived with elevation ≈ 0)
+        //   - obstacle, layer valid → snap to top plane + 0.001
+        //   - obstacle, no layer → keep current elevation,
+        //     so a crumpled-launched-no-layer net doesn't get clamped
+        //     to 0.001.
+        let obstacle_idx = self.find_landing_obstacle(
+            assets,
+            crate::coordinates::WorldPoint3D {
+                x: landing_xy.0,
+                y: landing_xy.1,
+                z: 0.0,
+            },
+        );
+        let new_z: Option<f32> = match (layer, obstacle_idx) {
+            (None, Some(_)) => None, // keep current elevation
+            (None, None) => Some(0.001),
+            (Some(_), Some(idx)) => Some(
+                assets
+                    .static_sight_obstacles
+                    .get(idx)
+                    .or_else(|| {
+                        self.world
+                            .dynamic_sight_obstacles
+                            .get(idx - assets.static_sight_obstacles.len())
+                    })
+                    .map(|o| o.compute_top_z(landing_xy.0, landing_xy.1) + 0.001)
+                    .unwrap_or(0.001),
+            ),
+            (Some(_), None) => Some(0.001),
+        };
+
+        if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {
+            let mut p = n.element.position();
+            if let Some(z) = new_z {
+                p.z = z;
+            }
+            n.element.set_position(p);
+            // Recompute the 2D map projection.
+            n.element
+                .set_position_map(MapPoint::from_world_xyz(p.x, p.y, p.z));
+        }
+
+        // Broadcast the BONK so nearby NPCs react to the thud of the
+        // landed net.
+        let origin = MapPoint::new(landing_xy.0, landing_xy.1);
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Bonk,
+            origin,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_BONK as u16,
+            new_z.unwrap_or(0.001).max(0.0) as u16,
+            Some(net_id),
+        );
+    }
+
+    /// Register the two `RepulsivePoint`s that prevent NPCs from
+    /// pathing through a landed net. Registers them once on landing
+    /// and tears them down on `unapply_net_effect`.
+    ///
+    /// Two points at the same map position with `(radius,
+    /// action_radius)` = `(40, 15)` and `(15, 30)`. Crumpled nets
+    /// would have their own radii, but that branch is disabled in the
+    /// reference, so we use the same dual-point setup regardless of
+    /// crumple state.
+    ///
+    /// ## Other object-class entities
+    ///
+    /// Every non-Net object subclass either contributes nothing
+    /// (Bonus, Scroll, base Projectile, Arrow, Stone, Apple, WaspNest,
+    /// Cape, Wasp — all radius 0) or explicitly skips registration
+    /// (Coin). The two subclasses that *would* contribute points are
+    /// Purse (radius 7) and Ale (radius 5); both are projectile
+    /// variants here (`ObjectType::Purse` / `ObjectType::Ale`). The
+    /// anti-collision loop that queries these is not yet implemented, so
+    /// no landed-purse/ale repulsion is wired up — once that loop is
+    /// implemented, it should follow this same persistent-registration
+    /// pattern.
+    fn register_net_repulsive_points(&mut self, net_id: EntityId) {
+        // Snapshot landing pos.
+        let pos = match self.get_entity(net_id) {
+            Some(Entity::Net(n)) => n.element.position_map(),
+            _ => return,
+        };
+        let configs = [(40.0_f32, 15.0_f32), (15.0_f32, 30.0_f32)];
+        let mut ids: Vec<i32> = Vec::with_capacity(2);
+        for (radius, action_radius) in configs {
+            let id = self.ai.global.next_repulsive_point_id;
+            self.ai.global.next_repulsive_point_id += 1;
+            self.ai
+                .global
+                .repulsive_points
+                .push(crate::ai::RepulsivePoint::new(
+                    id,
+                    crate::ai::Position {
+                        x: pos.x,
+                        y: pos.y,
+                        ..Default::default()
+                    },
+                    radius,
+                    action_radius,
+                    0,
+                ));
+            ids.push(id);
+        }
+        if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {
+            n.net.repulsive_point_ids = ids;
+        }
+    }
+
+    /// Returns `true` if any of the given victims is currently playing
+    /// the wriggle-under-net animation.
+    fn any_victim_is_moving(&self, victims: &[EntityId]) -> bool {
+        for &v in victims {
+            if self.get_entity(v).is_none() {
+                continue;
+            }
+            // The victim's currently-active order animation on the
+            // owning sequence element.
+            if let Some((_, _, order)) = self.orders.sequence_manager.current_order_for_actor(v)
+                && order.order_type == crate::order::OrderType::WriggleUnderNet
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    //  Spawn-time crumple detection
+    // ════════════════════════════════════════════════════════════════
+
+    /// Decide at spawn time whether a freshly-thrown net will land
+    /// crumpled (because it lands on too-steep terrain or its
+    /// landing-area ring is blocked by obstacles).
+    ///
+    /// The `time_till_unfolding` initialization lives in `bow_shot.rs`
+    /// where the net entity is constructed.
+    ///
+    /// Crumple signals:
+    /// 1. **Missing layer**: `layer == None` means the net
+    ///    had no valid landing surface at all → crumple.
+    /// 2. **Slope**: the obstacle the net lands on has a top-plane
+    ///    normal whose Z component ≤ [`NET_LANDING_NORMAL_Z_THRESHOLD`]
+    ///    (~30° from vertical) → crumple.
+    /// 3. **Ring blocked**: any of the 8 cardinal points around the
+    ///    landing centre at radius [`TEST_RADIUS_NET_CRUMPLED`] either
+    ///    can't be reached from the centre OR has a clear vertical
+    ///    drop below it (the second test catches "net hangs over a
+    ///    ledge" scenarios) → crumple.
+    ///
+    /// Caller should invoke this immediately after `spawn_net` adds
+    /// the net entity to the engine.
+    pub(crate) fn detect_initial_net_crumple(&mut self, assets: &LevelAssets, net_id: EntityId) {
+        // ── Snapshot landing pos, layer; bail if not a net ─────────
+        let (layer, landing) = match self.get_entity(net_id) {
+            Some(Entity::Net(n)) => (n.element.optional_layer(), n.projectile.end),
+            _ => {
+                tracing::warn!(?net_id, "detect_initial_net_crumple: not a net entity");
+                return;
+            }
+        };
+        if self.predict_net_crumple_at(assets, landing, layer) {
+            self.set_net_crumpled(net_id);
+        }
+    }
+
+    /// Pure predicate form of [`detect_initial_net_crumple`] — takes a
+    /// landing point + layer and returns `true` when a net dropped
+    /// there would crumple. Used by the Easy-difficulty trajectory
+    /// preview to tint the arc pink before the net is actually thrown.
+    pub fn predict_net_crumple_at(
+        &self,
+        assets: &LevelAssets,
+        landing: crate::coordinates::WorldPoint3D,
+        layer: Option<crate::position_interface::Layer>,
+    ) -> bool {
+        // No valid landing layer at all → crumple.
+        let Some(layer) = layer else { return true };
+
+        let obstacle_idx = self.find_landing_obstacle(assets, landing);
+
+        // Slope check.
+        if let Some(idx) = obstacle_idx {
+            let nz = assets
+                .static_sight_obstacles
+                .get(idx)
+                .or_else(|| {
+                    self.world
+                        .dynamic_sight_obstacles
+                        .get(idx - assets.static_sight_obstacles.len())
+                })
+                .map(top_plane_normal_z)
+                .unwrap_or(1.0);
+            if nz <= NET_LANDING_NORMAL_Z_THRESHOLD {
+                return true;
+            }
+        }
+
+        // 8-point reach-ring check.
+        let centre_2d = (landing.x, landing.y);
+        let centre_z = landing.z;
+        let mut radius = (TEST_RADIUS_NET_CRUMPLED, 0.0_f32);
+        let quarter_turn = std::f32::consts::FRAC_PI_4;
+
+        for _ in 0..8 {
+            radius = rotate_2d(radius, quarter_turn);
+            let test_x = centre_2d.0 + radius.0;
+            let test_y = centre_2d.1 + radius.1;
+
+            // When there's an obstacle, project the ring sample onto
+            // the obstacle's top plane along the screen-Y axis
+            // (`y = y - z`); when there isn't, the projected point
+            // keeps its world Y and the projected Z is 0.
+            let (test_proj_y, test_proj_z) = if let Some(idx) = obstacle_idx {
+                let proj_z = assets
+                    .static_sight_obstacles
+                    .get(idx)
+                    .or_else(|| {
+                        self.world
+                            .dynamic_sight_obstacles
+                            .get(idx - assets.static_sight_obstacles.len())
+                    })
+                    .map(|o| o.compute_top_z(test_x, test_y))
+                    .unwrap_or(0.0);
+                // projected_y = (test_y - centre_z) + projected_z
+                (test_y - centre_z + proj_z, proj_z)
+            } else {
+                (test_y, 0.0)
+            };
+
+            let p_test = crate::coordinates::WorldPoint3D {
+                x: test_x,
+                y: test_proj_y,
+                z: test_proj_z + 20.0,
+            };
+            let p_centre_high = crate::coordinates::WorldPoint3D {
+                x: landing.x,
+                y: landing.y,
+                z: centre_z + 20.0,
+            };
+            if !self.is_reachable_solid(assets, p_test, p_centre_high, layer.get()) {
+                return true;
+            }
+
+            let p_drop = crate::coordinates::WorldPoint3D {
+                x: test_x,
+                y: test_proj_y,
+                z: test_proj_z - 40.0,
+            };
+            if self.is_reachable_solid(assets, p_test, p_drop, layer.get()) {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Helper: flip the net's `crumpled` flag.  Defensive — if the
+    /// entity is gone or no longer a net, do nothing.
+    fn set_net_crumpled(&mut self, net_id: EntityId) {
+        if let Some(Entity::Net(n)) = self.get_entity_mut(net_id) {
+            n.net.crumpled = true;
+            tracing::debug!(?net_id, "Net flagged crumpled at spawn");
+        }
+    }
+
+    /// Find the first sight obstacle whose 2D bbox contains the
+    /// landing point. Returns a flat index spanning
+    /// `LevelAssets::static_sight_obstacles` first, then
+    /// `dynamic_sight_obstacles`.
+    ///
+    /// We don't model a position-interface obstacle handle yet, so a
+    /// direct point-in-bbox scan is the simplest faithful equivalent
+    /// of the original projectile-obstacle lookup.
+    fn find_landing_obstacle(
+        &self,
+        assets: &LevelAssets,
+        landing: crate::coordinates::WorldPoint3D,
+    ) -> Option<usize> {
+        for (i, o) in assets.static_sight_obstacles.iter().enumerate() {
+            if obstacle_bbox_contains(o, landing.x, landing.y) {
+                return Some(i);
+            }
+        }
+        let base = assets.static_sight_obstacles.len();
+        for (i, o) in self.world.dynamic_sight_obstacles.iter().enumerate() {
+            if obstacle_bbox_contains(o, landing.x, landing.y) {
+                return Some(base + i);
+            }
+        }
+        None
+    }
+
+    /// 3D ray reachability against `SIGHTOBSTACLE_SOLID` obstacles.
+    /// Wrapper around [`FastFindGrid::is_reachable_3d`] that passes
+    /// both static and dynamic sight obstacles in the
+    /// `SIGHTOBSTACLE_SOLID` filter.
+    fn is_reachable_solid(
+        &self,
+        assets: &LevelAssets,
+        origin: crate::coordinates::WorldPoint3D,
+        destination: crate::coordinates::WorldPoint3D,
+        layer: u16,
+    ) -> bool {
+        let obstacles = self.sight_obstacles(assets);
+        self.world.fast_grid.is_reachable_3d(
+            origin,
+            destination,
+            layer,
+            crate::sight_obstacle::SIGHTOBSTACLE_SOLID,
+            obstacles,
+        )
+    }
+}
+
+/// Rotate a 2D vector by `angle` radians. Used by the
+/// crumple-detection 8-point ring iteration.
+fn rotate_2d((x, y): (f32, f32), angle: f32) -> (f32, f32) {
+    let (s, c) = angle.sin_cos();
+    (x * c - y * s, x * s + y * c)
+}
+
+/// Compute the Z component of an obstacle's top-plane normal.
+/// Inline copy of `engine::melee::EngineInner::obstacle_top_normal`
+/// (which is private to the melee module). Returns 1.0 (flat) for
+/// degenerate obstacles.
+fn top_plane_normal_z(obstacle: &crate::sight_obstacle::SightObstacle) -> f32 {
+    let [p0, p1, p2] = obstacle.top_plane_points;
+    let u = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+    let v = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+    let nz = u[0] * v[1] - u[1] * v[0];
+    let nx = u[1] * v[2] - u[2] * v[1];
+    let ny = u[2] * v[0] - u[0] * v[2];
+    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+    if len < 1e-6 {
+        return 1.0;
+    }
+    let normalized = nz / len;
+    // Match `obstacle_top_normal`'s "ensure normal points up" flip.
+    normalized.abs()
+}
+
+/// Point-in-bbox test for the 2D ground-plane bounding box of a
+/// sight obstacle.
+fn obstacle_bbox_contains(o: &crate::sight_obstacle::SightObstacle, x: f32, y: f32) -> bool {
+    o.box_ground
+        .contains_point(crate::coordinates::GroundPoint::new(x, y))
+}
+
+/// Advance a single net's ballistic trajectory by one frame.
+///
+/// This is the trajectory-pop / increment-apply / land-detection slice
+/// of [`tick_arrows`]. Nets don't shield-block, hit FX targets, or
+/// damage humans on flight, so all we need is the ballistic step + a
+/// "trajectory exhausted → flying = false" landing signal.
+fn advance_net_trajectory(net: &mut crate::element::ElementNet) {
+    let proj = &mut net.projectile;
+
+    if proj.trajectory_frame_count == 0 {
+        if !proj.trajectory.is_empty() {
+            let point = proj.trajectory.remove(0);
+            let time = point.time.max(1);
+            proj.trajectory_frame_count = time - 1;
+
+            let current = net.element.position();
+            let factor = 1.0 / time as f32;
+            proj.velocity_increment = WorldVec3D {
+                x: (point.position.x - current.x) * factor,
+                y: (point.position.y - current.y) * factor,
+                z: (point.position.z - current.z) * factor,
+            };
+            proj.end = point.position;
+        } else {
+            proj.flying = false;
+            return;
+        }
+    } else {
+        proj.trajectory_frame_count -= 1;
+    }
+
+    let mut p = net.element.position();
+    p.x += proj.velocity_increment.x;
+    p.y += proj.velocity_increment.y;
+    p.z += proj.velocity_increment.z;
+    net.element.set_position(p);
+    net.element
+        .set_position_map(MapPoint::from_world_xyz(p.x, p.y, p.z));
+    let vx = proj.velocity_increment.x;
+    let vy = proj.velocity_increment.y;
+    if vx != 0.0 || vy != 0.0 {
+        net.element
+            .set_direction_instantly(crate::position_interface::vector_to_sector_0_to_15(vx, vy));
+    }
+
+    proj.frame_count = proj.frame_count.saturating_add(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinates::WorldPoint3D;
+    use crate::element::{
+        ActorData, ActorPc, ActorSoldier, ElementData, ElementKind, ElementNet, HumanData, NetData,
+        NpcData, ObjectData, PcData, Posture, ProjectileData, SoldierData,
+    };
+    use crate::profiles::{Action, CharacterProfile, ProfileManager, SoldierProfile};
+
+    /// Square root of [`SQUARE_RADIUS_NET_CAPTURE`] is 40, so any human
+    /// within 40 isometric units of the landing point qualifies (with Y
+    /// stretched).  Tests place victims well inside the radius (Δ = 5)
+    /// to avoid borderline arithmetic.
+    const LAND_X: f32 = 100.0;
+    const LAND_Y: f32 = 100.0;
+    const LAND_Z: f32 = 0.0;
+
+    fn make_engine() -> EngineInner {
+        EngineInner::new()
+    }
+
+    fn make_net(landing: WorldPoint3D) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ObjectNet,
+            active: true,
+            ..ElementData::default()
+        };
+        element.set_position(landing);
+        element.set_position_map(MapPoint::from_world_xyz(landing.x, landing.y, landing.z));
+        Entity::Net(ElementNet {
+            element,
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Net,
+                ..ObjectData::default()
+            },
+            projectile: ProjectileData {
+                end: landing,
+                flying: false,
+                ..ProjectileData::default()
+            },
+            net: NetData::default(),
+        })
+    }
+
+    fn run_net_owner_path(
+        engine: &mut EngineInner,
+        assets: &LevelAssets,
+    ) -> Vec<(EntityId, crate::sprite::FrameProgression)> {
+        let positions = crate::entities::EntitySlots::filled(engine.world.entities.len(), None);
+        let (_, trace) = capture_net_sprite_progressions(|| {
+            crate::sim_rng::with_seed(0x4E45_5431, |sim| {
+                engine.tick_actor_owner_envelopes(sim, assets, &positions);
+            });
+        });
+        trace
+    }
+
+    #[test]
+    fn owner_path_unfold_countdown_never_advances_sprite_including_zero_tick() {
+        let mut engine = make_engine();
+        let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 10.0));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.projectile.flying = true;
+        net.projectile.trajectory_frame_count = 1;
+        net.net.time_till_unfolding = 1;
+        net.object.animation = crate::element::Animation::ObjectFlying;
+        let net_id = engine.add_entity(entity);
+
+        let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(net.net.time_till_unfolding, 0);
+        assert_eq!(
+            net.object.animation,
+            crate::element::Animation::NetUnfolding
+        );
+        assert!(
+            trace.is_empty(),
+            "zero-count transition must not advance the new row"
+        );
+    }
+
+    #[test]
+    fn owner_path_ground_unfold_transitions_set_rows_without_advancing_them() {
+        for (crumpled, source, expected) in [
+            (
+                false,
+                crate::element::Animation::NetUnfolding,
+                crate::element::Animation::ObjectLying,
+            ),
+            (
+                true,
+                crate::element::Animation::NetUnfoldingCrumpled,
+                crate::element::Animation::NetLyingCrumpled,
+            ),
+        ] {
+            let mut engine = make_engine();
+            let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 0.0));
+            let Entity::Net(net) = &mut entity else {
+                unreachable!()
+            };
+            net.net.crumpled = crumpled;
+            net.object.animation = source;
+            let net_id = engine.add_entity(entity);
+            let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+            let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+                unreachable!()
+            };
+            assert_eq!(net.object.animation, expected);
+            assert!(
+                trace.is_empty(),
+                "ground transition must only select its new row"
+            );
+        }
+    }
+
+    #[test]
+    fn owner_path_stationary_net_moving_stays_moving_with_frozen_progression() {
+        let mut engine = make_engine();
+        let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 0.0));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.object.animation = crate::element::Animation::NetMoving;
+        net.net.landed_animation_resolved = true;
+        let net_id = engine.add_entity(entity);
+        let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(net.object.animation, crate::element::Animation::NetMoving);
+        assert_eq!(
+            trace,
+            vec![(net_id, crate::sprite::FrameProgression::Frozen)]
+        );
+    }
+
+    #[test]
+    fn owner_path_crumpled_net_being_taken_does_not_advance_sprite() {
+        // Original-game net updates have a branch for
+        // normal net-taking animation, but deliberately none for the
+        // distinct crumpled-net-taking row.
+        for (animation, expected) in [
+            (
+                crate::element::Animation::NetBeingTaken,
+                vec![crate::sprite::FrameProgression::FreezeWhenTerminated],
+            ),
+            (crate::element::Animation::NetBeingTakenCrumpled, Vec::new()),
+        ] {
+            let mut engine = make_engine();
+            let mut entity = make_net(WorldPoint3D::new(0.0, 0.0, 0.0));
+            let Entity::Net(net) = &mut entity else {
+                unreachable!()
+            };
+            net.element.active = false;
+            net.object.animation = animation;
+            let net_id = engine.add_entity(entity);
+
+            let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+            assert_eq!(
+                trace,
+                expected
+                    .into_iter()
+                    .map(|progression| (net_id, progression))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn owner_path_frozen_all_keeps_net_physics_but_suppresses_sprite_call() {
+        let mut engine = make_engine();
+        let mut entity = make_net(WorldPoint3D::new(1.0, 2.0, 10.0));
+        let Entity::Net(net) = &mut entity else {
+            unreachable!()
+        };
+        net.projectile.flying = true;
+        net.projectile.trajectory_frame_count = 1;
+        net.projectile.velocity_increment = WorldVec3D::new(3.0, 4.0, 1.0);
+        net.object.animation = crate::element::Animation::ObjectFlying;
+        let net_id = engine.add_entity(entity);
+        engine.set_actors_frozen(true);
+
+        let trace = run_net_owner_path(&mut engine, &LevelAssets::new());
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(net.projectile.frame_count, 1);
+        assert_eq!(
+            net.element.position_map(),
+            MapPoint::from_world_xyz(4.0, 6.0, 11.0)
+        );
+        assert!(
+            trace.is_empty(),
+            "FrozenAll must suppress the selected sprite call"
+        );
+    }
+
+    fn make_soldier(pos: WorldPoint3D, profile_idx: u32, rider: bool) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorSoldier,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position(pos);
+        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
+        Entity::Soldier(ActorSoldier {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData {
+                life_points: 50,
+                // Level loading copies the soldier profile's HtH weapon onto
+                // the brain; the fighter-registry scan reached from net
+                // capture requires it.
+                ai: crate::element::AiActorData {
+                    ai_brain: crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi {
+                        hth_weapon_id: 1,
+                        ..crate::ai_enemy::EnemyAi::default()
+                    })),
+                    ..Default::default()
+                },
+            },
+            soldier: SoldierData {
+                soldier_profile_index: crate::profiles::SoldierProfileIdx(profile_idx),
+                cached_camp: crate::element::Camp::Lacklandists,
+                rider,
+                ..SoldierData::default()
+            },
+        })
+    }
+
+    /// Add a soldier and complete the runtime identity production spawn
+    /// paths install: the enemy AI's self handle must reference the
+    /// soldier's real entity slot and its melee weapon must resolve to the
+    /// registered test HtH profile, or capture-time synchronous AI thinks
+    /// reject the fighter registry.
+    fn add_soldier(
+        engine: &mut EngineInner,
+        pos: WorldPoint3D,
+        profile_idx: u32,
+        rider: bool,
+    ) -> EntityId {
+        let id = engine.add_entity(make_soldier(pos, profile_idx, rider));
+        let enemy = engine
+            .world
+            .entities
+            .get_mut(id)
+            .and_then(Entity::enemy_ai_mut)
+            .expect("test soldier has an enemy AI brain");
+        enemy.base.me = id.index();
+        enemy.hth_weapon_id = 1;
+        id
+    }
+
+    fn make_pc(pos: WorldPoint3D, profile_idx: u32) -> Entity {
+        let mut element = ElementData {
+            kind: ElementKind::ActorPc,
+            active: true,
+            posture: Posture::Upright,
+            ..ElementData::default()
+        };
+        element.set_position(pos);
+        element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
+        Entity::Pc(ActorPc {
+            element,
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            pc: PcData {
+                profile_index: crate::profiles::CharacterProfileIdx(profile_idx),
+                life_points: 50,
+                ..PcData::default()
+            },
+        })
+    }
+
+    /// Build a [`LevelAssets`] with three character/soldier profiles set
+    /// up so:
+    ///   * soldier 0 — plain Royalist (vip = false)
+    ///   * soldier 1 — VIP Royalist
+    ///   * character 0 — plain PC (no Net action)
+    ///   * character 1 — Stuteley (Net action present)
+    fn assets_with_profiles() -> LevelAssets {
+        let mut pm = ProfileManager::new();
+        pm.soldiers.push(SoldierProfile::default());
+        pm.soldiers.push(SoldierProfile {
+            vip: true,
+            ..SoldierProfile::default()
+        });
+        pm.characters.push(CharacterProfile {
+            hth_weapon_id: 1,
+            ..CharacterProfile::default()
+        });
+        pm.characters.push(CharacterProfile {
+            actions: [Action::Net, Action::NoAction, Action::NoAction],
+            hth_weapon_id: 1,
+            ..CharacterProfile::default()
+        });
+        pm.hth_weapons
+            .push(crate::profiles::HtHWeaponProfile::default());
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = std::sync::Arc::new(pm);
+        assets
+    }
+
+    fn count_receive_net_for(engine: &EngineInner, victim_id: EntityId) -> usize {
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|s| s.elements.iter())
+            .filter(|e| e.owner == Some(victim_id) && e.command == Command::ReceiveNet)
+            .count()
+    }
+
+    #[test]
+    fn net_captures_three_normal_soldiers() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let soldiers: Vec<EntityId> = (0..3)
+            .map(|i| {
+                add_soldier(
+                    &mut engine,
+                    WorldPoint3D {
+                        x: LAND_X + i as f32 * 5.0,
+                        y: LAND_Y,
+                        z: 0.0,
+                    },
+                    0, // plain non-VIP profile
+                    false,
+                )
+            })
+            .collect();
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert!(
+            !net.net.crumpled,
+            "net should not crumple on plain soldiers"
+        );
+        assert_eq!(
+            net.net.victims.len(),
+            3,
+            "all three soldiers in range should be captured"
+        );
+        for s in &soldiers {
+            assert!(net.net.victims.contains(s));
+            assert_eq!(count_receive_net_for(&engine, *s), 1);
+            // Counter is bumped synchronously even though the posture
+            // snap waits for the ReceiveNet damage element next frame.
+            assert_eq!(
+                engine
+                    .get_entity(*s)
+                    .unwrap()
+                    .human_data()
+                    .unwrap()
+                    .stuck_under_nets_counter,
+                1,
+                "counter should be incremented eagerly on capture"
+            );
+            assert_eq!(
+                engine.get_entity(*s).unwrap().element_data().posture,
+                Posture::Upright,
+                "posture stays Upright until the ReceiveNet handler runs"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_net_dispatch_applies_landing_capture_inline() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let mut net = make_net(landing);
+        let Entity::Net(net_data) = &mut net else {
+            unreachable!();
+        };
+        net_data.projectile.flying = true;
+        net_data.net.was_flying = true;
+        let net_id = engine.add_entity(net);
+        let victim_id = add_soldier(&mut engine, landing, 0, false);
+
+        engine.tick_net(sim, &assets, net_id);
+
+        assert_eq!(
+            engine
+                .get_entity(victim_id)
+                .expect("landing victim present")
+                .human_data()
+                .expect("landing victim human")
+                .stuck_under_nets_counter,
+            1,
+            "net landing must capture before dispatch advances to the victim's later slot"
+        );
+        assert_eq!(count_receive_net_for(&engine, victim_id), 1);
+    }
+
+    #[test]
+    fn second_apply_pass_does_not_double_capture() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        // The capture sweep runs every frame the net is descending
+        // within the apply threshold of landing — the dedup guard
+        // ensures each victim is only captured once.
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let victim_id = add_soldier(
+            &mut engine,
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            false,
+        );
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert_eq!(net.net.victims, vec![victim_id]);
+        assert_eq!(count_receive_net_for(&engine, victim_id), 1);
+        assert_eq!(
+            engine
+                .get_entity(victim_id)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .stuck_under_nets_counter,
+            1,
+            "dedup guard prevents counter double-bump on repeat ApplyEffect"
+        );
+    }
+
+    #[test]
+    fn net_crumples_when_only_rider_in_range() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let rider_id = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: LAND_X + 5.0,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            true, // rider
+        ));
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert!(
+            net.net.crumpled,
+            "net should crumple when only a rider is in range"
+        );
+        assert!(net.net.victims.is_empty(), "no victims when crumpled");
+        assert_eq!(count_receive_net_for(&engine, rider_id), 0);
+    }
+
+    #[test]
+    fn selective_immunity_skips_all_resistant_types_and_captures_an_ally() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        engine
+            .control
+            .sim_config
+            .item_gameplay
+            .net_selective_immunity = true;
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z);
+        let net_id = engine.add_entity(make_net(landing));
+        let rider_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z),
+            0,
+            true,
+        );
+        let victim_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 5.0, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+        let Entity::Soldier(victim) = engine
+            .get_entity_mut(victim_id)
+            .expect("test allied victim")
+        else {
+            unreachable!()
+        };
+        victim.soldier.cached_camp = crate::element::Camp::Royalists;
+        let vip_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 10.0, LAND_Y, LAND_Z),
+            1,
+            false,
+        );
+        let stuteley_id =
+            engine.add_entity(make_pc(WorldPoint3D::new(LAND_X + 15.0, LAND_Y, LAND_Z), 1));
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            panic!("test net changed entity kind");
+        };
+        assert!(!net.net.crumpled);
+        assert_eq!(net.net.victims, vec![victim_id]);
+        assert_eq!(count_receive_net_for(&engine, rider_id), 0);
+        assert_eq!(count_receive_net_for(&engine, vip_id), 0);
+        assert_eq!(count_receive_net_for(&engine, stuteley_id), 0);
+        assert_eq!(count_receive_net_for(&engine, victim_id), 1);
+    }
+
+    #[test]
+    fn net_capture_circle_keeps_original_strict_radius_boundary() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        engine
+            .control
+            .sim_config
+            .item_gameplay
+            .net_selective_immunity = true;
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D::new(LAND_X, LAND_Y, LAND_Z);
+        let net_id = engine.add_entity(make_net(landing));
+        let inside_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 39.999, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+        let boundary_id = add_soldier(
+            &mut engine,
+            WorldPoint3D::new(LAND_X + 40.0, LAND_Y, LAND_Z),
+            0,
+            false,
+        );
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let Entity::Net(net) = engine.get_entity(net_id).unwrap() else {
+            panic!("test net changed entity kind");
+        };
+        assert_eq!(net.net.victims, vec![inside_id]);
+        assert_eq!(count_receive_net_for(&engine, boundary_id), 0);
+    }
+
+    #[test]
+    fn net_crumples_on_vip_soldier_alone() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        // Profile 1 = VIP soldier
+        let vip_id = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            1,
+            false,
+        ));
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert!(net.net.crumpled);
+        assert!(net.net.victims.is_empty());
+        assert_eq!(count_receive_net_for(&engine, vip_id), 0);
+    }
+
+    #[test]
+    fn net_with_existing_victim_ignores_new_rider() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        // Pre-existing victim simulates a previous capture-sweep
+        // call's captures; a Rider seen on a subsequent sweep triggers
+        // the "new arrivants won't be caught" branch — the net does
+        // NOT crumple, and the existing victim list is kept.
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let existing_id = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            false,
+        ));
+        let rider_id = engine.add_entity(make_soldier(
+            WorldPoint3D {
+                x: LAND_X + 5.0,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            true,
+        ));
+        // Seed the net with an already-captured victim so the
+        // crumple guard sees a non-empty list.
+        if let Some(Entity::Net(n)) = engine.world.entities.get_mut(net_id) {
+            n.net.victims.push(existing_id);
+        }
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert!(
+            !net.net.crumpled,
+            "rider with existing victim must not crumple"
+        );
+        // No new captures were added (rider triggered the early return
+        // before the existing victim could be re-processed; existing
+        // entry is dedup'd against itself).
+        assert_eq!(net.net.victims, vec![existing_id]);
+        assert_eq!(count_receive_net_for(&engine, rider_id), 0);
+    }
+
+    #[test]
+    fn net_skips_humans_outside_radius() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let near_id = add_soldier(
+            &mut engine,
+            WorldPoint3D {
+                x: LAND_X + 5.0,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            false,
+        );
+        // 200 units away in X — way outside SQUARE_RADIUS_NET_CAPTURE.
+        let far_id = add_soldier(
+            &mut engine,
+            WorldPoint3D {
+                x: LAND_X + 200.0,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            false,
+        );
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert_eq!(net.net.victims, vec![near_id]);
+        assert_eq!(count_receive_net_for(&engine, near_id), 1);
+        assert_eq!(count_receive_net_for(&engine, far_id), 0);
+    }
+
+    #[test]
+    fn net_crumples_on_stuteley_pc() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        // Character profile 1 = Stuteley (Action::Net present).
+        let _ = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            1,
+        ));
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert!(net.net.crumpled);
+        assert!(net.net.victims.is_empty());
+    }
+
+    #[test]
+    fn unapply_clears_victims_and_releases_counters() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let victim_id = add_soldier(
+            &mut engine,
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            false,
+        );
+        engine.add_detectable_for_all_npc(victim_id, crate::element::DetectableType::Body);
+        let body_slot = crate::element::DetectableType::Body as usize;
+        assert!(
+            engine
+                .get_entity(victim_id)
+                .and_then(Entity::npc_data)
+                .expect("test victim NPC")
+                .detectable_lists[body_slot]
+                .iter()
+                .any(|detectable| detectable.element == Some(victim_id))
+        );
+
+        // First, fire the apply sweep so the victim is registered.
+        // The sweep eagerly increments stuck_under_nets_counter; the
+        // posture snap to StuckUnderNet would normally happen the
+        // next frame inside `EngineInner::apply_net` (the ReceiveNet
+        // damage handler). We don't run the per-tick dispatcher in
+        // this unit test, so set the posture by hand to simulate the
+        // post-dispatch state.
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+        if let Some(entity) = engine.world.entities.get_mut(victim_id) {
+            entity.set_posture_stuck_under_net_for_human();
+        }
+        assert_eq!(
+            engine
+                .get_entity(victim_id)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .stuck_under_nets_counter,
+            1,
+            "apply_net_falling_effect should eagerly increment counter to 1"
+        );
+        assert_eq!(
+            engine.get_entity(victim_id).unwrap().element_data().posture,
+            Posture::StuckUnderNet
+        );
+
+        engine.unapply_net_effect(sim, &assets, net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert!(net.net.victims.is_empty(), "victims drained");
+        let v = engine.get_entity(victim_id).unwrap();
+        assert_eq!(v.human_data().unwrap().stuck_under_nets_counter, 0);
+        assert_eq!(v.element_data().posture, Posture::Lying);
+        assert!(
+            v.npc_data().expect("test victim NPC").detectable_lists[body_slot]
+                .iter()
+                .all(|detectable| detectable.element != Some(victim_id))
+        );
+    }
+
+    #[test]
+    fn vip_soldier_says_vip_net_no_remark() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        // The VipNetNo remark fires for VIP soldiers in the crumple
+        // radius. We populate an EnemyAi brain so the say() call has
+        // somewhere to land.
+        use crate::ai::AiController;
+        use crate::ai_enemy::EnemyAi;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let mut vip = make_soldier(
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            1, // VIP profile
+            false,
+        );
+        if let Entity::Soldier(ref mut s) = vip {
+            s.npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(EnemyAi {
+                base: AiController::default(),
+                ..Default::default()
+            }));
+        }
+        let vip_id = engine.add_entity(vip);
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let entity = engine.get_entity(vip_id).unwrap();
+        let remark = entity
+            .npc_data()
+            .and_then(|n| n.ai_brain.base())
+            .map(|b| b.current_remark)
+            .unwrap();
+        assert_eq!(remark, crate::ai::Remark::VipNetNo);
+    }
+
+    #[test]
+    fn capture_sets_victim_display_order_behind_net() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        // Capture should mark the victim's sprite as
+        // `display_order_ref = Some(net_id)` + `behind = true`.
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        // The victim already has a default Sprite (non-Option).
+        let victim_id = add_soldier(
+            &mut engine,
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            0,
+            false,
+        );
+
+        engine.apply_net_falling_effect(sim, &assets, net_id);
+
+        let sprite = engine.get_entity(victim_id).unwrap().sprite();
+        assert_eq!(sprite.display_order_ref, Some(net_id));
+        assert!(sprite.behind_display_order_ref);
+
+        engine.unapply_net_effect(sim, &assets, net_id);
+        let sprite = engine.get_entity(victim_id).unwrap().sprite();
+        assert_eq!(
+            sprite.display_order_ref, None,
+            "unapply should clear the behind-net reference"
+        );
+        assert!(!sprite.behind_display_order_ref);
+    }
+
+    #[test]
+    fn landing_registers_repulsive_points() {
+        let sim_context = crate::sim_rng::test_context();
+        let sim = &sim_context;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+
+        // Manually fire the landing-time helper (no flight ticking).
+        engine.register_net_repulsive_points(net_id);
+
+        let net = match engine.get_entity(net_id).unwrap() {
+            Entity::Net(n) => n,
+            _ => panic!("not a net"),
+        };
+        assert_eq!(net.net.repulsive_point_ids.len(), 2);
+        // Two repulsive points should be registered on AiGlobalState.
+        let registered_ids: Vec<i32> = engine
+            .ai
+            .global
+            .repulsive_points
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        for id in &net.net.repulsive_point_ids {
+            assert!(registered_ids.contains(id));
+        }
+
+        engine.unapply_net_effect(sim, &assets, net_id);
+        // After unapply: zero repulsive points left.
+        assert!(engine.ai.global.repulsive_points.is_empty());
+    }
+
+    #[test]
+    fn taking_net_animation_dispatched_for_pc() {
+        // PC taking a net should pick `OrderType::TakingNet` in the
+        // dispatcher. Soldiers picking purses still get `Taking`.
+        // We verify by populating PC + net + manually launching a
+        // Take element, then asserting the active_ai_anim type.
+        use crate::sequence::SequenceElement;
+        let mut engine = make_engine();
+        let assets = assets_with_profiles();
+        let landing = WorldPoint3D {
+            x: LAND_X,
+            y: LAND_Y,
+            z: LAND_Z,
+        };
+        let net_id = engine.add_entity(make_net(landing));
+        let pc_id = engine.add_entity(make_pc(
+            WorldPoint3D {
+                x: LAND_X,
+                y: LAND_Y,
+                z: 0.0,
+            },
+            1, // Stuteley (has Action::Net)
+        ));
+        // The full hourglass resolves the PC's portrait/ammo state through
+        // its campaign-description identity; install it like production
+        // roster construction does.
+        engine
+            .mission_domain
+            .campaign
+            .characters
+            .push(crate::campaign::PcDescription {
+                character_profile_idx: Some(crate::profiles::CharacterProfileIdx(1)),
+                ..Default::default()
+            });
+        engine
+            .world
+            .entities
+            .get_mut(pc_id)
+            .and_then(Entity::pc_data_mut)
+            .expect("test PC data")
+            .campaign_description_index = Some(0);
+
+        // Fire the landing path so the net is actually on the ground.
+        let sim = crate::sim_rng::test_context();
+        engine.snap_net_to_landing_obstacle(&sim, &assets, net_id);
+
+        // Launch Take(antagonist=net) targeting the PC.
+        let elem = SequenceElement::new_interaction(1, Command::Take, Some(pc_id), Some(net_id));
+        engine.launch_element(elem);
+        // Process the pending element so the dispatcher runs.
+        let mut dev = crate::engine::DevState::default();
+        let mut display = crate::engine::HostDisplayState::default();
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+
+        let active_anim = engine
+            .orders
+            .sequence_manager
+            .current_order_for_actor(pc_id)
+            .map(|(_, _, o)| o.order_type);
+        assert_eq!(
+            active_anim,
+            Some(crate::order::OrderType::TakingNet),
+            "PC picking up a net should play TakingNet, not generic Taking"
+        );
+    }
+}

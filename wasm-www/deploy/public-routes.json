@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "zone_name": "phiresky.xyz",
+  "worker_name": "robinhood-public-site",
+  "routes": [
+    {
+      "pattern": "robinhood.phiresky.xyz/api*",
+      "script": null
+    },
+    {
+      "pattern": "robinhood.phiresky.xyz/.well-known/acme-challenge/*",
+      "script": null
+    },
+    {
+      "pattern": "robinhood.phiresky.xyz/wasm/*",
+      "script": "robinhood-runtime-assets"
+    },
+    {
+      "pattern": "robinhood.phiresky.xyz/datadirs/*",
+      "script": "robinhood-datadir-assets"
+    },
+    {
+      "pattern": "robinhood.phiresky.xyz/*",
+      "script": "robinhood-public-site"
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "round tower",
+      "id": "leicester-round-tower",
+      "bbox": [650, 40, 290, 300],
+      "prompt": "round stone tower with conical wooden shingle roof",
+      "tags": ["tower", "castle"],
+      "pick": "all",
+      "max_masks": 6,
+      "variant_group": "leicester-round-tower",
+      "scale_class": "variant"
+    },
+    {
+      "name": "moat tower",
+      "id": "leicester-moat-tower",
+      "bbox": [30, 560, 270, 340],
+      "prompt": "round stone tower with conical roof",
+      "tags": ["tower", "castle", "moat"]
+    },
+    {
+      "name": "church",
+      "id": "leicester-church",
+      "bbox": [1000, 200, 470, 750],
+      "prompt": "stone church with bell tower and arched doorway",
+      "tags": ["church", "building", "castle"]
+    },
+    {
+      "name": "great hall",
+      "id": "leicester-great-hall",
+      "bbox": [520, 330, 530, 330],
+      "prompt": "castle hall building with red tiled roof",
+      "tags": ["building", "castle", "interior"]
+    },
+    {
+      "name": "beehive",
+      "id": "leicester-beehive",
+      "bbox": [255, 505, 130, 65],
+      "prompt": "straw beehive skep",
+      "tags": ["prop", "beehive"],
+      "pick": "all",
+      "max_masks": 4,
+      "min_area": 300,
+      "min_score": 0.4,
+      "variant_group": "leicester-beehive",
+      "scale_class": "variant",
+      "pad": 24
+    },
+    {
+      "name": "castle well",
+      "id": "leicester-castle-well",
+      "bbox": [1220, 20, 90, 90],
+      "prompt": "stone well",
+      "tags": ["prop", "well"],
+      "min_area": 400,
+      "pad": 32
+    },
+    {
+      "name": "courtyard well",
+      "id": "leicester-courtyard-well",
+      "bbox": [1220, 1000, 85, 80],
+      "prompt": "stone well with wooden roof",
+      "tags": ["prop", "well"],
+      "min_area": 400,
+      "pad": 32
+    },
+    {
+      "name": "stone bridge",
+      "id": "leicester-stone-bridge",
+      "bbox": [2880, 730, 190, 120],
+      "prompt": "stone bridge over stream",
+      "tags": ["bridge", "village"]
+    },
+    {
+      "name": "orchard tree",
+      "id": "leicester-orchard-tree",
+      "bbox": [1760, 270, 270, 190],
+      "prompt": "apple tree",
+      "tags": ["tree", "vegetation"],
+      "pick": "all",
+      "max_masks": 6,
+      "min_area": 800,
+      "variant_group": "leicester-orchard-tree",
+      "scale_class": "variant"
+    },
+    {
+      "name": "handcart",
+      "id": "leicester-handcart",
+      "bbox": [2720, 400, 150, 110],
+      "prompt": "wooden handcart wheelbarrow",
+      "tags": ["prop", "cart"],
+      "min_area": 400,
+      "pad": 32
+    },
+    {
+      "name": "gatehouse",
+      "id": "leicester-gatehouse",
+      "bbox": [660, 1100, 260, 330],
+      "prompt": "castle gatehouse with arched entrance",
+      "tags": ["castle", "gate", "building"]
+    },
+    {
+      "name": "footbridge",
+      "id": "leicester-footbridge",
+      "bbox": [570, 1420, 170, 130],
+      "prompt": "wooden footbridge",
+      "tags": ["bridge", "wood"],
+      "min_area": 800
+    },
+    {
+      "name": "manor house",
+      "id": "leicester-manor-house",
+      "bbox": [960, 1060, 600, 380],
+      "prompt": "stone manor house with slate roof",
+      "tags": ["building", "manor"]
+    },
+    {
+      "name": "ploughed field",
+      "id": "leicester-ploughed-field",
+      "bbox": [230, 1770, 820, 210],
+      "prompt": "ploughed brown farm field",
+      "tags": ["terrain", "field"],
+      "scale_class": "spline-segment"
+    },
+    {
+      "name": "tall shed",
+      "id": "leicester-tall-shed",
+      "bbox": [1890, 1590, 195, 320],
+      "prompt": "tall narrow wooden shed on stone base",
+      "tags": ["building", "shed", "wood"]
+    },
+    {
+      "name": "wooden cottage",
+      "id": "leicester-wooden-cottage",
+      "bbox": [2700, 1380, 260, 300],
+      "prompt": "wooden cottage",
+      "tags": ["building", "house", "village"]
+    },
+    {
+      "name": "lone tree",
+      "id": "leicester-lone-tree",
+      "bbox": [2050, 1110, 180, 230],
+      "prompt": "tree",
+      "tags": ["tree", "vegetation"]
+    },
+    {
+      "name": "rail fence",
+      "id": "leicester-rail-fence",
+      "bbox": [2350, 1540, 310, 80],
+      "prompt": "wooden rail fence",
+      "tags": ["fence", "wood"],
+      "scale_class": "spline-segment",
+      "min_area": 500
+    },
+    {
+      "name": "wall walkway",
+      "id": "leicester-wall-walkway",
+      "bbox": [390, 390, 350, 160],
+      "prompt": "crenellated castle wall walkway",
+      "tags": ["wall", "castle", "crenellated"],
+      "scale_class": "spline-segment"
+    }
+  ]
+}

@@ -1,0 +1,2229 @@
+//! Serializable player commands for the replay / rollback pipeline.
+//!
+//! Every sim-affecting player action flows through [`PlayerCommand`].
+//! The game session resolves raw platform input against read-only engine
+//! state to produce fully-resolved commands, then feeds them to
+//! [`crate::engine::Engine::advance_frame`]. The input system never holds
+//! mutable access to the engine's internal state.
+//!
+//! Commands are **resolved** — they carry entity IDs, map positions,
+//! and command types determined at resolution time.  During replay,
+//! the same commands are applied verbatim without re-resolving.
+
+use crate::coordinates::{MapPoint, ScreenPoint, WorldPoint3D};
+use crate::element::{Command, EntityId};
+use crate::engine::EngineStateRequest;
+use crate::profiles::Action;
+use crate::sequence::Field;
+use crate::tactical_control::{CombatStance, TacticalFormation};
+use serde::{Deserialize, Serialize};
+
+/// Fixed-point multiplier applied to cutting and concussion effects from a
+/// mouse/touch combat gesture. `1000` is the authored, original-game effect;
+/// lower values only reduce it.
+///
+/// Keeping this integer in the resolved command makes replays, rollback and
+/// multiplayer independent of platform mouse sampling and floating-point
+/// template matching.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct GestureQuality(u16);
+
+impl GestureQuality {
+    pub const MINIMUM: Self = Self(250);
+    pub const FAIR: Self = Self(500);
+    pub const GOOD: Self = Self(750);
+    pub const PERFECT_PERMILLE: u16 = 1000;
+    pub const PERFECT: Self = Self(Self::PERFECT_PERMILLE);
+    pub const LEVELS: [Self; 5] = [
+        Self(0),
+        Self::MINIMUM,
+        Self::FAIR,
+        Self::GOOD,
+        Self::PERFECT,
+    ];
+
+    /// Construct one of the deterministic quality tiers. Zero is reserved
+    /// for host-side feedback about an unrecognized gesture and never enters
+    /// a sword command.
+    pub fn new(permille: u16) -> Result<Self, GestureQualityError> {
+        if matches!(permille, 0 | 250 | 500 | 750 | 1000) {
+            Ok(Self(permille))
+        } else {
+            Err(GestureQualityError { permille })
+        }
+    }
+
+    pub const fn permille(self) -> u16 {
+        self.0
+    }
+
+    pub const fn is_valid(self) -> bool {
+        matches!(self.0, 0 | 250 | 500 | 750 | 1000)
+    }
+
+    pub const fn is_strike_quality(self) -> bool {
+        matches!(self.0, 250 | 500 | 750 | 1000)
+    }
+
+    /// Scale an authored combat effect, rounding to the nearest integer.
+    pub fn scale_u16(self, effect: u16) -> u16 {
+        let scaled =
+            (u32::from(effect) * u32::from(self.0) + 500) / u32::from(Self::PERFECT_PERMILLE);
+        u16::try_from(scaled).expect("gesture quality cannot increase a u16 effect")
+    }
+}
+
+impl Default for GestureQuality {
+    fn default() -> Self {
+        Self::PERFECT
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GestureQualityError {
+    pub permille: u16,
+}
+
+impl std::fmt::Display for GestureQualityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "gesture quality {} is not a supported tier (expected 0, 250, 500, 750, or {})",
+            self.permille,
+            GestureQuality::PERFECT_PERMILLE
+        )
+    }
+}
+
+impl std::error::Error for GestureQualityError {}
+
+/// The nine optional single-stroke techniques. Each expands into two ordinary
+/// A-I sword strikes, preserving the shipped animation set and normal combat
+/// interruption/energy rules.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum CompositeSwordTechnique {
+    RisingFeint,
+    FallingFeint,
+    Lightning,
+    Backslash,
+    Triad,
+    Rampart,
+    Vortex,
+    Stag,
+    Serpent,
+}
+
+impl CompositeSwordTechnique {
+    pub const ALL: [Self; 9] = [
+        Self::RisingFeint,
+        Self::FallingFeint,
+        Self::Lightning,
+        Self::Backslash,
+        Self::Triad,
+        Self::Rampart,
+        Self::Vortex,
+        Self::Stag,
+        Self::Serpent,
+    ];
+
+    pub const fn commands(self) -> [Command; 2] {
+        match self {
+            Self::RisingFeint => [Command::SwordstrikeThrustD, Command::SwordstrikeThrustB],
+            Self::FallingFeint => [Command::SwordstrikeThrustE, Command::SwordstrikeThrustB],
+            Self::Lightning => [Command::SwordstrikeThrustD, Command::SwordstrikeThrustE],
+            Self::Backslash => [Command::SwordstrikeThrustE, Command::SwordstrikeThrustD],
+            Self::Triad => [Command::SwordstrikeThrustF, Command::SwordstrikeThrustB],
+            Self::Rampart => [Command::SwordstrikeThrustG, Command::SwordstrikeThrustB],
+            Self::Vortex => [Command::SwordstrikeThrustH, Command::SwordstrikeThrustA],
+            Self::Stag => [Command::SwordstrikeThrustD, Command::SwordstrikeThrustA],
+            Self::Serpent => [Command::SwordstrikeThrustE, Command::SwordstrikeThrustA],
+        }
+    }
+
+    pub const fn first_command(self) -> Command {
+        self.commands()[0]
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::RisingFeint => "Rising Feint",
+            Self::FallingFeint => "Falling Feint",
+            Self::Lightning => "Lightning",
+            Self::Backslash => "Backslash",
+            Self::Triad => "Triad",
+            Self::Rampart => "Rampart",
+            Self::Vortex => "Vortex",
+            Self::Stag => "Stag",
+            Self::Serpent => "Serpent",
+        }
+    }
+}
+
+/// Semantic rejection reason for a native sword-gesture command. Derived
+/// decoders can construct private fixed-point fields without calling
+/// [`GestureQuality::new`], so every command admission path must validate the
+/// decoded values before recording or dispatching them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InvalidSwordGestureCommand {
+    NonSwordCommand(Command),
+    InvalidQuality(GestureQuality),
+    CompositeFirstStrikeMismatch {
+        command: Command,
+        composite: CompositeSwordTechnique,
+    },
+    CompositeTechniquesDisabled,
+    QualityDamageDisabled,
+}
+
+impl std::fmt::Display for InvalidSwordGestureCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NonSwordCommand(command) => {
+                write!(formatter, "non-sword command {command:?} in SwordStrikeCmd")
+            }
+            Self::InvalidQuality(quality) => write!(
+                formatter,
+                "invalid sword-gesture quality {}",
+                quality.permille()
+            ),
+            Self::CompositeFirstStrikeMismatch { command, composite } => write!(
+                formatter,
+                "composite {composite:?} starts with {:?}, not {command:?}",
+                composite.first_command()
+            ),
+            Self::CompositeTechniquesDisabled => {
+                formatter.write_str("composite sword techniques are disabled for this mission")
+            }
+            Self::QualityDamageDisabled => {
+                formatter.write_str("reduced sword-gesture quality is disabled for this mission")
+            }
+        }
+    }
+}
+
+impl std::error::Error for InvalidSwordGestureCommand {}
+
+fn validate_sword_gesture_fields(
+    command: Command,
+    composite: Option<CompositeSwordTechnique>,
+    gesture_quality: GestureQuality,
+    more_combat_gestures: bool,
+    gesture_quality_damage: bool,
+) -> Result<(), InvalidSwordGestureCommand> {
+    if !command.is_swordstrike() {
+        return Err(InvalidSwordGestureCommand::NonSwordCommand(command));
+    }
+    if !gesture_quality.is_strike_quality() {
+        return Err(InvalidSwordGestureCommand::InvalidQuality(gesture_quality));
+    }
+    if let Some(composite) = composite {
+        if !more_combat_gestures {
+            return Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled);
+        }
+        if composite.first_command() != command {
+            return Err(InvalidSwordGestureCommand::CompositeFirstStrikeMismatch {
+                command,
+                composite,
+            });
+        }
+    }
+    if !gesture_quality_damage && gesture_quality != GestureQuality::PERFECT {
+        return Err(InvalidSwordGestureCommand::QualityDamageDisabled);
+    }
+    Ok(())
+}
+
+/// The deliberately restricted command payload accepted by
+/// [`PlayerCommand::QueueQuickAction`]. Keeping this as a separate enum makes
+/// the player-command wire graph non-recursive and prevents queue commands
+/// from nesting other queue commands.
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum QueuedQuickActionCommand {
+    GroupMove {
+        actors: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+        show_marker: bool,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        door_route_override: Option<bool>,
+        recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
+        recorded_failed_gate_routes: Vec<EntityId>,
+    },
+    #[serde(rename = "MoveAlliedSoldiers")]
+    MoveTacticalUnits {
+        formation: TacticalFormation,
+        soldiers: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+    },
+    LaunchInteraction {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+    },
+    LaunchGroundTarget {
+        actor: EntityId,
+        target_pos: WorldPoint3D,
+        command: Command,
+        target_field: Field,
+        titbit_layer: u16,
+    },
+    LaunchSelfAbility {
+        actor: EntityId,
+        command: Command,
+    },
+    LaunchScrollRead {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    EnterSwordfight {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    SwordStrikeCmd {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        /// Optional authored two-strike technique. `command` must match its
+        /// first strike so seek-distance resolution remains explicit.
+        composite: Option<CompositeSwordTechnique>,
+        /// Resolved input quality for this native-schema command.
+        gesture_quality: GestureQuality,
+        with_seek: bool,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        seek_distance: Option<f32>,
+    },
+    RaiseShieldWithDanger {
+        actor: EntityId,
+        protected_pc: EntityId,
+        danger_point: WorldPoint3D,
+        danger_point_layer: u16,
+    },
+    DropAleAt {
+        actor: EntityId,
+        target_pos: MapPoint,
+        running: bool,
+        already_authorized: bool,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        #[serde(deserialize_with = "deserialize_required_option")]
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    },
+    CrouchDown,
+    StandUp,
+}
+
+impl QueuedQuickActionCommand {
+    fn validate_sword_gesture(
+        &self,
+        more_combat_gestures: bool,
+        gesture_quality_damage: bool,
+    ) -> Result<(), InvalidSwordGestureCommand> {
+        let Self::SwordStrikeCmd {
+            command,
+            composite,
+            gesture_quality,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        validate_sword_gesture_fields(
+            *command,
+            *composite,
+            *gesture_quality,
+            more_combat_gestures,
+            gesture_quality_damage,
+        )
+    }
+
+    pub fn from_player_command(command: PlayerCommand) -> Option<Self> {
+        use PlayerCommand::*;
+        Some(match command {
+            GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            } => Self::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            },
+            MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            } => Self::MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            },
+            LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            } => Self::LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            },
+            LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            } => Self::LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            },
+            LaunchSelfAbility { actor, command } => Self::LaunchSelfAbility { actor, command },
+            LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => Self::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            EnterSwordfight {
+                actor,
+                target,
+                running,
+            } => Self::EnterSwordfight {
+                actor,
+                target,
+                running,
+            },
+            SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                composite,
+                gesture_quality,
+                with_seek,
+                seek_distance,
+            } => Self::SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                composite,
+                gesture_quality,
+                with_seek,
+                seek_distance,
+            },
+            RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => Self::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            },
+            DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            } => Self::DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            },
+            CrouchDown => Self::CrouchDown,
+            StandUp => Self::StandUp,
+            _ => return None,
+        })
+    }
+
+    pub fn to_player_command(&self) -> PlayerCommand {
+        use QueuedQuickActionCommand::*;
+        match self.clone() {
+            GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            } => PlayerCommand::GroupMove {
+                actors,
+                destination,
+                running,
+                show_marker,
+                goal_override,
+                goal_sector_index_override,
+                door_route_override,
+                recorded_gate_routes,
+                recorded_failed_gate_routes,
+            },
+            MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            } => PlayerCommand::MoveTacticalUnits {
+                formation,
+                soldiers,
+                destination,
+                running,
+            },
+            LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            } => PlayerCommand::LaunchInteraction {
+                actor,
+                target,
+                command,
+                running,
+            },
+            LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            } => PlayerCommand::LaunchGroundTarget {
+                actor,
+                target_pos,
+                command,
+                target_field,
+                titbit_layer,
+            },
+            LaunchSelfAbility { actor, command } => {
+                PlayerCommand::LaunchSelfAbility { actor, command }
+            }
+            LaunchScrollRead {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::LaunchScrollRead {
+                actor,
+                target,
+                running,
+            },
+            EnterSwordfight {
+                actor,
+                target,
+                running,
+            } => PlayerCommand::EnterSwordfight {
+                actor,
+                target,
+                running,
+            },
+            SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                composite,
+                gesture_quality,
+                with_seek,
+                seek_distance,
+            } => PlayerCommand::SwordStrikeCmd {
+                actor,
+                target,
+                command,
+                composite,
+                gesture_quality,
+                with_seek,
+                seek_distance,
+            },
+            RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            } => PlayerCommand::RaiseShieldWithDanger {
+                actor,
+                protected_pc,
+                danger_point,
+                danger_point_layer,
+            },
+            DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            } => PlayerCommand::DropAleAt {
+                actor,
+                target_pos,
+                running,
+                already_authorized,
+                goal_override,
+                goal_sector_index_override,
+                recorded_gate_path,
+            },
+            CrouchDown => PlayerCommand::CrouchDown,
+            StandUp => PlayerCommand::StandUp,
+        }
+    }
+}
+
+impl From<PlayerCommand> for QueuedQuickActionCommand {
+    fn from(command: PlayerCommand) -> Self {
+        Self::from_player_command(command)
+            .expect("unsupported PlayerCommand used as a queued quick action")
+    }
+}
+
+/// A single player-issued command that affects simulation state.
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum PlayerCommand {
+    /// No-op — signals that the input was consumed (e.g. an
+    /// unrecognised swordfight gesture) without producing an action.
+    Noop,
+
+    /// Spellforge's authoritative global `KeyPressed(VK_*)` event. The host
+    /// converts platform key identities to Win32 virtual-key values before
+    /// admission so replay and multiplayer never re-interpret local layouts.
+    ScriptKeyPressed {
+        virtual_key: i32,
+    },
+
+    // ── Movement ─────────────────────────────────────────────────
+    /// Move a group of PCs to a destination.
+    GroupMove {
+        actors: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+        /// Whether to show the click marker at the destination.
+        show_marker: bool,
+        /// Optional explicit goal `(sector, layer)` that bypasses the
+        /// spatial lookup at `destination`.  Used by host-side selected
+        /// sector substitutions, including the patch-click flow that
+        /// mirrors the original game's
+        /// resolving the patch-aware goal sector and
+        /// selected-layer substitution at
+        /// When hovering a patch overlay,
+        /// the move's goal sector and layer come from the patch's
+        /// proto-loaded `(sector, final_layer)` rather than from a
+        /// spatial query on the waypoint, which can pick the wrong
+        /// layer (or no sector at all when the waypoint sits outside any
+        /// registered geometry). Jump-sector hover also rewrites the
+        /// selected sector to the underlying motion sector when no jump
+        /// line is executable, matching original-game movement behavior.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        /// Replay-only exact arena identity for `goal_override`. Schema-16
+        /// Original traces retain the sparse FastFindGrid slot; live input
+        /// leaves this unset and uses the spatial hit's arena identity.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        /// Replay-only reconstruction of which original-game route form was
+        /// selected. `Some(false)` forces ordinary movement construction
+        /// semantics even when Rust's spatial hit lands on a coincident door
+        /// overlay; `Some(true)` forces the door-target constructor. Live
+        /// input leaves this unset and uses the spatial selection normally.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        door_route_override: Option<bool>,
+        /// Schema-16 replay-only ordinary gate routes, keyed by actor. Each
+        /// gate is `(Original gate index, direct)`. Original has already run
+        /// gate-path search when it records this metadata; consuming that exact
+        /// result avoids a second A* search choosing a different valid route
+        /// and therefore authoring different building-exit waits/RNG draws.
+        /// Live input leaves this empty.
+        recorded_gate_routes: Vec<(EntityId, Vec<(u32, bool)>)>,
+        /// Schema-16 replay-only actors whose authoritative Original
+        /// movement-construction gate search failed. Replaying that observed
+        /// failure must not launch a second A* search against Rust topology.
+        recorded_failed_gate_routes: Vec<EntityId>,
+    },
+    /// Stop a PC (clear path, set waiting).
+    StopPc {
+        pc_id: EntityId,
+    },
+
+    // ── Sequence-based interactions ──────────────────────────────
+    /// Launch an interaction sequence (attack, heal, tie, search, etc.).
+    ///
+    /// `running`: seek with `RUNNING_UPRIGHT` instead of walking.
+    /// Set true on double-click action paths.
+    LaunchInteraction {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        running: bool,
+    },
+    /// Launch a ground-targeted ability (net, wasp nest, purse).
+    ///
+    /// `target_pos` is the full 3D point produced by the caller's
+    /// 2D→3D projection lookup against the sight-obstacle area, so
+    /// the titbit stamp and the `*_TARGET` sequence-field land on the
+    /// same 3D coordinate the projectile itself will resolve to.
+    ///
+    /// `titbit_layer` is the layer argument threaded into the QA
+    /// titbit — Purse/Wasp pass the currently selected layer, Net
+    /// hard-codes `0`.  The caller resolves the correct value on the
+    /// host side (where `selected_layer` is already tracked) so the
+    /// engine handler never has to second-guess it.
+    LaunchGroundTarget {
+        actor: EntityId,
+        target_pos: crate::coordinates::WorldPoint3D,
+        command: Command,
+        /// Which sequence property field to set the target position on.
+        target_field: Field,
+        /// Layer to stamp on the QA titbit (Purse/Wasp: currently
+        /// selected layer; Net: `0`).
+        titbit_layer: u16,
+    },
+    /// Launch a self-ability (whistle, eat, parry, drop corpse, etc.).
+    LaunchSelfAbility {
+        actor: EntityId,
+        command: Command,
+    },
+    /// Click on a scroll-attached NPC — build the composite `LOCK_AI →
+    /// turn-to-face (×2) → UNLOCK_AI → OPEN_SCROLL` sequence, prepend a
+    /// Seek if the PC is out of range, and launch it.
+    LaunchScrollRead {
+        actor: EntityId,
+        target: EntityId,
+        /// Double-click bit — `true` makes the PC run to the NPC
+        /// instead of walking.
+        running: bool,
+    },
+
+    // ── Swordfight ───────────────────────────────────────────────
+    /// Enter swordfight: engage an opponent.
+    ///
+    /// `running`: seek to the target with `RUNNING_UPRIGHT` animation
+    /// instead of `WALKING_UPRIGHT` / `WALKING_CROUCHED`. Only set on
+    /// the double-click-while-recording-macro branch; all other
+    /// click paths want `running=false`.
+    EnterSwordfight {
+        actor: EntityId,
+        target: EntityId,
+        running: bool,
+    },
+    /// Sword strike on a specific target.
+    SwordStrikeCmd {
+        actor: EntityId,
+        target: EntityId,
+        command: Command,
+        composite: Option<CompositeSwordTechnique>,
+        gesture_quality: GestureQuality,
+        with_seek: bool,
+        /// Exact tolerance resolved by the input source. Explicitly null for
+        /// a direct strike and required in every current Rust command.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        seek_distance: Option<f32>,
+    },
+    /// Promote `opponent_id` to `actor`'s principal opponent (front of
+    /// `human_data.opponents`).  Issued by the gamepad's swordfight
+    /// A/B/C directional opponent cycle.
+    SetPrincipalOpponent {
+        actor: EntityId,
+        opponent_id: EntityId,
+    },
+
+    // ── Action bar ───────────────────────────────────────────────
+    /// Select an action from the portrait action bar.
+    SelectAction {
+        pc_id: EntityId,
+        action_index: u32,
+    },
+    /// Select an already-resolved semantic action. Unlike `SelectAction`,
+    /// this remains stable when a character's three portrait slots differ.
+    SelectResolvedAction {
+        pc_id: EntityId,
+        action: Action,
+    },
+    /// Toggle an action for Shift-held quick-action planning without changing
+    /// the live PC's action, posture, animation, or current sequence.
+    SelectPlannedAction {
+        pc_id: EntityId,
+        action: Action,
+    },
+    /// First click of a planned Shield/BigShield action.
+    SelectPlannedShieldProtected {
+        actor: EntityId,
+        protected_pc: EntityId,
+    },
+    /// Clear only the Shift-held planned action, leaving the live PC action
+    /// and animation untouched.
+    CancelPlannedAction,
+    /// Cancel the active action (set to NoAction).
+    CancelAction {
+        pc_id: EntityId,
+    },
+    /// Cancel action on all selected PCs (right-click unselect).
+    UnselectAllActions,
+    /// Right mouse button pushed down.  Sets
+    /// `InputState.right_mouse_down` so any subsequent input that
+    /// gates on a held right button (e.g. selection-drag extension)
+    /// sees the correct state.  Issued by the gamepad CANCEL_PARADE
+    /// press edge so gamepad parry-cancel goes through the same
+    /// pipeline as the mouse.
+    MouseRightDown,
+    /// Right mouse button released.  Clears `InputState.right_mouse_down`.
+    /// Paired with [`Self::MouseRightDown`] on the CANCEL_PARADE release
+    /// edge so the held-state span brackets the press duration.
+    MouseRightUp,
+    /// Drain `pc_id`'s pending `Command::ShootBow` sequence elements.
+    /// Right-clicking while Bow is armed drains any queued shots
+    /// instead of cancelling the action — only an empty queue falls
+    /// through to the action cancel.
+    ClearShootList {
+        pc_id: EntityId,
+    },
+    /// Drop ammo onto the ground.
+    DropAmmo {
+        pc_id: EntityId,
+        action_id: u32,
+        amount: u32,
+    },
+    /// Walk/run to `target_pos`, then drop a single ale bottle there.
+    /// Resolves to a compound seek→drop-ale sequence engine-side.
+    DropAleAt {
+        actor: EntityId,
+        target_pos: MapPoint,
+        /// True selects `RUNNING_UPRIGHT` seek animation; comes from
+        /// the double-click / record-QA matrix.
+        running: bool,
+        /// The parity recorder stores the center returned by Original's
+        /// an authorized-position search, while live input stores the raw cursor.
+        /// Only an Original-trace replay sets this.
+        already_authorized: bool,
+        /// Authoritative route goal retained by a matching schema-16 route
+        /// construction event. Spatially re-querying an authorized projected
+        /// point can select an overlapping floor instead.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_override: Option<(crate::sector::SectorNumber, u16)>,
+        /// Replay-only exact sparse FastFindGrid identity for
+        /// `goal_override`. Public sector numbers are not unique, so retaining
+        /// only the number instead of the exact identity can
+        /// turn a valid cross-building route into no route at all.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
+        /// Replay-only authoritative result of Original's gate search. Live
+        /// commands leave this unset and use the runtime gate graph.
+        #[serde(deserialize_with = "deserialize_required_option")]
+        recorded_gate_path: Option<crate::gate::RecordedGatePath>,
+    },
+    /// Shield two-click protocol, first click: stash the focusable PC to
+    /// protect in [`ShieldState::protected_pc`] and flip
+    /// `is_protected = false` so the next click resolves the danger
+    /// direction.  No sequence is launched.
+    ShieldSelectProtected {
+        /// The PC with the Shield action armed.  Captured for replay
+        /// parity even though the engine reads the currently-selected
+        /// PC from its own state.
+        actor: EntityId,
+        /// The focusable PC that the carrier will shield.
+        protected_pc: EntityId,
+    },
+    /// Shield two-click protocol, second click (non-QA branch): set
+    /// the danger point, launch the compound Seek(protected_pc, 50)
+    /// → RaiseShield sequence, refresh the `DangerPoint` titbit, and
+    /// deselect the Shield action.
+    RaiseShieldWithDanger {
+        /// The PC raising the shield.
+        actor: EntityId,
+        /// The PC whose defensive arc is being honoured — seeked to
+        /// first.
+        protected_pc: EntityId,
+        /// The danger point toward which the shield is oriented.
+        danger_point: WorldPoint3D,
+        /// Map layer the player was looking at when picking the danger
+        /// point.  Differs from the carrier's own layer when the danger
+        /// is across a chasm or off a balcony.  Stamped onto
+        /// `Field::ShieldDangerPointLayer` so the danger-point titbit
+        /// renders on the picked layer.
+        danger_point_layer: u16,
+    },
+
+    // ── Posture ──────────────────────────────────────────────────
+    /// Crouch down (applies to all selected PCs).
+    CrouchDown,
+    /// Stand up / leave disguise (applies to all selected PCs).
+    StandUp,
+
+    // ── Selection ────────────────────────────────────────────────
+    SelectPc {
+        pc_id: EntityId,
+        append: bool,
+    },
+    TogglePcSelection {
+        pc_id: EntityId,
+    },
+    /// Drop one specific PC from the selection.  Unlike
+    /// [`Self::TogglePcSelection`] this never adds: a PC that is not
+    /// currently selected is left alone and the selection-change
+    /// follow-ups are skipped entirely.
+    UnselectPc {
+        pc_id: EntityId,
+    },
+    BoxSelect {
+        pt1: MapPoint,
+        pt2: MapPoint,
+        shift: bool,
+    },
+    BoxUnselect {
+        pt1: MapPoint,
+        pt2: MapPoint,
+    },
+    SelectAllPcs,
+    UnselectAllPcs,
+    AssignQuickGroup {
+        index: u8,
+    },
+    RecallQuickGroup {
+        index: u8,
+    },
+    SelectByPortrait {
+        portrait_index: u32,
+        append: bool,
+    },
+
+    // ── Optional tactical-unit control ──────────────────────────
+    // Serde names retain the pre-refactor replay vocabulary. Bitcode uses
+    // declaration order, which is unchanged.
+    #[serde(rename = "SelectAlliedSoldiers")]
+    SelectTacticalUnits {
+        soldiers: Vec<EntityId>,
+        append: bool,
+    },
+    #[serde(rename = "BoxSelectAlliedSoldiers")]
+    BoxSelectTacticalUnits {
+        pt1: MapPoint,
+        pt2: MapPoint,
+        shift: bool,
+    },
+    #[serde(rename = "ClearAlliedSelection")]
+    ClearTacticalSelection,
+    #[serde(rename = "PinAlliedSelection")]
+    PinTacticalSelection,
+    #[serde(rename = "UnpinAlliedGroup")]
+    UnpinTacticalGroup {
+        group_id: u32,
+    },
+    #[serde(rename = "SelectAlliedGroup")]
+    SelectTacticalGroup {
+        group_id: u32,
+        append: bool,
+    },
+    #[serde(rename = "PageAlliedPortraits")]
+    PageTacticalPortraits {
+        delta: i8,
+    },
+    #[serde(rename = "MoveAlliedSoldiers")]
+    MoveTacticalUnits {
+        soldiers: Vec<EntityId>,
+        destination: MapPoint,
+        running: bool,
+        formation: TacticalFormation,
+    },
+    SetCombatStance {
+        soldiers: Vec<EntityId>,
+        stance: CombatStance,
+    },
+    SetTacticalFormation {
+        soldiers: Vec<EntityId>,
+        formation: TacticalFormation,
+    },
+    #[serde(rename = "SetAlliedPatrol")]
+    SetTacticalPatrol {
+        soldiers: Vec<EntityId>,
+        destination: MapPoint,
+        formation: TacticalFormation,
+    },
+    #[serde(rename = "SetAlliedFollow")]
+    SetTacticalFollow {
+        soldiers: Vec<EntityId>,
+        hero: EntityId,
+        formation: TacticalFormation,
+    },
+    #[serde(rename = "ReleaseAlliedControl")]
+    ReleaseTacticalControl,
+
+    // ── Special ──────────────────────────────────────────────────
+    ResetComa {
+        pc_id: EntityId,
+    },
+    /// Click on the trumpet indicator of a dead PC's portrait — dispatch
+    /// `PcMessage::SendReinforcement` so the campaign spawns a replacement.
+    SendReinforcement {
+        pc_id: EntityId,
+    },
+    /// Double-click on a portrait while an action countdown is active:
+    /// accelerate the targeted PC's active movement / sequence.  No
+    /// separate QA-replay path is needed — recorded QA steps are
+    /// dispatched as regular player commands, so the targeted PC's
+    /// live sequence is already what `make_fast` acts on.
+    MakePcFast {
+        pc_id: EntityId,
+    },
+    /// Downgrade the targeted PC to walking. Counterpart to
+    /// [`Self::MakePcFast`].
+    MakePcSlow {
+        pc_id: EntityId,
+    },
+    /// Stand the targeted PC up (rewrite queued crouched orders to
+    /// upright variants).  When the PC has no active movement
+    /// sequence, falls back to launching a `CROUCH_UP` element.
+    MakePcUpright {
+        pc_id: EntityId,
+    },
+    /// Crouch the targeted PC (rewrite queued upright orders to
+    /// crouched variants).
+    MakePcCrouched {
+        pc_id: EntityId,
+    },
+
+    // ── Cutscene / engine state control ─────────────────────────
+    /// Request an engine state change. Player viewport zoom/scroll is
+    /// host-local; this remains for sim-visible state such as locker.
+    /// Routed through `EngineInner::change_state` inside `apply_command`.
+    ChangeState(EngineStateRequest),
+
+    // ── Speed / pacing ───────────────────────────────────────────
+    /// Enable fast-forward (slow-motion toggle).
+    SetFastForward,
+
+    // ── QA macro recording ──────────────────────────────────────
+    /// Stop the currently-running macro recording, if any.
+    StopRecordingMacro,
+    /// Play back a recorded macro.  `pc = None` means "start the
+    /// slot for every PC that has a macro there"; `pc = Some(id)`
+    /// means "start just this PC's macro".  The engine clears each
+    /// launched slot and — when *all* PCs finished slot N — runs the
+    /// strip collapse pass.
+    StartMacro {
+        pc: Option<EntityId>,
+        slot: u8,
+    },
+    /// Drop a recorded macro without replaying.  `pc = None` drops
+    /// the slot for every PC that has one; `pc = Some(id)` drops
+    /// just that PC's slot.  Unlike `StartMacro`, deletion does not
+    /// run the strip collapse pass for a single-PC case.
+    DeleteMacro {
+        pc: Option<EntityId>,
+        slot: u8,
+    },
+    /// Begin recording a quick-action macro.  `pc = None` arms
+    /// recording on the first selected PC; `pc = Some(id)` targets
+    /// that specific PC's portrait.  `slot` is the QA memory slot to
+    /// record into (typically derived from the recording-place
+    /// chooser).
+    StartRecordingMacro {
+        pc: Option<EntityId>,
+        slot: u8,
+    },
+    /// Switch the active QA memory slot while a recording is in
+    /// flight.  Ends the current recording, then arms a new one on
+    /// the same selected PCs against the new slot.
+    ChangeQaMemory {
+        slot: u8,
+    },
+    /// Record one already-resolved action into the next free QA memory slot.
+    /// The queue executor starts it immediately when the actor is idle and
+    /// advances subsequent slots as each dispatched action completes.
+    QueueQuickAction {
+        action: Action,
+        command: QueuedQuickActionCommand,
+    },
+    /// Double-click acceleration for Shift-planned movement.  If the newest
+    /// pending QA is a move it becomes a run; otherwise the active actor is
+    /// accelerated, matching ordinary double-click behavior.
+    MakeQueuedActionFast {
+        pc_id: EntityId,
+    },
+    /// Toggle the permanent alt-lock flag.  When true, the engine
+    /// behaves as though alt is always held, enabling the view cone
+    /// hover overlay without needing the key.  Host-driven from the
+    /// sight HUD button.
+    SetLockAlt(bool),
+
+    /// Ctrl was pressed (the "move during action" modifier).  Saves
+    /// the current action on every selected PC so the follow-on
+    /// move command can run without the action overriding it, and
+    /// ctrl-release can restore the saved action.  Routed through
+    /// the command pipeline for replay determinism; the drain arm
+    /// for `SimpleMessage::KeyControl` is the engine-internal mirror.
+    KeyControl,
+
+    /// Ctrl was released.  Restores each selected PC's action saved
+    /// by the matching `KeyControl`.  No-op on macOS (ctrl is
+    /// repurposed for stop-action there); honour the carve-out via
+    /// `cfg` in the handler.
+    KeyReleaseControl,
+
+    // ── Per-frame aim orientation ──────────────────────────────
+    /// Per-frame re-orientation of selected PCs toward the mouse
+    /// map position while an aim/throw/help-climb/beggar action is
+    /// active and the PC's animation hasn't committed to a throw
+    /// yet.  Issued once per frame when the window has focus.
+    /// Routed through the command pipeline so replay / rollback
+    /// reproduce the same direction updates.
+    PerformOrientation {
+        mouse_map: MapPoint,
+    },
+    /// Apply a cursor-independent orientation operation already resolved by
+    /// an authoritative input producer.
+    PerformResolvedOrientation {
+        pc_id: EntityId,
+        action: Action,
+        mouse_map: MapPoint,
+        target: WorldPoint3D,
+    },
+
+    // ── Cheats ───────────────────────────────────────────────────
+    /// `--goldeneye` CLI cheat: NPCs can't see PCs.  Issued once at
+    /// startup so replay / rollback reproduces the same AI vision
+    /// behaviour.
+    SetGoldenEyeMode {
+        on: bool,
+    },
+
+    // ── Host-driven sim mutations routed through the command pipeline
+    //    so replay / rollback reproduces them deterministically. ──
+    /// Toggle the engine-owned men-to-blazon conversion mode.
+    SetMenToBlazonConversionMode {
+        on: bool,
+    },
+    /// Register a generated peasant firstname+surname on the engine so
+    /// subsequent peasant spawns don't reuse it.  Called from the UI
+    /// panel when the civilian display-name generator picks a name.
+    RegisterPeasantName {
+        name: String,
+    },
+    /// Send a one-shot engine-level `ProcessMessage` to the global
+    /// StartUp script.  Used e.g. by the Sherwood `GoToExit` button
+    /// (msg=1000).
+    DispatchStartupMessage {
+        msg: i32,
+        arg1: i32,
+        arg2: i32,
+    },
+    /// `UNBLIP` console cheat — reveal all blipped entities.
+    RevealAllBlips,
+    /// Select (or clear with `None`) the next mission to play.
+    /// Invoked from campaign-map / Sherwood HUD button handlers.
+    CampaignSelectNextMission {
+        mission_idx: Option<usize>,
+    },
+    /// Promote the campaign's pending missions to the accessible list.
+    /// Runs when the player clicks the "show pending missions" choice
+    /// on the campaign map.
+    CampaignSwapPendingToAccessibleMissions,
+    /// Harvest Sherwood's per-sector bonus counts + PC occupants back
+    /// into the campaign before exiting Sherwood.  Invoked on the
+    /// mission-start branch.
+    CampaignHarvestProductionSectorState,
+    /// Sell exactly one or five stored Sherwood production items.  The
+    /// authoritative handler validates host ownership, location, stock and
+    /// currency overflow before mutating anything.
+    CampaignSellProductionItem {
+        request_id: u64,
+        prod_type: crate::sector_production::Type,
+        quantity: crate::trading::TradeQuantity,
+    },
+    /// Convert every peasant on the current mission team into blazons,
+    /// removing their PC entities from the engine.  Dispatched from
+    /// the Sherwood mission-start branch when the player committed
+    /// the "men to blazon" mission-description choice.  Rolls each
+    /// mission-team member's life-points against `2 * LIFEPOINTS_PC`
+    /// on the deterministic sim RNG: successes move to reservists,
+    /// failures are removed from the gang entirely.  The PC actor is
+    /// removed from the engine in both cases.  After the loop the
+    /// mission team is cleared and `BLAZON_VALUE` gains
+    /// `num_to_convert / peasant_to_blazon_quotation`.  Routed
+    /// through the command pipeline so the RNG-driven split replays
+    /// deterministically.
+    CampaignConvertSelectedPeasantsToBlazons,
+    /// End-of-mission rollup: stat sync, coma reset, score bonuses,
+    /// warcrime recruitment, blazon consumption.  Issued once after
+    /// the engine tick returns a mission-end `GameCode`, before the
+    /// debriefing is shown.
+    ApplyQuitMissionUpdates {
+        exit_code: crate::game_operation::GameCode,
+        /// Difficulty selected by the application context that issued this
+        /// deterministic command. Recruitment is the only quit-mission
+        /// update affected by it.
+        difficulty: crate::player_profile::DifficultyLevel,
+        /// Host wall-clock completion time. It is carried by the deterministic
+        /// command so peers and replay playback retain the same timestamp.
+        #[serde(default)]
+        completed_at_unix_seconds: Option<i64>,
+        /// High-resolution identity seed assigned to the campaign's first
+        /// native attempt. Carried in the command for peer/replay determinism.
+        #[serde(default)]
+        campaign_run_nonce: Option<u64>,
+    },
+    /// Player confirmed the quit-mission popup.  Sets `quit_won`
+    /// when the mission was already marked won (first-time-mission-
+    /// won banner path) or `quit_interrupted` otherwise (normal
+    /// abort path).  The tick's own flag-reading arms then convert
+    /// these into the matching mission-end `GameCode`.
+    QuitMissionRequested,
+    /// F7 `TELEPORT` cheat — teleport every currently-selected PC to
+    /// the mouse map position.  The first selected PC lands on
+    /// `dest`; subsequent PCs keep their relative offset from it.
+    /// Routed through the command pipeline so replay / rollback
+    /// reproduces the teleport deterministically.
+    TeleportSelectedToPoint {
+        dest: MapPoint,
+        /// Target layer (the currently selected layer).
+        layer: u16,
+        /// Target sector.  `None` leaves the sector unchanged — the
+        /// teleport executor only overwrites `ElementData.sector`
+        /// when this is `Some`.
+        sector: Option<crate::position_interface::SectorHandle>,
+    },
+
+    // ── Minimap ─────────────────────────────────────────────────
+    /// Window resize: reposition the minimap button / map boxes.
+    MinimapResize {
+        base: ScreenPoint,
+        corner_size: crate::coordinates::ScreenSize,
+    },
+    /// Left mouse down on the minimap widget. Starts a drag when the
+    /// map is deployed.
+    MinimapMouseDown {
+        click_pt: ScreenPoint,
+        /// Whether host presentation had already started a drag before this
+        /// edge. This fully resolves the UI-focus message decision so command
+        /// application never derives engine output from host display scratch.
+        continuing_drag: bool,
+    },
+    /// Mouse move — drives hover state, drag continuation, and the
+    /// entered-nicely / capture flags.
+    MinimapMouseMove {
+        mouse_pt: ScreenPoint,
+        left_mouse_down: bool,
+        /// Whether the host-owned minimap drag is continuing on this move.
+        /// Engine-visible focus output is derived from this recorded bit.
+        continuing_drag: bool,
+    },
+    /// Left mouse up while interacting with the minimap (either the
+    /// cursor is over the widget or a drag is in progress).  Handles
+    /// the click / drag-end / center-on-map-click branch.
+    MinimapMouseUp {
+        on_minimap: bool,
+    },
+    /// Center the shared camera on a host-resolved map point. Minimap gesture
+    /// presentation is deliberately represented by a separate command.
+    CenterCameraOnPoint {
+        point: MapPoint,
+    },
+    /// Right-click on the displayed minimap — close the map and clear
+    /// pending highlights.
+    MinimapRightClick,
+    /// A bound accelerator key was pressed —
+    /// toggle the map open or closed.
+    MinimapToggle,
+
+    // ── Display / UI setters ────────────────────────────────────
+    /// Set the locker-mode follow target.  `None` clears the target
+    /// and disables locker mode.
+    SelectFollowElement {
+        entity_id: Option<EntityId>,
+    },
+    /// Clear the one-shot `display_double_status_bar` flag on every
+    /// NPC.  Issued after the bars have been rendered for the frame.
+    ClearNpcDoubleStatusBarFlags,
+
+    /// Change the authoritative hero-comment frequency immediately.
+    /// Hero speech reads the active profile setting on every
+    /// call; carrying the edit as a command gives replay, rollback, and
+    /// multiplayer the same application frame and RNG-flow gate.
+    SetAmountOfSpeaking {
+        /// Sound-menu slider value in the original 0..=9 range.
+        amount: u16,
+    },
+    /// Toggle the fix for the original Hard reaction-time multiplier bug.
+    SetFixHardReactionTimes {
+        enabled: bool,
+    },
+    /// Toggle the post-port player interaction for releasing tied NPCs.
+    SetUnbindingEnabled {
+        enabled: bool,
+    },
+    /// Toggle the deterministic trading rule immediately after an in-game
+    /// options change.
+    SetSherwoodTrading {
+        enabled: bool,
+    },
+    /// Toggle authored/runtime relationship overrides at an authoritative
+    /// frame boundary. Disabling restores distinct-ID hostility.
+    SetDiplomacyEnabled {
+        enabled: bool,
+    },
+    SetNpcFactionWars {
+        enabled: bool,
+    },
+    /// Symmetrically change one relationship at runtime.
+    SetDiplomacyRelationship {
+        first: u16,
+        second: u16,
+        relationship: crate::diplomacy::Relationship,
+    },
+    // ── Hero speech (side-effect feedback) ───────────────────────
+    /// Trigger a hero speech barked line on `pc_id`.  Used by input
+    /// handlers that need to emit a UX-feedback voice line when a
+    /// click is discarded — e.g. plays `HERO_UNABLE_TO_DO_SOMETHING`
+    /// when an AnonymousArcher tries to shoot an NPC.  The
+    /// `expression` value is a `HERO_*` constant from `engine::melee`.
+    HeroSpeak {
+        pc_id: EntityId,
+        expression: u16,
+    },
+
+    // ── Modal dismissal ─────────────────────────────────────────
+    /// Result of a blocking modal that the host drained after the
+    /// engine tick queued it (mission briefing `DisplayDialog`, the
+    /// `DisplayPopupText` parchment scroll, etc.). Recorded so
+    /// replays can auto-dismiss the modal instead of waiting for a
+    /// human to click OK. Purely a host-side record —
+    /// `EngineInner::apply_command` treats this as a no-op.
+    ModalDismiss {
+        kind: ModalKind,
+        result: DialogResult,
+    },
+
+    // ── Seat lifecycle ───────────────────────────────────────────
+    /// A peer (or the host on its behalf) announces that the
+    /// referenced seat is now active.  Idempotent: re-running
+    /// `ConnectSeat` for an existing seat updates the nickname and
+    /// flips `connected = true` (drop-in/drop-out re-join).  The
+    /// engine grows `seats` on demand via `ensure_seat`, so a
+    /// `ConnectSeat` for an unseen `player_id` materialises a new
+    /// `SeatState`.
+    ///
+    /// Recorded into the replay stream so seat-creation timing is
+    /// data, not derived from transport state — that's what makes
+    /// recordings byte-identical across machines.
+    ConnectSeat {
+        player_id: PlayerId,
+        nickname: String,
+    },
+    /// A peer (or the host on its behalf) announces that the
+    /// referenced seat has dropped out.  The seat's `SeatState`
+    /// (selection, hotgroups) is preserved so the controlled PCs
+    /// stay where they were left, on autopilot — drop-in/drop-out
+    /// per `MULTIPLAYER.md` item 3.  A subsequent `ConnectSeat`
+    /// with the same `player_id` re-arms the seat for that peer.
+    DisconnectSeat {
+        player_id: PlayerId,
+    },
+    /// Preserve the original game's target-side civilian click behavior.
+    /// cooldown stamp. A non-macro double-click discards the Pay interaction
+    /// after recording only `make_pc_fast`, but this mutation still occurs.
+    BeggarDontTalkStamp {
+        beggar_id: EntityId,
+    },
+    /// Toggle reusable-cloak mechanics in the authoritative simulation.
+    /// Appended for bitcode compatibility with every pre-cloak command.
+    SetReusableCloaks {
+        enabled: bool,
+    },
+    /// Toggle deterministic NPC-on-NPC Clean Hands invalidation. Appended to
+    /// preserve every current-main bitcode variant index.
+    SetCleanHandsNpcKillsInvalidate {
+        enabled: bool,
+    },
+    /// Replace the complete deterministic item-rule set on this frame.
+    SetItemGameplayConfig {
+        config: crate::gameplay_config::ItemGameplayConfig,
+    },
+    /// Toggle the optional distraction-impact cue independently.
+    SetNoiseDistractionFeedback {
+        enabled: bool,
+    },
+    /// Toggle authored time-limit enforcement at a deterministic frame.
+    SetTimedMissionsEnabled {
+        enabled: bool,
+    },
+    /// Toggle authored ambience gameplay changes at a deterministic frame.
+    SetDynamicAmbienceEnabled {
+        enabled: bool,
+    },
+    /// Replace the authoritative combat-gesture rule pair at a deterministic
+    /// frame. Presentation-only guide and coach switches remain host-local.
+    SetCombatGestureRules {
+        more_combat_gestures: bool,
+        gesture_quality_damage: bool,
+    },
+    /// Toggle deterministic fog/intelligence at a replay-safe frame boundary.
+    /// Appended to preserve every current-main bitcode variant index.
+    SetFogOfWar {
+        enabled: bool,
+    },
+}
+
+impl PlayerCommand {
+    /// Validate all sword-gesture payloads, including the restricted command
+    /// nested inside an automatic quick action, against the authoritative
+    /// mission rules. Call this before any recording or simulation mutation.
+    pub fn validate_sword_gesture(
+        &self,
+        more_combat_gestures: bool,
+        gesture_quality_damage: bool,
+    ) -> Result<(), InvalidSwordGestureCommand> {
+        match self {
+            Self::SwordStrikeCmd {
+                command,
+                composite,
+                gesture_quality,
+                ..
+            } => validate_sword_gesture_fields(
+                *command,
+                *composite,
+                *gesture_quality,
+                more_combat_gestures,
+                gesture_quality_damage,
+            ),
+            Self::QueueQuickAction { command, .. } => {
+                command.validate_sword_gesture(more_combat_gestures, gesture_quality_damage)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether transport clients must be prevented from authoring this
+    /// command. These mutations define shared campaign/session state rather
+    /// than the issuing seat's controlled actors, so only the host may place
+    /// them in the deterministic command stream.
+    pub fn requires_host_authority(&self) -> bool {
+        matches!(
+            self,
+            Self::ReleaseTacticalControl
+                | Self::SetGoldenEyeMode { .. }
+                | Self::SetMenToBlazonConversionMode { .. }
+                | Self::RegisterPeasantName { .. }
+                | Self::DispatchStartupMessage { .. }
+                | Self::RevealAllBlips
+                | Self::CampaignSelectNextMission { .. }
+                | Self::CampaignSwapPendingToAccessibleMissions
+                | Self::CampaignHarvestProductionSectorState
+                | Self::CampaignSellProductionItem { .. }
+                | Self::CampaignConvertSelectedPeasantsToBlazons
+                | Self::ApplyQuitMissionUpdates { .. }
+                | Self::QuitMissionRequested
+                | Self::SetAmountOfSpeaking { .. }
+                | Self::SetFixHardReactionTimes { .. }
+                | Self::SetUnbindingEnabled { .. }
+                | Self::SetSherwoodTrading { .. }
+                | Self::ModalDismiss { .. }
+                | Self::ConnectSeat { .. }
+                | Self::DisconnectSeat { .. }
+                | Self::SetReusableCloaks { .. }
+                | Self::SetCleanHandsNpcKillsInvalidate { .. }
+                | Self::SetItemGameplayConfig { .. }
+                | Self::SetNoiseDistractionFeedback { .. }
+                | Self::SetTimedMissionsEnabled { .. }
+                | Self::SetDynamicAmbienceEnabled { .. }
+                | Self::SetCombatGestureRules { .. }
+                | Self::SetFogOfWar { .. }
+                | Self::SetDiplomacyEnabled { .. }
+                | Self::SetNpcFactionWars { .. }
+                | Self::SetDiplomacyRelationship { .. }
+        )
+    }
+
+    /// Identify commands which attempt to edit immutable ranked simulation
+    /// settings after frame zero. Restating the approved value is still an
+    /// attempted mutation and is rejected.
+    pub fn ranked_simulation_setting_mutation(
+        &self,
+    ) -> Option<crate::engine::RankedSimulationConfigField> {
+        use crate::engine::RankedSimulationConfigField as Field;
+        match self {
+            Self::SetGoldenEyeMode { .. } => Some(Field::GoldenEye),
+            Self::SetAmountOfSpeaking { .. } => Some(Field::AmountOfSpeaking),
+            Self::SetFixHardReactionTimes { .. } => Some(Field::FixHardReactionTimes),
+            Self::SetUnbindingEnabled { .. } => Some(Field::EnableUnbinding),
+            Self::SetSherwoodTrading { .. } => Some(Field::SherwoodTrading),
+            Self::SetReusableCloaks { .. } => Some(Field::ReusableCloaks),
+            Self::SetCleanHandsNpcKillsInvalidate { .. } => {
+                Some(Field::CleanHandsNpcKillsInvalidate)
+            }
+            Self::SetItemGameplayConfig { .. } => Some(Field::ItemGameplay),
+            Self::SetNoiseDistractionFeedback { .. } => Some(Field::NoiseDistractionFeedback),
+            Self::SetTimedMissionsEnabled { .. } => Some(Field::EnableTimedMissions),
+            Self::SetDynamicAmbienceEnabled { .. } => Some(Field::EnableDynamicAmbience),
+            Self::SetCombatGestureRules { .. } => Some(Field::CombatGestureRules),
+            Self::SetFogOfWar { .. } => Some(Field::FogOfWar),
+            Self::SetDiplomacyEnabled { .. } => Some(Field::Diplomacy),
+            Self::SetNpcFactionWars { .. } => Some(Field::NpcFactionWars),
+            Self::SetDiplomacyRelationship { .. } => Some(Field::DiplomacyRelationshipGraph),
+            _ => None,
+        }
+    }
+}
+
+/// Deserialize an explicitly present optional value.
+///
+/// Serde otherwise treats an absent `Option<T>` field as `None`, which would
+/// silently accept replay commands from an older, truncated schema.
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::element::EntityIdKind;
+
+    #[test]
+    fn simulation_setting_commands_are_host_only_ranked_mutations_even_as_noops() {
+        use crate::engine::RankedSimulationConfigField;
+
+        for (command, expected_field) in [
+            (
+                PlayerCommand::SetTimedMissionsEnabled { enabled: true },
+                RankedSimulationConfigField::EnableTimedMissions,
+            ),
+            (
+                PlayerCommand::SetDynamicAmbienceEnabled { enabled: true },
+                RankedSimulationConfigField::EnableDynamicAmbience,
+            ),
+            (
+                PlayerCommand::SetCombatGestureRules {
+                    more_combat_gestures: true,
+                    gesture_quality_damage: true,
+                },
+                RankedSimulationConfigField::CombatGestureRules,
+            ),
+            (
+                PlayerCommand::SetFogOfWar { enabled: true },
+                RankedSimulationConfigField::FogOfWar,
+            ),
+            (
+                PlayerCommand::SetDiplomacyEnabled { enabled: true },
+                RankedSimulationConfigField::Diplomacy,
+            ),
+            (
+                PlayerCommand::SetNpcFactionWars { enabled: true },
+                RankedSimulationConfigField::NpcFactionWars,
+            ),
+            (
+                PlayerCommand::SetDiplomacyRelationship {
+                    first: 2,
+                    second: 3,
+                    relationship: crate::diplomacy::Relationship::Hostile,
+                },
+                RankedSimulationConfigField::DiplomacyRelationshipGraph,
+            ),
+        ] {
+            assert!(command.requires_host_authority());
+            assert_eq!(
+                command.ranked_simulation_setting_mutation(),
+                Some(expected_field),
+                "restating an enabled policy value must remain an attempted ranked mutation"
+            );
+        }
+        assert!(!PlayerCommand::CrouchDown.requires_host_authority());
+    }
+
+    #[test]
+    fn diplomacy_command_roundtrips_through_replay_codecs() {
+        let command = PlayerCommand::SetDiplomacyRelationship {
+            first: 9,
+            second: 2,
+            relationship: crate::diplomacy::Relationship::Neutral,
+        };
+        let json = serde_json::to_string(&command).expect("serialize diplomacy command");
+        let decoded_json: PlayerCommand =
+            serde_json::from_str(&json).expect("deserialize diplomacy command");
+        let bytes = bitcode::encode(&decoded_json);
+        let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode diplomacy command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SetDiplomacyRelationship {
+                first: 9,
+                second: 2,
+                relationship: crate::diplomacy::Relationship::Neutral,
+            }
+        ));
+    }
+
+    #[test]
+    fn fog_setting_command_roundtrips_through_canonical_codecs() {
+        let command = PlayerCommand::SetFogOfWar { enabled: false };
+        let json = serde_json::to_string(&command).expect("serialize fog command");
+        let decoded_json: PlayerCommand =
+            serde_json::from_str(&json).expect("deserialize fog command");
+        let bytes = bitcode::encode(&decoded_json);
+        assert!(matches!(
+            bitcode::decode::<PlayerCommand>(&bytes).expect("decode fog command"),
+            PlayerCommand::SetFogOfWar { enabled: false }
+        ));
+    }
+
+    #[test]
+    fn queued_quick_action_is_non_recursive_and_native_bitcode_roundtrips() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Whistle,
+            command: PlayerCommand::LaunchSelfAbility {
+                actor,
+                command: Command::WhistleCmd,
+            }
+            .into(),
+        };
+        let bytes = bitcode::encode(&command);
+        let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode queued command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::QueueQuickAction {
+                action: Action::Whistle,
+                command: QueuedQuickActionCommand::LaunchSelfAbility {
+                    actor: decoded_actor,
+                    command: Command::WhistleCmd,
+                },
+            } if decoded_actor == actor
+        ));
+    }
+
+    #[test]
+    fn reusable_cloak_commands_roundtrip_for_replay_and_network() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        for command in [
+            PlayerCommand::LaunchSelfAbility {
+                actor,
+                command: Command::EnterCloak,
+            },
+            PlayerCommand::SetReusableCloaks { enabled: false },
+        ] {
+            let bytes = bitcode::encode(&command);
+            let decoded: PlayerCommand = bitcode::decode(&bytes).expect("decode cloak command");
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded cloak command"),
+                serde_json::to_value(command).expect("serialize cloak command")
+            );
+        }
+    }
+
+    #[test]
+    fn item_gameplay_command_roundtrips_for_replay_and_network() {
+        let command = PlayerCommand::SetItemGameplayConfig {
+            config: crate::gameplay_config::ItemGameplayConfig {
+                apple_combat_interrupt: true,
+                wasp_reliable_acquisition: false,
+                stone_ground_distraction: true,
+                stone_longer_range: false,
+                net_selective_immunity: true,
+                ale_reliable_distraction: false,
+            },
+        };
+        let native = bitcode::encode(&command);
+        let decoded_native: PlayerCommand = bitcode::decode(&native).expect("decode item command");
+        let json = serde_json::to_string(&command).expect("serialize item command");
+        let decoded_json: PlayerCommand = serde_json::from_str(&json).expect("decode item JSON");
+        for decoded in [decoded_native, decoded_json] {
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded item command"),
+                serde_json::to_value(&command).expect("serialize source item command")
+            );
+        }
+    }
+
+    #[test]
+    fn sherwood_trading_commands_roundtrip_in_current_native_codec() {
+        for command in [
+            PlayerCommand::CampaignSellProductionItem {
+                request_id: 41,
+                prod_type: crate::sector_production::Type::MakeNet,
+                quantity: crate::trading::TradeQuantity::One,
+            },
+            PlayerCommand::CampaignSellProductionItem {
+                request_id: 42,
+                prod_type: crate::sector_production::Type::MakeWaspNest,
+                quantity: crate::trading::TradeQuantity::Five,
+            },
+            PlayerCommand::SetSherwoodTrading { enabled: false },
+        ] {
+            let bytes = bitcode::encode(&command);
+            let decoded: PlayerCommand =
+                bitcode::decode(&bytes).expect("decode Sherwood trading command");
+            assert_eq!(
+                serde_json::to_value(decoded).expect("serialize decoded trading command"),
+                serde_json::to_value(command).expect("serialize trading command")
+            );
+        }
+    }
+
+    #[test]
+    fn queued_quick_action_rejects_truncated_current_payloads() {
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Hit,
+            command: PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: Command::SwordstrikeThrustA,
+                composite: None,
+                gesture_quality: GestureQuality::PERFECT,
+                with_seek: true,
+                seek_distance: Some(63.0),
+            }
+            .into(),
+        };
+        let mut encoded = serde_json::to_value(command).expect("serialize queued sword command");
+        encoded
+            .get_mut("QueueQuickAction")
+            .and_then(serde_json::Value::as_object_mut)
+            .and_then(|outer| outer.get_mut("command"))
+            .and_then(|command| command.get_mut("SwordStrikeCmd"))
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged queued sword command")
+            .remove("seek_distance");
+        assert!(
+            serde_json::from_value::<PlayerCommand>(encoded).is_err(),
+            "a queued Rust sword command without seek_distance must not enter the current schema"
+        );
+    }
+
+    #[test]
+    fn sword_payload_roundtrips_and_rejects_native_field_omission() {
+        let command = PlayerCommand::SwordStrikeCmd {
+            actor: EntityId::new(3, EntityIdKind::Pc),
+            target: EntityId::new(7, EntityIdKind::Soldier),
+            command: Command::SwordstrikeThrustA,
+            composite: Some(CompositeSwordTechnique::Vortex),
+            gesture_quality: GestureQuality::GOOD,
+            with_seek: true,
+            seek_distance: Some(63.0),
+        };
+        let encoded = serde_json::to_value(&command).expect("serialize sword command");
+        let decoded: PlayerCommand =
+            serde_json::from_value(encoded.clone()).expect("roundtrip sword command");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SwordStrikeCmd {
+                seek_distance: Some(63.0),
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality,
+                ..
+            } if gesture_quality == GestureQuality::GOOD
+        ));
+
+        let wire = bitcode::encode(&command);
+        let decoded: PlayerCommand = bitcode::decode(&wire).expect("roundtrip sword command wire");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::SwordStrikeCmd {
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::GOOD,
+                seek_distance: Some(63.0),
+                ..
+            }
+        ));
+
+        let mut pre_gesture = encoded.clone();
+        let payload = pre_gesture
+            .get_mut("SwordStrikeCmd")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged sword command");
+        payload.remove("composite");
+        payload.remove("gesture_quality");
+        assert!(
+            serde_json::from_value::<PlayerCommand>(pre_gesture).is_err(),
+            "a native sword command without gesture fields must not enter the current schema"
+        );
+
+        let mut legacy = encoded;
+        legacy
+            .get_mut("SwordStrikeCmd")
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("externally tagged sword command")
+            .remove("seek_distance");
+        assert!(
+            serde_json::from_value::<PlayerCommand>(legacy).is_err(),
+            "a Rust sword command without seek_distance must not enter the current schema"
+        );
+    }
+
+    #[test]
+    fn gesture_quality_scales_without_exceeding_authored_effect() {
+        assert_eq!(GestureQuality::PERFECT.scale_u16(57), 57);
+        assert_eq!(GestureQuality::FAIR.scale_u16(57), 29);
+        assert_eq!(GestureQuality::new(0).unwrap().scale_u16(57), 0);
+        assert!(GestureQuality::new(725).is_err());
+        assert!(GestureQuality::new(1001).is_err());
+    }
+
+    #[test]
+    fn composite_techniques_are_typed_two_strike_sequences() {
+        for technique in CompositeSwordTechnique::ALL {
+            let commands = technique.commands();
+            assert_eq!(commands[0], technique.first_command());
+            assert!(commands.into_iter().all(Command::is_swordstrike));
+        }
+    }
+
+    #[test]
+    fn sword_gesture_validation_rejects_malformed_and_disabled_payloads() {
+        let actor = EntityId::new(3, EntityIdKind::Pc);
+        let target = EntityId::new(7, EntityIdKind::Soldier);
+        let make = |command, composite, gesture_quality| PlayerCommand::SwordStrikeCmd {
+            actor,
+            target,
+            command,
+            composite,
+            gesture_quality,
+            with_seek: false,
+            seek_distance: None,
+        };
+
+        assert_eq!(
+            make(Command::WhistleCmd, None, GestureQuality::PERFECT)
+                .validate_sword_gesture(true, true),
+            Err(InvalidSwordGestureCommand::NonSwordCommand(
+                Command::WhistleCmd
+            ))
+        );
+        assert_eq!(
+            make(
+                Command::SwordstrikeThrustA,
+                Some(CompositeSwordTechnique::RisingFeint),
+                GestureQuality::PERFECT,
+            )
+            .validate_sword_gesture(true, true),
+            Err(InvalidSwordGestureCommand::CompositeFirstStrikeMismatch {
+                command: Command::SwordstrikeThrustA,
+                composite: CompositeSwordTechnique::RisingFeint,
+            })
+        );
+        assert_eq!(
+            make(
+                CompositeSwordTechnique::RisingFeint.first_command(),
+                Some(CompositeSwordTechnique::RisingFeint),
+                GestureQuality::PERFECT,
+            )
+            .validate_sword_gesture(false, true),
+            Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled)
+        );
+        assert_eq!(
+            make(Command::SwordstrikeThrustA, None, GestureQuality::GOOD)
+                .validate_sword_gesture(true, false),
+            Err(InvalidSwordGestureCommand::QualityDamageDisabled)
+        );
+
+        let invalid_wire = bitcode::encode(&725_u16);
+        let invalid_quality: GestureQuality =
+            bitcode::decode(&invalid_wire).expect("decode malicious quality newtype");
+        assert_eq!(
+            make(Command::SwordstrikeThrustA, None, invalid_quality)
+                .validate_sword_gesture(true, true),
+            Err(InvalidSwordGestureCommand::InvalidQuality(invalid_quality))
+        );
+    }
+
+    #[test]
+    fn queued_sword_gesture_uses_the_same_validation() {
+        let command = PlayerCommand::QueueQuickAction {
+            action: Action::Hit,
+            command: PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: CompositeSwordTechnique::Vortex.first_command(),
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::PERFECT,
+                with_seek: false,
+                seek_distance: None,
+            }
+            .into(),
+        };
+        assert_eq!(
+            command.validate_sword_gesture(false, true),
+            Err(InvalidSwordGestureCommand::CompositeTechniquesDisabled)
+        );
+
+        let reduced_quality = PlayerCommand::QueueQuickAction {
+            action: Action::Hit,
+            command: PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: CompositeSwordTechnique::Vortex.first_command(),
+                composite: Some(CompositeSwordTechnique::Vortex),
+                gesture_quality: GestureQuality::GOOD,
+                with_seek: false,
+                seek_distance: None,
+            }
+            .into(),
+        };
+        assert_eq!(
+            reduced_quality.validate_sword_gesture(true, false),
+            Err(InvalidSwordGestureCommand::QualityDamageDisabled)
+        );
+        let decoded: PlayerCommand = bitcode::decode(&bitcode::encode(&reduced_quality))
+            .expect("queued composite gesture roundtrips");
+        assert!(matches!(
+            decoded,
+            PlayerCommand::QueueQuickAction {
+                action: Action::Hit,
+                command: QueuedQuickActionCommand::SwordStrikeCmd {
+                    composite: Some(CompositeSwordTechnique::Vortex),
+                    gesture_quality,
+                    ..
+                },
+            } if gesture_quality == GestureQuality::GOOD
+        ));
+    }
+
+    #[test]
+    fn gesture_resolution_participates_in_command_state_hashes() {
+        let make = |composite: Option<CompositeSwordTechnique>, gesture_quality: GestureQuality| {
+            PlayerCommand::SwordStrikeCmd {
+                actor: EntityId::new(3, EntityIdKind::Pc),
+                target: EntityId::new(7, EntityIdKind::Soldier),
+                command: composite
+                    .map(CompositeSwordTechnique::first_command)
+                    .unwrap_or(Command::SwordstrikeThrustA),
+                composite,
+                gesture_quality,
+                with_seek: false,
+                seek_distance: None,
+            }
+        };
+        let original = robin_util::state_hash::compute(&make(None, GestureQuality::PERFECT));
+        let reduced = robin_util::state_hash::compute(&make(None, GestureQuality::GOOD));
+        let composite = robin_util::state_hash::compute(&make(
+            Some(CompositeSwordTechnique::Vortex),
+            GestureQuality::PERFECT,
+        ));
+        assert_ne!(original, reduced);
+        assert_ne!(original, composite);
+        assert_ne!(reduced, composite);
+    }
+
+    #[test]
+    fn tactical_command_rust_names_preserve_legacy_replay_tags() {
+        let command = PlayerCommand::ClearTacticalSelection;
+        let encoded = serde_json::to_string(&command).expect("serialize tactical command");
+        assert_eq!(encoded, "\"ClearAlliedSelection\"");
+        let decoded: PlayerCommand =
+            serde_json::from_str(&encoded).expect("deserialize legacy tactical tag");
+        assert!(matches!(decoded, PlayerCommand::ClearTacticalSelection));
+    }
+}
+
+/// Which blocking modal was dismissed, plus whatever identifier the
+/// host needs to pair the dismissal with the specific script-queued
+/// entry it came from.
+///
+/// Only modals that actually block the main loop and need replay
+/// auto-dismiss are enumerated. The remaining drain sites
+/// (short-briefings pane, other mission-state popups) share the same
+/// pattern — add new variants as they get wired up.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum DebriefingTextId {
+    Lose { index: usize },
+    Win { index: usize },
+}
+
+impl DebriefingTextId {
+    pub fn from_outcome(won: bool, index: usize) -> Self {
+        if won {
+            Self::Win { index }
+        } else {
+            Self::Lose { index }
+        }
+    }
+}
+
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum ModalKind {
+    /// Two-button dialogue window (`show_dialogue`), keyed by the
+    /// script-assigned dialog id.
+    Dialog { dialog_id: i32 },
+    /// Single-OK popup scroll (`show_popup_scroll` via
+    /// `DisplayPopupText`), keyed by the script text id.
+    PopupText { text_id: i32 },
+    /// Sherwood campaign stats report (`show_popup_scroll` variant
+    /// dispatched from `DisplaySherwoodReport`). Unkeyed — only one
+    /// in flight at a time.
+    SherwoodReport,
+    /// Mission debriefing page queued by `DisplayDebriefing`.
+    Debriefing { text_id: DebriefingTextId },
+    /// Final mission debriefing shown after the engine returns a
+    /// mission exit code. Distinct from `Debriefing` because the final
+    /// flow can also resolve to Restart or Load.
+    FinalDebriefing { text_id: DebriefingTextId },
+    /// Mission-state confirmation popup.
+    MissionState { kind: MissionStateModalKind },
+}
+
+#[derive(
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum MissionStateModalKind {
+    /// First-time mission-won prompt asking whether to leave now.
+    LeaveMissionNow,
+    /// End-state mission popup shown before the final debriefing.
+    EndState { won: bool },
+}
+
+/// Outcome of a blocking modal.
+///
+/// Popup-scroll / single-button modals always record `Completed`;
+/// `Aborted` is only meaningful for modals that distinguish a
+/// play-through-all-sentences OK from an early Stop / Escape
+/// (currently just `show_dialogue`).
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum DialogResult {
+    /// Player saw every sentence / pressed OK / pressed Return.
+    Completed,
+    /// Player aborted (Stop / Escape / window close).
+    Aborted,
+    /// Final mission debriefing requested restart.
+    Restart,
+    /// Final mission debriefing requested loading a save slot.
+    Load { slot: u32 },
+}
+
+/// Identifies which player issued a command. `LOCAL` (= 0) is the
+/// implicit single-player default; multiplayer assigns distinct ids
+/// per connected seat. The id is plumbed through the input stream,
+/// replay file, and engine command-dispatch boundary so handlers can
+/// authorise / route per-player commands. Viewport state is deliberately
+/// host-local; engine seats carry deterministic selection/hotgroup state.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Hash,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct PlayerId(pub u8);
+
+impl PlayerId {
+    /// The host / first-joined seat.  Assigned by **join order**, not
+    /// by which machine a recording was captured on:
+    ///
+    /// - In single-player, the only seat is `HOST`.
+    /// - In multiplayer with a headful host, the host always gets `HOST`;
+    ///   peers receive `PlayerId(1)`, `PlayerId(2)`, … in the order they
+    ///   join.
+    /// - In multiplayer with a headless host, the first peer to join
+    ///   gets `HOST` and subsequent peers get `PlayerId(1+)`.
+    ///
+    /// This is **not** "the seat this process drives" — that's
+    /// `Host::local_seat`, which can be any `PlayerId` and varies per
+    /// machine.  Recordings serialize the join-order seat so a replay
+    /// produced on peer-2 is byte-identical to one produced on the host.
+    pub const HOST: Self = Self(0);
+}
+
+impl Default for PlayerId {
+    fn default() -> Self {
+        Self::HOST
+    }
+}
+
+/// A [`PlayerCommand`] tagged with the [`PlayerId`] that issued it.
+///
+/// This is the wire-level / replay-level / batch-dispatch unit. The
+/// inner [`PlayerCommand`] enum stays focused on *what* action was
+/// requested; the wrapper records *who* requested it so replay,
+/// rollback, network sync, and (eventually) per-seat state mutation
+/// all see the same authoritative tag.
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct PlayerInput {
+    pub player_id: PlayerId,
+    pub command: PlayerCommand,
+}
+
+impl PlayerInput {
+    /// Tag a command as issued by the host seat ([`PlayerId::HOST`]).
+    /// Used for the single-player input pipeline and for v1 replay
+    /// upgrade (legacy untagged recordings have a single seat by
+    /// definition).  Live multiplayer pipelines should use
+    /// [`PlayerInput::new`] with `Host::local_seat` instead, so the
+    /// stamping is data-driven.
+    pub fn host(command: PlayerCommand) -> Self {
+        Self {
+            player_id: PlayerId::HOST,
+            command,
+        }
+    }
+
+    pub fn new(player_id: PlayerId, command: PlayerCommand) -> Self {
+        Self { player_id, command }
+    }
+}
+
+impl From<PlayerCommand> for PlayerInput {
+    fn from(command: PlayerCommand) -> Self {
+        Self::host(command)
+    }
+}
+
+/// All player commands for a single frame.
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct FrameCommands {
+    pub commands: Vec<PlayerInput>,
+}
+
+impl FrameCommands {
+    pub fn new() -> Self {
+        Self {
+            commands: Vec::new(),
+        }
+    }
+
+    /// Append a command. Accepts either a bare [`PlayerCommand`] (tagged
+    /// [`PlayerId::HOST`] via `From`) or a pre-tagged [`PlayerInput`].
+    pub fn push(&mut self, cmd: impl Into<PlayerInput>) {
+        self.commands.push(cmd.into());
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.commands.is_empty()
+    }
+}

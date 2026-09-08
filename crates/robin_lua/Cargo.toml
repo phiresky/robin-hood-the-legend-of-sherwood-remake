@@ -1,0 +1,25 @@
+[package]
+name = "robin_lua"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_lua"
+
+[dependencies]
+robin_engine.workspace = true
+# Luau is vendored by default, so no system Lua or `vendored` feature is
+# needed. `send` supports host tools that move the state between calls, while
+# Luau's `Lua::sandbox` isolates arbitrary downloaded missions.
+mlua.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

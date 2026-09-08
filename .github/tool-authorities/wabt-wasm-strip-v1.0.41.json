@@ -1,0 +1,1 @@
+{"distribution":{"byte_length":5076269,"media_type":"application/gzip","sha256":"83f8122e924745fcd70636e3594bc01c4c47f2d4c8f3c63b5d70d3f83a482677"},"distribution_url":"https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz","executable_relative_path":"wabt-1.0.41/bin/wasm-strip","role":"wabt_wasm_strip","schema_version":1,"version":"1.0.41"}

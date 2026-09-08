@@ -1,0 +1,270 @@
+//! Derive persistence columns from one signed submission and its reserved authority.
+use crate::{
+    config::AdmissionProfile,
+    db::{DbError, SubmissionUploadLease},
+    model::{NewSubmission, ParticipantClaim},
+};
+use robin_run_protocol::{
+    CanonicalDocument, Digest32, InitialStateExpectationV1, ParticipantPublicDisclosureV1,
+    SignedSubmissionV1, SubmissionOfferV1, Validate,
+};
+
+/// Authentication is independent; finalization checks the live lease in its transaction.
+/// Redundant storage fields are derived here, never supplied by the HTTP adapter.
+pub(crate) fn prepare_submission(
+    signed: &SignedSubmissionV1,
+    lease: &SubmissionUploadLease,
+) -> Result<NewSubmission, DbError> {
+    signed
+        .validate()
+        .map_err(|error| DbError::ResultInvariant(error.to_string()))?;
+    let reserved_offer: SubmissionOfferV1 =
+        serde_json::from_str(&lease.offer_json).map_err(stored_json_error)?;
+    if reserved_offer != signed.submission.offer
+        || lease.upload_challenge_id != signed.submission.offer.upload_challenge_id.as_str()
+    {
+        return Err(DbError::SubmissionConflict);
+    }
+    let artifacts = &signed.submission.artifacts;
+    let envelope_json = serde_json::to_string(signed).map_err(stored_json_error)?;
+    let signatures_json =
+        serde_json::to_string(&signed.participant_signatures).map_err(stored_json_error)?;
+    let controller_public_key = signed
+        .submission
+        .campaign_continuation_authorization
+        .as_ref()
+        .map(|authorization| authorization.claim.campaign_controller_public_key)
+        .unwrap_or(
+            signed
+                .submission
+                .offer
+                .session_genesis
+                .claim
+                .host_public_key,
+        )
+        .into_bytes();
+    let session_genesis_sha256 = signed
+        .submission
+        .offer
+        .session_genesis
+        .canonical_digest()
+        .map_err(|error| DbError::ResultInvariant(error.to_string()))?
+        .into_bytes();
+    let session_genesis_host_public_key = signed
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .host_public_key
+        .into_bytes();
+    let replay_session_id = signed
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .replay_session_id
+        .into_bytes();
+    let session_genesis_host_nonce = signed
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .host_nonce
+        .into_bytes();
+    let participants = signed
+        .submission
+        .offer
+        .participant_claims
+        .iter()
+        .map(|claim| ParticipantClaim {
+            seat: claim.seat,
+            participant_instance_id: claim.participant_instance_id.into_bytes(),
+            public_key: claim.public_key.into_bytes(),
+            public_disclosure: match claim.public_disclosure {
+                ParticipantPublicDisclosureV1::NamedProfile => "named_profile",
+                ParticipantPublicDisclosureV1::Anonymous => "anonymous",
+            }
+            .to_owned(),
+        })
+        .collect::<Vec<_>>();
+    let (scope_kind, chain_id, predecessor_id) = starting_state_storage(&signed.submission.offer);
+    let admission_profile: AdmissionProfile =
+        serde_json::from_str(&lease.public_metadata_json).map_err(stored_json_error)?;
+    if admission_profile.canonical_campaign_state.requirement
+        != signed
+            .submission
+            .offer
+            .starting_state
+            .campaign_state_requirement()
+    {
+        return Err(DbError::ResultInvariant(
+            "signed offer campaign-state authority differs from its admission profile".to_owned(),
+        ));
+    }
+    let canonical_campaign_state_json =
+        serde_json::to_string(&admission_profile.canonical_campaign_state)
+            .map_err(stored_json_error)?;
+    let submission = NewSubmission {
+        id: lease.submission_id.clone(),
+        upload_challenge_id: signed
+            .submission
+            .offer
+            .upload_challenge_id
+            .as_str()
+            .to_owned(),
+        offer_json: lease.offer_json.clone(),
+        envelope_json,
+        signatures_json,
+        public_metadata_json: lease.public_metadata_json.clone(),
+        replay_sha256: artifacts.replay.artifact.sha256.into_bytes(),
+        replay_bytes: artifacts.replay.artifact.byte_length,
+        build_manifest_id: signed.submission.offer.build_manifest_sha256.into_bytes(),
+        content_manifest_id: signed.submission.offer.content_manifest_sha256.into_bytes(),
+        campaign_content_manifest_id: signed
+            .submission
+            .offer
+            .session_genesis
+            .claim
+            .ranked_session
+            .campaign_content_manifest_sha256
+            .map(Digest32::into_bytes),
+        config_id: signed.submission.offer.rules_config_sha256.into_bytes(),
+        ruleset_id: signed.submission.offer.ruleset_manifest_sha256.into_bytes(),
+        mission_id: signed.submission.offer.mission_id.clone(),
+        scope_kind: scope_kind.to_owned(),
+        starting_campaign_sha256: artifacts.starting_campaign.sha256.into_bytes(),
+        starting_campaign_bytes: artifacts.starting_campaign.byte_length,
+        canonical_campaign_state_json,
+        controller_public_key,
+        starting_state_json: serde_json::to_string(&signed.submission.offer.starting_state)
+            .map_err(stored_json_error)?,
+        campaign_chain_id: chain_id,
+        predecessor_run_id: predecessor_id,
+        competition_manifest_id: signed
+            .submission
+            .offer
+            .competition_manifest_sha256
+            .map(Digest32::into_bytes),
+        requested_metrics_json: serde_json::to_string(&signed.submission.requested_metrics)
+            .map_err(stored_json_error)?,
+        participant_claims_json: serde_json::to_string(&signed.submission.offer.participant_claims)
+            .map_err(stored_json_error)?,
+        max_concurrent_players: signed.submission.offer.max_concurrent_players,
+        participant_instance_count: signed.submission.offer.participant_instance_count,
+        session_genesis_sha256,
+        session_genesis_host_public_key,
+        replay_session_id,
+        session_genesis_host_nonce,
+        participants,
+    };
+    Ok(submission)
+}
+
+/// Verify authorizing proofs against the server's exact immutable offer.
+/// Kept separate from transport parsing and from transaction-time lease checks.
+pub(crate) fn authenticate_reserved_offer(
+    signed: &SignedSubmissionV1,
+    offer_json: &str,
+) -> Result<(), crate::error::ApiError> {
+    use crate::{error::ApiError, identity::verify_signature};
+    let authoritative_offer: SubmissionOfferV1 =
+        serde_json::from_str(offer_json).map_err(|_error| {
+            tracing::error!(
+                error_code = "stored_offer_json_invalid",
+                "stored offer JSON is corrupt"
+            );
+            ApiError::Internal
+        })?;
+    if authoritative_offer != signed.submission.offer {
+        return Err(ApiError::Conflict(
+            "signed offer does not match the server-issued offer".to_owned(),
+        ));
+    }
+    let signing_bytes = signed
+        .signing_bytes()
+        .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+    for participant in &signed.participant_signatures {
+        verify_signature(
+            participant.public_key.as_bytes(),
+            participant.signature.as_bytes(),
+            &signing_bytes,
+        )
+        .map_err(|_| ApiError::Unauthorized)?;
+    }
+    if let Some(authorization) = &signed.submission.campaign_continuation_authorization {
+        let bytes = authorization
+            .signing_bytes(&signed.submission.offer)
+            .map_err(|error| ApiError::BadRequest(error.to_string()))?;
+        verify_signature(
+            authorization
+                .claim
+                .campaign_controller_public_key
+                .as_bytes(),
+            authorization.signature.as_bytes(),
+            &bytes,
+        )
+        .map_err(|_| ApiError::Unauthorized)?;
+    }
+    Ok(())
+}
+
+fn stored_json_error(error: serde_json::Error) -> DbError {
+    DbError::Corrupt(format!("submission persistence document: {error}"))
+}
+
+/// Complete one reserved upload. The adapter supplies bounded artifact I/O as
+/// a future, so this workflow owns failure cleanup and durable transitions
+/// without depending on multipart or buffering a campaign itself.
+pub(crate) async fn finish_reserved_upload(
+    database: &crate::Database,
+    signed: &SignedSubmissionV1,
+    lease: &SubmissionUploadLease,
+    resume_uploaded: bool,
+    ingestion: impl std::future::Future<Output = Result<(), crate::error::ApiError>>,
+) -> Result<crate::model::SubmissionLifecycle, crate::error::ApiError> {
+    if let Err(error) = ingestion.await {
+        abandon_failed_upload(database, lease).await;
+        return Err(error);
+    }
+    if !resume_uploaded {
+        if let Err(error) = database.mark_submission_upload_uploaded(lease).await {
+            abandon_failed_upload(database, lease).await;
+            return Err(error.into());
+        }
+    }
+    let submission = prepare_submission(signed, lease)?;
+    Ok(database
+        .finalize_submission_upload(&submission, lease)
+        .await?)
+}
+
+async fn abandon_failed_upload(database: &crate::Database, lease: &SubmissionUploadLease) {
+    match database.abandon_submission_upload(lease).await {
+        Ok(true) => {}
+        Ok(false) => tracing::warn!("failed upload no longer held its reservation lease"),
+        Err(error) => tracing::error!(
+            error_code = error.safe_log_code(),
+            "could not release failed upload reservation"
+        ),
+    }
+}
+
+fn starting_state_storage(
+    offer: &SubmissionOfferV1,
+) -> (&'static str, Option<String>, Option<String>) {
+    match &offer.starting_state {
+        InitialStateExpectationV1::IndividualLevel { .. } => ("individual_level", None, None),
+        InitialStateExpectationV1::CampaignGenesis { .. } => {
+            ("campaign", Some(uuid::Uuid::now_v7().to_string()), None)
+        }
+        InitialStateExpectationV1::CampaignContinuation {
+            chain_id,
+            predecessor_run_id,
+            ..
+        } => (
+            "campaign",
+            Some(chain_id.as_str().to_owned()),
+            Some(predecessor_run_id.as_str().to_owned()),
+        ),
+    }
+}

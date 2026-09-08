@@ -1,0 +1,36 @@
+[package]
+name = "robin_replay_verifier"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_replay_verifier"
+
+[[bin]]
+name = "robin-replay-verifier"
+path = "src/bin/robin-replay-verifier.rs"
+
+[dependencies]
+anyhow.workspace = true
+bitcode.workspace = true
+ed25519-dalek = "3.0.0"
+nix = { version = "0.31", features = ["fs", "resource"] }
+robin_engine = { path = "../robin_engine" }
+robin_replay_format.workspace = true
+robin_ranked_verification.workspace = true
+robin_run_protocol = { path = "../robin_run_protocol" }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2 = "0.11"
+tempfile.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+walkdir = "2"
+
+[dev-dependencies]
+hex = "0.4"
+rand = "0.10"
+robin_highscores = { path = "../robin_highscores" }
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }

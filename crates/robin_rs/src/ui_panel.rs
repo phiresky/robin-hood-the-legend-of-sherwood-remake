@@ -1,0 +1,4165 @@
+//! Bottom UI panel rendering — portraits, minimap frame, and action buttons.
+//!
+//! The panel is composited from multiple overlapping widget bitmaps; this
+//! module renders character portraits loaded from resource files with
+//! selection highlighting and health bars.
+//!
+//! Layout reference:
+//! - 5 portrait slots across the bottom, 32px margin on each side
+//! - Each portrait: 112px wide, stacked vertically from bottom:
+//!   border(3) + bottom_scroll(23) + actions(35) + visage(50) + top_scroll(23)
+//! - Minimap button at top-right of panel area
+//!
+//! The `PANNEL_HEIGHT` used by the engine camera (130px in engine.rs) represents
+//! the full UI chrome height including the panel and its transition zone.
+
+use crate::host::Host;
+use robin_assets::picture::Picture;
+use robin_engine::character_kind::CharacterKind;
+use robin_engine::coordinates as engine_coordinates;
+use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
+use robin_engine::engine::Engine;
+use robin_engine::player_command::PlayerId;
+use robin_engine::profiles as engine_profiles;
+use robin_engine::sprite::BBox;
+use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormation};
+use std::collections::HashMap;
+
+use crate::gfx_types::{BlendMode, Rect};
+use crate::ingame_menu::{layout, widget_bridge};
+use crate::renderer::{BLIT_SOURCE_TRANSPARENT, GpuImage, Renderer};
+use crate::widget::requirements::{RequirementSlot, RequirementStatus};
+use robin_assets::resource_manager::{ResourceId, ResourceManager};
+use robin_engine::element::{Entity, EntityId};
+use robin_engine::minimap::HitMask;
+use robin_engine::profiles::Action;
+use robin_engine::titbit::SpriteRow;
+
+// ─── Layout constants ─────────────────────────────────────────────
+
+/// Horizontal margin on each side of the portrait area (pixels).
+const MARGIN: u16 = 32;
+
+/// Width of a single portrait element (pixels).
+const ELEMENT_WIDTH: u16 = 112;
+const ALLIED_ACTION_ICON_WIDTH: u16 = 34;
+const ALLIED_ACTION_ICON_HEIGHT: u16 = 32;
+const ALLIED_PIN_ICON_SIZE: u16 = 27;
+const ALLIED_VISAGE_COUNT: usize = 6;
+// Scale the old 18px icon around its center, then move that center 9px
+// right/up. The resulting pin hangs slightly over the scroll's top-right.
+const ALLIED_PIN_LEFT: u16 = 86;
+const ALLIED_PIN_RISE: u16 = 10;
+
+/// Border gap at the very bottom of the screen.
+const BORDURE: u16 = 3;
+
+// Vertical heights of portrait sub-elements (open state).
+const BOTTOM_SCROLL_HEIGHT: u16 = 23;
+const ACTION_HEIGHT: u16 = 35;
+const VISAGE_HEIGHT: u16 = 50;
+const TOP_SCROLL_HEIGHT: u16 = 23;
+
+/// Total height of a fully open portrait widget.
+const PORTRAIT_TOTAL_HEIGHT: u16 =
+    BORDURE + BOTTOM_SCROLL_HEIGHT + ACTION_HEIGHT + VISAGE_HEIGHT + TOP_SCROLL_HEIGHT;
+
+// Vertical positions measured from the bottom of the screen.
+// Open state (selected PCs) — full layout with action buttons.
+const POSITION_BOTTOM_SCROLL: u16 = BORDURE + BOTTOM_SCROLL_HEIGHT;
+const POSITION_ACTION: u16 = POSITION_BOTTOM_SCROLL + ACTION_HEIGHT;
+const POSITION_VISAGE: u16 = POSITION_ACTION + VISAGE_HEIGHT;
+const POSITION_TOP_SCROLL: u16 = POSITION_VISAGE + TOP_SCROLL_HEIGHT;
+
+// Closed state (non-selected PCs) — no action buttons, scrolls compressed.
+const CLOSE_POSITION_BOTTOM_SCROLL: u16 = POSITION_BOTTOM_SCROLL;
+const CLOSE_POSITION_VISAGE: u16 = CLOSE_POSITION_BOTTOM_SCROLL + VISAGE_HEIGHT;
+const CLOSE_POSITION_TOP_SCROLL: u16 = CLOSE_POSITION_VISAGE + TOP_SCROLL_HEIGHT;
+
+// Action button widths (3-button mode).
+const ACTION1_WIDTH: u16 = 40;
+const ACTION2_WIDTH: u16 = 32;
+const ACTION3_WIDTH: u16 = 40;
+
+// Action button widths (2-button mode — peasants whose third action is NoAction).
+const ACTIONA_WIDTH: u16 = 56;
+const ACTIONB_WIDTH: u16 = 56;
+
+// Quick-action slot icon strip — each icon is 33 px wide, placed 20 px above
+// the upper scroll top.
+const QA_ICON_WIDTH: u16 = 33;
+/// Height of the QA icon strip above the upper scroll.
+const QA_ICON_HEIGHT: u16 = 20;
+/// Cast of [`robin_engine::macro_store::NUMBER_OF_QA_MEMORY`] for the draw loop.
+const NUMBER_OF_QA_MEMORY_U16: u16 = robin_engine::macro_store::NUMBER_OF_QA_MEMORY as u16;
+
+// ─── Colors (RGB565) ───────────────────────────────────────────────
+
+/// Fallback fill for the visage slot when the portrait sprite fails to load.
+fn color_visage_fill() -> u16 {
+    Renderer::create_color_16(50, 40, 30)
+}
+
+/// Fallback fill for an action button slot when its icon sprite is missing.
+fn color_action_fill() -> u16 {
+    Renderer::create_color_16(40, 50, 35)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActionButtonVisual {
+    Disabled,
+    Normal,
+    Hover,
+    Pressed,
+    HoverPressed,
+}
+
+/// Profile-specific visage art for player-controlled soldiers. The five named
+/// variants are cropped from Original's dialogue portraits; `Generic` keeps
+/// the established helmet portrait for every other soldier profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AlliedVisageKind {
+    Generic,
+    Guisbourne,
+    Longchamp,
+    PrinceJohn,
+    Scathlock,
+    Sheriff,
+}
+
+impl AlliedVisageKind {
+    const VARIANTS: [Self; ALLIED_VISAGE_COUNT] = [
+        Self::Generic,
+        Self::Guisbourne,
+        Self::Longchamp,
+        Self::PrinceJohn,
+        Self::Scathlock,
+        Self::Sheriff,
+    ];
+
+    fn from_profile_filename(filename: &str) -> Self {
+        match filename {
+            "Guisbourne" => Self::Guisbourne,
+            "Longchamp" => Self::Longchamp,
+            "PrinceJohn" => Self::PrinceJohn,
+            "Scatlock" => Self::Scathlock,
+            "sherif" | "Sherif" => Self::Sheriff,
+            _ => Self::Generic,
+        }
+    }
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    fn pc_action_template(self) -> Option<CharacterKind> {
+        match self {
+            Self::Generic => None,
+            Self::Guisbourne | Self::PrinceJohn => {
+                Some(CharacterKind::RobinHood { is_town: false })
+            }
+            Self::Longchamp => Some(CharacterKind::WillScarlet),
+            Self::Scathlock => Some(CharacterKind::FriarTuck),
+            Self::Sheriff => Some(CharacterKind::Stutely),
+        }
+    }
+}
+
+const ACTION_SUB_ID_DISABLED: usize = 0;
+const ACTION_SUB_ID_UNSELECTED: usize = 1;
+const ACTION_SUB_ID_FOCUSED: usize = 2;
+const ACTION_SUB_ID_SELECTED: usize = 3;
+const ACTION_SUB_ID_FOCUSED_SELECTED: usize = 4;
+
+fn action_button_visual(
+    is_active: bool,
+    is_disabled: bool,
+    is_hovered: bool,
+) -> ActionButtonVisual {
+    if is_disabled {
+        ActionButtonVisual::Disabled
+    } else if is_active && is_hovered {
+        ActionButtonVisual::HoverPressed
+    } else if is_active {
+        ActionButtonVisual::Pressed
+    } else if is_hovered {
+        ActionButtonVisual::Hover
+    } else {
+        ActionButtonVisual::Normal
+    }
+}
+
+use robin_engine::resource_ids;
+
+// ─── Scroll decoration resource IDs ───────────────────────────────
+// These are generic parchment frame bitmaps shared by all portrait widgets.
+
+/// Top scroll parchment banner (character name area).
+const RHID_TOP_SCROLL: ResourceId = resource_ids::RHID_TOP_SCROLL;
+/// Top scroll alternate (HP gauge overlay).
+const RHID_TOP_SCROLL_ALTERNATE: ResourceId = resource_ids::RHID_TOP_SCROLL_ALTERNATE;
+/// Bottom scroll parchment banner (ammo count area).
+const RHID_BOTTOM_SCROLL: ResourceId = resource_ids::RHID_BOTTOM_SCROLL;
+
+// ─── Panel border frame resource IDs ─────────────────────────────
+// These form the ornamental frame around the bottom panel area.
+
+const RHID_TOP_LEFT_CORNER: ResourceId = resource_ids::RHID_TOP_LEFT_CORNER;
+const RHID_TOP_RIGHT_CORNER: ResourceId = resource_ids::RHID_TOP_RIGHT_CORNER;
+const RHID_BOTTOM_LEFT_CORNER: ResourceId = resource_ids::RHID_BOTTOM_LEFT_CORNER;
+const RHID_BOTTOM_RIGHT_CORNER: ResourceId = resource_ids::RHID_BOTTOM_RIGHT_CORNER;
+const RHID_MIDDLE_800: ResourceId = resource_ids::RHID_MIDDLE_800;
+const RHID_MIDDLE_1024: ResourceId = resource_ids::RHID_MIDDLE_1024;
+
+// Border piece dimensions are derived from the bitmap surface sizes at runtime;
+// the renderer auto-fits its bounding box to the resource size.
+
+// Portrait resource IDs are pulled directly from `resource_ids` below.
+
+// ─── Action button resource IDs ─────────────────────────────────
+
+// ─── Localized name string resource IDs ────────────────────────
+
+/// Resource ID for the menu text string table (campaign version).
+pub(crate) const MENU_TEXT_TABLE_ID: ResourceId = 1000507;
+/// Alternate menu text table IDs for demo versions.
+pub(crate) const MENU_TEXT_TABLE_ID_DEMO: ResourceId = 1000040;
+pub(crate) const MENU_TEXT_TABLE_ID_DEMO2: ResourceId = 1000034;
+
+// ─── Portrait cache ───────────────────────────────────────────────
+
+/// Pre-loaded portrait renderer surfaces and action button icons, keyed by [`CharacterKind`].
+///
+/// Loaded once at mission start from `Data/Interface/DEFAULT.RES`, then
+/// passed to [`draw_panel`] each frame.  The per-character arrays are
+/// indexed via `CharacterKind::as_index()` (`CharacterKind::COUNT`
+/// slots).
+pub struct PortraitCache {
+    /// Renderer surface id for each character's face portrait.
+    surfaces: [Option<u32>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (disabled state, sub_id 0).
+    action_disabled_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (normal state, sub_id 1).
+    action_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (focused/hover state, sub_id 2).
+    action_hover_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (pressed/selected state, sub_id 3).  Used to highlight the
+    /// currently active action button.
+    action_pressed_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// `[action1, action2, action3]` renderer surface ids per character
+    /// (focused selected state, sub_id 4).
+    action_hover_pressed_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    /// Localized display name per character.
+    localized_names: [Option<String>; CharacterKind::COUNT],
+    /// Generic scroll decoration surfaces (shared by all portraits).
+    top_scroll_surface: Option<u32>,
+    top_scroll_alt_surface: Option<u32>,
+    bottom_scroll_surface: Option<u32>,
+    /// Authored 112x134 transparent scroll background for allied groups.
+    allied_portrait_background: Option<GpuImage>,
+    /// Complete 112x50 visage strips for generic and named allied soldiers.
+    allied_visages: [Option<GpuImage>; ALLIED_VISAGE_COUNT],
+    /// Transparent medieval brooch artwork for the transient and pinned states.
+    allied_pin_icons: [Option<GpuImage>; 2],
+    /// State-specific artwork: three stances, two patrol states, and four
+    /// formations, in that order.
+    allied_action_surfaces: [Option<GpuImage>; 9],
+    /// Panel border frame pieces.
+    border_top_left: Option<u32>,
+    border_top_right: Option<u32>,
+    border_bottom_left: Option<u32>,
+    border_bottom_right: Option<u32>,
+    border_middle: Option<u32>,
+    portrait_page_left: Option<u32>,
+    portrait_page_right: Option<u32>,
+    /// Fighting sword overlay surface per character.
+    fighting_surfaces: [Option<u32>; CharacterKind::COUNT],
+    /// Guard indicator surface (RHID_GUARD=209).
+    guard_surface: Option<u32>,
+    /// Trumpet/reinforcement indicator surface (RHID_TRUMPET=224).
+    trumpet_surface: Option<u32>,
+    /// Amulet/clover indicator surface (RHID_CLOVER=165).
+    /// Shown in burned state when PC is NOT guarded (player can click to revive).
+    amulet_surface: Option<u32>,
+    /// Pixel-level hit mask for the top scroll surface.
+    /// Used to reject clicks on transparent curved parchment edges.
+    top_scroll_hit_mask: Option<robin_engine::minimap::HitMask>,
+    /// Quick-action slot icon (RHID_QUICKACTION, shared by all QA slots).
+    qa_icon_surface: Option<u32>,
+    /// Quick-action slot icon while recording (RHID_QUICKACTION_IN_PROGRESS).
+    qa_icon_recording_surface: Option<u32>,
+    /// PC-info popup backgrounds (RHID_INFO_POPUP_BKGND_{TINY,HUGE}).
+    info_popup_bg_tiny: Option<u32>,
+    info_popup_bg_huge: Option<u32>,
+    /// PC-info popup pip sprites (RHID_INFO_POPUP_SWORD / BOW).  We blit
+    /// the "on" pip for the first `n` slots and skip the rest.
+    info_popup_sword: Option<u32>,
+    info_popup_bow: Option<u32>,
+    /// Blazon bar icon strip — sub_ids: 0 = empty, 1 = normal (won),
+    /// 2 = castle (to-collect).  We load the tiny set (used when the bar
+    /// is the thin top strip).
+    blazon_tiny_empty: Option<u32>,
+    blazon_tiny_normal: Option<u32>,
+    blazon_tiny_castle: Option<u32>,
+    /// Per-(resource, sub_id) surface cache for resources that carry a
+    /// table of sub-pictures indexed by character profile / action
+    /// (requirements bar per-slot icons).  Pre-loaded at level load so the
+    /// HUD can blit any `(res_id, sub_id)` without holding a
+    /// `ResourceManager` borrow across the draw path.
+    sub_pictures: HashMap<(ResourceId, usize), u32>,
+    /// `RHID_YES_NO` status overlay — sub_id 0 = yes (green tick),
+    /// sub_id 1 = no (red cross).
+    req_yes: Option<u32>,
+    req_no: Option<u32>,
+    /// `RHID_SELECTED_ACTION` overlay marker used to highlight the
+    /// currently-selected slot on the requirements bar.
+    req_selected: Option<u32>,
+}
+
+impl Default for PortraitCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PortraitCache {
+    pub fn new() -> Self {
+        Self {
+            surfaces: [None; CharacterKind::COUNT],
+            action_disabled_surfaces: [None; CharacterKind::COUNT],
+            action_surfaces: [None; CharacterKind::COUNT],
+            action_hover_surfaces: [None; CharacterKind::COUNT],
+            action_pressed_surfaces: [None; CharacterKind::COUNT],
+            action_hover_pressed_surfaces: [None; CharacterKind::COUNT],
+            localized_names: [const { None }; CharacterKind::COUNT],
+            top_scroll_surface: None,
+            top_scroll_alt_surface: None,
+            bottom_scroll_surface: None,
+            allied_portrait_background: None,
+            allied_visages: [const { None }; ALLIED_VISAGE_COUNT],
+            allied_pin_icons: [None, None],
+            allied_action_surfaces: [const { None }; 9],
+            border_top_left: None,
+            border_top_right: None,
+            border_bottom_left: None,
+            border_bottom_right: None,
+            border_middle: None,
+            portrait_page_left: None,
+            portrait_page_right: None,
+            fighting_surfaces: [None; CharacterKind::COUNT],
+            guard_surface: None,
+            trumpet_surface: None,
+            amulet_surface: None,
+            top_scroll_hit_mask: None,
+            qa_icon_surface: None,
+            qa_icon_recording_surface: None,
+            info_popup_bg_tiny: None,
+            info_popup_bg_huge: None,
+            info_popup_sword: None,
+            info_popup_bow: None,
+            blazon_tiny_empty: None,
+            blazon_tiny_normal: None,
+            blazon_tiny_castle: None,
+            sub_pictures: HashMap::new(),
+            req_yes: None,
+            req_no: None,
+            req_selected: None,
+        }
+    }
+
+    /// Load portrait pictures for all known characters.
+    ///
+    /// Reads each portrait resource from the resource manager, converts
+    /// to a renderer surface. Missing resources are logged and skipped.
+    pub fn load(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+        files: &robin_engine::sbfile::SbFileSystem,
+    ) {
+        let mut timer = crate::game_session::PhaseTimer::new("portrait cache load");
+        for kind in CharacterKind::VARIANTS {
+            let slot = kind.as_index();
+            let res_id = kind.portrait_resource();
+
+            // Portrait resources are BTTN type with bitmask 0b1110;
+            // sub_id 0 is absent, sub_id 1 is the default portrait.
+            match res.get_picture(res_id, 1) {
+                Ok(pic) => {
+                    let surface_id = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded portrait for {:?}: resource {res_id}, surface {surface_id} ({}x{})",
+                        kind,
+                        pic.width,
+                        pic.height,
+                    );
+                    self.surfaces[slot] = Some(surface_id);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load portrait for {kind:?} (resource {res_id}): {e}",);
+                }
+            }
+        }
+
+        tracing::info!(
+            "Portrait cache: {} surfaces loaded",
+            self.surfaces.iter().filter(|s| s.is_some()).count(),
+        );
+        timer.step("character portraits");
+
+        let (width, height, pixels) =
+            decode_embedded_png_rgba(&read_ui_asset("allied_portrait_background.png", files))
+                .expect("allied portrait background must be a valid RGB/RGBA PNG");
+        assert_eq!(
+            (width, height),
+            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
+            "allied portrait background must match the native open HUD slot"
+        );
+        self.allied_portrait_background = Some(
+            renderer
+                .create_rgba_gpu_image(width, height, &pixels, "allied portrait background")
+                .expect("allied portrait background dimensions must match its payload"),
+        );
+
+        for (kind, file) in AlliedVisageKind::VARIANTS.into_iter().zip([
+            "allied_portrait_generic.png",
+            "allied_portrait_guisbourne.png",
+            "allied_portrait_longchamp.png",
+            "allied_portrait_prince_john.png",
+            "allied_portrait_scathlock.png",
+            "allied_portrait_sheriff.png",
+        ]) {
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files))
+                .unwrap_or_else(|error| panic!("decode allied visage {file}: {error}"));
+            assert_eq!(
+                (width, height),
+                (ELEMENT_WIDTH, VISAGE_HEIGHT),
+                "allied visage {file} must match the native 112x50 HUD visage slot"
+            );
+            self.allied_visages[kind.index()] = Some(
+                renderer
+                    .create_rgba_gpu_image(width, height, &pixels, file)
+                    .unwrap_or_else(|| panic!("allied visage {file} dimensions mismatch")),
+            );
+        }
+
+        for (index, (file, label)) in [
+            ("allied_pin_unpinned.png", "allied portrait pin (unpinned)"),
+            ("allied_pin_pinned.png", "allied portrait pin (pinned)"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files))
+                .expect("allied pin icon must be a valid RGB/RGBA PNG");
+            assert_eq!(
+                (width, height),
+                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE),
+                "allied pin icon must be 27x27"
+            );
+            self.allied_pin_icons[index] = Some(
+                renderer
+                    .create_rgba_gpu_image(width, height, &pixels, label)
+                    .expect("allied pin icon dimensions must match its payload"),
+            );
+        }
+
+        for (index, file) in [
+            "allied_stance_hold.png",
+            "allied_stance_defensive.png",
+            "allied_stance_aggressive.png",
+            "allied_patrol_off.png",
+            "allied_patrol_on.png",
+            "allied_formation_line.png",
+            "allied_formation_box.png",
+            "allied_formation_staggered.png",
+            "allied_formation_flank.png",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files))
+                .unwrap_or_else(|error| panic!("decode allied state icon {file}: {error}"));
+            assert_eq!(
+                (width, height),
+                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT),
+                "embedded allied state icon must be 34x32"
+            );
+            self.allied_action_surfaces[index] = Some(
+                renderer
+                    .create_rgba_gpu_image(
+                        width,
+                        height,
+                        &pixels,
+                        &format!("allied state icon {index}"),
+                    )
+                    .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
+            );
+        }
+        timer.step("embedded allied art");
+
+        // ── Load scroll decoration surfaces (generic, shared by all portraits) ──
+        for (res_id, field, label) in [
+            (
+                RHID_TOP_SCROLL,
+                &mut self.top_scroll_surface as &mut Option<u32>,
+                "top scroll",
+            ),
+            (
+                RHID_TOP_SCROLL_ALTERNATE,
+                &mut self.top_scroll_alt_surface,
+                "top scroll alt",
+            ),
+            (
+                RHID_BOTTOM_SCROLL,
+                &mut self.bottom_scroll_surface,
+                "bottom scroll",
+            ),
+        ] {
+            match res.get_picture(res_id, 1) {
+                Ok(pic) => {
+                    // Build pixel-level hit mask for the top scroll so clicks on
+                    // transparent curved parchment edges fall through.
+                    if res_id == RHID_TOP_SCROLL {
+                        let pixels: Vec<u16> = pic
+                            .data
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .collect();
+                        let tc = crate::renderer::TRANSPARENT_COLOR_KEY_16;
+                        self.top_scroll_hit_mask =
+                            Some(HitMask::from_pixels_u16(pic.width, pic.height, &pixels, tc));
+                        tracing::info!("Built top scroll hit mask ({}x{})", pic.width, pic.height);
+                    }
+
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
+                }
+            }
+        }
+
+        for (res_id, field, label) in [
+            (
+                resource_ids::RHID_PORTRAIT_SCROLL_LEFT,
+                &mut self.portrait_page_left as &mut Option<u32>,
+                "portrait page left",
+            ),
+            (
+                resource_ids::RHID_PORTRAIT_SCROLL_RIGHT,
+                &mut self.portrait_page_right,
+                "portrait page right",
+            ),
+        ] {
+            let picture = match res.get_picture(res_id, 1) {
+                Ok(picture) => Ok(picture),
+                Err(_) => res.get_picture(res_id, 0),
+            };
+            match picture {
+                Ok(pic) => *field = Some(pic_to_surface(renderer, pic)),
+                Err(error) => tracing::warn!("Failed to load {label}: {error}"),
+            }
+        }
+
+        // ── Load panel border frame pieces ──
+        // Choose the center piece based on screen width (800 vs 1024).
+        let middle_id = if renderer.screen_width() >= 1024 {
+            RHID_MIDDLE_1024
+        } else {
+            RHID_MIDDLE_800
+        };
+        for (res_id, field, label) in [
+            (
+                RHID_TOP_LEFT_CORNER,
+                &mut self.border_top_left as &mut Option<u32>,
+                "border top-left",
+            ),
+            (
+                RHID_TOP_RIGHT_CORNER,
+                &mut self.border_top_right,
+                "border top-right",
+            ),
+            (
+                RHID_BOTTOM_LEFT_CORNER,
+                &mut self.border_bottom_left,
+                "border bottom-left",
+            ),
+            (
+                RHID_BOTTOM_RIGHT_CORNER,
+                &mut self.border_bottom_right,
+                "border bottom-right",
+            ),
+            (middle_id, &mut self.border_middle, "border middle"),
+        ] {
+            match res.get_picture(res_id, 0) {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
+                }
+            }
+        }
+
+        timer.step("scrolls + borders");
+
+        // ── Load action button icons (normal + focused + pressed states) ──
+        for kind in CharacterKind::VARIANTS {
+            let slot = kind.as_index();
+            let action_res_ids = kind.action_resources();
+            let mut disabled = [None; 3];
+            let mut surfaces = [None; 3];
+            let mut hover = [None; 3];
+            let mut pressed = [None; 3];
+            let mut hover_pressed = [None; 3];
+            for (i, opt_id) in action_res_ids.iter().enumerate() {
+                if let Some(res_id) = opt_id {
+                    // Action button BTTN resources follow the widget resource IDs:
+                    // radio 0 = disabled, 1 = unselected, 2 = focused,
+                    // 3 = selected, 4 = focused selected.
+                    match res.get_picture(*res_id, ACTION_SUB_ID_DISABLED) {
+                        Ok(pic) => {
+                            disabled[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: disabled surface unavailable, will use normal.
+                        }
+                    }
+                    match res.get_picture(*res_id, ACTION_SUB_ID_UNSELECTED) {
+                        Ok(pic) => {
+                            let surface_id = pic_to_surface(renderer, pic);
+                            tracing::info!(
+                                "Loaded action icon for {kind:?} action {i}: resource {res_id}, surface {surface_id} ({}x{})",
+                                pic.width,
+                                pic.height,
+                            );
+                            surfaces[i] = Some(surface_id);
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to load action icon for {kind:?} action {i} (resource {res_id}): {e}"
+                            );
+                        }
+                    }
+                    // Focused/hover state (sub_id 2).
+                    match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED) {
+                        Ok(pic) => {
+                            hover[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: hover surface unavailable, will use normal.
+                        }
+                    }
+                    // Pressed/selected state (sub_id 3).
+                    match res.get_picture(*res_id, ACTION_SUB_ID_SELECTED) {
+                        Ok(pic) => {
+                            pressed[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: pressed surface unavailable, will use normal
+                        }
+                    }
+                    // Focused selected state. The original game's portrait actions are
+                    // the original game's radio widget, which uses classic radio state
+                    // ids even when the backing resource contains seven RDO
+                    // frames.
+                    match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED_SELECTED) {
+                        Ok(pic) => {
+                            hover_pressed[i] = Some(pic_to_surface(renderer, pic));
+                        }
+                        Err(_) => {
+                            // Fallback: focused selected surface unavailable.
+                        }
+                    }
+                }
+            }
+            self.action_disabled_surfaces[slot] = Some(disabled);
+            self.action_surfaces[slot] = Some(surfaces);
+            self.action_hover_surfaces[slot] = Some(hover);
+            self.action_pressed_surfaces[slot] = Some(pressed);
+            self.action_hover_pressed_surfaces[slot] = Some(hover_pressed);
+        }
+        tracing::info!(
+            "Portrait cache: {} action icon sets loaded",
+            self.action_surfaces.iter().filter(|s| s.is_some()).count(),
+        );
+        timer.step("action icons");
+
+        // ── Load fighting sword overlay surfaces (per character) ──
+        for kind in CharacterKind::VARIANTS {
+            let slot = kind.as_index();
+            let res_id = kind.fighting_resource();
+            // Fighting overlays are PICT type; sub_id 0 is the default picture.
+            match res.get_picture(res_id, 0) {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded fighting overlay for {kind:?}: resource {res_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    self.fighting_surfaces[slot] = Some(sid);
+                }
+                Err(_) => {
+                    // Try sub_id 1 as fallback (some resources use BTTN layout)
+                    if let Ok(pic) = res.get_picture(res_id, 1) {
+                        let sid = pic_to_surface(renderer, pic);
+                        self.fighting_surfaces[slot] = Some(sid);
+                    }
+                }
+            }
+        }
+        tracing::info!(
+            "Portrait cache: {} fighting overlays loaded",
+            self.fighting_surfaces
+                .iter()
+                .filter(|s| s.is_some())
+                .count(),
+        );
+
+        // ── Load guard and trumpet indicator surfaces ──
+        for (res_id, field, label) in [
+            (
+                resource_ids::RHID_GUARD,
+                &mut self.guard_surface as &mut Option<u32>,
+                "guard indicator",
+            ),
+            (
+                resource_ids::RHID_TRUMPET,
+                &mut self.trumpet_surface,
+                "trumpet indicator",
+            ),
+            (
+                resource_ids::RHID_CLOVER,
+                &mut self.amulet_surface,
+                "amulet/clover indicator",
+            ),
+        ] {
+            // Try sub_id 0 first, then sub_id 1
+            let pic = match res.get_picture(res_id, 0) {
+                Ok(p) => Ok(p),
+                Err(_) => res.get_picture(res_id, 1),
+            };
+            match pic {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
+                }
+            }
+        }
+
+        // ── Load QA icon surfaces (RHID_QUICKACTION / _IN_PROGRESS) ──
+        // RHID_QUICKACTION is the normal icon and RHID_QUICKACTION_IN_PROGRESS
+        // is the recording-alternate.  Shared across all PCs and all three slots.
+        for (res_id, field, label) in [
+            (
+                resource_ids::RHID_QUICKACTION,
+                &mut self.qa_icon_surface as &mut Option<u32>,
+                "QA icon",
+            ),
+            (
+                resource_ids::RHID_QUICKACTION_IN_PROGRESS,
+                &mut self.qa_icon_recording_surface,
+                "QA icon (recording)",
+            ),
+        ] {
+            let pic = match res.get_picture(res_id, 1) {
+                Ok(p) => Ok(p),
+                Err(_) => res.get_picture(res_id, 0),
+            };
+            match pic {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
+                }
+            }
+        }
+
+        // ── Load PC-info popup resources (backgrounds + pips) ──
+        // Backgrounds and pip rows both live at sub_id 0.  We blit one pip
+        // per lit slot rather than maintaining widget visibility flags.
+        for (res_id, field, label) in [
+            (
+                resource_ids::RHID_INFO_POPUP_BKGND_TINY,
+                &mut self.info_popup_bg_tiny as &mut Option<u32>,
+                "info popup bg (tiny)",
+            ),
+            (
+                resource_ids::RHID_INFO_POPUP_BKGND_HUGE,
+                &mut self.info_popup_bg_huge,
+                "info popup bg (huge)",
+            ),
+            (
+                resource_ids::RHID_INFO_POPUP_SWORD,
+                &mut self.info_popup_sword,
+                "info popup sword pip",
+            ),
+            (
+                resource_ids::RHID_INFO_POPUP_BOW,
+                &mut self.info_popup_bow,
+                "info popup bow pip",
+            ),
+        ] {
+            let pic = match res.get_picture(res_id, 0) {
+                Ok(p) => Ok(p),
+                Err(_) => res.get_picture(res_id, 1),
+            };
+            match pic {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label} (resource {res_id}): {e}");
+                }
+            }
+        }
+
+        // ── Load blazon-bar icons (tiny set) ──
+        // `RHID_BLAZON_TINY` carries 3 sub-pictures: 0 = empty, 1 = normal
+        // (won), 2 = castle (to-collect).  The tiny set is the default
+        // layout on 800+ width panels.
+        for (sub_id, field, label) in [
+            (
+                0usize,
+                &mut self.blazon_tiny_empty as &mut Option<u32>,
+                "blazon tiny empty",
+            ),
+            (1, &mut self.blazon_tiny_normal, "blazon tiny normal"),
+            (2, &mut self.blazon_tiny_castle, "blazon tiny castle"),
+        ] {
+            match res.get_picture(resource_ids::RHID_BLAZON_TINY, sub_id) {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {} sub {sub_id}, surface {sid} ({}x{})",
+                        resource_ids::RHID_BLAZON_TINY,
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label}: {e}");
+                }
+            }
+        }
+
+        // ── Load requirements-bar status overlays (yes/no, selected) ──
+        // `RHID_YES_NO` has sub 0 = yes tick, sub 1 = no cross.
+        for (res_id, sub_id, field, label) in [
+            (
+                resource_ids::RHID_YES_NO,
+                0usize,
+                &mut self.req_yes as &mut Option<u32>,
+                "requirements yes overlay",
+            ),
+            (
+                resource_ids::RHID_YES_NO,
+                1,
+                &mut self.req_no,
+                "requirements no overlay",
+            ),
+            (
+                resource_ids::RHID_SELECTED_ACTION,
+                0,
+                &mut self.req_selected,
+                "requirements selected overlay",
+            ),
+        ] {
+            match res.get_picture(res_id, sub_id) {
+                Ok(pic) => {
+                    let sid = pic_to_surface(renderer, pic);
+                    tracing::info!(
+                        "Loaded {label}: resource {res_id} sub {sub_id}, surface {sid} ({}x{})",
+                        pic.width,
+                        pic.height,
+                    );
+                    *field = Some(sid);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to load {label}: {e}");
+                }
+            }
+        }
+
+        timer.step("indicators + blazons + overlays");
+
+        // ── Pre-load all per-slot sub-pictures of the requirements-bar
+        //    icon tables.  Each resource carries one sub-picture per
+        //    character-profile or per-action enum value.  Loading the full
+        //    table here lets `draw_requirements_bar` blit `(res_id, sub_id)`
+        //    without ever re-borrowing the `ResourceManager` at render time.
+        for res_id in [
+            resource_ids::RHID_REQUIRED_PC,
+            resource_ids::RHID_REQUIRED_ACTION,
+            resource_ids::RHID_OPTIONAL_PC,
+        ] {
+            // Collect first to avoid re-borrowing `res` inside the loop.
+            let subs: Vec<(usize, u16, u16, Vec<u16>)> = match res.get_pictures(res_id) {
+                Ok(pics) => pics
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, opt)| {
+                        opt.as_ref().map(|pic| {
+                            let pixels: Vec<u16> = pic
+                                .data
+                                .as_chunks::<2>()
+                                .0
+                                .iter()
+                                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                                .collect();
+                            (i, pic.width, pic.height, pixels)
+                        })
+                    })
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Failed to load sub-pictures for resource {res_id}: {e}");
+                    continue;
+                }
+            };
+            for (sub_id, w, h, pixels) in subs {
+                let surface_id = renderer
+                    .create_surface_from_rgb565(w, h, &pixels)
+                    .expect("requirements sub-picture dimensions must match RGB565 payload");
+                tracing::debug!(
+                    "Loaded requirements sub-picture: res {res_id} sub {sub_id}, surface {surface_id} ({w}x{h})"
+                );
+                self.sub_pictures.insert((res_id, sub_id), surface_id);
+            }
+        }
+        timer.step("requirements tables");
+        timer.total();
+    }
+
+    /// Install a pre-loaded localized-name map.  Read at render time
+    /// via [`Self::get_localized_name`] and by the peasant-name
+    /// generator.  [`load_localized_character_names`] builds the map
+    /// from `Level.res`.
+    pub fn install_localized_names(&mut self, names: [Option<String>; CharacterKind::COUNT]) {
+        self.localized_names = names;
+    }
+
+    /// Refresh data-authored hero/VIP names without rewriting the generated
+    /// Merry Men names that are already part of campaign/replay identity.
+    pub fn reload_localized_names_preserving_generated(
+        &mut self,
+        names: [Option<String>; CharacterKind::COUNT],
+    ) {
+        for kind in CharacterKind::VARIANTS {
+            if matches!(
+                kind,
+                CharacterKind::MerryManA | CharacterKind::MerryManB | CharacterKind::MerryManC
+            ) && self.localized_names[kind.as_index()].is_some()
+            {
+                continue;
+            }
+            self.localized_names[kind.as_index()] = names[kind.as_index()].clone();
+        }
+    }
+
+    /// Look up the renderer surface for a character's face portrait.
+    pub fn get_surface(&self, kind: CharacterKind) -> Option<u32> {
+        self.surfaces[kind.as_index()]
+    }
+
+    /// Look up the action button surfaces for a character.
+    pub fn get_action_disabled_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+        self.action_disabled_surfaces[kind.as_index()].as_ref()
+    }
+
+    /// Look up the action button surfaces for a character.
+    pub fn get_action_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+        self.action_surfaces[kind.as_index()].as_ref()
+    }
+
+    /// Look up the focused/hover action button surfaces for a character.
+    pub fn get_action_hover_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+        self.action_hover_surfaces[kind.as_index()].as_ref()
+    }
+
+    /// Look up the pressed/selected action button surfaces for a character.
+    pub fn get_action_pressed_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+        self.action_pressed_surfaces[kind.as_index()].as_ref()
+    }
+
+    /// Look up the focused selected action button surfaces for a character.
+    pub fn get_action_hover_pressed_surfaces(
+        &self,
+        kind: CharacterKind,
+    ) -> Option<&[Option<u32>; 3]> {
+        self.action_hover_pressed_surfaces[kind.as_index()].as_ref()
+    }
+
+    /// Look up the fighting sword overlay surface for a character.
+    pub fn get_fighting_surface(&self, kind: CharacterKind) -> Option<u32> {
+        self.fighting_surfaces[kind.as_index()]
+    }
+
+    /// Look up the localized display name for a character.
+    pub fn get_localized_name(&self, kind: CharacterKind) -> Option<&str> {
+        self.localized_names[kind.as_index()].as_deref()
+    }
+
+    /// True if at least one portrait has been loaded.
+    pub fn is_loaded(&self) -> bool {
+        self.surfaces.iter().any(|s| s.is_some())
+    }
+
+    /// Look up a pre-loaded `(resource_id, sub_id)` surface.
+    ///
+    /// Populated at [`PortraitCache::load`] time for the requirements-bar
+    /// icon tables (`RHID_REQUIRED_PC` / `RHID_REQUIRED_ACTION` /
+    /// `RHID_OPTIONAL_PC`).
+    pub fn get_sub_picture(&self, res_id: ResourceId, sub_id: usize) -> Option<u32> {
+        self.sub_pictures.get(&(res_id, sub_id)).copied()
+    }
+}
+
+// ─── Requirements-bar per-slot sub-picture mapping ────────────────
+
+/// Sub-picture index within `RHID_REQUIRED_ACTION` for a required action.
+///
+/// Returns the `UnknownAction=0` fallback for actions the widget does
+/// not visualise.
+pub(crate) fn required_action_sub_id(action: robin_engine::profiles::Action) -> usize {
+    // Sub-id mapping: UnknownAction=0, Bow=1, Carry=2, Climb=3, Jump=4,
+    //                 Lever=5, Lockpick=6, Stun=7, Tie=8, Eat=9, Search=10.
+    use robin_engine::profiles::Action;
+    match action {
+        Action::Bow => 1,
+        Action::LittleJohnCarry | Action::FarmerCarry => 2,
+        Action::Climb => 3,
+        Action::Jump => 4,
+        Action::Lever => 5,
+        Action::Lockpick => 6,
+        Action::Hit | Action::HitHard => 7,
+        Action::Tie => 8,
+        Action::Eat | Action::Guzzle => 9,
+        Action::Search => 10,
+        _ => 0,
+    }
+}
+
+/// Upload a 16-bit picture into a new renderer surface.
+pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
+    let pixels: Vec<u16> = pic
+        .data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    renderer
+        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
+        .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
+}
+
+/// Read an engine-shipped UI asset through the virtual filesystem.
+///
+/// These files ship in `assets/core-datadir/Data/Interface/UI/` and are
+/// resolved through the overlay system, so mods can restyle them by
+/// overlaying the same path. They are required — a failed read means the
+/// core overlay datadir is missing next to the game, which is an
+/// installation error worth failing loudly on.
+fn read_ui_asset(name: &str, files: &robin_engine::sbfile::SbFileSystem) -> Vec<u8> {
+    let path = format!("Data/Interface/UI/{name}");
+    files.read_all(&path).unwrap_or_else(|error| {
+        panic!(
+            "required UI asset {path} could not be read (error {error}); \
+             is the core overlay datadir (assets/core-datadir/) missing?"
+        )
+    })
+}
+
+fn decode_embedded_png_rgba(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("decode embedded PNG header: {error}"))?;
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .ok_or_else(|| "embedded PNG has no known output size".to_owned())?
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|error| format!("decode embedded PNG frame: {error}"))?;
+    let data = &buffer[..info.buffer_size()];
+    let pixels = match info.color_type {
+        png::ColorType::Rgba => data.to_vec(),
+        png::ColorType::Rgb => data
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 255])
+            .collect(),
+        color_type => {
+            return Err(format!(
+                "embedded PNG uses unsupported color type {color_type:?}"
+            ));
+        }
+    };
+    Ok((info.width as u16, info.height as u16, pixels))
+}
+
+/// The [`CharacterKind`] for a PC entity, if it is a PC whose profile
+/// matched one of the 10 known characters at level-load time.
+fn pc_character_kind(entity: &Entity) -> Option<CharacterKind> {
+    match entity {
+        Entity::Pc(pc) => pc.pc.kind,
+        _ => None,
+    }
+}
+
+fn pc_custom_visage_kind(
+    entity: &Entity,
+    profiles: &engine_profiles::ProfileManager,
+) -> Option<AlliedVisageKind> {
+    let pc = entity.pc_data()?;
+    let profile = profiles.get_character(pc.profile_index).unwrap_or_else(|| {
+        panic!(
+            "PC references missing character profile {}",
+            pc.profile_index
+        )
+    });
+    let kind = AlliedVisageKind::from_profile_filename(&profile.filename);
+    (kind != AlliedVisageKind::Generic).then_some(kind)
+}
+
+fn pc_action_character_kind(
+    entity: &Entity,
+    profiles: &engine_profiles::ProfileManager,
+) -> Option<CharacterKind> {
+    pc_character_kind(entity).or_else(|| {
+        pc_custom_visage_kind(entity, profiles).and_then(AlliedVisageKind::pc_action_template)
+    })
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────
+
+/// Minimum number of layout slots the bar is divided into. Matches the
+/// original fixed five-slot layout so a small party stays spread out
+/// instead of packing into the left corner.
+const NUMBER_OF_SLOTS: usize = 5;
+
+/// Maximum number of portraits that physically fit across the panel.
+pub fn portrait_capacity(screen_width: u16) -> usize {
+    usize::from(((screen_width.saturating_sub(2 * MARGIN)) / ELEMENT_WIDTH).max(1))
+}
+
+/// Number of layout slots the bar is divided into for `num_items` portraits.
+pub(crate) fn portrait_slot_count(screen_width: u16, num_items: usize) -> usize {
+    num_items.clamp(
+        NUMBER_OF_SLOTS,
+        portrait_capacity(screen_width).max(NUMBER_OF_SLOTS),
+    )
+}
+
+/// Compute the left X of a portrait element within its slot.
+pub(crate) fn slot_left_x(screen_width: u16, slot_index: u16, slot_count: usize) -> u16 {
+    let sw = screen_width.saturating_sub(2 * MARGIN) / slot_count.max(1) as u16;
+    let position_in_slot = MARGIN + sw.saturating_sub(ELEMENT_WIDTH) / 2;
+    slot_index * sw + position_in_slot
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortraitTarget {
+    Pc(EntityId),
+    AlliedSelection,
+    AlliedGroup(u32),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PortraitBarItem {
+    pub target: PortraitTarget,
+    pub members: Vec<EntityId>,
+}
+
+pub(crate) fn portrait_bar_items(
+    engine: &Engine,
+    seat: PlayerId,
+    screen_width: u16,
+) -> (Vec<PortraitBarItem>, bool) {
+    let mut all: Vec<_> = engine
+        .displayed_pc_ids()
+        .into_iter()
+        .map(|pc| PortraitBarItem {
+            target: PortraitTarget::Pc(pc),
+            members: vec![pc],
+        })
+        .collect();
+    for group in engine.tactical_pinned_groups(seat) {
+        all.push(PortraitBarItem {
+            target: PortraitTarget::AlliedGroup(group.id),
+            members: group.members.clone(),
+        });
+    }
+    let selection = engine.tactical_selection(seat);
+    if !selection.is_empty()
+        && !engine
+            .tactical_pinned_groups(seat)
+            .iter()
+            .any(|group| group.members == selection)
+    {
+        all.push(PortraitBarItem {
+            target: PortraitTarget::AlliedSelection,
+            members: selection.to_vec(),
+        });
+    }
+    let capacity = portrait_capacity(screen_width);
+    let paged = all.len() > capacity;
+    if paged {
+        let offset = engine.tactical_first_visible_portrait(seat) % all.len();
+        all.rotate_left(offset);
+        all.truncate(capacity);
+    }
+    (all, paged)
+}
+
+fn bbox(x1: u16, y1: u16, x2: u16, y2: u16) -> BBox {
+    screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
+        x1 as f32, y1 as f32, x2 as f32, y2 as f32,
+    ))
+}
+
+fn screen_bbox_to_sprite_bbox(bbox: ScreenBBox) -> BBox {
+    let min = bbox.top_left();
+    let max = bbox.bottom_right();
+    BBox::from_coords(min.x, min.y, max.x, max.y)
+}
+
+fn blit_to_screen_widget(
+    renderer: &mut Renderer,
+    surface_id: u32,
+    src: Option<&BBox>,
+    dst: Option<&BBox>,
+    flags: u32,
+) {
+    let src_box = src.copied().unwrap_or_else(|| {
+        screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
+            0.0,
+            0.0,
+            renderer.surface_width(surface_id) as f32,
+            renderer.surface_height(surface_id) as f32,
+        ))
+    });
+    let dst_box = dst.copied().unwrap_or(src_box);
+    widget_bridge::draw_picture_surface_rect(
+        renderer,
+        layout::MenuTransform {
+            origin_x: 0,
+            origin_y: 0,
+        },
+        surface_id,
+        dst_box.min.x as i32,
+        dst_box.min.y as i32,
+        dst_box.width() as i32,
+        dst_box.height() as i32,
+        src_box.min.x as i32,
+        src_box.min.y as i32,
+        src_box.width() as i32,
+        src_box.height() as i32,
+        flags & BLIT_SOURCE_TRANSPARENT != 0,
+    );
+}
+
+/// Check if a PC is in coma state (amulet death-save, still alive but burned).
+///
+/// Coma PCs have `in_coma=true` in their campaign PcStatus and
+/// life_points=5 (set by wound handling). They render as burned portraits
+/// with the health gauge visible. Fully dead PCs have life_points<=0
+/// and are NOT in coma — their scrolls are hidden entirely.
+fn is_pc_in_coma(engine: &Engine, entity: &Entity) -> bool {
+    let profile_idx = match entity.pc_data() {
+        Some(pc) => pc.profile_index,
+        None => return false,
+    };
+    engine
+        .campaign()
+        .characters
+        .get(usize::from(profile_idx))
+        .map(|desc| desc.status.in_coma)
+        .unwrap_or(false)
+}
+
+/// Determine which action button index (0..=2) is currently active for a PC.
+///
+/// Compares the PC's `current_action` against the profile's `actions[]` array.
+/// Returns `None` if `current_action == NoAction` or doesn't match any slot.
+fn active_action_index(profiles: &engine_profiles::ProfileManager, entity: &Entity) -> Option<u8> {
+    use robin_engine::profiles::Action;
+    let pc = entity.pc_data()?;
+    if pc.current_action == Action::NoAction {
+        return None;
+    }
+    let profile = profiles.get_character(pc.profile_index)?;
+    profile
+        .actions
+        .iter()
+        .position(|a| *a == pc.current_action)
+        .map(|i| i as u8)
+}
+
+fn action_index(
+    profiles: &engine_profiles::ProfileManager,
+    entity: &Entity,
+    action: engine_profiles::Action,
+) -> Option<u8> {
+    if action == engine_profiles::Action::NoAction {
+        return None;
+    }
+    let profile = profiles.get_character(entity.pc_data()?.profile_index)?;
+    profile
+        .actions
+        .iter()
+        .position(|candidate| *candidate == action)
+        .map(|index| index as u8)
+}
+
+fn allied_action_index(relative_x: f32) -> u8 {
+    ((relative_x / (ELEMENT_WIDTH as f32 / 3.0)).floor() as u8).min(2)
+}
+
+fn allied_state_icon_index(
+    action: u8,
+    order: Option<&robin_engine::tactical_control::TacticalUnitOrder>,
+) -> usize {
+    match action {
+        0 => match order.map_or(CombatStance::Defensive, |order| order.stance) {
+            CombatStance::Hold => 0,
+            CombatStance::Defensive => 1,
+            CombatStance::Aggressive => 2,
+        },
+        1 => {
+            if order.is_some_and(|order| matches!(order.duty, TacticalDuty::Patrol { .. })) {
+                4
+            } else {
+                3
+            }
+        }
+        2 => match order.map_or(TacticalFormation::Line, |order| order.formation) {
+            TacticalFormation::Line => 5,
+            TacticalFormation::Box => 6,
+            TacticalFormation::Staggered => 7,
+            TacticalFormation::Flank => 8,
+        },
+        _ => panic!("allied action index {action} is outside the three-button row"),
+    }
+}
+
+fn render_allied_portrait_layer(
+    renderer: &mut Renderer,
+    image: &GpuImage,
+    x: u16,
+    sh: u16,
+    selected: bool,
+) {
+    if selected {
+        let top = sh - PORTRAIT_TOTAL_HEIGHT;
+        renderer.render_gpu_image(
+            image,
+            None,
+            Some(&bbox(
+                x,
+                top,
+                x + ELEMENT_WIDTH,
+                top + PORTRAIT_TOTAL_HEIGHT,
+            )),
+            BlendMode::Blend,
+        );
+        return;
+    }
+
+    // Closed portraits omit the 35-pixel action row. Preserve the authored
+    // layer boundaries and close the gap exactly like the native PC widget.
+    for (source, destination) in [
+        (
+            bbox(0, 0, ELEMENT_WIDTH, TOP_SCROLL_HEIGHT),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_TOP_SCROLL,
+                x + ELEMENT_WIDTH,
+                sh - CLOSE_POSITION_VISAGE,
+            ),
+        ),
+        (
+            bbox(
+                0,
+                TOP_SCROLL_HEIGHT,
+                ELEMENT_WIDTH,
+                TOP_SCROLL_HEIGHT + VISAGE_HEIGHT,
+            ),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_VISAGE,
+                x + ELEMENT_WIDTH,
+                sh - CLOSE_POSITION_BOTTOM_SCROLL,
+            ),
+        ),
+        (
+            bbox(
+                0,
+                TOP_SCROLL_HEIGHT + VISAGE_HEIGHT + ACTION_HEIGHT,
+                ELEMENT_WIDTH,
+                PORTRAIT_TOTAL_HEIGHT - BORDURE,
+            ),
+            bbox(
+                x,
+                sh - CLOSE_POSITION_BOTTOM_SCROLL,
+                x + ELEMENT_WIDTH,
+                sh - BORDURE,
+            ),
+        ),
+    ] {
+        renderer.render_gpu_image(image, Some(&source), Some(&destination), BlendMode::Blend);
+    }
+}
+
+fn render_auto_queue_ticks(
+    host: &mut Host,
+    renderer: &mut Renderer,
+    engine: &Engine,
+    members: &[EntityId],
+    x: u16,
+    base_y: i32,
+) {
+    let animation_key = *members
+        .first()
+        .expect("automatic queue strip cannot have an empty member list");
+    let queue_count: usize = members
+        .iter()
+        .map(|member| engine.automatic_quick_action_count(*member))
+        .sum();
+    let animation = host
+        .frontend
+        .queue_strip_animations
+        .entry(animation_key)
+        .or_default();
+    if queue_count < animation.previous_count {
+        animation.fall_offset = 10;
+    }
+    animation.previous_count = queue_count;
+    let fall_offset = animation.fall_offset;
+    animation.fall_offset = animation.fall_offset.saturating_sub(2);
+    if queue_count == 0 {
+        return;
+    }
+    let color = Renderer::create_color_16(238, 192, 55);
+    let visible = queue_count.min(12);
+    for index in 0..visible {
+        // Original-game falling-button behavior offsets the surviving
+        // quick-action icon horizontally, then reduces that elevation on
+        // every refresh. Keep the automatic strip independent, but preserve
+        // the same right-to-left tetris collapse.
+        let left = i32::from(x) + 5 + index as i32 * 8 + fall_offset;
+        let height = if index == 11 && queue_count > 12 {
+            8
+        } else {
+            5
+        };
+        renderer.draw_line_screen(left, base_y, left, base_y + height, color);
+        renderer.draw_line_screen(left + 1, base_y, left + 1, base_y + height, color);
+    }
+}
+
+fn render_allied_portrait(
+    host: &mut Host,
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+    seat: PlayerId,
+    item: &PortraitBarItem,
+    x: u16,
+    sh: u16,
+    hovered_action: Option<u8>,
+) {
+    let selected = engine.tactical_selection(seat) == item.members;
+    let top_scroll = if selected {
+        POSITION_TOP_SCROLL
+    } else {
+        CLOSE_POSITION_TOP_SCROLL
+    };
+    render_allied_portrait_layer(
+        renderer,
+        portraits
+            .allied_portrait_background
+            .as_ref()
+            .expect("allied portrait background must be loaded before drawing the HUD"),
+        x,
+        sh,
+        selected,
+    );
+    let visage_kind = allied_visage_kind(engine, profiles, &item.members);
+    let visage = portraits.allied_visages[visage_kind.index()]
+        .as_ref()
+        .unwrap_or_else(|| panic!("allied visage {visage_kind:?} was not loaded"));
+    let visage_top = if selected {
+        sh - POSITION_VISAGE
+    } else {
+        sh - CLOSE_POSITION_VISAGE
+    };
+    renderer.render_gpu_image(
+        visage,
+        None,
+        Some(&bbox(
+            x,
+            visage_top,
+            x + ELEMENT_WIDTH,
+            visage_top + VISAGE_HEIGHT,
+        )),
+        BlendMode::Blend,
+    );
+
+    // Reuse the native merry-man crossed-swords overlay for controlled
+    // soldiers. A group counts as fighting while any surviving member is in
+    // a sword action or has an active melee opponent. Match hero portraits:
+    // the overlay stays visible on the open portrait and blinks while closed.
+    let is_sword_fighting = item.members.iter().any(|member| {
+        engine.get_entity(*member).is_some_and(|entity| {
+            entity
+                .actor_data()
+                .is_some_and(|actor| actor.action_state.is_sword())
+                || entity
+                    .human_data()
+                    .is_some_and(|human| !human.opponents.is_empty())
+        })
+    });
+    let fighting_visible = selected || (engine.frame_counter() / 10).is_multiple_of(2);
+    if is_sword_fighting
+        && fighting_visible
+        && let Some(surface) = portraits.get_fighting_surface(CharacterKind::MerryManA)
+    {
+        let visage_top = if selected {
+            sh - POSITION_VISAGE
+        } else {
+            sh - CLOSE_POSITION_VISAGE
+        };
+        let width = renderer.surface_width(surface);
+        let height = renderer.surface_height(surface);
+        blit_to_screen_widget(
+            renderer,
+            surface,
+            None,
+            Some(&bbox(x, visage_top, x + width, visage_top + height)),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+
+    // Pin/unpin button remains visible in both open and closed states.
+    let pin_x = x + ALLIED_PIN_LEFT;
+    let pin_y = sh - top_scroll - ALLIED_PIN_RISE;
+    let pin_index = if matches!(item.target, PortraitTarget::AlliedGroup(_)) {
+        1
+    } else {
+        0
+    };
+    let pin = portraits.allied_pin_icons[pin_index]
+        .as_ref()
+        .expect("allied pin icon must be loaded before drawing the HUD");
+    renderer.render_gpu_image(
+        pin,
+        None,
+        Some(&bbox(
+            pin_x,
+            pin_y,
+            pin_x + ALLIED_PIN_ICON_SIZE,
+            pin_y + ALLIED_PIN_ICON_SIZE,
+        )),
+        BlendMode::Blend,
+    );
+
+    // Automatic work is separate from Original's three macro slots. Give
+    // tactical group portraits an unambiguous pending-work strip: one gold tick
+    // per queued soldier action, capped to the portrait width with a final
+    // longer overflow tick.
+    render_auto_queue_ticks(
+        host,
+        renderer,
+        engine,
+        &item.members,
+        x,
+        i32::from(sh - top_scroll + 4),
+    );
+
+    if selected {
+        let action_top = sh - POSITION_ACTION;
+        let action_bottom = sh - POSITION_BOTTOM_SCROLL;
+        let order = item
+            .members
+            .first()
+            .and_then(|soldier| engine.tactical_order(*soldier));
+        let button_w = ELEMENT_WIDTH / 3;
+        for index in 0..3 {
+            let left = x + index as u16 * button_w;
+            let right = if index == 2 {
+                x + ELEMENT_WIDTH
+            } else {
+                left + button_w
+            };
+            let active = index == 1
+                && order.is_some_and(|order| matches!(order.duty, TacticalDuty::Patrol { .. }));
+            let icon_index = allied_state_icon_index(index as u8, order);
+            let image = portraits.allied_action_surfaces[icon_index]
+                .as_ref()
+                .unwrap_or_else(|| panic!("allied state icon {icon_index} was not loaded"));
+            let scale = f32::min(
+                (right - left - 2) as f32 / ALLIED_ACTION_ICON_WIDTH as f32,
+                (action_bottom - action_top - 2) as f32 / ALLIED_ACTION_ICON_HEIGHT as f32,
+            );
+            let width = ((ALLIED_ACTION_ICON_WIDTH as f32 * scale).round() as u16).max(1);
+            let height = ((ALLIED_ACTION_ICON_HEIGHT as f32 * scale).round() as u16).max(1);
+            let icon_x = left + (right - left - width) / 2;
+            let icon_y = action_top + (action_bottom - action_top - height) / 2;
+            renderer.render_gpu_image(
+                image,
+                None,
+                Some(&bbox(icon_x, icon_y, icon_x + width, icon_y + height)),
+                BlendMode::Blend,
+            );
+
+            if active || hovered_action == Some(index as u8) {
+                let color = if active {
+                    Renderer::create_color_16(238, 192, 55)
+                } else {
+                    Renderer::create_color_16(224, 211, 157)
+                };
+                renderer.draw_line_screen(
+                    i32::from(left + 3),
+                    i32::from(action_bottom - 2),
+                    i32::from(right - 4),
+                    i32::from(action_bottom - 2),
+                    color,
+                );
+            }
+        }
+    }
+}
+
+fn allied_visage_kind(
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+    members: &[EntityId],
+) -> AlliedVisageKind {
+    let mut resolved = members.iter().map(|member| {
+        let entity = engine
+            .get_entity(*member)
+            .unwrap_or_else(|| panic!("allied portrait member {member:?} disappeared"));
+        let Entity::Soldier(soldier) = entity else {
+            panic!("allied portrait member {member:?} is not a soldier");
+        };
+        let profile = profiles
+            .get_soldier(soldier.soldier.soldier_profile_index)
+            .unwrap_or_else(|| {
+                panic!(
+                    "allied portrait member {member:?} references missing soldier profile {}",
+                    soldier.soldier.soldier_profile_index
+                )
+            });
+        AlliedVisageKind::from_profile_filename(&profile.filename)
+    });
+    let Some(first) = resolved.next() else {
+        panic!("allied portrait has no members");
+    };
+    if resolved.all(|kind| kind == first) {
+        first
+    } else {
+        AlliedVisageKind::Generic
+    }
+}
+
+// ─── Public API ────────────────────────────────────────────────────
+
+/// Load the 7-hero localized display name map from `Level.res`.
+///
+/// Tries the campaign menu text table first, then demo variants in
+/// order.  The map is fed to [`PortraitCache::install_localized_names`]
+/// and consulted at render time by the HUD's `entity_display_name`
+/// (PC branch) and by the peasant-name generator (to avoid colliding
+/// with hero names).
+pub fn load_localized_character_names(
+    text_res: &mut ResourceManager,
+) -> [Option<String>; CharacterKind::COUNT] {
+    let mut out: [Option<String>; CharacterKind::COUNT] = [const { None }; CharacterKind::COUNT];
+    let mut loaded = 0usize;
+    for kind in CharacterKind::VARIANTS {
+        // Display names are generated once at gang-creation time from the
+        // campaign character profile, which is always forest Robin; the
+        // per-level forest/town profile swap never regenerates the name.
+        // "Robin Town" (id 145) is therefore never shown — both Robin
+        // variants display the forest name.
+        let str_id = match (CharacterKind::RobinHood { is_town: false })
+            .localized_name_string_id()
+            .filter(|_| kind.is_robin())
+            .or_else(|| kind.localized_name_string_id())
+        {
+            Some(id) => id,
+            None => continue,
+        };
+        if let Some((localized, table_id, sub_id)) = menu_text_string(text_res, str_id) {
+            tracing::info!(
+                "Localized name for {kind:?}: {localized:?} (table {table_id}, sub {sub_id})"
+            );
+            out[kind.as_index()] = Some(localized);
+            loaded += 1;
+        }
+    }
+    tracing::info!("Loaded {loaded} localized character names");
+    out
+}
+
+/// String ids whose position shifted between the original retail demo's
+/// menu-text table and the final layout (see [`menu_text_string`]).
+const MENU_TEXT_OLD_DEMO_SHIFT_RANGE: std::ops::RangeInclusive<usize> = 54..=166;
+
+/// True when the attached full-game menu-text table uses the original
+/// retail demo's layout.
+///
+/// That build predates the "3D sound" audio option: its table
+/// (`MENU_TEXT_TABLE_ID`) is missing that entry at index 53, so every
+/// string id in `54..=166` sits one position lower than in the final
+/// layout (the window closes at 167 because the final layout in turn
+/// dropped the old "Display entrances to houses" entry — the tables have
+/// equal length). The probe keys on the "3D" substring, which appears in
+/// the option label in every shipped localization.
+fn menu_text_old_demo_layout(res: &mut ResourceManager) -> bool {
+    match res.get_string(MENU_TEXT_TABLE_ID, 53) {
+        Ok(s) => !s.contains("3D"),
+        Err(_) => false,
+    }
+}
+
+/// Fetch a menu-text string by final-layout id, trying the full-game
+/// table first and falling back to the two demo tables.  Old-demo
+/// full-game tables (see [`menu_text_old_demo_layout`]) get the shifted
+/// id transparently remapped.  Returns the string plus the table id and
+/// sub id it was actually read from (for logging).
+pub(crate) fn menu_text_string(
+    res: &mut ResourceManager,
+    sub_id: usize,
+) -> Option<(String, ResourceId, usize)> {
+    let table_ids = [
+        MENU_TEXT_TABLE_ID,
+        MENU_TEXT_TABLE_ID_DEMO,
+        MENU_TEXT_TABLE_ID_DEMO2,
+    ];
+    for &table_id in &table_ids {
+        let effective_sub_id = if table_id == MENU_TEXT_TABLE_ID
+            && MENU_TEXT_OLD_DEMO_SHIFT_RANGE.contains(&sub_id)
+            && menu_text_old_demo_layout(res)
+        {
+            sub_id - 1
+        } else {
+            sub_id
+        };
+        if let Ok(s) = res.get_string(table_id, effective_sub_id) {
+            return Some((s.to_string(), table_id, effective_sub_id));
+        }
+    }
+    None
+}
+
+/// Render the health gauge (two-parchment composite) at the given position.
+///
+/// Splits the top scroll into a "live" left portion (normal parchment)
+/// and a "dead" right portion (darkened parchment) at `ratio × width`.
+fn render_health_gauge(
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    entity: Option<&Entity>,
+    x: u16,
+    top: u16,
+) {
+    let Some(normal_sid) = portraits.top_scroll_surface else {
+        return;
+    };
+    let w = renderer.surface_width(normal_sid);
+    let h = renderer.surface_height(normal_sid);
+
+    let ratio = match entity {
+        Some(Entity::Pc(pc)) => (pc.pc.life_points.max(0) as f32 / 100.0).clamp(0.0, 1.0),
+        _ => 1.0,
+    };
+    let split_x = (w as f32 * ratio) as u16;
+
+    // Dead portion (right side — darkened parchment)
+    if split_x < w
+        && let Some(alt_sid) = portraits.top_scroll_alt_surface
+    {
+        let src = bbox(split_x, 0, w, h);
+        let dst = bbox(x + split_x, top, x + w, top + h);
+        blit_to_screen_widget(
+            renderer,
+            alt_sid,
+            Some(&src),
+            Some(&dst),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+    // Live portion (left side — normal parchment)
+    if split_x > 0 {
+        let src = bbox(0, 0, split_x, h);
+        let dst = bbox(x, top, x + split_x, top + h);
+        blit_to_screen_widget(
+            renderer,
+            normal_sid,
+            Some(&src),
+            Some(&dst),
+            BLIT_SOURCE_TRANSPARENT,
+        );
+    }
+}
+
+/// Blit a surface centered within the vertical region between two scrolls.
+///
+/// Centers the indicator widget within the reference box spanning from
+/// upper scroll top to lower scroll bottom.
+fn blit_centered_between_scrolls(
+    renderer: &mut Renderer,
+    surface: Option<u32>,
+    x: u16,
+    ref_top: u16,
+    ref_bot: u16,
+) {
+    let Some(sid) = surface else { return };
+    let iw = renderer.surface_width(sid);
+    let ih = renderer.surface_height(sid);
+    let ref_h = ref_bot.saturating_sub(ref_top);
+    let ix = x + (ELEMENT_WIDTH.saturating_sub(iw)) / 2;
+    let iy = ref_top + (ref_h.saturating_sub(ih)) / 2;
+    let dst = bbox(ix, iy, ix + iw, iy + ih);
+    blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+}
+
+/// Draw the bottom UI panel to the screen surface.
+///
+/// This renders, in order:
+/// 1. Ornamental border frame pieces (corners + middle strip) around the
+///    bottom panel area.
+/// 2. Portrait slots for each displayed PC — top/bottom scrolls, visage,
+///    action buttons, fighting/guard/trumpet/amulet overlays, QA strip,
+///    and burned-state variants for dead/coma PCs.
+///
+/// The minimap and its frame are drawn separately by `render_minimap`
+/// (the `RHMAP_CORNER` sprite covers the slot in non-Sherwood missions).
+///
+/// Should be called after entity rendering and before `renderer.flip()`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_panel(
+    host: &mut Host,
+    engine: &Engine,
+    local_seat: PlayerId,
+    profiles: &engine_profiles::ProfileManager,
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    mouse_x: f32,
+    mouse_y: f32,
+    titbit_renderer: Option<&mut crate::titbit_renderer::TitbitRenderer>,
+    shift_held: bool,
+) {
+    let sw = renderer.screen_width();
+    let sh = renderer.screen_height();
+
+    if sw == 0 || sh == 0 {
+        return;
+    }
+
+    // ── Panel border frame (ornamental frame around the bottom panel) ──
+    // Rendered BEFORE portrait widgets, in absolute screen coordinates.
+    // Blit using source surface dimensions to avoid size mismatch issues.
+    if let Some(sid) = portraits.border_top_left {
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
+        let dst = bbox(0, 0, w, h);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
+    if let Some(sid) = portraits.border_top_right {
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
+        let dst = bbox(sw - w, 0, sw, h);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
+    if let Some(sid) = portraits.border_bottom_left {
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
+        let dst = bbox(0, sh - h, w, sh);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
+    if let Some(sid) = portraits.border_bottom_right {
+        let w = renderer.surface_width(sid).min(sw);
+        let h = renderer.surface_height(sid).min(sh);
+        let dst = bbox(sw - w, sh - h, sw, sh);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
+    // Center border piece — only at 800+ width (disabled at 640). The
+    // original supplied fixed 800/1024 strips; tile and crop the selected
+    // strip between the corners so adaptive widths never expose a gap.
+    if sw > 640
+        && let Some(sid) = portraits.border_middle
+    {
+        let w = renderer.surface_width(sid);
+        let h = renderer.surface_height(sid).min(sh);
+        let mut x = portraits
+            .border_bottom_left
+            .map_or(0, |id| renderer.surface_width(id))
+            .min(sw);
+        let right = sw.saturating_sub(
+            portraits
+                .border_bottom_right
+                .map_or(0, |id| renderer.surface_width(id))
+                .min(sw),
+        );
+        while x < right && w > 0 {
+            let tile_width = w.min(right - x);
+            let src = bbox(0, 0, tile_width, h);
+            let dst = bbox(x, sh.saturating_sub(h), x + tile_width, sh);
+            blit_to_screen_widget(
+                renderer,
+                sid,
+                Some(&src),
+                Some(&dst),
+                BLIT_SOURCE_TRANSPARENT,
+            );
+            x += tile_width;
+        }
+    }
+
+    // ── Portrait slots (one per PC in the mission) ──
+    // Hidden-interface PCs don't consume a slot, so filter on
+    // `pc.interface_hidden` via `engine.displayed_pc_ids()` rather than
+    // walking `pc_ids` directly.
+    let (portrait_items, paged) = portrait_bar_items(engine, local_seat, sw);
+    let num_portraits = portrait_items.len() as u16;
+    let slot_count = portrait_slot_count(sw, portrait_items.len());
+    let frame = engine.frame_counter();
+    let hovered_portrait =
+        hit_test_portrait_detailed(engine, local_seat, portraits, sw, sh, mouse_x, mouse_y);
+    let hovered_action = hovered_portrait.and_then(|hit| match hit.area {
+        PortraitHitArea::ActionButton(btn) => Some((hit.slot, btn)),
+        _ => None,
+    });
+    let hovered_allied_action = hovered_portrait.and_then(|hit| match hit.area {
+        PortraitHitArea::AlliedAction(btn) => Some((hit.slot, btn)),
+        _ => None,
+    });
+
+    let mut titbit_renderer_opt = titbit_renderer;
+
+    if paged {
+        for (surface, x) in [
+            (portraits.portrait_page_left, 4),
+            (portraits.portrait_page_right, sw.saturating_sub(28)),
+        ] {
+            if let Some(surface) = surface {
+                let w = renderer.surface_width(surface);
+                let h = renderer.surface_height(surface);
+                let y = sh.saturating_sub(PORTRAIT_TOTAL_HEIGHT / 2 + h / 2);
+                blit_to_screen_widget(
+                    renderer,
+                    surface,
+                    None,
+                    Some(&bbox(x, y, x + w, y + h)),
+                    BLIT_SOURCE_TRANSPARENT,
+                );
+            }
+        }
+    }
+
+    for slot in 0..num_portraits {
+        let x = slot_left_x(sw, slot, slot_count);
+        let x2 = x + ELEMENT_WIDTH;
+
+        let item = &portrait_items[slot as usize];
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            let hovered = hovered_allied_action
+                .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
+                .map(|(_, button)| button);
+            render_allied_portrait(
+                host, renderer, portraits, engine, profiles, local_seat, item, x, sh, hovered,
+            );
+            continue;
+        }
+        let PortraitTarget::Pc(pc_id) = item.target else {
+            unreachable!()
+        };
+        let entity = engine.get_entity(pc_id);
+        let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
+
+        // ── Extract PC-specific state for overlay rendering ──
+        let (is_dead, is_coma, is_sword_fighting, is_guarded, has_trumpet) = match entity {
+            Some(Entity::Pc(pc)) => (
+                pc.pc.life_points <= 0,
+                is_pc_in_coma(engine, entity.unwrap()),
+                pc.actor.action_state.is_sword(),
+                pc.pc.guard.is_some(),
+                pc.pc.trumpet_enabled,
+            ),
+            _ => (false, false, false, false, false),
+        };
+        // Burned = dead OR in coma (the burn path covers both).
+        let is_burned = is_dead || is_coma;
+
+        if is_burned {
+            // ── BURNED STATE ──
+            // Visage and action buttons hidden. Upper scroll repositioned
+            // directly above lower scroll.
+            // Coma PCs show health gauge + enabled scrolls;
+            // fully dead PCs hide scrolls entirely.
+            let burned_upper_top = sh - POSITION_BOTTOM_SCROLL - BOTTOM_SCROLL_HEIGHT;
+
+            if is_coma {
+                // Coma: scrolls enabled, health gauge visible.
+                render_health_gauge(renderer, portraits, entity, x, burned_upper_top);
+
+                if let Some(sid) = portraits.bottom_scroll_surface {
+                    let w = renderer.surface_width(sid);
+                    let h = renderer.surface_height(sid);
+                    let top = sh - POSITION_BOTTOM_SCROLL;
+                    let dst = bbox(x, top, x + w, top + h);
+                    blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+                }
+
+                // Guard indicator (centered between scrolls).
+                if is_guarded {
+                    let guard_visible = if engine.mission().mission_won {
+                        (frame / 25).is_multiple_of(2)
+                    } else {
+                        true
+                    };
+                    if guard_visible {
+                        blit_centered_between_scrolls(
+                            renderer,
+                            portraits.guard_surface,
+                            x,
+                            burned_upper_top,
+                            sh - BORDURE,
+                        );
+                    }
+                }
+                // Amulet/clover indicator when NOT guarded.
+                if !is_guarded {
+                    blit_centered_between_scrolls(
+                        renderer,
+                        portraits.amulet_surface,
+                        x,
+                        burned_upper_top,
+                        sh - BORDURE,
+                    );
+                }
+            }
+            // Fully dead (not coma): scrolls disabled, nothing rendered.
+            //
+            // Trumpet indicator: the trumpet only appears on dead PCs (not
+            // coma). `melee.rs:3208` sets `trumpet_enabled = true` when the
+            // killed PC has a non-VIP replacement available. Drawn centered
+            // in the same between-scrolls region the coma amulet/guard uses.
+            if has_trumpet {
+                blit_centered_between_scrolls(
+                    renderer,
+                    portraits.trumpet_surface,
+                    x,
+                    burned_upper_top,
+                    sh - BORDURE,
+                );
+            }
+        } else {
+            // ── NORMAL STATE ──
+            let pos_top_scroll = if is_selected {
+                POSITION_TOP_SCROLL
+            } else {
+                CLOSE_POSITION_TOP_SCROLL
+            };
+            let pos_visage = if is_selected {
+                POSITION_VISAGE
+            } else {
+                CLOSE_POSITION_VISAGE
+            };
+
+            // Top scroll (health gauge)
+            render_health_gauge(renderer, portraits, entity, x, sh - pos_top_scroll);
+
+            // Bottom scroll
+            if let Some(sid) = portraits.bottom_scroll_surface {
+                let w = renderer.surface_width(sid);
+                let h = renderer.surface_height(sid);
+                let top = sh - POSITION_BOTTOM_SCROLL;
+                let dst = bbox(x, top, x + w, top + h);
+                blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+            }
+
+            // Visage (face) — 1:1 blit at native surface dimensions
+            let vis_top = sh - pos_visage;
+            let vis_bot = if is_selected {
+                sh - POSITION_ACTION
+            } else {
+                sh - CLOSE_POSITION_BOTTOM_SCROLL
+            };
+
+            let mut portrait_drawn = false;
+            if let Some(visage_kind) = entity.and_then(|ent| pc_custom_visage_kind(ent, profiles)) {
+                let visage = portraits.allied_visages[visage_kind.index()]
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("PC visage {visage_kind:?} was not loaded"));
+                renderer.render_gpu_image(
+                    visage,
+                    None,
+                    Some(&bbox(
+                        x,
+                        vis_top,
+                        x + ELEMENT_WIDTH,
+                        vis_top + VISAGE_HEIGHT,
+                    )),
+                    BlendMode::Blend,
+                );
+                portrait_drawn = true;
+            } else if let Some(ent) = entity
+                && let Some(kind) = pc_character_kind(ent)
+                && let Some(surface_id) = portraits.get_surface(kind)
+            {
+                let src_w = renderer.surface_width(surface_id);
+                let src_h = renderer.surface_height(surface_id);
+                if src_w > 0 && src_h > 0 {
+                    let dst = bbox(x, vis_top, x + src_w, vis_top + src_h);
+                    blit_to_screen_widget(
+                        renderer,
+                        surface_id,
+                        None,
+                        Some(&dst),
+                        BLIT_SOURCE_TRANSPARENT,
+                    );
+                    portrait_drawn = true;
+                }
+            }
+            if !portrait_drawn {
+                renderer.fill_screen(Some(&bbox(x, vis_top, x2, vis_bot)), color_visage_fill());
+            }
+
+            // Fighting sword overlay (period=10 frames).
+            // Positioned at visage top-left, per-character bitmap (91×44 px).
+            // When selected the sword is always visible; otherwise it blinks
+            // on the odd half of each 10-frame cycle.
+            if is_sword_fighting {
+                let fighting_visible = is_selected || (frame / 10).is_multiple_of(2);
+                if fighting_visible
+                    && let Some(ent) = entity
+                    && let Some(kind) = pc_action_character_kind(ent, profiles)
+                    && let Some(sid) = portraits.get_fighting_surface(kind)
+                {
+                    let fw = renderer.surface_width(sid);
+                    let fh = renderer.surface_height(sid);
+                    let dst = bbox(x, vis_top, x + fw, vis_top + fh);
+                    blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+                }
+            }
+
+            // Action buttons — only when selected/open.
+            // Switches between 3-button (40+32+40) and 2-button (56+56)
+            // layout based on whether the profile's third action is NoAction.
+            // We detect this from action_icons[2] being None.
+            if is_selected {
+                let act_top = sh - POSITION_ACTION;
+                let act_bot = sh - POSITION_BOTTOM_SCROLL;
+
+                let kind = entity.and_then(|entity| pc_action_character_kind(entity, profiles));
+                let action_icons = kind.and_then(|k| portraits.get_action_surfaces(k).cloned());
+                let action_disabled =
+                    kind.and_then(|k| portraits.get_action_disabled_surfaces(k).cloned());
+                let action_hover =
+                    kind.and_then(|k| portraits.get_action_hover_surfaces(k).cloned());
+                let action_pressed =
+                    kind.and_then(|k| portraits.get_action_pressed_surfaces(k).cloned());
+                let action_hover_pressed =
+                    kind.and_then(|k| portraits.get_action_hover_pressed_surfaces(k).cloned());
+
+                let two_button_mode = action_icons
+                    .as_ref()
+                    .is_some_and(|icons| icons[2].is_none());
+
+                let (btn_lefts, btn_rights, num_buttons) = if two_button_mode {
+                    let a_right = x + ACTIONA_WIDTH;
+                    let b_right = a_right + ACTIONB_WIDTH;
+                    ([x, a_right, 0], [a_right, b_right, 0], 2)
+                } else {
+                    let a1_right = x + ACTION1_WIDTH;
+                    let a2_right = a1_right + ACTION2_WIDTH;
+                    let a3_right = a2_right + ACTION3_WIDTH;
+                    ([x, a1_right, a2_right], [a1_right, a2_right, a3_right], 3)
+                };
+
+                // Determine active action button index and disabled state.
+                let active_idx = if shift_held {
+                    entity.and_then(|entity| {
+                        action_index(profiles, entity, engine.planned_action_for_seat(local_seat))
+                    })
+                } else {
+                    entity.and_then(|e| active_action_index(profiles, e))
+                };
+
+                for i in 0..num_buttons {
+                    let is_active = active_idx == Some(i as u8);
+                    let is_disabled = !shift_held
+                        && entity.and_then(|e| e.pc_data()).is_some_and(|pc| {
+                            pc.disabled_actions.get(i).copied().unwrap_or(false)
+                                || pc.disabled_actions_temp.get(i).copied().unwrap_or(false)
+                        });
+                    let is_hovered = hovered_action == Some((slot as u8, i as u8));
+
+                    let mut icon_drawn = false;
+
+                    let visual = action_button_visual(is_active, is_disabled, is_hovered);
+                    let visual_surface = match visual {
+                        ActionButtonVisual::Disabled => action_disabled
+                            .as_ref()
+                            .and_then(|disabled| disabled[i])
+                            .or_else(|| action_icons.as_ref().and_then(|icons| icons[i])),
+                        ActionButtonVisual::HoverPressed => action_hover_pressed
+                            .as_ref()
+                            .and_then(|hover_pressed| hover_pressed[i])
+                            .or_else(|| action_pressed.as_ref().and_then(|pressed| pressed[i])),
+                        ActionButtonVisual::Pressed => {
+                            action_pressed.as_ref().and_then(|pressed| pressed[i])
+                        }
+                        ActionButtonVisual::Hover => {
+                            action_hover.as_ref().and_then(|hover| hover[i])
+                        }
+                        ActionButtonVisual::Normal => None,
+                    }
+                    .or_else(|| action_icons.as_ref().and_then(|icons| icons[i]));
+
+                    if let Some(surface_id) = visual_surface {
+                        let dst = bbox(btn_lefts[i], act_top, btn_rights[i], act_bot);
+                        blit_to_screen_widget(
+                            renderer,
+                            surface_id,
+                            None,
+                            Some(&dst),
+                            BLIT_SOURCE_TRANSPARENT,
+                        );
+                        icon_drawn = true;
+                    }
+                    if !icon_drawn {
+                        renderer.fill_screen(
+                            Some(&bbox(
+                                btn_lefts[i] + 1,
+                                act_top + 1,
+                                btn_rights[i] - 1,
+                                act_bot - 1,
+                            )),
+                            color_action_fill(),
+                        );
+                    }
+
+                    // Disabled-state BTTN resources are already authored as
+                    // grayed-out sprites.  Do not add a synthetic stipple on
+                    // top: it produces visible horizontal artifacts through
+                    // portrait action icons.
+                }
+            }
+
+            // ── Quick-action icon strip ──
+            // Positioned 20 px above the top scroll, 33 px wide each.
+            // Shared icon per slot; alternate sprite while this slot is the
+            // active recording target.
+            let upper_top = sh - pos_top_scroll;
+            let qa_strip_y = upper_top.saturating_sub(QA_ICON_HEIGHT);
+            let recording_slot = if engine.is_qa_recording_for(pc_id) {
+                engine
+                    .macro_store()
+                    .get(pc_id)
+                    .and_then(|m| m.recording_slot())
+            } else {
+                None
+            };
+            for slot_idx in 0..NUMBER_OF_QA_MEMORY_U16 {
+                let has_macro = engine
+                    .macro_store()
+                    .get(pc_id)
+                    .map(|m| m.has_macro(slot_idx as usize))
+                    .unwrap_or(false);
+                let is_recording_slot = recording_slot == Some(slot_idx as u8);
+                if !has_macro && !is_recording_slot {
+                    continue;
+                }
+
+                let sid_opt = if is_recording_slot {
+                    portraits
+                        .qa_icon_recording_surface
+                        .or(portraits.qa_icon_surface)
+                } else {
+                    portraits.qa_icon_surface
+                };
+                let Some(sid) = sid_opt else { continue };
+
+                let icon_x = x + slot_idx * QA_ICON_WIDTH;
+                let iw = renderer.surface_width(sid);
+                let ih = renderer.surface_height(sid);
+                let dst = bbox(icon_x, qa_strip_y, icon_x + iw, qa_strip_y + ih);
+                blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+
+                // Single-frame titbit sprite overlay.  Looks up the slot's
+                // titbit id in the per-PC slot table and resolves to the one
+                // `RHID_QUICKACTION_TITBITS` sub-frame via the titbit
+                // manager's phase lookup.
+                //
+                // The per-slot titbit id is registered at
+                // `record_macro_step_for` (`engine/commands.rs`) on the
+                // first committed PlayerCommand of a recording.
+                //
+                // Layered on top: the falling-button refresh animation —
+                // each slot tracks `shift_phase` (px) that re-arms to
+                // `SHIFT_STEP` whenever the step count changes and decays
+                // by `SHIFT_FALL_PER_REFRESH` each draw.  The titbit icon is
+                // offset by `shift_phase` along +X to produce the slide.
+                let slot_idx_usz = slot_idx as usize;
+                let shift_phase = host
+                    .frontend
+                    .engine_display
+                    .macro_shift_phase(pc_id, slot_idx_usz);
+                // Fizzle-blink visibility: the QA strobe toggles the per-slot
+                // titbit on/off after a macro fizzles.  When blink-hidden,
+                // skip the titbit blit.
+                let blink_hidden = host
+                    .frontend
+                    .engine_display
+                    .macro_titbit_blink_hidden(pc_id, slot_idx_usz);
+                if has_macro && !blink_hidden {
+                    // Per-step titbit overlay: draw the `RHID_QUICKACTION_TITBITS`
+                    // sub-frame for the slot's most recent step, resolved via
+                    // `action_to_qa_frame(step.action)`.  Driven directly off
+                    // the recorded step's `Action` rather than the transient
+                    // titbit manager entry — so the overlay survives a titbit
+                    // expiring or a ground-target step that never produced an
+                    // `add_titbit` entry (walk/run).
+                    //
+                    // When the last step is an action with no dedicated
+                    // dedicated quick-action icon (e.g. Jump or Search) we fall back
+                    // to the slot's titbit phase if one is still live, so
+                    // interact-only flows (`LaunchInteraction`) keep their
+                    // player/NPC interaction fallback from `commands.rs`.
+                    let frame_from_last_step = engine
+                        .macro_store()
+                        .get(pc_id)
+                        .and_then(|m| m.slot(slot_idx as usize))
+                        .and_then(|s| s.steps.last())
+                        .and_then(|step| {
+                            robin_engine::macro_store::action_to_qa_frame(step.action)
+                        });
+                    let phase_from_slot_titbit = || {
+                        engine
+                            .macro_store()
+                            .get(pc_id)
+                            .and_then(|m| m.get_slot_titbit(slot_idx as usize))
+                            .and_then(|id| engine.titbit_manager().get_phase(id))
+                    };
+                    // The titbit phase is target/command-specific (Take,
+                    // BowOk, lever, pay, ...), while the recorded Action is
+                    // only a broad fallback for expired legacy titbits.
+                    let frame = phase_from_slot_titbit().or(frame_from_last_step);
+                    // The per-slot `run` flag carries through into the
+                    // shifting-titbit renderer, which then draws a second
+                    // copy of the sprite offset by `(3, 0)`.  The flag is
+                    // driven by `is_running_for_qa(...)` on the slot's
+                    // titbit id.
+                    let run = engine
+                        .macro_store()
+                        .get(pc_id)
+                        .and_then(|m| m.get_slot_titbit(slot_idx as usize))
+                        .map(|id| engine.titbit_manager().is_running_for_qa(id))
+                        .unwrap_or(false);
+                    if let (Some(tbr), Some(frame)) = (titbit_renderer_opt.as_mut(), frame) {
+                        let shift_px = shift_phase.round() as i32;
+                        tbr.blit_ui_frame(
+                            renderer,
+                            SpriteRow::QuickActionTitbits,
+                            frame,
+                            Rect::new(
+                                icon_x as i32 + shift_px,
+                                qa_strip_y as i32,
+                                iw as u32,
+                                ih as u32,
+                            ),
+                            run,
+                        );
+                    }
+                }
+            }
+            render_auto_queue_ticks(
+                host,
+                renderer,
+                engine,
+                std::slice::from_ref(&pc_id),
+                x,
+                i32::from(qa_strip_y.saturating_sub(8)),
+            );
+
+            // The trumpet widget is only enabled on death, so it never
+            // appears on a living PC — nothing to draw in this branch.
+        }
+    }
+}
+
+// ─── Blazon bar & requirements bar icon strips ────────────────────
+
+/// The blazon set uses three sprites per slot (normal/empty/castle).
+/// Classifying a slot up-front lets the draw and tooltip paths share
+/// layout + semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlazonSlotKind {
+    /// Already-owned blazon.
+    Normal,
+    /// Un-owned slot that will be earned via Sherwood buy/convert.
+    Empty,
+    /// Un-owned slot that must be collected inside the mission itself.
+    /// Flashes to `Normal` while the blink latch is armed.
+    Castle,
+}
+
+const BLAZON_BAR_TINY_W: u16 = 9;
+const BLAZON_BAR_TINY_H: u16 = 14;
+const BLAZON_BAR_SPACING: u16 = 5;
+const BLAZON_BAR_Y: u16 = 2;
+
+/// Classify each blazon-bar slot:
+///
+/// - slots `0..owned` → `Normal`
+/// - if `owned + to_be_collected < total`: middle gap → `Empty`,
+///   trailing `to_be_collected` slots → `Castle`
+/// - otherwise: `owned..total` → `Castle`
+///
+/// The `blinking` suffix flips the trailing N `Castle` slots back to
+/// `Normal`.
+pub fn blazon_bar_slot_kinds(
+    state: &crate::widget::blazon_bar::BlazonBarState,
+) -> Vec<BlazonSlotKind> {
+    let owned = state.current.saturating_add(state.additional);
+    let slots = state.required.max(owned);
+    if slots == 0 {
+        return Vec::new();
+    }
+    let slots_u = slots as usize;
+    let owned_clamped = owned.min(slots) as usize;
+    let to_be_collected = state.to_be_collected.min(slots) as usize;
+    let castle_start = slots_u - to_be_collected;
+    let blink_start = slots_u - (state.blinking.min(slots) as usize);
+
+    let mut kinds = Vec::with_capacity(slots_u);
+    for i in 0..slots_u {
+        let kind = if i < owned_clamped {
+            BlazonSlotKind::Normal
+        } else if i < castle_start {
+            BlazonSlotKind::Empty
+        } else if state.blinking > 0 && i >= blink_start {
+            BlazonSlotKind::Normal
+        } else {
+            BlazonSlotKind::Castle
+        };
+        kinds.push(kind);
+    }
+    kinds
+}
+
+/// Start-X of the centered blazon-bar strip and its per-slot step.
+/// Exposed so hit-testing shares the same layout as the draw.
+fn blazon_bar_start_x(screen_width: u16, slot_count: u16) -> u16 {
+    if slot_count == 0 {
+        return 0;
+    }
+    let total_w =
+        slot_count * BLAZON_BAR_TINY_W + slot_count.saturating_sub(1) * BLAZON_BAR_SPACING;
+    screen_width.saturating_sub(total_w) / 2
+}
+
+/// Hit-test the blazon bar against a screen-space mouse position.
+/// Returns the slot index under the cursor, or `None` when the cursor
+/// is outside every icon rect.
+pub fn hit_test_blazon_bar(
+    screen_width: u16,
+    state: &crate::widget::blazon_bar::BlazonBarState,
+    mouse_x: i32,
+    mouse_y: i32,
+) -> Option<usize> {
+    let owned = state.current.saturating_add(state.additional);
+    let slots: u16 = state.required.max(owned).min(u16::MAX as u32) as u16;
+    if slots == 0 {
+        return None;
+    }
+    let start_x = blazon_bar_start_x(screen_width, slots) as i32;
+    let step = (BLAZON_BAR_TINY_W + BLAZON_BAR_SPACING) as i32;
+    let y0 = BLAZON_BAR_Y as i32;
+    let y1 = y0 + BLAZON_BAR_TINY_H as i32;
+    if mouse_y < y0 || mouse_y >= y1 {
+        return None;
+    }
+    for i in 0..slots {
+        let x0 = start_x + (i as i32) * step;
+        let x1 = x0 + BLAZON_BAR_TINY_W as i32;
+        if mouse_x >= x0 && mouse_x < x1 {
+            return Some(i as usize);
+        }
+    }
+    None
+}
+
+/// Draw the blazon-bar icon strip across the top of the screen.
+///
+/// Tiny-variant layout: the bar is centred across the screen width at
+/// `y = 2` (the blazon bar sits in a 0..150 band but the actual icon row
+/// is top-justified).  Reads the per-frame state from
+/// [`crate::widget::blazon_bar::build_blazon_bar_state`].
+///
+/// Slot colouring is delegated to [`blazon_bar_slot_kinds`] which
+/// implements the three-sprite split (normal / empty / castle) plus the
+/// one-shot blink latch.
+pub fn draw_blazon_bar(
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    state: &crate::widget::blazon_bar::BlazonBarState,
+) {
+    let (Some(normal), Some(castle), Some(empty)) = (
+        portraits.blazon_tiny_normal,
+        portraits.blazon_tiny_castle,
+        portraits.blazon_tiny_empty,
+    ) else {
+        return;
+    };
+    let kinds = blazon_bar_slot_kinds(state);
+    if kinds.is_empty() {
+        return;
+    }
+    let sw = renderer.screen_width();
+    let start_x = blazon_bar_start_x(sw, kinds.len() as u16);
+    for (i, kind) in kinds.iter().enumerate() {
+        let sid = match kind {
+            BlazonSlotKind::Normal => normal,
+            BlazonSlotKind::Empty => empty,
+            BlazonSlotKind::Castle => castle,
+        };
+        let x = start_x + (i as u16) * (BLAZON_BAR_TINY_W + BLAZON_BAR_SPACING);
+        let dst = bbox(
+            x,
+            BLAZON_BAR_Y,
+            x + BLAZON_BAR_TINY_W,
+            BLAZON_BAR_Y + BLAZON_BAR_TINY_H,
+        );
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
+}
+
+//
+// Layout constants:
+//   ICON_WIDTH              40
+//   ICON_HEIGHT             50
+//   ICON_MARGIN             10
+//   DIFFERENCE_X_YES_NO     25
+//   DIFFERENCE_Y_YES_NO     30
+//   DIFFERENCE_X_SELECTED   -1
+//   DIFFERENCE_Y_SELECTED    2
+const REQ_BAR_ICON_W: u16 = 40;
+const REQ_BAR_ICON_H: u16 = 50;
+const REQ_BAR_ICON_MARGIN: u16 = 10;
+const REQ_BAR_Y: u16 = 2;
+// The box is `(40, 2, screen_w - 40, 2)`.
+const REQ_BAR_BOX_INSET: u16 = 40;
+const REQ_BAR_DIFFERENCE_X_YES_NO: i32 = 25;
+const REQ_BAR_DIFFERENCE_Y_YES_NO: i32 = 30;
+const REQ_BAR_DIFFERENCE_X_SELECTED: i32 = -1;
+const REQ_BAR_DIFFERENCE_Y_SELECTED: i32 = 2;
+
+/// Starting-X for the centered requirements strip.  The box is
+/// `(40, 2, screen_w - 40, 2)` so box_width = `screen_w - 80`; the strip
+/// is centered by offsetting the box's top-left by `(box_w - needed_w) / 2`.
+/// `needed_w = n * (ICON_W + MARGIN) - MARGIN`.
+/// Returns `None` when the strip is wider than the box (no slots fit).
+fn requirements_bar_start_x(screen_width: u16, slot_count: usize) -> Option<i32> {
+    if slot_count == 0 {
+        return None;
+    }
+    let step = (REQ_BAR_ICON_W + REQ_BAR_ICON_MARGIN) as i32;
+    let needed = slot_count as i32 * step - REQ_BAR_ICON_MARGIN as i32;
+    let box_left = REQ_BAR_BOX_INSET as i32;
+    let box_w = (screen_width as i32) - 2 * (REQ_BAR_BOX_INSET as i32);
+    if box_w <= 0 {
+        return None;
+    }
+    Some(box_left + (box_w - needed) / 2)
+}
+
+/// Hit-test the requirements bar against a screen-space mouse position.
+/// Returns the slot index under the cursor, or `None` when the cursor
+/// is outside every icon rect.  Layout mirrors [`draw_requirements_bar`].
+pub fn hit_test_requirements_bar(
+    screen_width: u16,
+    state: &crate::widget::requirements::RequirementsState,
+    mouse: ScreenPoint,
+) -> Option<usize> {
+    let mouse_x = mouse.x as i32;
+    let mouse_y = mouse.y as i32;
+    let start_x = requirements_bar_start_x(screen_width, state.slots.len())?;
+    let step = (REQ_BAR_ICON_MARGIN + REQ_BAR_ICON_W) as i32;
+    let y0 = REQ_BAR_Y as i32;
+    let y1 = (REQ_BAR_Y + REQ_BAR_ICON_H) as i32;
+    if mouse_y < y0 || mouse_y >= y1 {
+        return None;
+    }
+    for i in 0..state.slots.len() {
+        let x0 = start_x + (i as i32) * step;
+        let x1 = x0 + REQ_BAR_ICON_W as i32;
+        if mouse_x >= x0 && mouse_x < x1 {
+            return Some(i);
+        }
+    }
+    None
+}
+
+pub fn draw_requirements_bar(
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    campaign: &robin_engine::campaign::Campaign,
+    profiles: &engine_profiles::ProfileManager,
+    state: &crate::widget::requirements::RequirementsState,
+) {
+    let _ = campaign;
+    let sw = renderer.screen_width();
+    let Some(start_x) = requirements_bar_start_x(sw, state.slots.len()) else {
+        return;
+    };
+    let step = (REQ_BAR_ICON_MARGIN + REQ_BAR_ICON_W) as i32;
+    for (i, slot) in state.slots.iter().enumerate() {
+        let icon_x = start_x + (i as i32) * step;
+        let icon_y = REQ_BAR_Y as i32;
+        let dst = bbox_i32(
+            icon_x,
+            icon_y,
+            icon_x + REQ_BAR_ICON_W as i32,
+            icon_y + REQ_BAR_ICON_H as i32,
+        );
+        let (icon_sid, status, selected) = match slot {
+            RequirementSlot::RequiredCharacter {
+                character_profile_idx,
+                status,
+                selected,
+            } => {
+                let sub_id = profiles
+                    .get_character(*character_profile_idx)
+                    .and_then(|p| CharacterKind::from_profile_name(&p.profile_name))
+                    .map(|k| k.required_pc_sub_id())
+                    .unwrap_or(0);
+                (
+                    portraits.get_sub_picture(resource_ids::RHID_REQUIRED_PC, sub_id),
+                    Some(*status),
+                    *selected,
+                )
+            }
+            RequirementSlot::RequiredAction {
+                action,
+                status,
+                selected,
+            } => {
+                let sub_id = required_action_sub_id(*action);
+                (
+                    portraits.get_sub_picture(resource_ids::RHID_REQUIRED_ACTION, sub_id),
+                    Some(*status),
+                    *selected,
+                )
+            }
+            RequirementSlot::OptionalCharacter {
+                character_profile_idx,
+            } => {
+                let slot_kind = character_profile_idx
+                    .and_then(|idx| profiles.get_character(idx))
+                    .and_then(|p| CharacterKind::from_profile_name(&p.profile_name));
+                let sub_id = CharacterKind::optional_pc_sub_id(slot_kind);
+                (
+                    portraits.get_sub_picture(resource_ids::RHID_OPTIONAL_PC, sub_id),
+                    None,
+                    false,
+                )
+            }
+        };
+        if let Some(sid) = icon_sid {
+            blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        }
+        // Status badge (yes tick / no cross) — small corner overlay at
+        // (+25, +30) from the icon origin, not stretched across the icon.
+        // Its size comes from the `RHID_YES_NO` resource's native dimensions.
+        if let Some(st) = status {
+            let overlay = match st {
+                RequirementStatus::Fulfilled => portraits.req_yes,
+                RequirementStatus::Missing => portraits.req_no,
+            };
+            if let Some(sid) = overlay {
+                let w = renderer.surface_width(sid) as i32;
+                let h = renderer.surface_height(sid) as i32;
+                let bx = icon_x + REQ_BAR_DIFFERENCE_X_YES_NO;
+                let by = icon_y + REQ_BAR_DIFFERENCE_Y_YES_NO;
+                let badge = bbox_i32(bx, by, bx + w, by + h);
+                blit_to_screen_widget(renderer, sid, None, Some(&badge), BLIT_SOURCE_TRANSPARENT);
+            }
+        }
+        // Selected-ring overlay at (-1, +2) from the icon origin.
+        if selected && let Some(sid) = portraits.req_selected {
+            let w = renderer.surface_width(sid) as i32;
+            let h = renderer.surface_height(sid) as i32;
+            let rx = icon_x + REQ_BAR_DIFFERENCE_X_SELECTED;
+            let ry = icon_y + REQ_BAR_DIFFERENCE_Y_SELECTED;
+            let ring = bbox_i32(rx, ry, rx + w, ry + h);
+            blit_to_screen_widget(renderer, sid, None, Some(&ring), BLIT_SOURCE_TRANSPARENT);
+        }
+    }
+}
+
+/// Build a `BBox` from signed i32 screen coordinates (helper for layouts
+/// that compute positions in signed space — e.g. the `-1` offset of the
+/// requirements-bar selected ring).
+fn bbox_i32(x0: i32, y0: i32, x1: i32, y1: i32) -> BBox {
+    screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
+        x0 as f32, y0 as f32, x1 as f32, y1 as f32,
+    ))
+}
+
+/// Menu-text id for the static tooltip attached to a given requirements-bar
+/// slot:
+/// - `MT_INFOBULLE_QG_NEEDED_PC` for `RequiredCharacter`
+/// - `MT_INFOBULLE_QG_NEEDED_ACTION` for `RequiredAction`
+/// - `MT_INFOBULLE_QG_OTHER_PC` for `OptionalCharacter`
+pub fn requirements_slot_tooltip_mt_id(
+    slot: &crate::widget::requirements::RequirementSlot,
+) -> usize {
+    use crate::ingame_menu::resources::{
+        MT_INFOBULLE_QG_NEEDED_ACTION, MT_INFOBULLE_QG_NEEDED_PC, MT_INFOBULLE_QG_OTHER_PC,
+    };
+    match slot {
+        RequirementSlot::RequiredCharacter { .. } => MT_INFOBULLE_QG_NEEDED_PC,
+        RequirementSlot::RequiredAction { .. } => MT_INFOBULLE_QG_NEEDED_ACTION,
+        RequirementSlot::OptionalCharacter { .. } => MT_INFOBULLE_QG_OTHER_PC,
+    }
+}
+
+/// Menu-text id for the static tooltip attached to a given blazon-bar
+/// slot:
+/// - `MT_INFOBULLE_BLAZON_WON` for `Normal`
+/// - `MT_INFOBULLE_BLAZON_TO_WIN` for `Empty`
+/// - `MT_INFOBULLE_BLAZON_TO_WIN_IN_ATTACK` for `Castle`
+pub fn blazon_slot_tooltip_mt_id(kind: BlazonSlotKind) -> usize {
+    use crate::ingame_menu::resources::{
+        MT_INFOBULLE_BLAZON_TO_WIN, MT_INFOBULLE_BLAZON_TO_WIN_IN_ATTACK, MT_INFOBULLE_BLAZON_WON,
+    };
+    match kind {
+        BlazonSlotKind::Normal => MT_INFOBULLE_BLAZON_WON,
+        BlazonSlotKind::Empty => MT_INFOBULLE_BLAZON_TO_WIN,
+        BlazonSlotKind::Castle => MT_INFOBULLE_BLAZON_TO_WIN_IN_ATTACK,
+    }
+}
+
+/// The blazon bar and the requirements bar share the same tooltip
+/// idle-timer pipeline.  Rather than duplicate the tracker, the two
+/// bars use the same struct — a slot index is a slot index.
+pub type BlazonTooltipTracker = RequirementsTooltipTracker;
+
+/// Menu-text id for the tooltip attached to a PC action button.
+/// Actions that are not in the switch (e.g. contextual-only actions
+/// or `NoAction`) get `None`, which renders as no tooltip.
+pub fn action_button_tooltip_mt_id(action: robin_engine::profiles::Action) -> Option<usize> {
+    use crate::ingame_menu::resources::*;
+    use robin_engine::profiles::Action;
+    Some(match action {
+        Action::Bow => MT_INFOBULLE_ACTION_BOW,
+        Action::Hit | Action::HitHard => MT_INFOBULLE_ACTION_FIST,
+        Action::Purse => MT_INFOBULLE_ACTION_PURSE,
+        Action::Stone => MT_INFOBULLE_ACTION_STONE,
+        Action::Shield | Action::BigShield => MT_INFOBULLE_ACTION_SHIELD,
+        Action::Strangle => MT_INFOBULLE_ACTION_STRANGLER,
+        Action::HelpToClimb => MT_INFOBULLE_ACTION_COURTE_ECHELLE,
+        Action::Apple => MT_INFOBULLE_ACTION_APPLE,
+        Action::Eat | Action::Guzzle => MT_INFOBULLE_ACTION_GIGOT,
+        Action::Listen => MT_INFOBULLE_ACTION_SPY,
+        Action::Heal => MT_INFOBULLE_ACTION_HERBS,
+        Action::Net => MT_INFOBULLE_ACTION_NET,
+        Action::Beggar => MT_INFOBULLE_ACTION_SIMULER_MENDIANT,
+        Action::WaspNest => MT_INFOBULLE_ACTION_WASP,
+        Action::Ale => MT_INFOBULLE_ACTION_BEER,
+        Action::Whistle => MT_INFOBULLE_ACTION_SIFFLER,
+        _ => return None,
+    })
+}
+
+/// Optional post-port detail appended to the localized Original tooltip.
+/// The stable key is exposed with the English fallback so a future extension
+/// catalog can translate these strings independently of `MenuText` ids.
+pub fn item_action_tooltip_extension(
+    action: robin_engine::profiles::Action,
+    rules: robin_engine::gameplay_config::ItemGameplayConfig,
+    previews: robin_engine::gameplay_config::ItemPreviewConfig,
+) -> Option<(&'static str, &'static str)> {
+    use robin_engine::profiles::Action;
+    match action {
+        Action::Apple if previews.apple_effect => Some(if rules.apple_combat_interrupt {
+            (
+                "item_tooltip.apple.interrupt",
+                "60-frame daze; 1500-frame scent; interrupts active combat.",
+            )
+        } else {
+            (
+                "item_tooltip.apple.classic",
+                "60-frame daze; 1500-frame scent; fighting targets are immune.",
+            )
+        }),
+        Action::Stone if previews.stone_direct_effect || previews.stone_distraction_area => Some(
+            match (
+                previews.stone_direct_effect,
+                previews.stone_distraction_area,
+                rules.stone_ground_distraction,
+                rules.stone_longer_range,
+            ) {
+                (true, true, true, true) => (
+                    "item_tooltip.stone.direct_and_distraction",
+                    "Direct hit: 10 damage + strong concussion; long base range 300. Ground noise radius: 240.",
+                ),
+                (true, true, true, false) => (
+                    "item_tooltip.stone.direct_and_distraction_classic_range",
+                    "Direct hit: 10 damage + strong concussion; classic base range 200. Ground noise radius: 240.",
+                ),
+                (true, _, _, true) => (
+                    "item_tooltip.stone.direct",
+                    "Direct hit: 10 damage + strong concussion; long base range 300.",
+                ),
+                (true, _, _, false) => (
+                    "item_tooltip.stone.direct_classic_range",
+                    "Direct hit: 10 damage + strong concussion; classic base range 200.",
+                ),
+                (false, true, true, _) => (
+                    "item_tooltip.stone.distraction",
+                    "Ground noise attracts eligible hostiles within 240.",
+                ),
+                (false, true, false, _) => (
+                    "item_tooltip.stone.distraction_disabled",
+                    "Ground distraction is disabled in Gameplay settings.",
+                ),
+                (false, false, _, _) => unreachable!("tooltip guard checked above"),
+            },
+        ),
+        Action::Net if previews.net_capture_area || previews.net_crumple_prediction => Some(
+            match (
+                previews.net_capture_area,
+                previews.net_crumple_prediction,
+                rules.net_selective_immunity,
+            ) {
+                (true, true, true) => (
+                    "item_tooltip.net.capture_and_terrain_crumple",
+                    "Captures active people within 40, including allies; VIPs/riders/Net user are skipped; terrain can crumple it.",
+                ),
+                (true, true, false) => (
+                    "item_tooltip.net.capture_and_crumple",
+                    "Captures active people within 40, including allies; terrain or people can crumple it.",
+                ),
+                (true, false, true) => (
+                    "item_tooltip.net.selective_capture",
+                    "Captures active people within 40, including allies; VIPs, riders, and the Net user are skipped.",
+                ),
+                (true, false, false) => (
+                    "item_tooltip.net.capture",
+                    "Captures active people within 40, including allies.",
+                ),
+                (false, true, true) => (
+                    "item_tooltip.net.terrain_crumple",
+                    "Terrain can crumple the net; resistant people are skipped.",
+                ),
+                (false, true, false) => (
+                    "item_tooltip.net.crumple",
+                    "Terrain and some victim conditions can crumple the net.",
+                ),
+                (false, false, _) => unreachable!("tooltip guard checked above"),
+            },
+        ),
+        Action::Ale if previews.ale_effect => Some(if rules.ale_reliable_distraction {
+            (
+                "item_tooltip.ale.reliable",
+                "Zero-interest outdoor non-VIP soldiers also accept at potency 20; authored interest and drunk behavior stay unchanged.",
+            )
+        } else {
+            (
+                "item_tooltip.ale.classic",
+                "Visible outdoor enemies need authored beer interest; drunk enemies accept.",
+            )
+        }),
+        Action::Purse if previews.purse_effect => Some((
+            "item_tooltip.purse.effect",
+            "Scatters 5 coins worth £50; visible outdoor enemies need money interest.",
+        )),
+        Action::WaspNest if previews.wasp_area => Some(if rules.wasp_reliable_acquisition {
+            (
+                "item_tooltip.wasp.reliable",
+                "Acquires within 75 (225 if apple-scented); ignores VIPs and active swordfights.",
+            )
+        } else {
+            (
+                "item_tooltip.wasp.classic",
+                "Acquires within 50 (150 if apple-scented); ignores VIPs and active swordfights.",
+            )
+        }),
+        _ => None,
+    }
+}
+
+/// Hover-idle tracker for portrait action buttons. These compact controls
+/// need much quicker feedback than the large requirements-bar widgets.
+#[derive(Default, Clone)]
+pub struct PcActionTooltipTracker {
+    hovered: Option<(u8, u8)>,
+    hover_ticks: u32,
+}
+
+pub const PC_ACTION_TOOLTIP_DELAY_TICKS: u32 = 12;
+
+impl PcActionTooltipTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Call once per frame with the hovered `(slot, btn)` pair, or
+    /// `None` when the cursor is not over any PC action button.
+    pub fn update(&mut self, hovered: Option<(u8, u8)>) {
+        if hovered == self.hovered {
+            if hovered.is_some() {
+                self.hover_ticks = self.hover_ticks.saturating_add(1);
+            }
+        } else {
+            self.hovered = hovered;
+            self.hover_ticks = u32::from(hovered.is_some());
+        }
+    }
+
+    /// `Some((slot, btn))` once the cursor has been idle on the same
+    /// button long enough for the tooltip to appear.
+    pub fn ready_button(&self) -> Option<(u8, u8)> {
+        (self.hover_ticks >= PC_ACTION_TOOLTIP_DELAY_TICKS)
+            .then_some(self.hovered)
+            .flatten()
+    }
+}
+
+/// Number of `update()` ticks the cursor must idle on the same slot
+/// before the tooltip appears (one tick per game frame).
+pub const REQUIREMENTS_TOOLTIP_DELAY_TICKS: u32 = 75;
+
+/// Hover tracker for the requirements-bar tooltip.  Increments a
+/// per-tick counter while the cursor stays on the same slot, resets
+/// when the target slot changes, and fires the tooltip once the
+/// counter crosses the threshold.
+///
+/// The bar is drawn in immediate mode with no backing widget list, so
+/// we key the tracker on the slot index returned by
+/// [`hit_test_requirements_bar`] rather than on a `WidgetId`.  The
+/// counter is frame-count-based (not wall-clock), so pausing the frame
+/// loop pauses the delay too.
+#[derive(Default, Clone)]
+pub struct RequirementsTooltipTracker {
+    hovered_slot: Option<usize>,
+    /// Ticks accumulated with the cursor on `hovered_slot`.  Saturates
+    /// at `u32::MAX` so a very long idle hover can't wrap back below
+    /// the threshold.
+    hover_ticks: u32,
+}
+
+impl RequirementsTooltipTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Call once per frame with the slot currently under the cursor.
+    /// Resets the tick counter when the target slot changes.
+    pub fn update(&mut self, hovered: Option<usize>) {
+        if hovered != self.hovered_slot {
+            self.hovered_slot = hovered;
+            self.hover_ticks = 0;
+        } else if hovered.is_some() {
+            self.hover_ticks = self.hover_ticks.saturating_add(1);
+        }
+    }
+
+    /// Returns `Some(slot_idx)` when the cursor has been idle over the
+    /// same slot long enough for the tooltip to appear.  Strictly
+    /// greater-than the threshold.
+    pub fn ready_slot(&self) -> Option<usize> {
+        let idx = self.hovered_slot?;
+        if self.hover_ticks > REQUIREMENTS_TOOLTIP_DELAY_TICKS {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+}
+
+/// Draw a tooltip string at a screen-space position: shadowed text (the
+/// Background font rendered at `+1, +1` then the Tooltips font on top),
+/// anchored at `mouse + cursor_size - (0, font_height)` so the tooltip
+/// sits to the right of the cursor with its bottom aligned with the
+/// cursor's bottom.  When it would overflow the right edge the tooltip
+/// flips to the left of the cursor; if the left fallback also doesn't
+/// fit, falls back to a multi-line text box anchored at the cursor,
+/// clipped to the right screen edge and at most three lines tall.
+/// Shifts up when it would overflow the bottom edge.  No background
+/// fill — relies on the shadow font for contrast against the scene.
+///
+/// `shadow` is the optional "Background" font; when `None`, the text is
+/// drawn without an explicit shadow. `cursor_size` is the current cursor
+/// sprite's on-screen size (width, height).
+pub fn draw_screen_tooltip(
+    renderer: &mut Renderer,
+    font: &crate::native_font::Font,
+    shadow: Option<&crate::native_font::Font>,
+    text: &str,
+    mouse_x: i32,
+    mouse_y: i32,
+    cursor_size: (i32, i32),
+) {
+    if text.is_empty() {
+        return;
+    }
+    let tw = font.text_width(text);
+    let th = font.height() as i32;
+    if tw <= 0 || th <= 0 {
+        return;
+    }
+
+    let sw = renderer.screen_width() as i32;
+    let sh = renderer.screen_height() as i32;
+    let (cursor_w, cursor_h) = cursor_size;
+
+    // Default anchor: to the right of the cursor, bottom-aligned with
+    // the cursor's bottom edge (`mouse + cursor_size - (0, font_h)`).
+    let default_x = mouse_x + cursor_w;
+    let default_y = mouse_y + cursor_h - th;
+
+    let right_overflow = default_x + tw > sw;
+    let left_fits = mouse_x - tw > 0;
+
+    if right_overflow && !left_fits {
+        // Three-way fallback: neither right nor left fits — wrap the text
+        // into a multi-line box anchored at the cursor, with width clipped
+        // to the right screen edge and height capped at `3 * font.height()`.
+        let box_x = mouse_x.max(0);
+        let box_y = default_y.max(0);
+        let box_w = (sw - box_x).max(1);
+        let wrap = layout::wrap_text_for_box_font(font, text, box_w, 3);
+        // Clamp vertically if the wrapped box overflows the bottom.
+        let total_h = (wrap.lines.len() as i32) * th;
+        let y_top = if box_y + total_h > sh {
+            (sh - total_h).max(0)
+        } else {
+            box_y
+        };
+        for (i, line) in wrap.lines.iter().enumerate() {
+            let ly = y_top + (i as i32) * th;
+            if let Some(sh_font) = shadow {
+                layout::render_text_screen_font(renderer, sh_font, line, box_x + 1, ly + 1);
+            }
+            layout::render_text_screen_font(renderer, font, line, box_x, ly);
+        }
+        return;
+    }
+
+    let (mut x, mut y) = if right_overflow {
+        // Overflow right: flip to the left of the cursor, same y.
+        (mouse_x - tw, default_y)
+    } else {
+        (default_x, default_y)
+    };
+
+    // Overflow bottom: shift up so the tooltip stays on screen.
+    if y + th > sh {
+        y = sh - th;
+    }
+    if y < 0 {
+        y = 0;
+    }
+    if x < 0 {
+        x = 0;
+    }
+
+    if let Some(sh_font) = shadow {
+        layout::render_text_screen_font(renderer, sh_font, text, x + 1, y + 1);
+    }
+    layout::render_text_screen_font(renderer, font, text, x, y);
+}
+
+// ─── PC info popup overlay ────────────────────────────────────────
+
+/// Render the hovered-PC info popup.
+///
+/// Resolves the hovered PC's sword/bow capacity from the campaign
+/// `HumanStatus`, re-computes the pip layout each frame (skills are
+/// re-read on every show), then blits the background + lit pip sprites.
+/// Does nothing when the overlay is not visible.
+///
+/// `mouse` is the current mouse cursor position — the overlay clamps
+/// itself to the screen bounds each frame.
+pub fn draw_pc_info_overlay(
+    host: &mut Host,
+    engine: &Engine,
+    profiles: &engine_profiles::ProfileManager,
+    renderer: &mut Renderer,
+    portraits: &PortraitCache,
+    mouse: ScreenPoint,
+) {
+    use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
+
+    let ov = &host.frontend.pc_info_overlay;
+    if !ov.visible {
+        return;
+    }
+    let Some(pc_id) = ov.pc_id else { return };
+    let Some(Entity::Pc(pc)) = engine.get_entity(pc_id) else {
+        return;
+    };
+
+    // Pull sword / bow capacity from the campaign character descriptor.
+    let campaign = engine.campaign();
+    let Some(desc) = campaign.characters.get(usize::from(pc.pc.profile_index)) else {
+        return;
+    };
+    let sword_cap = desc.status.human_status.hand_to_hand.capacity;
+    let bow_cap = desc.status.human_status.bow.capacity;
+
+    // Archer iff the PC's profile lists a Bow action.
+    let _ = campaign;
+    let is_archer = profiles
+        .get_character(pc.pc.profile_index)
+        .map(|p| p.actions.contains(&Action::Bow))
+        .unwrap_or(false);
+
+    let sw = renderer.screen_width() as i32;
+    let sh = renderer.screen_height() as i32;
+
+    // Compute positions + pip counts for this frame (recomputed every
+    // show, since skills can change between displays).
+    let mut frame_ov = PcInfoOverlay::default();
+    frame_ov.show(pc_id, mouse, (sw, sh), is_archer, sword_cap, bow_cap);
+
+    // ── Background ──
+    let bg_sid = if is_archer {
+        portraits.info_popup_bg_huge
+    } else {
+        portraits.info_popup_bg_tiny
+    };
+    if let Some(sid) = bg_sid {
+        let w = renderer.surface_width(sid);
+        let h = renderer.surface_height(sid);
+        let (x, y) = (frame_ov.position.0 as u16, frame_ov.position.1 as u16);
+        let dst = bbox(x, y, x + w, y + h);
+        blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+    }
+
+    // ── Sword pips ──
+    if let Some(sid) = portraits.info_popup_sword {
+        let w = renderer.surface_width(sid);
+        let h = renderer.surface_height(sid);
+        for i in 0..frame_ov.sword_pips.min(LEVEL_NUMBER) {
+            let (px, py) = frame_ov.sword_pip_position(i);
+            let dst = bbox(px as u16, py as u16, px as u16 + w, py as u16 + h);
+            blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        }
+    }
+
+    // ── Bow pips (archer only) ──
+    if is_archer && let Some(sid) = portraits.info_popup_bow {
+        let w = renderer.surface_width(sid);
+        let h = renderer.surface_height(sid);
+        for i in 0..frame_ov.bow_pips.min(LEVEL_NUMBER) {
+            let (px, py) = frame_ov.bow_pip_position(i);
+            let dst = bbox(px as u16, py as u16, px as u16 + w, py as u16 + h);
+            blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        }
+    }
+}
+
+// ─── Dotted-chain rendering (world space) ─────────────────────────
+
+/// Render the per-PC macro dotted chains.
+///
+/// For every PC with at least one non-empty macro slot, walks the
+/// recorded steps and calls
+/// `DrawManager::draw_dotted_line(… DISTANCE_DOT, 1, 0x0000 …)` for each
+/// segment starting at the PC's map position.  The dot phase is a
+/// single field (`TitbitManager::dotted_start`) shared across all PCs.
+pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+    use robin_engine::macro_store::DISTANCE_DOT;
+
+    // Snapshot the PC positions first — the draw call borrows engine.host
+    // mutably for the draw_manager and its phase store, so we can't
+    // still be iterating `engine.pc_ids()` while calling it.
+    let mut per_pc: Vec<(
+        robin_engine::element::EntityId,
+        engine_coordinates::MapPoint,
+    )> = Vec::with_capacity(engine.pc_ids().len());
+    for &pc_id in engine.pc_ids() {
+        if let Some(ent) = engine.get_entity(pc_id) {
+            let pos = ent.element_data().position_map();
+            per_pc.push((pc_id, pos));
+        }
+    }
+
+    // The dotted-phase is chained across every segment draw within a
+    // frame; since the engine-owned phase is advanced once per tick
+    // (`TitbitManager::prepare_refresh`), the renderer reads the current
+    // phase and chains locally across segments.  Not writing back
+    // preserves the mutation-free invariant — next frame's tick will
+    // re-advance the canonical phase.
+    let mut phase = engine.titbit_dotted_start();
+    for (pc_id, pc_pos) in per_pc {
+        let Some(state) = engine.macro_store().get(pc_id) else {
+            continue;
+        };
+        if state.slots().iter().all(|s| s.is_empty()) {
+            continue;
+        }
+
+        // Gather every QA-memory titbit into a single list and walk it
+        // once with `from` carrying forward across slots — the polyline
+        // is `PC → slot0 → slot1 → slot2`, not three separate fans from
+        // the PC.
+        let mut from = pc_pos;
+        for slot in state.slots() {
+            for step in &slot.steps {
+                let to = step.position;
+                host.frontend.draw_manager.draw_dotted_line(
+                    renderer,
+                    from,
+                    to,
+                    &mut phase,
+                    DISTANCE_DOT,
+                    1.0,
+                    0x0000,
+                );
+                from = to;
+            }
+        }
+    }
+}
+
+// ─── Portrait hit-testing ─────────────────────────────────────────
+
+/// Which sub-area of a portrait was clicked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortraitHitArea {
+    /// Top scroll (health gauge / parchment).
+    TopScroll,
+    /// Face / visage area.
+    Visage,
+    /// One of the action buttons (0-based index).
+    ActionButton(u8),
+    /// Allied group controls: stance, patrol, formation, follow.
+    AlliedAction(u8),
+    /// Pin a transient group or unpin a persistent group.
+    Pin,
+    PageLeft,
+    PageRight,
+    /// One of the quick-action macro icons (0-based QA slot).
+    QuickAction(u8),
+    /// Bottom scroll (ammo count area).
+    BottomScroll,
+    /// Guard indicator (burned state only).
+    Guard,
+    /// Amulet/clover indicator (burned state, not guarded).
+    Amulet,
+    /// Reinforcement trumpet indicator (dead state, when a replacement is
+    /// still available).
+    Trumpet,
+}
+
+/// Result of a portrait hit-test.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortraitHit {
+    /// Portrait slot index (0-based into `engine.displayed_pc_ids()`).
+    /// Hidden-interface PCs are not part of the displayed list, so this
+    /// index is *not* a valid index into `engine.pc_ids()` whenever any
+    /// PC has `interface_hidden = true` — use `pc_id` instead of
+    /// re-indexing.
+    pub slot: u8,
+    /// Resolved PC entity id at this slot — saves the caller from
+    /// re-walking `displayed_pc_ids()`.
+    pub pc_id: robin_engine::element::EntityId,
+    pub target: PortraitTarget,
+    /// Which sub-area was clicked.
+    pub area: PortraitHitArea,
+    /// Whether this portrait's PC is burned (coma/dead).
+    pub is_burned: bool,
+}
+
+/// Hit-test a screen-space click against the portrait slots (simple version).
+///
+/// Returns the index of the clicked portrait slot (0-based into `engine.pc_ids()`),
+/// or `None` if the click is outside all portrait areas.
+pub fn hit_test_portrait(
+    screen_width: u16,
+    screen_height: u16,
+    click_x: f32,
+    click_y: f32,
+    num_pcs: usize,
+) -> Option<u8> {
+    let num_slots = num_pcs.min(portrait_capacity(screen_width));
+    let slot_count = portrait_slot_count(screen_width, num_slots);
+    let sh = screen_height;
+
+    let panel_top = sh - PORTRAIT_TOTAL_HEIGHT;
+    let panel_bot = sh - BORDURE;
+
+    // Quick reject: not in panel area
+    if click_y < panel_top as f32 || click_y > panel_bot as f32 {
+        return None;
+    }
+
+    for slot in 0..num_slots {
+        let x = slot_left_x(screen_width, slot as u16, slot_count) as f32;
+        let x2 = x + ELEMENT_WIDTH as f32;
+
+        if click_x >= x && click_x <= x2 {
+            return Some(slot as u8);
+        }
+    }
+
+    None
+}
+
+/// Detailed hit-test returning which sub-area of which portrait was clicked.
+///
+/// Uses engine state to determine burned/selected per slot, and maps
+/// the click Y to the appropriate sub-area.
+pub fn hit_test_portrait_detailed(
+    engine: &Engine,
+    local_seat: PlayerId,
+    portraits: &PortraitCache,
+    screen_width: u16,
+    screen_height: u16,
+    click_x: f32,
+    click_y: f32,
+) -> Option<PortraitHit> {
+    let (items, paged) = portrait_bar_items(engine, local_seat, screen_width);
+    let slot_count = portrait_slot_count(screen_width, items.len());
+    let num_slots = items.len();
+    let sh = screen_height;
+    let cy = click_y;
+
+    let panel_top = (sh - PORTRAIT_TOTAL_HEIGHT - QA_ICON_HEIGHT) as f32;
+    let panel_bot = (sh - BORDURE) as f32;
+
+    if cy < panel_top || cy > panel_bot {
+        return None;
+    }
+
+    if paged {
+        let representative = items
+            .first()
+            .and_then(|item| item.members.first())
+            .copied()
+            .expect("paged portrait bar has no representative entity");
+        if click_x <= 30.0 {
+            return Some(PortraitHit {
+                slot: 0,
+                pc_id: representative,
+                target: items[0].target,
+                area: PortraitHitArea::PageLeft,
+                is_burned: false,
+            });
+        }
+        if click_x >= screen_width.saturating_sub(30) as f32 {
+            return Some(PortraitHit {
+                slot: 0,
+                pc_id: representative,
+                target: items[0].target,
+                area: PortraitHitArea::PageRight,
+                is_burned: false,
+            });
+        }
+    }
+
+    for (slot, item) in items.iter().enumerate().take(num_slots) {
+        let x = slot_left_x(screen_width, slot as u16, slot_count) as f32;
+        let pin_right = x + f32::from(ALLIED_PIN_LEFT + ALLIED_PIN_ICON_SIZE);
+        let x2 = if matches!(item.target, PortraitTarget::Pc(_)) {
+            x + ELEMENT_WIDTH as f32
+        } else {
+            pin_right
+        };
+
+        if click_x < x || click_x > x2 {
+            continue;
+        }
+
+        let pc_id = item.members[0];
+        if !matches!(item.target, PortraitTarget::Pc(_)) {
+            let selected = engine.tactical_selection(local_seat) == item.members;
+            let top_scroll_top = if selected {
+                (sh - POSITION_TOP_SCROLL) as f32
+            } else {
+                (sh - CLOSE_POSITION_TOP_SCROLL) as f32
+            };
+            let visage_top = if selected {
+                (sh - POSITION_VISAGE) as f32
+            } else {
+                (sh - CLOSE_POSITION_VISAGE) as f32
+            };
+            let pin_left = x + f32::from(ALLIED_PIN_LEFT);
+            let pin_top = top_scroll_top - f32::from(ALLIED_PIN_RISE);
+            let pin_bottom = pin_top + f32::from(ALLIED_PIN_ICON_SIZE);
+            let action_top = (sh - POSITION_ACTION) as f32;
+            let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+            let area =
+                if click_x >= pin_left && click_x <= pin_right && cy >= pin_top && cy <= pin_bottom
+                {
+                    PortraitHitArea::Pin
+                } else if cy >= top_scroll_top && cy < visage_top {
+                    PortraitHitArea::TopScroll
+                } else if cy >= visage_top && (!selected || cy < action_top) {
+                    PortraitHitArea::Visage
+                } else if selected && cy >= action_top && cy < bottom_scroll_top {
+                    PortraitHitArea::AlliedAction(allied_action_index(click_x - x))
+                } else {
+                    PortraitHitArea::BottomScroll
+                };
+            return Some(PortraitHit {
+                slot: slot as u8,
+                pc_id,
+                target: item.target,
+                area,
+                is_burned: false,
+            });
+        }
+
+        let entity = engine.get_entity(pc_id);
+        let is_selected = engine.hero_selection(local_seat).contains(&pc_id);
+
+        let is_coma = entity.map(|e| is_pc_in_coma(engine, e)).unwrap_or(false);
+        if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 && (!is_selected || is_coma) {
+            continue;
+        }
+        if is_selected && !is_coma {
+            let qa_strip_y = (sh - POSITION_TOP_SCROLL - QA_ICON_HEIGHT) as f32;
+            let qa_strip_bot = qa_strip_y + QA_ICON_HEIGHT as f32;
+            if cy >= qa_strip_y && cy < qa_strip_bot {
+                let rel_x = click_x - x;
+                if rel_x >= 0.0 {
+                    let slot_idx = (rel_x / QA_ICON_WIDTH as f32).floor() as u8;
+                    if usize::from(slot_idx) < robin_engine::macro_store::NUMBER_OF_QA_MEMORY {
+                        return Some(PortraitHit {
+                            slot: slot as u8,
+                            pc_id,
+                            target: item.target,
+                            area: PortraitHitArea::QuickAction(slot_idx),
+                            is_burned: false,
+                        });
+                    }
+                }
+            }
+        }
+        if cy < (sh - PORTRAIT_TOTAL_HEIGHT) as f32 {
+            continue;
+        }
+
+        let is_dead = match entity {
+            Some(Entity::Pc(pc)) => pc.pc.life_points <= 0,
+            _ => false,
+        };
+        let is_burned = is_dead || is_coma;
+        let is_guarded = match entity {
+            Some(Entity::Pc(pc)) => pc.pc.guard.is_some(),
+            _ => false,
+        };
+        let has_trumpet = match entity {
+            Some(Entity::Pc(pc)) => pc.pc.trumpet_enabled,
+            _ => false,
+        };
+
+        if is_burned {
+            // Burned layout: upper scroll repositioned above lower scroll.
+            // Guard/amulet/trumpet indicator is between the two scrolls.
+            let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+            let upper_scroll_top = (sh - POSITION_BOTTOM_SCROLL - BOTTOM_SCROLL_HEIGHT) as f32;
+            let upper_scroll_bot = upper_scroll_top + TOP_SCROLL_HEIGHT as f32;
+
+            let area = if cy >= upper_scroll_top && cy < upper_scroll_bot {
+                PortraitHitArea::TopScroll
+            } else if cy >= upper_scroll_bot && cy < bottom_scroll_top {
+                // Between scrolls — trumpet (dead only) takes priority over
+                // guard/amulet (coma only).  The trumpet is only enabled on
+                // dead PCs, so the two indicator families never overlap in
+                // practice.
+                if has_trumpet && is_dead && !is_coma {
+                    PortraitHitArea::Trumpet
+                } else if is_guarded {
+                    PortraitHitArea::Guard
+                } else {
+                    PortraitHitArea::Amulet
+                }
+            } else {
+                PortraitHitArea::BottomScroll
+            };
+
+            return Some(PortraitHit {
+                slot: slot as u8,
+                pc_id,
+                target: item.target,
+                area,
+                is_burned,
+            });
+        }
+
+        // Normal (non-burned) layout
+        let top_scroll_top = if is_selected {
+            (sh - POSITION_TOP_SCROLL) as f32
+        } else {
+            (sh - CLOSE_POSITION_TOP_SCROLL) as f32
+        };
+        let visage_top = if is_selected {
+            (sh - POSITION_VISAGE) as f32
+        } else {
+            (sh - CLOSE_POSITION_VISAGE) as f32
+        };
+        let action_top = (sh - POSITION_ACTION) as f32;
+        let bottom_scroll_top = (sh - POSITION_BOTTOM_SCROLL) as f32;
+
+        let area = if cy >= top_scroll_top && cy < visage_top {
+            // Check pixel transparency on the curved scroll edges.
+            // If the pixel is transparent, reject the hit so the click falls through.
+            if let Some(ref mask) = portraits.top_scroll_hit_mask {
+                let rel_x = (click_x - x) as u16;
+                let rel_y = (cy - top_scroll_top) as u16;
+                if !mask.is_opaque(rel_x, rel_y) {
+                    return None;
+                }
+            }
+            PortraitHitArea::TopScroll
+        } else if cy >= visage_top && cy < action_top && is_selected {
+            PortraitHitArea::Visage
+        } else if cy >= visage_top && !is_selected {
+            // Closed state: visage extends down to bottom scroll
+            PortraitHitArea::Visage
+        } else if cy >= action_top && cy < bottom_scroll_top && is_selected {
+            // Determine which action button based on X.
+            // Check two-button mode
+            let action_icons = entity
+                .and_then(pc_character_kind)
+                .map(|k| k.action_resources());
+            let two_btn = action_icons
+                .as_ref()
+                .is_some_and(|icons| icons[2].is_none());
+            let rel_x = click_x - x;
+
+            let btn_idx = if two_btn {
+                if rel_x < ACTIONA_WIDTH as f32 { 0 } else { 1 }
+            } else if rel_x < ACTION1_WIDTH as f32 {
+                0
+            } else if rel_x < (ACTION1_WIDTH + ACTION2_WIDTH) as f32 {
+                1
+            } else {
+                2
+            };
+            PortraitHitArea::ActionButton(btn_idx)
+        } else {
+            PortraitHitArea::BottomScroll
+        };
+
+        return Some(PortraitHit {
+            slot: slot as u8,
+            pc_id,
+            target: item.target,
+            area,
+            is_burned,
+        });
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn required_ui_assets_follow_the_supplied_preparation() {
+        let make = |bytes: &[u8]| {
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            vfs.install_preloaded_asset("Data/Interface/UI/isolated-test.png", bytes.to_vec())
+                .unwrap();
+            robin_engine::sbfile::SbFileSystem::new(vfs)
+        };
+        let first = make(b"first");
+        let second = make(b"second");
+        assert_eq!(super::read_ui_asset("isolated-test.png", &first), b"first");
+        assert_eq!(
+            super::read_ui_asset("isolated-test.png", &second),
+            b"second"
+        );
+        assert_eq!(super::read_ui_asset("isolated-test.png", &first), b"first");
+    }
+    use super::*;
+
+    #[test]
+    fn portrait_capacity_tracks_available_width() {
+        assert_eq!(portrait_capacity(640), 5);
+        assert_eq!(portrait_capacity(800), 6);
+        assert_eq!(portrait_capacity(1024), 8);
+        assert_eq!(portrait_capacity(1280), 10);
+    }
+
+    #[test]
+    fn slot_left_positions_at_800() {
+        // Each slot center should contain the 112px element
+        let sw = 800u16;
+        for slot in 0..5 {
+            let left = slot_left_x(sw, slot, portrait_slot_count(sw, 5));
+            let right = left + ELEMENT_WIDTH;
+            assert!(
+                left >= MARGIN || slot == 0,
+                "slot {} starts before margin",
+                slot
+            );
+            assert!(
+                right <= sw - MARGIN || slot == 4,
+                "slot {} extends past margin",
+                slot
+            );
+        }
+    }
+
+    #[test]
+    fn few_portraits_spread_across_bar() {
+        // With five or fewer portraits the bar keeps the original
+        // five-slot layout: slots span the full width instead of
+        // packing element-width slots into the left corner.
+        for num_items in 1..=5 {
+            assert_eq!(portrait_slot_count(800, num_items), 5);
+        }
+        let slot_width = slot_left_x(800, 1, 5) - slot_left_x(800, 0, 5);
+        assert!(
+            slot_width > ELEMENT_WIDTH,
+            "five-slot layout should leave gaps between portraits"
+        );
+        // More items than the minimum divide the bar by the item count.
+        assert_eq!(portrait_slot_count(800, 6), 6);
+        assert_eq!(portrait_slot_count(1024, 7), 7);
+    }
+
+    #[test]
+    fn portrait_total_height() {
+        // 3 + 23 + 35 + 50 + 23 = 134
+        assert_eq!(PORTRAIT_TOTAL_HEIGHT, 134);
+    }
+
+    #[test]
+    fn position_stack() {
+        // Verify the position constants stack correctly from bottom
+        assert_eq!(POSITION_BOTTOM_SCROLL, 26); // 3 + 23
+        assert_eq!(POSITION_ACTION, 61); // 26 + 35
+        assert_eq!(POSITION_VISAGE, 111); // 61 + 50
+        assert_eq!(POSITION_TOP_SCROLL, 134); // 111 + 23
+    }
+
+    #[test]
+    fn bbox_construction() {
+        let b = bbox(10, 20, 30, 40);
+        assert_eq!(b.min.x, 10.0);
+        assert_eq!(b.min.y, 20.0);
+        assert_eq!(b.max.x, 30.0);
+        assert_eq!(b.max.y, 40.0);
+    }
+
+    #[test]
+    fn action_button_visual_matches_widget_priority() {
+        assert_eq!(
+            action_button_visual(false, false, false),
+            ActionButtonVisual::Normal
+        );
+        assert_eq!(
+            action_button_visual(false, false, true),
+            ActionButtonVisual::Hover
+        );
+        assert_eq!(
+            action_button_visual(false, true, true),
+            ActionButtonVisual::Disabled
+        );
+        assert_eq!(
+            action_button_visual(true, false, true),
+            ActionButtonVisual::HoverPressed
+        );
+        assert_eq!(
+            action_button_visual(true, true, true),
+            ActionButtonVisual::Disabled
+        );
+    }
+
+    #[test]
+    fn allied_villain_profiles_select_named_visages() {
+        for (filename, expected) in [
+            ("Guisbourne", AlliedVisageKind::Guisbourne),
+            ("Longchamp", AlliedVisageKind::Longchamp),
+            ("PrinceJohn", AlliedVisageKind::PrinceJohn),
+            ("Scatlock", AlliedVisageKind::Scathlock),
+            ("sherif", AlliedVisageKind::Sheriff),
+            ("Sherif", AlliedVisageKind::Sheriff),
+            ("Soldier A03", AlliedVisageKind::Generic),
+        ] {
+            assert_eq!(AlliedVisageKind::from_profile_filename(filename), expected);
+        }
+    }
+
+    #[test]
+    fn action_button_sub_ids_cover_classic_radio_and_rdo_hover() {
+        assert_eq!(ACTION_SUB_ID_DISABLED, 0);
+        assert_eq!(ACTION_SUB_ID_UNSELECTED, 1);
+        assert_eq!(ACTION_SUB_ID_FOCUSED, 2);
+        assert_eq!(ACTION_SUB_ID_SELECTED, 3);
+        assert_eq!(ACTION_SUB_ID_FOCUSED_SELECTED, 4);
+    }
+
+    #[test]
+    fn allied_action_row_has_three_full_height_hit_columns() {
+        assert_eq!(allied_action_index(0.0), 0);
+        assert_eq!(allied_action_index(37.2), 0);
+        assert_eq!(allied_action_index(37.4), 1);
+        assert_eq!(allied_action_index(74.5), 1);
+        assert_eq!(allied_action_index(74.7), 2);
+        assert_eq!(allied_action_index(112.0), 2);
+    }
+
+    #[test]
+    fn portrait_action_tooltip_appears_quickly_and_resets_between_cells() {
+        let mut tracker = PcActionTooltipTracker::new();
+        for _ in 0..PC_ACTION_TOOLTIP_DELAY_TICKS {
+            tracker.update(Some((2, 1)));
+        }
+        assert_eq!(tracker.ready_button(), Some((2, 1)));
+        tracker.update(Some((2, 2)));
+        assert_eq!(tracker.ready_button(), None);
+    }
+
+    #[test]
+    fn stone_preview_controls_direct_hit_and_noise_explanations_independently() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let direct_only = ItemPreviewConfig {
+            stone_direct_effect: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, direct_text) = item_action_tooltip_extension(
+            Action::Stone,
+            ItemGameplayConfig::default(),
+            direct_only,
+        )
+        .expect("direct stone explanation");
+        assert!(direct_text.contains("Direct hit"));
+        assert!(!direct_text.contains("noise"));
+
+        let noise_only = ItemPreviewConfig {
+            stone_distraction_area: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, noise_text) =
+            item_action_tooltip_extension(Action::Stone, ItemGameplayConfig::default(), noise_only)
+                .expect("stone noise explanation");
+        assert!(noise_text.contains("Ground noise"));
+        assert!(!noise_text.contains("Direct hit"));
+    }
+
+    #[test]
+    fn net_preview_controls_capture_area_and_crumple_explanations_independently() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let capture_only = ItemPreviewConfig {
+            net_capture_area: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, capture_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::classic(), capture_only)
+                .expect("net capture explanation");
+        assert!(capture_text.contains("within 40"));
+        assert!(!capture_text.contains("crumple"));
+
+        let crumple_only = ItemPreviewConfig {
+            net_crumple_prediction: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, crumple_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::classic(), crumple_only)
+                .expect("net crumple explanation");
+        assert!(crumple_text.contains("crumple"));
+        assert!(!crumple_text.contains("within 40"));
+    }
+
+    #[test]
+    fn item_tooltips_explain_selective_net_and_reliable_ale_without_changing_previews() {
+        use robin_engine::gameplay_config::{ItemGameplayConfig, ItemPreviewConfig};
+        use robin_engine::profiles::Action;
+
+        let net_preview = ItemPreviewConfig {
+            net_capture_area: true,
+            net_crumple_prediction: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, net_text) =
+            item_action_tooltip_extension(Action::Net, ItemGameplayConfig::default(), net_preview)
+                .expect("selective net explanation");
+        assert!(net_text.contains("skipped"));
+        assert!(net_text.contains("terrain can crumple"));
+        assert!(!net_text.contains("people can crumple"));
+
+        let ale_preview = ItemPreviewConfig {
+            ale_effect: true,
+            ..ItemPreviewConfig::classic()
+        };
+        let (_, reliable_text) =
+            item_action_tooltip_extension(Action::Ale, ItemGameplayConfig::default(), ale_preview)
+                .expect("reliable ale explanation");
+        let (_, classic_text) =
+            item_action_tooltip_extension(Action::Ale, ItemGameplayConfig::classic(), ale_preview)
+                .expect("classic ale explanation");
+        assert!(reliable_text.contains("potency 20"));
+        assert!(classic_text.contains("authored beer interest"));
+    }
+
+    #[test]
+    fn embedded_allied_portrait_layers_preserve_full_alpha() {
+        let mut found_partial_alpha = false;
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_portrait_background.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_portrait_foreground.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!((width, height), (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT));
+            assert_eq!(pixels.len(), usize::from(width) * usize::from(height) * 4);
+            assert!(pixels.as_chunks::<4>().0.iter().any(|pixel| pixel[3] == 0));
+            found_partial_alpha |= pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|pixel| (1..=254).contains(&pixel[3]));
+        }
+        assert!(found_partial_alpha);
+    }
+
+    #[test]
+    fn embedded_allied_pin_icons_decode_with_transparency() {
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_pin_unpinned.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_pin_pinned.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!(
+                (width, height),
+                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE)
+            );
+            let pixels = pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+            assert!(pixels.iter().any(|pixel| (1..=254).contains(&pixel[3])));
+        }
+    }
+
+    #[test]
+    fn embedded_allied_state_icons_decode_with_transparency() {
+        for bytes in [
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_stance_hold.png"
+            )) as &[u8],
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_stance_defensive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_stance_aggressive.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_patrol_off.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_patrol_on.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_line.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_box.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_staggered.png"
+            )),
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../assets/core-datadir/Data/Interface/UI/allied_formation_flank.png"
+            )),
+        ] {
+            let (width, height, pixels) = decode_embedded_png_rgba(bytes).unwrap();
+            assert_eq!(
+                (width, height),
+                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT)
+            );
+            let pixels = pixels.as_chunks::<4>().0;
+            assert!(pixels.iter().any(|pixel| pixel[3] == 0));
+            assert!(pixels.iter().any(|pixel| pixel[3] == 255));
+            assert!(pixels.iter().any(|pixel| (1..=254).contains(&pixel[3])));
+        }
+    }
+
+    // The CharacterKind resource-lookup and sub-id tests live in
+    // `robin_engine::character_kind`; the UI-panel side just delegates to
+    // those methods, so no duplicate tests are needed here.
+
+    #[test]
+    fn hit_test_outside_panel() {
+        // Click above the panel area
+        assert_eq!(hit_test_portrait(800, 600, 400.0, 100.0, 3), None);
+    }
+
+    #[test]
+    fn hit_test_on_portrait_slot() {
+        // screen 800x600, slot 0 starts at slot_left_x(800, 0)
+        let x = slot_left_x(800, 0, portrait_slot_count(800, 3)) as f32 + 10.0;
+        let y = 600.0 - 50.0; // within the panel area
+        assert_eq!(hit_test_portrait(800, 600, x, y, 3), Some(0));
+    }
+
+    #[test]
+    fn hit_test_empty_slots() {
+        // No PCs means no hits even inside the panel
+        let x = slot_left_x(800, 0, portrait_slot_count(800, 0)) as f32 + 10.0;
+        let y = 600.0 - 50.0;
+        assert_eq!(hit_test_portrait(800, 600, x, y, 0), None);
+    }
+
+    #[test]
+    fn hit_test_between_slots() {
+        // Click between slot boundaries (in the gap)
+        let x0_right =
+            slot_left_x(800, 0, portrait_slot_count(800, 3)) as f32 + ELEMENT_WIDTH as f32 + 5.0;
+        let y = 600.0 - 50.0;
+        let x1_left = slot_left_x(800, 1, portrait_slot_count(800, 3)) as f32;
+        // Only a gap hit if the click is truly between elements
+        if x0_right < x1_left {
+            assert_eq!(hit_test_portrait(800, 600, x0_right, y, 3), None);
+        }
+    }
+
+    #[test]
+    fn hit_test_requirements_bar_maps_screen_coords_to_slots() {
+        use crate::widget::requirements::{RequirementSlot, RequirementStatus, RequirementsState};
+        use robin_engine::profiles::Action;
+        let state = RequirementsState {
+            slots: vec![
+                RequirementSlot::RequiredCharacter {
+                    character_profile_idx: engine_profiles::CharacterProfileIdx(1),
+                    status: RequirementStatus::Fulfilled,
+                    selected: false,
+                },
+                RequirementSlot::RequiredAction {
+                    action: Action::Bow,
+                    status: RequirementStatus::Fulfilled,
+                    selected: false,
+                },
+            ],
+            all_fulfilled: true,
+        };
+        // Strip is centered in the box (40, screen_w - 40).  For 800px:
+        // box_w = 720, needed_w = 2*(40+10) - 10 = 90, start_x =
+        // 40 + (720 - 90)/2 = 355.  Step = 50px between slot origins.
+        let step = (REQ_BAR_ICON_MARGIN + REQ_BAR_ICON_W) as i32;
+        let start_x = requirements_bar_start_x(800, state.slots.len()).unwrap();
+        let y_in = (REQ_BAR_Y + REQ_BAR_ICON_H / 2) as i32;
+        let slot0_cx = start_x + REQ_BAR_ICON_W as i32 / 2;
+        let slot1_cx = slot0_cx + step;
+        assert_eq!(start_x, 355);
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot0_cx as f32, y_in as f32)),
+            Some(0)
+        );
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot1_cx as f32, y_in as f32)),
+            Some(1)
+        );
+        // In the margin between slot 0 and slot 1.
+        let gap_x = start_x + REQ_BAR_ICON_W as i32 + 1;
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(gap_x as f32, y_in as f32)),
+            None
+        );
+        // Below the bar.
+        assert_eq!(
+            hit_test_requirements_bar(800, &state, ScreenPoint::new(slot0_cx as f32, 200.0)),
+            None
+        );
+    }
+
+    #[test]
+    fn requirements_bar_centered_in_box() {
+        // The strip is centered inside the (40, w-40) box.  A 2-slot
+        // strip on a 1024px screen: box_w = 944, needed_w = 90, start_x
+        // = 40 + (944 - 90)/2 = 467.
+        assert_eq!(requirements_bar_start_x(1024, 2), Some(467));
+        // 0 slots = no strip to center.
+        assert_eq!(requirements_bar_start_x(1024, 0), None);
+        // Narrow screen with negative box_w falls back to None.
+        assert_eq!(requirements_bar_start_x(40, 2), None);
+    }
+
+    #[test]
+    fn requirements_slot_tooltip_mt_id_matches_table() {
+        use crate::ingame_menu::resources::{
+            MT_INFOBULLE_QG_NEEDED_ACTION, MT_INFOBULLE_QG_NEEDED_PC, MT_INFOBULLE_QG_OTHER_PC,
+        };
+        use crate::widget::requirements::{RequirementSlot, RequirementStatus};
+        use robin_engine::profiles::Action;
+        assert_eq!(
+            requirements_slot_tooltip_mt_id(&RequirementSlot::RequiredCharacter {
+                character_profile_idx: engine_profiles::CharacterProfileIdx(1),
+                status: RequirementStatus::Fulfilled,
+                selected: false,
+            }),
+            MT_INFOBULLE_QG_NEEDED_PC
+        );
+        assert_eq!(
+            requirements_slot_tooltip_mt_id(&RequirementSlot::RequiredAction {
+                action: Action::Bow,
+                status: RequirementStatus::Fulfilled,
+                selected: false,
+            }),
+            MT_INFOBULLE_QG_NEEDED_ACTION
+        );
+        assert_eq!(
+            requirements_slot_tooltip_mt_id(&RequirementSlot::OptionalCharacter {
+                character_profile_idx: Some(engine_profiles::CharacterProfileIdx(2)),
+            }),
+            MT_INFOBULLE_QG_OTHER_PC
+        );
+        assert_eq!(
+            requirements_slot_tooltip_mt_id(&RequirementSlot::OptionalCharacter {
+                character_profile_idx: None,
+            }),
+            MT_INFOBULLE_QG_OTHER_PC
+        );
+    }
+
+    #[test]
+    fn requirements_tooltip_tracker_counts_ticks() {
+        let mut t = RequirementsTooltipTracker::new();
+        assert!(t.ready_slot().is_none());
+
+        // First update arms the counter at 0 (timer resets when the
+        // focus changes).  Not yet ready.
+        t.update(Some(0));
+        assert!(t.ready_slot().is_none());
+
+        // Bump up to (but not past) the threshold — the comparison is
+        // strictly greater-than, so 75 ticks still means "not ready".
+        for _ in 0..REQUIREMENTS_TOOLTIP_DELAY_TICKS {
+            t.update(Some(0));
+        }
+        assert_eq!(t.ready_slot(), None);
+
+        // One more tick crosses the threshold.
+        t.update(Some(0));
+        assert_eq!(t.ready_slot(), Some(0));
+
+        // Switching slots resets the counter.
+        t.update(Some(1));
+        assert!(t.ready_slot().is_none());
+
+        // Leaving the bar clears the tracker entirely.
+        t.update(None);
+        assert!(t.ready_slot().is_none());
+    }
+
+    #[test]
+    fn portrait_cache_empty() {
+        let cache = PortraitCache::new();
+        assert!(!cache.is_loaded());
+        let robin = CharacterKind::RobinHood { is_town: false };
+        assert_eq!(cache.get_surface(robin), None);
+        assert!(cache.get_action_surfaces(robin).is_none());
+        assert!(cache.get_localized_name(robin).is_none());
+        assert_eq!(
+            cache.get_sub_picture(resource_ids::RHID_REQUIRED_PC, 1),
+            None,
+        );
+    }
+
+    #[test]
+    fn required_action_sub_ids_match_table() {
+        use robin_engine::profiles::Action;
+        // Sub-id table:
+        // UnknownAction=0, Bow=1, Carry=2, Climb=3, Jump=4, Lever=5,
+        // Lockpick=6, Stun=7, Tie=8, Eat=9, Search=10.
+        assert_eq!(required_action_sub_id(Action::Bow), 1);
+        assert_eq!(required_action_sub_id(Action::LittleJohnCarry), 2);
+        assert_eq!(required_action_sub_id(Action::FarmerCarry), 2);
+        assert_eq!(required_action_sub_id(Action::Climb), 3);
+        assert_eq!(required_action_sub_id(Action::Jump), 4);
+        assert_eq!(required_action_sub_id(Action::Lever), 5);
+        assert_eq!(required_action_sub_id(Action::Lockpick), 6);
+        assert_eq!(required_action_sub_id(Action::Hit), 7);
+        assert_eq!(required_action_sub_id(Action::HitHard), 7);
+        assert_eq!(required_action_sub_id(Action::Tie), 8);
+        assert_eq!(required_action_sub_id(Action::Eat), 9);
+        assert_eq!(required_action_sub_id(Action::Guzzle), 9);
+        assert_eq!(required_action_sub_id(Action::Search), 10);
+    }
+}

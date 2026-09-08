@@ -1,0 +1,328 @@
+cargo-features = ["codegen-backend"]
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/robin_identity_signer",
+    "crates/robin_data_io",
+    "crates/robin_highscores",
+    "crates/robin_manifest_tool",
+    "crates/robin_official_content",
+    "crates/robin_parity",
+    "crates/robin_replay_format",
+    "crates/robin_replay_admission_wasm",
+    "crates/robin_rs",
+    "crates/robin_engine",
+    "crates/robin_lua",
+    "crates/robin_ranked_verification",
+    "crates/robin_run_protocol",
+    "crates/robin_spellforge",
+    "crates/robin_util",
+    "crates/robin_assets",
+    "crates/robin_state_hash_derive",
+    "crates/robin_replay_verifier",
+]
+# Keep bare `cargo build` / `cargo test` as a quick workspace smoke check.
+# Simulation, assets, client, Lua, and parity suites remain available through
+# `-p <crate>` or `--workspace` and should be selected deliberately.
+default-members = [
+    "crates/robin_util",
+    "crates/robin_state_hash_derive",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.lints.clippy]
+# Compatibility functions retain established signatures; bundling arguments into
+# context structs is done case-by-case, not lint-driven.
+too_many_arguments = "allow"
+type_complexity = "allow"
+# Ported decision chains keep the original per-condition branch structure even
+# when several branches produce the same outcome.
+if_same_then_else = "allow"
+# Negated float comparisons (`!(a < b)`) preserve the original engine's exact
+# NaN semantics; rewriting to `>=`/`partial_cmp` changes behavior.
+neg_cmp_op_on_partial_ord = "allow"
+# Transient outcome/control-flow enums and error paths intentionally carry big
+# engine-state values by move; boxing them is churn with no measured benefit.
+large_enum_variant = "allow"
+result_large_err = "allow"
+
+[workspace.dependencies]
+# Workspace crates
+robin_data_io = { path = "crates/robin_data_io" }
+robin_assets = { path = "crates/robin_assets" }
+robin_engine = { path = "crates/robin_engine" }
+robin_lua = { path = "crates/robin_lua" }
+robin_official_content = { path = "crates/robin_official_content" }
+robin_replay_format = { path = "crates/robin_replay_format" }
+robin_ranked_verification = { path = "crates/robin_ranked_verification" }
+robin_run_protocol = { path = "crates/robin_run_protocol" }
+robin_spellforge = { path = "crates/robin_spellforge" }
+robin_state_hash_derive = { path = "crates/robin_state_hash_derive" }
+robin_util = { path = "crates/robin_util" }
+
+# Dependencies shared by multiple workspace crates. Keep crate-specific feature
+# selections in the member manifests when they differ between consumers.
+anyhow = "1"
+axum = "0.8"
+bitcode = { git = "https://github.com/SoftbearStudios/bitcode.git", rev = "7ae88076943b74151e99713f33635ac5a5d4f4bf" }
+bitflags = "2"
+bytemuck = "1"
+enum-map = "3"
+fastrand = "2"
+geo = "0.33"
+hex = "0.4"
+indexmap = "2"
+mlua = { version = "0.12", features = ["luau", "send"] }
+rilua = { version = "=0.1.24", features = ["send"] }
+nonmax = "0.5"
+serde = "1"
+serde_json = "1"
+sha2 = "0.11"
+sqlx = "0.9"
+syn = "3"
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+unicode-security = "0.1.2"
+unicode-segmentation = "1.13"
+web-time = "1"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+zstd = "0.14"
+
+[patch.crates-io]
+rilua = { path = "vendor/rilua" }
+# winit 0.30.13 pins a hidden+Confined cursor to a 1x1 ClipCursor rect at the
+# window center on Windows, so mouse motion stops entirely (we always hide the
+# OS cursor and draw our own). The fork is v0.30.13 plus the upstream fix
+# (rust-windowing/winit#4387, in 0.31 only) backported. Drop this once we
+# migrate to winit 0.31.
+winit = { git = "https://github.com/phiresky/winit.git", rev = "571b50f3c2fd9911d46564d8def16f0955b194a8" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+# codegen-units = 1
+
+# Optimized replay-validation profile. Parity investigations rebuild the
+# engine frequently and then run long traces, so release-like optimization is
+# valuable but whole-program LTO is not: even thin LTO makes every one-line
+# engine change relink the entire example for many minutes. Keep incremental
+# codegen units reusable and trade a little runtime throughput for fast links.
+#
+# Use with: cargo build -p robin_parity --profile parity --bin original_parity_replay
+[profile.parity]
+inherits = "release"
+lto = false
+incremental = true
+codegen-units = 16
+debug = 0
+
+# Dev profile tuned for fast incremental iteration.
+# - debug = "line-tables-only": file:line in backtraces, no locals/types.
+#   Workflow is --replay + trace! logging, not interactive debugging.
+# - split-debuginfo = "unpacked": keep debuginfo out of the main binary so
+#   relinking doesn't rewrite megabytes on every change.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+codegen-backend = "cranelift"
+
+# Optimize dependencies once; they rarely change and this makes debug runtime
+# dramatically faster without slowing down our own crate's rebuilds.
+[profile.dev.package."*"]
+opt-level = 3
+
+# crc32fast 1.5.1 runtime-dispatches to a VPCLMULQDQ path whose intrinsics
+# cranelift cannot compile yet (it aborts with "llvm.x86.pclmulqdq.256 is
+# not yet supported" the moment that path runs on AVX-512 hardware).
+# Build just this crate with LLVM in the cranelift-backed profiles.
+[profile.dev.package.crc32fast]
+codegen-backend = "llvm"
+[profile.test.package.crc32fast]
+codegen-backend = "llvm"
+
+# Same story for jxl-rs: its SIMD feature (on by default, and wanted — map
+# decode is a mission-load hot path) carries AVX512 intrinsics cranelift
+# can't compile, so the jxl crates build with LLVM in the cranelift-backed
+# profiles.
+[profile.dev.package.jxl]
+codegen-backend = "llvm"
+[profile.dev.package.jxl_simd]
+codegen-backend = "llvm"
+[profile.dev.package.jxl_transforms]
+codegen-backend = "llvm"
+[profile.test.package.jxl]
+codegen-backend = "llvm"
+[profile.test.package.jxl_simd]
+codegen-backend = "llvm"
+[profile.test.package.jxl_transforms]
+codegen-backend = "llvm"
+
+# curve25519-dalek (ed25519 signing for leaderboards and replays) compiles its
+# AVX-512 IFMA backend on nightly and runtime-dispatches to it on capable
+# CPUs. Cranelift aborts with "llvm.x86.avx512.vpmadd52l.uq.256 is not yet
+# supported" the moment that path runs, so build it with LLVM too.
+[profile.dev.package.curve25519-dalek]
+codegen-backend = "llvm"
+[profile.test.package.curve25519-dalek]
+codegen-backend = "llvm"
+
+# Workspace crates stay unoptimized so incremental rebuilds are fast.
+[profile.dev.package.robin_rs]
+opt-level = 0
+[profile.dev.package.robin_engine]
+opt-level = 0
+[profile.dev.package.robin_lua]
+opt-level = 0
+[profile.dev.package.robin_replay_format]
+opt-level = 0
+[profile.dev.package.robin_ranked_verification]
+opt-level = 0
+[profile.dev.package.robin_spellforge]
+opt-level = 0
+[profile.dev.package.robin_util]
+opt-level = 0
+[profile.dev.package.robin_assets]
+opt-level = 0
+[profile.dev.package.robin_state_hash_derive]
+opt-level = 0
+
+# rilua's native I/O compatibility path calls C `fprintf("%.14g", f64)`.
+# Cranelift deliberately rejects floating-point C variadic arguments because
+# it cannot yet provide the required x86 ABI register metadata; LLVM supports
+# the call and preserves rilua's PUC-Rio-compatible number formatting.
+# TODO(toolchain): remove these package overrides once cg_clif supports float
+# varargs (https://github.com/rust-lang/rustc_codegen_cranelift/issues/1451).
+[profile.dev.package.rilua]
+codegen-backend = "llvm"
+
+# Tests favor fast compile/link cycles over debugger-quality artifacts.  Keep
+# the production dependency graph unchanged, but use the same fast native
+# codegen backend as development builds and omit bulky test-only debuginfo.
+# Panic locations and test assertion locations remain available.
+[profile.test]
+debug = 0
+codegen-backend = "cranelift"
+
+[profile.test.package.rilua]
+codegen-backend = "llvm"
+
+# Full-debuginfo profile for interactive debugging (gdb/lldb).
+# `debug` is a reserved cargo profile name (alias for `dev`), so this is
+# named `dev-debug`. Use with `cargo build --profile dev-debug`.
+[profile.dev-debug]
+inherits = "dev"
+debug = 2
+
+# Lightly-optimized native development build.  This keeps dev-style
+# debuginfo/incrementality but gives our workspace crates enough
+# optimization to make live multiplayer timing usable while debug-mode
+# hot spots are still being cleaned up.
+# Use with `cargo build --profile dev-opt1 --bin robin`.
+[profile.dev-opt1]
+inherits = "dev"
+opt-level = 1
+
+[profile.dev-opt1.package.robin_rs]
+opt-level = 1
+[profile.dev-opt1.package.robin_engine]
+opt-level = 1
+[profile.dev-opt1.package.robin_lua]
+opt-level = 1
+[profile.dev-opt1.package.robin_replay_format]
+opt-level = 1
+[profile.dev-opt1.package.robin_ranked_verification]
+opt-level = 1
+[profile.dev-opt1.package.robin_spellforge]
+opt-level = 1
+[profile.dev-opt1.package.robin_util]
+opt-level = 1
+[profile.dev-opt1.package.robin_assets]
+opt-level = 1
+[profile.dev-opt1.package.robin_state_hash_derive]
+opt-level = 1
+
+# Wasm profiles — inherit from dev/release but force the LLVM codegen
+# backend (cranelift can't target wasm and errors at compile time
+# instead of falling back).
+#
+# Build (wasm32-unknown-unknown + wasm-bindgen):
+#   cargo build --profile wasm-dev --target wasm32-unknown-unknown \
+#       --no-default-features -p robin_rs --bin robin
+# Then run wasm-bindgen --target web on the produced .wasm to emit
+# the JS glue under wasm-www/.  See `README.md`.
+[profile.wasm-dev]
+inherits = "dev"
+codegen-backend = "llvm"
+
+[profile.wasm-dev.package."*"]
+codegen-backend = "llvm"
+
+[profile.wasm-release]
+inherits = "release"
+codegen-backend = "llvm"
+opt-level = "z"
+# Fat LTO *and* a vectorized codec crate — normally contradictory: rustc
+# runs the LTO-stage LLVM pipeline at the root crate's opt-level, and the
+# "z"/"s" pipelines contain no vectorizer passes at all, so under LTO the
+# robin_assets O3 override below produced exactly zero SIMD (verified on
+# nightly-2026-08-25; raising the profile to 3 with per-package "z"
+# overrides instead lets the O3 LTO inliner balloon the module: 7.10 MB gz
+# vs 4.92 baseline). The escape hatch is in .cargo/config.toml: the wasm
+# target rustflags append `-C passes=loop-vectorize,slp-vectorizer,...` to
+# every pipeline, and the per-function optsize/minsize attributes that "z"
+# stamps on all other crates keep those passes size-conservative outside
+# the attribute-free O3 crate. Demo-corpus decode bench (wasm_decode_bench,
+# node, single-thread, identical output hashes): 59.1 s old all-z fat LTO;
+# 28.2 s lto=false + O3+simd codec; 22.8 s this config. Adding loop-unroll
+# to the chain made it slower (32.9 s) — deliberately absent.
+lto = true
+codegen-units = 1
+debug = 0
+strip = "debuginfo"
+panic = "abort"
+# The deployed module is further shrunk with `wasm-opt -Oz` and
+# `wasm-strip` (wabt) — both as explicit post-build steps.
+
+# The sprite/asset codec is the wasm hot path (decode runs on every load);
+# O3 here both strips the size attributes (so the injected vectorizers act
+# on this crate) and raises its pre-link pipeline to O3.
+[profile.wasm-release.package.robin_assets]
+opt-level = 3
+# JXL map decode (~3 s of mission setup) and zstd chunk inflate are the
+# other measured load hot paths — same O3 treatment.
+[profile.wasm-release.package.jxl]
+opt-level = 3
+[profile.wasm-release.package.jxl_simd]
+opt-level = 3
+[profile.wasm-release.package.jxl_transforms]
+opt-level = 3
+[profile.wasm-release.package.zstd]
+opt-level = 3
+[profile.wasm-release.package.zstd-safe]
+opt-level = 3
+[profile.wasm-release.package.zstd-sys]
+opt-level = 3
+
+# Android cross builds need LLVM.  The workspace dev profile uses
+# cranelift for native Linux iteration, but cranelift does not target
+# Android.  Use `--profile android-dev` for fast APK iteration and
+# `--profile android-release` for installable release builds.
+[profile.android-dev]
+inherits = "dev"
+codegen-backend = "llvm"
+
+[profile.android-dev.package."*"]
+codegen-backend = "llvm"
+
+[profile.android-release]
+inherits = "release"
+codegen-backend = "llvm"
+panic = "abort"

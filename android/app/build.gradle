@@ -1,0 +1,180 @@
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+
+plugins {
+    id "com.android.application"
+}
+
+def repoRoot = layout.projectDirectory.dir("../..")
+def coreOverlayDir = repoRoot.dir("assets/core-datadir")
+def coreOverlayManifest = coreOverlayDir.file("core-overlay-manifest.json")
+def runtimeContractFile = repoRoot.file("wasm-www/runtime-contract.json")
+def pinnedNdkVersion = "29.0.14206865"
+// Locked CPAL 0.18 uses directly linked AAudio (ndk api-level-26); advertising
+// API 24 would produce an APK whose audio library cannot load on Android 7.
+def nativeApi = 26
+def hostOs = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+def ndkHost = hostOs.contains("linux") ? "linux-x86_64" :
+    hostOs.contains("mac") ? "darwin-x86_64" : null
+if (ndkHost == null) {
+    throw new GradleException("Android Cargo packaging currently supports Linux and macOS hosts")
+}
+def rustProfile = providers.gradleProperty("rustProfile").orElse("android-dev")
+def rustLib = rustProfile.map { repoRoot.file("target/aarch64-linux-android/${it}/librobin_rs.so") }
+def syncedJniLibs = layout.buildDirectory.dir("generated/jniLibs")
+
+android {
+    namespace "io.github.phiresky.robinhood"
+    compileSdk 35
+    ndkVersion pinnedNdkVersion
+
+    defaultConfig {
+        applicationId "io.github.phiresky.robinhood"
+        minSdk nativeApi
+        targetSdk 35
+        versionCode 1
+        versionName "0.1"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile "../AndroidManifest.xml"
+            // `../assets` is operator-supplied generated demo content and is
+            // intentionally absent from the repository. The engine-owned core
+            // overlay is a separate, retail-content-free APK asset root.
+            assets.srcDirs = ["../assets", coreOverlayDir.asFile]
+            jniLibs.srcDirs = [syncedJniLibs]
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
+
+// Resolve through Gradle's SDK configuration (including local.properties), not
+// an individual developer's filesystem. Gradle installs the pinned NDK.
+def ndkHome = androidComponents.sdkComponents.ndkDirectory
+def ndkBin = ndkHome.map { it.dir("toolchains/llvm/prebuilt/${ndkHost}/bin").asFile.absolutePath }
+def ndkLib = ndkHome.map { it.dir("toolchains/llvm/prebuilt/${ndkHost}/sysroot/usr/lib/aarch64-linux-android").asFile.absolutePath }
+def cxxSharedLib = ndkLib.map { file("${it}/libc++_shared.so") }
+
+// Resolve the Android extension during configuration. Inside a task action,
+// unqualified `android` is looked up as a task property by Gradle 9.7.
+def coreOverlayRegistered = android.sourceSets.main.assets.srcDirs
+    .collect { it.canonicalFile }
+    .contains(coreOverlayDir.asFile.canonicalFile)
+
+tasks.register("validateCoreOverlay") {
+    group = "verification"
+    description = "Validate the exact engine core-overlay inventory packaged in the APK"
+    inputs.file(coreOverlayManifest)
+    inputs.dir(coreOverlayDir.dir("Data"))
+    inputs.file(runtimeContractFile)
+
+    doLast {
+        if (!coreOverlayRegistered) {
+            throw new GradleException("core overlay is validated but not registered as an Android asset root")
+        }
+
+        def manifestFile = coreOverlayManifest.asFile
+        if (!manifestFile.isFile()) {
+            throw new GradleException("required core overlay manifest is missing: ${manifestFile}")
+        }
+        def manifest = new JsonSlurper().parse(manifestFile)
+        if (manifest.schema != 1) {
+            throw new GradleException("unsupported core overlay manifest schema ${manifest.schema}; expected 1")
+        }
+
+        def runtimeContract = new JsonSlurper().parse(runtimeContractFile.asFile)
+        if (runtimeContract.schema != 1 || !(runtimeContract.shippingDatadirSchema instanceof Integer)) {
+            throw new GradleException("invalid generated runtime contract: ${runtimeContractFile.asFile}")
+        }
+        def shippingVersion = runtimeContract.shippingDatadirSchema
+        if (manifest.shippingDatadirSchema != shippingVersion) {
+            throw new GradleException(
+                "core overlay targets shipping datadir schema ${manifest.shippingDatadirSchema}; runtime expects ${shippingVersion}"
+            )
+        }
+        if (!(manifest.files instanceof List) || manifest.files.isEmpty()) {
+            throw new GradleException("core overlay manifest must contain a non-empty files array")
+        }
+
+        def declared = manifest.files.collect { entry -> entry.path as String }
+        if (declared != declared.toSorted() || declared.toSet().size() != declared.size()) {
+            throw new GradleException("core overlay manifest paths must be unique and strictly sorted")
+        }
+        def actual = []
+        coreOverlayDir.dir("Data").asFile.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+            actual.add(coreOverlayDir.asFile.toPath().relativize(file.toPath()).toString().replace('\\', '/'))
+        }
+        actual.sort()
+        if (declared != actual) {
+            throw new GradleException("core overlay manifest inventory differs from assets/core-datadir/Data")
+        }
+
+        manifest.files.each { entry ->
+            def relative = entry.path as String
+            if (!relative.startsWith("Data/") || relative.contains("..") || relative.startsWith("/")) {
+                throw new GradleException("invalid core overlay asset path: ${relative}")
+            }
+            def asset = coreOverlayDir.file(relative).asFile
+            if (!asset.isFile()) {
+                throw new GradleException("required core overlay asset is missing: ${asset}")
+            }
+            if (asset.length() != (entry.size as Long)) {
+                throw new GradleException(
+                    "core overlay asset ${relative} has ${asset.length()} bytes; manifest requires ${entry.size}"
+                )
+            }
+            def digest = MessageDigest.getInstance("SHA-256").digest(asset.bytes).encodeHex().toString()
+            if (digest != entry.sha256) {
+                throw new GradleException(
+                    "core overlay asset ${relative} failed SHA-256 validation: expected ${entry.sha256}, got ${digest}"
+                )
+            }
+        }
+    }
+}
+
+tasks.register("buildRustAndroid", Exec) {
+    workingDir repoRoot.asFile
+    commandLine "cargo", "rustc",
+        "-p", "robin_rs",
+        "--lib",
+        "--crate-type", "cdylib",
+        "--target", "aarch64-linux-android",
+        "--profile", rustProfile.get(),
+        "--locked",
+        "--no-default-features",
+        "--features", "android"
+    environment "ANDROID_NDK_HOME", ndkHome.get().asFile.absolutePath
+    environment "PATH", "${ndkBin.get()}:${System.getenv("PATH")}"
+    environment "CC_aarch64_linux_android", "aarch64-linux-android${nativeApi}-clang"
+    environment "CXX_aarch64_linux_android", "aarch64-linux-android${nativeApi}-clang++"
+    environment "AR_aarch64_linux_android", "llvm-ar"
+    environment "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER", "aarch64-linux-android${nativeApi}-clang"
+    environment "RUSTC_WRAPPER", ""
+    // Cargo owns the dependency graph, including build.rs inputs, vendored
+    // dependencies, Git refs, target flags and toolchain changes. Always invoke
+    // it; a partial Gradle input list can silently package a stale library.
+    outputs.upToDateWhen { false }
+    outputs.file(rustLib)
+}
+
+tasks.register("syncRustJniLibs", Copy) {
+    dependsOn tasks.named("buildRustAndroid")
+    from(rustLib)
+    from(cxxSharedLib)
+    into(syncedJniLibs.map { it.dir("arm64-v8a") })
+}
+
+tasks.named("preBuild") {
+    dependsOn tasks.named("validateCoreOverlay")
+    dependsOn tasks.named("syncRustJniLibs")
+}

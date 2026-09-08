@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "netProtocol": 39,
+  "replaySchema": 30,
+  "ticketSchema": 3,
+  "joinCodePrefix": "rhmp3-",
+  "contentSchema": 2,
+  "shippingDatadirSchema": 15
+}

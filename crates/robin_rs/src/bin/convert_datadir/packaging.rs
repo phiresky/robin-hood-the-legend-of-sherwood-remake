@@ -1,0 +1,261 @@
+//! Deterministic payload encoding, resume validation and web manifest packaging.
+use super::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn diagnostic_plan_does_not_change_web_manifest_bytes() {
+        use robin_rs::multiplayer::content_identity::{
+            WEB_CONTENT_MANIFEST_NAME, WebContentEdition,
+        };
+        let temp = tempfile::tempdir().unwrap();
+        fs::write(temp.path().join("datadir.bin"), b"boot fixture").unwrap();
+        fs::create_dir(temp.path().join("missions")).unwrap();
+        fs::write(
+            temp.path().join("missions/test.rhmission.zst"),
+            b"mission fixture",
+        )
+        .unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        let before = fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap();
+        fs::write(temp.path().join("conversion-plan.json"), b"{}").unwrap();
+        write_web_content_manifest(temp.path(), WebContentEdition::Demo, "a".repeat(64)).unwrap();
+        assert_eq!(
+            fs::read(temp.path().join(WEB_CONTENT_MANIFEST_NAME)).unwrap(),
+            before
+        );
+    }
+}
+
+pub(super) fn write_web_content_manifest(
+    data_out: &Path,
+    edition: robin_rs::multiplayer::content_identity::WebContentEdition,
+    native_content_sha256: String,
+) -> Result<()> {
+    use robin_rs::multiplayer::content_identity::{
+        WEB_CONTENT_MANIFEST_NAME, WEB_CONTENT_MANIFEST_SCHEMA, WebContentDatadir, WebContentFile,
+        WebContentFileKind, WebContentManifest,
+    };
+
+    let manifest_path = data_out.join(WEB_CONTENT_MANIFEST_NAME);
+    if manifest_path.exists() {
+        fs::remove_file(&manifest_path)
+            .with_context(|| format!("remove stale {}", manifest_path.display()))?;
+    }
+    let mut paths = Vec::new();
+    let mut pending = vec![data_out.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory)
+            .with_context(|| format!("enumerate web content {}", directory.display()))?
+        {
+            let entry =
+                entry.with_context(|| format!("enumerate web content {}", directory.display()))?;
+            let path = entry.path();
+            let metadata = fs::symlink_metadata(&path)
+                .with_context(|| format!("stat web content {}", path.display()))?;
+            if metadata.file_type().is_symlink() {
+                bail!("web content package refuses symlink {}", path.display());
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            } else if metadata.is_file() {
+                paths.push(path);
+            } else {
+                bail!("web content package refuses non-file {}", path.display());
+            }
+        }
+    }
+    paths.sort_by_key(|path| {
+        path.strip_prefix(data_out)
+            .expect("enumerated path stays in package")
+            .to_string_lossy()
+            .replace('\\', "/")
+    });
+
+    let mut datadir = None;
+    let mut files = Vec::new();
+    let mut seen = BTreeSet::new();
+    for path in paths {
+        let relative = path
+            .strip_prefix(data_out)
+            .expect("enumerated path stays in package")
+            .to_str()
+            .ok_or_else(|| anyhow!("web content path is not UTF-8: {}", path.display()))?
+            .replace('\\', "/");
+        if relative == "conversion-plan.json" {
+            // Inspectable converter diagnostics are not runtime content.
+            continue;
+        }
+        let canonical_key = relative.to_ascii_lowercase();
+        if !seen.insert(canonical_key) {
+            bail!("web content paths collide case-insensitively at {relative}");
+        }
+        let (byte_length, sha256) = digest_file(&path)?;
+        if relative == "datadir.bin" {
+            datadir = Some(WebContentDatadir {
+                path: relative,
+                byte_length,
+                sha256,
+            });
+        } else {
+            let kind = if relative.starts_with("audio/assets/")
+                || relative.starts_with("audio/bundles/")
+            {
+                WebContentFileKind::Asset
+            } else {
+                WebContentFileKind::Shipping
+            };
+            files.push(WebContentFile {
+                path: relative,
+                kind,
+                byte_length,
+                sha256,
+            });
+        }
+    }
+    let datadir = datadir.ok_or_else(|| anyhow!("web content package has no datadir.bin"))?;
+    if files.is_empty() {
+        bail!("web content package has no split mission/audio files");
+    }
+    let manifest = WebContentManifest {
+        schema: WEB_CONTENT_MANIFEST_SCHEMA,
+        edition,
+        engine_version: robin_rs::replay_format::ENGINE_SOURCE_COMMIT.to_string(),
+        native_content_sha256,
+        datadir,
+        files,
+    };
+    let bytes = serde_json::to_vec(&manifest).context("serialize web content manifest")?;
+    fs::write(&manifest_path, bytes)
+        .with_context(|| format!("write {}", manifest_path.display()))?;
+    tracing::info!(manifest = %manifest_path.display(), "wrote exact web content closure");
+    Ok(())
+}
+
+pub(super) fn digest_file(path: &Path) -> Result<(u64, String)> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let byte_length = file
+        .metadata()
+        .with_context(|| format!("stat {}", path.display()))?
+        .len();
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = std::io::Read::read(&mut file, &mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok((
+        byte_length,
+        robin_rs::multiplayer::content_identity::hex_digest(hasher.finalize().into()),
+    ))
+}
+
+pub(super) fn shipping_file_stem(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+pub(super) fn shipping_payload_filename(name: &str, window_log: u32, compressed: &[u8]) -> String {
+    use sha2::{Digest as _, Sha256};
+    let digest = Sha256::digest(compressed);
+    let hash: String = digest[..6]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!(
+        "{}-w{window_log}-{hash}.rhmission.zst",
+        shipping_file_stem(name)
+    )
+}
+
+pub(super) fn encode_shipping_payload(
+    payload: &ShippingMission,
+    window_log: u32,
+) -> Result<Vec<u8>> {
+    let encoded = robin_assets::shipping_datadir::encode_mission_native(payload);
+    robin_assets::shipping_datadir::zstd_compress_with_window(&encoded, window_log)
+}
+
+pub(super) fn write_prepared_shipping_payload(
+    output_dir: &Path,
+    filename: &str,
+    compressed: Option<Vec<u8>>,
+) -> Result<usize> {
+    let path = output_dir.join(filename);
+    if let Some(compressed) = compressed {
+        let len = compressed.len();
+        fs::write(&path, compressed).with_context(|| format!("write {}", path.display()))?;
+        Ok(len)
+    } else {
+        Ok(fs::metadata(&path)
+            .with_context(|| format!("stat reused payload {}", path.display()))?
+            .len() as usize)
+    }
+}
+
+/// Return a validated existing content filename, or freshly compressed bytes
+/// and their content-addressed filename. Reuse compares the complete decoded
+/// native-bitcode payload, so an interrupted run cannot accidentally mix
+/// schemas, source data, or converter options.
+pub(super) fn prepare_shipping_payload(
+    output_dir: &Path,
+    label: &str,
+    payload: &ShippingMission,
+    window_log: u32,
+    resume: bool,
+) -> Result<(String, Option<Vec<u8>>)> {
+    if resume {
+        let prefix = format!("{}-w{window_log}-", shipping_file_stem(label));
+        let expected = robin_assets::shipping_datadir::encode_mission_native(payload);
+        let mut candidates = fs::read_dir(output_dir)
+            .with_context(|| format!("read_dir {}", output_dir.display()))?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| {
+                        name.starts_with(&prefix) && name.ends_with(".rhmission.zst")
+                    })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort();
+        for path in candidates {
+            let compressed = match fs::read(&path) {
+                Ok(compressed) => compressed,
+                Err(_) => continue,
+            };
+            let decoded =
+                match robin_assets::shipping_datadir::decode_mission_compressed(&compressed) {
+                    Ok(decoded) => decoded,
+                    Err(_) => continue,
+                };
+            if robin_assets::shipping_datadir::encode_mission_native(&decoded) == expected {
+                let filename = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("candidate shipping filename was valid UTF-8")
+                    .to_owned();
+                tracing::info!(label, filename, "reused validated shipping payload");
+                return Ok((filename, None));
+            }
+        }
+    }
+
+    let compressed = encode_shipping_payload(payload, window_log)?;
+    let filename = shipping_payload_filename(label, window_log, &compressed);
+    Ok((filename, Some(compressed)))
+}

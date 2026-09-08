@@ -1,0 +1,738 @@
+#!/usr/bin/bash
+set -euo pipefail
+PATH=/usr/bin:/bin
+export PATH
+
+fail() {
+    echo "host compatibility overlay failed: $*" >&2
+    exit 1
+}
+
+usage() {
+    echo "usage: $0 install-and-retire-transient|verify|remove" >&2
+    exit 64
+}
+
+[[ $# -eq 1 ]] || usage
+action=$1
+case "$action" in
+    install-and-retire-transient|verify|remove) ;;
+    *) usage ;;
+esac
+
+expected_user=robinhood
+expected_home=/home/robinhood
+expected_overlay_sha256=832331e248a58932f3f0923285d7979d7316306cd0947d2502408e8e08bef579
+expected_overlay_size=30
+drop_in_name=50-robin-highscores-openat2-compat.conf
+transient_drop_in_name=50-e080-vps-openat2.conf
+
+# Tests exercise the exact installer against a private filesystem and a fake
+# user manager. The production invocation has no path or command overrides.
+if [[ ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_MODE:-0} == 1 ]]; then
+    test_home=${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_HOME:-}
+    test_systemctl=${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_SYSTEMCTL:-}
+    [[ $test_home == /* && $test_systemctl == /* ]] ||
+        fail "test mode requires absolute test home and systemctl paths"
+    expected_home=$test_home
+    systemctl_command=$test_systemctl
+    expected_uid=$(id -u)
+    expected_gid=$(id -g)
+    expected_directory_links=1
+    payload_mode=644
+    runtime_user_root=${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_RUNTIME_ROOT:-}
+    [[ $runtime_user_root == /* ]] || fail "test mode requires an absolute runtime root"
+else
+    [[ $(id -un) == "$expected_user" ]] || fail "must run as the robinhood account"
+    [[ $(id -u) -ne 0 ]] || fail "must not run as root"
+    [[ ${HOME:-} == "$expected_home" ]] || fail "HOME must be exactly $expected_home"
+    [[ $(getent passwd "$expected_user" | cut -d: -f6) == "$expected_home" ]] ||
+        fail "robinhood has an unexpected passwd home"
+    systemctl_command=/usr/bin/systemctl
+    expected_uid=$(id -u)
+    expected_gid=$(id -g)
+    expected_directory_links=2
+    payload_mode=400
+    runtime_user_root=/run/user/$expected_uid/systemd/user
+    [[ $(sha256sum /usr/bin/mv | cut -d' ' -f1) == a781be46e6f27ca5d7e119225429a4a12ef941eea15ed2c44eea0c8bca7e4ebe ]] ||
+        fail "host /usr/bin/mv is not the reviewed Debian 12 no-replace implementation"
+fi
+
+unit_root=$expected_home/.config/systemd/user
+script_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+payload=$script_root/$drop_in_name
+
+units=(
+    robin-highscores-api.service
+    robin-highscores-worker.service
+    robin-highscores-backup.service
+)
+base_sha256=(
+    50938f0f73b120be6fa6515508e0d1f6ac36662eab352df7b334c97c07f38206
+    a89d6408db0d29a8944e1923f713eaacd0e350385b4d6552e0d8bfd72e590c7d
+    12ba61d0ac4eb49f589deb903a2af6206a2da14ed16fd8577f0c18d7c28a5250
+)
+base_size=(2089 2478 4046)
+release_root=/home/robinhood/.local/opt/robin-highscores/releases/d3012fbb64954274aa4778df0882ba354e90df9c
+state_root=/home/robinhood/.local/share/robin-highscores
+
+sha256_of() {
+    local result
+    result=$(sha256sum -- "$1") || return 1
+    printf '%s\n' "${result%% *}"
+}
+
+validate_regular_file() {
+    local file=$1 mode=$2 size=$3 digest=$4 label=$5
+    [[ -f $file && ! -L $file ]] || fail "$label is not a regular no-follow file: $file"
+    [[ $(stat -c %u -- "$file") -eq $expected_uid ]] || fail "$label has the wrong owner: $file"
+    [[ $(stat -c %g -- "$file") -eq $expected_gid ]] || fail "$label has the wrong group: $file"
+    [[ $(stat -c %h -- "$file") -eq 1 ]] || fail "$label has multiple hard links: $file"
+    [[ $(stat -c %a -- "$file") == "$mode" ]] || fail "$label has the wrong mode: $file"
+    [[ $(stat -c %s -- "$file") -eq $size ]] || fail "$label has the wrong byte length: $file"
+    [[ $(sha256_of "$file") == "$digest" ]] || fail "$label has the wrong digest: $file"
+}
+
+validate_real_directory() {
+    local directory=$1 label=$2
+    [[ -d $directory && ! -L $directory ]] || fail "$label is not a real directory: $directory"
+    [[ $(realpath -e -- "$directory") == "$directory" ]] ||
+        fail "$label contains a symlink or noncanonical component: $directory"
+    [[ $(stat -c %u -- "$directory") -eq $expected_uid ]] ||
+        fail "$label has the wrong owner: $directory"
+    [[ $(stat -c %g -- "$directory") -eq $expected_gid ]] ||
+        fail "$label has the wrong group: $directory"
+}
+
+validate_base_units() {
+    local index unit
+    for index in "${!units[@]}"; do
+        unit=${units[$index]}
+        validate_regular_file "$unit_root/$unit" 440 "${base_size[$index]}" \
+            "${base_sha256[$index]}" "installed base unit"
+    done
+}
+
+validate_runtime_root() {
+    local runtime_parent=${runtime_user_root%/user}
+    local user_runtime=${runtime_parent%/systemd}
+    validate_real_directory "$user_runtime" "runtime user root"
+    validate_real_directory "$runtime_parent" "runtime systemd root"
+    validate_real_directory "$runtime_user_root" "runtime systemd user-unit root"
+    [[ $(stat -c %a -- "$user_runtime") == 700 ]] || fail "runtime user root has the wrong mode"
+    [[ $(stat -c %a -- "$runtime_parent") == 755 ]] || fail "runtime systemd root has the wrong mode"
+    [[ $(stat -c %a -- "$runtime_user_root") == 755 ]] ||
+        fail "runtime systemd user-unit root has the wrong mode"
+}
+
+validate_runtime_directory_metadata() {
+    local directory=$1 label=$2
+    validate_real_directory "$directory" "runtime compatibility drop-in directory"
+    [[ $(stat -c %a -- "$directory") == 700 ]] ||
+        fail "$label has the wrong mode: $directory"
+    [[ $(stat -c %h -- "$directory") -eq $expected_directory_links ]] ||
+        fail "$label has an unexpected link count: $directory"
+    [[ $(stat -c %d -- "$directory") == "$(stat -c %d -- "$runtime_user_root")" ]] ||
+        fail "$label crosses filesystems: $directory"
+}
+
+validate_transient_directory_path() {
+    local unit=$1 directory=$2 overlay=$2/$transient_drop_in_name
+    validate_runtime_directory_metadata "$directory" "runtime compatibility drop-in directory"
+    local entry_count
+    entry_count=$(find "$directory" -mindepth 1 -maxdepth 1 -printf . | wc -c)
+    [[ $entry_count -eq 1 ]] ||
+        fail "runtime compatibility drop-in directory is not an exact singleton: $directory"
+    validate_regular_file "$overlay" 400 "$expected_overlay_size" "$expected_overlay_sha256" \
+        "runtime compatibility drop-in"
+}
+
+transient_directory_for() {
+    printf '%s/%s.d\n' "$runtime_user_root" "$1"
+}
+
+transient_quarantine_for() {
+    printf '%s/.%s.d.e080-retire\n' "$runtime_user_root" "$1"
+}
+
+validate_persistent_directory_metadata() {
+    local directory=$1 label=$2
+    validate_real_directory "$directory" "$label"
+    [[ $(stat -c %a -- "$directory") == 700 ]] ||
+        fail "$label has the wrong mode: $directory"
+    [[ $(stat -c %h -- "$directory") -eq $expected_directory_links ]] ||
+        fail "$label has an unexpected link count: $directory"
+    [[ $(stat -c %d -- "$directory") == "$(stat -c %d -- "$unit_root")" ]] ||
+        fail "$label crosses filesystems: $directory"
+}
+
+validate_persistent_directory_path() {
+    local directory=$1 overlay=$1/$drop_in_name label=$2
+    validate_persistent_directory_metadata "$directory" "$label"
+    local entry_count
+    entry_count=$(find "$directory" -mindepth 1 -maxdepth 1 -printf . | wc -c)
+    [[ $entry_count -eq 1 ]] || fail "$label is not an exact singleton: $directory"
+    validate_regular_file "$overlay" 400 "$expected_overlay_size" "$expected_overlay_sha256" \
+        "persistent drop-in"
+}
+
+validate_overlay_directory() {
+    local unit=$1 directory=$unit_root/$unit.d
+    validate_persistent_directory_path "$directory" "persistent drop-in directory"
+}
+
+property_value() {
+    "$systemctl_command" --user show "$1" --property="$2" --value
+}
+
+verify_exact_drop_in_paths() {
+    local unit=$1
+    shift
+    local actual token expected match count=0
+    actual=$(property_value "$unit" DropInPaths)
+    for token in $actual; do
+        count=$((count + 1))
+        match=0
+        for expected in "$@"; do
+            [[ $token == "$expected" ]] && match=$((match + 1))
+        done
+        [[ $match -eq 1 ]] || fail "$unit reports an unapproved or duplicate drop-in: $token"
+    done
+    [[ $count -eq $# ]] || fail "$unit does not report the exact approved DropInPaths set"
+    for expected in "$@"; do
+        match=0
+        for token in $actual; do
+            [[ $token == "$expected" ]] && match=$((match + 1))
+        done
+        [[ $match -eq 1 ]] || fail "$unit omits or duplicates approved drop-in: $expected"
+    done
+}
+
+expect_property() {
+    local unit=$1 property=$2 expected=$3 actual
+    actual=$(property_value "$unit" "$property")
+    [[ $actual == "$expected" ]] ||
+        fail "$unit effective $property differs: expected '$expected', got '$actual'"
+}
+
+verify_common_hardening() {
+    local unit=$1
+    expect_property "$unit" NoNewPrivileges yes
+    expect_property "$unit" PrivateUsers yes
+    expect_property "$unit" PrivateTmp yes
+    expect_property "$unit" PrivateDevices yes
+    expect_property "$unit" ProtectSystem strict
+    expect_property "$unit" ProtectHome read-only
+    expect_property "$unit" ProtectKernelTunables yes
+    expect_property "$unit" ProtectKernelModules yes
+    expect_property "$unit" ProtectKernelLogs yes
+    expect_property "$unit" ProtectControlGroups yes
+    expect_property "$unit" RestrictRealtime yes
+    expect_property "$unit" LockPersonality yes
+    expect_property "$unit" CapabilityBoundingSet ""
+    expect_property "$unit" AmbientCapabilities ""
+    expect_property "$unit" RestrictSUIDSGID no
+    expect_property "$unit" UMask 0077
+    expect_property "$unit" MemorySwapMax 0
+}
+
+verify_unit_specific_hardening() {
+    local unit=$1
+    case "$unit" in
+        robin-highscores-api.service)
+            expect_property "$unit" MemoryDenyWriteExecute yes
+            expect_property "$unit" RestrictNamespaces yes
+            expect_property "$unit" RestrictAddressFamilies "AF_INET AF_INET6 AF_UNIX"
+            expect_property "$unit" SystemCallArchitectures native
+            expect_property "$unit" ProtectClock no
+            expect_property "$unit" ProtectHostname no
+            expect_property "$unit" TasksMax 1024
+            expect_property "$unit" LimitNOFILE 16384
+            expect_property "$unit" MemoryMax 3221225472
+            expect_property "$unit" ReadOnlyPaths "$release_root $state_root/api-secrets $state_root/status $state_root/runtime-fence"
+            expect_property "$unit" ReadWritePaths "$state_root/database $state_root/replays $state_root/campaign-states"
+            expect_property "$unit" InaccessiblePaths "$state_root/backups $state_root/raw-content"
+            ;;
+        robin-highscores-worker.service)
+            expect_property "$unit" MemoryDenyWriteExecute no
+            expect_property "$unit" RestrictNamespaces no
+            expect_property "$unit" RestrictAddressFamilies "AF_NETLINK AF_UNIX"
+            expect_property "$unit" SystemCallArchitectures ""
+            expect_property "$unit" ProtectClock no
+            expect_property "$unit" ProtectHostname no
+            expect_property "$unit" TasksMax 512
+            expect_property "$unit" LimitNOFILE 8192
+            expect_property "$unit" MemoryMax 2147483648
+            expect_property "$unit" ReadOnlyPaths "/usr/bin/bwrap /usr/bin/prlimit $release_root $state_root/raw-content $state_root/runtime-fence"
+            expect_property "$unit" ReadWritePaths "$state_root/database $state_root/replays $state_root/campaign-states"
+            expect_property "$unit" InaccessiblePaths "$state_root/api-secrets $state_root/backups $state_root/status"
+            expect_property "$unit" SystemCallFilter "~"
+            ;;
+        robin-highscores-backup.service)
+            expect_property "$unit" MemoryDenyWriteExecute yes
+            expect_property "$unit" RestrictNamespaces no
+            expect_property "$unit" RestrictAddressFamilies AF_UNIX
+            expect_property "$unit" SystemCallArchitectures native
+            expect_property "$unit" ProtectClock yes
+            expect_property "$unit" ProtectHostname yes
+            expect_property "$unit" TasksMax 256
+            expect_property "$unit" LimitNOFILE 8192
+            expect_property "$unit" MemoryMax 1073741824
+            expect_property "$unit" ReadOnlyPaths "$release_root $unit_root/robin-highscores.target $unit_root/robin-highscores-api.service $unit_root/robin-highscores-worker.service $unit_root/robin-highscores-backup.service $unit_root/robin-highscores-backup.timer $state_root/api-secrets $state_root/runtime-fence"
+            expect_property "$unit" ReadWritePaths "$state_root/database $state_root/replays $state_root/campaign-states $state_root/backups $state_root/status"
+            expect_property "$unit" InaccessiblePaths "$state_root/raw-content"
+            ;;
+        *) fail "unexpected managed unit: $unit" ;;
+    esac
+}
+
+verify_effective_overlay() {
+    local unit persistent transient transient_directory quarantine api_filter backup_filter
+    for unit in "${units[@]}"; do
+        persistent=$unit_root/$unit.d/$drop_in_name
+        transient_directory=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        transient=$transient_directory/$transient_drop_in_name
+        [[ $(property_value "$unit" LoadState) == loaded ]] || fail "$unit is not loaded"
+        [[ $(property_value "$unit" FragmentPath) == "$unit_root/$unit" ]] ||
+            fail "$unit is not loaded from the exact installed base unit"
+        if [[ -f $transient && ! -L $transient ]]; then
+            [[ ! -e $quarantine && ! -L $quarantine ]] ||
+                fail "runtime drop-in and retirement quarantine both exist for $unit"
+            validate_transient_directory_path "$unit" "$transient_directory"
+            verify_exact_drop_in_paths "$unit" "$persistent" "$transient"
+        else
+            if [[ -e $quarantine || -L $quarantine ]]; then
+                validate_transient_directory_path "$unit" "$quarantine"
+            fi
+            verify_exact_drop_in_paths "$unit" "$persistent"
+        fi
+        verify_common_hardening "$unit"
+        verify_unit_specific_hardening "$unit"
+    done
+    api_filter=$(property_value robin-highscores-api.service SystemCallFilter)
+    backup_filter=$(property_value robin-highscores-backup.service SystemCallFilter)
+    [[ -n $api_filter && $api_filter != "~" && $api_filter == "$backup_filter" ]] ||
+        fail "API and backup do not retain their common expanded @system-service filter"
+}
+
+verify_installed() {
+    validate_base_units
+    local unit
+    for unit in "${units[@]}"; do
+        validate_overlay_directory "$unit"
+    done
+    verify_effective_overlay
+}
+
+verify_transient_only_effective() {
+    local unit transient api_filter backup_filter
+    validate_base_units
+    validate_runtime_root
+    for unit in "${units[@]}"; do
+        transient=$(transient_directory_for "$unit")
+        validate_transient_directory_path "$unit" "$transient"
+        [[ ! -e $(transient_quarantine_for "$unit") && ! -L $(transient_quarantine_for "$unit") ]] ||
+            fail "unexpected runtime-retirement quarantine exists for $unit"
+        expect_property "$unit" LoadState loaded
+        expect_property "$unit" FragmentPath "$unit_root/$unit"
+        verify_exact_drop_in_paths "$unit" "$transient/$transient_drop_in_name"
+        verify_common_hardening "$unit"
+        verify_unit_specific_hardening "$unit"
+    done
+    api_filter=$(property_value robin-highscores-api.service SystemCallFilter)
+    backup_filter=$(property_value robin-highscores-backup.service SystemCallFilter)
+    [[ -n $api_filter && $api_filter != "~" && $api_filter == "$backup_filter" ]] ||
+        fail "API and backup do not retain their common expanded @system-service filter"
+}
+
+verify_transients_retired() {
+    local unit transient quarantine residue quarantines=0
+    validate_runtime_root
+    for unit in "${units[@]}"; do
+        transient=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        [[ ! -e $transient && ! -L $transient ]] ||
+            fail "runtime-only compatibility directory remains: $transient"
+        if [[ -e $quarantine || -L $quarantine ]]; then
+            validate_transient_directory_path "$unit" "$quarantine"
+            quarantines=$((quarantines + 1))
+        fi
+        for residue in \
+            "$unit_root/.$unit.d.host-compat-install" \
+            "$unit_root/.$unit.d.host-compat-install-rollback" \
+            "$unit_root/.$unit.d.host-compat-remove"; do
+            [[ ! -e $residue && ! -L $residue ]] ||
+                fail "persistent compatibility operation residue remains: $residue"
+        done
+    done
+    [[ $quarantines -eq 0 || $quarantines -eq ${#units[@]} ]] ||
+        fail "runtime-retirement quarantines are partially present"
+}
+
+verify_transient_only_or_overlap() {
+    local unit transient quarantine
+    for unit in "${units[@]}"; do
+        transient=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        validate_transient_directory_path "$unit" "$transient"
+        [[ ! -e $quarantine && ! -L $quarantine ]] ||
+            fail "runtime-retirement quarantine remains after restoration"
+    done
+    verify_installed
+}
+
+validate_payload() {
+    validate_regular_file "$payload" "$payload_mode" "$expected_overlay_size" \
+        "$expected_overlay_sha256" "sealed compatibility payload"
+}
+
+active_staging=
+new_persistent_units=()
+cleanup_staging() {
+    if [[ -n $active_staging && -d $active_staging && ! -L $active_staging ]]; then
+        validate_persistent_directory_metadata "$active_staging" "install staging directory"
+        local staged_overlay=$active_staging/$drop_in_name
+        if [[ -f $staged_overlay && ! -L $staged_overlay ]]; then
+            validate_regular_file "$staged_overlay" 400 "$expected_overlay_size" \
+                "$expected_overlay_sha256" "staged drop-in"
+            unlink -- "$staged_overlay" || true
+            sync -f -- "$unit_root" || true
+            if [[ ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_MODE:-0} == 1 &&
+                  ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_CRASH_AFTER_STAGE_UNLINK:-0} == 1 ]]; then
+                kill -KILL "$$"
+            fi
+        fi
+        rmdir -- "$active_staging" 2>/dev/null || true
+        sync -f -- "$unit_root" || true
+    fi
+}
+trap cleanup_staging EXIT
+
+install_one() {
+    local unit=$1 destination=$unit_root/$unit.d promoted=0 staging_entries staged_overlay staged_entry_name
+    active_staging=$unit_root/.$unit.d.host-compat-install
+    if [[ -e $active_staging || -L $active_staging ]]; then
+        validate_persistent_directory_metadata "$active_staging" "interrupted install staging directory"
+        staging_entries=$(find "$active_staging" -mindepth 1 -maxdepth 1 -printf . | wc -c)
+        [[ $staging_entries -eq 0 || $staging_entries -eq 1 ]] ||
+            fail "interrupted install staging directory has unexpected entries"
+        if [[ $staging_entries -eq 1 ]]; then
+            staged_entry_name=$(find "$active_staging" -mindepth 1 -maxdepth 1 -printf '%f')
+            [[ $staged_entry_name == "$drop_in_name" ]] ||
+                fail "interrupted install staging directory has an unexpected entry name"
+            staged_overlay=$active_staging/$drop_in_name
+            [[ -f $staged_overlay && ! -L $staged_overlay ]] ||
+                fail "interrupted staged payload is not a regular no-follow file"
+            [[ $(stat -c %u -- "$staged_overlay") -eq $expected_uid &&
+               $(stat -c %g -- "$staged_overlay") -eq $expected_gid &&
+               $(stat -c %h -- "$staged_overlay") -eq 1 &&
+               $(stat -c %a -- "$staged_overlay") == 400 ]] ||
+                fail "interrupted staged payload has unsafe metadata"
+        fi
+        if [[ -e $destination || -L $destination ]]; then
+            validate_overlay_directory "$unit"
+            if [[ $staging_entries -eq 1 ]]; then
+                validate_persistent_directory_path "$active_staging" "interrupted install staging directory"
+            fi
+            cleanup_staging
+            active_staging=
+            return
+        fi
+    fi
+    if [[ -e $destination || -L $destination ]]; then
+        validate_overlay_directory "$unit"
+        active_staging=
+        return
+    fi
+
+    if [[ ! -e $active_staging && ! -L $active_staging ]]; then
+        mkdir -m 0700 -- "$active_staging"
+        sync -f -- "$unit_root"
+        if [[ ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_MODE:-0} == 1 &&
+              ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_CRASH_AFTER_STAGE_MKDIR:-0} == 1 ]]; then
+            kill -KILL "$$"
+        fi
+    fi
+    staged_overlay=$active_staging/$drop_in_name
+    if [[ -e $staged_overlay || -L $staged_overlay ]]; then
+        [[ -f $staged_overlay && ! -L $staged_overlay ]] ||
+            fail "interrupted staged payload is not a regular no-follow file"
+        [[ $(stat -c %u -- "$staged_overlay") -eq $expected_uid &&
+           $(stat -c %g -- "$staged_overlay") -eq $expected_gid &&
+           $(stat -c %h -- "$staged_overlay") -eq 1 &&
+           $(stat -c %a -- "$staged_overlay") == 400 ]] ||
+            fail "interrupted staged payload has unsafe metadata"
+        if [[ $(stat -c %s -- "$staged_overlay") -ne $expected_overlay_size ||
+              $(sha256_of "$staged_overlay") != "$expected_overlay_sha256" ]]; then
+            # The fixed, unpromoted, owner-only staging file may be truncated
+            # if the host died inside install(1). Delete only that authenticated
+            # staging name, sync, and repopulate it from the sealed payload.
+            unlink -- "$staged_overlay"
+            sync -f -- "$unit_root"
+        fi
+    fi
+    if [[ ! -e $staged_overlay && ! -L $staged_overlay ]]; then
+        install -m 0400 -- "$payload" "$active_staging/$drop_in_name"
+        sync -f -- "$unit_root"
+    fi
+    validate_real_directory "$active_staging" "staged drop-in directory"
+    [[ $(stat -c %a -- "$active_staging") == 700 ]] || fail "staged directory mode changed"
+    validate_regular_file "$active_staging/$drop_in_name" 400 "$expected_overlay_size" \
+        "$expected_overlay_sha256" "staged drop-in"
+
+    # Debian's reviewed GNU mv implements this same-filesystem -n promotion
+    # with renameat2(RENAME_NOREPLACE): the destination is never followed or
+    # replaced, and a concurrently created destination remains untouched.
+    mv -Tn -- "$active_staging" "$destination"
+    if [[ -d $active_staging && ! -L $active_staging ]]; then
+        cleanup_staging
+    else
+        promoted=1
+    fi
+    active_staging=
+    validate_overlay_directory "$unit"
+    [[ $promoted -eq 0 ]] || new_persistent_units+=("$unit")
+}
+
+discard_new_persistent() {
+    local unit destination quarantine
+    for unit in "${new_persistent_units[@]}"; do
+        destination=$unit_root/$unit.d
+        quarantine=$unit_root/.$unit.d.host-compat-install-rollback
+        validate_overlay_directory "$unit" || return 1
+        [[ ! -e $quarantine && ! -L $quarantine ]] || return 1
+        mv -Tn -- "$destination" "$quarantine" || return 1
+        [[ ! -e $destination && ! -L $destination && -d $quarantine && ! -L $quarantine ]] ||
+            return 1
+    done
+    sync -f -- "$unit_root" || return 1
+    "$systemctl_command" --user daemon-reload || return 1
+    # Retain exact fixed-name quarantines. The next invocation restores and
+    # authenticates them before retrying, avoiding an irreversible cleanup
+    # phase after a failed effective proof.
+    for unit in "${new_persistent_units[@]}"; do
+        quarantine=$unit_root/.$unit.d.host-compat-install-rollback
+        validate_persistent_directory_path "$quarantine" "persistent rollback quarantine"
+    done
+}
+
+reconcile_persistent_quarantines() {
+    local unit destination quarantine restored=0
+    for unit in "${units[@]}"; do
+        destination=$unit_root/$unit.d
+        for quarantine in \
+            "$unit_root/.$unit.d.host-compat-install-rollback" \
+            "$unit_root/.$unit.d.host-compat-remove"; do
+            if [[ -e $quarantine || -L $quarantine ]]; then
+                [[ ! -e $destination && ! -L $destination ]] ||
+                    fail "persistent destination and interrupted-operation quarantine both exist for $unit"
+                validate_persistent_directory_path "$quarantine" "interrupted-operation quarantine"
+                mv -Tn -- "$quarantine" "$destination"
+                [[ ! -e $quarantine && ! -L $quarantine && -d $destination && ! -L $destination ]] ||
+                    fail "could not restore interrupted-operation quarantine for $unit"
+                restored=1
+            fi
+        done
+    done
+    if [[ $restored -eq 1 ]]; then
+        sync -f -- "$unit_root"
+        "$systemctl_command" --user daemon-reload
+    fi
+}
+
+restore_transient_quarantines() {
+    local index unit transient quarantine
+    for ((index=${#units[@]}-1; index>=0; index--)); do
+        unit=${units[$index]}
+        transient=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        if [[ -e $quarantine || -L $quarantine ]]; then
+            [[ ! -e $transient && ! -L $transient ]] || return 1
+            validate_transient_directory_path "$unit" "$quarantine"
+            mv -Tn -- "$quarantine" "$transient" || return 1
+        else
+            [[ -e $transient || -L $transient ]] || return 1
+            validate_transient_directory_path "$unit" "$transient"
+        fi
+    done
+    sync -f -- "$runtime_user_root" || return 1
+    for unit in "${units[@]}"; do
+        transient=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        validate_transient_directory_path "$unit" "$transient"
+        [[ ! -e $quarantine && ! -L $quarantine ]] || return 1
+    done
+}
+
+retire_transients() {
+    local unit transient quarantine missing=0 moved=0
+    validate_runtime_root
+    for unit in "${units[@]}"; do
+        transient=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        if [[ -e $transient || -L $transient ]]; then
+            [[ ! -e $quarantine && ! -L $quarantine ]] ||
+                fail "both runtime drop-in and retirement quarantine exist for $unit"
+            validate_transient_directory_path "$unit" "$transient"
+        elif [[ -e $quarantine || -L $quarantine ]]; then
+            validate_transient_directory_path "$unit" "$quarantine"
+        else
+            missing=$((missing + 1))
+        fi
+    done
+    if [[ $missing -ne 0 ]]; then
+        [[ $missing -eq ${#units[@]} ]] ||
+            fail "runtime compatibility state is partially absent"
+        verify_transients_retired
+        return
+    fi
+
+    # Persistent settings have already survived daemon-reload and exact
+    # effective-property proof before any runtime-only directory is moved.
+    for unit in "${units[@]}"; do
+        transient=$(transient_directory_for "$unit")
+        quarantine=$(transient_quarantine_for "$unit")
+        if [[ -d $transient && ! -L $transient ]]; then
+            mv -Tn -- "$transient" "$quarantine"
+            [[ ! -e $transient && ! -L $transient && -d $quarantine && ! -L $quarantine ]] || {
+                restore_transient_quarantines || true
+                fail "runtime drop-in was substituted during retirement: $transient"
+            }
+            sync -f -- "$runtime_user_root"
+            moved=$((moved + 1))
+            if [[ ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_MODE:-0} == 1 &&
+                  ${ROBIN_HIGHSCORES_HOST_COMPAT_TEST_CRASH_AFTER_QUARANTINE:-0} -eq $moved ]]; then
+                exit 99
+            fi
+        fi
+    done
+
+    if ! "$systemctl_command" --user daemon-reload || ! (verify_installed); then
+        restore_transient_quarantines ||
+            fail "effective proof failed and exact runtime drop-ins could not be restored"
+        "$systemctl_command" --user daemon-reload ||
+            fail "effective proof failed and the restored runtime state could not be reloaded"
+        (verify_transient_only_or_overlap) || fail "restored overlap state failed effective proof"
+        fail "persistent-only effective proof failed; exact runtime drop-ins were restored"
+    fi
+    # Keep all three exact dot-prefixed runtime quarantines. systemd does not
+    # load them; they consume only the three 30-byte payloads and disappear
+    # together when /run is recreated at reboot. Avoiding deletion makes this
+    # multi-directory cutover crash-retryable without durable cross-filesystem
+    # cleanup state.
+    verify_transients_retired
+}
+
+install_and_retire_transient() {
+    validate_payload
+    validate_base_units
+    validate_runtime_root
+    reconcile_persistent_quarantines
+
+    local persistent_absent=0 unit
+    for unit in "${units[@]}"; do
+        if [[ ! -e $unit_root/$unit.d && ! -L $unit_root/$unit.d ]]; then
+            persistent_absent=$((persistent_absent + 1))
+        else
+            validate_overlay_directory "$unit"
+        fi
+    done
+    if [[ $persistent_absent -eq ${#units[@]} ]]; then
+        verify_transient_only_effective
+    fi
+
+    for unit in "${units[@]}"; do
+        install_one "$unit"
+    done
+    sync -f -- "$unit_root"
+    if ! "$systemctl_command" --user daemon-reload || ! (verify_installed); then
+        restore_transient_quarantines ||
+            fail "overlap proof failed and the exact runtime drop-ins could not be restored"
+        discard_new_persistent ||
+            fail "overlap proof failed and newly installed persistent drop-ins could not be rolled back"
+        fail "persistent/runtime overlap failed effective proof; new persistent drop-ins were removed"
+    fi
+
+    retire_transients
+    verify_installed
+    verify_transients_retired
+    echo "persistent Robin Hood systemd compatibility overlay installed; runtime-only overlay retired"
+}
+
+restore_quarantines() {
+    local index unit destination quarantine
+    for ((index=${#units[@]}-1; index>=0; index--)); do
+        unit=${units[$index]}
+        destination=$unit_root/$unit.d
+        quarantine=$unit_root/.$unit.d.host-compat-remove
+        if [[ -d $quarantine && ! -L $quarantine && ! -e $destination && ! -L $destination ]]; then
+            validate_persistent_directory_path "$quarantine" "removal quarantine"
+            mv -Tn -- "$quarantine" "$destination" || true
+        fi
+    done
+    sync -f -- "$unit_root"
+}
+
+remove_overlay() {
+    reconcile_persistent_quarantines
+    verify_installed
+    verify_transients_retired
+    local unit destination quarantine drop_ins
+    for unit in "${units[@]}"; do
+        destination=$unit_root/$unit.d
+        quarantine=$unit_root/.$unit.d.host-compat-remove
+        [[ ! -e $quarantine && ! -L $quarantine ]] || fail "removal quarantine already exists"
+        if ! mv -Tn -- "$destination" "$quarantine"; then
+            restore_quarantines
+            fail "could not quarantine $destination"
+        fi
+        if [[ -e $destination || -L $destination || ! -d $quarantine || -L $quarantine ]]; then
+            restore_quarantines
+            fail "drop-in directory was substituted during removal: $destination"
+        fi
+    done
+
+    if ! "$systemctl_command" --user daemon-reload; then
+        restore_quarantines
+        "$systemctl_command" --user daemon-reload || true
+        fail "systemd user-manager reload failed; persistent drop-ins were restored"
+    fi
+    validate_base_units
+    for unit in "${units[@]}"; do
+        if ! (verify_exact_drop_in_paths "$unit"); then
+            restore_quarantines
+            "$systemctl_command" --user daemon-reload || true
+            fail "$unit reports a drop-in after persistent rollback"
+        fi
+    done
+
+    # Retain the exact fixed-name quarantines as the rollback artifact. A
+    # repeated remove restores, reloads, re-proves, and quarantines them again;
+    # no multi-directory irreversible deletion phase exists here.
+    for unit in "${units[@]}"; do
+        quarantine=$unit_root/.$unit.d.host-compat-remove
+        validate_persistent_directory_path "$quarantine" "removal quarantine"
+    done
+    sync -f -- "$unit_root"
+    echo "persistent Robin Hood systemd compatibility overlay removed; exact rollback quarantines retained"
+}
+
+validate_real_directory "$expected_home" "deployment home"
+validate_real_directory "$unit_root" "systemd user-unit root"
+exec 9<"$unit_root"
+flock -x 9
+
+case "$action" in
+    install-and-retire-transient)
+        install_and_retire_transient
+        ;;
+    verify)
+        verify_installed
+        verify_transients_retired
+        echo "persistent Robin Hood systemd compatibility overlay is exact and effective"
+        ;;
+    remove)
+        remove_overlay
+        ;;
+esac

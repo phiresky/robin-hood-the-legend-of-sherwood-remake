@@ -1,0 +1,65 @@
+//! Main-menu "Load Game" entry.
+//!
+//! Opens the shared save/load slot picker in load-only mode against the
+//! main-menu `Renderer` + `IngameMenuResources`, reads the chosen slot's
+//! cached mission id from the save index, and returns a
+//! [`crate::main_menu::MainMenuChoice::Load`] so the caller can start a
+//! session seeded with a `SaveLoadRequest::Load`.
+
+use crate::host::ApplicationContext;
+use crate::ingame_menu::widget_bridge::ModalCursor;
+use crate::ingame_menu::{IngameMenuResources, SaveLoadMode, SaveLoadOutcome, show_save_load};
+use crate::main_menu::MainMenuChoice;
+use crate::renderer::Renderer;
+use crate::savegame::SaveGameManager;
+
+/// Display the slot picker in Load mode.  Returns `Some(MainMenuChoice::Load)`
+/// when the player picked a slot, `None` when they cancelled.
+pub(crate) async fn run_main_menu_load(
+    application_context: &ApplicationContext,
+    event_pump: &mut crate::window::GameWindow,
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    cursor: ModalCursor<'_>,
+    save_manager: &mut SaveGameManager,
+) -> Option<MainMenuChoice> {
+    let detailed_metadata = application_context
+        .active_profile_snapshot()
+        .unwrap_or_else(|error| panic!("Load Game requires an active profile: {error}"))
+        .gameplay_config
+        .detailed_save_metadata;
+    // `mission_id` is only written onto freshly-created Save slots; in
+    // Load mode `show_save_load` ignores it.  Pass 0 — there's no active
+    // mission at main-menu time.
+    // Main-menu entry has no live `SoundManager` plumbed through, so the
+    // widget noisy events are silent here. `None` on all three slots
+    // short-circuits `play_widget_noise` / `WidgetInputField::play_noise`.
+    let outcome = show_save_load(
+        event_pump,
+        renderer,
+        resources,
+        Some(cursor),
+        save_manager,
+        0,
+        None,
+        detailed_metadata,
+        SaveLoadMode::Load,
+        None,
+        None,
+        None,
+    )
+    .await;
+
+    let slot = match outcome {
+        SaveLoadOutcome::Slot(slot) => slot,
+        SaveLoadOutcome::Cancel => return None,
+    };
+
+    match save_manager.slot_mission_id(slot) {
+        Some(mission_id) => Some(MainMenuChoice::Load { slot, mission_id }),
+        None => {
+            tracing::error!("Load: selected slot {slot} has no cached mission id — cancelling");
+            None
+        }
+    }
+}

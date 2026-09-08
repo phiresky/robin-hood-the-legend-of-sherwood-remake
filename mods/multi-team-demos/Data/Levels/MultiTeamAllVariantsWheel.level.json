@@ -1,0 +1,644 @@
+{
+  "title": "All Soldier Variants Allegiance Wheel",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1152,
+    1700
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        1602,
+        1700
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 12
+    },
+    {
+      "position": [
+        1600,
+        1728
+      ],
+      "profile": 1,
+      "allegiance": 3,
+      "direction": 12
+    },
+    {
+      "position": [
+        1594,
+        1756
+      ],
+      "profile": 2,
+      "allegiance": 4,
+      "direction": 12
+    },
+    {
+      "position": [
+        1585,
+        1783
+      ],
+      "profile": 3,
+      "allegiance": 5,
+      "direction": 13
+    },
+    {
+      "position": [
+        1572,
+        1809
+      ],
+      "profile": 4,
+      "allegiance": 6,
+      "direction": 13
+    },
+    {
+      "position": [
+        1555,
+        1834
+      ],
+      "profile": 5,
+      "allegiance": 7,
+      "direction": 13
+    },
+    {
+      "position": [
+        1535,
+        1858
+      ],
+      "profile": 6,
+      "allegiance": 8,
+      "direction": 13
+    },
+    {
+      "position": [
+        1511,
+        1881
+      ],
+      "profile": 7,
+      "allegiance": 9,
+      "direction": 14
+    },
+    {
+      "position": [
+        1485,
+        1903
+      ],
+      "profile": 8,
+      "allegiance": 10,
+      "direction": 14
+    },
+    {
+      "position": [
+        1456,
+        1922
+      ],
+      "profile": 9,
+      "allegiance": 11,
+      "direction": 14
+    },
+    {
+      "position": [
+        1423,
+        1939
+      ],
+      "profile": 10,
+      "allegiance": 12,
+      "direction": 14
+    },
+    {
+      "position": [
+        1389,
+        1955
+      ],
+      "profile": 11,
+      "allegiance": 13,
+      "direction": 15
+    },
+    {
+      "position": [
+        1352,
+        1969
+      ],
+      "profile": 12,
+      "allegiance": 14,
+      "direction": 15
+    },
+    {
+      "position": [
+        1315,
+        1980
+      ],
+      "profile": 13,
+      "allegiance": 15,
+      "direction": 15
+    },
+    {
+      "position": [
+        1276,
+        1989
+      ],
+      "profile": 14,
+      "allegiance": 16,
+      "direction": 15
+    },
+    {
+      "position": [
+        1235,
+        1995
+      ],
+      "profile": 15,
+      "allegiance": 17,
+      "direction": 0
+    },
+    {
+      "position": [
+        1194,
+        1999
+      ],
+      "profile": 16,
+      "allegiance": 18,
+      "direction": 0
+    },
+    {
+      "position": [
+        1152,
+        2000
+      ],
+      "profile": 17,
+      "allegiance": 19,
+      "direction": 0
+    },
+    {
+      "position": [
+        1110,
+        1999
+      ],
+      "profile": 18,
+      "allegiance": 20,
+      "direction": 0
+    },
+    {
+      "position": [
+        1069,
+        1995
+      ],
+      "profile": 19,
+      "allegiance": 21,
+      "direction": 0
+    },
+    {
+      "position": [
+        1028,
+        1989
+      ],
+      "profile": 20,
+      "allegiance": 22,
+      "direction": 1
+    },
+    {
+      "position": [
+        989,
+        1980
+      ],
+      "profile": 21,
+      "allegiance": 23,
+      "direction": 1
+    },
+    {
+      "position": [
+        952,
+        1969
+      ],
+      "profile": 22,
+      "allegiance": 24,
+      "direction": 1
+    },
+    {
+      "position": [
+        915,
+        1955
+      ],
+      "profile": 23,
+      "allegiance": 25,
+      "direction": 1
+    },
+    {
+      "position": [
+        881,
+        1939
+      ],
+      "profile": 24,
+      "allegiance": 26,
+      "direction": 2
+    },
+    {
+      "position": [
+        848,
+        1922
+      ],
+      "profile": 25,
+      "allegiance": 27,
+      "direction": 2
+    },
+    {
+      "position": [
+        819,
+        1903
+      ],
+      "profile": 26,
+      "allegiance": 28,
+      "direction": 2
+    },
+    {
+      "position": [
+        793,
+        1881
+      ],
+      "profile": 27,
+      "allegiance": 29,
+      "direction": 2
+    },
+    {
+      "position": [
+        770,
+        1858
+      ],
+      "profile": 28,
+      "allegiance": 30,
+      "direction": 3
+    },
+    {
+      "position": [
+        749,
+        1834
+      ],
+      "profile": 29,
+      "allegiance": 31,
+      "direction": 3
+    },
+    {
+      "position": [
+        732,
+        1809
+      ],
+      "profile": 30,
+      "allegiance": 32,
+      "direction": 3
+    },
+    {
+      "position": [
+        719,
+        1783
+      ],
+      "profile": 31,
+      "allegiance": 33,
+      "direction": 3
+    },
+    {
+      "position": [
+        710,
+        1756
+      ],
+      "profile": 32,
+      "allegiance": 34,
+      "direction": 4
+    },
+    {
+      "position": [
+        704,
+        1728
+      ],
+      "profile": 33,
+      "allegiance": 35,
+      "direction": 4
+    },
+    {
+      "position": [
+        702,
+        1700
+      ],
+      "profile": 34,
+      "allegiance": 36,
+      "direction": 4
+    },
+    {
+      "position": [
+        704,
+        1672
+      ],
+      "profile": 35,
+      "allegiance": 37,
+      "direction": 4
+    },
+    {
+      "position": [
+        710,
+        1645
+      ],
+      "profile": 36,
+      "allegiance": 38,
+      "direction": 4
+    },
+    {
+      "position": [
+        719,
+        1618
+      ],
+      "profile": 37,
+      "allegiance": 39,
+      "direction": 5
+    },
+    {
+      "position": [
+        732,
+        1591
+      ],
+      "profile": 38,
+      "allegiance": 40,
+      "direction": 5
+    },
+    {
+      "position": [
+        749,
+        1567
+      ],
+      "profile": 39,
+      "allegiance": 41,
+      "direction": 5
+    },
+    {
+      "position": [
+        770,
+        1542
+      ],
+      "profile": 40,
+      "allegiance": 42,
+      "direction": 5
+    },
+    {
+      "position": [
+        793,
+        1519
+      ],
+      "profile": 41,
+      "allegiance": 43,
+      "direction": 6
+    },
+    {
+      "position": [
+        819,
+        1498
+      ],
+      "profile": 42,
+      "allegiance": 44,
+      "direction": 6
+    },
+    {
+      "position": [
+        848,
+        1478
+      ],
+      "profile": 43,
+      "allegiance": 45,
+      "direction": 6
+    },
+    {
+      "position": [
+        881,
+        1461
+      ],
+      "profile": 44,
+      "allegiance": 46,
+      "direction": 6
+    },
+    {
+      "position": [
+        915,
+        1445
+      ],
+      "profile": 45,
+      "allegiance": 47,
+      "direction": 7
+    },
+    {
+      "position": [
+        952,
+        1432
+      ],
+      "profile": 46,
+      "allegiance": 48,
+      "direction": 7
+    },
+    {
+      "position": [
+        989,
+        1420
+      ],
+      "profile": 47,
+      "allegiance": 49,
+      "direction": 7
+    },
+    {
+      "position": [
+        1028,
+        1411
+      ],
+      "profile": 48,
+      "allegiance": 50,
+      "direction": 7
+    },
+    {
+      "position": [
+        1069,
+        1405
+      ],
+      "profile": 49,
+      "allegiance": 51,
+      "direction": 8
+    },
+    {
+      "position": [
+        1110,
+        1402
+      ],
+      "profile": 50,
+      "allegiance": 52,
+      "direction": 8
+    },
+    {
+      "position": [
+        1152,
+        1400
+      ],
+      "profile": 51,
+      "allegiance": 53,
+      "direction": 8
+    },
+    {
+      "position": [
+        1194,
+        1402
+      ],
+      "profile": 52,
+      "allegiance": 54,
+      "direction": 8
+    },
+    {
+      "position": [
+        1235,
+        1405
+      ],
+      "profile": 53,
+      "allegiance": 55,
+      "direction": 8
+    },
+    {
+      "position": [
+        1276,
+        1411
+      ],
+      "profile": 54,
+      "allegiance": 56,
+      "direction": 9
+    },
+    {
+      "position": [
+        1315,
+        1420
+      ],
+      "profile": 55,
+      "allegiance": 57,
+      "direction": 9
+    },
+    {
+      "position": [
+        1352,
+        1432
+      ],
+      "profile": 56,
+      "allegiance": 58,
+      "direction": 9
+    },
+    {
+      "position": [
+        1389,
+        1445
+      ],
+      "profile": 57,
+      "allegiance": 59,
+      "direction": 9
+    },
+    {
+      "position": [
+        1423,
+        1461
+      ],
+      "profile": 58,
+      "allegiance": 60,
+      "direction": 10
+    },
+    {
+      "position": [
+        1456,
+        1478
+      ],
+      "profile": 59,
+      "allegiance": 61,
+      "direction": 10
+    },
+    {
+      "position": [
+        1485,
+        1498
+      ],
+      "profile": 60,
+      "allegiance": 62,
+      "direction": 10
+    },
+    {
+      "position": [
+        1511,
+        1519
+      ],
+      "profile": 61,
+      "allegiance": 63,
+      "direction": 10
+    },
+    {
+      "position": [
+        1535,
+        1542
+      ],
+      "profile": 62,
+      "allegiance": 64,
+      "direction": 11
+    },
+    {
+      "position": [
+        1555,
+        1567
+      ],
+      "profile": 63,
+      "allegiance": 65,
+      "direction": 11
+    },
+    {
+      "position": [
+        1572,
+        1591
+      ],
+      "profile": 64,
+      "allegiance": 66,
+      "direction": 11
+    },
+    {
+      "position": [
+        1585,
+        1618
+      ],
+      "profile": 65,
+      "allegiance": 67,
+      "direction": 11
+    },
+    {
+      "position": [
+        1594,
+        1645
+      ],
+      "profile": 66,
+      "allegiance": 68,
+      "direction": 12
+    },
+    {
+      "position": [
+        1600,
+        1672
+      ],
+      "profile": 67,
+      "allegiance": 69,
+      "direction": 12
+    }
+  ],
+  "pcs": []
+}

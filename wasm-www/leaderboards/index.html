@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-src https://identity.robinhood.phiresky.xyz; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'self'; object-src 'none'">
+    <title>Robin Hood — Verified Leaderboards</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <a class="skip-link" href="#main">Skip to verified records</a>
+    <header class="site-header">
+        <a class="brand" href="./" aria-label="Robin Hood verified leaderboards home">
+            <span class="brand-mark" aria-hidden="true">RH</span>
+            <span><strong>Robin Hood</strong><small>Verified replays &amp; leaderboards</small></span>
+        </a>
+        <nav aria-label="Primary">
+            <a href="./" data-nav="boards">Leaderboards</a>
+            <a href="../">Play</a>
+            <a href="https://github.com/phiresky/robin-hood-the-legend-of-sherwood-remake">Source</a>
+        </nav>
+    </header>
+    <main id="main" tabindex="-1">
+        <noscript>
+            <section class="panel state-panel"><h1>JavaScript required</h1><p>This static site needs JavaScript to query the verified-run API.</p></section>
+        </noscript>
+        <div id="app" aria-live="polite" aria-busy="true"></div>
+    </main>
+    <footer>
+        Every published result includes a full replay reproduced by the server. A signature identifies
+        the uploader; only deterministic server replay verification makes a result eligible for a board.
+    </footer>
+    <script type="module" src="../src/leaderboards/main.ts"></script>
+</body>
+</html>

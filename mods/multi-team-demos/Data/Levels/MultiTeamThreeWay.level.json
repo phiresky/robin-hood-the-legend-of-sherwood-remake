@@ -1,0 +1,66 @@
+{
+  "title": "Three-way Allegiance Arena",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1152,
+    1760
+  ],
+  "spawn_player": false,
+  "diplomacy": {
+    "player_coalition": [0],
+    "relationships": [
+      {"first": 2, "second": 3, "relationship": "allied"},
+      {"first": 3, "second": 4, "relationship": "neutral"}
+    ]
+  },
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        1212,
+        1760
+      ],
+      "profile": 1,
+      "allegiance": 2,
+      "direction": 12
+    },
+    {
+      "position": [
+        1122,
+        1812
+      ],
+      "profile": 7,
+      "allegiance": 3,
+      "direction": 1
+    },
+    {
+      "position": [
+        1122,
+        1708
+      ],
+      "profile": 13,
+      "allegiance": 4,
+      "direction": 7
+    }
+  ],
+  "pcs": []
+}

@@ -1,0 +1,26 @@
+{
+  "slug": "multi-team-demos",
+  "title": "Multi-team Demos",
+  "page_url": "",
+  "author": "Robin Rust port",
+  "map": "Open Battlefield",
+  "uploaded": "Aug 27, 2026",
+  "tags": [
+    "Hackable",
+    "Test",
+    "Battle"
+  ],
+  "description": "Ten multi-team combat and diplomacy demos, including allegiance arenas, army battles, hero matchups, and soldier variants.",
+  "hackable_missions": [
+    "MultiTeamAllPcsCircle",
+    "MultiTeamAllVariantsWheel",
+    "MultiTeamArrowCrossfire",
+    "MultiTeamChampionsRetinues",
+    "MultiTeamFourArmies",
+    "MultiTeamFourGrades",
+    "MultiTeamRobinVsLittleJohn",
+    "MultiTeamTenWay",
+    "MultiTeamThreeWay",
+    "MultiTeamTwentyRobins"
+  ]
+}

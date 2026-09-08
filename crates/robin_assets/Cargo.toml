@@ -1,0 +1,109 @@
+[package]
+name = "robin_assets"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_assets"
+
+# Wasm sprite-decode benchmark (see the example header for build/run steps).
+# cdylib so wasm-bindgen can process it; native profiles compile it to an
+# empty library (the whole file is cfg(target_arch = "wasm32")).
+[[example]]
+name = "wasm_decode_bench"
+crate-type = ["cdylib"]
+
+[dependencies]
+robin_util.workspace = true
+robin_data_io.workspace = true
+robin_engine.workspace = true
+serde = { workspace = true, features = ["derive", "rc"] }
+tracing.workspace = true
+anyhow.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
+flate2 = "1"
+# Fast non-cryptographic hasher for the sprite codec's context maps (hot
+# path: several map lookups per decoded tile).
+foldhash = "0.2"
+# Most adaptive contexts contain only a few symbols; keep them inline.
+smallvec = { version = "1", features = ["union"] }
+bitcode.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+zstd.workspace = true
+# Official libjxl Rust port (https://github.com/libjxl/jxl-rs). Used to
+# decode terrain `.map` files when the converter has transcoded them to
+# JPEG XL. SIMD (default features) is ON: the Cranelift dev profiles
+# can't compile its AVX512 intrinsics, so the workspace Cargo.toml builds
+# the jxl crates with the LLVM backend there (same treatment as
+# crc32fast) instead of paying scalar decode in every build.
+jxl = "0.7.1"
+
+# `bzip2` is only needed when reading legacy 16-bit picture data
+# (`.bfn` glyph tables, loose `.res` archives shipped by the original
+# game).  The shipping datadir format is zstd end-to-end, so wasm builds
+# — which only consume shipping blobs — don't pull this in.  The
+# pure-Rust `libbz2-rs-sys` backend also trips a `set_len > capacity`
+# UB check on wasm32 inside its spare-capacity handling; keeping the
+# dep native-only dodges that entirely.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Parallel VQ chunk decode at mission install. Native only: wasm builds run
+# the serial path (no thread pool without atomics).
+rayon = "1"
+bzip2 = "0.6"
+# Memory-maps the ~600 MB sprite bank so mission load doesn't read or
+# copy it; sprites fault their pages in on first draw.
+memmap2 = "0.9"
+
+# tempfile has no wasm32-unknown-unknown support; the tests that use it are
+# native-only anyway, and gating it keeps `--example wasm_decode_bench`
+# buildable for wasm (cargo builds every dev-dependency for example targets).
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tempfile.workspace = true
+# PNG export for the jxl_sprite_probe research example (cjxl input files).
+png = "0.18"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+
+# Browser thread pool for parallel VQ chunk decode (feature `wasm-threads`).
+# The build must also enable `-C target-feature=+atomics,+bulk-memory,
+# +mutable-globals` with `-Zbuild-std` and shared memory — see
+# `scripts/build-wasm-threads.sh`; a plain wasm build without the feature is
+# unchanged. wasm-bindgen-rayon is pinned exactly: its JS worker snippet is
+# post-processed by the deploy pipeline, so silent minor bumps must not
+# reshape it.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+rayon = { version = "1", optional = true }
+wasm-bindgen-rayon = { version = "=1.3.0", features = ["no-bundler"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+futures-channel = { version = "0.3", optional = true }
+futures-util = { version = "0.3", optional = true }
+# Global allocator for every wasm build (src/wasm_alloc.rs): std's dlmalloc
+# funnels every thread through one futex lock, which measurably INVERTS
+# worker-pool decode scaling past ~4 threads, and talc is ~9% faster even
+# single-threaded on the sprite-decode corpus. Pinned exactly: a global
+# allocator swap should never ride in on an unrelated `cargo update`.
+talc = "=5.1.0"
+spinning_top = "0.3"
+
+[features]
+# Threaded sprite decode on wasm32 (rayon worker pool via wasm-bindgen-rayon).
+# Requires an atomics + shared-memory build; without pool initialization at
+# runtime the decode paths fall back to serial.
+wasm-threads = [
+    "dep:rayon",
+    "dep:wasm-bindgen-rayon",
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:futures-channel",
+    "dep:futures-util",
+]
+
+[lints]
+workspace = true

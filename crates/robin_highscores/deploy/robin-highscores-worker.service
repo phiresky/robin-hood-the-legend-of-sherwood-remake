@@ -1,0 +1,57 @@
+[Unit]
+Description=Robin Hood isolated replay verification worker
+After=robin-highscores-api.service
+Requires=robin-highscores-api.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+ExecStart=/home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/bin/robin-highscores-worker --config /home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/config/highscores-worker.toml
+EnvironmentFile=/home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@/config/worker.env
+WorkingDirectory=/home/robinhood/.local/share/robin-highscores
+Restart=on-failure
+RestartSec=5s
+# Startup validates and hashes the complete operator-installed Demo and Full
+# raw-content closures before announcing READY=1.
+TimeoutStartSec=15min
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+TasksMax=512
+LimitNOFILE=8192
+# The direct verifier child remains in this service cgroup and also receives
+# independently digest-pinned prlimit ceilings from highscores-worker.toml.
+MemoryMax=2G
+MemorySwapMax=0
+NoNewPrivileges=yes
+PrivateUsers=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+# Do not add RestrictNamespaces or a narrow SystemCallFilter here: the
+# digest-pinned bubblewrap launcher requires unprivileged user/mount/PID/network
+# namespaces. Its fixed argv, sealed inputs, and prlimit policy form the child
+# containment boundary.
+ReadOnlyPaths=/usr/bin/bwrap /usr/bin/prlimit
+ReadOnlyPaths=/home/robinhood/.local/opt/robin-highscores/releases/@SOURCE_COMMIT@
+ReadOnlyPaths=/home/robinhood/.local/share/robin-highscores/raw-content
+ReadOnlyPaths=/home/robinhood/.local/share/robin-highscores/runtime-fence
+ReadWritePaths=/home/robinhood/.local/share/robin-highscores/database
+ReadWritePaths=/home/robinhood/.local/share/robin-highscores/replays
+ReadWritePaths=/home/robinhood/.local/share/robin-highscores/campaign-states
+InaccessiblePaths=/home/robinhood/.local/share/robin-highscores/api-secrets
+InaccessiblePaths=/home/robinhood/.local/share/robin-highscores/backups
+InaccessiblePaths=/home/robinhood/.local/share/robin-highscores/status
+
+[Install]
+WantedBy=robin-highscores.target

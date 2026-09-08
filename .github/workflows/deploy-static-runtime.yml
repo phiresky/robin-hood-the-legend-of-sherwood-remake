@@ -1,0 +1,233 @@
+name: Deploy admitted static runtime corpus
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_bundle_run_id:
+        description: Actions run containing the complete admitted runtime corpus and inventory
+        required: true
+        type: string
+      runtime_bundle_name:
+        description: Artifact containing runtime-dist/ and runtime-authority.json
+        required: true
+        type: string
+      runtime_inventory_sha256:
+        description: Approved SHA-256 of the exact runtime-authority.json bytes
+        required: true
+        type: string
+      datadir_authority_sha256:
+        description: SHA-256 of the exact external datadir-authority.json bound by this runtime
+        required: true
+        type: string
+      datadir_version_id:
+        description: Current robinhood-datadir-assets Worker version bound by the embedded receipt
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: static-runtime-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate immutable artifact authority inputs
+        env:
+          RUNTIME_BUNDLE_RUN_ID: ${{ inputs.runtime_bundle_run_id }}
+          RUNTIME_BUNDLE_NAME: ${{ inputs.runtime_bundle_name }}
+          RUNTIME_INVENTORY_SHA256: ${{ inputs.runtime_inventory_sha256 }}
+          DATADIR_AUTHORITY_SHA256: ${{ inputs.datadir_authority_sha256 }}
+          DATADIR_VERSION_ID: ${{ inputs.datadir_version_id }}
+        run: |
+          [[ "${RUNTIME_BUNDLE_RUN_ID}" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "runtime bundle run id must be a positive decimal integer" >&2; exit 1; }
+          [[ "${RUNTIME_BUNDLE_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] \
+            || { echo "runtime bundle name is not canonical" >&2; exit 1; }
+          [[ "${RUNTIME_INVENTORY_SHA256}" =~ ^[0-9a-f]{64}$ ]] \
+            || { echo "runtime inventory identity must be lowercase SHA-256" >&2; exit 1; }
+          [[ "${DATADIR_AUTHORITY_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${DATADIR_VERSION_ID}" =~ ^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$ ]]
+
+      - name: Check out deployment tooling only
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+
+      - name: Install lockfile-exact deployment tools
+        working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+
+      - name: Download the operator-approved complete corpus
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: ${{ inputs.runtime_bundle_name }}
+          path: target/runtime-input
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.runtime_bundle_run_id }}
+
+      - name: Materialize only the exact absent runtime closure
+        run: |
+          test ! -e wasm-www/runtime-dist
+          test -d target/runtime-input/runtime-dist
+          test -f target/runtime-input/runtime-authority.json
+          test -f target/runtime-input/datadir-authority.json
+          mv target/runtime-input/runtime-dist wasm-www/runtime-dist
+          mv target/runtime-input/runtime-authority.json target/runtime-authority.json
+          mv target/runtime-input/datadir-authority.json target/datadir-authority.json
+          test -z "$(find target/runtime-input -mindepth 1 -print -quit)"
+
+      - name: Reproduce the inventory and verify the complete runtime corpus
+        env:
+          RUNTIME_INVENTORY_SHA256: ${{ inputs.runtime_inventory_sha256 }}
+          DATADIR_AUTHORITY_SHA256: ${{ inputs.datadir_authority_sha256 }}
+        run: |
+          test "$(sha256sum target/datadir-authority.json | cut -d ' ' -f 1)" = "${DATADIR_AUTHORITY_SHA256}"
+          node wasm-www/scripts/verify-static-origin-inventory.mjs \
+            runtime wasm-www/runtime-dist target/runtime-authority.json \
+            "${RUNTIME_INVENTORY_SHA256}"
+          pnpm --dir wasm-www verify:runtime
+          pnpm --dir wasm-www verify:runtime-wrangler
+
+      - name: Preserve the exact verified deployment input
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: robinhood-verified-runtime-${{ github.run_id }}
+          path: |
+            wasm-www/runtime-dist
+            target/runtime-authority.json
+            target/datadir-authority.json
+          if-no-files-found: error
+          retention-days: 90
+
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: verify
+    environment:
+      name: cloudflare-production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check out deployment tooling only
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+
+      - name: Install lockfile-exact deployment tools
+        working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore only this run's verified runtime input
+        run: test ! -e wasm-www/runtime-dist
+
+      - name: Download only this run's verified runtime input
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: robinhood-verified-runtime-${{ github.run_id }}
+          path: .
+
+      - name: Re-verify inventory, corpus, and Wrangler closure after approval
+        env:
+          RUNTIME_INVENTORY_SHA256: ${{ inputs.runtime_inventory_sha256 }}
+          DATADIR_AUTHORITY_SHA256: ${{ inputs.datadir_authority_sha256 }}
+        run: |
+          test "$(pnpm --dir wasm-www exec wrangler --version)" = "4.127.1"
+          test "$(sha256sum target/datadir-authority.json | cut -d ' ' -f 1)" = "${DATADIR_AUTHORITY_SHA256}"
+          node wasm-www/scripts/verify-static-origin-inventory.mjs \
+            runtime wasm-www/runtime-dist target/runtime-authority.json \
+            "${RUNTIME_INVENTORY_SHA256}"
+          pnpm --dir wasm-www verify:runtime
+          pnpm --dir wasm-www verify:runtime-wrangler
+
+      - name: Prove the bound datadir deployment still exists before runtime publication
+        working-directory: wasm-www
+        env:
+          ROBINHOOD_DATADIR_VERSION_ID: ${{ inputs.datadir_version_id }}
+        run: |
+          node -e 'const fs=require("node:fs");const r=JSON.parse(fs.readFileSync("runtime-dist/wasm/datadir-deployment.json"));if(r.worker_version_id!==process.env.ROBINHOOD_DATADIR_VERSION_ID)process.exit(1)'
+          node scripts/sync-cloudflare-routes.mjs --prove-datadir
+
+      - name: Deploy runtime Worker without attaching routes
+        id: runtime
+        working-directory: wasm-www
+        env:
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-runtime-deploy.ndjson
+        run: |
+          pnpm exec wrangler deploy --config deploy/wrangler-runtime.json
+          version_id="$(node scripts/extract-wrangler-deploy-version.mjs \
+            "${WRANGLER_OUTPUT_FILE_PATH}" robinhood-runtime-assets)"
+          echo "version_id=${version_id}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prove the exact deployed runtime Worker version exists
+        working-directory: wasm-www
+        env:
+          ROBINHOOD_RUNTIME_VERSION_ID: ${{ steps.runtime.outputs.version_id }}
+        run: node scripts/sync-cloudflare-routes.mjs --prove-runtime
+
+      - name: Preserve inventory-to-version deployment evidence
+        env:
+          RUNTIME_BUNDLE_NAME: ${{ inputs.runtime_bundle_name }}
+          RUNTIME_BUNDLE_RUN_ID: ${{ inputs.runtime_bundle_run_id }}
+          RUNTIME_INVENTORY_SHA256: ${{ inputs.runtime_inventory_sha256 }}
+          RUNTIME_VERSION_ID: ${{ steps.runtime.outputs.version_id }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-runtime-deploy.ndjson
+        run: |
+          mkdir -p target/runtime-deployment-evidence
+          cp target/runtime-authority.json target/runtime-deployment-evidence/runtime-authority.json
+          cp target/datadir-authority.json target/runtime-deployment-evidence/datadir-authority.json
+          cp "${WRANGLER_OUTPUT_FILE_PATH}" target/runtime-deployment-evidence/wrangler-deploy.ndjson
+          node - target/runtime-deployment-evidence/deployment.json <<'NODE'
+          const fs = require('node:fs');
+          const record = {
+            artifact_name: process.env.RUNTIME_BUNDLE_NAME,
+            artifact_run_id: process.env.RUNTIME_BUNDLE_RUN_ID,
+            inventory_sha256: process.env.RUNTIME_INVENTORY_SHA256,
+            runtime_worker: 'robinhood-runtime-assets',
+            schema_version: 1,
+            version_id: process.env.RUNTIME_VERSION_ID,
+          };
+          fs.writeFileSync(process.argv[2], JSON.stringify(record), { flag: 'wx' });
+          NODE
+          printf 'Runtime Worker version: `%s`\n\nInventory SHA-256: `%s`\n' \
+            "${RUNTIME_VERSION_ID}" "${RUNTIME_INVENTORY_SHA256}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload exact runtime deployment evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: robinhood-runtime-deployment-${{ github.run_id }}
+          path: target/runtime-deployment-evidence
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,1694 @@
+//! Sword/parry/shield command dispatch entry points.
+//!
+//! Extracted from the original `melee.rs` mega-file.
+
+use super::*;
+use crate::element::{ActionState, Command, EntityId};
+use crate::engine::sequence_runtime::OwnerActionBarrier;
+use crate::sequence::SequenceElementData;
+use crate::weapons::SwordStrike;
+
+struct OpponentCallerDebugConfig {
+    frame: u32,
+    participant: u32,
+}
+
+struct ThrustAdmissionDebugConfig {
+    frame: u32,
+    owner: u32,
+}
+
+fn thrust_admission_debug_config() -> Option<&'static ThrustAdmissionDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<ThrustAdmissionDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_THRUST_A_ADMISSION")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when thrust-A admission debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for thrust-A admission diagnostic: {error}")
+                })
+            };
+            Some(ThrustAdmissionDebugConfig {
+                frame: parse("PARITY_DEBUG_THRUST_A_ADMISSION_FRAME"),
+                owner: parse("PARITY_DEBUG_THRUST_A_ADMISSION_OWNER"),
+            })
+        })
+        .as_ref()
+}
+
+fn opponent_caller_debug_config() -> Option<&'static OpponentCallerDebugConfig> {
+    static CONFIG: std::sync::OnceLock<Option<OpponentCallerDebugConfig>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            std::env::var_os("PARITY_DEBUG_OPPONENT_CALLER")?;
+            let parse = |name: &str| {
+                let raw = std::env::var(name).unwrap_or_else(|_| {
+                    panic!("{name} is required when opponent-caller debugging is enabled")
+                });
+                raw.parse::<u32>().unwrap_or_else(|error| {
+                    panic!("invalid {name}={raw:?} for opponent-caller diagnostic: {error}")
+                })
+            };
+            Some(OpponentCallerDebugConfig {
+                frame: parse("PARITY_DEBUG_OPPONENT_CALLER_FRAME"),
+                participant: parse("PARITY_DEBUG_OPPONENT_CALLER_PARTICIPANT"),
+            })
+        })
+        .as_ref()
+}
+
+impl EngineInner {
+    // ─── Sword strike dispatch (sequence-driven) ────────────────────
+
+    /// Dispatch a sword strike command from the sequence system.
+    ///
+    /// Called when an `InstructOwner` action delivers a strike command
+    /// (e.g. `SwordstrikeThrustA`) to an actor. The resulting sequence order
+    /// is the complete runtime identity of the strike, as in Original.
+    ///
+    /// Handles the `SwordstrikeThrustA..I` strike commands.
+    ///
+    /// Returns [`OwnerActionBarrier::Skip`] whenever translation marked the
+    /// impossible sequence element. The original game's translation reaches that
+    /// actor state change during instruction processing
+    /// in the original game; the resulting
+    /// Condolence dispatch detaches the selected sequence element, so the immediately
+    /// following pointer-change test returns before the acceptance epilogue
+    /// marks motion as in progress
+    /// by the original game's actor update.
+    pub(in crate::engine) fn dispatch_sword_strike(
+        &mut self,
+        _sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        target: EntityId,
+        strike: SwordStrike,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let admission_debug = thrust_admission_debug_config().is_some_and(|config| {
+            strike == SwordStrike::A
+                && config.frame == self.control.frame_counter
+                && config.owner == owner.index()
+        });
+        // Validate attacker
+        let owner_ok = self
+            .get_entity(owner)
+            .map(|e| e.is_human() && !e.is_dead())
+            .unwrap_or(false);
+        if !owner_ok {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+
+        // Translate B..I literally stores the interaction antagonist, even
+        // when that actor died while the strike was postponed. Thrust A is
+        // the sole exception: swordfight-entry eligibility performs its live/dead
+        // admission check below, matching the Original's separate A case.
+        let target_ok = self
+            .get_entity(target)
+            .map(|e| e.is_human())
+            .unwrap_or(false);
+        if !target_ok {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+
+        if strike == SwordStrike::A {
+            let can_enter = can_enter_swordfight_with(
+                &self.world.entities,
+                owner,
+                target,
+                &assets.profile_manager,
+                &self.world.fast_grid,
+            );
+            if admission_debug {
+                let owner_entity = self
+                    .world
+                    .entities
+                    .get(owner)
+                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} vanished"));
+                let target_entity = self
+                    .world
+                    .entities
+                    .get(target)
+                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} vanished"));
+                let owner_human = owner_entity
+                    .human_data()
+                    .unwrap_or_else(|| panic!("diagnosed thrust owner {owner:?} is not human"));
+                let target_human = target_entity
+                    .human_data()
+                    .unwrap_or_else(|| panic!("diagnosed thrust target {target:?} is not human"));
+                let owner_sector = owner_entity.element_data().sector();
+                let target_sector = target_entity.element_data().sector();
+                let selected = self
+                    .orders
+                    .sequence_manager
+                    .current_element_for_actor(owner);
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("diagnosed thrust element {seq_id:?}/{elem_idx} vanished")
+                    });
+                eprintln!(
+                    "PARITY_THRUST_A_ADMISSION frame={} owner={} target={} can_enter={} seq={} elem={} element_id={} state={:?} priority={:?} selected={selected:?} owner_dead={} owner_unconscious={} owner_net={} owner_soldier={} owner_vip={} owner_robin={} owner_sector={owner_sector:?} owner_building={} owner_wall_ladder={} target_dead={} target_unconscious={} target_net={} target_soldier={} target_vip={} target_robin={} target_sector={target_sector:?} target_building={} target_wall_ladder={}",
+                    self.control.frame_counter,
+                    owner.index(),
+                    target.index(),
+                    can_enter,
+                    seq_id.0,
+                    elem_idx,
+                    element.id,
+                    element.state,
+                    element.priority,
+                    owner_entity.is_dead(),
+                    owner_human.unconscious,
+                    owner_human.stuck_under_nets_counter,
+                    owner_entity.is_soldier(),
+                    is_vip_from_profile(owner_entity, &assets.profile_manager),
+                    owner_entity.pc_data().is_some_and(|pc| pc.robin),
+                    is_in_building_sector(owner_sector, &self.world.fast_grid),
+                    is_on_wall_or_ladder(owner_sector, &self.world.fast_grid),
+                    target_entity.is_dead(),
+                    target_human.unconscious,
+                    target_human.stuck_under_nets_counter,
+                    target_entity.is_soldier(),
+                    is_vip_from_profile(target_entity, &assets.profile_manager),
+                    target_entity.pc_data().is_some_and(|pc| pc.robin),
+                    is_in_building_sector(target_sector, &self.world.fast_grid),
+                    is_on_wall_or_ladder(target_sector, &self.world.fast_grid),
+                );
+            }
+            if can_enter {
+                self.set_as_new_principal_opponent(assets, owner, target);
+                self.set_as_new_principal_opponent(assets, target, owner);
+            } else {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                return OwnerActionBarrier::Skip;
+            }
+        }
+
+        let anim = strike_to_animation(strike);
+        // Read target position for the animation order
+        let (tx, ty) = self
+            .get_entity(target)
+            .map(|e| {
+                (
+                    e.element_data().position_map().x,
+                    e.element_data().position_map().y,
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "validated sword strike target {target:?} disappeared before order construction"
+                )
+            });
+
+        if let Some(entity) = self.world.entities.get_mut(owner)
+            && let Some(actor) = entity.actor_data_mut()
+        {
+            actor.clear_path();
+        }
+
+        // Original-game actor translation stores the target as the order's
+        // antagonist. Execution derives both the target and strike type from
+        // this selected order; there is no parallel melee state object.
+        let mut order = crate::order::Order::new(anim, tx, ty, self.orders.allocate_order_id());
+        order.target_actor = Some(target.index());
+        order.antagonist = Some(target);
+        order.compute_direction = false;
+        self.orders
+            .sequence_manager
+            .push_order_on(seq_id, elem_idx, order);
+
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
+
+        tracing::debug!(
+            attacker = ?owner,
+            target = ?target,
+            ?strike,
+            "Sword strike dispatched"
+        );
+        OwnerActionBarrier::Reach
+    }
+
+    // ─── Enter / quit swordfight ────────────────────────────────────
+
+    /// Dispatch an EnterSwordfight command.
+    ///
+    /// Establishes the fight relationship and queues the transition into the
+    /// sword pose.  Execute owns the action-state and facing changes.
+    pub(in crate::engine) fn dispatch_enter_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        opponent: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        self.dispatch_enter_swordfight_impl(sim, assets, owner, opponent, seq_id, elem_idx)
+    }
+
+    fn dispatch_enter_swordfight_impl(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        opponent: Option<EntityId>,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let caller_debug = opponent_caller_debug_config().is_some_and(|config| {
+            config.frame == self.control.frame_counter
+                && (config.participant == owner.index()
+                    || opponent.is_some_and(|id| config.participant == id.index()))
+        });
+        if caller_debug {
+            let selected_owner = self
+                .orders
+                .sequence_manager
+                .current_element_for_actor(owner);
+            let selected_opponent =
+                opponent.and_then(|id| self.orders.sequence_manager.current_element_for_actor(id));
+            let sequence = self
+                .orders
+                .sequence_manager
+                .get_sequence(seq_id)
+                .unwrap_or_else(|| {
+                    panic!("diagnosed EnterSwordfight sequence {seq_id:?} vanished")
+                });
+            let counters = sequence.parity_counters();
+            eprintln!(
+                "PARITY_OPPONENT_CALLER frame={} phase=dispatch owner={} opponent={:?} seq={} elem={} selected_owner={selected_owner:?} selected_opponent={selected_opponent:?} counters={counters:?} elements={}",
+                self.control.frame_counter,
+                owner.index(),
+                opponent.map(|id| id.index()),
+                seq_id.0,
+                elem_idx,
+                sequence.elements.len(),
+            );
+            for (index, element) in sequence.elements.iter().enumerate() {
+                eprintln!(
+                    "PARITY_OPPONENT_CALLER frame={} phase=element seq={} index={} id={} owner={:?} command={:?} level={} state={:?} priority={:?} script_driven={} legacy_v48={} postponed={:?} cross_postponed={:?} data={:?}",
+                    self.control.frame_counter,
+                    seq_id.0,
+                    index,
+                    element.id,
+                    element.owner.map(|id| id.index()),
+                    element.command,
+                    element.command_level,
+                    element.state,
+                    element.priority,
+                    element.script_driven,
+                    element.legacy_v48.is_some(),
+                    element.postponed_element_index,
+                    element.cross_postponed,
+                    element.data,
+                );
+            }
+        }
+        {
+            let Some(entity) = self.world.entities.get_mut(owner) else {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                return OwnerActionBarrier::Skip;
+            };
+            if entity.is_dead() || entity.human_data().map(|h| h.unconscious).unwrap_or(true) {
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                return OwnerActionBarrier::Skip;
+            }
+        }
+
+        // Table swordfight positioning: when entering a swordfight
+        // whose opponent sits in a different sector, count the fighters
+        // already engaging the opponent from our sector.  If 3+ fighters
+        // already crowd our side, interrupt.  With a jump line, also walk
+        // the jump-line graph to find a free slot and launch a movement
+        // element to nudge ourselves there before raising the sword.
+        //
+        // Original-game enter-swordfight translation
+        // runs the sector/occupancy gate whenever an unprepared element has an
+        // opponent — the jump line only guards the slot-finding half — and all
+        // three abort branches use interruption, which
+        // (unlike Impossible/Terminated) abandons any postponed successor.
+        let swordfight_prepared = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(is_swordfight_prepared);
+        if !swordfight_prepared
+            && let Some(opp) = opponent
+            && opp != owner
+        {
+            let jl_idx = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|e| e.get_property(crate::sequence::Field::JumplineDestination))
+                .and_then(|v| match v {
+                    crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(id.get()),
+                    _ => None,
+                });
+            match self.try_launch_table_swordfight_move(owner, opp, jl_idx) {
+                TableFightMove::Abort => {
+                    self.orders.sequence_manager.element_interrupted(
+                        seq_id,
+                        elem_idx,
+                        crate::sequence::CascadeFlags::NEXT_LEVEL,
+                    );
+                    return OwnerActionBarrier::Skip;
+                }
+                TableFightMove::Launched => {
+                    let element = self
+                        .orders
+                        .sequence_manager
+                        .get_element_mut(seq_id, elem_idx)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "EnterSwordfight element {seq_id:?}:{elem_idx} disappeared \
+                                 while preparing table movement"
+                            )
+                        });
+                    mark_swordfight_prepared(element);
+                }
+                TableFightMove::Ok => {}
+            }
+        }
+
+        let owner_action_state = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(|entity| entity.actor_data())
+            .map(|actor| actor.action_state)
+            .unwrap_or(ActionState::Waiting);
+        let transition = match owner_action_state {
+            ActionState::WaitingSword => None,
+            ActionState::Menacing => Some(crate::order::OrderType::TransitionMenacingWaitingSword),
+            _ => Some(crate::order::OrderType::TransitionRaisingSword),
+        };
+        // The EnterSwordfight sequence element carries the
+        // opponent (set by apply_enter_swordfight when the player
+        // clicked a sword-target, or by the AI side on reciprocal
+        // entry).  Run the full `enter_swordfight` engine path so both
+        // entities get added to each other's opponent lists and the
+        // cursor / is_selected_pc_swordfighting flag flips on.
+        // Without this, action_state changed to WaitingSword but the
+        // opponents list stayed empty — the cursor kept showing the
+        // non-combat pointer and no strikes were possible.
+        if let Some(opp) = opponent
+            && opp != owner
+        {
+            // Re-read JumplineDestination from the element so it lands
+            // in the opponent list as the aggressor's table-swordfight
+            // line.
+            let aggressor_jl = self
+                .orders
+                .sequence_manager
+                .get_element(seq_id, elem_idx)
+                .and_then(|e| e.get_property(crate::sequence::Field::JumplineDestination))
+                .and_then(|v| match v {
+                    crate::sequence::FieldValue::LineId(id) if id.get() != 0 => Some(*id),
+                    _ => None,
+                });
+            let entered =
+                self.enter_swordfight_with_jump_line(sim, assets, owner, opp, false, aggressor_jl);
+            if !entered {
+                // The original game's swordfight-entry translation detaches
+                // the matching postponed THRUST_A prerequisite when admission
+                // fails. Restarting that
+                // strike would translate the same higher-priority Enter pair
+                // again with no intervening state change, producing an
+                // unbounded reciprocal admission loop.
+                let postponed = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .and_then(|element| element.cross_postponed)
+                    .filter(|(postponed_sequence, postponed_index)| {
+                        self.orders
+                            .sequence_manager
+                            .get_element(*postponed_sequence, *postponed_index)
+                            .is_some_and(|element| {
+                                element.owner == Some(owner)
+                                    && element.command == Command::SwordstrikeThrustA
+                                    && matches!(
+                                        element.data,
+                                        crate::sequence::SequenceElementData::Interaction {
+                                            antagonist: Some(target)
+                                        } if target == opp
+                                    )
+                            })
+                    });
+                if let Some((postponed_sequence, postponed_index)) = postponed {
+                    self.orders
+                        .sequence_manager
+                        .set_cross_postponed_link((seq_id, elem_idx), None);
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(postponed_sequence, postponed_index);
+                }
+            }
+        }
+        if let Some(transition) = transition {
+            let id = self.orders.allocate_order_id();
+            let mut order = crate::order::Order::new(transition, 0.0, 0.0, id);
+            if let Some(opp) = opponent.filter(|opp| *opp != owner) {
+                order = order.with_antagonist(opp);
+            }
+            self.orders
+                .sequence_manager
+                .push_order_on(seq_id, elem_idx, order);
+        }
+        if transition.is_some() {
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+            OwnerActionBarrier::Reach
+        } else {
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            // Termination synchronously sends the removal notification.
+            // If that callback changes the selected sequence element, actor instruction handling
+            // returns before its accepted-motion/order epilogue.
+            OwnerActionBarrier::Skip
+        }
+    }
+
+    /// Handle the table-swordfight position check on entering a
+    /// cross-sector swordfight.  Returns `Abort` when the line is
+    /// oversubscribed or the slot is unreachable, `Launched` when a
+    /// movement element was enqueued, `Ok` otherwise (no move needed).
+    ///
+    pub(super) fn try_launch_table_swordfight_move(
+        &mut self,
+        owner: EntityId,
+        opp: EntityId,
+        jl_idx: Option<u32>,
+    ) -> TableFightMove {
+        let (owner_sector, owner_pos, owner_layer, owner_move_box) = {
+            let Some(e) = self.get_entity(owner) else {
+                return TableFightMove::Abort;
+            };
+            let Some(sector) = e.element_data().sector() else {
+                return TableFightMove::Ok;
+            };
+            let pos = e.element_data().position_map();
+            let layer = e.element_data().layer();
+            let mb = *e.position_iface().get_move_box();
+            (i16::from(sector), pos, layer, mb)
+        };
+        let opp_sector = match self.get_entity(opp).and_then(|e| e.element_data().sector()) {
+            Some(s) => i16::from(s),
+            None => return TableFightMove::Ok,
+        };
+        // Same-sector fights skip the positioning entirely.
+        if owner_sector == opp_sector {
+            return TableFightMove::Ok;
+        }
+
+        let table_count =
+            number_of_table_swordfight_opponents(&self.world.entities, opp, owner_sector);
+        // No existing fighters from our side → no slotting needed; the
+        // caller's pre-move (`apply_table_swordfight`) already placed us.
+        if table_count == 0 {
+            return TableFightMove::Ok;
+        }
+        if table_count >= 3 {
+            return TableFightMove::Abort;
+        }
+
+        // Original only runs the slot search when the element carries a jump
+        // line; without one the occupancy gate above is
+        // all that happens and the swordfight entry proceeds normally.
+        let Some(jl_idx) = jl_idx else {
+            return TableFightMove::Ok;
+        };
+
+        let jump_line = match self.world.fast_grid.level.jump_lines.get(jl_idx as usize) {
+            Some(jl) => jl.clone(),
+            None => return TableFightMove::Abort,
+        };
+
+        let Some(new_pos) = find_position_for_table_swordfight(
+            &self.world.entities,
+            owner_pos,
+            owner_sector,
+            owner,
+            opp,
+            &jump_line,
+        ) else {
+            return TableFightMove::Abort;
+        };
+
+        // Maximum norm == max(|dx|, |dy|); matches the 1-unit dead-zone
+        // below which the position is considered already reached.
+        let dx = new_pos.x - owner_pos.x;
+        let dy = new_pos.y - owner_pos.y;
+        if dx.abs().max(dy.abs()) < 1.0 {
+            return TableFightMove::Ok;
+        }
+
+        if !self.world.fast_grid.is_straight_movement_authorized(
+            owner_pos,
+            new_pos,
+            owner_layer,
+            &owner_move_box,
+        ) {
+            return TableFightMove::Abort;
+        }
+
+        // Launch the positioning move as a standalone element — it
+        // runs in parallel with the rest of the ENTER_SWORDFIGHT
+        // dispatch, then falls through to swordfight entry.
+        let mut move_elem = crate::sequence::SequenceElement::new_movement(
+            1,
+            crate::element::Command::Move,
+            Some(owner),
+            crate::order::OrderType::WalkingUpright,
+        );
+        if let crate::sequence::SequenceElementData::Movement {
+            destination,
+            flags,
+            tolerance,
+            line_id,
+            ..
+        } = &mut move_elem.data
+        {
+            *destination = crate::coordinates::MapPoint {
+                x: new_pos.x,
+                y: new_pos.y,
+            };
+            // STRAIGHT: go in a line, no gates.  LINE + `line_id`
+            // plumb the jump-line goal so downstream arrival code can
+            // snap to line tolerance.
+            *flags |= crate::sequence::MoveFlags::STRAIGHT | crate::sequence::MoveFlags::LINE;
+            *line_id = crate::jump_line::JumpLineIndex::new(jl_idx);
+            *tolerance = 0.0;
+        }
+        move_elem.priority = crate::sequence::SequencePriority::PostponeEverythingButInjuries;
+        self.launch_element(move_elem);
+        TableFightMove::Launched
+    }
+
+    /// Dispatch a QuitSwordfight command.
+    ///
+    /// Transitions the entity out of sword-fighting action state.
+    pub(in crate::engine) fn dispatch_quit_swordfight(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let queue_lower = self
+            .world
+            .entities
+            .get(owner)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.action_state.is_sword());
+
+        // The explicit command owns the visible transition. Relationship
+        // cleanup itself must not lower the sword, and action state stays
+        // sword-ready until the transition order actually starts.
+        self.quit_swordfight(sim, assets, owner);
+        if queue_lower {
+            let id = self.orders.allocate_order_id();
+            self.orders.sequence_manager.push_order_on(
+                seq_id,
+                elem_idx,
+                crate::order::Order::new(
+                    crate::order::OrderType::TransitionLoweringSword,
+                    0.0,
+                    0.0,
+                    id,
+                ),
+            );
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+            OwnerActionBarrier::Reach
+        } else {
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            OwnerActionBarrier::Skip
+        }
+    }
+
+    // ─── Parry ──────────────────────────────────────────────────────
+
+    /// Dispatch a ParrySword command.
+    pub(in crate::engine) fn dispatch_parry_sword(
+        &mut self,
+        owner: EntityId,
+        low: bool,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let Some(entity) = self.world.entities.get(owner) else {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+        let Some(actor) = entity.actor_data() else {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+
+        // The original game's sequence validation accepts sword parrying without an
+        // action-state precondition, and Translate appends the transition and
+        // hold orders from every state except an already-active parade.
+        // The sword-parry command arms in
+        // sequence-element validation and translation.
+        if matches!(
+            actor.action_state,
+            ActionState::ParryingSword | ActionState::ParryingSwordLow
+        ) {
+            // Original terminates either parry command immediately when any
+            // parade is already active. It does not append another hold
+            // order, even when the requested low/normal variant differs.
+            // Actor instruction handling has already assigned this incoming element to
+            // selected sequence element while translation performs that zero-frame
+            // termination. Keep the same selected identity through the
+            // synchronous condolence snapshot so actor condolence dispatch
+            // clears the selected order and map goal before releasing
+            // any postponed predecessor.
+            self.orders
+                .sequence_manager
+                .begin_instruct_callback(owner, seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .end_instruct_callback(owner, seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+
+        let transition = if low {
+            crate::order::OrderType::TransitionWaitingSwordParryingSwordLow
+        } else {
+            crate::order::OrderType::TransitionWaitingSwordParryingSword
+        };
+        let id = self.orders.allocate_order_id();
+        self.orders.sequence_manager.push_order_on(
+            seq_id,
+            elem_idx,
+            crate::order::Order::new(transition, 0.0, 0.0, id),
+        );
+
+        let hold = if low {
+            crate::order::OrderType::ParryingLowSword
+        } else {
+            crate::order::OrderType::ParryingSword
+        };
+        let id = self.orders.allocate_order_id();
+        self.orders.sequence_manager.push_order_on(
+            seq_id,
+            elem_idx,
+            crate::order::Order::new(hold, 0.0, 0.0, id),
+        );
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+
+    /// Dispatch a StopParrySword command.
+    pub(in crate::engine) fn dispatch_stop_parry(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        let Some(entity) = self.world.entities.get(owner) else {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+        let Some(actor) = entity.actor_data() else {
+            self.orders
+                .sequence_manager
+                .element_impossible(seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        };
+        if !matches!(
+            actor.action_state,
+            ActionState::ParryingSword | ActionState::ParryingSwordLow
+        ) {
+            // As in the ParrySword early-exit above, Translate terminates the
+            // already-selected incoming element rather than an unrelated
+            // queued command.
+            self.orders
+                .sequence_manager
+                .begin_instruct_callback(owner, seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+            self.orders
+                .sequence_manager
+                .end_instruct_callback(owner, seq_id, elem_idx);
+            return OwnerActionBarrier::Skip;
+        }
+
+        let id = self.orders.allocate_order_id();
+        self.orders.sequence_manager.push_order_on(
+            seq_id,
+            elem_idx,
+            crate::order::Order::new(
+                crate::order::OrderType::TransitionParryingSwordWaitingSword,
+                0.0,
+                0.0,
+                id,
+            ),
+        );
+        self.orders
+            .sequence_manager
+            .element_in_progress(seq_id, elem_idx);
+        OwnerActionBarrier::Reach
+    }
+}
+
+// ─── Shield commands ────────────────────────────────────────────────
+
+/// Shield command translation against only entity state, sequence state, and
+/// order-id allocation.
+///
+/// Human shield-action translation
+/// Human behavior appends each shield animation directly, while player
+/// translation
+/// synchronously launches a follow-up `SEEK` when an already-shielding PC gets
+/// a refreshed danger/protectee command. The follow-up is returned so the
+/// sequence-phase owner can launch it through the normal instruction path before
+/// performing the after-action synchronous splice.
+pub(crate) struct ShieldCommandContext<'a> {
+    entities: &'a mut crate::entities::Entities,
+    sequence_manager: &'a mut crate::sequence::SequenceManager,
+    next_order_id: &'a mut u32,
+}
+
+impl<'a> ShieldCommandContext<'a> {
+    pub(crate) fn new(
+        entities: &'a mut crate::entities::Entities,
+        sequence_manager: &'a mut crate::sequence::SequenceManager,
+        next_order_id: &'a mut u32,
+    ) -> Self {
+        Self {
+            entities,
+            sequence_manager,
+            next_order_id,
+        }
+    }
+
+    /// Dispatch one shield command and return an owned follow-up that must be
+    /// launched synchronously before the sequence phase splices pending work.
+    pub(crate) fn dispatch(
+        &mut self,
+        owner: EntityId,
+        command: Command,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Option<crate::sequence::SequenceElement> {
+        match command {
+            Command::RaiseShield => self.dispatch_raise_shield(owner, seq_id, elem_idx),
+            Command::RaiseShieldInstantly => {
+                self.dispatch_raise_shield_instantly(owner, seq_id, elem_idx);
+                None
+            }
+            Command::LowerShield => {
+                self.dispatch_lower_shield(owner, seq_id, elem_idx);
+                None
+            }
+            Command::ParryShield => {
+                self.dispatch_parry_shield(owner, seq_id, elem_idx);
+                None
+            }
+            _ => unreachable!("non-shield command passed to shield command context"),
+        }
+    }
+
+    /// Dispatch a RaiseShield command.
+    ///
+    /// If already holding shield, terminates immediately. Otherwise
+    /// transitions to `HoldingShield` and queues the raising animation.
+    fn dispatch_raise_shield(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> Option<crate::sequence::SequenceElement> {
+        // Read danger point for facing direction.
+        // Supports both Interaction data (player-issued: antagonist
+        // entity position) and Generic data (AI-issued: shield danger
+        // point + ShieldProtected target).  We stamp the per-PC
+        // `shield_danger_point` and the bidirectional protection link
+        // below.
+        //
+        // The read happens BEFORE the action-state branch, so an
+        // "already holding shield" actor still gets its danger point
+        // and protection link refreshed by the new command.
+        let (danger_pt, danger_pt3d, danger_layer, new_protected) = self
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|e| match &e.data {
+                crate::sequence::SequenceElementData::Interaction { antagonist } => {
+                    let pt = antagonist.and_then(|id| {
+                        self.entities
+                            .get(id)
+                            .map(|e| e.element_data().position_map())
+                    });
+                    (pt, None, None, None)
+                }
+                crate::sequence::SequenceElementData::Generic { properties } => {
+                    use crate::sequence::{Field, FieldValue};
+
+                    let (pt2d, pt3d) = read_shield_danger_point(properties);
+                    // Picked layer travels with the danger point.  The
+                    // The original game reads
+                    // shield-danger point layer and feeds it to
+                    // the danger-point titbit so the indicator renders
+                    // on the chosen map layer rather than the PC's own.
+                    let layer = match properties.get(&Field::ShieldDangerPointLayer) {
+                        Some(FieldValue::Integer(v)) => Some(*v as u16),
+                        _ => None,
+                    };
+                    let prot = match properties.get(&Field::ShieldProtected) {
+                        Some(FieldValue::Element(id)) => Some(*id),
+                        _ => None,
+                    };
+                    (pt2d, pt3d, layer, prot)
+                }
+                _ => (None, None, None, None),
+            })
+            .unwrap_or((None, None, None, None));
+
+        // Stamp the per-PC shield danger point when the Generic
+        // property carries a non-zero point. Leave it zero-initialised
+        // otherwise; `sync_danger_point_titbits` skips zero danger
+        // points so no titbit is created in that case.
+        //
+        // The layer is always overwritten so a stale player-picked
+        // layer from a previous raise can't leak into a follow-up
+        // AI-issued raise (which omits the layer property and thus
+        // gets `None` here, falling back to the PC's own layer in
+        // `sync_danger_point_titbits`).
+        if let Some(pt3d) = danger_pt3d
+            && (pt3d.x != 0.0 || pt3d.y != 0.0 || pt3d.z != 0.0)
+            && let Some(entity) = self.entities.get_mut(owner)
+            && let Some(pc) = entity.pc_data_mut()
+        {
+            pc.shield_danger_point = pt3d;
+            pc.shield_danger_point_layer = danger_layer.unwrap_or(0);
+        }
+        // Only assign shield protection when the Generic property is
+        // non-null.
+        if let Some(prot) = new_protected
+            && let Some(pc) = self.entities.get_mut(owner).and_then(Entity::pc_data_mut)
+        {
+            pc.shield_protected = Some(prot);
+        }
+
+        // Human-base Translate treats only HOLDING_SHIELD as redundant.
+        // The player-actor override additionally accepts MOVING_SHIELD so a
+        // player protector can refresh its danger point/protectee while
+        // following them. A soldier in MOVING_SHIELD must still append the
+        // ordinary raising animation.
+        let (action_state, owner_is_pc) = self
+            .entities
+            .get(owner)
+            .map(|entity| {
+                (
+                    entity.actor_data().map(|actor| actor.action_state),
+                    entity.is_pc(),
+                )
+            })
+            .unwrap_or((None, false));
+        match (action_state, owner_is_pc) {
+            (Some(ActionState::HoldingShield), _) | (Some(ActionState::MovingShield), true) => {
+                self.sequence_manager.element_terminated(seq_id, elem_idx);
+                let protected_now = self
+                    .entities
+                    .get(owner)
+                    .and_then(|e| e.pc_data())
+                    .and_then(|pc| pc.shield_protected);
+                if let Some(target) = protected_now {
+                    let danger_zero = self
+                        .entities
+                        .get(owner)
+                        .and_then(|e| e.pc_data())
+                        .map(|pc| {
+                            pc.shield_danger_point.x == 0.0
+                                && pc.shield_danger_point.y == 0.0
+                                && pc.shield_danger_point.z == 0.0
+                        })
+                        .unwrap_or(true);
+                    let mut seek = crate::sequence::SequenceElement::new_movement(
+                        1,
+                        Command::Seek,
+                        Some(owner),
+                        crate::order::OrderType::WalkingUpright,
+                    );
+                    if let SequenceElementData::Movement {
+                        element,
+                        tolerance,
+                        flags,
+                        ..
+                    } = &mut seek.data
+                    {
+                        *element = Some(target);
+                        if danger_zero {
+                            *tolerance = 50.0;
+                            *flags |= crate::sequence::MoveFlags::SEEK;
+                        } else {
+                            *tolerance = 0.0;
+                            *flags |= crate::sequence::MoveFlags::SEEK
+                                | crate::sequence::MoveFlags::SEEK_SHIELD;
+                        }
+                    }
+                    return Some(seek);
+                }
+                return None;
+            }
+            (None, _) => {
+                self.sequence_manager.element_impossible(seq_id, elem_idx);
+                return None;
+            }
+            _ => {} // Waiting, Bored, ParryingShield, etc. — proceed.
+        }
+
+        let mut started = false;
+        if let Some(entity) = self.entities.get_mut(owner) {
+            // The PC override faces the picked danger point. Enemy NPCs use
+            // the human-base RaiseShield implementation instead: their AI
+            // has already called Focus, and the non-directional shield order
+            // must preserve that direction goal.
+            if entity.is_pc()
+                && let Some(pt) = danger_pt
+            {
+                let owner_pos = entity.element_data().position_map();
+                let dx = pt.x - owner_pos.x;
+                let dy = pt.y - owner_pos.y;
+                if dx != 0.0 || dy != 0.0 {
+                    let goal = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+                    if entity.actor_data().is_some() {
+                        entity.position_iface_mut().set_direction(
+                            crate::position_interface::Direction::from_raw(goal as i32),
+                        );
+                    }
+                }
+            }
+
+            if let Some(actor) = entity.actor_data_mut() {
+                // Don't set HoldingShield immediately — the animation
+                // tick will set it when the raising animation
+                // completes (on MotionState::Done →
+                // upright posture with the holding-shield action state).
+                actor.clear_path();
+                actor.shield_face_point = danger_pt;
+                started = true;
+            }
+        }
+        if started {
+            // Push the order onto the element so `do_next_order` sees
+            // an exhaustion when the animation terminates.  The
+            // shield-arm `dispatch_arm_completion` entry in
+            // `engine/animation.rs` gates advance on TERMINATED only
+            // so the upright / holding-shield state-change side effect
+            // on Done doesn't also pop the order mid-play.
+            self.push_order(seq_id, elem_idx, crate::order::OrderType::RaisingShield);
+            self.sequence_manager.element_in_progress(seq_id, elem_idx);
+        } else {
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+        }
+        None
+    }
+
+    /// Dispatch a RaiseShieldInstantly command.
+    ///
+    /// Sets `HoldingShield` immediately without a raising animation.
+    fn dispatch_raise_shield_instantly(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        if let Some(entity) = self.entities.get_mut(owner) {
+            if let Some(actor) = entity.actor_data_mut() {
+                actor.action_state = ActionState::HoldingShield;
+                actor.clear_path();
+            }
+            entity.set_posture(Posture::Upright);
+        }
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::WaitingShield);
+        // Original-game instant-raise-shield translation leaves the
+        // WAITING_SHIELD order installed. Actor instruction handling then marks the
+        // accepted, still-selected element IN_PROGRESS; it does not terminate
+        // this command at translation time.
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+    }
+
+    /// Dispatch a LowerShield command.
+    ///
+    /// Transitions out of shield state to `Waiting` with a lowering animation.
+    fn dispatch_lower_shield(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        let actor = self
+            .entities
+            .get_mut(owner)
+            .and_then(crate::element::Entity::actor_data_mut)
+            .unwrap_or_else(|| panic!("LowerShield owner {owner:?} is not a live actor"));
+        // The original game's lower-shield translation appends the lowering-shield action
+        // unconditionally. In particular, an authored LowerShield that was
+        // postponed behind a hit can first finish its StandingUp transition;
+        // the resulting Waiting action state must not suppress the command.
+        // Don't set Waiting immediately — the animation tick owns that state
+        // change when the lowering animation completes.
+        actor.shield_face_point = None;
+
+        // The sprite-anim fallback to TRANSITION_LOWERING_SWORD when the
+        // actor has no LOWERING_SHIELD anim is applied by the animation
+        // driver. The order itself remains LOWERING_SHIELD.
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::LoweringShield);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+    }
+
+    /// Dispatch a ParryShield command.
+    ///
+    /// Transitions to `ParryingShield` from a shield-holding state.
+    fn dispatch_parry_shield(
+        &mut self,
+        owner: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) {
+        // Original-game parry-shield translation appends the
+        // parry order unconditionally. Whether a transition into
+        // `HOLDING_SHIELD` is needed was decided earlier by
+        // transition-flag calculation; translation must not re-check the actor's
+        // current action state. This matters when an injury postponed a
+        // shield parry: the actor can have returned to WAITING by the time the
+        // postponed element is selected, but its stored entry transition
+        // still makes the parry valid.
+        //
+        // Order action is `PARRYING_SHIELD`; the sprite-anim fallback to
+        // `PARRYING_SWORD` happens at perform_action time only. The shield-arm
+        // `dispatch_arm_completion` entry gates advance on TERMINATED only so
+        // the parry sprite plays all the way through before the side-effect
+        // handler returns to HoldingShield.
+        self.entities
+            .get(owner)
+            .and_then(crate::element::Entity::actor_data)
+            .unwrap_or_else(|| panic!("ParryShield owner {owner:?} is not a live actor"));
+        self.push_order(seq_id, elem_idx, crate::order::OrderType::ParryingShield);
+        self.sequence_manager.element_in_progress(seq_id, elem_idx);
+    }
+
+    fn push_order(
+        &mut self,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_type: crate::order::OrderType,
+    ) {
+        let id = crate::order::alloc_order_id(self.next_order_id);
+        // All four Original shield translators explicitly disable direction
+        // recomputation. These are
+        // posture-local animations: facing is controlled by Focus/the shield
+        // danger point before translation, and selecting the new order must
+        // not derive a fresh goal from its zero-valued destination.
+        let mut order = crate::order::Order::new(order_type, 0.0, 0.0, id);
+        order.compute_direction = false;
+        self.sequence_manager.push_order_on(seq_id, elem_idx, order);
+    }
+}
+
+impl EngineInner {
+    // ─── Receive damage dispatch ────────────────────────────────────
+
+    /// Complete the actor instruction handler's accepted-empty-order path for damage.
+    ///
+    /// The original game publishes in-progress motion, discovers that translation
+    /// produced no current order, clears the selected sequence element, and only then
+    /// terminates the accepted element. Its condolence card therefore cannot
+    /// clear a movement goal belonging to the element that will resume next.
+    fn terminate_accepted_empty_damage(
+        &mut self,
+        victim_id: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        self.trace_sword_damage_lifecycle(
+            "accepted-empty-before-terminate",
+            victim_id,
+            None,
+            None,
+            Some((seq_id, elem_idx)),
+            None,
+        );
+        // A deferred Hades kill can outlive an already removed entity slot.
+        // There is no actor instruction receiver (and therefore no motion field)
+        // in that case, but its synthetic damage element still has to close.
+        if let Some(victim) = self.world.entities.get_mut(victim_id) {
+            victim
+                .actor_data_mut()
+                .expect("accepted damage victim lost actor state")
+                .continuation
+                .motion_state = crate::sprite::MotionState::InProgress;
+        }
+        self.orders.sequence_manager.set_translating_element(None);
+        self.orders
+            .sequence_manager
+            .element_terminated(seq_id, elem_idx);
+        self.trace_sword_damage_lifecycle(
+            "accepted-empty-after-terminate",
+            victim_id,
+            None,
+            None,
+            Some((seq_id, elem_idx)),
+            None,
+        );
+        OwnerActionBarrier::Reach
+    }
+
+    /// Dispatch a receive-damage command from the sequence system.
+    ///
+    /// Reads damage data from the sequence element, applies it to the
+    /// victim, and handles death/KO transitions.  Handles
+    /// `ReceiveSwordDamage`, `ReceiveDamage`, `ReceiveHitDamage`, etc.
+    pub(in crate::engine) fn dispatch_receive_damage(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+    ) -> OwnerActionBarrier {
+        // Read damage data from the sequence element
+        let elem = match self.orders.sequence_manager.get_element(seq_id, elem_idx) {
+            Some(e) => e,
+            None => return OwnerActionBarrier::Skip,
+        };
+        let command = elem.command;
+
+        let (
+            origin,
+            projectile,
+            damage,
+            concussion,
+            sword_strike,
+            sword_profile_idx,
+            is_harder_hit,
+        ) = match &elem.data {
+            SequenceElementData::Damage {
+                origin,
+                projectile,
+                damage,
+                concussion,
+                sword_strike,
+                sword_profile_idx,
+                is_harder_hit,
+            } => (
+                *origin,
+                projectile.or_else(|| {
+                    elem.legacy_v48
+                        .as_ref()
+                        .and_then(|legacy| legacy.damage_arrow)
+                }),
+                *damage,
+                *concussion,
+                *sword_strike,
+                *sword_profile_idx,
+                *is_harder_hit,
+            ),
+            _ => {
+                tracing::warn!(
+                    ?victim_id,
+                    ?command,
+                    "dispatch_receive_damage: element is not Damage"
+                );
+                return self.terminate_accepted_empty_damage(victim_id, seq_id, elem_idx);
+            }
+        };
+
+        // Apply damage based on command type.  Per-command `apply_*`
+        // functions are responsible for applying the civilian-with-
+        // attached-scroll immunity check: nets land, everything else
+        // is a no-op on a scroll-carrying beggar.
+        match command {
+            Command::ReceiveSwordDamage => {
+                // Sword damage is the one receive-damage command gated on
+                // the element owner still being active.  A victim that has
+                // left the world (walked into a building, been removed)
+                // between the strike landing in the sweep queue and the
+                // sequence manager dispatching this element takes no damage
+                // at all — the element is terminated without rolling the
+                // two protection draws.
+                let owner_active = match self.get_entity(victim_id) {
+                    Some(e) => e.is_active(),
+                    None => {
+                        tracing::warn!(
+                            ?victim_id,
+                            "dispatch_receive_damage: sword damage victim is gone"
+                        );
+                        false
+                    }
+                };
+                if !owner_active {
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                }
+                #[cfg(test)]
+                let test_life_before = self
+                    .get_entity(victim_id)
+                    .and_then(super::damage::test_human_life_points)
+                    .expect("sword damage test victim is human");
+                self.apply_sword_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    origin,
+                    sword_strike,
+                    sword_profile_idx,
+                    (seq_id, elem_idx),
+                );
+                #[cfg(test)]
+                if let (Some(attacker_id), Some(strike)) = (origin, sword_strike) {
+                    super::damage::record_test_sword_damage_observation(
+                        self,
+                        victim_id,
+                        attacker_id,
+                        strike,
+                        test_life_before,
+                    );
+                }
+                // Pushed falling or rolling marks the
+                // damage element NonInterruptable directly when those
+                // anims start.  Here, `queue_damage_anim` does the
+                // equivalent inline `set_element_priority` call when
+                // the falling/rolling order is pushed onto the
+                // element — no separate propagation step is needed.
+            }
+            Command::ReceiveDamage | Command::ReceiveMobileDamage => {
+                self.apply_generic_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    damage,
+                    concussion,
+                    (seq_id, elem_idx),
+                );
+            }
+            Command::ReceiveArrowDamage | Command::ReceiveStoneDamage => {
+                // Human impact checks arrow hurtability before it registers
+                // this element. Do not repeat that check here: the
+                // intervening EventGetArrow callback is allowed to change
+                // the victim's AI state before damage executes.
+                let victim_active = self
+                    .get_entity(victim_id)
+                    .is_some_and(|victim| victim.element_data().active);
+                if !victim_active {
+                    self.orders
+                        .sequence_manager
+                        .element_terminated(seq_id, elem_idx);
+                    return OwnerActionBarrier::Skip;
+                }
+                self.apply_piercing_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    damage,
+                    concussion,
+                    command == Command::ReceiveArrowDamage,
+                    (seq_id, elem_idx),
+                );
+
+                if command == Command::ReceiveArrowDamage {
+                    // The original game performs these after receiving piercing damage or
+                    // translating arrow damage, while executing the deferred
+                    // damage element. The projectile remains retained as a
+                    // tombstone, exactly like the original-game element identity.
+                    if self
+                        .get_entity(victim_id)
+                        .is_some_and(|victim| get_life_points(victim) <= 0)
+                    {
+                        let shooter = origin.expect("arrow damage element has no shooter");
+                        self.award_bow_kill_xp(shooter);
+                    }
+                    if let Some(projectile_id) = projectile {
+                        let direction = match self.get_entity(projectile_id) {
+                            Some(crate::element::Entity::Projectile(projectile)) => {
+                                projectile.projectile.flight_direction as i16
+                            }
+                            Some(other) => panic!(
+                                "arrow damage projectile {projectile_id:?} is {:?}",
+                                other.kind()
+                            ),
+                            None => panic!(
+                                "arrow damage projectile {projectile_id:?} disappeared before dispatch"
+                            ),
+                        };
+                        self.get_entity_mut(victim_id)
+                            .expect("arrow damage victim disappeared after damage")
+                            .element_data_mut()
+                            .set_direction_instantly(direction ^ 8);
+                    }
+                }
+            }
+            Command::ReceiveHitDamage => {
+                self.apply_hit_damage(
+                    sim,
+                    assets,
+                    victim_id,
+                    origin,
+                    concussion,
+                    is_harder_hit,
+                    (seq_id, elem_idx),
+                );
+            }
+            Command::ReceiveNet => {
+                self.apply_net(victim_id);
+            }
+            _ => {
+                tracing::warn!(
+                    ?command,
+                    "dispatch_receive_damage: unhandled damage command"
+                );
+            }
+        }
+
+        // Some translation bodies terminate themselves synchronously while
+        // the accepted element is still selected (notably an amulet coma
+        // save receiving sword damage while lying). Their condolence
+        // card has already captured that selected identity; do not apply the
+        // different accepted-empty-order lifecycle a second time.
+        if self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .is_some_and(|element| element.state == crate::sequence::SequenceState::Terminated)
+        {
+            return OwnerActionBarrier::Skip;
+        }
+
+        // Order-advancement boot: if the damage handler pushed any orders
+        // (the sword-damage path pushes simpleHit / standup /
+        // BeingStunnedSword), let the element keep running so
+        // `do_next_order` chains through on each MotionState::Terminated.
+        // Order ids are stamped at construction time (`Order::new`
+        // requires `NonZeroU32`), so no batch fixup is needed here.
+        // Otherwise terminate now.
+        let order_count = self
+            .orders
+            .sequence_manager
+            .get_element(seq_id, elem_idx)
+            .map(|e| e.orders.len())
+            .unwrap_or(0);
+        if order_count > 0 && self.get_entity(victim_id).is_some() {
+            self.orders
+                .sequence_manager
+                .element_in_progress(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
+        }
+        self.terminate_accepted_empty_damage(victim_id, seq_id, elem_idx)
+    }
+}
+
+fn is_swordfight_prepared(element: &crate::sequence::SequenceElement) -> bool {
+    matches!(
+        element.get_property(crate::sequence::Field::SwordfightPrepared),
+        Some(crate::sequence::FieldValue::Bool(true))
+    )
+}
+
+fn mark_swordfight_prepared(element: &mut crate::sequence::SequenceElement) {
+    let crate::sequence::SequenceElementData::Generic { properties } = &mut element.data else {
+        panic!("EnterSwordfight preparation requires a generic sequence element");
+    };
+    properties.insert(
+        crate::sequence::Field::SwordfightPrepared,
+        crate::sequence::FieldValue::Bool(true),
+    );
+}
+
+fn read_shield_danger_point(
+    properties: &std::collections::HashMap<crate::sequence::Field, crate::sequence::FieldValue>,
+) -> (
+    Option<crate::coordinates::MapPoint>,
+    Option<crate::coordinates::WorldPoint3D>,
+) {
+    use crate::sequence::{Field, FieldValue};
+
+    match properties.get(&Field::ShieldDangerPoint) {
+        Some(FieldValue::Point3D { x, y, z }) => (
+            Some(crate::coordinates::MapPoint::new(*x, *y)),
+            Some(crate::coordinates::WorldPoint3D {
+                x: *x,
+                y: *y,
+                z: *z,
+            }),
+        ),
+        Some(FieldValue::GeoPoint2D { x, y }) => (
+            Some(crate::coordinates::MapPoint::new(*x, *y)),
+            Some(crate::coordinates::WorldPoint3D {
+                x: *x,
+                y: *y,
+                z: 0.0,
+            }),
+        ),
+        _ => (None, None),
+    }
+}
+
+#[cfg(test)]
+mod swordfight_preparation_tests {
+    use super::{is_swordfight_prepared, mark_swordfight_prepared};
+    use crate::element::Command;
+    use crate::sequence::{Field, FieldValue, SequenceElement};
+
+    #[test]
+    fn table_preparation_marker_is_persistent_and_legacy_missing_means_false() {
+        let mut element = SequenceElement::new_generic(1, Command::EnterSwordfight, None);
+        assert!(!is_swordfight_prepared(&element));
+
+        element.set_property(Field::SwordfightPrepared, FieldValue::Bool(false));
+        assert!(!is_swordfight_prepared(&element));
+
+        mark_swordfight_prepared(&mut element);
+        assert!(is_swordfight_prepared(&element));
+        assert!(matches!(
+            element.get_property(Field::SwordfightPrepared),
+            Some(FieldValue::Bool(true))
+        ));
+    }
+}
+
+#[cfg(test)]
+mod shield_order_tests {
+    use super::ShieldCommandContext;
+    use crate::element::{
+        ActionState, ActorData, ActorSoldier, ElementData, ElementKind, Entity, HumanData, NpcData,
+        Posture, SoldierData,
+    };
+    use crate::entities::Entities;
+    use crate::entity_id::{EntityId, SoldierId};
+    use crate::order::OrderType;
+    use crate::sequence::{Sequence, SequenceElement, SequenceManager};
+    use crate::{element::Command, sequence::SequenceState};
+
+    #[test]
+    fn translated_shield_orders_never_recompute_facing() {
+        for order_type in [
+            OrderType::RaisingShield,
+            OrderType::WaitingShield,
+            OrderType::LoweringShield,
+            OrderType::ParryingShield,
+        ] {
+            let mut sequence_manager = SequenceManager::new();
+            let mut sequence = Sequence::new();
+            sequence.append_element(SequenceElement::new_generic(1, Command::Wait, None));
+            let sequence_id = sequence_manager.launch_sequence(sequence);
+            let mut entities = Entities::new();
+            let mut next_order_id = 1;
+
+            ShieldCommandContext {
+                entities: &mut entities,
+                sequence_manager: &mut sequence_manager,
+                next_order_id: &mut next_order_id,
+            }
+            .push_order(sequence_id, 0, order_type);
+
+            let element = sequence_manager
+                .get_element(sequence_id, 0)
+                .expect("shield test sequence element");
+            assert_eq!(element.state, SequenceState::Todo);
+            assert_eq!(element.orders.len(), 1);
+            assert_eq!(element.orders[0].order_type, order_type);
+            assert!(!element.orders[0].compute_direction);
+        }
+    }
+
+    fn lying_soldier() -> Entity {
+        Entity::Soldier(ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                active: true,
+                posture: Posture::Lying,
+                ..ElementData::default()
+            },
+            actor: ActorData::default(),
+            human: HumanData::default(),
+            npc: NpcData::default(),
+            soldier: SoldierData::default(),
+        })
+    }
+
+    #[test]
+    fn ordinary_raise_shield_retains_lying_until_generated_stand_up_executes() {
+        let owner = EntityId::Soldier(SoldierId(0));
+        let mut entities = Entities::from_legacy_slots(vec![Some(lying_soldier())]);
+        let mut sequence_manager = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_generic(
+            1,
+            Command::RaiseShield,
+            Some(owner),
+        ));
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        let mut next_order_id = 1;
+        let mut context =
+            ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id);
+
+        // The posture transition has already prepended this order. Translation
+        // may append RaisingShield, but Original does not stand the actor up
+        // until StandingUp itself executes and returns MotionState::Start.
+        context.push_order(sequence_id, 0, OrderType::StandingUp);
+        context.dispatch(owner, Command::RaiseShield, sequence_id, 0);
+
+        assert_eq!(
+            entities.get(owner).unwrap().element_data().posture,
+            Posture::Lying
+        );
+        assert_eq!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [OrderType::StandingUp, OrderType::RaisingShield]
+        );
+    }
+
+    #[test]
+    fn instant_raise_shield_still_enters_upright_holding_state_immediately() {
+        let owner = EntityId::Soldier(SoldierId(0));
+        let mut entities = Entities::from_legacy_slots(vec![Some(lying_soldier())]);
+        let mut sequence_manager = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_generic(
+            1,
+            Command::RaiseShieldInstantly,
+            Some(owner),
+        ));
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        let mut next_order_id = 1;
+
+        ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id)
+            .dispatch(owner, Command::RaiseShieldInstantly, sequence_id, 0);
+
+        let entity = entities.get(owner).unwrap();
+        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(
+            entity.actor_data().unwrap().action_state,
+            ActionState::HoldingShield
+        );
+        assert_eq!(
+            sequence_manager.get_element(sequence_id, 0).unwrap().state,
+            SequenceState::InProgress
+        );
+        assert_eq!(
+            sequence_manager
+                .get_element(sequence_id, 0)
+                .unwrap()
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [OrderType::WaitingShield]
+        );
+    }
+
+    #[test]
+    fn parry_shield_translation_does_not_recheck_current_action_state() {
+        let owner = EntityId::Soldier(SoldierId(0));
+        let mut soldier = lying_soldier();
+        soldier.element_data_mut().posture = Posture::Upright;
+        soldier.actor_data_mut().unwrap().action_state = ActionState::Waiting;
+        let mut entities = Entities::from_legacy_slots(vec![Some(soldier)]);
+        let mut sequence_manager = SequenceManager::new();
+        let mut sequence = Sequence::new();
+        sequence.append_element(SequenceElement::new_generic(
+            1,
+            Command::ParryShield,
+            Some(owner),
+        ));
+        let sequence_id = sequence_manager.launch_sequence(sequence);
+        let mut next_order_id = 1;
+
+        ShieldCommandContext::new(&mut entities, &mut sequence_manager, &mut next_order_id)
+            .dispatch(owner, Command::ParryShield, sequence_id, 0);
+
+        let element = sequence_manager.get_element(sequence_id, 0).unwrap();
+        assert_eq!(element.state, SequenceState::InProgress);
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .map(|order| order.order_type)
+                .collect::<Vec<_>>(),
+            [OrderType::ParryingShield]
+        );
+        assert_eq!(
+            entities
+                .get(owner)
+                .unwrap()
+                .actor_data()
+                .unwrap()
+                .action_state,
+            ActionState::Waiting,
+            "the transition layer, not Translate, owns the HOLDING_SHIELD entry state"
+        );
+    }
+}

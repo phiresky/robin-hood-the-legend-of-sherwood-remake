@@ -1,0 +1,320 @@
+{
+  "title": "Arrow Crossfire",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1470,
+    1760
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        1375,
+        1561
+      ],
+      "profile": "guard_a03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1565,
+        1561
+      ],
+      "profile": "guard_a03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1375,
+        1501
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1440,
+        1501
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1500,
+        1501
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1565,
+        1501
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1405,
+        1441
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1535,
+        1441
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1375,
+        1959
+      ],
+      "profile": "guard_a03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1565,
+        1959
+      ],
+      "profile": "guard_a03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1375,
+        2019
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1440,
+        2019
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1500,
+        2019
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1565,
+        2019
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1405,
+        2079
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1535,
+        2079
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1271,
+        1680
+      ],
+      "profile": "guard_a03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1271,
+        1840
+      ],
+      "profile": "guard_a03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1211,
+        1660
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1211,
+        1725
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1211,
+        1790
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1211,
+        1855
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1151,
+        1700
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1151,
+        1820
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1669,
+        1680
+      ],
+      "profile": "guard_a03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1669,
+        1840
+      ],
+      "profile": "guard_a03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1729,
+        1660
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1729,
+        1725
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1729,
+        1790
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1729,
+        1855
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1789,
+        1700
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1789,
+        1820
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    }
+  ],
+  "pcs": []
+}

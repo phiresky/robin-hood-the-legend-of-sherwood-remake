@@ -1,0 +1,4 @@
+#reference "../../vendor/slang-shaders/crt/crt-guest-advanced.slangp"
+
+parameters = "interm"
+interm = "0.0"

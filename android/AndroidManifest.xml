@@ -1,0 +1,26 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
+        android:hasCode="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="Robin Hood"
+        android:roundIcon="@mipmap/ic_launcher_round">
+        <activity
+            android:name="io.github.phiresky.robinhood.RobinHoodActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:theme="@style/RobinHoodTheme">
+            <meta-data android:name="android.app.lib_name" android:value="robin_rs" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -1,0 +1,31 @@
+# Ban ambient/unseeded RNG sources in simulation code.
+#
+# Rollback multiplayer requires every gameplay-affecting random roll to come
+# from the single deterministic `Engine::rng`, accessed via `crate::sim_rng::*`.
+# Direct use of `rand::thread_rng`, `fastrand` globals, or `rand::random` would
+# pull from the unseeded thread-local RNG and cause desyncs between clients.
+#
+# If you *genuinely* need ambient randomness (UI jitter, audio dithering,
+# menu flavour, tools, tests, loading-screen nonsense), put the call in a
+# file or module that is not reachable from `Engine::perform_hourglass`, and
+# add `#[allow(clippy::disallowed_methods)]` to the specific call site with
+# a comment explaining why it cannot desync the simulation.
+disallowed-methods = [
+    { path = "rand::thread_rng", reason = "Use crate::sim_rng for determinism", allow-invalid = true },
+    { path = "rand::rng", reason = "Use crate::sim_rng for determinism", allow-invalid = true },
+    { path = "rand::random", reason = "Use crate::sim_rng for determinism" },
+    { path = "fastrand::u8", reason = "Use crate::sim_rng::u8 for determinism" },
+    { path = "fastrand::u16", reason = "Use crate::sim_rng::u16 for determinism" },
+    { path = "fastrand::u32", reason = "Use crate::sim_rng::u32 for determinism" },
+    { path = "fastrand::u64", reason = "Use crate::sim_rng::u64 for determinism" },
+    { path = "fastrand::i8", reason = "Use crate::sim_rng::i8 for determinism" },
+    { path = "fastrand::i16", reason = "Use crate::sim_rng::i16 for determinism" },
+    { path = "fastrand::i32", reason = "Use crate::sim_rng::i32 for determinism" },
+    { path = "fastrand::i64", reason = "Use crate::sim_rng::i64 for determinism" },
+    { path = "fastrand::usize", reason = "Use crate::sim_rng::usize for determinism" },
+    { path = "fastrand::bool", reason = "Use crate::sim_rng::bool for determinism" },
+    { path = "fastrand::f32", reason = "Use crate::sim_rng::f32 for determinism" },
+    { path = "fastrand::f64", reason = "Use crate::sim_rng::f64 for determinism" },
+    { path = "fastrand::choice", reason = "Use crate::sim_rng::choice for determinism" },
+    { path = "fastrand::shuffle", reason = "Use crate::sim_rng::shuffle for determinism" },
+]

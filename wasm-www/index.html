@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'self' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: wss: http://127.0.0.1:* http://localhost:*; frame-src https://identity.robinhood.phiresky.xyz; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
+    <title>Robin Hood - Rust WASM</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            min-height: 100%;
+            background: #111;
+            color: #eee;
+            font-family: monospace;
+        }
+        #canvas {
+            display: block;
+            margin: 8px auto;
+            width: min(calc(100vw - 16px), calc((100dvh - 16px) * 16 / 9));
+            height: min(calc(100dvh - 16px), calc((100vw - 16px) * 9 / 16));
+            background: #000;
+            image-rendering: pixelated;
+        }
+        #canvas:fullscreen {
+            width: 100vw;
+            height: 100vh;
+            margin: 0;
+        }
+        #log {
+            max-height: 240px;
+            overflow-y: auto;
+            padding: 8px;
+            font-size: 12px;
+            white-space: pre-wrap;
+            border-top: 1px solid #333;
+        }
+        .err { color: #f77; }
+        #replay-timeline {
+            display: none;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-top: 1px solid #333;
+            background: #1a1a1a;
+            font-size: 12px;
+        }
+        #replay-timeline .timeline-scrub { flex: 1; }
+        #replay-timeline button {
+            min-width: 5.5em;
+            background: #333;
+            color: #eee;
+            border: 1px solid #555;
+            padding: 4px 10px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #replay-timeline button:hover { background: #444; }
+        #replay-timeline .timeline-time {
+            min-width: 5ch;
+            font-variant-numeric: tabular-nums;
+        }
+        #toolbar {
+            display: flex;
+            gap: 8px;
+            padding: 6px 8px;
+            border-top: 1px solid #333;
+            background: #1a1a1a;
+        }
+        #toolbar button {
+            background: #333;
+            color: #eee;
+            border: 1px solid #555;
+            padding: 4px 10px;
+            font: inherit;
+            cursor: pointer;
+        }
+        #toolbar a {
+            display: inline-flex;
+            align-items: center;
+            color: #9ddcae;
+            padding: 4px 8px;
+        }
+        #toolbar button:hover:not(:disabled) { background: #444; }
+        #toolbar button:disabled { opacity: .5; cursor: default; }
+        #boot-progress {
+            position: absolute;
+            top: 284px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: min(420px, 80vw);
+            text-align: center;
+            pointer-events: none;
+        }
+        #boot-progress .bp-label {
+            font-size: 14px;
+            letter-spacing: .08em;
+            margin-bottom: 10px;
+            color: #d9c48a;
+        }
+        #boot-progress .bp-bar {
+            height: 14px;
+            border: 1px solid #6d5a2e;
+            background: #000;
+            padding: 2px;
+        }
+        #boot-progress .bp-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(180deg, #e3c878, #a8842f);
+            transition: width .15s ease-out;
+        }
+        #boot-progress .bp-detail {
+            margin-top: 8px;
+            font-size: 11px;
+            color: #888;
+            min-height: 1.2em;
+        }
+        #boot-progress.bp-error .bp-label { color: #f77; }
+        #boot-progress.bp-error .bp-fill { background: #a33; }
+        #multiplayer-content-gate {
+            position: fixed;
+            inset: 0;
+            z-index: 20;
+            display: grid;
+            place-items: center;
+            background: rgb(0 0 0 / 82%);
+        }
+        #multiplayer-content-gate[hidden] { display: none; }
+        #multiplayer-content-panel {
+            width: min(560px, calc(100vw - 32px));
+            box-sizing: border-box;
+            border: 1px solid #6d5a2e;
+            background: #17140e;
+            padding: 20px;
+            line-height: 1.5;
+        }
+        #multiplayer-content-choose {
+            background: #493b20;
+            color: #fff2c9;
+            border: 1px solid #a8842f;
+            padding: 8px 14px;
+            font: inherit;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="1024" height="768"></canvas>
+    <div id="boot-progress" role="status">
+        <div class="bp-label" id="bp-label">loading&hellip;</div>
+        <div class="bp-bar"><div class="bp-fill" id="bp-fill"></div></div>
+        <div class="bp-detail" id="bp-detail"></div>
+    </div>
+    <section id="multiplayer-content-gate" hidden aria-labelledby="multiplayer-content-title">
+        <div id="multiplayer-content-panel">
+            <h1 id="multiplayer-content-title">Full game content required</h1>
+            <p>
+                This host is playing the Full edition. Choose the exact local web-content export
+                for this build. Files are authenticated in this browser and are never uploaded.
+            </p>
+            <p id="multiplayer-content-status"></p>
+            <button id="multiplayer-content-choose" type="button">Choose Full content folder</button>
+            <input id="multiplayer-content-files" type="file" webkitdirectory multiple hidden>
+        </div>
+    </section>
+    <div id="replay-timeline"></div>
+    <div id="toolbar">
+        <button id="share-replay" type="button" title="Copy a shareable URL of the current replay">
+            Share replay
+        </button>
+        <button id="fullscreen" type="button" title="Enter fullscreen">
+            Fullscreen
+        </button>
+        <a href="./leaderboards/" target="_blank" rel="noopener">
+            Verified leaderboards
+        </a>
+    </div>
+    <div id="log" role="status" aria-live="polite"></div>
+    <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

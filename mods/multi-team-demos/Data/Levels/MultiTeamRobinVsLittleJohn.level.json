@@ -1,0 +1,60 @@
+{
+  "title": "Autonomous Robin vs Little John",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1500,
+    1700
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [],
+  "pcs": [
+    {
+      "position": [
+        1000,
+        1000
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 4,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1100,
+        1000
+      ],
+      "profile": 2,
+      "allegiance": 3,
+      "direction": 12,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "great hall",
+      "id": "leicester-great-hall",
+      "bbox": [640, 240, 410, 290],
+      "prompt": "large hall building with red tiled roof",
+      "alt_prompts": ["stone building with tiled roof", "building"],
+      "apply_patches": true,
+      "tags": ["building", "castle", "hall"]
+    },
+    {
+      "name": "castle west wing",
+      "id": "leicester-west-wing",
+      "bbox": [495, 375, 255, 245],
+      "prompt": "stone building with tiled roof",
+      "alt_prompts": ["building"],
+      "apply_patches": true,
+      "tags": ["building", "castle"]
+    },
+    {
+      "name": "forest tower",
+      "id": "leicester-forest-tower",
+      "bbox": [595, 15, 290, 240],
+      "prompt": "round stone tower with conical shingle roof",
+      "alt_prompts": ["round tower"],
+      "apply_patches": true,
+      "tags": ["tower", "castle"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower"
+    },
+    {
+      "name": "northwest tower",
+      "id": "leicester-nw-tower",
+      "bbox": [30, 290, 210, 240],
+      "prompt": "round stone tower with conical shingle roof",
+      "alt_prompts": ["round tower"],
+      "apply_patches": true,
+      "tags": ["tower", "castle"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower",
+      "pad": 24
+    },
+    {
+      "name": "small turret",
+      "id": "leicester-small-turret",
+      "bbox": [1035, 275, 140, 120],
+      "prompt": "stone turret",
+      "alt_prompts": ["round stone structure", "tower"],
+      "apply_patches": true,
+      "tags": ["tower", "castle", "turret"],
+      "min_area": 800,
+      "pad": 30
+    },
+    {
+      "name": "tower bridge",
+      "id": "leicester-tower-bridge",
+      "bbox": [1655, 495, 200, 130],
+      "prompt": "bridge",
+      "alt_prompts": ["wooden structure"],
+      "apply_patches": true,
+      "tags": ["bridge", "castle", "wood"],
+      "min_area": 800,
+      "pad": 30
+    },
+    {
+      "name": "castle well",
+      "id": "leicester-castle-well",
+      "bbox": [1210, 10, 110, 110],
+      "prompt": "water well",
+      "alt_prompts": ["wooden structure", "wooden post"],
+      "tags": ["prop", "well"],
+      "min_area": 250,
+      "pad": 40
+    }
+  ]
+}

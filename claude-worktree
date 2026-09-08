@@ -1,0 +1,44 @@
+#!/bin/bash
+set -e
+name="$1"
+if [ -z "$name" ]; then
+    echo "Usage: claude-worktree <name>"
+    echo "Reads agent prompt from stdin."
+    exit 1
+fi
+dir=".worktrees/$name"
+branch="worktree-$name"
+base="main"
+
+prompt="$(cat)"
+if [ -z "$prompt" ]; then
+    echo "Error: no prompt provided on stdin"
+    exit 1
+fi
+
+if [ -d "$dir" ]; then
+    echo "Error: worktree $dir already exists"
+    exit 1
+fi
+
+git worktree add "$dir" -b "$branch" "$base"
+git -C "$dir" submodule update --init --recursive
+git_common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+mkdir -p "$dir/.codex"
+cat > "$dir/.codex/config.toml" <<EOF
+[permissions.sccache-workspace.filesystem]
+"$git_common_dir" = "write"
+"/home/phire/.cache/sccache" = "write"
+"/home/phire/.cargo" = "write"
+"/home/phire/.local/share/robin_hood" = "write"
+EOF
+if [ "$AGENT" = "codex" ]; then
+    cmd="codex $(printf '%q' "$prompt")"
+else
+    cmd="claude --permission-mode acceptEdits $(printf '%q' "$prompt")"
+fi
+
+cmd="systemd-run --user --scope --slice=robin-build.slice --quiet --collect -- $cmd"
+tmux new-session -d -s "$name" -c "$(pwd)/$dir" "$cmd"
+
+echo "Started tmux session '$name'"

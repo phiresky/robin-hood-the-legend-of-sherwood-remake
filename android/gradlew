@@ -1,0 +1,12 @@
+#!/bin/sh
+# Linux/macOS launcher for the official, pinned Gradle wrapper.
+# Wrapper JAR SHA-256: 55243ef57851f12b070ad14f7f5bb8302daceeebc5bce5ece5fa6edb23e1145c
+set -eu
+wrapper_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -n "${JAVA_HOME:-}" ]; then
+    java_command="$JAVA_HOME/bin/java"
+else
+    java_command=java
+fi
+exec "$java_command" -classpath "$wrapper_dir/gradle/wrapper/gradle-wrapper.jar" \
+    org.gradle.wrapper.GradleWrapperMain -p "$wrapper_dir" "$@"

@@ -1,0 +1,80 @@
+# Build output
+/output/
+/build/
+/target/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/assets/Data/datadir.bin
+# no trailing slash: in worktrees this is a symlink to the parent checkout
+/merge-claude-worktrees
+
+# Editor / IDE
+*.swp
+*~
+.idea/
+.vscode/
+*.orig
+/compile_commands.json
+
+# copied from the game install
+/datadirs
+/original-game
+
+# playwright cache
+/.playwright-mcp/
+
+/.pnpm-store
+
+# screenshots / logs
+/robin_*.png
+/*.log
+
+# local Ferris source/render outputs
+/assets/ferris/*.blend
+/datadirs/ferris_overlay/
+
+# Claude agent state
+/.claude
+!/.claude/settings.json
+
+# Local agent worktrees
+/.worktrees
+
+# Sandbox-created empty dotfiles
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.mcp.json
+/.profile
+/.ripgreprc
+/.zprofile
+/.zshrc
+/tmp/
+/.codex-tmp/
+/.agent-debug/
+/.codex-target/
+/.codex-worktrees/
+/.diagnostics/
+/.rng-runtime-audit-commit/
+/schema14/
+/binaries
+/.codex
+
+# Local API credentials
+/concept-maps/.env
+/.env
+
+__pycache__/
+
+# temporary
+
+/parity-hang-diagnostics
+/parity-random-save-replays*
+/parity-save-replays
+/parity-save-replays*
+/concept-maps
+/factorio-mods
+/mission-maps
+/mods

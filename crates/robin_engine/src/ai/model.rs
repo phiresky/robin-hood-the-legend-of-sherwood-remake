@@ -1,0 +1,3180 @@
+use super::*;
+use crate::coordinates::MapVec;
+
+// AI State
+// ---------------------------------------------------------------------------
+
+/// Top-level AI state.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum AiState {
+    Sleeping = 0,
+    #[default]
+    Default = 1,
+    Wondering = 2,
+    Seeking = 3,
+    Attacking = 4,
+    Menacing = 5,
+    Fleeing = 6,
+}
+
+/// State codes used in the event system / scripts. Matches the `#define
+/// AISTATE_*` constants from the header.
+impl AiState {
+    pub const SCRIPT_DRIVEN: u32 = 7;
+
+    /// Translate an internal `STATE_*` engine enum to the script-visible
+    /// `AISTATE_*` constant emitted by the `GetAIState` script native. The internal
+    /// and script numeric spaces coincide for Sleeping/Default/Wondering/Seeking
+    /// but differ for Attacking/Menacing/Fleeing.
+    pub fn to_script_code(self) -> i32 {
+        match self {
+            Self::Sleeping => 0,  // AISTATE_SLEEPING
+            Self::Default => 1,   // AISTATE_DEFAULT
+            Self::Wondering => 2, // AISTATE_WONDERING
+            Self::Seeking => 3,   // AISTATE_SEEKING
+            Self::Menacing => 4,  // AISTATE_MENACING
+            Self::Fleeing => 5,   // AISTATE_FLEEING
+            Self::Attacking => 6, // AISTATE_ATTACKING
+        }
+    }
+
+    /// AI event code for script `FilterAIEvent` state-change notifications.
+    pub fn state_change_event_code(self) -> i32 {
+        match self {
+            Self::Sleeping => 100,
+            Self::Default => 101,
+            Self::Wondering => 102,
+            Self::Seeking => 103,
+            Self::Attacking => 104,
+            Self::Menacing => 105,
+            Self::Fleeing => 106,
+        }
+    }
+}
+
+// ── AI event codes for FilterAIEvent ────────────────────────────────
+//
+// Used by the per-actor script `FilterAIEvent` callback which can block
+// stimulus processing (early gate) or is notified of state changes (late
+// notification).
+
+/// Map a stimulus type to its AI event code for `FilterAIEvent`.
+///
+/// Returns `Some(code)` for stimuli with a defined event mapping and
+/// `None` for types that the original passes to `FilterAIEvent` as `-2`.
+/// The mapping covers event codes 0–52.
+///
+/// Maps the original game's stimulus values to AI event values.
+pub fn stimulus_to_ai_event_code(st: StimulusType) -> Option<i32> {
+    match st {
+        // Perception events (0–14)
+        StimulusType::EventView => Some(0),
+        StimulusType::EventOutOfView => Some(1),
+        StimulusType::EventHear => Some(2),
+        StimulusType::EventReachPoint => Some(3),
+        StimulusType::EventCouldntReachPoint => Some(4),
+        StimulusType::EventDone => Some(5),
+        StimulusType::EventImpossible => Some(6),
+        StimulusType::EventTimer => Some(7),
+        StimulusType::EventSeesBody => Some(8),
+        StimulusType::EventSeesObject => Some(9),
+        StimulusType::EventSeesSoldier => Some(10),
+        StimulusType::EventSeesFriendInTrouble => Some(11),
+        StimulusType::EventFitAgain => Some(12),
+        StimulusType::EventGotHit => Some(13),
+        StimulusType::EventLoseConsciousness => Some(14),
+        // Extended perception / combat events (15–32)
+        StimulusType::EventMissesCharly => Some(15),
+        StimulusType::EventObjectAway => Some(16),
+        StimulusType::EventSeesCharly => Some(17),
+        StimulusType::EventSyncCharly => Some(18),
+        StimulusType::EventAfterScriptGoOn => Some(19),
+        StimulusType::EventReturnToDuty => Some(20),
+        StimulusType::EventPanic => Some(21),
+        StimulusType::EventEnterSwordfight => Some(22),
+        StimulusType::EventQuitSwordfight => Some(23),
+        StimulusType::EventSwordStrike => Some(24),
+        StimulusType::EventWasp => Some(25),
+        StimulusType::EventWaspAway => Some(26),
+        StimulusType::EventApple => Some(27),
+        StimulusType::EventNet => Some(28),
+        StimulusType::EventNetAway => Some(29),
+        StimulusType::EventSeesBeggar => Some(30),
+        StimulusType::EventGetArrow => Some(31),
+        StimulusType::EventSeesBrawl => Some(32),
+        // Inter-NPC calls (33–48)
+        StimulusType::CallAlert => Some(33),
+        StimulusType::CallCombatAlert => Some(34),
+        StimulusType::CallFinishBrawl => Some(35),
+        StimulusType::CallHey => Some(36),
+        StimulusType::CallTowerGuardAlert => Some(37),
+        StimulusType::CallTowerGuardCallsMe => Some(38),
+        StimulusType::CallHint => Some(39),
+        StimulusType::CallInstruction => Some(40),
+        StimulusType::CallLookThere => Some(41),
+        StimulusType::CallCoordinate => Some(42),
+        StimulusType::CallReport => Some(43),
+        StimulusType::CallGoToOfficer => Some(44),
+        StimulusType::CallMrOfficerIAmBack => Some(45),
+        StimulusType::CallCharlyIsBack => Some(46),
+        StimulusType::CallPatrolCoordinate => Some(47),
+        StimulusType::CallYouJustWait => Some(48),
+        // Chase / combat / patrol events (49–52)
+        StimulusType::EventAppleChaseNear => Some(49),
+        StimulusType::EventDoorCombat => Some(50),
+        StimulusType::EventGaloppLoopEnd => Some(51),
+        StimulusType::EventSeesShadow => Some(52),
+        // Original-game stimuli with no public AI event mapping. The decision tick's
+        // default switch arm assigns -2 before calling FilterAIEvent.
+        StimulusType::EventPcShotAtMe
+        | StimulusType::EventArrowLaunched
+        | StimulusType::EventStone
+        | StimulusType::EventAdversaryWeak
+        | StimulusType::EventAfterCombatInjury
+        | StimulusType::CallCleanUpAfterBrawl
+        | StimulusType::EventMyTalk0
+        | StimulusType::EventMyTalk1
+        | StimulusType::EventMyTalk2
+        | StimulusType::EventMyTalk3
+        | StimulusType::CallYourTalk0
+        | StimulusType::CallYourTalk1
+        | StimulusType::CallYourTalk2
+        | StimulusType::CallYourTalk3
+        | StimulusType::EventGoodStrike
+        | StimulusType::EventLethalStrike
+        | StimulusType::EventEnemyNear
+        | StimulusType::EventStop
+        | StimulusType::ForceBattleDecision
+        | StimulusType::NoEvent => None,
+    }
+}
+
+fn pascal_debug_name_to_hyphen_upper<T: std::fmt::Debug>(value: T) -> String {
+    let name = format!("{value:?}");
+    let mut out = String::with_capacity(name.len() + 8);
+    let mut prev: Option<char> = None;
+    let mut chars = name.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch.is_uppercase() {
+            let split_before = prev.is_some_and(|p| {
+                p.is_lowercase()
+                    || p.is_ascii_digit()
+                    || chars.peek().is_some_and(|next| next.is_lowercase()) && p.is_uppercase()
+            });
+            if split_before {
+                out.push('-');
+            }
+        } else if ch.is_ascii_digit() && prev.is_some_and(|p| !p.is_ascii_digit()) {
+            out.push('-');
+        }
+
+        for upper in ch.to_uppercase() {
+            out.push(upper);
+        }
+        prev = Some(ch);
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// AI Substate — massive enum
+// ---------------------------------------------------------------------------
+
+/// Fine-grained substate within an [`AiState`]. Implemented as a giant
+/// flat enum with sentinel markers for each state group.
+///
+/// The numeric layout is preserved so savegame compatibility is possible
+/// if needed.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+#[allow(non_camel_case_types)] // preserve original naming for clarity
+pub enum Substate {
+    // -- Sleeping substates --
+    StartSleepingSubstates = 0,
+
+    SleepingForever,
+    SleepingUnconscious,
+    SleepingNapping,
+    SleepingAwakening,
+
+    EndSleepingSubstates,
+
+    // -- Default substates --
+    StartDefaultSubstates,
+
+    DefaultGotoPost,
+    DefaultGotoPostTurn,
+    DefaultGotoRoute,
+    DefaultGotoRouteTurn,
+    DefaultOnPost,
+    DefaultOnPostLookingSidewards,
+    DefaultEnroute,
+    DefaultScriptDriven,
+    DefaultInMacro,
+    DefaultInMacroWaitingForDone,
+    DefaultHomeSweetHome,
+    DefaultLookingOfficerForAdvice,
+    DefaultLookingForCharly,
+    DefaultLookingSidewardsForCharly,
+    DefaultDetectedCharly,
+    DefaultSynchronizing,
+    DefaultPatrolEnroute,
+    DefaultPatrolEnrouteWaiting,
+    DefaultLookingShadow,
+    DefaultChildApproachedWhistling,
+
+    EndDefaultSubstates,
+
+    // -- Wondering substates --
+    StartWonderingSubstates,
+
+    WonderingWatching,
+    WonderingLooking1,
+    WonderingLooking1Sidewards,
+    WonderingLooking2,
+    WonderingLooking2Sidewards,
+    WonderingLooking3,
+    WonderingLooking3Sidewards,
+    WonderingWaspInArmour,
+    WonderingAppleReactiontime,
+    WonderingAppleChasingChild,
+    WonderingAppleChasingChildWaiting,
+    WonderingAppleChasingChildEnd,
+    WonderingMoneyReactiontime,
+    WonderingApproachingMoney,
+    WonderingRunningForMoney,
+    WonderingTakingMoney,
+    WonderingBrawlReactiontime,
+    WonderingBrawlApproaching,
+    WonderingBrawlHitting,
+    WonderingBrawlGotHit,
+    WonderingBrawlRecovering,
+    WonderingWatchingForMoreMoney,
+    WonderingApproachingToLoot,
+    WonderingLooting,
+    WonderingAleReactiontime,
+    WonderingApproachingAle,
+    WonderingDrinkingAle,
+    WonderingAleAway,
+    WonderingWatchingTowerGuard,
+    WonderingUnderNet,
+    WonderingCivilianAdmiringHero,
+    WonderingCivilianEnemyReactiontime,
+    WonderingCivilianBodyReactiontime,
+    WonderingOfficerSeeingBrawl,
+    WonderingOfficerApproachingBrawl,
+    WonderingOfficerFinishingBrawl,
+    WonderingSoldierLookingOfficerWhoFinishedBrawl,
+    WonderingHeardWhistling,
+    WonderingWatchingWhistling,
+    WonderingChildApproachingWhistling,
+
+    EndWonderingSubstates,
+
+    // -- Seeking substates --
+    StartSeekingSubstates,
+
+    SeekingHeardstepsReactiontime,
+    SeekingHeardsteps,
+    SeekingSeekpoint,
+    SeekingSeekpointWatching,
+    SeekingSeekpointWatchingSidewards,
+    SeekingSeekpointPassedAmbushPointLeft,
+    SeekingSeekpointPassedAmbushPointRight,
+    SeekingSeekpointCheckingAmbushPoint,
+    SeekingSeekpointApproachingBeggar,
+    SeekingSeekpointIdentifyingBeggar1,
+    SeekingSeekpointIdentifyingBeggar2,
+    SeekingJustWatching,
+    SeekingJustWatchingSidewards,
+    SeekingKnightWatchingTowerGuard,
+    SeekingOfficerCallSoldier,
+    SeekingOfficerWaitForSoldier,
+    SeekingOfficerInstructSoldier,
+    SeekingOfficerWaitForInstructedSoldier,
+    SeekingOfficerGetReportFromSoldier,
+    SeekingOfficerGetAlertingReportFromSoldier,
+    SeekingSoldierCalledByOfficer,
+    SeekingSoldierGoToOfficer,
+    SeekingSoldierGetInstructedByOfficer,
+    SeekingSoldierReturnToOfficer,
+    SeekingSoldierGiveReportToOfficer,
+    SeekingSoldierGiveAlertingReportToOfficerStart,
+    SeekingSoldierGiveAlertingReportToOfficerPoint,
+    SeekingSoldierGiveAlertingReportToOfficerEnd,
+    SeekingOfficerCallGroup,
+    SeekingOfficerWaitForGroup,
+    SeekingOfficerWaitInsideHouseToInstructGroup,
+    SeekingOfficerLeavingHouseToInstructGroup,
+    SeekingOfficerInstructGroup,
+    SeekingOfficerInstructGroupPointing,
+    SeekingOfficerWaitForInstructedGroup,
+    SeekingGroupCalledByOfficer,
+    SeekingGroupGoToOfficer,
+    SeekingGroupGetInstructedByOfficer,
+    SeekingBodyReactiontime,
+    SeekingBody,
+    SeekingNet,
+    SeekingTakingNet,
+    SeekingBodyLookingDeadBody,
+    SeekingBodyAwakeningSleeperr,
+    SeekingOfficerLookingForSoldiers1,
+    SeekingOfficerLookingForSoldiers1Sidewards,
+    SeekingOfficerLookingForSoldiers2,
+    SeekingOfficerLookingForSoldiers2Sidewards,
+    SeekingOfficerLookingForSoldiers3,
+    SeekingOfficerLookingForSoldiers3Sidewards,
+    SeekingRunningToOfficer,
+    SeekingRunningToOfficerSeen,
+    SeekingOfficerWaitForAlertingSoldier,
+    SeekingArrowReactiontime,
+    SeekingArrow,
+    SeekingArrowJustWatching,
+    SeekingArrowJustWatchingSidewards,
+    SeekingCharly,
+    SeekingCharlyWatching,
+    SeekingDetectedCharly,
+    SeekingSendCharlyToOfficer,
+    SeekingLookingResurrectedCharly,
+    SeekingCharlySentToOfficer,
+    SeekingCharlyGoToOfficer,
+    SeekingCharlyGoToOfficerSeen,
+    SeekingCharlyGetLectureByOfficer,
+    SeekingOfficerWaitForCharly,
+    SeekingOfficerLectureCharly,
+    SeekingOfficerLectureCharlyPointing,
+    SeekingCombatAlertReactiontime,
+    SeekingCombatAlert,
+    SeekingCivilianRunningToSoldier,
+    SeekingCivilianRunningToSoldierSeen,
+    SeekingCivilianGiveAlertingReportToSoldierStart,
+    SeekingCivilianGiveAlertingReportToSoldierPoint,
+    SeekingCivilianGiveAlertingReportToSoldierEnd,
+    SeekingWaitForAlertingCivilian,
+    SeekingGetReportFromCivilian,
+    SeekingGetAlertingReportFromCivilian,
+
+    EndSeekingSubstates,
+
+    // -- Attacking substates --
+    StartAttackingSubstates,
+
+    AttackingReactiontimeTurning,
+    AttackingReactiontime,
+    AttackingReactiontimeRunning,
+    AttackingRunningToEnemy,
+    AttackingWalkingToEnemy,
+    AttackingChargingEnemy,
+    AttackingOverviewLookLeft,
+    AttackingOverviewLookRight,
+    AttackingSwordfight,
+    /// Original numeric substate retained even though the current combat
+    /// implementation also tracks the pending strike sequence explicitly.
+    /// Omitting it shifts every subsequent legacy substate discriminant.
+    AttackingSwordfightSpecialStrike,
+    AttackingSwordfightParade,
+    AttackingQuittingSwordfight,
+    AttackingReserve,
+    AttackingReserveOverview,
+    AttackingApproachToObserve,
+    AttackingObserve,
+    AttackingObserveAndMove,
+    AttackingGotHit,
+    AttackingGotHitStandingUp,
+    AttackingHitting,
+    AttackingApproachingNewEnemy,
+    AttackingMovingAroundOldEnemy,
+    AttackingApproachingSleepingEnemy,
+    AttackingKillingSleepingEnemy,
+    AttackingBowShooting,
+    AttackingBowLoading,
+    AttackingBowAiming,
+    AttackingBowObserving,
+    AttackingBowObservingLoading,
+    AttackingArcherRetireFromCombat,
+    AttackingArcherRetireFromCombatTurn,
+    AttackingProtectingWithShield,
+    AttackingAdvancingWithShield,
+    AttackingBowRunningBehindShieldBearer,
+    AttackingBowCorrectingPosition,
+    AttackingPhalanx,
+    AttackingRunningToPhalanx,
+    AttackingOfficerGivingOrders,
+    AttackingOfficerGivingOrdersWaiting,
+    AttackingTooProudToAttack,
+    AttackingTooProudToAttackOverview,
+    AttackingTooProudToAttackRetire,
+    AttackingTooProudToAttackRetireTurn,
+    AttackingTooProudToAttackApproach,
+    AttackingTowerGuardAlert,
+    AttackingTowerGuardObserve,
+    AttackingArcherRunOnShootingPath,
+    AttackingArcherRunOnShootingPathFinalSprint,
+    AttackingArcherRunOnShootingPathTurn,
+    AttackingArcherWaitOnArcheryPath,
+    AttackingArcherWaitOnArcheryPathBending,
+    AttackingDoorFightDelay,
+    AttackingDoorFightLeaving,
+    AttackingDoorFightTurning,
+    AttackingDoorFightWaiting,
+    AttackingRiderChargingApproachingBlindly,
+    AttackingRiderChargingApproaching,
+    AttackingRiderChargingPassing,
+    AttackingRiderChargingGettingDistance,
+    AttackingRiderChargingReturning,
+    AttackingReactiontimeBending,
+    AttackingArcherWaitOnBendPoint,
+
+    AttackingDummyBehaviour,
+
+    EndAttackingSubstates,
+
+    // -- Menacing substates --
+    StartMenacingSubstates,
+
+    MenacingPcInComa,
+
+    EndMenacingSubstates,
+
+    // -- Fleeing substates --
+    StartFleeingSubstates,
+
+    FleeingRunToHide,
+    FleeingRunToDoor,
+    FleeingHiding,
+    FleeingRunForArrowReserves,
+    FleeingPanic,
+    FleeingChildChased,
+    FleeingChildChasedSupplementalRuns,
+    FleeingChildChasedEnd,
+    FleeingChildFriendChased,
+    FleeingRunToAlertSoldiers,
+    FleeingRetireFromCombat,
+    FleeingRetireFromCombatTurn,
+    FleeingMerryManRunToLeaveMap,
+    FleeingMerryManLeaveMap,
+
+    EndFleeingSubstates,
+
+    // -- Additional substates (added later, outside main groups) --
+    BeginAdditionalSubstates,
+
+    AttackingSwordfightStepBack,
+    WonderingAppleSauceInTheVisor,
+    DefaultPatrolEnrouteRunning,
+    DefaultGotoChief,
+    DefaultPatrolChiefReturnToPatrol,
+    WonderingApproachingBrawlVictim,
+    WonderingAwakenBrawlVictim,
+    WonderingOfficerFinishingBrawlWaiting,
+    AttackingReturnToOtherPcAfterMenacing,
+    SeekingCharlyGetLectureByOfficer2,
+    AttackingRunningToLadder,
+    AttackingWaitingAtLadder,
+    SeekingHeardstepsPreReactiontime,
+    AttackingLastReserve,
+    AttackingRunToAvengerOnRoof,
+    AttackingWaitForAvengerOnRoof,
+    SeekingGotStopEvent,
+    SeekingGetAlertingReportFromCivilianLook,
+
+    NumberOfSubstates,
+
+    /// Sentinel — no substate.
+    None = 0xFFFF_FFFF,
+}
+
+impl Substate {
+    /// Return the top-level AI state that owns this numeric substate.
+    ///
+    /// The original game's state changes enforce these numeric family boundaries in
+    /// debug builds. Additional substates live after the contiguous family
+    /// ranges, so they are mapped explicitly here rather than inferred from
+    /// their names.
+    pub const fn ai_state_family(self) -> Option<AiState> {
+        let raw = self as u32;
+        if raw > Self::StartSleepingSubstates as u32 && raw < Self::EndSleepingSubstates as u32 {
+            return Some(AiState::Sleeping);
+        }
+        if raw > Self::StartDefaultSubstates as u32 && raw < Self::EndDefaultSubstates as u32 {
+            return Some(AiState::Default);
+        }
+        if raw > Self::StartWonderingSubstates as u32 && raw < Self::EndWonderingSubstates as u32 {
+            return Some(AiState::Wondering);
+        }
+        if raw > Self::StartSeekingSubstates as u32 && raw < Self::EndSeekingSubstates as u32 {
+            return Some(AiState::Seeking);
+        }
+        if raw > Self::StartAttackingSubstates as u32 && raw < Self::EndAttackingSubstates as u32 {
+            return Some(AiState::Attacking);
+        }
+        if raw > Self::StartMenacingSubstates as u32 && raw < Self::EndMenacingSubstates as u32 {
+            return Some(AiState::Menacing);
+        }
+        if raw > Self::StartFleeingSubstates as u32 && raw < Self::EndFleeingSubstates as u32 {
+            return Some(AiState::Fleeing);
+        }
+
+        match self {
+            Self::AttackingSwordfightStepBack
+            | Self::AttackingReturnToOtherPcAfterMenacing
+            | Self::AttackingRunningToLadder
+            | Self::AttackingWaitingAtLadder
+            | Self::AttackingLastReserve
+            | Self::AttackingRunToAvengerOnRoof
+            | Self::AttackingWaitForAvengerOnRoof => Some(AiState::Attacking),
+            Self::WonderingAppleSauceInTheVisor
+            | Self::WonderingApproachingBrawlVictim
+            | Self::WonderingAwakenBrawlVictim
+            | Self::WonderingOfficerFinishingBrawlWaiting => Some(AiState::Wondering),
+            Self::DefaultPatrolEnrouteRunning
+            | Self::DefaultGotoChief
+            | Self::DefaultPatrolChiefReturnToPatrol => Some(AiState::Default),
+            Self::SeekingCharlyGetLectureByOfficer2
+            | Self::SeekingHeardstepsPreReactiontime
+            | Self::SeekingGotStopEvent
+            | Self::SeekingGetAlertingReportFromCivilianLook => Some(AiState::Seeking),
+            _ => None,
+        }
+    }
+
+    pub fn log_string_from_u16(raw: u16) -> String {
+        Self::try_from(u32::from(raw))
+            .ok()
+            .and_then(Self::log_string)
+            .unwrap_or_else(|| "SUBSTATE-???".to_string())
+    }
+
+    pub fn log_string(self) -> Option<String> {
+        use Substate::*;
+
+        let text = match self {
+            StartSleepingSubstates
+            | EndSleepingSubstates
+            | StartDefaultSubstates
+            | EndDefaultSubstates
+            | StartWonderingSubstates
+            | EndWonderingSubstates
+            | StartSeekingSubstates
+            | EndSeekingSubstates
+            | StartAttackingSubstates
+            | EndAttackingSubstates
+            | StartMenacingSubstates
+            | EndMenacingSubstates
+            | StartFleeingSubstates
+            | EndFleeingSubstates
+            | BeginAdditionalSubstates
+            | AttackingRunToAvengerOnRoof
+            | AttackingWaitForAvengerOnRoof
+            | NumberOfSubstates
+            | None => return std::option::Option::None,
+
+            DefaultGotoPost => "SUBSTATE-DEFAULT-GOTOPOST".to_string(),
+            DefaultGotoPostTurn => "SUBSTATE-DEFAULT-GOTOPOST-TURN".to_string(),
+            DefaultGotoRoute => "SUBSTATE-DEFAULT-GOTOROUTE".to_string(),
+            DefaultGotoRouteTurn => "SUBSTATE-DEFAULT-GOTOROUTE-TURN".to_string(),
+            DefaultGotoChief => "SUBSTATE-DEFAULT-GOTOCHIEF".to_string(),
+            DefaultOnPost => "SUBSTATE-DEFAULT-ONPOST".to_string(),
+            DefaultOnPostLookingSidewards => {
+                "SUBSTATE-DEFAULT-ONPOST-LOOKING-SIDEWARDS".to_string()
+            }
+            DefaultInMacro => "SUBSTATE-DEFAULT-INMACRO".to_string(),
+            DefaultInMacroWaitingForDone => "SUBSTATE-DEFAULT-INMACRO-WAITING-FOR-DONE".to_string(),
+            WonderingBrawlGotHit => "SUBSTATE-WONDERING-BRAWL-GOTHIT".to_string(),
+            SeekingBodyAwakeningSleeperr => "SUBSTATE-SEEKING-BODY-AWAKENING-SLEEPER".to_string(),
+            AttackingSwordfight => "SUBSTATE-ATTACKING-SWORDFIGHT".to_string(),
+            AttackingSwordfightSpecialStrike => {
+                "SUBSTATE-ATTACKING-SWORDFIGHT-SPECIAL-STRIKE".to_string()
+            }
+            AttackingSwordfightParade => "SUBSTATE-ATTACKING-SWORDFIGHT-PARADE".to_string(),
+            AttackingQuittingSwordfight => "SUBSTATE-ATTACKING-QUITTING-SWORDFIGHT".to_string(),
+            AttackingSwordfightStepBack => "SUBSTATE-ATTACKING-SWORDFIGHT-STEP-BACK".to_string(),
+            AttackingArcherWaitOnArcheryPath => {
+                "SUBSTATE-ATTACKING-ARCHER-WAIT-ON-ACHERY-PATH".to_string()
+            }
+            AttackingArcherWaitOnArcheryPathBending => {
+                "SUBSTATE-ATTACKING-ARCHER-WAIT-ON-ACHERY-PATH-BENDING".to_string()
+            }
+            other => format!("SUBSTATE-{}", pascal_debug_name_to_hyphen_upper(other)),
+        };
+
+        Some(text)
+    }
+
+    /// Returns `true` if this substate is in the "seek area" group.
+    pub fn is_seek_area(self) -> bool {
+        matches!(
+            self,
+            Self::SeekingSeekpoint
+                | Self::SeekingSeekpointWatching
+                | Self::SeekingSeekpointWatchingSidewards
+                | Self::SeekingSeekpointPassedAmbushPointLeft
+                | Self::SeekingSeekpointPassedAmbushPointRight
+                | Self::SeekingSeekpointCheckingAmbushPoint
+                | Self::SeekingSeekpointApproachingBeggar
+                | Self::SeekingSeekpointIdentifyingBeggar1
+                | Self::SeekingSeekpointIdentifyingBeggar2
+        )
+    }
+
+    /// Returns `true` if this is any swordfight substate.
+    pub fn is_any_swordfight(self) -> bool {
+        matches!(
+            self,
+            Self::AttackingRunningToEnemy
+                | Self::AttackingWalkingToEnemy
+                | Self::AttackingChargingEnemy
+                | Self::AttackingSwordfight
+                | Self::AttackingSwordfightSpecialStrike
+                | Self::AttackingSwordfightParade
+                | Self::AttackingApproachingNewEnemy
+                | Self::AttackingSwordfightStepBack
+                | Self::AttackingMovingAroundOldEnemy
+        )
+    }
+
+    /// Returns `true` if this is an active swordfight substate.
+    pub fn is_real_swordfight(self) -> bool {
+        matches!(
+            self,
+            Self::AttackingSwordfight
+                | Self::AttackingSwordfightSpecialStrike
+                | Self::AttackingSwordfightParade
+                | Self::AttackingApproachingNewEnemy
+                | Self::AttackingSwordfightStepBack
+                | Self::AttackingMovingAroundOldEnemy
+        )
+    }
+
+    /// Any money-taking substate.
+    pub fn is_take_money(self) -> bool {
+        matches!(
+            self,
+            Self::WonderingMoneyReactiontime
+                | Self::WonderingApproachingMoney
+                | Self::WonderingRunningForMoney
+                | Self::WonderingTakingMoney
+        )
+    }
+
+    /// Any money-fight substate.
+    pub fn is_fight_for_money(self) -> bool {
+        matches!(
+            self,
+            Self::WonderingBrawlReactiontime
+                | Self::WonderingBrawlApproaching
+                | Self::WonderingBrawlHitting
+                | Self::WonderingBrawlGotHit
+                | Self::WonderingBrawlRecovering
+                | Self::WonderingApproachingToLoot
+                | Self::WonderingLooting
+                | Self::WonderingWatchingForMoreMoney
+        )
+    }
+
+    /// Any ale-taking substate.
+    pub fn is_take_ale(self) -> bool {
+        matches!(
+            self,
+            Self::WonderingAleReactiontime
+                | Self::WonderingApproachingAle
+                | Self::WonderingDrinkingAle
+                | Self::WonderingAleAway
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Emoticon type
+// ---------------------------------------------------------------------------
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    Default,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum EmoticonType {
+    #[default]
+    None = 0,
+    GrowingQuestionMark,
+    QuestionMark,
+    XMark,
+    Zzz,
+    Cloud,
+    Sun,
+    Thunderstorm,
+    Drunken,
+}
+
+// ---------------------------------------------------------------------------
+// Probability distribution
+// ---------------------------------------------------------------------------
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum ProbabilityDistribution {
+    Rectangle = 0,
+    Gauss,
+    GaussHighVariance,
+    Dirac,
+}
+
+// ---------------------------------------------------------------------------
+// Stimulus types (events / calls)
+// ---------------------------------------------------------------------------
+
+/// The type of stimulus that can trigger an AI reaction.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum StimulusType {
+    // -- Perception events --
+    EventView = 0,
+    EventOutOfView,
+    EventHear,
+    EventReachPoint,
+    EventCouldntReachPoint,
+    EventDone,
+    EventImpossible,
+    EventTimer,
+    EventPcShotAtMe,
+    EventSeesBody,
+    EventSeesObject,
+    EventSeesSoldier,
+    EventSeesFriendInTrouble,
+    EventFitAgain,
+    EventGotHit,
+    EventLoseConsciousness,
+    EventMissesCharly,
+    EventObjectAway,
+    EventSeesCharly,
+    EventSyncCharly,
+    EventAfterScriptGoOn,
+    EventReturnToDuty,
+    EventPanic,
+    EventEnterSwordfight,
+    EventQuitSwordfight,
+    EventSwordStrike,
+    EventWasp,
+    EventWaspAway,
+    EventApple,
+    EventNet,
+    EventNetAway,
+    EventSeesBeggar,
+    EventGetArrow,
+    EventSeesBrawl,
+    // -- Calls (inter-NPC communication) --
+    CallAlert,
+    CallCombatAlert,
+    CallHey,
+    CallHint,
+    CallInstruction,
+    CallLookThere,
+    CallCoordinate,
+    CallReport,
+    CallGoToOfficer,
+    CallMrOfficerIAmBack,
+    CallCharlyIsBack,
+    CallPatrolCoordinate,
+    CallTowerGuardAlert,
+    CallTowerGuardCallsMe,
+    CallFinishBrawl,
+    CallYouJustWait,
+    EventAppleChaseNear,
+    EventDoorCombat,
+    EventGaloppLoopEnd,
+    EventSeesShadow,
+    EventArrowLaunched,
+    EventStone,
+    EventAdversaryWeak,
+    EventAfterCombatInjury,
+    CallCleanUpAfterBrawl,
+    EventMyTalk1,
+    EventMyTalk2,
+    EventMyTalk3,
+    CallYourTalk1,
+    CallYourTalk2,
+    CallYourTalk3,
+    EventGoodStrike,
+    EventLethalStrike,
+    EventEnemyNear,
+    EventMyTalk0,
+    CallYourTalk0,
+    EventStop,
+    NoEvent,
+    /// Script-triggered: force AI to run battle_decisions(sim, ) immediately.
+    ForceBattleDecision,
+}
+
+impl StimulusType {
+    pub fn log_string_from_u16(raw: u16) -> &'static str {
+        Self::try_from(u32::from(raw))
+            .ok()
+            .and_then(Self::log_string)
+            .unwrap_or("EVENT-???")
+    }
+
+    pub fn log_string(self) -> Option<&'static str> {
+        Some(match self {
+            StimulusType::EventView => "EVENT-VIEW",
+            StimulusType::EventOutOfView => "EVENT-OUTOFVIEW",
+            StimulusType::EventHear => "EVENT-HEAR",
+            StimulusType::EventReachPoint => "EVENT-REACHPOINT",
+            StimulusType::EventCouldntReachPoint => "EVENT-COULDNT-REACHPOINT",
+            StimulusType::EventDone => "EVENT-DONE",
+            StimulusType::EventImpossible => "EVENT-IMPOSSIBLE",
+            StimulusType::EventTimer => "EVENT-TIMER",
+            StimulusType::EventPcShotAtMe => "EVENT-PC-SHOT-AT-ME",
+            StimulusType::EventSeesBody => "EVENT-SEESBODY",
+            StimulusType::EventSeesObject => "EVENT-SEESOBJECT",
+            StimulusType::EventSeesSoldier => "EVENT-SEES-SOLDIER",
+            StimulusType::EventSeesFriendInTrouble => "EVENT-SEESFRIENDINTROUBLE",
+            StimulusType::EventFitAgain => "EVENT-FITAGAIN",
+            StimulusType::EventGotHit => "EVENT-GOTHIT",
+            StimulusType::EventLoseConsciousness => "EVENT-LOSE-CONSCIOUSNESS",
+            StimulusType::EventMissesCharly => "EVENT-MISSES-CHARLY",
+            StimulusType::EventObjectAway => "EVENT-OBJECT-AWAY",
+            StimulusType::EventSeesCharly => "EVENT-SEES-CHARLY",
+            StimulusType::EventSyncCharly => "EVENT-SYNC-CHARLY",
+            StimulusType::EventAfterScriptGoOn => "EVENT-AFTER-SCRIPT-GO-ON",
+            StimulusType::EventReturnToDuty => "EVENT-RETURN-TO-DUTY",
+            StimulusType::EventPanic => "EVENT-PANIC",
+            StimulusType::EventEnterSwordfight => "EVENT-ENTER-SWORDFIGHT",
+            StimulusType::EventQuitSwordfight => "EVENT-QUIT-SWORDFIGHT",
+            StimulusType::EventSwordStrike => "EVENT-SWORDSTRIKE",
+            StimulusType::EventWasp => "EVENT-WASP",
+            StimulusType::EventWaspAway => "EVENT-WASP-AWAY",
+            StimulusType::EventApple => "EVENT-APPLE",
+            StimulusType::EventNet => "EVENT-NET",
+            StimulusType::EventNetAway => "EVENT-NET-AWAY",
+            StimulusType::EventSeesBeggar => "EVENT-SEES-BEGGAR",
+            StimulusType::EventGetArrow => "EVENT-GET-ARROW",
+            StimulusType::EventSeesBrawl => "EVENT-SEES-BRAWL",
+            StimulusType::CallAlert => "CALL-ALERT",
+            StimulusType::CallCombatAlert => "CALL-COMBAT-ALERT",
+            StimulusType::CallHey => "CALL-HEY",
+            StimulusType::CallHint => "CALL-HINT",
+            StimulusType::CallInstruction => "CALL-INSTRUCTION",
+            StimulusType::CallLookThere => "CALL-LOOKTHERE",
+            StimulusType::CallCoordinate => "CALL-COORDINATE",
+            StimulusType::CallReport => "CALL-REPORT",
+            StimulusType::CallGoToOfficer => "CALL-GO-TO-OFFICER",
+            StimulusType::CallMrOfficerIAmBack => "CALL-MR-OFFICER-I-AM-BACK",
+            StimulusType::CallCharlyIsBack => "CALL-CHARLY-IS-BACK",
+            StimulusType::CallPatrolCoordinate => "CALL-PATROL-COORDINATE",
+            StimulusType::CallTowerGuardAlert => "CALL-TOWER-GUARD-ALERT",
+            StimulusType::CallTowerGuardCallsMe => "CALL-TOWER-GUARD-CALLS-ME",
+            StimulusType::CallFinishBrawl => "CALL-FINISH-BRAWL",
+            StimulusType::CallYouJustWait => "CALL-YOU-JUST-WAIT",
+            StimulusType::EventAppleChaseNear => "EVENT-APPLE-CHASE-NEAR",
+            StimulusType::EventDoorCombat => "EVENT-DOOR-COMBAT",
+            StimulusType::EventGaloppLoopEnd => "EVENT-GALOPP-LOOP-END",
+            StimulusType::EventSeesShadow => "EVENT-SEES-SHADOW",
+            StimulusType::EventArrowLaunched => "EVENT-ARROW-LAUNCHED",
+            StimulusType::EventStone => "EVENT-STONE",
+            StimulusType::EventAdversaryWeak => "EVENT-ADVERSARY-WEAK",
+            StimulusType::EventAfterCombatInjury => "EVENT-AFTER-COMBAT-INJURY",
+            StimulusType::CallCleanUpAfterBrawl => "CALL-CLEAN-UP-AFTER-BRAWL",
+            StimulusType::EventMyTalk1 => "EVENT-MYTALK-1",
+            StimulusType::EventMyTalk2 => "EVENT-MYTALK-2",
+            StimulusType::EventMyTalk3 => "EVENT-MYTALK-3",
+            StimulusType::CallYourTalk1 => "CALL-YOURTALK-1",
+            StimulusType::CallYourTalk2 => "CALL-YOURTALK-2",
+            StimulusType::CallYourTalk3 => "CALL-YOURTALK-3",
+            StimulusType::EventGoodStrike => "EVENT-GOOD-STRIKE",
+            StimulusType::EventLethalStrike => "EVENT-LETHAL-STRIKE",
+            StimulusType::EventEnemyNear => "EVENT-ENEMY-NEAR",
+            StimulusType::EventMyTalk0 => "EVENT-MYTALK-0",
+            StimulusType::CallYourTalk0 => "CALL-YOURTALK-0",
+            StimulusType::EventStop => "EVENT-STOP",
+            StimulusType::NoEvent | StimulusType::ForceBattleDecision => return None,
+        })
+    }
+}
+
+/// Classification of stimulus types into processing categories.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StimulusCategory {
+    /// Expected events (timer, reachpoint, etc.) — drive state progression.
+    Expected,
+    /// Unexpected events — interruptions that may change behavior.
+    Unexpected,
+    /// Alerting events — high-priority perception events.
+    Alerting,
+    /// Return to duty — special handling.
+    ReturnToDuty,
+    /// Ignored by this AI type.
+    Ignored,
+}
+
+// ---------------------------------------------------------------------------
+// Remark types
+// ---------------------------------------------------------------------------
+
+/// Speech/remark that an NPC can make.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    num_enum::TryFromPrimitive,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum Remark {
+    SeesBody = 0,
+    AwakensSleeperr,
+    BahIlBougePus,
+    SeesEnemy,
+    HuntsEnemy,
+    StartsCombat,
+    ProvokesCombat,
+    GoodStrikeCombat,
+    CombatInsult,
+    Warcry,
+    KilledAdversary,
+    Cassos,
+    CallsOfficer,
+    TellsOfficerBody,
+    TellsOfficerEnemy,
+    TellsOfficerOther,
+    TellsOfficerCharlyAway,
+    TellsOfficerWhere,
+    AwaitsOrders,
+    TellsOfficerNothing,
+    CharlyDefendsHimself,
+    MissesCharly,
+    DidntFindCharly,
+    FoundCharly,
+    SendsCharlyToOfficer,
+    WaspSting,
+    UnderNet,
+    SeesFriendUnderNet,
+    Arrow,
+    Wounded,
+    Dies,
+    Strangled,
+    TiedUp,
+    SeesObject,
+    AleYes,
+    AleNo,
+    Drunken,
+    HitByApple,
+    ChasesChild,
+    CaughtChild,
+    GoldYes,
+    GoldNo,
+    GoldBrawl,
+    SearchingSoldierGold,
+    SearchingSoldierNothing,
+    EndsSearch,
+    Panic,
+    HearsNoise,
+    ControlsBeggar,
+    MenacesPcInComa,
+    BadExcuse,
+    CryAlert,
+    ShieldBearerCovers,
+    ShieldBearersLineFormation,
+    ArchersBehindShieldBearers,
+    ProudDontFight,
+    ProudFinallyFight,
+    OfficerSeesBrawl,
+    OfficerEndsBrawl,
+    OfficerStopsPatrol,
+    OfficerStartsPatrol,
+    OfficerComplains,
+    OfficerAsksWhatsup,
+    OfficerAsksWhere,
+    OfficerEndsConversation,
+    OfficerCallsSoldier,
+    OfficerSendsOutSoldier,
+    OfficerCallsGroup,
+    OfficerSendsOutGroup,
+    OfficerSendsOutGroupForCharly,
+    OfficerRebukesCharly,
+    OfficerRebukesCharlyEnd,
+    OfficerGivesAttackOrder,
+    OutOfAmmunition,
+    SpecialAction,
+    AdmiresObjectScript,
+    MissesObjectScript,
+    GiveOrReceiveOrder,
+
+    // -- Civilian remarks --
+    CivSeesBody,
+    CivSeesDeadBody,
+    CivCallsSoldier,
+    CivDenunciates,
+    CivAdmiresRobin,
+    CivPanic,
+    CivWounded,
+    CivDies,
+    CivThanx,
+    CivCries,
+    CivBeerYes,
+    CivBeerNo,
+    CivSeesSoldiersUnderNet,
+    CivUnderNet,
+    CivApple,
+    CivWasps,
+    CivWhistling,
+    CivSeesBrawl,
+    CivGoldYes,
+    CivGoldNo,
+    CivBeggarBegging,
+    CivBeggarGivesInfo,
+    CivBeggarWantsMore,
+    CivBeggarGivesLastInfo,
+    CivBeggarThanx,
+    CivBeggarIdentifiesHimself,
+    CivChildCaughtBySoldier,
+    CivChildChasedBySoldier,
+
+    // -- VIP remarks --
+    VipProudDontFight,
+    VipProudFinallyFight,
+    VipStartsCombat,
+    VipWounded,
+    VipDies,
+    VipGoodStrikeCombat,
+    VipWarcry,
+    VipVictory,
+    VipSpeaksToHimself,
+    VipAleNo,
+    VipNetNo,
+    VipAppleNo,
+    VipWaspsNo,
+    VipGoldNo,
+
+    NumberOfRemarks,
+    /// Sentinel — no remark.
+    TheSoundOfSilence,
+}
+
+impl Remark {
+    /// First civilian remark variant.
+    pub const FIRST_CIVILIAN: Self = Self::CivSeesBody;
+    /// First VIP remark variant.
+    pub const FIRST_VIP: Self = Self::VipProudDontFight;
+
+    pub fn log_string_from_u16(raw: u16) -> &'static str {
+        Self::try_from(u32::from(raw))
+            .map(Self::speech)
+            .unwrap_or(" ........... ")
+    }
+
+    /// Returns the NPC's actual French speech line for this remark.
+    ///
+    /// Strings are kept verbatim, including trailing-tab and trailing-space
+    /// quirks (some lines pad with tabs to reserve display width). Variants
+    /// without a dedicated arm — `NumberOfRemarks`, `TheSoundOfSilence` —
+    /// fall through to the default arm.
+    pub fn speech(self) -> &'static str {
+        match self {
+            Remark::SeesBody => "Ca va?",
+            Remark::AwakensSleeperr => "Leve-toi!",
+            Remark::BahIlBougePus => "Il est mort!",
+            Remark::SeesEnemy => "Declinez votre identite! ",
+            Remark::HuntsEnemy => "Halte!",
+            Remark::StartsCombat => "Defends-toi !",
+            Remark::ProvokesCombat => "Allez, viens!",
+            Remark::GoodStrikeCombat => "Hahaaaaa!",
+            Remark::CombatInsult => "Gibier de Potence!",
+            Remark::Warcry => "A l'assaut!",
+            Remark::KilledAdversary => "Un de moins!",
+            Remark::Cassos => "Il est trop fort !",
+            Remark::CallsOfficer => "Sire!",
+            Remark::TellsOfficerBody => "Sire, un cadavre, Sire!",
+            Remark::TellsOfficerEnemy => "Sire, des ennemis, Sire!",
+            Remark::TellsOfficerOther => "Sire, un probleme, Sire !",
+            Remark::TellsOfficerCharlyAway => "Sire, un garde manque a l'appel, Sire!",
+            Remark::TellsOfficerWhere => "Sire, la-bas, Sire!",
+            Remark::AwaitsOrders => "Sire, A vos ordres, Sire!",
+            Remark::TellsOfficerNothing => "Sire, il n'y a rien, Sire!",
+            Remark::CharlyDefendsHimself => "Sire, je...",
+            Remark::MissesCharly => "O\u{FFFD} est-il?",
+            Remark::DidntFindCharly => "Je ne le trouve pas!",
+            Remark::FoundCharly => "O\u{FFFD} etais-tu?  ",
+            Remark::SendsCharlyToOfficer => "L'officier te demande!\t\t\t\t\t\t\t\t\t\t\t\t\t\t",
+            Remark::WaspSting => "Bon sang de guepe!\t\t\t\t\t\t\t\t\t\t\t\t\t\t",
+            Remark::UnderNet => "Au secours! Sortez-moi d'ici!\t\t\t\t\t\t\t\t\t\t\t\t\t\t",
+            Remark::SeesFriendUnderNet => "Aidons-les!",
+            Remark::Arrow => "Qu'est-ce ?",
+            Remark::Wounded => "Ouille!",
+            Remark::Dies => "Ahhhh...",
+            Remark::Strangled => " Alagrll mmf rgh",
+            Remark::TiedUp => "Mohfefour!",
+            Remark::SeesObject => "Qu'est-ce que c'est?",
+            Remark::AleYes => "Hmm! Ca c'est gentil!",
+            Remark::AleNo => "On ne boit pas en service !",
+            Remark::Drunken => " HUPS On ne boit pas HUPS pendant le s... HUPS service!",
+            Remark::HitByApple => "Qui a lance ca?",
+            Remark::ChasesChild => "Encore ces gamins!",
+            Remark::CaughtChild => "Tu vas voir, chenapan !",
+            Remark::GoldYes => "Ah, de l'or!",
+            Remark::GoldNo => "Cet argent ne m'appartient pas!",
+            Remark::GoldBrawl => "Eh! C'est a moi!",
+            Remark::SearchingSoldierGold => "Ah! C'est donc lui qui l'avait!",
+            Remark::SearchingSoldierNothing => "C'est pas lui...",
+            Remark::EndsSearch => "Il faut que je retourne a mon poste...",
+            Remark::Panic => "Allons chercher des secours!",
+            Remark::HearsNoise => "Qui va la?...",
+            Remark::ControlsBeggar => "Controle!",
+            Remark::MenacesPcInComa => "J'en tiens un!",
+            Remark::BadExcuse => "Sire, il vous a insulte, Sire!",
+            Remark::CryAlert => "Alerte!!! Alerte!!!",
+            Remark::ShieldBearerCovers => {
+                "A couvert! Ils ont des arcs!\t\t\t\t\t\t\t\t\t\t\t\t\t\t"
+            }
+            Remark::ShieldBearersLineFormation => "En ligne!",
+            Remark::ArchersBehindShieldBearers => "Les archers, derriere!",
+            Remark::ProudDontFight => "Montrez-moi ce que vous savez faire!",
+            Remark::ProudFinallyFight => "Je vais vous montrer moi...",
+            Remark::OfficerSeesBrawl => "Qu'est-ce qu'ils font, encore?",
+            Remark::OfficerEndsBrawl => "Hkhmmmm!\t\t\t\t\t\t\t\t\t\t\t\t\t\t",
+            Remark::OfficerStopsPatrol => "Halte !",
+            Remark::OfficerStartsPatrol => "En avant, marche !",
+            Remark::OfficerComplains => "Bande d'incapables !",
+            Remark::OfficerAsksWhatsup => "Qu' y a-t-il, Soldat?",
+            Remark::OfficerAsksWhere => "O\u{FFFD} ?",
+            Remark::OfficerEndsConversation => "Rompez!",
+            Remark::OfficerCallsSoldier => "Soldat!",
+            Remark::OfficerSendsOutSoldier => "Va voir par la",
+            Remark::OfficerCallsGroup => "A moi, la garde!",
+            Remark::OfficerSendsOutGroup => "Examinez les alentours! Execution!",
+            Remark::OfficerSendsOutGroupForCharly => "Trouvez-moi ce tire au flanc! Execution!",
+            Remark::OfficerRebukesCharly => "Alors? On quitte son poste?",
+            Remark::OfficerRebukesCharlyEnd => "Tu me feras trois jours!",
+            Remark::OfficerGivesAttackOrder => "Soldats! A l'attaaaaque!!!",
+            Remark::OutOfAmmunition => "J'ai plus de fleches!\t\t\t\t\t\t\t\t\t\t\t\t\t\t",
+            Remark::SpecialAction => "hahaha",
+            Remark::AdmiresObjectScript => "Alors ca ressemble a ca?",
+            Remark::MissesObjectScript => "Bon sang! Il a disparu!",
+            Remark::GiveOrReceiveOrder => "J'y vais!",
+
+            Remark::CivSeesBody => "Oh, le pauvre!",
+            Remark::CivSeesDeadBody => "Mais il est mort!",
+            Remark::CivCallsSoldier => "Eh, le garde! ",
+            Remark::CivDenunciates => "Y sont passes par la!",
+            Remark::CivAdmiresRobin => "Qu'il est beau!",
+            Remark::CivPanic => "A l'aide!",
+            Remark::CivWounded => "Pitie!",
+            Remark::CivDies => "hennnfff",
+            Remark::CivThanx => "Oh, merci, merci",
+            Remark::CivCries => "C'est affreux, affreux",
+            Remark::CivBeerYes => "Une bonne chopine, ca rechauffe...",
+            Remark::CivBeerNo => "Non, ca me ferait perdre la tete...",
+            Remark::CivSeesSoldiersUnderNet => "Tiens? Elle a fini par en attraper un?",
+            Remark::CivUnderNet => "Mais qui a fait ca?",
+            Remark::CivApple => "Oh, le vilain petit garcon!",
+            Remark::CivWasps => "Au secours, des guepes!",
+            Remark::CivWhistling => "Arretes, mon mari va t'entendre!",
+            Remark::CivSeesBrawl => "Quelle bande de brutes!",
+            Remark::CivGoldYes => "Oh! Quelle chance!",
+            Remark::CivGoldNo => "L'argent ne fait pas le bonheur...",
+            Remark::CivBeggarBegging => "L'aumone, mon bon seigneur, l'aumone!",
+            Remark::CivBeggarGivesInfo => "Merci bien! Je vais vous dire...",
+            Remark::CivBeggarWantsMore => "Encore quelques sous, monseigneur?",
+            Remark::CivBeggarGivesLastInfo => "Mon dernier conseil...",
+            Remark::CivBeggarThanx => "Oh, merci!",
+            Remark::CivBeggarIdentifiesHimself => "Voila, voila",
+            Remark::CivChildCaughtBySoldier => "C'etait pas moi",
+            Remark::CivChildChasedBySoldier => "Tu m'attraperas pas!",
+
+            Remark::VipProudDontFight => "Qu'on l'echarpe!",
+            Remark::VipProudFinallyFight => "Ahhh! Poussez-vous, bande d'incapables!",
+            Remark::VipStartsCombat => "Je vais t'ecraser!",
+            Remark::VipWounded => "Argh!",
+            Remark::VipDies => "Noir tout est si  noir",
+            Remark::VipGoodStrikeCombat => "Ca fait mal, hein?",
+            Remark::VipWarcry => "Je ne vais pas te tuer tout de suite...",
+            Remark::VipVictory => "Pff trop facile",
+            Remark::VipSpeaksToHimself => "Une bataille! Qu'on me donne une bataille!",
+            Remark::VipAleNo => "De la biere Tiede! Je ferait fouetter cet impudent!",
+            Remark::VipNetNo => "Ah! Quelle idee grotesque!",
+            Remark::VipAppleNo => "Une pomme? J'ai demande du CHEVREUIL que diable!",
+            Remark::VipWaspsNo => "Des guepes? Hmm C'est une idee...",
+            Remark::VipGoldNo => "Hmm Si un serviteur la ramasse, je le ferais fouetter..",
+
+            Remark::NumberOfRemarks | Remark::TheSoundOfSilence => " ........... ",
+        }
+    }
+}
+
+impl std::fmt::Display for Remark {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.speech())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Question (decision-making queries)
+// ---------------------------------------------------------------------------
+
+/// Questions the AI asks itself to make behavior decisions.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum Question {
+    ShallIFollowSteps = 0,
+    ShallIStayOnMyPost,
+    ShallIFollowLostEnemy,
+    ShallIFollowHint,
+    ShallIHelpFriendInTrouble,
+    ShallIRun,
+    ShallITakeAle,
+    ShallITakeMoney,
+    ShallIReactOnApple,
+    ShallIFightForMoney,
+    ShallISeekBeforeAlertingOfficer,
+    ShallISeekBeforeAlertingSoldiers,
+    ShallISendOutSoldier,
+    ShallILookWhistle,
+    ShallIFollowWhistle,
+    HasTheNewTaskPriority,
+}
+
+// ---------------------------------------------------------------------------
+// Battle decision
+// ---------------------------------------------------------------------------
+
+/// Battle-time tactical decisions.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum Decision {
+    None = 0,
+    PredecisionOffensive,
+    PredecisionDefensive,
+    Cassos,
+    Fight,
+    Observe,
+    Reserve,
+    AlertSoldiers,
+    RunAndAlertSoldiers,
+    Menace,
+    Shoot,
+    ArcherStepBack,
+    LookForHelp,
+    LookForHelpIfNobodyElseDoes,
+    CoverBehindShieldBearer,
+    TooProudToAttack,
+    TowerGuardAlert,
+    TowerGuardObserve,
+    ArcherObserve,
+    RunToArcheryPoint,
+    RunForNewArrows,
+    LastReserve,
+}
+
+impl Decision {
+    pub fn log_string_from_u16(raw: u16) -> &'static str {
+        Self::try_from(u32::from(raw))
+            .ok()
+            .and_then(Self::log_string)
+            .unwrap_or("DECISION-???")
+    }
+
+    pub fn log_string(self) -> Option<&'static str> {
+        Some(match self {
+            Decision::None | Decision::PredecisionOffensive | Decision::PredecisionDefensive => {
+                return None;
+            }
+            Decision::Cassos => "DECISION-CASSOS",
+            Decision::Fight => "DECISION-FIGHT",
+            Decision::Observe => "DECISION-OBSERVE",
+            Decision::Reserve => "DECISION-RESERVE",
+            Decision::AlertSoldiers => "DECISION-ALERT-SOLDIERS",
+            Decision::RunAndAlertSoldiers => "DECISION-RUN-AND-ALERT-SOLDIERS",
+            Decision::Menace => "DECISION-MENACE",
+            Decision::Shoot => "DECISION-SHOOT",
+            Decision::ArcherStepBack => "DECISION-ARCHER-STEP-BACK",
+            Decision::LookForHelp => "DECISION-LOOK-4-HELP",
+            Decision::LookForHelpIfNobodyElseDoes => "DECISION-LOOK-4-HELP-IF-NOBODY-ELSE-DOES",
+            Decision::CoverBehindShieldBearer => "DECISION-COVER-BEHIND-SHIELD-BEARER",
+            Decision::TooProudToAttack => "DECISION-TOO-PROUD-TO-ATTACK",
+            Decision::TowerGuardAlert => "DECISION-TOWER-GUARD-ALERT",
+            Decision::TowerGuardObserve => "DECISION-TOWER-GUARD-OBSERVE",
+            Decision::ArcherObserve => "DECISION-ARCHER-OBSERVE",
+            Decision::RunToArcheryPoint => "DECISION-RUN-TO-ARCHERY-POINT",
+            Decision::RunForNewArrows => "DECISION-RUN-FOR-NEW-ARROWS",
+            Decision::LastReserve => "DECISION-LAST-RESERVE",
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cross-NPC actions (phalanx coordination, stimulus forwarding)
+// ---------------------------------------------------------------------------
+
+/// Actions that one NPC's AI emits to affect another NPC. The engine
+/// drains these after each think() and applies them to the targets.
+/// Used for patterns like calling `InstructGatherPosition` then
+/// delivering `CALL_INSTRUCTION`, and recursive `BreakPhalanx`.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum CrossNpcAction {
+    /// Synchronously deliver `CALL_ALERT` and resume the caller with the
+    /// recipient's actual `Think` result. The original uses the returned bool
+    /// to decide whether the reporting NPC may enter its approach/report
+    /// handshake; predicting from a recipient snapshot loses script-filter and
+    /// re-entrant callback effects.
+    RequestAlert {
+        target: NpcHandle,
+        caller: NpcHandle,
+        continuation: AlertContinuation,
+    },
+    /// Synchronously deliver a direct `Think` call whose boolean controls a
+    /// caller-side continuation. The recipient may re-enter and mutate the
+    /// caller before returning, so the continuation resumes on live fields.
+    RequestThinkResult {
+        target: NpcHandle,
+        caller: NpcHandle,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+        continuation: ThinkResultContinuation,
+    },
+    /// Synchronously call a patrol chief's
+    /// patrol-wide stimulus dispatch and resume the subordinate
+    /// according to that routine's actual boolean result. This is deliberately
+    /// not a `Think` call: an eligible chief with an empty patrol returns false
+    /// without handling the stimulus, so the subordinate must handle it
+    /// locally.
+    RequestPatrolDispatch {
+        chief: NpcHandle,
+        caller: NpcHandle,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+    },
+    /// Set gather position and gather direction on the target NPC.
+    ///
+    /// The gather instruction itself is a plain setter: the alert paths that
+    /// hand out formation slots only stash the slot, and the recipient reads
+    /// it whenever its own behaviour next needs a gather point. Only the
+    /// phalanx-correction paths follow the setter with a `CALL_INSTRUCTION`
+    /// Think, and they do so exclusively for members still standing in the
+    /// phalanx — hence `call_instruction`, which re-checks that substate at
+    /// delivery time because an earlier member's Think may have moved this one.
+    InstructGatherPosition {
+        target: NpcHandle,
+        position: Position,
+        direction: u16,
+        call_instruction: bool,
+    },
+    /// Propagate break-phalanx to target: clear their combat neighbours,
+    /// set `phalanx_aborted = true`, and trigger battle planning.
+    BreakPhalanx {
+        target: NpcHandle,
+        refresh_them_list: bool,
+    },
+    /// Deliver a stimulus to the target NPC (e.g. `CALL_COORDINATE`).
+    SendStimulus {
+        target: NpcHandle,
+        stimulus_type: StimulusType,
+        /// Optional payload (position, human handle, etc.).  Defaults to
+        /// `StimulusInfo::None` for stimuli that carry no data.
+        info: StimulusInfo,
+        /// When set, if the target's `think()` returns `false` (stimulus
+        /// not handled), redeliver the stimulus to this NPC instead. Used
+        /// in conversation chains to fall back to the original sender when
+        /// the receiver doesn't handle the call.
+        fallback_to_sender: Option<NpcHandle>,
+        /// Propagated `Stimulus::to_whole_patrol` flag — set when a patrol
+        /// chief broadcasts a stimulus to subordinates. Receivers must
+        /// restore this flag when rebuilding the `Stimulus`, otherwise
+        /// `dispatch_stimulus_to_whole_patrol` fails to early-exit on the
+        /// member side and re-delegates back to the chief, producing an
+        /// unbounded chief↔member ping-pong loop.
+        to_whole_patrol: bool,
+    },
+    /// Broadcast a whole-patrol stimulus from a chief to its subordinates.
+    ///
+    /// The chief feeds the stimulus back into its own `think` first, and that
+    /// self-call may cascade arbitrarily far (a standard-procedure handler can
+    /// call a subordinate, who relays back to the chief, who broadcasts again).
+    /// Only once that cascade has fully drained does the chief walk its
+    /// members, and each member's 360-degree detection gate is evaluated
+    /// immediately before that member's own `think`. Both effects are
+    /// observable in the visibility-query stream, so the member walk cannot be
+    /// resolved into per-member `SendStimulus` entries at push time: the
+    /// detection queries would run before the self-call's cascade instead of
+    /// interleaved with the member dispatches.
+    ///
+    /// `members` is the chief's patrol snapshot taken before the self-call, so
+    /// a cascade that changes patrol membership does not alter this broadcast.
+    RelayStimulusToPatrolMembers {
+        members: Vec<NpcHandle>,
+        stimulus_type: StimulusType,
+        info: StimulusInfo,
+    },
+    /// Set the target NPC's left combat neighbour link (one-way).
+    /// Bare setter, no reciprocal cleanup. Use
+    /// [`Self::UpdateLeftCombatNeighbour`] for the full semantics
+    /// (reciprocal cleanup).
+    SetLeftCombatNeighbour {
+        target: NpcHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        neighbour: Option<AiEntityHandle>,
+    },
+    /// Set the target NPC's right combat neighbour link (one-way).
+    SetRightCombatNeighbour {
+        target: NpcHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        neighbour: Option<AiEntityHandle>,
+    },
+    /// One-way counterpart of the original game's rear-archer assignment, used while
+    /// applying the reciprocal half of shield-bearer-ahead updates.
+    SetArcherBehindMe {
+        target: NpcHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        archer: Option<AiEntityHandle>,
+    },
+    /// One-way counterpart of the original game's forward shield-bearer assignment, used while
+    /// applying the reciprocal half of archer-behind updates.
+    SetShieldBearerBeforeMe {
+        target: NpcHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        shield_bearer: Option<AiEntityHandle>,
+    },
+    /// Full reciprocal update of `target`'s left combat neighbour. Four steps:
+    ///   1. Clear `old_left`'s right pointer (if present).
+    ///   2. Store `new_left` on `target`'s left pointer.
+    ///   3. Pre-clean `new_left`'s existing right (and that-right's left).
+    ///   4. Wire `new_left`'s right pointer back to `target`.
+    ///
+    /// `old_left` is captured at push time so the drain doesn't depend on
+    /// `target`'s current state being unmodified.
+    UpdateLeftCombatNeighbour {
+        target: NpcHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        old_left: Option<AiEntityHandle>,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        new_left: Option<AiEntityHandle>,
+    },
+    /// Mirror of [`Self::UpdateLeftCombatNeighbour`] for the right side.
+    UpdateRightCombatNeighbour {
+        target: NpcHandle,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        old_right: Option<AiEntityHandle>,
+        #[serde(
+            serialize_with = "serialize_optional_ai_handle",
+            deserialize_with = "deserialize_optional_ai_handle"
+        )]
+        new_right: Option<AiEntityHandle>,
+    },
+    /// Propagate primary target to a phalanx member during
+    /// the phalanx reassessment's member walk.
+    SetPrimaryTarget {
+        target: NpcHandle,
+        primary_target: Option<AiEntityHandle>,
+    },
+    /// Install the merged phalanx them-list and its head target on one
+    /// member. Shared enemy-list rebuilding recurses to the right end and
+    /// then, as the recursion unwinds, assigns the completed shared list
+    /// and its first element to every member it passed through — not just
+    /// to the member that started the walk.
+    SetPhalanxThemList {
+        target: NpcHandle,
+        them: Vec<HumanHandle>,
+        primary_target: Option<AiEntityHandle>,
+    },
+    /// Make the target NPC say a remark.
+    Say { target: NpcHandle, remark: Remark },
+    /// Write `AiController::looted_after_money_fight` on a target soldier.
+    /// Money-fight looters set this as soon as they reserve a KO'd victim
+    /// so other scanners skip the same body.
+    SetLootedAfterMoneyFight { target: NpcHandle, looted: bool },
+    /// Legacy pending-work representation retained at its serialized ordinal.
+    /// New soldier-report processing must use [`Self::ConsiderReport`],
+    /// because Original also processes the shared report's body detectables.
+    UpdateReport {
+        target: NpcHandle,
+        report_type: ReportType,
+        seek_position: Position,
+    },
+    /// Merge the officer's reconnaissance report into the target soldier's
+    /// report. Broadcast inside `AlertSoldiers` so newly alerted soldiers
+    /// pick up the officer's charly handle and report type before they run
+    /// into the group.
+    ConsiderReport {
+        target: NpcHandle,
+        /// Cloned from the caller's own `ReconnaissanceReport` at the
+        /// time the alert was dispatched.
+        report: ReconnaissanceReport,
+        /// Merge-mask passed to [`ReconnaissanceReport::consider_report`]
+        /// (e.g. `UPDATE_CHARLY | UPDATE_TYPE = 2|4 = 6`).
+        flags: u16,
+    },
+    /// Resume the outer AlertSoldiers call after the final accepted
+    /// soldier's ConsiderReport call and all of its owner-side effects have
+    /// closed. A refused final Think has no report boundary and finalizes
+    /// directly in the result continuation.
+    FinalizeAlertSoldiers {
+        caller: NpcHandle,
+        use_formation: bool,
+        failure: AlertSoldiersFailureContinuation,
+    },
+    /// Resume a tower guard's battle planning only after every direct
+    /// `CALL_TOWER_GUARD_ALERT`/`CALL_TOWER_GUARD_CALLS_ME` has returned.
+    /// Those recipients can change alert status synchronously, which the
+    /// guard's immediately following area-search friend scan must observe.
+    ResumeTowerGuardBattleDecisions { caller: NpcHandle },
+    /// Push `actor` onto `target`'s `synchronizing_actors` list. Used by
+    /// PC-sighting processing when the reuniting soldier
+    /// still needs to wait at the sync waypoint for its macro friend.
+    RegisterSynchronizingActor { target: NpcHandle, actor: NpcHandle },
+    /// Run the look-there broadcast's soldier-registry walk at the owner boundary.
+    /// Each recipient's live state is tested immediately before its direct
+    /// `Think(CALL_LOOKTHERE)`, because an earlier recipient can re-enter and
+    /// mutate a later one during the same broadcast.
+    BroadcastLookThere {
+        caller: NpcHandle,
+        position: Position,
+        radius: u16,
+        continuation: LookThereContinuation,
+    },
+    /// Resume the procedure that requested the look-there broadcast once every
+    /// `CALL_LOOKTHERE` it emitted has been delivered and its cascade has
+    /// closed. The look-there broadcast is a plain synchronous call in the
+    /// Original, so the caller's own state transition happens *after* the
+    /// friends have thought. A friend that relays the call back to the sender
+    /// must therefore still observe the sender's pre-transition state.
+    ResumeAfterLookThere {
+        caller: NpcHandle,
+        continuation: LookThereContinuation,
+    },
+    /// Synchronously deliver `CALL_MR_OFFICER_I_AM_BACK` and feed the
+    /// target officer's actual `Think` return value back into Charly's
+    /// state machine before the originating dispatch completes.
+    ReportBackToOfficer {
+        officer: NpcHandle,
+        charly: NpcHandle,
+    },
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum AlertContinuation {
+    CivilianReachedSoldier,
+    CivilianSawSoldier,
+    SoldierSawOfficer,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum AlertSoldiersFailureContinuation {
+    None,
+    ReturnToDuty,
+    SeekBody { center: Position, radius: u16 },
+    SeekMissingInstructedSoldier,
+    SeekMissedCharly { center: Position },
+    FleeingRunToDoor,
+}
+
+/// The tail of a procedure that broadcast `CALL_LOOKTHERE`, parked until the
+/// broadcast's synchronous delivery has finished.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum LookThereContinuation {
+    EventView {
+        enemy: HumanHandle,
+        enemy_pos: Position,
+    },
+    EventSeesBody {
+        body: HumanHandle,
+        body_pos: Position,
+        is_charly: bool,
+    },
+    EventGetArrow,
+    SeekingArrowReactiontime,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum ThinkResultContinuation {
+    /// Resume the reporting soldier only after the officer's direct
+    /// `CALL_YOURTALK_1` stack has closed. The officer may synchronously call
+    /// back while the soldier must still be in the report-start substate.
+    SoldierFinishedAlertReportStart,
+    OfficerCalledSoldier,
+    OfficerSentCharlyToOfficer,
+    OfficerInstructedGroupSoldier {
+        last: bool,
+    },
+    OfficerAlertedSoldier {
+        last: bool,
+        use_formation: bool,
+        failure: AlertSoldiersFailureContinuation,
+    },
+    OfficerCombatAlertedSoldier {
+        last: bool,
+        use_formation: bool,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// Panic request (queued by AI, applied by engine)
+// ---------------------------------------------------------------------------
+
+/// Queued `Panic()` request on an [`AiController`].
+///
+/// The AI layer sets this field when a fleeing stimulus kicks in; the
+/// engine consumes it at post-think time and performs the door lookup
+/// against `ai_global.door_seek_infos` (which the AI layer doesn't
+/// see on its call stack).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct PanicRequest {
+    /// Point to flee *away from*.  `None` means undirected panic — the
+    /// engine picks any reachable door and runs in random directions.
+    pub center: Option<Position>,
+    /// Number of run segments the NPC should execute after the initial
+    /// door fallback fails.
+    pub runs: u8,
+    /// Alert level the drain should install on state entry (default
+    /// `ALERT_RED`).
+    pub alert: AlertLevel,
+    /// `true` when the caller was not already in `FleeingPanic` /
+    /// `FleeingRunToDoor` at the time the request was queued. Lets the
+    /// drain suppress repeated state changes / Say() / `EventReachPoint`
+    /// dispatches when we're already mid-panic.
+    pub is_new_panic: bool,
+}
+
+/// Pending request for a script-driven area search, set from
+/// `SetAIState(actor, STATE_SEEKING)` script natives. The engine
+/// consumes it post-think by dispatching into `EnemyAi::seek_area`
+/// (soldier-only).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ScriptSeekAreaRequest {
+    /// Seek center — typically the NPC's current position.
+    pub center: Position,
+    /// Area-search radius (`AI_SCRIPT_SEEK_RADIUS`).
+    pub radius: u16,
+}
+
+/// Patrol-path assignment variants — the three call shapes (sentinel
+/// `-1`, sentinel `-2`, valid index) collapse to these semantic cases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PatrolAssignment {
+    /// Sentinel `-1` / null pointer — drop the path, leave
+    /// `likes_to_sit_around = false`.
+    ClearPath,
+    /// Sentinel `-2` / `(void*)-1` — drop the path but set
+    /// `likes_to_sit_around = true`.
+    ClearPathSitAround,
+    /// Valid-index branch of patrol-path assignment by 16-bit index (waypoint-macro
+    /// opcodes `CMD_CHANGE_WAY` / `CMD_STAY_HERE`). Clears both
+    /// `likes_to_sit_around` and `special_action`.
+    Index(PathId),
+    /// Valid-reference branch of assigning a new hiking patrol path — the
+    /// `AssignPath` script native. Unlike the index
+    /// index-based path, while the original game's reference-based path
+    /// only clears
+    /// the likes-to-sit-around flag; an NPC authored with a Special/leisure
+    /// initial action keeps its special-action flag while walking the
+    /// scripted route, which later disables movement's already-on-point
+    /// shortcut when it returns to duty.
+    ScriptWay(PathId),
+}
+
+// ---------------------------------------------------------------------------
+// Look direction
+// ---------------------------------------------------------------------------
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum LookDirection {
+    Left = 0,
+    Right,
+    LeftRight,
+    RightLeft,
+    Down,
+}
+
+// ---------------------------------------------------------------------------
+// Log line type (debug AI log)
+// ---------------------------------------------------------------------------
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum LogLineType {
+    Event = 0,
+    EventRefused,
+    ChangeState,
+    BattleDecision,
+    Speak,
+    SpeakImpossible,
+    SpeakFinished,
+    Timer,
+}
+
+/// A single AI log entry for debug display.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct LogLine {
+    pub line_type: LogLineType,
+    pub info: u16,
+    pub frame: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Simple shared data types
+// ---------------------------------------------------------------------------
+
+/// Noise type.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum NoiseType {
+    Plouf = 0,
+    Bonk,
+    Zonk,
+    TapTapTap,
+    ArfArf,
+    Tirili,
+    PutPut,
+    Aaargh,
+    Heeelp,
+    Pling,
+    Pfiiit,
+    Logs,
+    Drawbridge,
+    ZingZing,
+    Off,
+    /// An intentionally thrown object impact. Appended after every Original
+    /// ordinal so legacy enum values remain stable.
+    Distraction,
+}
+
+/// Spatial origin of a noise. One-shot effects may deliberately have no
+/// world layer (for example a crumpled net launched without a landing
+/// surface), so absence is represented structurally rather than by layer
+/// `0xffff`.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct NoiseOrigin {
+    pub x: f32,
+    pub y: f32,
+    pub sector: Option<crate::position_interface::SectorHandle>,
+    pub layer: Option<crate::position_interface::Layer>,
+}
+
+impl NoiseOrigin {
+    pub fn from_position(position: Position) -> Self {
+        Self {
+            x: position.x,
+            y: position.y,
+            sector: position.sector,
+            layer: crate::position_interface::Layer::new(position.level),
+        }
+    }
+
+    pub fn position(self) -> Option<Position> {
+        self.layer.map(|layer| Position {
+            x: self.x,
+            y: self.y,
+            sector: self.sector,
+            level: layer.get(),
+        })
+    }
+
+    /// Recreate the complete original-game position, including its authored
+    /// `0xffff` no-layer sentinel. Projectile impacts can legitimately carry
+    /// that sentinel together with a null sector; Original stores the raw
+    /// position in AI state and projects it at ground level when facing it.
+    pub fn legacy_position(self) -> Position {
+        Position {
+            x: self.x,
+            y: self.y,
+            sector: self.sector,
+            level: self
+                .layer
+                .map_or(u16::MAX, crate::position_interface::Layer::get),
+        }
+    }
+}
+
+/// A noise event with origin, type, volume, and elevation.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct Noise {
+    pub origin: NoiseOrigin,
+    pub noise_type: NoiseType,
+    pub volume: u16,
+    pub elevation: u16,
+    pub element_id: u16,
+}
+
+/// Detection level of a PC by an NPC.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum Detection {
+    None = 0,
+    Unrecognized,
+    Recognized,
+    /// Internally used by AI.
+    Killed,
+}
+
+/// Global alert level.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum AlertLevel {
+    #[default]
+    Green = 0,
+    Yellow,
+    Red,
+}
+
+/// NPC attitude toward PCs / the world.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    num_enum::TryFromPrimitive,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum Attitude {
+    Friendly = 0,
+    Neutral,
+    #[default]
+    Suspicious,
+    Nervous,
+    Hostile,
+}
+
+/// View cone configuration.
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum ViewCone {
+    #[default]
+    Commandoslike = 0,
+    Patrol,
+    QuickSearch,
+    GetOverview,
+    QuickOverview,
+    SlowOverview,
+    GattlingOverview,
+    LookDown,
+    LookTo,
+    LookToOrCommandoslikeDependingOnIq,
+    LookForward,
+    Focus,
+    GattlingFocus,
+    Idle,
+    Slow,
+    LongRange,
+    Sniper,
+    SceneOfTheCrime,
+    Valium,
+}
+
+/// Curiosity trigger type.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum Curiosity {
+    Shot = 0,
+    Dynamite,
+    Siesta,
+    Steps,
+    Cards,
+    Watch,
+    Whistle,
+    // Curiosity count — use Curiosity::COUNT
+}
+
+impl Curiosity {
+    pub const COUNT: usize = 7;
+}
+
+/// Type of target (PC, NPC, or scarecrow).
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum TargetType {
+    Pc = 0,
+    Npc,
+    Scarecrow,
+}
+
+/// Report type for reconnaissance reports.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[repr(u32)]
+pub enum ReportType {
+    Nothing = 0,
+    Noise,
+    Body,
+    MissedCharly,
+    DeadBody,
+    Enemy,
+}
+
+// ---------------------------------------------------------------------------
+// Stimulus info — typed payload for stimuli
+// ---------------------------------------------------------------------------
+
+/// Hint passed between NPCs (e.g. "look over there").
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct Hint {
+    pub seek_point: Position,
+    pub seek_flags: u16,
+    pub who_tells_me: AiEntityHandle,
+}
+
+/// Info about a stolen object.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct StolenObject {
+    pub object: AiEntityHandle,
+    pub thief: AiEntityHandle,
+}
+
+/// Info about a friend in trouble.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct CombatInfo {
+    pub actor_npc: AiEntityHandle,
+    pub enemy_position: Position,
+}
+
+/// Info about a door combat event.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct DoorCombatInfo {
+    pub delay: u16,
+    pub goal: Position,
+    pub direction: u16,
+    /// The original game's pre-door combat dispatch explicitly permits no adversary.
+    /// Slot zero is a live human, so only `None` represents that null pointer.
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub adversary: Option<AiEntityHandle>,
+}
+
+#[cfg(test)]
+mod nullable_stimulus_reference_tests {
+    use super::*;
+
+    #[test]
+    fn current_door_adversary_rejects_legacy_bare_zero() {
+        let mut value = serde_json::to_value(DoorCombatInfo {
+            delay: 1,
+            goal: Position::default(),
+            direction: 2,
+            adversary: None,
+        })
+        .unwrap();
+        value["adversary"] = serde_json::json!(0);
+        assert!(serde_json::from_value::<DoorCombatInfo>(value).is_err());
+    }
+
+    #[test]
+    fn door_adversary_slot_zero_round_trips_as_live() {
+        let info = DoorCombatInfo {
+            delay: 1,
+            goal: Position::default(),
+            direction: 2,
+            adversary: Some(AiEntityHandle::new(0)),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""adversary":{"entity":0}"#));
+        let restored: DoorCombatInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.adversary, Some(AiEntityHandle::new(0)));
+    }
+
+    #[test]
+    fn stimulus_owner_slot_zero_round_trips_as_live() {
+        let mut stimulus = Stimulus::new(StimulusType::NoEvent);
+        stimulus.owner = Some(AiEntityHandle::new(0));
+        let json = serde_json::to_string(&stimulus).unwrap();
+        assert!(json.contains(r#""owner":{"entity":0}"#));
+        let restored: Stimulus = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.owner, Some(AiEntityHandle::new(0)));
+    }
+}
+
+/// The payload of a [`Stimulus`].
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum StimulusInfo {
+    #[default]
+    None,
+    Noise(Noise),
+    Position(Position),
+    Human(AiEntityHandle),
+    Hint(Hint),
+    Object(AiEntityHandle),
+    Stolen(StolenObject),
+    Combat(CombatInfo),
+    DoorCombat(DoorCombatInfo),
+    Index(u16),
+    /// Exact invalid stimulus type storage from an old native save.
+    ///
+    /// The original game did not initialize this type field by default. Such a
+    /// stimulus reaches the default/no-event dispatch path if it was queued,
+    /// but retaining the raw word keeps the imported state inspectable.
+    LegacyInvalidType(i32),
+}
+
+/// Runtime-only provenance for a self-stimulus queued while the engine closes
+/// an Original synchronous callback boundary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum SelfStimulusOrigin {
+    #[default]
+    Ordinary,
+    Condolation,
+    EngineCompletion,
+}
+
+/// A queued self-stimulus. The transparent representation preserves the
+/// existing serialized `Vec<StimulusType>` shape; provenance exists only
+/// while the live engine is closing the same-frame callback stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bitcode::Encode, bitcode::Decode)]
+pub struct QueuedSelfStimulus {
+    pub stimulus_type: StimulusType,
+    #[bitcode(skip)]
+    pub(crate) origin: SelfStimulusOrigin,
+}
+
+impl robin_util::state_hash::StateHash for QueuedSelfStimulus {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Preserve the prior `Vec<StimulusType>` hash exactly. Runtime
+        // provenance is deliberately absent from deterministic snapshots.
+        robin_util::state_hash::StateHash::state_hash(&self.stimulus_type, state);
+    }
+}
+
+impl QueuedSelfStimulus {
+    pub(crate) fn new(stimulus_type: StimulusType, origin: SelfStimulusOrigin) -> Self {
+        Self {
+            stimulus_type,
+            origin,
+        }
+    }
+}
+
+impl From<StimulusType> for QueuedSelfStimulus {
+    fn from(stimulus_type: StimulusType) -> Self {
+        Self::new(stimulus_type, SelfStimulusOrigin::Ordinary)
+    }
+}
+
+impl PartialEq<StimulusType> for QueuedSelfStimulus {
+    fn eq(&self, other: &StimulusType) -> bool {
+        self.stimulus_type == *other
+    }
+}
+
+impl PartialEq<QueuedSelfStimulus> for StimulusType {
+    fn eq(&self, other: &QueuedSelfStimulus) -> bool {
+        *self == other.stimulus_type
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stimulus
+// ---------------------------------------------------------------------------
+
+/// An event or call that is dispatched to an NPC's AI for processing.
+#[derive(Debug, Clone, Copy, bitcode::Encode, bitcode::Decode)]
+pub struct Stimulus {
+    pub stimulus_type: StimulusType,
+    pub info: StimulusInfo,
+    /// Optional original-game stimulus-owner reference. This is independent of the
+    /// actor currently processing the stimulus and is initialized empty.
+    pub owner: Option<AiEntityHandle>,
+    pub to_whole_patrol: bool,
+    #[bitcode(skip)]
+    pub(crate) self_origin: SelfStimulusOrigin,
+}
+
+impl robin_util::state_hash::StateHash for Stimulus {
+    fn state_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Match the pre-provenance field sequence. `self_origin` is a live
+        // callback-stack discriminator, not persistent deterministic state.
+        robin_util::state_hash::StateHash::state_hash(&self.stimulus_type, state);
+        robin_util::state_hash::StateHash::state_hash(&self.info, state);
+        robin_util::state_hash::StateHash::state_hash(&self.owner, state);
+        robin_util::state_hash::StateHash::state_hash(&self.to_whole_patrol, state);
+    }
+}
+
+impl Stimulus {
+    pub fn new(stimulus_type: StimulusType) -> Self {
+        Self {
+            stimulus_type,
+            info: StimulusInfo::None,
+            owner: None,
+            to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
+        }
+    }
+
+    pub(crate) fn from_queued_self(queued: QueuedSelfStimulus) -> Self {
+        Self {
+            stimulus_type: queued.stimulus_type,
+            info: StimulusInfo::None,
+            owner: None,
+            to_whole_patrol: false,
+            self_origin: queued.origin,
+        }
+    }
+
+    pub fn with_noise(stimulus_type: StimulusType, noise: Noise) -> Self {
+        Self {
+            stimulus_type,
+            info: StimulusInfo::Noise(noise),
+            owner: None,
+            to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
+        }
+    }
+
+    pub fn with_position(stimulus_type: StimulusType, pos: Position) -> Self {
+        Self {
+            stimulus_type,
+            info: StimulusInfo::Position(pos),
+            owner: None,
+            to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
+        }
+    }
+
+    pub fn with_human(stimulus_type: StimulusType, human: HumanHandle) -> Self {
+        Self {
+            stimulus_type,
+            info: StimulusInfo::Human(AiEntityHandle::new(human)),
+            owner: None,
+            to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
+        }
+    }
+
+    pub fn with_door_combat(stimulus_type: StimulusType, dc: DoorCombatInfo) -> Self {
+        Self {
+            stimulus_type,
+            info: StimulusInfo::DoorCombat(dc),
+            owner: None,
+            to_whole_patrol: false,
+            self_origin: SelfStimulusOrigin::Ordinary,
+        }
+    }
+
+    /// Returns `true` if two stimuli have the same type and equivalent info.
+    pub fn is_similar(&self, other: &Self) -> bool {
+        if self.stimulus_type != other.stimulus_type {
+            return false;
+        }
+        match (&self.info, &other.info) {
+            (StimulusInfo::None, StimulusInfo::None) => true,
+            (StimulusInfo::Noise(a), StimulusInfo::Noise(b)) => {
+                a.origin.x == b.origin.x && a.origin.y == b.origin.y && a.noise_type == b.noise_type
+            }
+            (StimulusInfo::Position(a), StimulusInfo::Position(b)) => a.x == b.x && a.y == b.y,
+            (StimulusInfo::Human(a), StimulusInfo::Human(b)) => a == b,
+            (StimulusInfo::Hint(a), StimulusInfo::Hint(b)) => {
+                a.seek_point.x == b.seek_point.x
+                    && a.seek_point.y == b.seek_point.y
+                    && a.seek_flags == b.seek_flags
+            }
+            (StimulusInfo::Object(a), StimulusInfo::Object(b)) => a == b,
+            (StimulusInfo::Stolen(a), StimulusInfo::Stolen(b)) => {
+                a.object == b.object && a.thief == b.thief
+            }
+            (StimulusInfo::Combat(a), StimulusInfo::Combat(b)) => {
+                a.enemy_position.x == b.enemy_position.x
+                    && a.enemy_position.y == b.enemy_position.y
+                    && a.actor_npc == b.actor_npc
+            }
+            (StimulusInfo::DoorCombat(a), StimulusInfo::DoorCombat(b)) => {
+                a.goal.x == b.goal.x && a.goal.y == b.goal.y
+            }
+            (StimulusInfo::Index(a), StimulusInfo::Index(b)) => a == b,
+            (StimulusInfo::LegacyInvalidType(a), StimulusInfo::LegacyInvalidType(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Screen remark (HUD display)
+// ---------------------------------------------------------------------------
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ScreenRemark {
+    pub timer: u16,
+    pub prefix: String,
+    pub remark: Remark,
+}
+
+/// A forbidden remark entry — prevents the same line from being repeated.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ForbiddenRemark {
+    pub remark: Remark,
+    pub flags: u16,
+    pub speech_id: u32,
+    pub guy_index: u16,
+    pub bad_guy: bool,
+    pub forbidden_till_frame: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Reconnaissance report
+// ---------------------------------------------------------------------------
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ReconnaissanceReport {
+    pub seek_position: Position,
+    pub report_type: ReportType,
+    pub seen_bodies: Vec<HumanHandle>,
+    #[serde(
+        serialize_with = "serialize_optional_ai_handle",
+        deserialize_with = "deserialize_optional_ai_handle"
+    )]
+    pub charly: Option<AiEntityHandle>,
+    pub charly_seen: bool,
+}
+
+impl Default for ReconnaissanceReport {
+    fn default() -> Self {
+        Self {
+            seek_position: Position::default(),
+            report_type: ReportType::Nothing,
+            seen_bodies: Vec::new(),
+            charly: None,
+            charly_seen: false,
+        }
+    }
+}
+
+impl ReconnaissanceReport {
+    pub fn reset(&mut self) {
+        self.seen_bodies.clear();
+        self.report_type = ReportType::Nothing;
+        self.charly = None;
+    }
+
+    pub fn update(&mut self, new_type: ReportType, new_position: Position) {
+        if self.report_type <= new_type {
+            self.report_type = new_type;
+            self.seek_position = new_position;
+        }
+    }
+
+    /// Full report merging.
+    ///
+    /// `flags` is a bitmask:
+    /// - `REPORT_UPDATE_BODIES` (1): merge seen_bodies from `other`
+    /// - `REPORT_UPDATE_CHARLY` (2): copy charly handle if we don't have one
+    /// - `REPORT_UPDATE_TYPE` (4): update report type and seek position
+    pub fn add_seen_body(&mut self, body: HumanHandle) {
+        self.seen_bodies.push(body);
+    }
+
+    pub fn is_body_seen(&self, body: HumanHandle) -> bool {
+        self.seen_bodies.contains(&body)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Seek point
+// ---------------------------------------------------------------------------
+
+/// A point of interest that NPCs can investigate during seek-area sweeps.
+///
+/// Interest decays over time after examination: the `frame_when_full_interest`
+/// field tracks when the point will be "fresh" again (100% interest).
+/// Multiple NPCs avoid investigating the same point simultaneously via
+/// the `locked` flag.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct SeekPoint {
+    pub position: Position,
+    /// Frame at which interest will be 100% again.
+    pub frame_when_full_interest: u32,
+    /// Compass directions (0–15) to look from this point.
+    pub directions: Vec<u16>,
+    /// Last calculated interest value (0–100).
+    pub last_calculated_interest: u8,
+    /// Whether a soldier is currently investigating this point.
+    pub locked: bool,
+    /// Unique ID. Global seek points use their array index; personal
+    /// seek points use sentinel values (1111, 2222).
+    pub id: u16,
+}
+
+impl SeekPoint {
+    /// Create a new seek point from a direction.
+    ///
+    /// We initialise `last_calculated_interest = 100` (full interest) as a
+    /// safe, deterministic starting value; in the happy path
+    /// `calculate_interest()` overwrites it before any reader inspects it.
+    pub fn from_direction(dir: &SeekPointDirection) -> Self {
+        Self {
+            position: dir.position,
+            directions: vec![dir.direction],
+            frame_when_full_interest: 0,
+            last_calculated_interest: 100,
+            locked: false,
+            id: 0,
+        }
+    }
+
+    /// Create a seek point at a position with random directions.
+    ///
+    /// Uses `sim_rng` for deterministic RNG (port-wide choice) and
+    /// initialises `last_calculated_interest = 100` — see `from_direction`
+    /// above.
+    pub fn from_position(sim: &crate::sim_rng::SimulationContext, pos: Position) -> Self {
+        let directions = match crate::sim_rng::u8(
+            sim,
+            crate::sim_rng::RngSite::SeekPointDirectionPattern,
+            0..4,
+        ) {
+            0 => vec![0, 3, 7, 11],
+            1 => vec![2, 5, 10, 14],
+            2 => vec![2, 7, 13],
+            _ => vec![4, 10, 15],
+        };
+        Self {
+            position: pos,
+            directions,
+            frame_when_full_interest: 0,
+            last_calculated_interest: 100,
+            locked: false,
+            id: 0,
+        }
+    }
+
+    /// Calculate interest based on elapsed time since last examination.
+    /// Returns 0–100.
+    pub fn calculate_interest(&mut self, current_frame: u32) -> u8 {
+        let relative = current_frame as i32 - self.frame_when_full_interest as i32;
+        self.last_calculated_interest = if relative >= 0 {
+            100
+        } else if relative <= -(crate::parameters_ai::SEEK_POINT_TIME_TO_REGAIN_FULL_INTEREST) {
+            0
+        } else {
+            (100 + (100 * relative) / crate::parameters_ai::SEEK_POINT_TIME_TO_REGAIN_FULL_INTEREST)
+                as u8
+        };
+        self.last_calculated_interest
+    }
+
+    /// Decrease interest (push full-interest frame further into the future).
+    pub fn subtract_interest(&mut self, value: u8, current_frame: u32) {
+        if self.frame_when_full_interest < current_frame {
+            self.frame_when_full_interest = current_frame;
+        }
+        self.frame_when_full_interest += value as u32
+            * crate::parameters_ai::SEEK_POINT_TIME_TO_REGAIN_1_PERCENT_OF_INTEREST as u32;
+        let max =
+            current_frame + crate::parameters_ai::SEEK_POINT_TIME_TO_REGAIN_FULL_INTEREST as u32;
+        if self.frame_when_full_interest > max {
+            self.frame_when_full_interest = max;
+        }
+    }
+
+    /// Try to merge a nearby direction into this seek point.
+    /// Returns `true` if the direction was close enough and was added.
+    pub fn add_if_near(&mut self, dir: &SeekPointDirection) -> bool {
+        let dx = (dir.position.x - self.position.x).abs();
+        let dy = (dir.position.y - self.position.y).abs();
+        let max_norm = dx.max(dy);
+        if max_norm <= crate::parameters_ai::SEEK_POINT_UNIFY_TOLERANCE as f32 {
+            // The original game stores these in a unique integer array: a near
+            // duplicate is handled successfully, but is not inserted again.
+            if !self.directions.contains(&dir.direction) {
+                self.directions.push(dir.direction);
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod seek_point_tests {
+    use super::{Position, SeekPoint, SeekPointDirection};
+
+    fn direction(x: f32, y: f32, value: u16) -> SeekPointDirection {
+        SeekPointDirection {
+            position: Position {
+                x,
+                y,
+                ..Position::default()
+            },
+            direction: value,
+        }
+    }
+
+    #[test]
+    fn add_if_near_handles_duplicate_without_growing_unique_directions() {
+        let first = direction(100.0, 200.0, 7);
+        let mut point = SeekPoint::from_direction(&first);
+
+        assert!(point.add_if_near(&direction(110.0, 190.0, 7)));
+        assert_eq!(point.directions, vec![7]);
+    }
+
+    #[test]
+    fn add_if_near_appends_distinct_direction() {
+        let first = direction(100.0, 200.0, 7);
+        let mut point = SeekPoint::from_direction(&first);
+
+        assert!(point.add_if_near(&direction(110.0, 190.0, 12)));
+        assert_eq!(point.directions, vec![7, 12]);
+    }
+
+    #[test]
+    fn add_if_near_rejects_direction_outside_tolerance() {
+        let first = direction(100.0, 200.0, 7);
+        let mut point = SeekPoint::from_direction(&first);
+
+        assert!(!point.add_if_near(&direction(111.0, 200.0, 12)));
+        assert_eq!(point.directions, vec![7]);
+    }
+}
+
+/// A seek-point direction from the level file (position + facing).
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct SeekPointDirection {
+    pub position: Position,
+    pub direction: u16,
+}
+
+// ---------------------------------------------------------------------------
+// Ambush point
+// ---------------------------------------------------------------------------
+
+/// A tactical ambush point that NPCs check while patrolling.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct AmbushPoint {
+    pub position: Position,
+    pub direction: u16,
+    /// 3D anchor point — the 2D `position` lifted to eye height (z + 32).
+    /// Used by the sight-polygon anchor for stealth / hide-in-ambush
+    /// queries.
+    pub position_3d: crate::coordinates::WorldPoint3D,
+    /// Unique ambush-point ID assigned during AI initialization. Used by AI
+    /// scripts that reference ambush points by index.
+    pub id: u16,
+}
+
+/// Half-size of the ambush-containment box along the X axis.
+pub const AMBUSH_BOX_HALF_SIZE: f32 = 100.0;
+
+impl AmbushPoint {
+    /// True iff `sector` and `level` match the ambush point's stored
+    /// position and the 2D `point` lies inside the ambush containment
+    /// box centred on `position` with half-diagonal
+    /// `(AMBUSH_BOX_HALF_SIZE, AMBUSH_BOX_HALF_SIZE * ASPECT_RATIO)`.
+    pub fn is_near(
+        &self,
+        point: crate::coordinates::MapPoint,
+        level: u16,
+        sector: Option<crate::position_interface::SectorHandle>,
+    ) -> bool {
+        if self.position.level != level || self.position.sector != sector {
+            return false;
+        }
+        let dx = (point.x - self.position.x).abs();
+        let dy = (point.y - self.position.y).abs();
+        dx <= AMBUSH_BOX_HALF_SIZE
+            && dy <= AMBUSH_BOX_HALF_SIZE * crate::position_interface::ASPECT_RATIO
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Archery sector
+// ---------------------------------------------------------------------------
+
+/// A waypoint along an archery path (entry point or shooting point).
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct PointArchery {
+    pub position: Position,
+    pub direction: u16,
+    /// True if this is a shooting position (not just a path waypoint).
+    pub is_shooting_point: bool,
+    /// Sector number of this point — used for sector-change distance
+    /// penalty (compared against [`crate::position_interface::SectorHandle`]
+    /// via [`crate::sector::SectorNumber`] u16 conversion).
+    pub sector_index: crate::sector::SectorNumber,
+    /// Entity of the archer occupying this point, or `None` if free.
+    pub owner: Option<crate::entity_id::EntityId>,
+}
+
+/// An archery sector where archers can set up, with ordered waypoints
+/// leading to shooting positions.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct SectorArchery {
+    pub points: Vec<PointArchery>,
+    /// Polygon vertices for the `is_inside` check (f32 coords).
+    pub polygon: Vec<(f32, f32)>,
+    /// Layer / level this archery sector belongs to.
+    pub layer: u16,
+    /// Index of the first shooting point in `points`.  `None` when the
+    /// sector has no shooting points.
+    pub index_first_shooting_point: Option<crate::sector::ArcheryPointIdx>,
+    /// Index of the last shooting point in `points`.  `None` when the
+    /// sector has no shooting points.
+    pub index_last_shooting_point: Option<crate::sector::ArcheryPointIdx>,
+    /// Total number of shooting points.
+    pub num_shooting_points: u16,
+    /// Number of archers currently assigned to this sector.
+    pub num_owners: u16,
+}
+
+impl SectorArchery {
+    pub fn is_full(&self) -> bool {
+        self.num_owners >= self.num_shooting_points
+    }
+
+    /// Bump the sector-level archer count; asserts the sector isn't
+    /// already full (the caller must have checked `!is_full()` before
+    /// picking this sector, as `choose_good_shooting_point` does).
+    pub fn increment_owner_counter(&mut self) {
+        assert!(!self.is_full(), "archery sector is full");
+        self.num_owners += 1;
+    }
+
+    pub fn decrement_owner_counter(&mut self) {
+        assert!(self.num_owners > 0, "archery sector has no owners");
+        self.num_owners -= 1;
+    }
+
+    /// Point-in-polygon test for the archery sector boundary.
+    pub fn is_inside(&self, pos: &Position, layer: u16) -> bool {
+        if self.layer != layer {
+            return false;
+        }
+        let (px, py) = (pos.x, pos.y);
+        let n = self.polygon.len();
+        if n < 3 {
+            return false;
+        }
+        // Ray-casting algorithm
+        let mut inside = false;
+        let mut j = n - 1;
+        for i in 0..n {
+            let (xi, yi) = self.polygon[i];
+            let (xj, yj) = self.polygon[j];
+            if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Repulsive point (scripts add these to repel NPCs from an area)
+// ---------------------------------------------------------------------------
+
+/// A point that NPCs try to avoid during pathfinding.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct RepulsivePoint {
+    pub id: i32,
+    pub position: Position,
+    /// Inner radius — strong repulsion zone.
+    pub radius: f32,
+    /// Total outer action radius, including `radius`, matching
+    /// Repulsive-point action radius.
+    pub action_radius: f32,
+    /// Linear falloff coefficients serialized for a repulsive point.
+    pub force_a: f32,
+    pub force_b: f32,
+    /// Serialized action-field geometry. Static script points are total
+    /// circles in the Original, but retaining these fields is required for
+    /// lossless save adoption.
+    pub concave: bool,
+    pub limit_left: MapVec,
+    pub limit_right: MapVec,
+    /// Flags (affects PCs, soldiers, etc.).
+    pub flags: i32,
+}
+
+impl RepulsivePoint {
+    /// Construct the total-circle point produced by the Original's
+    /// Fast-grid static repulsive-point insertion.
+    pub fn new(
+        id: i32,
+        position: Position,
+        radius: f32,
+        action_radius_input: f32,
+        flags: i32,
+    ) -> Self {
+        let (action_radius, radius, force_a, force_b) =
+            crate::rhline::repulsive_set_force(radius, action_radius_input);
+        Self {
+            id,
+            position,
+            radius,
+            action_radius,
+            force_a,
+            force_b,
+            concave: false,
+            limit_left: MapVec::ZERO,
+            limit_right: MapVec::ZERO,
+            flags,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Door info for seek-area door checks
+// ---------------------------------------------------------------------------
+
+/// Minimal door info cached on AiGlobalState for searches behind doors.
+/// Populated at level load from the canonical interactable door table.
+/// Serialized with `AiGlobalState`; includes cached authorization data that
+/// should match the exact door state at the save point.
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct DoorSeekInfo {
+    /// Index into the canonical interactable door array. Carried so AI
+    /// helpers (e.g. `RunAndAlertSoldiers`) can stash a door reference
+    /// onto the NPC.
+    pub door_index: crate::gate::DoorIndex,
+    pub door_type: crate::gate::DoorType,
+    pub point_out: MapPoint,
+    pub position_in: Position,
+    pub sector_out: u16,
+    /// Exact arena half of the original game's outside-door sector identity.
+    /// Current Rust snapshots must carry this field explicitly; older Rust
+    /// layouts are rejected by their outer schema version.
+    #[serde(deserialize_with = "deserialize_required_option")]
+    pub sector_out_index: Option<crate::fast_find_grid::SectorIndex>,
+    /// Sector on the inside of the door (the building).
+    pub sector_in: u16,
+    /// Layer (z-level) on the outside of the door. Used by
+    /// running soldier alerts for the layer-mismatch malus in the
+    /// weighted-distance scoring.
+    pub layer_out: u16,
+    /// Cached static door authorization for a non-rider NPC
+    /// soldier entering in the direct (outside→inside) direction with
+    /// building capacity available. Runtime capacity and rider state are
+    /// applied by [`Self::is_npc_villain_authorized_direct`].
+    pub npc_villain_authorized_direct: bool,
+}
+
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+impl DoorSeekInfo {
+    /// Complete the cached static authorization with the two live gates from
+    /// Door authorization: destination-building capacity and rider
+    /// state.
+    #[inline]
+    pub fn is_npc_villain_authorized_direct(
+        &self,
+        building_has_capacity: bool,
+        actor_is_rider: bool,
+    ) -> bool {
+        self.npc_villain_authorized_direct && building_has_capacity && !actor_is_rider
+    }
+}
+
+#[cfg(test)]
+mod door_seek_schema_tests {
+    use super::*;
+
+    #[test]
+    fn current_door_seek_schema_requires_exact_sector_provenance_field() {
+        let info = DoorSeekInfo {
+            door_index: crate::gate::DoorIndex::new(1).unwrap(),
+            door_type: crate::gate::DoorType::Default,
+            point_out: MapPoint::new(1.0, 2.0),
+            position_in: Position::default(),
+            sector_out: 3,
+            sector_out_index: crate::fast_find_grid::SectorIndex::new(4),
+            sector_in: 5,
+            layer_out: 6,
+            npc_villain_authorized_direct: true,
+        };
+        let mut value = serde_json::to_value(info).unwrap();
+        value.as_object_mut().unwrap().remove("sector_out_index");
+        assert!(serde_json::from_value::<DoorSeekInfo>(value).is_err());
+    }
+}
+
+/// Build the static authorization cached by [`DoorSeekInfo`].
+///
+/// The search for an enemy behind a door has already narrowed the actor to an NPC
+/// soldier and supplies the live capacity/rider gates at use time. Calling
+/// the shared door authorization implementation here keeps the remaining
+/// building-type, active-state, and villain-lock gates aligned with
+/// original-game door authorization.
+pub(crate) fn cache_npc_villain_authorized_direct(door: &crate::gate::Door) -> bool {
+    let actor = crate::gate::ActorAuthInfo {
+        kind: crate::element_kinds::ElementKind::ActorSoldier,
+        pc_auth_bit: 0,
+        has_lockpick: false,
+        has_climb: false,
+        has_jump: false,
+        is_rider: false,
+        posture: crate::element::Posture::Upright,
+    };
+
+    door.door_type == crate::gate::DoorType::Building
+        && door.is_actor_authorized(true, &actor, true, false)
+}
+
+// ---------------------------------------------------------------------------

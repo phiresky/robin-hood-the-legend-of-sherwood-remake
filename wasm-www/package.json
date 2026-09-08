@@ -1,0 +1,52 @@
+{
+  "name": "robin-hood-wasm-www",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "24.19.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "pnpm build:site",
+    "build:site": "tsc --noEmit && VITE_ROBIN_IDENTITY_SIGNER_ORIGIN=https://identity.robinhood.phiresky.xyz vite build && node scripts/stage-cloudflare-headers.mjs public dist",
+    "build:signer": "../scripts/build_identity_signer.sh \"$ROBINHOOD_WASM_BINDGEN\"",
+    "build:signer-shell": "tsc --noEmit && vite build --config vite.identity-signer.config.ts && node scripts/stage-cloudflare-headers.mjs signer signer-dist",
+    "build:shell": "pnpm build:site && pnpm verify:public",
+    "strip:wasm": "node scripts/optimize-wasm.mjs dist/assets",
+    "strip:wasm-pkg": "node scripts/optimize-wasm.mjs pkg",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "preview": "vite preview",
+    "smoke:cloudflare": "node scripts/smoke-cloudflare-deployment.mjs",
+    "test:leaderboards": "node -e \"require('node:fs').rmSync('.leaderboard-test-dist',{recursive:true,force:true})\" && tsc -p tsconfig.leaderboards-tests.json && node --test .leaderboard-test-dist/leaderboards/*.test.js .leaderboard-test-dist/identity-signer/*.test.js",
+    "test:deployment": "node --test scripts/*.test.mjs",
+    "test:identity": "node --test ../crates/robin_rs/js/browser_identity_modules.test.mjs",
+    "test:all": "pnpm test && pnpm test:leaderboards && pnpm test:identity && pnpm test:deployment",
+    "verify:web": "pnpm typecheck && pnpm test:all && pnpm build:site && pnpm build:signer-shell",
+    "verify:deployment-config": "node scripts/verify-cloudflare-deployment.mjs",
+    "verify:public": "node scripts/verify-static-build.mjs dist",
+    "verify:runtime": "node scripts/verify-runtime-corpus.mjs --datadir-authority ../target/datadir-authority.json runtime-dist",
+    "verify:runtime-addition": "node scripts/verify-runtime-corpus.mjs --addition --current-source runtime-addition",
+    "verify:runtime-source": "node scripts/verify-runtime-source-contract.mjs",
+    "verify:datadir": "node scripts/verify-datadir-corpus.mjs datadir-dist",
+    "verify:signer": "node scripts/verify-static-build.mjs --signer signer-dist",
+    "verify:signer-bridge": "node scripts/verify-identity-signer-bridge.mjs signer-dist/identity-signer/bridge",
+    "verify:wrangler": "wrangler deploy --dry-run --config deploy/wrangler-public.json && wrangler deploy --dry-run --config deploy/wrangler-signer.json",
+    "verify:runtime-wrangler": "wrangler deploy --dry-run --config deploy/wrangler-runtime.json",
+    "verify:datadir-wrangler": "wrangler deploy --dry-run --config deploy/wrangler-datadir.json",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^30.0.0",
+    "@types/node": "^25.6.0",
+    "es-module-lexer": "2.3.2",
+    "jsdom": "^30.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "wrangler": "4.127.1"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "dependencies": {
+    "@noble/hashes": "1.8.0"
+  }
+}

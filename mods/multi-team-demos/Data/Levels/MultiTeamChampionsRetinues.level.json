@@ -1,0 +1,233 @@
+{
+  "title": "Champions and Retinues",
+  "map_filename": "OpenBattlefield",
+  "reveal_all": true,
+  "spawn": [
+    1470,
+    1760
+  ],
+  "spawn_player": false,
+  "walkable_polygon": [
+    [
+      80,
+      80
+    ],
+    [
+      2428,
+      80
+    ],
+    [
+      2428,
+      2428
+    ],
+    [
+      80,
+      2428
+    ]
+  ],
+  "volumes": [],
+  "soldiers": [
+    {
+      "position": [
+        1380,
+        1520
+      ],
+      "profile": "guard_a03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1440,
+        1520
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1500,
+        1520
+      ],
+      "profile": "archer03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1560,
+        1520
+      ],
+      "profile": "officier_b03",
+      "allegiance": 2,
+      "direction": 8
+    },
+    {
+      "position": [
+        1380,
+        2000
+      ],
+      "profile": "guard_a03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1440,
+        2000
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1500,
+        2000
+      ],
+      "profile": "archer03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1560,
+        2000
+      ],
+      "profile": "officier_b03",
+      "allegiance": 3,
+      "direction": 0
+    },
+    {
+      "position": [
+        1209,
+        1640
+      ],
+      "profile": "guard_a03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1209,
+        1720
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1209,
+        1800
+      ],
+      "profile": "archer03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1209,
+        1880
+      ],
+      "profile": "officier_b03",
+      "allegiance": 4,
+      "direction": 4
+    },
+    {
+      "position": [
+        1731,
+        1640
+      ],
+      "profile": "guard_a03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1731,
+        1720
+      ],
+      "profile": "soldier_a03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1731,
+        1800
+      ],
+      "profile": "archer03",
+      "allegiance": 5,
+      "direction": 12
+    },
+    {
+      "position": [
+        1731,
+        1880
+      ],
+      "profile": "officier_b03",
+      "allegiance": 5,
+      "direction": 12
+    }
+  ],
+  "pcs": [
+    {
+      "position": [
+        1470,
+        1580
+      ],
+      "profile": 0,
+      "allegiance": 2,
+      "direction": 8,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1470,
+        1940
+      ],
+      "profile": 2,
+      "allegiance": 3,
+      "direction": 0,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1269,
+        1760
+      ],
+      "profile": 3,
+      "allegiance": 4,
+      "direction": 4,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    },
+    {
+      "position": [
+        1671,
+        1760
+      ],
+      "profile": 4,
+      "allegiance": 5,
+      "direction": 12,
+      "decision_policy": "enemy_ai",
+      "command_interface": "none",
+      "mission_role": "combatant",
+      "combat_stance": "aggressive",
+      "ai_profile": "soldier_b04"
+    }
+  ]
+}

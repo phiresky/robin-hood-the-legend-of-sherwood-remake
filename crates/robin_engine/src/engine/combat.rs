@@ -1,0 +1,6470 @@
+//! Bow shots and arrow projectile ticking.
+
+use super::input::BowTarget;
+use super::*;
+use crate::bow_shot::{self};
+use crate::coordinates::MapPoint;
+use crate::element::{Command, Entity, EntityId};
+
+fn arrow_publication_debug_filter(
+    frame_after: u32,
+    shooter_creation_order: u32,
+    projectile_creation_order: Option<u32>,
+) -> bool {
+    if std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for arrow publication diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_FRAME_AFTER")
+        .is_none_or(|value| value == frame_after)
+        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_SHOOTER_CREATION_ORDER")
+            .is_none_or(|value| value == shooter_creation_order)
+        && parse_filter("PARITY_DEBUG_ARROW_PUBLICATION_PROJECTILE_CREATION_ORDER")
+            .is_none_or(|value| projectile_creation_order.is_none_or(|actual| value == actual))
+}
+
+fn record_arrow_publication_debug(
+    stage: &str,
+    frame_after: u32,
+    shooter_creation_order: u32,
+    projectile_creation_order: Option<u32>,
+    entity: &Entity,
+) {
+    if !arrow_publication_debug_filter(
+        frame_after,
+        shooter_creation_order,
+        projectile_creation_order,
+    ) {
+        return;
+    }
+    let Entity::Projectile(arrow) = entity else {
+        panic!("arrow publication diagnostic received a non-projectile entity");
+    };
+    let sprite = &arrow.element.sprite;
+    let position = sprite.position_iface.get_position();
+    let old_position = sprite.position_iface.v48_serialized_state().old_position;
+    eprintln!(
+        "PARITY_ARROW_PUBLICATION_RUST stage={stage} frame_after={frame_after} \
+         projectile_creation_order={projectile_creation_order:?} \
+         shooter_creation_order={shooter_creation_order} active={} flying={} falling={} \
+         trajectory_size={} row={} frame={} frame_count={} \
+         position_bits=[{:08x},{:08x},{:08x}] old_position_bits=[{:08x},{:08x},{:08x}]",
+        arrow.element.active,
+        arrow.projectile.flying,
+        arrow.projectile.falling,
+        arrow.projectile.trajectory.len(),
+        sprite.current_row,
+        sprite.current_frame,
+        sprite.frame_count,
+        position.x.to_bits(),
+        position.y.to_bits(),
+        position.z.to_bits(),
+        old_position.x.to_bits(),
+        old_position.y.to_bits(),
+        old_position.z.to_bits(),
+    );
+}
+
+fn projectile_landing_debug_matches(frame: u32, shooter: EntityId, projectile: EntityId) -> bool {
+    if std::env::var_os("PARITY_DEBUG_PROJECTILE_LANDING").is_none() {
+        return false;
+    }
+    let parse_filter = |name: &str| {
+        std::env::var(name).ok().map(|value| {
+            value.parse::<u32>().unwrap_or_else(|error| {
+                panic!("invalid {name}={value:?} for projectile landing diagnostic: {error}")
+            })
+        })
+    };
+    parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_FRAME").is_none_or(|value| value == frame)
+        && parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_SHOOTER")
+            .is_none_or(|value| value == shooter.index())
+        && parse_filter("PARITY_DEBUG_PROJECTILE_LANDING_PROJECTILE")
+            .is_none_or(|value| value == projectile.index())
+}
+
+#[cfg(test)]
+thread_local! {
+    static RECEIVE_PURSE_REVEAL_OBSERVER: std::cell::RefCell<Option<Box<dyn FnMut(&EngineInner, EntityId)>>> =
+        std::cell::RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(crate) fn set_receive_purse_reveal_observer(
+    observer: Option<Box<dyn FnMut(&EngineInner, EntityId)>>,
+) {
+    RECEIVE_PURSE_REVEAL_OBSERVER.with(|slot| *slot.borrow_mut() = observer);
+}
+
+/// Frames of apple-smell AI state after a soldier is hit by an apple.
+pub const APPLE_SMELL_DURATION: u32 = 1500;
+
+/// Piercing damage applied by a stone hit on an unprotected victim.
+pub const STONE_DAMAGE: u16 = 10;
+
+/// Concussion applied by a stone hit on an unprotected victim.  Heavy
+/// KO potential relative to damage.
+pub const STONE_CONCUSSION: u16 = 100;
+
+/// Outcome of testing an arrow-candidate-victim impact.  See
+/// [`EngineInner::classify_arrow_hit`] for the full control flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArrowHitOutcome {
+    /// Apply piercing damage to the victim.
+    Damage,
+    /// Arrow flies through silently — friendly-fire filter or VIP NPC.
+    /// Hit flag and impact sound are both suppressed.
+    PassThrough,
+    /// Arrow ricochets off the victim's armor. The original game puts the arrow into
+    /// falling state before impact-FX lookup, so this path is silent.
+    Ricochet,
+}
+
+/// Finish the original game's arrow-vulnerability decision after its civilian/camp
+/// filter. Only PCs and soldiers own a sword whose piercing protection can
+/// reject an otherwise hurtable arrow. A civilian on Hard difficulty is
+/// immediately hurtable and must not be treated as if a missing sword meant
+/// full protection.
+fn resolve_arrow_hurtable(
+    hurtable_base: bool,
+    victim_is_pc_or_soldier: bool,
+    piercing_roll_passed: Option<bool>,
+) -> bool {
+    if !hurtable_base {
+        false
+    } else if !victim_is_pc_or_soldier {
+        true
+    } else {
+        piercing_roll_passed.expect("PC/soldier arrow classification requires a piercing result")
+    }
+}
+
+#[cfg(test)]
+mod arrow_hurtable_tests {
+    use super::resolve_arrow_hurtable;
+
+    #[test]
+    fn hard_difficulty_civilian_does_not_require_a_piercing_weapon_profile() {
+        assert!(resolve_arrow_hurtable(true, false, None));
+    }
+
+    #[test]
+    fn protected_or_filtered_human_remains_unhurtable() {
+        assert!(!resolve_arrow_hurtable(true, true, Some(false)));
+        assert!(!resolve_arrow_hurtable(false, false, None));
+    }
+}
+
+impl EngineInner {
+    // ─── Bow shots & arrow projectiles ───────────────────────────
+
+    /// Rebuild Rust's derived active-shot latch after loading an Original
+    /// save in the middle of a shooting order. Original needs no parallel
+    /// latch: the selected sequence element and current order are sufficient
+    /// for execution to shoot the bow on the action-done pulse.
+    pub(crate) fn restore_loaded_active_shots(&mut self) {
+        let owners = self
+            .world
+            .entities
+            .actors()
+            .map(|(id, _)| EntityId::from(id))
+            .collect::<Vec<_>>();
+        let active = owners
+            .into_iter()
+            .filter_map(|owner| {
+                let (sequence_id, element_index, _order) = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(owner)?;
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence_id, element_index)?;
+                if !matches!(element.command, Command::ShootBow | Command::ShootBowOnce) {
+                    return None;
+                }
+                let (shoot_mode, shoot_order_id) = element.orders.iter().find_map(|order| {
+                    crate::bow_shot::shoot_mode_for_order(order.order_type)
+                        .map(|mode| (mode, order.order_id))
+                })?;
+                let target = match &element.data {
+                    crate::sequence::SequenceElementData::Interaction { antagonist } => {
+                        (*antagonist)?
+                    }
+                    _ => return None,
+                };
+                Some((
+                    owner,
+                    crate::movement::ActiveShot {
+                        sequence_id: Some(sequence_id),
+                        element_index,
+                        target: Some(target),
+                        order_id: Some(shoot_order_id),
+                        released: false,
+                        shoot_mode: Some(shoot_mode),
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        for (owner, shot) in active {
+            self.world
+                .entities
+                .get_mut(owner)
+                .and_then(Entity::actor_data_mut)
+                .unwrap_or_else(|| {
+                    panic!("loaded bow-shot owner {owner:?} is missing required actor state")
+                })
+                .active_shot = shot;
+        }
+    }
+
+    pub(super) fn apply_projectile_landing_resolution(
+        &mut self,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+    ) -> Option<crate::fast_find_grid::ProjectileLandingResolution> {
+        let landing_map = {
+            let entity = self.get_entity(projectile_id)?;
+            let pos = entity.element_data().position();
+            pos.to_map()
+        };
+        let resolution = self
+            .world
+            .fast_grid
+            .resolve_projectile_landing(landing_map, self.sight_obstacles(assets));
+        if let Some(entity) = self.world.entities.get_mut(projectile_id) {
+            let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
+                resolution.obstacle_index,
+                assets.static_sight_obstacles.as_slice(),
+            );
+            bow_shot::apply_projectile_landing_resolution(
+                entity.element_data_mut(),
+                resolution,
+                obstacle_plane,
+            );
+        }
+        Some(resolution)
+    }
+
+    /// Public entry point for "player pressed the bow button on a
+    /// target".  Launches a `Command::ShootBow` sequence element on the
+    /// shooter and returns its sequence id.
+    pub(crate) fn shoot_bow_at(
+        &mut self,
+        assets: &LevelAssets,
+        shooter: EntityId,
+        target: EntityId,
+    ) -> Option<crate::sequence::SequenceId> {
+        let Some(shooter_entity) = self.get_entity(shooter) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: missing shooter"
+            );
+            return None;
+        };
+        if !shooter_entity.is_human() {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                shooter_kind = ?shooter_entity.kind(),
+                "shoot_bow_at: non-human shooter"
+            );
+            return None;
+        }
+        if shooter_entity.is_dead() {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: dead shooter"
+            );
+            return None;
+        }
+        let Some((bow_profile_idx, _)) = self.bow_profile_and_ability(assets, shooter) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: shooter has no bow profile"
+            );
+            return None;
+        };
+        let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                bow_profile_idx,
+                "shoot_bow_at: missing bow profile"
+            );
+            return None;
+        };
+        if bow_profile.normal_shoot.range == 0 {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                bow_profile_idx,
+                "shoot_bow_at: shooter bow profile has no range"
+            );
+            return None;
+        }
+
+        // Both humans and FX targets are valid bow-shot targets.  FX
+        // targets with the ARROW action filter are the hunting/puzzle
+        // targets in forest levels.
+        let Some(target_entity) = self.get_entity(target) else {
+            tracing::warn!(
+                shooter = ?shooter,
+                target = ?target,
+                "shoot_bow_at: missing target"
+            );
+            return None;
+        };
+        match target_entity {
+            // Arrow shooting targets the retained actor
+            // without rechecking whether it is dead. A target may die after an
+            // archer selected it but before the aiming timer expires.
+            Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_) => {}
+            Entity::Target(t)
+                if t.target
+                    .action_filter
+                    .contains(crate::element::TargetFilter::ARROW) => {}
+            Entity::Target(_) => {
+                tracing::warn!(
+                    shooter = ?shooter,
+                    target = ?target,
+                    "shoot_bow_at: target does not accept arrows"
+                );
+                return None;
+            }
+            other => {
+                tracing::warn!(
+                    shooter = ?shooter,
+                    target = ?target,
+                    target_kind = ?other.kind(),
+                    "shoot_bow_at: unsupported target kind"
+                );
+                return None;
+            }
+        }
+
+        Some(self.launch_element(bow_shot::build_shoot_bow_element(shooter, target)))
+    }
+
+    /// Look up the bow profile index and shooting ability for an entity.
+    ///
+    /// Returns `(bow_profile_index, shooting_ability)` or `None` if the
+    /// entity has no bow data.
+    pub(super) fn bow_profile_and_ability(
+        &self,
+        assets: &LevelAssets,
+        entity_id: EntityId,
+    ) -> Option<(u32, u32)> {
+        let entity = self.get_entity(entity_id)?;
+        match entity {
+            Entity::Pc(pc) => {
+                let idx = usize::from(pc.pc.profile_index);
+                let profile = assets.profile_manager.characters.get(idx)?;
+                if profile.shooting_weapon_id == 0 {
+                    return None;
+                }
+                Some((profile.shooting_weapon_id, profile.shooting as u32))
+            }
+            Entity::Soldier(s) => {
+                let idx = usize::from(s.soldier.soldier_profile_index);
+                let profile = assets.profile_manager.soldiers.get(idx)?;
+                if profile.shooting_weapon_id == 0 {
+                    return None;
+                }
+                // The shooting-ability lookup applies FIGHTING modifiers
+                // (not SHOOTING — appears to be an upstream bug preserved
+                // for accuracy).
+                let mut shooting = if self.is_hostile_to_player_camp(s.soldier.cached_camp) {
+                    let diff = self.control.sim_config.difficulty;
+                    diff.rules().enemy_shooting(profile.shooting, 100) as u32
+                } else {
+                    profile.shooting as u32
+                };
+                // Apply blood_alcohol penalty:
+                // result = result * (1.0 - 0.01 * bloodAlcohol)
+                let blood_alcohol = s.npc.ai_brain.base().map_or(0, |a| a.blood_alcohol);
+                if blood_alcohol > 0 {
+                    shooting =
+                        ((shooting as f32) * (1.0 - 0.01 * blood_alcohol as f32)).max(0.0) as u32;
+                }
+                Some((profile.shooting_weapon_id, shooting))
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the live bow-skill capacity used to scale a
+    /// missed arrow's random bias.
+    ///
+    /// This is deliberately distinct from [`Self::bow_profile_and_ability`].
+    /// The original game's bow shot uses the actor's shooting ability, including
+    /// difficulty and drunkenness modifiers for soldiers) to the hit-chance
+    /// lookup, but scales the miss vector with the unmodified capacity stored
+    /// in the actor's human status. Soldier status is initialized from the
+    /// raw profile; PC status aliases its campaign description.
+    fn bow_skill_capacity(&self, assets: &LevelAssets, entity_id: EntityId) -> Option<u32> {
+        match self.get_entity(entity_id)? {
+            Entity::Pc(pc) => self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|description| description.status.human_status.bow.capacity),
+            Entity::Soldier(soldier) => assets
+                .profile_manager
+                .soldiers
+                .get(usize::from(soldier.soldier.soldier_profile_index))
+                .map(|profile| u32::from(profile.shooting)),
+            _ => None,
+        }
+    }
+
+    pub(super) fn selected_bow_order(
+        &self,
+        owner: EntityId,
+    ) -> Option<(crate::sequence::SequenceId, usize, std::num::NonZeroU32)> {
+        let shot = self.get_entity(owner)?.actor_data()?.active_shot;
+        let (seq_id, elem_idx, order) = self
+            .orders
+            .sequence_manager
+            .current_order_for_actor(owner)?;
+        (shot.is_active()
+            && shot.sequence_id == Some(seq_id)
+            && shot.element_index == elem_idx
+            && bow_shot::is_active_bow_order(order.order_type))
+        .then_some((seq_id, elem_idx, order.order_id))
+    }
+
+    /// Deliver the original game's bow-shot shield warning at the release
+    /// callsite. The arrow-launched AI event is
+    /// synchronous there, before both the hit roll and arrow insertion.
+    fn warn_shield_target_of_arrow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        shooter: EntityId,
+        target: EntityId,
+    ) {
+        // Shield-bearer admission is two-gated: the HtH weapon must be a
+        // shield weapon *and* the soldier's sprite profile must carry a
+        // `WaitingShield` animation row.
+        let target_is_shield_soldier = match self.get_entity(target) {
+            Some(Entity::Soldier(s)) => {
+                let soldier_profile = assets
+                    .profile_manager
+                    .get_soldier(s.soldier.soldier_profile_index)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow target {} requires missing soldier profile {}",
+                            target.index(),
+                            s.soldier.soldier_profile_index
+                        )
+                    });
+                let weapon = assets
+                    .profile_manager
+                    .get_hth_weapon(soldier_profile.hth_weapon_id)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "bow target {} soldier profile {} requires missing HtH weapon {}",
+                            target.index(),
+                            s.soldier.soldier_profile_index,
+                            soldier_profile.hth_weapon_id
+                        )
+                    });
+                weapon.shield
+                    && s.element
+                        .sprite
+                        .has_animation(crate::order::OrderType::WaitingShield)
+            }
+            _ => false,
+        };
+        if !target_is_shield_soldier {
+            return;
+        }
+
+        // This is a live cone + LOS query, not the detection cadence's stale
+        // `seen_now` snapshot, matching the original game's immediate detection.
+        if self.npc_is_detecting_human(assets, target, shooter, self.control.frame_counter) {
+            self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                sim,
+                target,
+                assets,
+                crate::ai::Stimulus::with_human(
+                    crate::ai::StimulusType::EventArrowLaunched,
+                    shooter.index(),
+                ),
+            );
+        }
+    }
+
+    /// Advance one exact selected bow arm without detaching or restoring any
+    /// other actor state.
+    pub(super) fn tick_bow_shot_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        shooter_id: EntityId,
+        expected_order_id: std::num::NonZeroU32,
+    ) -> Vec<EntityId> {
+        let mut spawned_projectiles = Vec::new();
+        if self
+            .get_entity(shooter_id)
+            .and_then(Entity::actor_data)
+            .is_some_and(|actor| actor.execution_frozen)
+        {
+            return spawned_projectiles;
+        }
+        let sprite_frozen = self.actors_frozen();
+        let events = bow_shot::tick_bow_shot_for_owner(
+            sim,
+            &mut self.world.entities,
+            &mut self.orders.sequence_manager,
+            shooter_id,
+            expected_order_id,
+            sprite_frozen,
+        );
+        for pc_id in events.pc_equip_actions {
+            // The specialized active-shot owner bypasses generic animation
+            // side effects. Close human action execution's synchronous
+            // MSG_SELECT_ACTION(BOW) callback before this actor slot returns.
+            self.set_pc_action_from_message(assets, 0, pc_id, crate::profiles::Action::Bow);
+        }
+        for result in events.fired {
+            let Some(shooter_entity) = self.get_entity(result.shooter) else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    target = ?result.target,
+                    "Bow shot release skipped: shooter entity missing"
+                );
+                continue;
+            };
+            let layer = shooter_entity.element_data().layer();
+            let trajectory_origin_sector =
+                super::ai::ai_view_position_sector(self, shooter_entity.element_data());
+            let shooter_is_pc = shooter_entity.kind().is_pc();
+
+            let Some(target_entity) = self.get_entity(result.target) else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    target = ?result.target,
+                    "Bow shot release skipped: target entity missing"
+                );
+                continue;
+            };
+            let target_is_fx_target = target_entity.kind().is_fx_target();
+            let target_is_human = target_entity.is_human();
+            let target_posture = target_entity.element_data().posture;
+
+            // ── Determine shoot mode from action state ───────────
+            let shoot_mode = result.shoot_mode;
+            let flat_shot = bow_shot::is_flat_shot(shoot_mode);
+            let mass = bow_shot::arrow_mass(shoot_mode);
+
+            // ── Look up bow profile for damage and hit chance ────
+            let Some((bow_profile_idx, shooting_ability)) =
+                self.bow_profile_and_ability(assets, result.shooter)
+            else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    "Bow shot release skipped: shooter has no bow profile data"
+                );
+                continue;
+            };
+
+            let Some(bow_profile) = assets.profile_manager.get_bow(bow_profile_idx) else {
+                tracing::warn!(
+                    shooter = ?result.shooter,
+                    bow_profile_idx,
+                    "Bow shot release skipped: missing bow profile"
+                );
+                continue;
+            };
+
+            use crate::weapons::{BowState, ShootMode};
+            // Create a temporary BowState just for the lookup.
+            let bow = BowState::new(bow_profile_idx, bow_profile, 1);
+            // Down maps to Normal for damage lookup (flat shots use Normal,
+            // arced shots use Long).
+            let lookup_mode = match shoot_mode {
+                ShootMode::Down => ShootMode::Normal,
+                other => other,
+            };
+            let damage = bow.get_damage(bow_profile, lookup_mode);
+
+            // ── Compute bow point (hand position) ────────────────
+            let bow_point = bow_shot::compute_bow_point(
+                result.shooter_position,
+                shoot_mode,
+                result.shooter_direction,
+                result.sprite_hand_point,
+            );
+
+            // ── Target belt point (resolved in tick_bow_shots) ───
+            // For LEANING_OUT targets the belt can be obstructed by
+            // the parapet/crenel, so we fall back to the eyes point if the
+            // belt aim would only be reachable as a long shot (or not at
+            // all).  Non-leaning targets always aim at belt.
+            //
+            // Only applies when the planned shoot mode is Normal: re-run
+            // `can_shoot_with_bow_at_point` against the belt and swap to
+            // eyes when that re-check fails or upgrades to a long shot.
+            // `can_shoot_with_bow_at_point` folds in range / posture-
+            // override / ammo semantics.
+            let mut target_point = result.target_point;
+            if target_posture == crate::element::Posture::LeaningOut
+                && shoot_mode == crate::weapons::ShootMode::Normal
+            {
+                let (belt_status, belt_mode) =
+                    self.can_shoot_with_bow_at_point(assets, result.shooter, target_point, false);
+                let belt_failed =
+                    belt_status != BowTarget::Valid || belt_mode == crate::weapons::ShootMode::Long;
+                if belt_failed
+                    && let Some(eyes) = self
+                        .get_entity(result.target)
+                        .and_then(|e| e.compute_eyes_point(None))
+                {
+                    target_point = eyes;
+                }
+            }
+
+            // ── Lead a moving target ─────────────────────────────
+            // For human targets, read their forecasted movement so the
+            // shot leads them; FX targets pass None.
+            //
+            // PositionInterface returns canonical world XYZ data; projectile
+            // code still carries the older element-local 3D type for now.
+            let target_movement = target_is_human.then_some(result.target_forecasted_movement);
+
+            // ── Compute velocity ─────────────────────────────────
+            // `compute_shot_velocity_params` forwards `target_movement`
+            // into `compute_initial_throw_velocity`, which adds
+            // `movement * 0.5 * TIME_FLYSEGMENT` to lead a moving target.
+            // Adding the lead a second time here would double-correct,
+            // so we trust the helper.
+            let (mut velocity, _flight_time, _apex) = bow_shot::compute_shot_velocity_params(
+                bow_point,
+                target_point,
+                shoot_mode,
+                target_movement,
+            );
+
+            self.warn_shield_target_of_arrow(sim, assets, result.shooter, result.target);
+
+            // ── Hit chance roll ──────────────────────────────────
+            // The original game only applies the bow's hit chance in the
+            // human-target branch of bow shooting.
+            // Scripted FX targets use the exact center-point trajectory.
+            let hit_distance = {
+                let dx = target_point.x - bow_point.x;
+                let dy = target_point.y - bow_point.y;
+                let dz = target_point.z - bow_point.z;
+                (dx * dx + dy * dy + dz * dz).sqrt()
+            };
+
+            let hit_chance = if target_is_human {
+                let bow = crate::weapons::BowState::new(bow_profile_idx, bow_profile, 1);
+                bow.get_hit_chance(bow_profile, shooting_ability, hit_distance as u32)
+            } else {
+                100
+            };
+
+            // human-status capacity, not the difficulty-/alcohol-adjusted
+            // shooting-ability value used by the hit-chance lookup.
+            let bow_skill_capacity = self
+                .bow_skill_capacity(assets, result.shooter)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "bow shot shooter {:?} is missing its authoritative bow skill capacity",
+                        result.shooter
+                    )
+                });
+
+            if target_is_human
+                && let Some(bias) =
+                    bow_shot::roll_hit_and_compute_bias(sim, hit_chance, bow_skill_capacity)
+            {
+                // Miss — deflect the velocity.
+                velocity.x += bias.x;
+                velocity.y += bias.y;
+                velocity.z += bias.z;
+                tracing::debug!(
+                    shooter = ?result.shooter,
+                    ?hit_chance,
+                    ?bias,
+                    "Bow shot missed (bias applied)"
+                );
+            }
+
+            // ── Bloodseeker-oil check ────────────────────────────
+            // When a PC shoots an FX target in a forest level the
+            // arrow gets magic-bullet mode, bypassing obstacle collision so
+            // it can pass through trees to reach the target.
+            let magic_bullet =
+                target_is_fx_target && shooter_is_pc && self.world.weather.is_forest_level;
+
+            // ── Compute ballistic trajectory ─────────────────────
+            let obstacle_list = self.sight_obstacles(assets);
+            let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+                fast_find_grid: &self.world.fast_grid,
+                sight_obstacles: obstacle_list,
+                water_zones: Some(&assets.water_zones),
+            };
+            let collision_debug_identity =
+                crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
+                    crate::sight_obstacle::ProjectileCollisionDebugIdentity {
+                        frame: self.control.frame_counter,
+                        shooter: result.shooter.index(),
+                        projectile_creation_order: self.world.next_original_creation_order,
+                    }
+                });
+            let capture_collision_debug = collision_debug_identity
+                .is_some_and(crate::sight_obstacle::projectile_collision_debug_matches);
+            let compute_trajectory = || {
+                bow_shot::compute_trajectory_ballistic_with_terminal_impact(
+                    bow_point,
+                    velocity,
+                    mass,
+                    flat_shot,
+                    // Magic-bullet short-circuit: skip the obstacle check entirely.
+                    if magic_bullet {
+                        None
+                    } else {
+                        Some(&obstacle_check)
+                    },
+                )
+            };
+            let (
+                trajectory,
+                terminal_obstacle,
+                terminal_impact,
+                terminal_lands_in_hole,
+                terminal_lands_in_water,
+            ) = if capture_collision_debug {
+                crate::sight_obstacle::with_projectile_collision_debug_identity(
+                    collision_debug_identity.expect("matched collision debug has no identity"),
+                    compute_trajectory,
+                )
+            } else {
+                compute_trajectory()
+            };
+            let terminal_obstacle_plane =
+                bow_shot::terminal_obstacle_plane(terminal_obstacle, obstacle_list);
+            let trajectory_end = trajectory.last().map(|tp| tp.position);
+            // Trajectory calculation resolves and stores the eventual impact
+            // membership before the projectile's explicit pre-add
+            // update. It is therefore observable throughout flight, not
+            // only after the projectile lands.
+            //
+            // A terminal impact that classifies as water or hole returns from
+            // trajectory calculation *before* the membership block
+            // (setting the dive flag and returning; and
+            // adding a fall-into-hole trajectory and returning, both
+            // before clearing the layer when no obstacle is present).
+            // Neither fall-into-hole trajectory creation, projectile-impact
+            // handling, nor the dive flag touches
+            // layer, sector or obstacle, so such a projectile keeps the
+            // clearing the layer, sector, and obstacle that
+            // installed for the whole of its fall.
+            let terminal_membership =
+                terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water;
+            let initial_landing_resolution = terminal_membership.then(|| {
+                let end = trajectory_end.expect("terminal impact has no trajectory endpoint");
+                if let Some(obstacle) = terminal_obstacle {
+                    self.world
+                        .fast_grid
+                        .resolve_projectile_landing_with_obstacle(
+                            end.to_map(),
+                            Some(obstacle),
+                            obstacle_list,
+                        )
+                } else {
+                    self.world
+                        .fast_grid
+                        .resolve_projectile_ground_landing(end.to_map())
+                }
+            });
+            tracing::debug!(
+                shooter = ?result.shooter,
+                target = ?result.target,
+                ?shoot_mode,
+                ?bow_point,
+                ?target_point,
+                ?trajectory_end,
+                trajectory_len = trajectory.len(),
+                magic_bullet,
+                predicted_hit = bow_shot::will_hit_target(&trajectory, bow_point, target_point),
+                "Bow shot trajectory computed"
+            );
+            // Launch-parameter snapshot, on its own target so it can be
+            // enabled without the rest of the combat module's chatter:
+            // `RUST_LOG=arrow_launch=trace`.
+            tracing::trace!(
+                target: "arrow_launch",
+                frame = self.control.frame_counter,
+                shooter = result.shooter.index(),
+                target_id = result.target.index(),
+                ?shoot_mode,
+                shooter_pos = ?result.shooter_position,
+                shooter_dir = result.shooter_direction,
+                hand = ?result.sprite_hand_point,
+                ?bow_point,
+                ?target_point,
+                target_movement = ?target_movement,
+                ?velocity,
+                hit_chance,
+                trajectory_len = trajectory.len(),
+                first_waypoint = ?trajectory.first().map(|tp| tp.position),
+                "arrow launch parameters"
+            );
+
+            // ── Spawn the arrow ──────────────────────────────────
+            let mut arrow = bow_shot::spawn_arrow(bow_shot::SpawnArrowParams {
+                shooter: result.shooter,
+                bow_point,
+                trajectory_origin: crate::coordinates::MapPoint {
+                    x: result.shooter_position.x,
+                    y: result.shooter_position.y,
+                },
+                target: result.target,
+                target_pos: result.target_pos,
+                trajectory,
+                damage,
+                layer,
+                lands_in_hole: terminal_lands_in_hole,
+                initial_velocity: velocity,
+            });
+            let diagnostic_identity =
+                std::env::var_os("PARITY_DEBUG_ARROW_PUBLICATION").map(|_| {
+                    (
+                        self.control.frame_counter.checked_add(1).expect(
+                            "frame counter overflow while recording arrow publication diagnostic",
+                        ),
+                        self.world.original_creation_order(result.shooter),
+                    )
+                });
+            if let Some((frame_after, shooter_creation_order)) = diagnostic_identity {
+                record_arrow_publication_debug(
+                    "after_spawn_arrow",
+                    frame_after,
+                    shooter_creation_order,
+                    None,
+                    &arrow,
+                );
+            }
+            let Entity::Projectile(arrow_projectile) = &mut arrow else {
+                panic!("spawn_arrow returned a non-projectile entity");
+            };
+            // Trajectory calculation retains the dive flag across a later ricochet
+            // trajectory. Its terminal update must therefore still take
+            // the water-return path even when the recomputed fall ends dry.
+            arrow_projectile.projectile.dive = terminal_lands_in_water;
+            set_projectile_trajectory_origin(
+                &mut arrow_projectile.projectile,
+                trajectory_origin_sector,
+                layer,
+            );
+            let arrow_id = self.add_entity(arrow);
+            if capture_collision_debug {
+                crate::sight_obstacle::validate_projectile_collision_debug_spawn(
+                    arrow_id,
+                    self.world.original_creation_order(arrow_id),
+                );
+            }
+            let diagnostic_projectile_creation_order =
+                diagnostic_identity.map(|_| self.world.original_creation_order(arrow_id));
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_add_entity",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing immediately after add_entity"),
+                );
+            }
+            if let Some(resolution) = initial_landing_resolution {
+                if projectile_landing_debug_matches(
+                    self.control.frame_counter,
+                    result.shooter,
+                    arrow_id,
+                ) {
+                    let obstacle_list = self.sight_obstacles(assets);
+                    let obstacle = terminal_obstacle.map(|handle| {
+                        let index = usize::from(handle);
+                        let obstacle = obstacle_list.get(index).unwrap_or_else(|| {
+                            panic!("diagnostic terminal obstacle {index} disappeared")
+                        });
+                        (
+                            index,
+                            obstacle_list.is_active(index),
+                            obstacle.is_projection_area(),
+                            obstacle.projection_area_ref(),
+                            obstacle.contains_point_projection(
+                                trajectory_end
+                                    .expect("terminal impact lost its endpoint")
+                                    .to_map(),
+                            ),
+                        )
+                    });
+                    let landing = trajectory_end
+                        .expect("terminal impact lost its endpoint")
+                        .to_map();
+                    let terminal_obstacle_ref = terminal_obstacle.map(|handle| {
+                        let index = usize::from(handle);
+                        obstacle_list.get(index).unwrap_or_else(|| {
+                            panic!("diagnostic terminal obstacle {index} disappeared")
+                        })
+                    });
+                    let material_inputs = terminal_obstacle_ref.map(|obstacle| {
+                        let sectors = obstacle
+                            .material_sectors
+                            .iter()
+                            .enumerate()
+                            .map(|(index, sector)| {
+                                (
+                                    index,
+                                    sector.material,
+                                    sector.bounding_box.contains_point(landing),
+                                    sector.contains(landing),
+                                )
+                            })
+                            .collect::<Vec<_>>();
+                        (obstacle.material, sectors)
+                    });
+                    let ground_material_inputs = assets
+                        .water_zones
+                        .zones
+                        .iter()
+                        .enumerate()
+                        .map(|(index, zone)| {
+                            (
+                                index,
+                                zone.material,
+                                zone.bounding_box.contains_point(landing),
+                                zone.contains(landing),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let scoped_material = crate::water_zones::determine_water_hole_scoped(
+                        &assets.water_zones,
+                        terminal_obstacle_ref,
+                        landing,
+                    )
+                    .map(|resolved| (resolved.material, resolved.sector_points.map(<[_]>::len)));
+                    let candidate_layer = obstacle
+                        .filter(|(_, active, projection, topology, _)| {
+                            *active && *projection && topology.is_some()
+                        })
+                        .map_or(0, |(_, _, _, topology, _)| {
+                            topology.expect("filtered projection topology").layer.get()
+                        });
+                    let candidates = if self.world.fast_grid.is_inside_grid_point(landing) {
+                        let block = self
+                            .world
+                            .fast_grid
+                            .get_block_index(landing, candidate_layer);
+                        self.world
+                            .fast_grid
+                            .get_sectors_at_block(block, crate::sector::SectorType::MOTION)
+                            .into_iter()
+                            .map(|(index, sector)| {
+                                (
+                                    index,
+                                    i16::from(sector.sector_number),
+                                    sector.sector_type.is_area(),
+                                    sector.bounding_box.contains_point(landing),
+                                    sector.contains_point(landing),
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
+                    eprintln!(
+                        "PARITY_PROJECTILE_LANDING frame={} shooter={} projectile={} end_bits=[{:#010x},{:#010x},{:#010x}] landing_bits=[{:#010x},{:#010x}] terminal_impact={} lands_in_water={} lands_in_hole={} terminal_obstacle={obstacle:?} material_inputs={material_inputs:?} ground_material_inputs={ground_material_inputs:?} scoped_material={scoped_material:?} candidate_layer={} candidates={candidates:?} result={resolution:?}",
+                        self.control.frame_counter,
+                        result.shooter.index(),
+                        arrow_id.index(),
+                        trajectory_end
+                            .expect("terminal impact lost its endpoint")
+                            .x
+                            .to_bits(),
+                        trajectory_end
+                            .expect("terminal impact lost its endpoint")
+                            .y
+                            .to_bits(),
+                        trajectory_end
+                            .expect("terminal impact lost its endpoint")
+                            .z
+                            .to_bits(),
+                        landing.x.to_bits(),
+                        landing.y.to_bits(),
+                        terminal_impact,
+                        terminal_lands_in_water,
+                        terminal_lands_in_hole,
+                        candidate_layer,
+                    );
+                }
+                let entity = self
+                    .world
+                    .entities
+                    .get_mut(arrow_id)
+                    .expect("newly added arrow vanished before landing-state initialization");
+                let element = entity.element_data_mut();
+                element.set_sector(resolution.sector);
+                if resolution.sector.is_some() && !resolution.blocked_by_motion_obstacle {
+                    element.set_layer(
+                        resolution
+                            .layer
+                            .expect("authorized projectile landing has no resolved layer")
+                            .get(),
+                    );
+                }
+            }
+            if terminal_membership {
+                // obstacle assignment lives inside the same membership
+                // block the water/hole `return`s skip
+                // for flying projectiles, so a projectile that ends in
+                // water or a hole stays bound to no obstacle.
+                let element = self
+                    .world
+                    .entities
+                    .get_mut(arrow_id)
+                    .expect("newly added arrow vanished before obstacle binding")
+                    .element_data_mut();
+                bow_shot::bind_trajectory_obstacle(
+                    element,
+                    terminal_obstacle,
+                    terminal_obstacle_plane,
+                );
+            }
+            // Hydrate the arrow's sprite from the accessory registry so
+            // the flying arrow renders its proper sprite instead of the
+            // colored-rect fallback.
+            self.attach_accessory_sprite(assets, arrow_id);
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_attach_accessory_sprite",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing after accessory sprite attachment"),
+                );
+            }
+            self.tick_new_projectile_once(sim, assets, arrow_id);
+            if let Some(((frame_after, shooter_creation_order), projectile_creation_order)) =
+                diagnostic_identity.zip(diagnostic_projectile_creation_order)
+            {
+                record_arrow_publication_debug(
+                    "after_first_hourglass",
+                    frame_after,
+                    shooter_creation_order,
+                    Some(projectile_creation_order),
+                    self.world
+                        .entities
+                        .get(arrow_id)
+                        .expect("new arrow missing after its first hourglass"),
+                );
+            }
+            spawned_projectiles.push(arrow_id);
+
+            tracing::debug!(
+                shooter = ?result.shooter,
+                target = ?result.target,
+                arrow = ?arrow_id,
+                ?shoot_mode,
+                damage,
+                ?hit_chance,
+                "Arrow spawned from bow shot"
+            );
+
+            // ── Decrement bow ammo after shot ───────────────────
+            // Decrement ammo by 1; disable the bow action if ammo hits 0.
+            self.decrement_bow_ammo(assets, result.shooter);
+
+            // The sequence element stays in progress after release so
+            // the shoot animation and reload/unequip orders can finish.
+            // `tick_bow_shots` emits completion when the final bow order
+            // terminates.
+        }
+        for (seq_id, elem_idx) in events.completed {
+            self.orders
+                .sequence_manager
+                .element_terminated(seq_id, elem_idx);
+        }
+        spawned_projectiles
+    }
+
+    /// Put an arrow into non-shield falling state — the "armor ricochet"
+    /// branch: inverse sector (xor 8), `y * 10`, z velocity zero.  Used
+    /// when a PC/Soldier is hit but not hurtable (same-camp friendly fire
+    /// or a successful piercing-protection roll).
+    fn start_arrow_ricochet(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        arrow_id: EntityId,
+    ) {
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles,
+            water_zones: Some(&assets.water_zones),
+        };
+        let Some(entity) = self.world.entities.get_mut(arrow_id) else {
+            return;
+        };
+        let Entity::Projectile(proj) = entity else {
+            return;
+        };
+
+        bow_shot::make_arrow_falling_down(sim, proj, false, Some(&obstacle_check));
+    }
+
+    /// Classify an arrow impact on a candidate victim.
+    ///
+    /// Folds together two distinct concerns whose outcomes differ on a
+    /// "miss":
+    ///   * Find-victim filter match (forest royalist vs royalist,
+    ///     soldier→civilian, soldier→same-camp, PC→PC-with-shield) →
+    ///     target is invisible to the search, the arrow sails past
+    ///     silently.
+    ///   * VIP-NPC / civilian-non-hurtable branch → no hit, no impact
+    ///     sound: the arrow also passes through silently.
+    ///   * PC/Soldier non-hurtable branch → falling state with impact
+    ///     sound — armor ricochet.
+    ///   * Piercing-protection roll for PC / Soldier targets rolls
+    ///     `rand() % 101 <= protection`; if it passes the target is
+    ///     flagged non-hurtable, funnelling into the PC/Soldier ricochet
+    ///     branch.
+    ///
+    /// `PassThrough` replays the silent miss, `Ricochet` plays the
+    /// falling-state transition, and `Damage` launches the damage
+    /// sequence element.
+    fn classify_arrow_hit(
+        &self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim_id: EntityId,
+        shooter_id: EntityId,
+    ) -> ArrowHitOutcome {
+        let victim = match self.get_entity(victim_id) {
+            Some(e) => e,
+            None => return ArrowHitOutcome::PassThrough,
+        };
+
+        // ── (A) VIP NPC — early-out ───────────────────────────────
+        // Arrow sails past silently, no impact sound.
+        if victim.is_npc() {
+            let is_vip = match victim {
+                Entity::Soldier(s) => match assets
+                    .profile_manager
+                    .soldiers
+                    .get(usize::from(s.soldier.soldier_profile_index))
+                {
+                    Some(profile) => profile.vip,
+                    None => {
+                        tracing::warn!(
+                            ?victim_id,
+                            profile = ?s.soldier.soldier_profile_index,
+                            "arrow hit classification missing soldier profile; treating victim as protected"
+                        );
+                        return ArrowHitOutcome::PassThrough;
+                    }
+                },
+                _ => false,
+            };
+            if is_vip {
+                return ArrowHitOutcome::PassThrough;
+            }
+        }
+
+        // ── (B) Gather shooter / victim camp + kind info ────────────
+        let Some(shooter) = self.get_entity(shooter_id) else {
+            tracing::warn!(
+                ?victim_id,
+                ?shooter_id,
+                "arrow hit classification missing shooter entity; skipping hit"
+            );
+            return ArrowHitOutcome::PassThrough;
+        };
+        let shooter_is_npc = shooter.is_npc();
+        let shooter_is_pc = shooter.is_pc();
+        let shooter_is_soldier = shooter.is_soldier();
+        let shooter_camp = shooter.is_human().then(|| shooter.camp());
+        let victim_camp = victim.is_human().then(|| victim.camp());
+        let same_camp = matches!(
+            (shooter_camp, victim_camp),
+            (Some(sc), Some(vc)) if self.camps_are_allied(sc, vc),
+        );
+        let victim_is_pc_with_shield = if victim.is_pc() {
+            match victim.actor_data() {
+                Some(actor) => actor.action_state.is_shield(),
+                None => {
+                    tracing::warn!(
+                        ?victim_id,
+                        "arrow hit classification PC victim missing actor data"
+                    );
+                    return ArrowHitOutcome::PassThrough;
+                }
+            }
+        } else {
+            false
+        };
+        let victim_is_pc_or_soldier = victim.is_pc() || victim.is_soldier();
+
+        // ── (C) Find-victim pre-filter ──────────────────────────────
+        // When one of these fires, the candidate is invisible to the
+        // arrow's victim search — no impact sound, no ricochet. Maps to
+        // PassThrough.
+        //
+        // Note: rule (1) "forest + both GoodSoldier" is strictly a
+        // subset of rule (3) "Soldier shooter + same camp" (both
+        // GoodSoldier ⇒ both Royalists ⇒ same camp), so testing rule
+        // (3) alone covers it.
+        //
+        // Rule (2) Soldier → Civilian.
+        // Rule (3) Soldier → same camp.
+        // Rule (4) PC → PC with shield.
+        if shooter_is_soldier && (victim.is_civilian() || same_camp) {
+            return ArrowHitOutcome::PassThrough;
+        }
+        if shooter_is_pc && victim_is_pc_with_shield {
+            return ArrowHitOutcome::PassThrough;
+        }
+
+        // ── (D) Base hurtable filter ────────────────────────────────
+        // NPC shooters always keep the retail protection. PC shooters use the
+        // resolved difficulty rule; Hard and Legendary disable it, preserving
+        // the retail Hard civilian-friendly-fire behavior.
+        let apply_hurtable_filter = if shooter_is_npc {
+            true
+        } else if shooter_is_pc {
+            sim.config()
+                .difficulty
+                .rules()
+                .protect_allies_from_pc_arrows
+        } else {
+            false
+        };
+        let hurtable_base = if apply_hurtable_filter {
+            !(victim.is_civilian() || same_camp)
+        } else {
+            true
+        };
+
+        // ── (E) Piercing-protection roll ─────────────────────────────
+        // Applies to PC and Soldier victims, only when the base filter
+        // already flagged the victim hurtable.
+        let piercing_protection = match victim {
+            Entity::Pc(pc) => assets
+                .profile_manager
+                .get_character(pc.pc.profile_index)
+                .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
+                .map(|w| w.piercing_protection),
+            Entity::Soldier(s) => assets
+                .profile_manager
+                .get_soldier(s.soldier.soldier_profile_index)
+                .and_then(|p| assets.profile_manager.get_hth_weapon(p.hth_weapon_id))
+                .map(|w| w.piercing_protection),
+            _ => None,
+        };
+        let piercing_roll_passed = if hurtable_base && victim_is_pc_or_soldier {
+            // `(rand() % 101) > protection` runs even when protection is
+            // 0 — gives a 1/101 ricochet for the exact `roll == 0` case,
+            // and keeps RNG consumption consistent with the
+            // piercing-protection > 0 path. Missing weapon profile data
+            // is invalid actor state; the original game requires a weapon, so do
+            // not invent an unconditional-damage fallback.
+            match piercing_protection {
+                Some(protection) => {
+                    let roll = crate::sim_rng::u32(
+                        sim,
+                        crate::sim_rng::RngSite::ArrowPiercingProtection,
+                        0..101,
+                    );
+                    Some(roll > protection as u32)
+                }
+                None => {
+                    tracing::warn!(
+                        ?victim_id,
+                        "arrow hurtability: missing HtH weapon profile; treating victim as protected",
+                    );
+                    Some(false)
+                }
+            }
+        } else {
+            None
+        };
+        let hurtable =
+            resolve_arrow_hurtable(hurtable_base, victim_is_pc_or_soldier, piercing_roll_passed);
+
+        // ── (F) Outcome dispatch ────────────────────────────────────
+        // Hurtable → Damage.
+        // !Hurtable + victim is PC or Soldier → Ricochet. This is
+        // silent for arrows because falling setup marks them as falling
+        // before impact-effect selection.
+        // !Hurtable + civilian → silent miss (PassThrough).
+        if hurtable {
+            ArrowHitOutcome::Damage
+        } else if victim_is_pc_or_soldier {
+            ArrowHitOutcome::Ricochet
+        } else {
+            ArrowHitOutcome::PassThrough
+        }
+    }
+
+    /// Check if the shooter has bow ammo available.
+    ///
+    /// Returns `true` if the shooter has at least one arrow. PCs read
+    /// campaign-side status; NPC soldiers read their live
+    /// `number_of_arrows` counter.
+    pub fn check_bow_ammo(&self, shooter_id: EntityId) -> bool {
+        match self.get_entity(shooter_id) {
+            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+                Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) > 0,
+                None => {
+                    tracing::warn!(
+                        shooter = ?shooter_id,
+                        "check_bow_ammo: PC has no campaign status"
+                    );
+                    false
+                }
+            },
+            Some(Entity::Soldier(s)) => s.npc.number_of_arrows > 0,
+            Some(_) => true,
+            None => {
+                tracing::warn!(
+                    shooter = ?shooter_id,
+                    "check_bow_ammo: shooter entity missing"
+                );
+                false
+            }
+        }
+    }
+
+    /// Get the number of bow arrows the shooter has.
+    ///
+    /// Returns `u32::MAX` only for non-human object/civilian callers
+    /// that do not track bow ammo.
+    pub fn get_bow_ammo_count(&self, shooter_id: EntityId) -> u32 {
+        match self.get_entity(shooter_id) {
+            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+                Some(pc_desc) => pc_desc.status.get_ammo(crate::profiles::Action::Bow) as u32,
+                None => {
+                    tracing::warn!(
+                        shooter = ?shooter_id,
+                        "get_bow_ammo_count: PC has no campaign status"
+                    );
+                    0
+                }
+            },
+            Some(Entity::Soldier(s)) => u32::from(s.npc.number_of_arrows),
+            Some(_) => u32::MAX,
+            None => {
+                tracing::warn!(
+                    shooter = ?shooter_id,
+                    "get_bow_ammo_count: shooter entity missing"
+                );
+                0
+            }
+        }
+    }
+
+    /// Return one PC's authoritative campaign-side ammunition counter.
+    ///
+    /// PC entities intentionally do not duplicate these counters: the
+    /// campaign character status is the live source, as in the Original.
+    /// Debug/parity consumers need the same lookup rather than a stale
+    /// entity-local mirror.
+    pub fn get_pc_ammo_count(&self, pc_id: EntityId, action: crate::profiles::Action) -> u16 {
+        let pc = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => pc,
+            Some(entity) => panic!(
+                "get_pc_ammo_count expected PC {pc_id:?}, found {:?}",
+                entity.kind()
+            ),
+            None => panic!("get_pc_ammo_count PC {pc_id:?} is missing"),
+        };
+        self.pc_description_for_pc_data(&pc.pc)
+            .unwrap_or_else(|| {
+                panic!(
+                    "get_pc_ammo_count PC {pc_id:?} profile {} has no campaign character status",
+                    pc.pc.profile_index
+                )
+            })
+            .status
+            .get_ammo(action)
+    }
+
+    /// Decrement the shooter's bow ammo by 1 after a shot.
+    ///
+    /// PCs hit the campaign-side PcStatus; NPC soldiers
+    /// saturate-decrement `npc.number_of_arrows` so the
+    /// `FleeingRunForArrowReserves` refill loop has a chance to trigger
+    /// (the AI gates on `ctx.remaining_arrows > 0` and
+    /// `pending_refill_bow_ammo` restocks).
+    fn decrement_bow_ammo(&mut self, assets: &LevelAssets, shooter_id: EntityId) {
+        // Soldier branch — saturating sub on the live NPC field.
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(shooter_id) {
+            s.npc.number_of_arrows = s.npc.number_of_arrows.saturating_sub(1);
+            tracing::debug!(
+                shooter = ?shooter_id,
+                remaining = s.npc.number_of_arrows,
+                "NPC bow ammo decremented"
+            );
+            return;
+        }
+
+        let status_idx = match self.get_entity(shooter_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            _ => None,
+        };
+        let Some(status_idx) = status_idx else {
+            return; // Civilians / props don't track ammo
+        };
+
+        let remaining = if let Some(campaign) = Some(&mut self.mission_domain.campaign)
+            && let Some(pc_desc) = campaign.characters.get_mut(status_idx)
+        {
+            let removed = pc_desc
+                .status
+                .decrease_ammo(crate::profiles::Action::Bow, 1);
+            let remaining = pc_desc.status.get_ammo(crate::profiles::Action::Bow);
+            tracing::debug!(
+                shooter = ?shooter_id,
+                removed,
+                remaining,
+                "Bow ammo decremented"
+            );
+            remaining
+        } else {
+            return;
+        };
+        // When ammo hits 0, disable the Bow action and speak
+        // HERO_OUT_OF_AMMO if the level isn't Sherwood.
+        if remaining == 0 {
+            self.disable_pc_action(assets, shooter_id, crate::profiles::Action::Bow);
+            if !self.is_sherwood(&assets.profile_manager) {
+                self.hero_speaking(assets, shooter_id, crate::engine::melee::HERO_OUT_OF_AMMO);
+            }
+        }
+    }
+
+    /// Decrement ammo for a generic ability (heal, net, wasp-nest, etc.)
+    /// and disable the action in the UI when ammo reaches 0.
+    ///
+    /// Check if a PC has ammo for a given action (via campaign PcStatus).
+    /// Returns `false` for non-PCs or if campaign isn't loaded.
+    pub(super) fn has_ammo(&self, actor_id: EntityId, action: crate::profiles::Action) -> bool {
+        match self.get_entity(actor_id) {
+            Some(Entity::Pc(pc)) => match self.pc_description_for_pc_data(&pc.pc) {
+                Some(pc_desc) => pc_desc.status.get_ammo(action) > 0,
+                None => {
+                    tracing::warn!(
+                        actor = ?actor_id,
+                        ?action,
+                        "has_ammo: PC has no campaign status"
+                    );
+                    false
+                }
+            },
+            _ => true, // non-PCs don't track ammo
+        }
+    }
+
+    /// Decrement ability ammo by 1; disable the action slot when ammo
+    /// hits 0.
+    fn decrement_ability_ammo(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        action: crate::profiles::Action,
+    ) {
+        let status_idx = match self.get_entity(actor_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            _ => None,
+        };
+        let Some(status_idx) = status_idx else {
+            return; // Only PCs track ammo
+        };
+
+        let remaining = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
+            if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
+                let removed = pc_desc.status.decrease_ammo(action, 1);
+                let remaining = pc_desc.status.get_ammo(action);
+                tracing::debug!(
+                    actor = ?actor_id,
+                    ?action,
+                    removed,
+                    remaining,
+                    "Ability ammo decremented"
+                );
+                remaining
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        // Disable the action and speak HERO_OUT_OF_AMMO.  Every ability
+        // call site (Heal/Ale/Apple/Stone/Purse/WaspNest/Net) wants the
+        // speech, so we always speak here except on the Sherwood hub map.
+        if remaining == 0 {
+            self.disable_pc_action(assets, actor_id, action);
+            if !self.is_sherwood(&assets.profile_manager) {
+                self.hero_speaking(assets, actor_id, crate::engine::melee::HERO_OUT_OF_AMMO);
+            }
+        }
+    }
+
+    /// Consume one Stoeckel ration through the original game's ammunition update.
+    ///
+    /// Eating is deliberately different from every ammunition-decrement
+    /// ability: the player-character eating action computes the remaining
+    /// count and updates the remaining food or drink amount. That
+    /// disables an emptied action slot but does not say `HERO_OUT_OF_AMMO`.
+    pub(super) fn consume_ration_without_speech(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        action: crate::profiles::Action,
+    ) {
+        debug_assert!(matches!(
+            action,
+            crate::profiles::Action::Eat | crate::profiles::Action::Guzzle
+        ));
+        let status_idx = match self.get_entity(actor_id) {
+            Some(Entity::Pc(pc)) => self.pc_description_index_for_pc_data(&pc.pc),
+            _ => None,
+        };
+        let status_idx = status_idx
+            .unwrap_or_else(|| panic!("ration consumer {actor_id:?} has no campaign status"));
+        let remaining = {
+            let pc_desc = self
+                .mission_domain
+                .campaign
+                .characters
+                .get_mut(status_idx)
+                .unwrap_or_else(|| {
+                    panic!("ration consumer {actor_id:?} campaign index {status_idx} is missing")
+                });
+            let removed = pc_desc.status.decrease_ammo(action, 1);
+            assert_eq!(
+                removed, 1,
+                "ration consumer {actor_id:?} completed Eat without available ammo"
+            );
+            pc_desc.status.get_ammo(action)
+        };
+        if remaining == 0 {
+            self.disable_pc_action(assets, actor_id, action);
+        } else {
+            // Ammo-amount assignment also re-enables a non-empty slot. This matters
+            // for a restored or temporarily reconciled status whose widget
+            // mask was stale when the eating animation completed.
+            self.enable_pc_action(assets, actor_id, action);
+        }
+    }
+
+    /// Spawn an apple / stone projectile at the end of the throw
+    /// animation.  Take the thrower's hand point and the victim's eyes
+    /// point (or FX-target centre), compute a ballistic trajectory, and
+    /// register the projectile.
+    fn on_throw_projectile_done(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        target: Option<EntityId>,
+        action: crate::profiles::Action,
+        object_type: crate::element::ObjectType,
+    ) {
+        let target_id = target.expect("apple/stone throw selected without its required target");
+        let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "on_throw_projectile_done");
+        let thrower = self
+            .get_entity(actor_id)
+            .unwrap_or_else(|| panic!("projectile thrower {actor_id:?} disappeared before Done"));
+        let trajectory_origin_sector =
+            super::ai::ai_view_position_sector(self, thrower.element_data());
+        // Lead the victim's forecasted motion only when it's an NPC
+        // (Soldier/Civilian); FX targets and fellow-PC victims fall
+        // through to the centre branch with no movement lead.
+        let (target_pos, target_forecasted_movement) = match self.get_entity(target_id) {
+            Some(e) => {
+                if e.is_human() {
+                    let pos = e.compute_eyes_point(None).unwrap_or_else(|| {
+                        panic!("projectile human target {target_id:?} missing eyes hotspot")
+                    });
+                    let movement = if e.is_npc() {
+                        Some(e.position_iface().get_forecasted_movement())
+                    } else {
+                        None
+                    };
+                    (pos, movement)
+                } else if e.is_fx_target() {
+                    let pos = e.compute_target_center().unwrap_or_else(|| {
+                        panic!("projectile FX target {target_id:?} missing center hotspot")
+                    });
+                    (pos, None)
+                } else {
+                    panic!(
+                        "projectile target {target_id:?} has unsupported kind {:?}",
+                        e.kind()
+                    );
+                }
+            }
+            None => panic!("projectile target {target_id:?} disappeared before Done"),
+        };
+        let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles: self.sight_obstacles(assets),
+            water_zones: Some(&assets.water_zones),
+        };
+        let mut projectile = match object_type {
+            crate::element::ObjectType::Apple => crate::bow_shot::spawn_apple(
+                actor_id,
+                throw_pos,
+                target_pos,
+                Some(target_id),
+                target_forecasted_movement,
+                layer,
+                Some(&obstacle_check),
+            ),
+            crate::element::ObjectType::Stone => crate::bow_shot::spawn_stone(
+                actor_id,
+                throw_pos,
+                target_pos,
+                Some(target_id),
+                target_forecasted_movement,
+                layer,
+                Some(&obstacle_check),
+            ),
+            _ => return,
+        };
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            panic!("apple/stone spawn returned a non-projectile entity");
+        };
+        set_projectile_trajectory_origin(
+            &mut projectile_data.projectile,
+            trajectory_origin_sector,
+            layer,
+        );
+        let proj_id = self.add_entity(projectile);
+        // Hydrate the accessory sprite (apple/stone) on demand.
+        self.attach_accessory_sprite(assets, proj_id);
+        tracing::debug!(
+            actor = ?actor_id,
+            target = ?target_id,
+            ?action,
+            ?object_type,
+            "Throw projectile spawned"
+        );
+        self.decrement_ability_ammo(assets, actor_id, action);
+    }
+
+    /// Spawn the ground-targeted stone extension after the original throw
+    /// animation completes. The projectile carries the one-shot noise latch,
+    /// so saving or rolling back mid-flight cannot lose or duplicate the
+    /// impact stimulus.
+    fn on_throw_noise_distraction_done(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        target: crate::coordinates::WorldPoint3D,
+    ) {
+        // Admission was validated when the sequence began. Disabling the
+        // option during the throw animation prevents future throws but does
+        // not erase this already-authoritative command.
+        let (throw_pos, layer) =
+            self.projectile_throw_origin(actor_id, "ThrowNoiseDistractionDone");
+        let thrower = self.get_entity(actor_id).unwrap_or_else(|| {
+            panic!("noise-distraction thrower {actor_id:?} disappeared before Done")
+        });
+        let trajectory_origin_sector =
+            super::ai::ai_view_position_sector(self, thrower.element_data());
+        let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles: self.sight_obstacles(assets),
+            water_zones: Some(&assets.water_zones),
+        };
+        let mut projectile = crate::bow_shot::spawn_stone(
+            actor_id,
+            throw_pos,
+            target,
+            None,
+            None,
+            layer,
+            Some(&obstacle_check),
+        );
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            panic!("ground stone spawn returned a non-projectile entity");
+        };
+        projectile_data.projectile.noise_distraction = true;
+        set_projectile_trajectory_origin(
+            &mut projectile_data.projectile,
+            trajectory_origin_sector,
+            layer,
+        );
+        let projectile_id = self.add_entity(projectile);
+        self.attach_accessory_sprite(assets, projectile_id);
+        self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Stone);
+        tracing::debug!(
+            actor = ?actor_id,
+            projectile = ?projectile_id,
+            x = target.x,
+            y = target.y,
+            "ground noise-distraction stone spawned"
+        );
+    }
+
+    fn projectile_throw_origin(
+        &self,
+        actor_id: EntityId,
+        context: &'static str,
+    ) -> (crate::coordinates::WorldPoint3D, u16) {
+        let entity = self
+            .get_entity(actor_id)
+            .unwrap_or_else(|| panic!("{context}: projectile throw actor {actor_id:?} missing"));
+        let hand = entity.compute_hand_point(None).unwrap_or_else(|| {
+            panic!("{context}: projectile throw actor {actor_id:?} missing hand hotspot")
+        });
+        (hand, entity.element_data().layer())
+    }
+
+    /// Disable a PC action slot and deselect if it's the current action.
+    ///
+    ///   1. if `current_action == action`, set `current_action = NoAction`
+    ///      (note this is unconditional `NoAction`, not first-available;
+    ///      the HUD slot clears and the user must manually re-pick).
+    ///   2. if `saved_action == action`, set `saved_action = NoAction`.
+    ///   3. set `disabled_actions[idx] = true`.
+    ///
+    /// No widget messaging side-effect — the HUD reads `disabled_actions`
+    /// directly each frame.
+    pub(super) fn disable_pc_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+    ) {
+        let action_idx = self.pc_action_slot(assets, pc_id, action);
+        if let Some(entity) = self.get_entity_mut(pc_id)
+            && let Some(pc) = entity.pc_data_mut()
+        {
+            // Deselect if this was the current action.
+            if pc.current_action == action {
+                pc.current_action = crate::profiles::Action::NoAction;
+            }
+            // Clear `saved_action` if it matched, so a later ctrl-release
+            // / EnableAllActionsTemp restore can't bring back a
+            // now-disabled slot.
+            if pc.saved_action == action {
+                pc.saved_action = crate::profiles::Action::NoAction;
+            }
+            if let Some(action_idx) = action_idx
+                && action_idx < pc.disabled_actions.len()
+            {
+                pc.disabled_actions[action_idx] = true;
+            }
+            tracing::trace!(
+                pc = ?pc_id,
+                ?action,
+                "Action disabled"
+            );
+        }
+    }
+
+    /// Enable a PC action slot, respecting temp-disables.
+    ///
+    ///   1. unconditionally clear `disabled_actions[idx]`.
+    ///   2. only emit the widget-enable side-effect when
+    ///      `disabled_actions_temp[idx] == false`.
+    ///
+    /// No widget messaging because the HUD reads `disabled_actions` /
+    /// `disabled_actions_temp` directly each frame, but the
+    /// unconditional permanent-mask clear is load-bearing — without it,
+    /// a slot left both perm-disabled and temp-disabled would stay
+    /// perm-disabled after the temp mask later clears, leaving the
+    /// action permanently unavailable.
+    pub(super) fn enable_pc_action(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+    ) {
+        let action_idx = self.pc_action_slot(assets, pc_id, action);
+        if let Some(entity) = self.get_entity_mut(pc_id)
+            && let Some(pc) = entity.pc_data_mut()
+            && let Some(action_idx) = action_idx
+            && action_idx < pc.disabled_actions.len()
+        {
+            // Unconditional clear, BEFORE the temp-disable gate (which
+            // only guards the widget side-effect).
+            pc.disabled_actions[action_idx] = false;
+            tracing::debug!(
+                pc = ?pc_id,
+                ?action,
+                "Action re-enabled"
+            );
+        }
+    }
+
+    fn pc_action_slot(
+        &self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+    ) -> Option<usize> {
+        let profile_idx = self
+            .get_entity(pc_id)
+            .and_then(|e| e.pc_data())
+            .map(|pc| pc.profile_index)?;
+        let profile = assets.profile_manager.get_character(profile_idx)?;
+        crate::inventory::find_action_slot(profile, action)
+    }
+
+    /// Per-tick refresh of the Purse-action disable flag based on
+    /// campaign ransom and each PC's purse ammo.
+    ///
+    /// The Purse button is disabled when either the PC's
+    /// `num_purses == 0` or the campaign's ransom drops below
+    /// `COINS_PER_PURSE * COIN_VALUE`, and re-enables when both pass.
+    /// We piggyback on the per-tick sweep instead of hooking every
+    /// ransom mutation.
+    pub(super) fn tick_refresh_purse_disable(&mut self, assets: &LevelAssets) {
+        use crate::profiles::Action;
+        let ransom = Some(&self.mission_domain.campaign)
+            .map(|c| c.get_value(crate::campaign::CampaignValue::Ransom))
+            .unwrap_or(0);
+        let threshold =
+            crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
+        let ransom_ok = ransom >= threshold;
+        let pcs: Vec<EntityId> = self.world.entities.pcs().map(|(id, _)| id.into()).collect();
+        for pc_id in pcs {
+            // Only PCs that have the Purse action in their profile
+            // participate in the gate — Robin/Stuteley don't have Purse
+            // at all, and their slot array should stay untouched.
+            let has_purse = self
+                .get_entity(pc_id)
+                .and_then(|e| match e {
+                    Entity::Pc(pc) => {
+                        let idx = usize::from(pc.pc.profile_index);
+                        assets.profile_manager.characters.get(idx)
+                    }
+                    _ => None,
+                })
+                .map(|profile| profile.actions.contains(&Action::Purse))
+                .unwrap_or(false);
+            if !has_purse {
+                continue;
+            }
+            // Disable if `num_purses == 0` OR ransom below threshold;
+            // enable otherwise.  Purse ammo lives on the selected PC's
+            // campaign status block, matching the original game's status reference.
+            let num_purses = self
+                .get_entity(pc_id)
+                .and_then(|e| match e {
+                    Entity::Pc(pc) => self.pc_description_for_pc_data(&pc.pc),
+                    _ => None,
+                })
+                .map(|desc| desc.status.get_ammo(Action::Purse))
+                .unwrap_or(0);
+            if num_purses == 0 || !ransom_ok {
+                self.disable_pc_action(assets, pc_id, Action::Purse);
+            } else {
+                self.enable_pc_action(assets, pc_id, Action::Purse);
+            }
+        }
+    }
+
+    /// Increase ammo for a PC and re-enable the action if it was disabled.
+    ///
+    /// After adding ammo, if the new count is > 0, the action slot is
+    /// re-enabled.  This is the counterpart of `decrement_bow_ammo` /
+    /// `decrement_ability_ammo` which disable the slot when ammo reaches
+    /// 0.
+    pub(crate) fn increase_ammo_and_enable(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+        amount: u16,
+    ) {
+        let (profile_idx, status_idx) = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => (
+                pc.pc.profile_index,
+                self.pc_description_index_for_pc_data(&pc.pc),
+            ),
+            None => return,
+            _ => return,
+        };
+        let Some(status_idx) = status_idx else { return };
+
+        // Look up the profile to get max ammo for clamping.
+        let max_ammo = assets
+            .profile_manager
+            .characters
+            .get(usize::from(profile_idx))
+            .map(|cp| {
+                let difficulty = self.control.sim_config.difficulty;
+                crate::inventory::max_ammo_for_action(cp, action, difficulty)
+            })
+            .unwrap_or(u16::MAX);
+
+        let new_ammo = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
+            if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
+                let added = pc_desc.status.increase_ammo(action, amount, max_ammo);
+                let new_count = pc_desc.status.get_ammo(action);
+                tracing::debug!(
+                    pc = ?pc_id,
+                    ?action,
+                    added,
+                    new_count,
+                    "Ammo increased"
+                );
+                new_count
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        // If ammo > 0, re-enable the action.
+        if new_ammo > 0 {
+            self.enable_pc_action(assets, pc_id, action);
+        }
+    }
+
+    /// Handle a PC picking up a bonus item (arrows, plants, food, etc.).
+    ///
+    /// Increases ammo, re-enables the action if it was disabled, and
+    /// returns the full [`PickupResult`] so callers can implement the
+    /// three-way split (full pickup → remove / partial pickup → leave
+    /// in world with reduced quantity / nothing taken → leave alone).
+    pub(crate) fn handle_bonus_pickup(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        action: crate::profiles::Action,
+        quantity: u16,
+    ) -> Option<crate::inventory::PickupResult> {
+        let (profile_idx, status_idx) = match self.get_entity(pc_id) {
+            Some(Entity::Pc(pc)) => (
+                pc.pc.profile_index,
+                self.pc_description_index_for_pc_data(&pc.pc)?,
+            ),
+            _ => return None,
+        };
+
+        let profile = assets
+            .profile_manager
+            .characters
+            .get(usize::from(profile_idx))
+            .cloned()?;
+
+        let difficulty = self.control.sim_config.difficulty;
+
+        // Use the pure-function pickup logic from inventory module.
+        let result = if let Some(campaign) = Some(&mut self.mission_domain.campaign) {
+            if let Some(pc_desc) = campaign.characters.get_mut(status_idx) {
+                crate::inventory::take_object(
+                    &mut pc_desc.status,
+                    &profile,
+                    difficulty,
+                    action,
+                    quantity,
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let result = result?;
+
+        if result.taken > 0 {
+            self.enable_pc_action(assets, pc_id, action);
+        }
+
+        Some(result)
+    }
+
+    /// Apply the take-object completion for a PC picking up an object.
+    /// Handles every `ObjectType` branch — amulet, purse, coin, ransom,
+    /// relics, and the default ammo-bonus fall-through.
+    ///
+    /// Called by the `Command::Take` DONE handler in [`super::tick`],
+    /// after the explicit seek-and-take sequence finishes its `Taking`
+    /// animation.
+    ///
+    /// When the take is fully consumed the object is deactivated;
+    /// otherwise it stays in world with `taken = true` set.  Returns
+    /// `true` iff the PC consumed the object (inventory-full ammo
+    /// bonuses return `false` so the caller can skip the taken-flip).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn apply_pc_take_object(
+        &mut self,
+        assets: &LevelAssets,
+        pc_id: EntityId,
+        bonus_id: EntityId,
+        obj_type: crate::element::ObjectType,
+        assoc_action: crate::profiles::Action,
+        quantity: u16,
+        bx: f32,
+        by: f32,
+        blayer: u16,
+    ) -> bool {
+        use crate::element::ObjectType;
+        let pos = crate::coordinates::WorldPoint3D {
+            x: bx,
+            y: by,
+            z: 2.0,
+        };
+        let mut remove = false;
+        let mut consumed = true;
+
+        match obj_type {
+            // ── Amulet (clover): adds to amulet pool, no counter titbit ──
+            ObjectType::BonusAmulet => {
+                if let Some(c) = Some(&mut self.mission_domain.campaign) {
+                    c.add_value(crate::campaign::CampaignValue::Amulets, quantity as i32);
+                }
+                remove = true;
+            }
+
+            // ── Purse: COINS_PER_PURSE * COIN_VALUE to ransom + counter ──
+            // For a fresh world purse we always credit the full value.
+            ObjectType::Purse => {
+                let value = crate::inventory::COINS_PER_PURSE as u32 * crate::inventory::COIN_VALUE;
+                self.add_campaign_value(crate::campaign::CampaignValue::Ransom, value as i32);
+                self.spawn_take_counter(pos, blayer, value as u16);
+                remove = true;
+            }
+
+            // ── Coin: VALUE_COIN to ransom + counter ──
+            //
+            // Walking near any coin from a burst takes every still-active
+            // sibling coin from the source purse in one call.  Loose
+            // coins (no source purse) take individually.
+            ObjectType::Coin => {
+                let source_purse = self.get_entity(bonus_id).and_then(|e| match e {
+                    Entity::Projectile(p) => p.projectile.purse.source_purse,
+                    _ => None,
+                });
+                let value = if let Some(purse_id) = source_purse {
+                    // `take_purse` deactivates the picked-up coin
+                    // along with every active sibling and returns
+                    // the cumulative ransom value.
+                    self.take_purse(purse_id)
+                } else {
+                    crate::inventory::COIN_VALUE
+                };
+                self.add_campaign_value(crate::campaign::CampaignValue::Ransom, value as i32);
+                self.spawn_take_counter(pos, blayer, value as u16);
+                remove = true;
+            }
+
+            // ── Ransom bonus (gold bag): quantity -> ransom + score + counter ──
+            ObjectType::BonusRansom => {
+                const SCORE_STOLEN_MONEY_HUNDRED: i32 = 10;
+                self.add_campaign_value(crate::campaign::CampaignValue::Ransom, quantity as i32);
+                self.add_campaign_value(
+                    crate::campaign::CampaignValue::Score,
+                    SCORE_STOLEN_MONEY_HUNDRED * (quantity as i32) / 100,
+                );
+                self.spawn_take_counter(pos, blayer, quantity);
+                // HERO_GET_MONEY speech cue.
+                self.hero_speaking(assets, pc_id, crate::engine::melee::HERO_GET_MONEY);
+                remove = true;
+            }
+
+            // ── Relics: added to collection + fixed score ──
+            ObjectType::BonusAmpulla
+            | ObjectType::BonusCoronationSpoon
+            | ObjectType::BonusRichardsCrown
+            | ObjectType::BonusRoyalSeal
+            | ObjectType::BonusRoyalSceptre
+            | ObjectType::BonusDomesdayBook
+            | ObjectType::BonusSwordOfTheState => {
+                const SCORE_COLLECTED_RELIC: i32 = 1000;
+                if let Some(c) = Some(&mut self.mission_domain.campaign) {
+                    c.add_relic(relic_object_type_index(obj_type));
+                }
+                self.add_campaign_value(
+                    crate::campaign::CampaignValue::Score,
+                    SCORE_COLLECTED_RELIC,
+                );
+                remove = true;
+            }
+
+            // ── Default: ammo bonus (arrows, plants, food, stones, …) ──
+            _ => {
+                if assoc_action == crate::profiles::Action::NoAction {
+                    // Unhandled pickup type — leave it in world.
+                    return false;
+                }
+                match self.handle_bonus_pickup(assets, pc_id, assoc_action, quantity) {
+                    None => {
+                        consumed = false;
+                    }
+                    Some(result) if result.taken == 0 => {
+                        consumed = false;
+                    }
+                    Some(result) if result.remove_from_world => {
+                        remove = true;
+                    }
+                    Some(result) => {
+                        // Partial pickup — write the residual quantity
+                        // back to the world bonus and leave it active.
+                        match self.world.entities.get_mut(bonus_id) {
+                            Some(Entity::Bonus(b)) => {
+                                b.object.quantity = result.remainder;
+                            }
+                            Some(Entity::Projectile(p)) => {
+                                p.object.quantity = result.remainder;
+                            }
+                            _ => {}
+                        }
+                        consumed = false;
+                    }
+                }
+            }
+        }
+
+        if consumed {
+            // Note: burst-coin pickups already routed through
+            // `take_purse` above, which deactivates this coin and
+            // every active sibling and clears the purse's child
+            // list.  The match below is therefore a no-op for
+            // those (active already false), but it still flips
+            // `taken` for non-purse projectile pickups (e.g. loose
+            // coins or non-burst purses).
+            match self.world.entities.get_mut(bonus_id) {
+                Some(Entity::Bonus(bonus)) => {
+                    bonus.object.taken = true;
+                    if remove {
+                        bonus.element.active = false;
+                    }
+                }
+                Some(Entity::Projectile(proj)) => {
+                    proj.object.taken = true;
+                    if remove {
+                        proj.element.active = false;
+                    }
+                }
+                _ => {}
+            }
+            tracing::debug!(?pc_id, ?bonus_id, ?obj_type, "PC took object");
+        }
+
+        consumed
+    }
+
+    /// Spawn a floating `+N` counter titbit at `pos` / `layer` (no
+    /// element supplier — stays at creation point and rises).
+    pub(super) fn spawn_take_counter(
+        &mut self,
+        pos: crate::coordinates::WorldPoint3D,
+        layer: u16,
+        value: u16,
+    ) {
+        if value == 0 {
+            return;
+        }
+        self.feedback.titbit_manager.add_titbit(
+            pos,
+            layer,
+            crate::titbit::TitbitKind::Counter,
+            crate::titbit::ElementHandle::INVALID,
+            value,
+            crate::titbit::ElementHandle::INVALID,
+            false,
+            crate::titbit::INVALID_ID,
+            true,
+            Some(pos.y),
+            Some(layer),
+        );
+    }
+
+    /// Compute a walkable drop position near the PC's hand.
+    ///
+    /// Computes the hand point, offsets the PC's `MoveBox` by the hand
+    /// xy, snaps to a walkable cell via `find_authorized_position_toward`,
+    /// and returns the resulting box centre.  Returns `None` when no
+    /// walkable cell exists near the hand (e.g. against a wall), which
+    /// causes the drop sequence to be refused.
+    pub fn try_get_drop_position(&self, entity_id: crate::element::EntityId) -> Option<MapPoint> {
+        let entity = self.get_entity(entity_id)?;
+        let hand = entity.compute_hand_point(None)?;
+        let move_box = *entity.position_iface().get_move_box();
+        if !move_box.is_somewhere() {
+            return None;
+        }
+        let layer = entity.element_data().layer();
+        let hand_xy = crate::coordinates::MapPoint::new(hand.x, hand.y);
+        let mut bbox = move_box.translated(hand_xy);
+        if self
+            .world
+            .fast_grid
+            .find_authorized_position_toward(&mut bbox, hand_xy, layer)
+        {
+            Some(bbox.center())
+        } else {
+            None
+        }
+    }
+}
+
+fn soldier_piercing_protection(
+    profile_manager: &crate::profiles::ProfileManager,
+    profile_index: crate::profiles::SoldierProfileIdx,
+) -> Option<u16> {
+    profile_manager
+        .get_soldier(profile_index)
+        .and_then(|p| profile_manager.get_hth_weapon(p.hth_weapon_id))
+        .map(|w| w.piercing_protection)
+}
+
+#[cfg(test)]
+fn soldier_shield_dimensions(
+    profile_manager: &crate::profiles::ProfileManager,
+    profile_index: crate::profiles::SoldierProfileIdx,
+) -> Option<(u16, u16)> {
+    profile_manager
+        .get_soldier(profile_index)
+        .and_then(|p| profile_manager.get_hth_weapon(p.hth_weapon_id))
+        .map(|w| (w.shield_width, w.shield_height))
+}
+
+fn set_projectile_trajectory_origin(
+    projectile: &mut crate::element::ProjectileData,
+    sector: Option<crate::position_interface::SectorHandle>,
+    layer: u16,
+) {
+    projectile.trajectory_origin_sector = sector.map(crate::position_interface::SectorHandle::get);
+    projectile.trajectory_origin_sector_index = sector.and_then(|sector| sector.arena_index());
+    projectile.trajectory_origin_layer = crate::position_interface::Layer::new(layer);
+}
+
+fn projectile_trajectory_origin_sector(
+    projectile: &crate::element::ProjectileData,
+) -> Option<crate::position_interface::SectorHandle> {
+    match (
+        projectile.trajectory_origin_sector,
+        projectile.trajectory_origin_sector_index,
+    ) {
+        (None, None) => None,
+        (Some(public), index) => crate::position_interface::SectorHandle::new(public)
+            .map(|sector| index.map_or(sector, |index| sector.with_arena_index(index))),
+        (None, Some(index)) => panic!(
+            "projectile trajectory origin retains exact sector index {index:?} without its public sector number"
+        ),
+    }
+}
+
+fn projectile_trajectory_origin(entity: &Entity) -> Option<crate::ai::Position> {
+    match entity {
+        Entity::Projectile(p) => {
+            let sector = projectile_trajectory_origin_sector(&p.projectile);
+            let layer = p.projectile.trajectory_origin_layer?;
+            Some(crate::ai::Position {
+                x: p.projectile.start_of_trajectory_x,
+                y: p.projectile.start_of_trajectory_y,
+                sector,
+                level: layer.get(),
+            })
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::{
+        projectile_trajectory_origin, projectile_trajectory_origin_sector,
+        set_projectile_trajectory_origin, soldier_piercing_protection, soldier_shield_dimensions,
+    };
+    use crate::element::{
+        ActionState, ActorData, ActorPc, ElementData, ElementKind, ElementProjectile, Entity,
+        EntityId, HumanData, ObjectData, Posture, ProjectileData,
+    };
+    use crate::engine::{EngineInner, LevelAssets};
+    use crate::order::OrderType;
+    use crate::profiles::{HtHWeaponProfile, ProfileManager, SoldierProfile, SoldierProfileIdx};
+    use crate::sequence::{SequenceElementData, SequenceState};
+    use crate::sight_obstacle::{ObstaclePoint, SightObstacle};
+    use std::sync::Arc;
+
+    fn make_pc(posture: Posture) -> Entity {
+        Entity::Pc(ActorPc {
+            element: ElementData {
+                kind: ElementKind::ActorPc,
+                posture,
+                ..Default::default()
+            },
+            actor: ActorData {
+                action_state: ActionState::Waiting,
+                ..Default::default()
+            },
+            human: HumanData::default(),
+            pc: Default::default(),
+        })
+    }
+
+    #[test]
+    fn distraction_projectile_latch_survives_serialization_and_emits_once() {
+        std::thread::Builder::new()
+            .name("distraction-projectile-latch-roundtrip".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(distraction_projectile_latch_survives_serialization_and_emits_once_inner)
+            .expect("spawn large-stack projectile round-trip regression")
+            .join()
+            .expect("large-stack projectile round-trip regression panicked");
+    }
+
+    fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
+        let mut engine = EngineInner::new();
+        let mut projectile = Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                ..Default::default()
+            },
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Stone,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                noise_distraction: true,
+                ..Default::default()
+            },
+        });
+        projectile.element_data_mut().set_layer(2);
+
+        let encoded = bitcode::encode(&projectile);
+        let restored: Entity = bitcode::decode(&encoded).expect("decode distraction projectile");
+        assert!(matches!(
+            &restored,
+            Entity::Projectile(projectile) if projectile.projectile.noise_distraction
+        ));
+
+        let projectile_id = engine.add_entity(restored);
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let impact = crate::coordinates::MapPoint::new(80.0, 120.0);
+        assert!(engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+        assert!(!engine.emit_noise_distraction_impact(&sim, &assets, projectile_id, impact));
+    }
+
+    #[test]
+    fn water_splash_accepts_original_no_layer_sentinel() {
+        let mut engine = EngineInner::new();
+        let mut element = ElementData {
+            active: true,
+            kind: ElementKind::ObjectProjectile,
+            ..Default::default()
+        };
+        element.clear_layer();
+        element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 120.0, 2.0));
+        let projectile_id = engine.add_entity(Entity::Projectile(ElementProjectile {
+            element,
+            object: ObjectData {
+                object_type: crate::element::ObjectType::Arrow,
+                ..Default::default()
+            },
+            projectile: ProjectileData {
+                dive: true,
+                ..Default::default()
+            },
+        }));
+        engine
+            .get_entity_mut(projectile_id)
+            .expect("inserted projectile")
+            .element_data_mut()
+            .clear_layer();
+
+        engine.maybe_splash_on_landing(
+            &crate::sim_rng::test_context(),
+            &LevelAssets::new(),
+            projectile_id,
+        );
+
+        let splash = engine
+            .feedback
+            .titbit_manager
+            .titbits()
+            .iter()
+            .find(|titbit| titbit.kind == crate::titbit::TitbitKind::Plouf)
+            .expect("water landing must emit a Plouf titbit");
+        // The original game normalizes an unowned raw -1 hint layer to layer 0
+        // during the effect update.
+        assert_eq!(splash.layer, 0);
+    }
+
+    fn purse_publication_assets() -> LevelAssets {
+        use crate::element::{Animation, ObjectType};
+        use crate::sprite::Sprite;
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[Animation::ObjectFlying as usize] = 16;
+        let script = SpriteScript {
+            action_id: Animation::ObjectFlying as u16,
+            action_done: 4,
+            frame_ids: vec![1, 2, 3, 4, 5],
+            delays: vec![0; 5],
+            distances: vec![0; 5],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 5],
+            sound_ids: vec![0; 5],
+            ..Default::default()
+        };
+        let mut assets = LevelAssets::new();
+        let prototype = Sprite::new(Arc::new(vec![script; 17]), Arc::new(conversion));
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Purse, prototype.clone());
+        assets
+            .accessory_sprite_prototypes
+            .insert(ObjectType::Coin, prototype);
+        assets
+    }
+
+    #[test]
+    fn purse_prepublication_hourglass_preserves_origin_material_and_next_tick_edge() {
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Entity, GameMaterial, TrajectoryPointRuntime};
+        use crate::position_interface::SectorHandle;
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let mut thrower = make_pc(Posture::Upright);
+        thrower
+            .element_data_mut()
+            .set_position_map(MapPoint::new(400.0, 500.0));
+        thrower.element_data_mut().set_layer(2);
+        thrower.element_data_mut().set_sector(SectorHandle::new(7));
+        let thrower = engine.add_entity(thrower);
+        let start = WorldPoint3D::new(64.0, 64.0, 20.0);
+        let target = WorldPoint3D::new(200.0, 64.0, 0.0);
+        let mut entity = crate::bow_shot::spawn_purse(thrower, start, target, 2, None);
+        let Entity::Projectile(purse) = &mut entity else {
+            unreachable!()
+        };
+        purse.projectile.trajectory_runtime = vec![
+            TrajectoryPointRuntime {
+                bounce: false,
+                material: GameMaterial::Stone.as_u32(),
+            };
+            purse.projectile.trajectory.len()
+        ];
+
+        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, entity);
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("published purse disappeared")
+        };
+        assert_eq!(purse.element.direction(), 0);
+        assert_eq!(purse.element.sprite.position_iface.old_position(), start);
+        assert_eq!(purse.element.material(), GameMaterial::Stone);
+        assert_eq!(purse.element.sprite.current_row, 16);
+        assert_eq!(purse.element.sprite.current_frame, 2);
+        assert_eq!(purse.projectile.frame_count, 1);
+        assert_eq!(purse.projectile.start_of_trajectory_x, 400.0);
+        assert_eq!(purse.projectile.start_of_trajectory_y, 500.0);
+        assert_eq!(purse.projectile.trajectory_origin_sector, Some(7));
+        assert_eq!(
+            purse.projectile.trajectory_origin_layer,
+            crate::position_interface::Layer::new(2)
+        );
+        let after_prime = purse.element.position();
+        engine.tick_projectile_or_net_hourglass(&sim, &assets, purse_id);
+        let Some(Entity::Projectile(purse)) = engine.get_entity(purse_id) else {
+            panic!("published purse disappeared")
+        };
+        assert_eq!(purse.projectile.frame_count, 2);
+        assert_eq!(
+            purse.element.sprite.position_iface.old_position(),
+            after_prime
+        );
+    }
+
+    #[test]
+    fn purse_prepublication_empty_and_one_step_trajectories_are_not_double_primed() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Entity, TrajectoryPoint};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let mut unplaced_thrower = make_pc(Posture::Upright);
+        unplaced_thrower.element_data_mut().clear_layer();
+        unplaced_thrower.element_data_mut().set_sector(None);
+        let thrower = engine.add_entity(unplaced_thrower);
+        let start = WorldPoint3D::new(20.0, 30.0, 10.0);
+
+        let mut empty = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
+        let Entity::Projectile(empty_purse) = &mut empty else {
+            unreachable!()
+        };
+        empty_purse.projectile.trajectory.clear();
+        empty_purse.projectile.trajectory_runtime.clear();
+        let empty_id = engine.publish_new_purse(&sim, &assets, thrower, empty);
+        let Some(Entity::Projectile(empty_purse)) = engine.get_entity(empty_id) else {
+            panic!("published empty purse disappeared")
+        };
+        assert!(!empty_purse.element.active);
+        assert_eq!(
+            empty_purse.projectile.purse.child_coins.len(),
+            usize::from(crate::bow_shot::NUMBER_OF_COINS_IN_PURSE)
+        );
+        assert!(
+            empty_purse
+                .projectile
+                .purse
+                .child_coins
+                .iter()
+                .all(|child| child.index() < empty_id.index()),
+            "Original adds every burst coin before the inactive purse"
+        );
+        let purse_creation = engine.original_creation_order(empty_id);
+        for &child in &empty_purse.projectile.purse.child_coins {
+            let Some(Entity::Projectile(coin)) = engine.get_entity(child) else {
+                panic!("purse child {child} is not a coin projectile")
+            };
+            assert_eq!(coin.projectile.purse.source_purse, Some(empty_id));
+            assert_eq!(
+                coin.object.animation,
+                crate::element::Animation::ObjectFlying
+            );
+            assert_eq!(coin.element.sprite.current_row, 16);
+            assert_eq!(coin.element.sprite.current_frame, 2);
+            assert_eq!(coin.element.sprite.position_iface.old_position(), start);
+            assert_eq!(coin.projectile.start_of_trajectory_x, start.x);
+            assert_eq!(coin.projectile.start_of_trajectory_y, start.y - start.z);
+            assert_eq!(coin.projectile.trajectory_origin_sector, None);
+            assert_eq!(coin.projectile.trajectory_origin_layer, None);
+            assert_eq!(coin.element.sector(), None);
+            assert_eq!(coin.element.optional_layer(), None);
+            assert!(
+                purse_creation < engine.original_creation_order(child),
+                "purse constructor identity must precede child coin constructors"
+            );
+        }
+        assert_eq!(empty_purse.element.optional_layer(), None);
+        assert_eq!(empty_purse.element.sector(), None);
+        assert_eq!(empty_purse.projectile.trajectory_origin_layer, None);
+        assert_eq!(empty_purse.projectile.trajectory_origin_sector, None);
+
+        let endpoint = WorldPoint3D::new(24.0, 36.0, 8.0);
+        let mut one = crate::bow_shot::spawn_purse(thrower, start, endpoint, 0, None);
+        let Entity::Projectile(one_purse) = &mut one else {
+            unreachable!()
+        };
+        one_purse.projectile.trajectory = vec![TrajectoryPoint {
+            position: endpoint,
+            time: 1,
+        }];
+        one_purse.projectile.trajectory_runtime.clear();
+        let one_id = engine.publish_new_purse(&sim, &assets, thrower, one);
+        let Some(Entity::Projectile(one_purse)) = engine.get_entity(one_id) else {
+            panic!("published one-step purse disappeared")
+        };
+        assert_eq!(one_purse.element.position(), endpoint);
+        assert_eq!(one_purse.projectile.frame_count, 1);
+        assert!(one_purse.projectile.trajectory.is_empty());
+    }
+
+    #[test]
+    fn purse_prepublication_water_and_hole_exhaustion_do_not_burst() {
+        use crate::coordinates::WorldPoint3D;
+        use crate::element::{Entity, GameMaterial};
+
+        for (material, dive, disappear) in [
+            (GameMaterial::Water, true, false),
+            (GameMaterial::Hole, false, true),
+        ] {
+            let sim = crate::sim_rng::test_context();
+            let assets = purse_publication_assets();
+            let mut engine = EngineInner::new();
+            let thrower = engine.add_entity(make_pc(Posture::Upright));
+            let start = WorldPoint3D::new(20.0, 30.0, 10.0);
+            let mut purse = crate::bow_shot::spawn_purse(thrower, start, start, 0, None);
+            let Entity::Projectile(projectile) = &mut purse else {
+                unreachable!()
+            };
+            projectile.projectile.trajectory.clear();
+            projectile.projectile.trajectory_runtime.clear();
+            projectile.projectile.dive = dive;
+            projectile.projectile.disappear = disappear;
+            projectile.element.set_material(material);
+
+            let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+            let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
+                panic!("published water/hole purse disappeared")
+            };
+            assert!(projectile.element.active);
+            assert!(!projectile.projectile.purse.burst);
+            assert!(projectile.projectile.purse.child_coins.is_empty());
+            assert_eq!(
+                projectile.projectile.trajectory_frame_count,
+                if dive { 0 } else { u16::MAX }
+            );
+            assert_eq!(
+                projectile.projectile.velocity_increment,
+                crate::coordinates::WorldVec3D::ZERO
+            );
+        }
+    }
+
+    #[test]
+    fn purse_prepublication_first_segment_obeys_base_shield_early_return() {
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{ActionState, Entity, TrajectoryPoint};
+
+        let sim = crate::sim_rng::test_context();
+        let assets = purse_publication_assets();
+        let mut engine = EngineInner::new();
+        let thrower = engine.add_entity(make_pc(Posture::Upright));
+        let mut holder = make_arrow_warning_soldier();
+        holder
+            .element_data_mut()
+            .set_position_map(MapPoint::new(50.0, 0.0));
+        holder.element_data_mut().set_direction_instantly(4);
+        {
+            let actor = holder.actor_data_mut().unwrap();
+            actor.action_state = ActionState::HoldingShield;
+            actor.shield_obstacle = Some(crate::bow_shot::compute_shield_obstacle(
+                MapPoint::new(50.0, 0.0),
+                0.0,
+                4,
+                &crate::bow_shot::ShieldParams {
+                    pre_offset: 20.0,
+                    width: 20.0,
+                    depth: 5.0,
+                    height: 40.0,
+                    z_offset: 10.0,
+                },
+            ));
+        }
+        let holder = engine.add_entity(holder);
+
+        let start = WorldPoint3D::new(100.0, 0.0, 40.0);
+        let end = WorldPoint3D::new(50.0, 0.0, 40.0);
+        let mut purse = crate::bow_shot::spawn_purse(thrower, start, end, 0, None);
+        let Entity::Projectile(projectile) = &mut purse else {
+            unreachable!()
+        };
+        projectile.projectile.trajectory = vec![TrajectoryPoint {
+            position: end,
+            time: 1,
+        }];
+        projectile.projectile.trajectory_runtime.clear();
+        let purse_id = engine.publish_new_purse(&sim, &assets, thrower, purse);
+        let Some(Entity::Projectile(projectile)) = engine.get_entity(purse_id) else {
+            panic!("published shielded purse disappeared")
+        };
+        assert!(projectile.projectile.flying);
+        assert!(projectile.projectile.trajectory.is_empty());
+        assert_eq!(projectile.element.sprite.current_frame, 2);
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .flat_map(|sequence| &sequence.elements)
+                .any(|element| element.owner == Some(holder)
+                    && element.command == crate::element::Command::ParryShield)
+        );
+    }
+
+    fn make_arrow_warning_soldier() -> Entity {
+        let mut soldier = crate::element::ActorSoldier {
+            element: ElementData {
+                kind: ElementKind::ActorSoldier,
+                posture: Posture::Upright,
+                active: true,
+                ..Default::default()
+            },
+            actor: Default::default(),
+            human: Default::default(),
+            npc: Default::default(),
+            soldier: Default::default(),
+        };
+        soldier.soldier.cached_camp = crate::element::Camp::Lacklandists;
+        soldier.npc.life_points = 100;
+        soldier.npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        Entity::Soldier(soldier)
+    }
+
+    fn bind_arrow_warning_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript, UNMAPPED};
+
+        let mut conversion = vec![UNMAPPED; NONANIMATION_END];
+        conversion[OrderType::WaitingShield as usize] = 0;
+        conversion[OrderType::LoweringShield as usize] = 0;
+        let script = SpriteScript {
+            action_id: OrderType::WaitingShield as u16,
+            action_done: 1,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1, 2],
+            delays: vec![0, 0],
+            distances: vec![0, 0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0, 0],
+        };
+        entity.element_data_mut().sprite =
+            crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+    }
+
+    fn arrow_warning_fixture(
+        shield_weapon: bool,
+        shooter_x: f32,
+    ) -> (
+        EngineInner,
+        LevelAssets,
+        EntityId,
+        EntityId,
+        crate::sequence::SequenceId,
+    ) {
+        use crate::ai::{AiState, Substate};
+        use crate::coordinates::{MapPoint, WorldPoint3D};
+        use crate::element::{Command, EyeStatus};
+        use crate::sequence::SequenceElement;
+
+        let mut engine = EngineInner::new();
+        // Legacy human handles reserve zero as missing; production has a hidden
+        // pre-level prefix, so keep the test shooter on a nonzero handle too.
+        engine.add_entity(Entity::Target(crate::element::ElementTarget {
+            element: ElementData {
+                kind: ElementKind::Target,
+                ..Default::default()
+            },
+            fx: Default::default(),
+            target: Default::default(),
+        }));
+
+        let mut shooter = make_pc(Posture::Upright);
+        shooter.element_data_mut().active = true;
+        shooter
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(shooter_x, 0.0, 0.0));
+        shooter
+            .element_data_mut()
+            .set_position_map(MapPoint::new(shooter_x, 0.0));
+        shooter.pc_data_mut().unwrap().life_points = 100;
+        let shooter_id = engine.add_entity(shooter);
+
+        let mut target = make_arrow_warning_soldier();
+        bind_arrow_warning_sprite(&mut target);
+        target
+            .element_data_mut()
+            .set_position(WorldPoint3D::new(0.0, 0.0, 0.0));
+        target
+            .element_data_mut()
+            .set_position_map(MapPoint::new(0.0, 0.0));
+        target.element_data_mut().set_direction_instantly(4);
+        let target_id = engine.add_entity(target);
+        assert!(shooter_id.index() < target_id.index());
+
+        let mut assets = LevelAssets::new();
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let profiles = Arc::make_mut(&mut assets.profile_manager);
+        profiles.soldiers[0].hth_weapon_id = 1;
+        profiles.hth_weapons[0].shield = shield_weapon;
+
+        let Entity::Soldier(target) = engine.get_entity_mut(target_id).unwrap() else {
+            unreachable!()
+        };
+        target.actor.action_state = ActionState::HoldingShield;
+        target.npc.view_direction = [1.0, 0.0];
+        target.npc.view_radius = 135;
+        target.npc.real_half_aperture = crate::ai_vision::NORMAL_HALF_APERTURE;
+        target.npc.eye_status = EyeStatus::Stare;
+        let ai = target.npc.ai_brain.enemy_mut().unwrap();
+        ai.base.me = target_id.index();
+        ai.base.current_state = AiState::Attacking;
+        ai.base.current_substate = Substate::AttackingProtectingWithShield;
+
+        let lower = engine
+            .orders
+            .sequence_manager
+            .launch_element(SequenceElement::new(
+                1,
+                Command::LowerShield,
+                Some(target_id),
+            ));
+        crate::engine::melee::ShieldCommandContext::new(
+            &mut engine.world.entities,
+            &mut engine.orders.sequence_manager,
+            &mut engine.orders.next_order_id,
+        )
+        .dispatch(target_id, Command::LowerShield, lower, 0);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .current_order_for_actor(target_id)
+                .map(|(_, _, order)| order.order_type),
+            Some(OrderType::LoweringShield)
+        );
+
+        (engine, assets, shooter_id, target_id, lower)
+    }
+
+    #[test]
+    fn arrow_warning_synchronously_interrupts_later_shield_target_and_preserves_fifo() {
+        use crate::ai::{Stimulus, StimulusType};
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, lower) = arrow_warning_fixture(true, 55.0);
+        engine
+            .get_entity_mut(target)
+            .and_then(Entity::ai_controller_mut)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli
+            .push(Stimulus::new(StimulusType::EventTimer));
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(lower, 0)
+                .unwrap()
+                .state,
+            SequenceState::Interrupted,
+            "the release-site Think must interrupt LowerShield before the later target slot animates"
+        );
+        assert_eq!(
+            engine
+                .get_entity(target)
+                .and_then(Entity::enemy_ai)
+                .unwrap()
+                .base
+                .primary_target,
+            Some(crate::ai::AiEntityHandle::new(shooter.index())),
+            "the arrow reaction must run now, not remain queued for the target's later slot"
+        );
+        let queued = &engine
+            .get_entity(target)
+            .and_then(Entity::ai_controller)
+            .unwrap()
+            .outbox
+            .detection
+            .stimuli;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].stimulus_type, StimulusType::EventTimer);
+    }
+
+    #[test]
+    fn arrow_warning_skips_nonshield_and_nonseeing_targets() {
+        use crate::sequence::SequenceState;
+
+        let sim = crate::sim_rng::test_context();
+        for (shield_weapon, shooter_x) in [(false, 55.0), (true, 500.0)] {
+            let (mut engine, assets, shooter, target, lower) =
+                arrow_warning_fixture(shield_weapon, shooter_x);
+
+            engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+
+            assert_eq!(
+                engine
+                    .orders
+                    .sequence_manager
+                    .get_element(lower, 0)
+                    .unwrap()
+                    .state,
+                SequenceState::InProgress
+            );
+            assert!(
+                engine
+                    .get_entity(target)
+                    .and_then(Entity::ai_controller)
+                    .unwrap()
+                    .outbox
+                    .detection
+                    .stimuli
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "bow target 2 requires missing soldier profile 9")]
+    fn arrow_warning_rejects_missing_authoritative_soldier_profile() {
+        let sim = crate::sim_rng::test_context();
+        let (mut engine, assets, shooter, target, _) = arrow_warning_fixture(true, 55.0);
+        let Entity::Soldier(soldier) = engine.get_entity_mut(target).unwrap() else {
+            unreachable!()
+        };
+        soldier.soldier.soldier_profile_index = SoldierProfileIdx(9);
+
+        engine.warn_shield_target_of_arrow(&sim, &assets, shooter, target);
+    }
+
+    fn attach_drop_test_sprite(entity: &mut Entity) {
+        use crate::sprite_script::{NONANIMATION_END, SpriteScript};
+
+        let script = SpriteScript {
+            action_id: 0,
+            action_done: 0,
+            average_speed: 0.0,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 0,
+            frame_ids: vec![1],
+            delays: vec![0],
+            distances: vec![0],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO],
+            sound_ids: vec![0],
+        };
+        entity.element_data_mut().sprite = crate::sprite::Sprite::new(
+            Arc::new(vec![script; 16]),
+            Arc::new(vec![0; NONANIMATION_END]),
+        );
+    }
+
+    fn corpse_drop_pair(
+        carrier_pos: crate::coordinates::MapPoint,
+    ) -> (
+        EngineInner,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let target_id = engine.add_entity(make_pc(Posture::Carried));
+        let mut carrier = make_pc(Posture::CarryingCorpse);
+        attach_drop_test_sprite(&mut carrier);
+        carrier.pc_data_mut().unwrap().carried = Some(target_id);
+        carrier.element_data_mut().set_position_map(carrier_pos);
+        let carrier_id = engine.add_entity(carrier);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+        (engine, carrier_id, target_id)
+    }
+
+    fn install_corpse_drop_building_sector(engine: &mut EngineInner, raw_sector: u16) {
+        let mut level = crate::fast_find_grid::LevelGrid::default();
+        level
+            .sector_number_map
+            .insert(crate::sector::SectorNumber::new(raw_sector as i16), 0);
+        level.sectors.push(crate::fast_find_grid::GridSector {
+            points: Vec::new(),
+            bounding_box: crate::coordinates::MapBBox::new(),
+            sector_type: crate::sector::SectorType::BUILDING,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(raw_sector as i16),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        });
+        engine.world.fast_grid_mut().level = Arc::new(level);
+    }
+
+    #[test]
+    fn delayed_corpse_drop_carries_sloped_surface_into_next_frame_position() {
+        let carrier_pos = crate::coordinates::MapPoint::new(743.0, 1681.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: -0.270_139,
+            bz: -1.787_207,
+            dz: 3_396.161_9,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(221).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        let cached_position = crate::coordinates::WorldPoint3D::new(700.0, 1906.001, 225.001);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_position(cached_position);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Grass);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(1);
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 15);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().layer(), 1);
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Grass
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(target.element_data().position(), cached_position);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(743.0, 1681.0).to_bits()
+        );
+        assert_ne!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn outdoor_null_surface_corpse_drop_preserves_cached_elevation_until_delayed_commit() {
+        let carrier_pos = crate::coordinates::MapPoint::new(3126.2605, 2149.9695);
+        let carried_position = crate::coordinates::WorldPoint3D::new(3125.0, 2375.001, 225.001);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position(carried_position);
+        }
+        let carried_map = engine
+            .get_entity(target_id)
+            .unwrap()
+            .element_data()
+            .position_map();
+
+        engine.apply_completed_corpse_drop(
+            carrier_id,
+            target_id,
+            Posture::DeadBack,
+            carrier_pos,
+            0,
+        );
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position(), carried_position);
+        assert_eq!(target.element_data().position_map(), carried_map);
+        assert_eq!(target.position_iface().get_obstacle(), None);
+        assert_eq!(target.position_iface().get_plane(), None);
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must commit its delayed position next frame");
+        let target = engine.get_entity(target_id).unwrap();
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            0.0_f32.to_bits()
+        );
+    }
+
+    #[test]
+    fn delayed_corpse_drop_updates_intersections_at_old_current_position() {
+        let carried_position = crate::coordinates::MapPoint::new(100.0, 100.0);
+        let drop_position = crate::coordinates::MapPoint::new(300.0, 300.0);
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(drop_position);
+        {
+            let target = engine.get_entity_mut(target_id).unwrap();
+            target.element_data_mut().set_position_map(carried_position);
+            assert_eq!(
+                target
+                    .human_data()
+                    .unwrap()
+                    .last_is_lying_for_corpse_intersection,
+                None,
+                "freshly adopted carried bodies have no derived observer state"
+            );
+        }
+        let mut neighbour = make_pc(Posture::Tied);
+        neighbour
+            .element_data_mut()
+            .set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
+        neighbour
+            .human_data_mut()
+            .unwrap()
+            .last_is_lying_for_corpse_intersection = Some(true);
+        let neighbour_id = engine.add_entity(neighbour);
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Tied, drop_position, 0);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carried_position);
+        assert!(target.human_data().unwrap().small_repulsive_radius);
+        assert!(
+            engine
+                .get_entity(neighbour_id)
+                .unwrap()
+                .human_data()
+                .unwrap()
+                .small_repulsive_radius
+        );
+
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .apply_next_delayed_position()
+            .expect("outdoor corpse drop must retain its delayed destination");
+        assert_eq!(
+            engine
+                .get_entity(target_id)
+                .unwrap()
+                .element_data()
+                .position_map(),
+            drop_position
+        );
+    }
+
+    #[test]
+    fn instant_building_corpse_drop_keeps_carrier_surface_and_commits_immediately() {
+        let carrier_pos = crate::coordinates::MapPoint::new(120.0, 240.0);
+        let plane = crate::position_interface::PlaneZCoeffs {
+            az: 0.125,
+            bz: -0.25,
+            dz: 45.0,
+        };
+        let obstacle = crate::position_interface::ObstacleHandle::new(17).unwrap();
+        let sector = crate::position_interface::SectorHandle::new(7).unwrap();
+        let (mut engine, carrier_id, target_id) = corpse_drop_pair(carrier_pos);
+        install_corpse_drop_building_sector(&mut engine, 7);
+        engine
+            .get_entity_mut(target_id)
+            .unwrap()
+            .element_data_mut()
+            .set_material(crate::element::GameMaterial::Leaves);
+        {
+            let carrier = engine.get_entity_mut(carrier_id).unwrap();
+            let elem = carrier.element_data_mut();
+            elem.set_layer(3);
+            elem.set_sector(Some(sector));
+            elem.set_obstacle_index(Some(obstacle), Some(plane));
+        }
+
+        engine.apply_completed_corpse_drop(carrier_id, target_id, Posture::Lying, carrier_pos, 4);
+
+        let target = engine.get_entity(target_id).unwrap();
+        assert!(!target.element_data().position_map_delayed);
+        assert_eq!(target.element_data().position_map(), carrier_pos);
+        assert_eq!(target.element_data().layer(), 3);
+        assert_eq!(target.element_data().sector(), Some(sector));
+        assert_eq!(
+            target.element_data().material(),
+            crate::element::GameMaterial::Leaves
+        );
+        assert_eq!(target.position_iface().get_obstacle(), Some(obstacle));
+        assert_eq!(target.position_iface().get_plane(), Some(&plane));
+        assert_eq!(
+            target.element_data().position().z.to_bits(),
+            plane.compute_z(120.0, 240.0).to_bits()
+        );
+        assert_eq!(target.element_data().direction(), 0);
+        assert_eq!(
+            i16::from(target.position_iface().get_direction_goal()),
+            4,
+            "clearing the carrier must restore its facing as the dropped corpse's goal"
+        );
+    }
+
+    #[test]
+    fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
+        let exact_sector = crate::fast_find_grid::SectorIndex::new(41).unwrap();
+        let mut projectile = Entity::Projectile(ElementProjectile {
+            element: ElementData {
+                kind: ElementKind::ObjectProjectile,
+                ..Default::default()
+            },
+            object: ObjectData::default(),
+            projectile: ProjectileData {
+                start_of_trajectory_x: 572.0,
+                start_of_trajectory_y: 2360.0,
+                ..Default::default()
+            },
+        });
+        let Entity::Projectile(projectile_data) = &mut projectile else {
+            unreachable!()
+        };
+        let exact_handle = crate::position_interface::SectorHandle::new(17)
+            .unwrap()
+            .with_arena_index(exact_sector);
+        set_projectile_trajectory_origin(&mut projectile_data.projectile, Some(exact_handle), 11);
+        assert_eq!(
+            projectile_data.projectile.trajectory_origin_sector,
+            Some(17)
+        );
+        assert_eq!(
+            projectile_data.projectile.trajectory_origin_sector_index,
+            Some(exact_sector),
+            "the shared arrow/apple publication writer must retain exact origin topology"
+        );
+
+        let origin = projectile_trajectory_origin(&projectile).unwrap();
+        assert_eq!(origin.x, 572.0);
+        assert_eq!(origin.y, 2360.0);
+        assert_eq!(origin.sector.map(|sector| sector.get()), Some(17));
+        assert_eq!(
+            origin.sector.and_then(|sector| sector.arena_index()),
+            Some(exact_sector),
+            "arrow-hit events must copy the exact trajectory-origin sector identity"
+        );
+        assert_eq!(origin.level, 11);
+
+        // The task-229 boundary lies on opposite sides of a direction-sector
+        // threshold depending on whether Face(Position) retains sector 17's
+        // projection elevation. Dropping the sector changes the authored turn.
+        let dx = 572.0 - 785.243_35;
+        let dy = 2360.0 - 2_192.851_6;
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy),
+            10
+        );
+        assert_eq!(
+            crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy + 105.001_01),
+            9
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "without its public sector number")]
+    fn projectile_origin_rejects_orphan_exact_sector_identity() {
+        let projectile = ProjectileData {
+            trajectory_origin_sector_index: crate::fast_find_grid::SectorIndex::new(41),
+            ..Default::default()
+        };
+        let _ = projectile_trajectory_origin_sector(&projectile);
+    }
+
+    fn blocked_shoulder_pair() -> (
+        EngineInner,
+        LevelAssets,
+        crate::element::EntityId,
+        crate::element::EntityId,
+    ) {
+        let mut engine = EngineInner::new();
+        let victim_id = engine.add_entity(make_pc(Posture::OnShoulders));
+        let mut carrier = make_pc(Posture::CarryingOnShoulders);
+        let Entity::Pc(carrier_pc) = &mut carrier else {
+            unreachable!()
+        };
+        carrier_pc.pc.carried = Some(victim_id);
+        let carrier_id = engine.add_entity(carrier);
+        engine
+            .get_entity_mut(victim_id)
+            .unwrap()
+            .human_data_mut()
+            .unwrap()
+            .carrier = Some(carrier_id);
+
+        // A flat solid slab from z=60 through z=70 intersects the exact
+        // Shoulder-carry eligibility's vertical segment (z=50..90) at the default
+        // actor position (0, 0).
+        let mut ceiling = SightObstacle::new_default(0);
+        ceiling.obstacle_points = vec![
+            ObstaclePoint {
+                x: -10.0,
+                y: -10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: -10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: 10.0,
+                y: 10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+            ObstaclePoint {
+                x: -10.0,
+                y: 10.0,
+                z_top: 70.0,
+                z_bottom: 60.0,
+            },
+        ];
+        ceiling.top_plane_points = [
+            [-10.0, -10.0, 70.0],
+            [10.0, -10.0, 70.0],
+            [-10.0, 10.0, 70.0],
+        ];
+        ceiling.bottom_plane_points = [
+            [-10.0, -10.0, 60.0],
+            [10.0, -10.0, 60.0],
+            [-10.0, 10.0, 60.0],
+        ];
+        ceiling.rebuild_geometry();
+
+        let mut assets = LevelAssets::new();
+        assets.static_sight_obstacles = Arc::new(vec![ceiling]);
+        (engine, assets, carrier_id, victim_id)
+    }
+
+    fn shoulder_drop_elements(engine: &EngineInner) -> Vec<&crate::sequence::SequenceElement> {
+        engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .filter(|element| element.command == crate::element::Command::ReceiveDamage)
+            .collect()
+    }
+
+    #[test]
+    fn stone_soldier_protection_requires_real_weapon_profile() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            ..SoldierProfile::default()
+        });
+
+        assert_eq!(
+            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
+            None
+        );
+
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            piercing_protection: 35,
+            ..HtHWeaponProfile::default()
+        });
+
+        assert_eq!(
+            soldier_piercing_protection(&profiles, SoldierProfileIdx(0)),
+            Some(35)
+        );
+    }
+
+    #[test]
+    fn soldier_shield_dimensions_require_real_weapon_profile() {
+        let mut profiles = ProfileManager::new();
+        profiles.soldiers.push(SoldierProfile {
+            hth_weapon_id: 1,
+            ..SoldierProfile::default()
+        });
+
+        assert_eq!(
+            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
+            None
+        );
+
+        profiles.hth_weapons.push(HtHWeaponProfile {
+            shield_width: 22,
+            shield_height: 44,
+            ..HtHWeaponProfile::default()
+        });
+
+        assert_eq!(
+            soldier_shield_dimensions(&profiles, SoldierProfileIdx(0)),
+            Some((22, 44))
+        );
+    }
+
+    #[test]
+    fn carrying_posture_waiting_action_does_not_run_ceiling_check() {
+        let (mut engine, assets, carrier_id, _) = blocked_shoulder_pair();
+
+        engine.tick_shouldered_carry_ceiling(
+            &assets,
+            &[(carrier_id, OrderType::WaitingCarryingOnShoulders)],
+        );
+
+        assert!(shoulder_drop_elements(&engine).is_empty());
+    }
+
+    #[test]
+    fn walking_carry_action_launches_drop_on_that_action_frame() {
+        let (mut engine, assets, carrier_id, victim_id) = blocked_shoulder_pair();
+        assert!(shoulder_drop_elements(&engine).is_empty());
+
+        engine.tick_shouldered_carry_ceiling(
+            &assets,
+            &[(carrier_id, OrderType::WalkingCarryingOnShoulders)],
+        );
+
+        let drops = shoulder_drop_elements(&engine);
+        assert_eq!(drops.len(), 1);
+        let drop = drops[0];
+        assert_eq!(drop.owner, Some(victim_id));
+        assert_eq!(drop.state, SequenceState::Todo);
+        assert!(matches!(
+            drop.data,
+            SequenceElementData::Damage {
+                origin: Some(origin),
+                projectile: None,
+                damage: 0,
+                concussion: 0,
+                sword_strike: None,
+                sword_profile_idx: None,
+                is_harder_hit: false,
+            } if origin == victim_id
+        ));
+    }
+
+    #[test]
+    fn projectile_damage_waits_for_sequence_manager_dispatch() {
+        let mut engine = EngineInner::new();
+        let shooter = engine.add_entity(make_pc(Posture::Upright));
+        let mut victim = make_pc(Posture::Upright);
+        let Entity::Pc(victim_pc) = &mut victim else {
+            unreachable!()
+        };
+        victim_pc.pc.life_points = 100;
+        let victim = engine.add_entity(victim);
+
+        engine.queue_projectile_damage(
+            victim,
+            shooter,
+            crate::element::Command::ReceiveArrowDamage,
+            40,
+            0,
+            Some(shooter),
+        );
+
+        assert_eq!(
+            engine
+                .get_entity(victim)
+                .and_then(|entity| entity.pc_data())
+                .map(|pc| pc.life_points),
+            Some(100),
+            "projectile collision must not apply damage before the sequence-manager tick"
+        );
+        let damage = engine
+            .orders
+            .sequence_manager
+            .sequences_iter()
+            .flat_map(|sequence| sequence.elements.iter())
+            .find(|element| {
+                element.owner == Some(victim)
+                    && element.command == crate::element::Command::ReceiveArrowDamage
+            })
+            .expect("queued arrow damage element");
+        assert_eq!(damage.state, SequenceState::Todo);
+        assert!(matches!(
+            damage.data,
+            SequenceElementData::Damage {
+                origin: Some(origin),
+                projectile: Some(projectile),
+                damage: 40,
+                concussion: 0,
+                ..
+            } if origin == shooter && projectile == shooter
+        ));
+    }
+}
+
+/// Index used by relic-collection bookkeeping — the BonusType ordinal
+/// for each relic.
+fn relic_object_type_index(obj: crate::element::ObjectType) -> u32 {
+    use crate::element::ObjectType as O;
+    match obj {
+        O::BonusAmpulla => 12,
+        O::BonusCoronationSpoon => 13,
+        O::BonusRichardsCrown => 14,
+        O::BonusRoyalSeal => 15,
+        O::BonusRoyalSceptre => 16,
+        O::BonusDomesdayBook => 17,
+        O::BonusSwordOfTheState => 18,
+        _ => panic!("relic_object_type_index: not a relic: {obj:?}"),
+    }
+}
+
+// Re-open the impl block for any methods that follow.
+impl EngineInner {
+    /// Award bow kill experience points to a PC shooter.
+    ///
+    /// Awards `BOW_KILL_EXPERIENCE_POINTS` to the shooter's Bow skill
+    /// via the campaign's `PcStatus`.
+    pub(super) fn award_bow_kill_xp(&mut self, shooter_id: EntityId) {
+        let Some(entity) = self.get_entity(shooter_id) else {
+            return;
+        };
+        let Entity::Pc(pc) = entity else {
+            return; // Only PCs get XP
+        };
+        let character_idx = self
+            .pc_description_index_for_pc_data(&pc.pc)
+            .unwrap_or_else(|| {
+                panic!(
+                    "bow-kill XP shooter {shooter_id:?} has no valid campaign character identity"
+                )
+            });
+
+        let capacity_increased = self.mission_domain.campaign.add_pc_experience(
+            character_idx,
+            crate::pc_status::SkillName::Bow,
+            bow_shot::BOW_KILL_EXPERIENCE_POINTS,
+        );
+        if capacity_increased {
+            self.add_campaign_value(
+                crate::campaign::CampaignValue::Score,
+                crate::pc_status::PC_ADDITIONAL_CAPACITY_POINTS,
+            );
+        }
+        tracing::debug!(
+            shooter = ?shooter_id,
+            xp = bow_shot::BOW_KILL_EXPERIENCE_POINTS,
+            capacity_increased,
+            "Bow kill XP awarded"
+        );
+    }
+
+    /// Advance one pre-existing projectile at its creation-order position in
+    /// the per-entity update pass.
+    pub(super) fn tick_existing_projectile(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+    ) {
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles,
+            water_zones: Some(&assets.water_zones),
+        };
+        let actor_order = self.world.actor_registry_order();
+        let results = bow_shot::tick_existing_projectile_in_actor_order(
+            sim,
+            &mut self.world.entities,
+            sight_obstacles,
+            Some(&obstacle_check),
+            projectile_id,
+            &actor_order,
+            &self.mission_domain.diplomacy,
+        );
+        self.process_projectile_tick_results(sim, assets, results);
+    }
+
+    fn tick_new_projectile_once(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        arrow_id: EntityId,
+    ) {
+        let sight_obstacles = crate::sight_obstacle::ObstacleList {
+            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            dynamic_obstacles: &self.world.dynamic_sight_obstacles,
+            static_active: &self.world.static_sight_obstacle_active,
+        };
+        let obstacle_check = bow_shot::TrajectoryObstacleCheck {
+            fast_find_grid: &self.world.fast_grid,
+            sight_obstacles,
+            water_zones: Some(&assets.water_zones),
+        };
+        let actor_order = self.world.actor_registry_order();
+        let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
+            sim,
+            &mut self.world.entities,
+            sight_obstacles,
+            Some(&obstacle_check),
+            arrow_id,
+            &actor_order,
+            &self.mission_domain.diplomacy,
+        );
+        self.process_projectile_tick_results(sim, assets, results);
+    }
+
+    pub(super) fn process_projectile_tick_results(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        results: Vec<bow_shot::ArrowTickResult>,
+    ) {
+        for result in results {
+            // ── Shield hit — trigger parry ───────────────────────
+            // Runs for every projectile type.  The per-type impact FX
+            // and the ParryShield sequence launch both fire at the
+            // shield holder's map position.
+            //
+            // Arrow: impact FX is suppressed because the falling-state
+            // transition runs before the impact sound check, and the
+            // sound gate excludes already-falling projectiles. So
+            // arrow shield hits leave `impact_fx = None`.
+            //
+            // Apple (509) and stone (508): impact_fx populated, played
+            // at the holder's map position.
+            if let Some(holder) = result.shield_hit {
+                tracing::debug!(
+                    arrow = ?result.arrow,
+                    shield_holder = ?holder,
+                    "Projectile blocked by shield"
+                );
+                if let Some(fx_id) = result.impact_fx
+                    && let Some(entity) = self.get_entity(holder)
+                {
+                    let p = entity.element_data().position_map();
+                    self.feedback
+                        .pending_side_effects
+                        .sounds
+                        .push(super::SoundCommand::Fx {
+                            fx_id,
+                            position: p,
+                            material: None,
+                        });
+                }
+                // Trigger parry-shield animation if not already parrying.
+                // The gate is on the current combat_anim order type, not
+                // the action state (they can diverge by a frame).
+                let already_parrying = self
+                    .orders
+                    .sequence_manager
+                    .current_order_for_actor(holder)
+                    .map(|(_, _, o)| o.order_type == crate::order::OrderType::ParryingShield)
+                    .unwrap_or(false);
+                if !already_parrying {
+                    let seq_elem = crate::sequence::SequenceElement::new(
+                        1,
+                        Command::ParryShield,
+                        Some(holder),
+                    );
+                    self.launch_element(seq_elem);
+                }
+                if result.despawn {
+                    self.deactivate_projectile_tombstone(result.arrow, false);
+                }
+                continue;
+            }
+
+            // FX-target hit — launch the projectile's activation command
+            // (ActivateArrow / ActivateApple) as an interaction element
+            // on the target with the shooter as antagonist. `tick_arrows`
+            // selects the command based on the projectile's object type.
+            if let Some((target_id, activation_cmd)) = result.fx_target_hit {
+                let shooter = self.get_entity(result.arrow).and_then(|e| match e {
+                    Entity::Projectile(p) => p.projectile.shooter,
+                    _ => None,
+                });
+                let mut seq_elem =
+                    crate::sequence::SequenceElement::new(1, activation_cmd, Some(target_id));
+                seq_elem.data = crate::sequence::SequenceElementData::Interaction {
+                    antagonist: shooter,
+                };
+                self.launch_element(seq_elem);
+                tracing::debug!(
+                    projectile = ?result.arrow,
+                    target = ?target_id,
+                    ?shooter,
+                    command = ?activation_cmd,
+                    "FX target activated by projectile"
+                );
+                let was_distraction = self.emit_noise_distraction_impact(
+                    sim,
+                    assets,
+                    result.arrow,
+                    result.impact_pos,
+                );
+                if let Some(fx_id) = result.impact_fx
+                    && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
+                {
+                    self.feedback
+                        .pending_side_effects
+                        .sounds
+                        .push(super::SoundCommand::Fx {
+                            fx_id,
+                            position: MapPoint::new(result.impact_pos.x, result.impact_pos.y),
+                            material: None,
+                        });
+                }
+                if result.despawn {
+                    self.deactivate_projectile_tombstone(result.arrow, false);
+                }
+                continue;
+            }
+
+            if let Some(victim) = result.hit_target {
+                // Identify the shooter and projectile type.
+                let Some((shooter, projectile_kind)) =
+                    self.get_entity(result.arrow).and_then(|e| match e {
+                        Entity::Projectile(p) => Some((p.projectile.shooter, p.object.object_type)),
+                        _ => None,
+                    })
+                else {
+                    tracing::warn!(
+                        projectile = ?result.arrow,
+                        ?victim,
+                        "projectile human hit missing projectile entity; skipping hit"
+                    );
+                    continue;
+                };
+                let Some(shooter) = shooter else {
+                    tracing::warn!(
+                        projectile = ?result.arrow,
+                        ?victim,
+                        ?projectile_kind,
+                        "projectile human hit missing shooter; skipping hit"
+                    );
+                    continue;
+                };
+
+                match projectile_kind {
+                    crate::element::ObjectType::Apple => {
+                        if let Some(old_pos) = result.human_hit_old_position {
+                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
+                        }
+                        // No damage; if the victim is a soldier, set
+                        // apple-smell and dispatch EventApple.
+                        self.on_apple_hit_human(result.arrow, victim);
+                    }
+                    crate::element::ObjectType::Stone => {
+                        if let Some(old_pos) = result.human_hit_old_position {
+                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
+                        }
+                        // Non-VIP and (non-soldier OR piercing-protection
+                        // roll failed) → piercing damage.  NPCs that
+                        // dodge (VIP or protected soldier) trigger an
+                        // EventApple stimulus instead.
+                        self.on_stone_hit_human(sim, assets, result.arrow, victim, shooter);
+                    }
+                    _ => {
+                        // ── Arrow path (default) — the 3-way classifier
+                        // folds in the friendly-fire / shielded-PC
+                        // pre-filter.  Each outcome is a distinct
+                        // side-effect:
+                        //   * `PassThrough`  — arrow keeps flying, no sound.
+                        //   * `Ricochet`     — falling state, silent.
+                        //   * `Damage`       — launch damage sequence element.
+                        match self.classify_arrow_hit(sim, assets, victim, shooter) {
+                            ArrowHitOutcome::PassThrough => {
+                                // Friendly-fire / VIP-NPC / civilian-protected
+                                // / PC-with-shield: arrow sails past.
+                                // `tick_arrows` has already flagged the
+                                // projectile for despawn; flip it back to
+                                // flying and skip the sound / despawn
+                                // sections below.
+                                if let Some(Entity::Projectile(p)) =
+                                    self.world.entities.get_mut(result.arrow)
+                                {
+                                    p.projectile.flying = true;
+                                }
+                                continue;
+                            }
+                            ArrowHitOutcome::Ricochet => {
+                                // Piercing-protection deflected.  Arrow
+                                // tumbles to the ground.  The
+                                // ricochet-falling transition runs
+                                // before the impact-sound check, and the
+                                // sound gate excludes already-falling
+                                // projectiles, so the ricochet impact
+                                // sound is intentionally silent.
+                                tracing::debug!(
+                                    arrow = ?result.arrow,
+                                    victim = ?victim,
+                                    "Arrow ricocheted from armor"
+                                );
+                                self.start_arrow_ricochet(sim, assets, result.arrow);
+                                continue;
+                            }
+                            ArrowHitOutcome::Damage => {}
+                        }
+
+                        if let Some(old_pos) = result.human_hit_old_position {
+                            self.rewind_projectile_to_human_hit_old_position(result.arrow, old_pos);
+                        }
+
+                        let damage = result.damage;
+                        // Civilian-with-attached-scroll immunity
+                        // (scroll-reveal beggar).  Consume the arrow but
+                        // don't apply damage.
+                        if self.is_scroll_protected_civilian(victim) {
+                            tracing::debug!(
+                                arrow = ?result.arrow,
+                                ?victim,
+                                "arrow hit blocked: civilian carrying unrevealed scroll"
+                            );
+                            continue;
+                        }
+                        self.queue_projectile_damage(
+                            victim,
+                            shooter,
+                            Command::ReceiveArrowDamage,
+                            damage,
+                            // The arrow-specific Original
+                            // Damage-sequence initialization stores
+                            // concussion to zero; only generic/stone damage
+                            // accepts an independent concussion payload.
+                            0,
+                            Some(result.arrow),
+                        );
+                        tracing::debug!(
+                            arrow = ?result.arrow,
+                            victim = ?victim,
+                            damage,
+                            "Arrow damage queued"
+                        );
+
+                        // After launching the damage sequence, if the
+                        // victim is an NPC, dispatch EventGetArrow at the
+                        // arrow's trajectory origin so the surviving
+                        // target wakes up and searches toward the shot
+                        // origin.
+                        let Some(victim_is_npc) = self.get_entity(victim).map(|e| e.is_npc())
+                        else {
+                            tracing::warn!(
+                                ?victim,
+                                arrow = ?result.arrow,
+                                "arrow hit follow-up skipped: victim missing before EventGetArrow"
+                            );
+                            continue;
+                        };
+                        if victim_is_npc {
+                            let trajectory_origin = self
+                                .get_entity(result.arrow)
+                                .and_then(projectile_trajectory_origin);
+                            if let Some(origin) = trajectory_origin {
+                                self.dispatch_event_get_arrow(sim, assets, victim, origin);
+                            } else {
+                                tracing::warn!(
+                                    arrow = ?result.arrow,
+                                    victim = ?victim,
+                                    "arrow hit NPC missing trajectory origin; skipping EventGetArrow"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Impact sound: apple 509, stone 508.  The arrow's 510
+            // plays only on shield deflection (handled above), so
+            // non-shield arrow impacts stay silent.
+            let was_distraction =
+                self.emit_noise_distraction_impact(sim, assets, result.arrow, result.impact_pos);
+            if let Some(fx_id) = result.impact_fx
+                && (!was_distraction || self.control.sim_config.noise_distraction_feedback)
+            {
+                self.feedback
+                    .pending_side_effects
+                    .sounds
+                    .push(super::SoundCommand::Fx {
+                        fx_id,
+                        position: MapPoint::new(result.impact_pos.x, result.impact_pos.y),
+                        material: None,
+                    });
+            }
+
+            // Landing deliberately re-derives no membership: a projectile's
+            // obstacle, layer and sector are settled while its arc is built
+            // and hold for the whole flight. Re-resolving them from the
+            // landing footprint would contradict that answer and, for a
+            // landing on open ground, bind a null obstacle whose plane drags
+            // the elevation just snapped above back down to a flat zero.
+
+            // Water/hole splash — arrow landed in a water or hole zone
+            // with no victim/shield/target.  Add the plouf titbit,
+            // broadcast the PLOUF noise, and play impact sound ID 470.
+            if result.despawn && result.hit_target.is_none() {
+                self.maybe_splash_on_landing(sim, assets, result.arrow);
+            }
+
+            if result.despawn {
+                self.deactivate_projectile_tombstone(result.arrow, result.hit_target.is_none());
+            }
+        }
+    }
+
+    /// Consume a ground-stone's one-shot impact latch and synchronously feed
+    /// the resulting authored noise into the existing AI hearing pipeline.
+    /// Returns whether this impact was the distraction terminal, allowing the
+    /// caller to apply the independently configurable feedback gate.
+    fn emit_noise_distraction_impact(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        projectile_id: EntityId,
+        impact: MapPoint,
+    ) -> bool {
+        let (layer, elevation) = {
+            let entity = self.get_entity_mut(projectile_id).unwrap_or_else(|| {
+                panic!("noise-distraction impact projectile {projectile_id:?} is missing")
+            });
+            let Entity::Projectile(projectile) = entity else {
+                panic!("noise-distraction impact id {projectile_id:?} is not a projectile");
+            };
+            if !projectile.projectile.noise_distraction {
+                return false;
+            }
+            projectile.projectile.noise_distraction = false;
+            (
+                projectile.element.optional_layer(),
+                projectile.element.sprite.position_iface.get_elevation() as u16,
+            )
+        };
+
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Distraction,
+            impact,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_DISTRACTION as u16,
+            elevation,
+            Some(projectile_id),
+        );
+        true
+    }
+
+    pub(super) fn deactivate_projectile_tombstone(
+        &mut self,
+        projectile_id: EntityId,
+        disappearance_reached: bool,
+    ) {
+        let entity = self
+            .get_entity_mut(projectile_id)
+            .unwrap_or_else(|| panic!("despawning projectile {projectile_id:?} vanished"));
+        assert!(
+            matches!(entity, Entity::Projectile(_) | Entity::Net(_)),
+            "projectile despawn targeted non-projectile {projectile_id:?}"
+        );
+        if let Entity::Projectile(projectile) = entity
+            && projectile.object.object_type == crate::element::ObjectType::Arrow
+            && (!projectile.projectile.disappear || !disappearance_reached)
+        {
+            // Successful human/target impact returns from the projectile tick
+            // before its later disappear branch. Thus even an arrow whose
+            // remaining trajectory would have fallen into a hole exposes one
+            // stopped, active snapshot and is retired by arrow presentation refresh.
+            // Only actually reaching the hole/water trajectory endpoint makes
+            // disappearance immediate.
+            projectile.projectile.flying = false;
+            return;
+        }
+        entity.element_data_mut().active = false;
+    }
+
+    pub(super) fn rewind_projectile_to_human_hit_old_position(
+        &mut self,
+        projectile: EntityId,
+        old_pos: crate::coordinates::WorldPoint3D,
+    ) {
+        let Some(Entity::Projectile(p)) = self.world.entities.get_mut(projectile) else {
+            tracing::warn!(
+                ?projectile,
+                "projectile human-hit rewind skipped: projectile entity missing"
+            );
+            return;
+        };
+        // Successful projectile impact handling rewinds to the
+        // position snapshotted at movement start, stops flight, and immediately
+        // deletes the trajectory. Settling both position representations is
+        // observable by the following parity snapshot and lets the subsequent
+        // arrow refresh retire the stationary arrow.
+        p.element.set_position(old_pos);
+        p.element.sprite.position_iface.new_move();
+        // The original game immediately recomputes all position projections after the rewind.
+        // Retain the already-published projectile increment while restoring
+        // all three position-cache validity bits.
+        p.element
+            .finish_projectile_position_update(p.projectile.velocity_increment);
+        p.projectile.trajectory.clear();
+    }
+
+    /// Apple lands on a human.  Apples deal no damage; they only
+    /// affect soldiers via the apple-smell AI hook.
+    fn on_apple_hit_human(&mut self, apple: EntityId, victim: EntityId) {
+        // Use the shooter's original position (trajectory origin) as
+        // the EventApple stimulus anchor.
+        let Some(trajectory_origin) = self
+            .get_entity(apple)
+            .and_then(projectile_trajectory_origin)
+        else {
+            tracing::warn!(
+                ?apple,
+                ?victim,
+                "apple hit human missing trajectory origin; skipping EventApple"
+            );
+            return;
+        };
+        let Some(victim_is_soldier) = self.get_entity(victim).map(|e| e.is_soldier()) else {
+            tracing::warn!(
+                ?apple,
+                ?victim,
+                "apple hit follow-up skipped: victim missing before EventApple"
+            );
+            return;
+        };
+        if !victim_is_soldier {
+            return;
+        }
+        self.set_soldier_apple_smell(victim);
+        self.dispatch_event_apple(victim, trajectory_origin);
+    }
+
+    /// Stone lands on a human.  Non-VIPs that fail the
+    /// piercing-protection roll take `STONE_DAMAGE`; NPCs that dodge
+    /// (VIP or armored soldier) receive an EventApple stimulus.
+    fn on_stone_hit_human(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        stone: EntityId,
+        victim: EntityId,
+        _shooter: EntityId,
+    ) {
+        let victim_entity = match self.get_entity(victim) {
+            Some(e) => e,
+            None => return,
+        };
+        let is_vip =
+            crate::engine::melee::is_vip_from_profile(victim_entity, &assets.profile_manager);
+        let is_npc = victim_entity.is_npc();
+
+        // Piercing-protection roll for soldiers only:
+        // `(!is_soldier) || (rand() % 100) >= protection`
+        let protected = if let Entity::Soldier(s) = victim_entity {
+            match soldier_piercing_protection(
+                &assets.profile_manager,
+                s.soldier.soldier_profile_index,
+            ) {
+                Some(protection) => {
+                    let roll = crate::sim_rng::u32(
+                        sim,
+                        crate::sim_rng::RngSite::StonePiercingProtection,
+                        0..100,
+                    );
+                    roll < protection as u32
+                }
+                None => panic!(
+                    "stone hit: missing soldier HtH weapon profile for victim={victim:?} profile_index={:?}",
+                    s.soldier.soldier_profile_index
+                ),
+            }
+        } else {
+            false
+        };
+
+        // Civilian-with-attached-scroll immunity.  The scroll-protected
+        // check belongs *inside* the damage branch, not on the gate:
+        // a scroll-carrying civilian enters the damage branch and the
+        // damage is silently cancelled downstream by the civilian's
+        // wound handler.  If we gated the branch on `!scroll_protected`,
+        // the civilian would fall through to the `else if is_npc` arm
+        // and erroneously dispatch EventApple.
+        let scroll_protected = self.is_scroll_protected_civilian(victim);
+
+        if !is_vip && !protected {
+            if scroll_protected {
+                // Damage cancelled, with no EventApple fall-through —
+                // the civilian wound handler returns without applying
+                // damage.
+                tracing::debug!(
+                    stone = ?stone,
+                    ?victim,
+                    "stone hit blocked: civilian carrying unrevealed scroll"
+                );
+                return;
+            }
+            self.queue_projectile_damage(
+                victim,
+                _shooter,
+                Command::ReceiveStoneDamage,
+                STONE_DAMAGE,
+                STONE_CONCUSSION,
+                None,
+            );
+        } else if is_npc {
+            // VIP / armored-soldier dodge: treated similarly to an
+            // apple hit.
+            let Some(trajectory_origin) = self
+                .get_entity(stone)
+                .and_then(projectile_trajectory_origin)
+            else {
+                tracing::warn!(
+                    ?stone,
+                    ?victim,
+                    "stone hit NPC missing trajectory origin; skipping EventApple"
+                );
+                return;
+            };
+            self.dispatch_event_apple(victim, trajectory_origin);
+        }
+    }
+
+    /// Set the 1500-frame apple-smell counter on a soldier.  Titbit
+    /// creation is driven event-free by `sync_apple_smell_titbits`.
+    fn set_soldier_apple_smell(&mut self, victim: EntityId) {
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(victim) {
+            s.soldier.apple_smell = APPLE_SMELL_DURATION;
+        }
+    }
+
+    /// Per-frame decrement of the apple-smell counter on all soldiers.
+    /// The associated titbit is auto-removed by
+    /// `sync_apple_smell_titbits` once the counter reaches 0.
+    pub(super) fn tick_apple_smell_for(&mut self, soldier_id: EntityId) {
+        let Entity::Soldier(soldier) =
+            self.world.entities.get_mut(soldier_id).unwrap_or_else(|| {
+                panic!(
+                    "apple-smell owner {} disappeared from its legacy slot",
+                    soldier_id.index()
+                )
+            })
+        else {
+            panic!("apple-smell owner {} is not a soldier", soldier_id.index());
+        };
+        if soldier.soldier.apple_smell > 0 {
+            soldier.soldier.apple_smell -= 1;
+        }
+    }
+
+    /// Per-frame body-direction re-snap for soldiers in reactiontime /
+    /// bow substates.  While the soldier is in
+    /// `AttackingReactiontimeTurning`, `AttackingReactiontime`,
+    /// `AttackingBowLoading`, `AttackingBowAiming`, or
+    /// `AttackingBowShooting`, re-orient the body to face the
+    /// `primary_target`'s ground position every tick so a bowman keeps
+    /// tracking a moving PC between Think stimuli.
+    pub(super) fn tick_soldier_track_primary_target_for(&mut self, npc_id: EntityId) {
+        use crate::ai::Substate;
+        let target_handle = {
+            let Some(Entity::Soldier(s)) = self.world.entities.get(npc_id) else {
+                panic!("tracking soldier {} disappeared", npc_id.index());
+            };
+            let Some(ai) = s.npc.ai_brain.base() else {
+                return;
+            };
+            let tracks = matches!(
+                ai.current_substate,
+                Substate::AttackingReactiontimeTurning
+                    | Substate::AttackingReactiontime
+                    | Substate::AttackingBowLoading
+                    | Substate::AttackingBowAiming
+                    | Substate::AttackingBowShooting
+            );
+            if !tracks {
+                return;
+            }
+            let Some(target) = ai.primary_target else {
+                return;
+            };
+            target
+        };
+        let my_pos = match self.get_entity(npc_id) {
+            Some(e) => e.ground_position(),
+            None => panic!("tracking soldier {} disappeared", npc_id.index()),
+        };
+        let target_pos =
+            match self.get_entity(self.expect_entity_id_for_index(
+                target_handle.get(),
+                "update_bow_defense target handle",
+            )) {
+                Some(e) => e.ground_position(),
+                None => return,
+            };
+        let dx = target_pos.x - my_pos.x;
+        let dy = target_pos.y - my_pos.y;
+        let sector = crate::position_interface::vector_to_sector_0_to_15_iso(dx, dy);
+        if let Some(Entity::Soldier(s)) = self.world.entities.get_mut(npc_id) {
+            s.element.set_direction_instantly(sector);
+        }
+    }
+
+    /// Per-frame PC life-point auto-heal.
+    ///
+    /// * If the PC is immortal and below the max, bump HP by 1
+    ///   (snapping up to 75 first if below that floor).
+    /// * Otherwise, when the resolved difficulty enables auto-heal, use its
+    ///   configured cadence while the PC is neither sword-fighting nor in
+    ///   coma. The Easy preset remains exactly once every 100 frames.
+    ///
+    /// The shared human prelude (concussion decrement, tiredness
+    /// recovery, produced-noise refresh) is handled by
+    /// [`Self::tick_concussion_healing`], [`Self::tick_tiredness`],
+    /// and the PC noise bookkeeping in `engine/ai.rs`; this tick only
+    /// covers the PC-specific heal branches.
+    /// Apply the PC-specific update tail to one PC.
+    pub(super) fn tick_pc_auto_heal_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        pc_id: EntityId,
+    ) {
+        let auto_heal_interval = sim.config().difficulty.rules().pc_auto_heal_interval_frames;
+        let tick_auto_heal = auto_heal_interval != 0
+            && self
+                .control
+                .frame_counter
+                .is_multiple_of(u32::from(auto_heal_interval));
+
+        let (lp, immortal, swordfighting, in_coma) = {
+            let Some(Entity::Pc(pc)) = self.get_entity(pc_id) else {
+                return;
+            };
+            // Fried-psykokwack PCs short-circuit the whole hourglass
+            // tick; skip heals too.  Also skip inactive / dead /
+            // already-maxed PCs.
+            if !pc.element.active
+                || pc.pc.fried_psykokwack
+                || pc.pc.life_points <= 0
+                || pc.pc.life_points >= crate::pc_status::LIFEPOINTS_PC
+            {
+                return;
+            }
+            let in_coma = self
+                .pc_description_for_pc_data(&pc.pc)
+                .map(|d| d.status.in_coma)
+                .unwrap_or(false);
+            (
+                pc.pc.life_points,
+                pc.pc.immortal,
+                !pc.human.opponents.is_empty(),
+                in_coma,
+            )
+        };
+
+        let new_lp = if immortal {
+            // Snap up to a 75 floor before incrementing.
+            if lp < 75 { 75 } else { lp + 1 }
+        } else if tick_auto_heal && !swordfighting {
+            if in_coma {
+                return;
+            }
+            lp + 1
+        } else {
+            return;
+        };
+        let new_lp = new_lp.min(crate::pc_status::LIFEPOINTS_PC);
+
+        if let Some(Entity::Pc(pc)) = self.get_entity_mut(pc_id) {
+            pc.pc.life_points = new_lp;
+        }
+    }
+
+    /// Dispatch an EventApple stimulus at the origin of the thrown
+    /// projectile.  Used by both apple and stone impacts on NPCs.
+    fn dispatch_event_apple(&mut self, victim: EntityId, origin: crate::ai::Position) {
+        self.dispatch_ai_stimulus(
+            victim,
+            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventApple, origin),
+        );
+    }
+
+    /// Dispatch an EventGetArrow stimulus at the arrow's trajectory
+    /// origin — wakes the struck NPC and seeds the search toward the
+    /// shot origin.
+    fn dispatch_event_get_arrow(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        victim: EntityId,
+        origin: crate::ai::Position,
+    ) {
+        // Arrow impact calls the NPC's AI directly after
+        // sequence-element launch and before returning to the projectile
+        // update. Merely appending this to the deferred detection FIFO
+        // makes the outcome depend on whether the NPC's creation-order slot
+        // is before or after the projectile.  Run the one Think inline while
+        // retaining older deferred stimuli ahead of work emitted here.
+        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+            sim,
+            victim,
+            assets,
+            crate::ai::Stimulus::with_position(crate::ai::StimulusType::EventGetArrow, origin),
+        );
+    }
+
+    /// If the arrow's landing position is inside a water or hole zone,
+    /// spawn the splash titbit, broadcast a PLOUF noise, and play the
+    /// plouf impact sound (FX 470).
+    fn maybe_splash_on_landing(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        arrow: EntityId,
+    ) {
+        let proj_entity = match self.get_entity(arrow) {
+            Some(e) => e,
+            None => return,
+        };
+        let elem = proj_entity.element_data();
+        let position = elem.position();
+        let position_map = elem.position_map();
+        let layer = elem.optional_layer();
+        // Trajectory calculation deliberately leaves water/hole projectiles at
+        // Original's raw 0xffff "no layer" sentinel. Projectile ticking
+        // still passes that value to the Plouf titbit before despawning it
+        // during projectile impact handling.
+        let raw_layer = layer.map_or(u16::MAX, crate::position_interface::Layer::get);
+        let (object_type, pre_flagged_disappear, pre_flagged_dive) = match proj_entity {
+            Entity::Projectile(p) => (
+                p.object.object_type,
+                p.projectile.disappear,
+                p.projectile.dive,
+            ),
+            _ => return,
+        };
+
+        // Pre-flagged hole landing: the trajectory builder identified
+        // the terminal waypoint as inside a hole polygon.  Skip the
+        // water-zone lookup (which can miss when the extended final
+        // point sits on the polygon boundary) and drop into the silent
+        // hole-disappear branch directly.
+        if pre_flagged_disappear {
+            return;
+        }
+
+        // Original scopes material lookup to the exact obstacle returned by
+        // the terminal trajectory raycast. Only a bare-ground impact scans
+        // global sound sectors. This prevents a raised dry platform from
+        // inheriting a projected ground-level water/hole polygon.
+        let landing_map = position_map;
+        let obstacle_handle = elem.obstacle_index();
+        let obstacles = self.sight_obstacles(assets);
+        let landing_obstacle = obstacle_handle.map(|handle| {
+            obstacles
+                .get(usize::from(handle))
+                .unwrap_or_else(|| panic!("projectile landing obstacle {handle} disappeared"))
+        });
+        // Trajectory calculation stores the dive flag at the trajectory that first found
+        // water and does not clear it when falling motion later recomputes a
+        // dry ricochet. The terminal update still emits the splash at the final
+        // position in that case, so the retained flag outranks a fresh lookup.
+        let resolved_material = if pre_flagged_dive {
+            Some(crate::sound_cache::Material::Water)
+        } else {
+            crate::water_zones::determine_water_hole_scoped(
+                &assets.water_zones,
+                landing_obstacle,
+                landing_map,
+            )
+            .map(|resolution| resolution.material)
+        };
+
+        let material = match resolved_material {
+            Some(m) => m,
+            None => {
+                // Dry landing — broadcast a ZONK noise for arrows so
+                // nearby NPCs hear the thud.  Apples/stones use their
+                // own FX sound instead and don't emit the noise.
+                if matches!(object_type, crate::element::ObjectType::Arrow) {
+                    self.broadcast_noise_synchronously(
+                        sim,
+                        assets,
+                        crate::ai::NoiseType::Zonk,
+                        position_map,
+                        layer,
+                        crate::parameters_ai::NOISE_VOLUME_ZONK as u16,
+                        position.z.max(0.0) as u16,
+                        Some(arrow),
+                    );
+                }
+                return;
+            }
+        };
+
+        // `disappear` fires only for HOLE material; the splash titbit
+        // and Plouf sound for water are emitted inline below.  Water
+        // doesn't need a stored flag because the side-effects fire in
+        // the same tick the landing is detected.
+        let is_water = matches!(material, crate::sound_cache::Material::Water);
+        if !is_water && let Some(Entity::Projectile(p)) = self.world.entities.get_mut(arrow) {
+            p.projectile.disappear = true;
+        }
+
+        if !is_water {
+            return;
+        }
+
+        // Plouf titbit at the landing position.
+        use crate::titbit::{ElementHandle, INVALID_ID, TitbitKind};
+        self.feedback.titbit_manager.add_titbit(
+            crate::coordinates::WorldPoint3D {
+                x: position.x,
+                y: position.y,
+                z: position.z,
+            },
+            raw_layer,
+            TitbitKind::Plouf,
+            ElementHandle::INVALID,
+            0,
+            ElementHandle::INVALID,
+            false,
+            INVALID_ID,
+            true,
+            None,
+            None,
+        );
+
+        // Plouf impact sound (FX 470).
+        self.feedback
+            .pending_side_effects
+            .sounds
+            .push(super::SoundCommand::Fx {
+                fx_id: 470,
+                position: position_map,
+                material: None,
+            });
+
+        // Broadcast PLOUF noise so nearby NPCs react. Volume from
+        // `parameters_ai::NOISE_VOLUME_PLOUF` (300).
+        self.broadcast_noise_synchronously(
+            sim,
+            assets,
+            crate::ai::NoiseType::Plouf,
+            position_map,
+            layer,
+            crate::parameters_ai::NOISE_VOLUME_PLOUF as u16,
+            position.z.max(0.0) as u16,
+            Some(arrow),
+        );
+    }
+
+    // ─── Shield obstacle update ─────────────────────────────────
+
+    /// Apply one original-game shield update to the owner's retained box.
+    pub(super) fn refresh_retained_shield_obstacle(
+        &mut self,
+        assets: &LevelAssets,
+        owner: EntityId,
+    ) {
+        let entity = self
+            .get_entity_mut(owner)
+            .unwrap_or_else(|| panic!("shield refresh owner {owner:?} disappeared"));
+        crate::bow_shot::refresh_retained_shield_obstacle(entity, &assets.profile_manager);
+    }
+
+    // ─── Hero ability tick ──────────────────────────────────────
+
+    /// Apply the terminal side effects of
+    /// `TRANSITION_CARRYING_CORPSE_WAITING_UPRIGHT`.
+    ///
+    /// The original game drops the corpse with its building-sector flag inside the selected
+    /// execution branch, before returning `TERMINATED` to the actor update. Keep
+    /// this separate from order advancement so transition prefixes for a
+    /// following command (for example Whistle) still sever the pair at the
+    /// transition's own terminal edge.
+    pub(super) fn apply_completed_corpse_drop(
+        &mut self,
+        carrier_id: EntityId,
+        target_id: EntityId,
+        drop_posture: crate::element::Posture,
+        carrier_pos: crate::coordinates::MapPoint,
+        carrier_direction: u16,
+    ) {
+        if let Some(carrier) = self.get_entity_mut(carrier_id) {
+            if let Some(pc) = carrier.pc_data_mut() {
+                pc.carried = None;
+            }
+            carrier.set_posture(crate::element::Posture::Upright);
+            if let Some(actor) = carrier.actor_data_mut() {
+                actor.action_state = crate::element::ActionState::Waiting;
+            }
+        }
+
+        let (carrier_sector, carrier_layer, carrier_obstacle, carrier_plane, drop_box_origin) =
+            self.get_entity(carrier_id)
+                .map(|e| {
+                    (
+                        e.element_data().sector(),
+                        e.element_data().layer(),
+                        e.position_iface().get_obstacle(),
+                        e.position_iface().get_plane().copied(),
+                        e.current_gameplay_point_map().unwrap_or_else(|| {
+                            panic!("corpse-drop carrier {carrier_id:?} has no current action point")
+                        }),
+                    )
+                })
+                .unwrap_or_else(|| panic!("corpse-drop carrier {carrier_id:?} disappeared"));
+        let in_building = carrier_sector
+            .and_then(|s| {
+                self.grid_sector_by_number(crate::sector::SectorNumber::new(i16::from(s)))
+            })
+            .map(|gs| gs.sector_type.is_building())
+            .unwrap_or(false);
+
+        let drop_pos = if in_building {
+            carrier_pos
+        } else {
+            let target_box = self
+                .get_entity(target_id)
+                .map(|e| e.position_iface())
+                .map(|pi| *pi.get_move_box())
+                .filter(|b| b.is_somewhere());
+            match target_box {
+                Some(b) => {
+                    // Original translates the corpse box by
+                    // the live map-space animation hotspot, then
+                    // searches toward the carrier's map origin.
+                    let mut bbox = b.translated(drop_box_origin);
+                    if self.world.fast_grid.find_authorized_position_toward(
+                        &mut bbox,
+                        carrier_pos,
+                        carrier_layer,
+                    ) {
+                        bbox.center()
+                    } else {
+                        carrier_pos
+                    }
+                }
+                None => carrier_pos,
+            }
+        };
+
+        let preserved_outdoor_position = (!in_building).then(|| {
+            self.get_entity(target_id)
+                .unwrap_or_else(|| panic!("corpse-drop target {target_id:?} disappeared"))
+                .element_data()
+                .position()
+        });
+
+        if let Some(target) = self.get_entity_mut(target_id) {
+            let was_lying = target.element_data().posture.is_lying();
+            if let Some(human) = target.human_data_mut()
+                && human.last_is_lying_for_corpse_intersection.is_none()
+            {
+                // A loaded carried body may reach DropCorpse before its
+                // first owner observation. Seed that derived tracker from
+                // the authoritative pre-posture-change state so the synchronous
+                // post-mutation hook below still observes false -> true.
+                human.last_is_lying_for_corpse_intersection = Some(was_lying);
+            }
+            target.set_posture(drop_posture);
+            // Dropping a corpse transfers the carrier's obstacle,
+            // plane, layer, and sector before either the instant or delayed
+            // position write. It deliberately does not replace the corpse's
+            // material. In particular, an outdoor delayed drop must retain
+            // the carrier's plane so next-frame delayed map positioning computes
+            // elevation on that plane rather than falling back to z=0.
+            let elem = target.element_data_mut();
+            elem.set_obstacle_index(carrier_obstacle, carrier_plane);
+            elem.set_layer(carrier_layer);
+            elem.set_sector(carrier_sector);
+            if in_building {
+                elem.set_position_map(drop_pos);
+            } else {
+                elem.set_position_map_delayed(drop_pos);
+                if let Some(position) = preserved_outdoor_position {
+                    // The original game's removal of the obstacle invalidates the cached 3D
+                    // position without overwriting it. Delayed map positioning
+                    // then queues next-frame work, and computed-position publication
+                    // keeps the old elevated coordinate visible for this
+                    // frame. Rust's eager obstacle setter has already
+                    // projected the current map onto z=0, so restore only the
+                    // cached 3D value/validity here; the delayed write will
+                    // authoritatively recompute it on the next update.
+                    elem.sprite
+                        .position_iface
+                        .restore_cached_position_all_computed(position);
+                }
+            }
+            elem.set_direction_instantly(((carrier_direction.wrapping_add(12)) & 15) as i16);
+            // Original-game corpse dropping unlinks the carrier, whose
+            // release path restores the carrier's facing as the corpse's
+            // direction goal after setting its current direction to +12.
+            elem.set_direction_goal(carrier_direction as i16);
+            if let Some(human) = target.human_data_mut() {
+                human.carrier = None;
+            }
+            if let Some(actor) = target.actor_data_mut() {
+                actor.execution_frozen = false;
+                actor.action_state = crate::element::ActionState::Waiting;
+            }
+            let sprite = &mut target.element_data_mut().sprite;
+            sprite.display_order_ref = None;
+            sprite.behind_display_order_ref = false;
+        }
+        // Dropping a corpse updates the carried human's states
+        // while an outdoor delayed map-position update is still only queued.
+        // Updating human posture synchronously runs
+        // corpse-intersection updates at that boundary, so overlap must be
+        // tested against the body's old current position, not against the
+        // delayed drop destination applied at its later owner slot.
+        self.process_corpse_intersection_update_for(target_id);
+        self.actor_wait(target_id);
+
+        if in_building && let Some(target) = self.get_entity_mut(target_id) {
+            let is_dead = target.is_dead();
+            let is_unconscious = target.human_data().is_some_and(|h| h.unconscious);
+            if is_dead || is_unconscious {
+                crate::engine::door_pass::start_hulk_on(target, 1.0);
+                let elem = target.element_data_mut();
+                elem.hidden_in_building = false;
+                elem.active = true;
+            }
+        }
+        tracing::debug!(
+            carrier = ?carrier_id,
+            target = ?target_id,
+            "Drop: put down body"
+        );
+    }
+
+    /// Apply the gameplay half of player execution's Listen-exit action message.
+    /// The caller has already installed the explicit Wait successor.
+    pub(super) fn apply_listen_done_action_handoff(&mut self, actor_id: EntityId) {
+        self.get_entity(actor_id)
+            .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} disappeared"))
+            .pc_data()
+            .unwrap_or_else(|| panic!("ListenDone owner {actor_id:?} is not a PC"));
+        if self.players.seats[0].selection.contains(&actor_id) {
+            // The messenger drops MSG_UNSELECT_ACTION unless its value is the
+            // currently selected action. A newer action can be selected while
+            // LeaveListen is postponed behind the entry transition; its late
+            // Listen completion must not clear that newer action.
+            if self.players.seats[0].selected_action == crate::profiles::Action::Listen {
+                self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
+                self.orders
+                    .messenger
+                    .send(crate::messenger::Message::pc_with_value(
+                        crate::messenger::PcMessage::UnselectAction,
+                        Some(actor_id),
+                        crate::profiles::Action::Listen as u32,
+                    ));
+                self.unselect_action(actor_id);
+            }
+        } else if let Some(pc) = self
+            .get_entity_mut(actor_id)
+            .and_then(crate::element::Entity::pc_data_mut)
+        {
+            pc.current_action = crate::profiles::Action::NoAction;
+        }
+    }
+
+    /// Drive one actor's ability and apply its completion effects inline at
+    /// that actor's creation-order position.
+    #[allow(unused_variables)] // Done results retain owner identity; Terminated consumes it.
+    pub(super) fn tick_ability_for(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        display: &mut super::CameraDisplayState,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+    ) {
+        let pending_pay_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Pay)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Pay initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Pay initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Pay initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, beggar_id, order_id)) = pending_pay_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Pay owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::Pay);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Pay element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(beggar_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Pay,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+
+            let beggar_direction = self
+                .get_entity(beggar_id)
+                .unwrap_or_else(|| {
+                    panic!("validated Pay beggar {beggar_id:?} vanished during initialization")
+                })
+                .element_data()
+                .direction();
+            // The player-character paying action samples the antagonist's live
+            // direction and changes only the progressive goal on the first
+            // Execute. Translation may happen after this PC's owner slot and
+            // therefore must not expose this facing one frame early.
+            self.get_entity_mut(actor_id)
+                .expect("validated Pay owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal((beggar_direction + 8).rem_euclid(16));
+            self.hero_speaking(assets, actor_id, crate::engine::melee::HERO_GIVE_MONEY);
+        }
+
+        let pending_hit_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Hit)
+                    && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Hit initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Hit initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Hit initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_hit_init {
+            let attacker_ground = self
+                .get_entity(actor_id)
+                .expect("Hit owner vanished during initialization")
+                .ground_position();
+            let victim_ground = self
+                .get_entity(victim_id)
+                .unwrap_or_else(|| {
+                    panic!("Hit victim {victim_id:?} vanished during initialization")
+                })
+                .ground_position();
+            let facing = crate::position_interface::vector_to_sector_0_to_15(
+                victim_ground.x - attacker_ground.x,
+                victim_ground.y - attacker_ground.y,
+            );
+            // The original game's hit initialization changes only the progressive
+            // direction goal, before checking whether the interaction remains
+            // valid. The later Turn call owns the current-direction change.
+            self.get_entity_mut(actor_id)
+                .expect("Hit owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!("pending Hit owner {actor_id:?} lost element {seq_id:?}/{elem_idx}")
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::HitCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Hit element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(victim_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Hit,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+        }
+
+        let pending_tying_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                let kind = ability.kind?;
+                (matches!(
+                    kind,
+                    crate::movement::AbilityKind::Tie | crate::movement::AbilityKind::Untie
+                ) && actor.execute_order_initialising)
+                    .then(|| {
+                        (
+                            kind,
+                            ability
+                                .sequence_id
+                                .expect("pending tying initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending tying initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending tying initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((kind, seq_id, elem_idx, target_id, order_id)) = pending_tying_init {
+            let command = match kind {
+                crate::movement::AbilityKind::Tie => crate::element::Command::TieCmd,
+                crate::movement::AbilityKind::Untie => crate::element::Command::Untie,
+                _ => unreachable!("pending tying initializer accepted a non-tying ability"),
+            };
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "pending {kind:?} owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, command);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending {kind:?} element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(target_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, Some(order_id));
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+
+            let actor_pos = self
+                .get_entity(actor_id)
+                .expect("validated tying owner vanished during initialization")
+                .element_data()
+                .position_map();
+            let target_pos = self
+                .get_entity(target_id)
+                .expect("validated tying target vanished during initialization")
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_pos.x - actor_pos.x,
+                target_pos.y - actor_pos.y,
+            );
+            // The player-character tying action installs only the progressive
+            // direction goal during the order's first Execute. Translation
+            // itself must not rotate or stop a moving PC: the Tie can still
+            // be interrupted by an earlier manager-FIFO continuation before
+            // its animation ever owns an actor slot.
+            self.get_entity_mut(actor_id)
+                .expect("validated tying owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+        }
+
+        let pending_carry_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Carry)
+                    && actor.execute_order_initialising
+                    && actor.installed_order.is_some_and(|installed| {
+                        installed.order_type
+                            == crate::order::OrderType::TransitionWaitingUprightCarryingCorpse
+                    }))
+                .then_some(ability.target)
+                .flatten()
+            });
+        if let Some(target_id) = pending_carry_init {
+            // The pickup transition's first Execute is where the carried
+            // body stops running its own sequence element and starts being
+            // driven by the carrier, and where an indoor pickup re-selects
+            // the pair and lights the body's hulk. Both are visible one
+            // frame later than the element's translation, which happens in
+            // the manager pass after the carrier's own slot.
+            crate::abilities::initialize_carry_relationship(
+                &mut self.world.entities,
+                actor_id,
+                target_id,
+            );
+            self.actor_freeze_execution(target_id);
+            self.apply_carry_building_hulk(actor_id, target_id);
+        }
+
+        let pending_climb_on_shoulders_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::ClimbOnShoulders)
+                    && actor.execute_order_initialising
+                    && actor.installed_order.is_some_and(|installed| {
+                        installed.order_type == crate::order::OrderType::ClimbingUpOnShoulders
+                    }))
+                .then_some(ability.target)
+                .flatten()
+            });
+        if let Some(helper_id) = pending_climb_on_shoulders_init {
+            // Translate only appends the climbing order. Original links the
+            // pair, changes posture, snaps the climber, and freezes the helper
+            // when that order reaches its first Execute in the climber's later
+            // owner slot.
+            crate::abilities::initialize_climb_on_shoulders_relationship(
+                &mut self.world.entities,
+                actor_id,
+                helper_id,
+            );
+            self.actor_freeze_execution(helper_id);
+        }
+
+        let pending_heal_facing = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Heal)
+                    && actor.execute_order_initialising)
+                    .then_some(ability.target)
+                    .flatten()
+                    .filter(|target| *target != actor_id)
+            });
+        if let Some(target_id) = pending_heal_facing {
+            let healer_pos = self
+                .get_entity(actor_id)
+                .expect("Heal owner vanished during initialization")
+                .element_data()
+                .position_map();
+            let target_pos = self
+                .get_entity(target_id)
+                .unwrap_or_else(|| {
+                    panic!("Heal target {target_id:?} vanished during initialization")
+                })
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                target_pos.x - healer_pos.x,
+                target_pos.y - healer_pos.y,
+            );
+            // The healing animation computes the goal on its first execution,
+            // then calls Turn before advancing the animation. Selection of
+            // the interaction alone must not rotate the actor a frame early.
+            self.get_entity_mut(actor_id)
+                .expect("Heal owner vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+        }
+
+        let pending_strangle_init = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                let ability = &actor.active_ability;
+                (ability.kind == Some(crate::movement::AbilityKind::Strangle)
+                    && !ability.strangle_initialized)
+                    .then(|| {
+                        (
+                            ability
+                                .sequence_id
+                                .expect("pending Strangle initialization lost sequence identity"),
+                            ability.element_index,
+                            ability
+                                .target
+                                .expect("pending Strangle initialization lost antagonist identity"),
+                            ability
+                                .order_id
+                                .expect("pending Strangle initialization lost order identity"),
+                        )
+                    })
+            });
+        if let Some((seq_id, elem_idx, victim_id, order_id)) = pending_strangle_init {
+            let valid = {
+                let element = self
+                    .orders
+                    .sequence_manager
+                    .get_element(seq_id, elem_idx)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "pending Strangle owner {actor_id:?} lost element {seq_id:?}/{elem_idx}"
+                        )
+                    });
+                assert_eq!(element.owner, Some(actor_id));
+                assert_eq!(element.command, crate::element::Command::StrangleCmd);
+                let order = element.current_order().unwrap_or_else(|| {
+                    panic!("pending Strangle element {seq_id:?}/{elem_idx} lost its selected order")
+                });
+                assert_eq!(order.order_id, order_id);
+                assert_eq!(order.target_actor, Some(victim_id.index()));
+                self.check_sequence_element_validity(assets, actor_id, element, true)
+            };
+            if !valid {
+                self.cleanup_aborted_ability(
+                    actor_id,
+                    crate::movement::AbilityKind::Strangle,
+                    seq_id,
+                    elem_idx,
+                    Some(order_id),
+                );
+                self.orders
+                    .sequence_manager
+                    .element_impossible(seq_id, elem_idx);
+                self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                return;
+            }
+
+            let attacker_pos = self
+                .get_entity(actor_id)
+                .expect("validated strangler vanished during initialization")
+                .element_data()
+                .position_map();
+            let victim_pos = self
+                .get_entity(victim_id)
+                .expect("validated Strangle victim vanished during initialization")
+                .element_data()
+                .position_map();
+            let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+                victim_pos.x - attacker_pos.x,
+                victim_pos.y - attacker_pos.y,
+            );
+            self.get_entity_mut(victim_id)
+                .expect("validated Strangle victim vanished before FREEZE")
+                .ai_controller_mut()
+                .expect("validated Strangle victim lost AI before FREEZE")
+                .non_script_lock(crate::ai::AiLockFlags::FREEZE);
+            self.get_entity_mut(actor_id)
+                .expect("validated strangler vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+            self.get_entity_mut(victim_id)
+                .expect("validated Strangle victim vanished before direction initialization")
+                .element_data_mut()
+                .set_direction_goal(facing);
+            self.get_entity_mut(actor_id)
+                .expect("validated strangler vanished before initialization latch")
+                .actor_data_mut()
+                .expect("validated strangler lost actor state before initialization latch")
+                .active_ability
+                .strangle_initialized = true;
+        }
+
+        let strangle_victim_after_attacker = self
+            .get_entity(actor_id)
+            .and_then(Entity::actor_data)
+            .and_then(|actor| {
+                (actor.active_ability.kind == Some(crate::movement::AbilityKind::Strangle)
+                    && actor.active_ability.done_effect_applied)
+                    .then_some(actor.active_ability.target)
+                    .flatten()
+            })
+            .map(|victim_id| {
+                let sprite = &self
+                    .get_entity(victim_id)
+                    .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
+                    .element_data()
+                    .sprite;
+                (
+                    victim_id,
+                    (
+                        sprite.last_action,
+                        sprite.last_processed_order_id,
+                        sprite.current_frame,
+                        sprite.frame_count,
+                    ),
+                )
+            });
+        let sprite_frozen = self.actors_frozen();
+        let results = crate::abilities::tick_ability(
+            sim,
+            &mut self.world.entities,
+            &self.orders.sequence_manager,
+            actor_id,
+            sprite_frozen,
+        );
+        if let Some((victim_id, victim_sprite_before)) = strangle_victim_after_attacker
+            && !sprite_frozen
+            && self
+                .get_entity(victim_id)
+                .map(|victim| {
+                    let sprite = &victim.element_data().sprite;
+                    (
+                        sprite.last_action,
+                        sprite.last_processed_order_id,
+                        sprite.current_frame,
+                        sprite.frame_count,
+                    ) == victim_sprite_before
+                })
+                .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
+        {
+            // Execute(STRANGLING) has one unconditional tail increment once
+            // the attacker's action is past DONE. The fast-turn short-circuit
+            // path performs that increment inside tick_ability; only supply
+            // the normal-path tail when the victim was not advanced there.
+            self.get_entity_mut(victim_id)
+                .unwrap_or_else(|| panic!("strangle victim {victim_id:?} vanished"))
+                .element_data_mut()
+                .sprite
+                .perform_virgin_increment(sim, crate::sprite::FrameProgression::Default);
+        }
+        for result in results {
+            use crate::abilities::AbilityTickResult;
+            match result {
+                AbilityTickResult::Terminated {
+                    actor_id,
+                    kind,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    self.do_next_order(seq_id, elem_idx);
+                    // Order advancement terminates the exhausted element, and
+                    // The original game immediately sends the condolence notification before
+                    // returning from that state-change stack. This is required
+                    // for every ability, not only Strangle: it clears the
+                    // actor's selected element (so the command becomes Wait)
+                    // and may synchronously instruct a successor.
+                    self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                    let next = self
+                        .orders
+                        .sequence_manager
+                        .get_element(seq_id, elem_idx)
+                        .and_then(|element| element.current_order())
+                        .map(|order| (order.order_id, order.order_type));
+                    if let Some(actor) = self
+                        .get_entity_mut(actor_id)
+                        .and_then(Entity::actor_data_mut)
+                        && actor.active_ability.kind == Some(kind)
+                        && actor.active_ability.sequence_id == Some(seq_id)
+                        && actor.active_ability.element_index == elem_idx
+                    {
+                        match (kind, next) {
+                            (crate::movement::AbilityKind::Listen, Some((order_id, crate::order::OrderType::Listening))) => {
+                                actor.listen_phase = crate::element::ListenPhase::CountingDown;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            (crate::movement::AbilityKind::Listen, Some((order_id, crate::order::OrderType::TransitionListeningWaitingUpright))) => {
+                                actor.listen_phase = crate::element::ListenPhase::ExitTransition;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            (crate::movement::AbilityKind::ReceivePurse, Some((order_id, crate::order::OrderType::WaitingWithPurse))) => {
+                                actor.receive_purse_phase = crate::element::ReceivePursePhase::Waiting;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            (crate::movement::AbilityKind::ReceivePurse, Some((order_id, crate::order::OrderType::TransitionWaitingWithPurseWaitingUpright))) => {
+                                actor.receive_purse_phase = crate::element::ReceivePursePhase::Transition;
+                                actor.active_ability.order_id = Some(order_id);
+                                actor.active_ability.done_effect_applied = false;
+                            }
+                            _ => {
+                                if kind == crate::movement::AbilityKind::Listen {
+                                    actor.listen_phase = crate::element::ListenPhase::Inactive;
+                                    actor.listen_wait_time = 0;
+                                } else if kind == crate::movement::AbilityKind::ReceivePurse {
+                                    actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
+                                }
+                                actor.active_ability.clear();
+                                actor.action_state = crate::element::ActionState::Waiting;
+                            }
+                        }
+                    }
+                }
+                AbilityTickResult::Aborted {
+                    actor_id,
+                    kind,
+                    seq_id,
+                    elem_idx,
+                    order_id,
+                } => {
+                    self.cleanup_aborted_ability(actor_id, kind, seq_id, elem_idx, order_id);
+                    self.orders
+                        .sequence_manager
+                        .element_impossible(seq_id, elem_idx);
+                    if kind == crate::movement::AbilityKind::Strangle {
+                        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                    }
+                }
+                AbilityTickResult::CarryDone {
+                    carrier_id,
+                    target_id,
+                    carried_posture: _,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Set PcData.carried and target posture.
+                    if let Some(carrier) = self.get_entity_mut(carrier_id)
+                        && let Some(pc) = carrier.pc_data_mut()
+                    {
+                        pc.carried = Some(target_id);
+                    }
+                    if let Some(target) = self.get_entity_mut(target_id) {
+                        target.set_posture(crate::element::Posture::Carried);
+                        if let Some(actor) = target.actor_data_mut() {
+                            actor.action_state = crate::element::ActionState::Waiting;
+                        }
+                    }
+                    tracing::debug!(
+                        carrier = ?carrier_id,
+                        target = ?target_id,
+                        "Carry: picked up body"
+                    );
+                }
+                AbilityTickResult::DropDone {
+                    carrier_id,
+                    target_id,
+                    drop_posture,
+                    carrier_pos,
+                    carrier_direction,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    self.apply_completed_corpse_drop(
+                        carrier_id,
+                        target_id,
+                        drop_posture,
+                        carrier_pos,
+                        carrier_direction,
+                    );
+                }
+                AbilityTickResult::TieDone {
+                    actor_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    let target = self
+                        .get_entity_mut(target_id)
+                        .unwrap_or_else(|| panic!("tie target {target_id:?} vanished at Done"));
+                    target.set_posture(crate::element::Posture::Tied);
+                    if target.is_soldier() {
+                        target
+                            .ai_controller_mut()
+                            .expect("tied soldier must have AI")
+                            .say(crate::ai::Remark::TiedUp);
+                        // The original game invokes speech directly from the tying PC's
+                        // owner tick, so expose the request at this same
+                        // creation-order boundary.
+                        self.drain_ai_owner_work_for(sim, assets, target_id);
+                    }
+                    // Player-character ability execution refreshes the victim
+                    // with Wait after applying the tied posture and remark.
+                    self.actor_wait(target_id);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        target = ?target_id,
+                        "Tie: enemy tied up"
+                    );
+                }
+                AbilityTickResult::UntieDone {
+                    actor_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    let target = self
+                        .get_entity_mut(target_id)
+                        .unwrap_or_else(|| panic!("untie target {target_id:?} vanished at Done"));
+                    assert!(target.is_active(), "untie target became inactive at Done");
+                    assert!(target.is_npc(), "untie target stopped being an NPC at Done");
+                    assert!(!target.is_dead(), "untie target died before Done");
+                    target.untie_human();
+                    // Preserve unconsciousness and concussion. The regular
+                    // human recovery tick remains the sole wake-up authority.
+                    self.actor_wait(target_id);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        target = ?target_id,
+                        "Untie: NPC released"
+                    );
+                }
+                AbilityTickResult::ClimbOnShouldersDone {
+                    climber_id,
+                    helper_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Postures were latched on init by
+                    // `begin_climb_on_shoulders`.  Terminate the
+                    // climber's sequence element so the post-seek
+                    // sequence advances and park the helper on a
+                    // low-priority Wait so its frozen-execution can
+                    // re-enter the idle loop while still
+                    // `CarryingOnShoulders`.
+                    self.actor_wait(helper_id);
+                    tracing::debug!(
+                        climber = ?climber_id,
+                        helper = ?helper_id,
+                        "ClimbOnShoulders: PC mounted helper's shoulders"
+                    );
+                }
+                AbilityTickResult::ClimbDownFromShouldersDone {
+                    climber_id,
+                    helper_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // On the climbing-down completion: reset paired
+                    // postures, sever the carrier ↔ carried link, copy
+                    // the carrier's plane/sector/material onto the
+                    // climber (so the dismount happens on the helper's
+                    // surface) and snap the climber to an authorised
+                    // landing slot adjacent to the helper.
+                    let helper_snapshot = self.get_entity(helper_id).map(|e| {
+                        (
+                            e.element_data().position_map(),
+                            e.element_data().layer(),
+                            e.element_data().sector(),
+                            e.element_data().material(),
+                            e.element_data().obstacle_index(),
+                            e.position_iface().get_plane().copied(),
+                            e.element_data().direction(),
+                        )
+                    });
+
+                    if let Some((
+                        helper_pos,
+                        helper_layer,
+                        helper_sector,
+                        helper_material,
+                        helper_obstacle,
+                        helper_plane,
+                        helper_dir,
+                    )) = helper_snapshot
+                    {
+                        // Resolve a landing slot using the climber's
+                        // upright move-box translated to the helper's
+                        // position.  We use the climber's current
+                        // move-box rather than re-deriving the upright
+                        // variant — the upright move-box was set when
+                        // the PC was last upright and isn't overwritten
+                        // while OnShoulders.
+                        let landing_pos = {
+                            let climber_box = self
+                                .get_entity(climber_id)
+                                .map(|e| e.position_iface())
+                                .map(|pi| *pi.get_move_box())
+                                .filter(|b| b.is_somewhere());
+                            match climber_box {
+                                Some(b) => {
+                                    let mut bbox = b.translated(helper_pos);
+                                    if self
+                                        .world
+                                        .fast_grid
+                                        .find_authorized_position(&mut bbox, helper_layer)
+                                    {
+                                        bbox.center()
+                                    } else {
+                                        helper_pos
+                                    }
+                                }
+                                None => helper_pos,
+                            }
+                        };
+
+                        if let Some(climber) = self.get_entity_mut(climber_id) {
+                            climber.set_posture(crate::element::Posture::Upright);
+                            // Sever climber → carrier back-reference.
+                            if let Some(human) = climber.human_data_mut() {
+                                human.carrier = None;
+                            }
+                            if let Some(actor) = climber.actor_data_mut() {
+                                actor.execution_frozen = false;
+                                actor.action_state = crate::element::ActionState::Waiting;
+                            }
+                            // Copy plane/sector/material/obstacle from
+                            // helper so the climber's reprojection lands
+                            // on the helper's surface.
+                            {
+                                let elem = climber.element_data_mut();
+                                elem.set_layer(helper_layer);
+                                elem.set_sector(helper_sector);
+                                elem.set_material(helper_material);
+                            }
+                            {
+                                let pi = climber.position_iface_mut();
+                                pi.set_obstacle(helper_obstacle, helper_plane);
+                                pi.set_material(helper_material);
+                            }
+                            // Preserve the climber's facing through the
+                            // copy.  The helper's direction was set to
+                            // the opposite of the climber's at climb
+                            // start, so adding 8 (180°) recovers the
+                            // climber's original facing.
+                            let preserved_dir = (helper_dir + 8) & 15;
+                            climber
+                                .element_data_mut()
+                                .set_direction_instantly(preserved_dir);
+                            // Snap to landing slot.
+                            climber.element_data_mut().set_position_map(landing_pos);
+                            // The climber is no longer carried so its
+                            // draw order detaches from the helper.
+                            let sprite = &mut climber.element_data_mut().sprite;
+                            sprite.display_order_ref = None;
+                            sprite.behind_display_order_ref = false;
+                        }
+                    }
+
+                    // Reset the helper to HelpingToClimb / Waiting and
+                    // sever the carrier-side link.
+                    if let Some(helper) = self.get_entity_mut(helper_id) {
+                        helper.set_posture(crate::element::Posture::HelpingToClimb);
+                        if let Some(actor) = helper.actor_data_mut() {
+                            actor.execution_frozen = false;
+                            actor.action_state = crate::element::ActionState::Waiting;
+                        }
+                        if let Some(pc) = helper.pc_data_mut() {
+                            pc.carried = None;
+                            pc.set_live_carried_posture(crate::element::Posture::Lying);
+                        }
+                    }
+
+                    // Park the helper on a low-priority idle so it
+                    // doesn't immediately re-acquire its previous
+                    // element.
+                    self.actor_wait(helper_id);
+
+                    tracing::debug!(
+                        climber = ?climber_id,
+                        helper = ?helper_id,
+                        "ClimbDownFromShoulders: PC dismounted"
+                    );
+                }
+                AbilityTickResult::HealDone {
+                    healer_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Player-character execution checks Heal validity again in
+                    // the completed-motion arm, immediately before healing (or
+                    // FX activation) and consuming a plant. The target may
+                    // have moved out of the strict 40-unit action range while
+                    // the Healing animation played.
+                    let heal_still_valid = {
+                        let element = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "Heal DONE owner {healer_id:?} lost element {seq_id:?}/{elem_idx}"
+                                )
+                            });
+                        self.check_sequence_element_validity(assets, healer_id, element, true)
+                    };
+                    if !heal_still_valid {
+                        let healer = self
+                            .get_entity_mut(healer_id)
+                            .unwrap_or_else(|| panic!("Heal DONE owner {healer_id:?} disappeared"));
+                        healer.element_data_mut().sprite.last_motion_state =
+                            Some(crate::sprite::MotionState::Terminated);
+                        let actor = healer
+                            .actor_data_mut()
+                            .expect("Heal DONE owner lost actor state");
+                        actor.continuation.motion_state = crate::sprite::MotionState::Terminated;
+                        // Execute returned TERMINATED: close the selected
+                        // order through the ordinary actor-update path,
+                        // including the synchronous owner condolence card.
+                        self.do_next_order(seq_id, elem_idx);
+                        self.dispatch_condolations_for_owner_boundary(sim, healer_id, assets);
+                        // The actor envelope normally serializes Execute's
+                        // return after the synchronous completion stack. This
+                        // DONE guard closes that stack locally, so publish the
+                        // returned TERMINATED value after it unwinds as well.
+                        let healer = self.get_entity_mut(healer_id).unwrap_or_else(|| {
+                            panic!("Heal DONE owner {healer_id:?} disappeared after condolence")
+                        });
+                        healer.element_data_mut().sprite.last_motion_state =
+                            Some(crate::sprite::MotionState::Terminated);
+                        healer
+                            .actor_data_mut()
+                            .expect("Heal DONE owner lost actor state after condolence")
+                            .continuation
+                            .motion_state = crate::sprite::MotionState::Terminated;
+                        continue;
+                    }
+
+                    // Heal effect depends on the antagonist's type.
+                    let target_is_fx_target = self
+                        .get_entity(target_id)
+                        .is_some_and(|e| e.kind().is_fx_target());
+                    if target_is_fx_target {
+                        // FX target — launch `Command::ActivateHeal` so
+                        // the target's bound script's `ActivatedByHeal`
+                        // hook fires.
+                        let mut activation = crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::ActivateHeal,
+                            Some(target_id),
+                        );
+                        activation.data = crate::sequence::SequenceElementData::Interaction {
+                            antagonist: Some(healer_id),
+                        };
+                        self.launch_element(activation);
+                    } else if let Some(target) = self.get_entity_mut(target_id) {
+                        // Heal the target PC via the shared helper that
+                        // applies the heal + life-point clamp guards.
+                        if let Some(pc) = target.pc_data_mut() {
+                            crate::pc_status::heal(
+                                &mut pc.life_points,
+                                crate::abilities::HEAL_AMOUNT,
+                                false, // invulnerable cheat unimplemented
+                            );
+                        }
+                        // Clear concussion.
+                        if let Some(human) = target.human_data_mut() {
+                            human.concussion_of_the_brain = 0;
+                        }
+                        // "Sexual healing" speech cue on the healed PC.
+                        self.hero_speaking(assets, target_id, crate::engine::melee::HERO_HEALED);
+                    }
+                    // Decrease healer's bandage ammo.
+                    self.decrement_ability_ammo(assets, healer_id, crate::profiles::Action::Heal);
+                    tracing::debug!(
+                        healer = ?healer_id,
+                        target = ?target_id,
+                        "Heal: restored HP"
+                    );
+                }
+                AbilityTickResult::EatDone {
+                    actor_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Re-check sequence-element validity by verifying
+                    // the actor still has Eat ammo — if it dropped to 0
+                    // mid-animation, skip the heal.
+                    //
+                    // Eat and Guzzle share the `num_rations` counter, so
+                    // the Guzzle branch only changes the heal amount
+                    // (80 vs 40); both end up decrementing the same
+                    // underlying field.
+                    let pc_status = self.get_entity(actor_id).and_then(|e| match e {
+                        Entity::Pc(pc) => {
+                            Some((pc.pc.profile_index, self.pc_description_for_pc_data(&pc.pc)))
+                        }
+                        _ => None,
+                    });
+                    if let Some((profile_idx, Some(pc_desc))) = pc_status {
+                        let still_has_ammo =
+                            pc_desc.status.get_ammo(crate::profiles::Action::Eat) > 0;
+                        if still_has_ammo {
+                            // Determine heal amount based on whether the
+                            // PC has the Guzzle action (gluttons heal
+                            // more).
+                            let has_guzzle = assets
+                                .profile_manager
+                                .get_character(profile_idx)
+                                .map(|p| p.has_action(crate::profiles::Action::Guzzle))
+                                .unwrap_or(false);
+                            let heal_amount: i16 = if has_guzzle { 80 } else { 40 };
+                            // The original game updates the ammunition amount here rather than
+                            // ammunition decrement. That distinction suppresses
+                            // HERO_OUT_OF_AMMO for the last ration. Gluttons
+                            // also address their Guzzle action slot even
+                            // though Eat and Guzzle share one counter.
+                            let ration_action = if has_guzzle {
+                                crate::profiles::Action::Guzzle
+                            } else {
+                                crate::profiles::Action::Eat
+                            };
+                            self.consume_ration_without_speech(assets, actor_id, ration_action);
+                            // Apply heal capped at LIFEPOINTS_PC.
+                            if let Some(target) = self.get_entity_mut(actor_id)
+                                && let Some(pc) = target.pc_data_mut()
+                            {
+                                crate::pc_status::heal(&mut pc.life_points, heal_amount, false);
+                            }
+                            tracing::debug!(
+                                actor = ?actor_id,
+                                heal_amount,
+                                has_guzzle,
+                                "Eat: ration consumed and HP restored"
+                            );
+                        }
+                    }
+                }
+                AbilityTickResult::WhistleDone {
+                    actor_id,
+                    position,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Emit a PFIIIT noise at the whistle position with
+                    // radius NOISE_VOLUME_PFIIIT (400).
+                    let (layer, elevation) = self
+                        .get_entity(actor_id)
+                        .map(|e| {
+                            (
+                                e.element_data().layer(),
+                                e.element_data().position().z.max(0.0) as u16,
+                            )
+                        })
+                        .unwrap_or_else(|| panic!("whistle noise owner {actor_id:?} disappeared"));
+                    self.broadcast_noise_synchronously(
+                        sim,
+                        assets,
+                        crate::ai::NoiseType::Pfiiit,
+                        crate::coordinates::MapPoint::new(position.x, position.y),
+                        crate::position_interface::Layer::new(layer),
+                        crate::abilities::NOISE_VOLUME_WHISTLE,
+                        elevation,
+                        Some(actor_id),
+                    );
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        x = position.x,
+                        y = position.y,
+                        "Whistle: noise emitted to attract NPCs"
+                    );
+                }
+                AbilityTickResult::ListenEntered { actor_id } => {
+                    // Entry transition animation just finished; the
+                    // PC is now in ActionState::Listening /
+                    // ListenPhase::CountingDown.  Forward
+                    // PcMessage::SelectAction(Listen) so HUD/UI
+                    // reflects the active listen.
+                    self.orders
+                        .messenger
+                        .send(crate::messenger::Message::pc_with_value(
+                            crate::messenger::PcMessage::SelectAction,
+                            Some(actor_id),
+                            crate::profiles::Action::Listen as u32,
+                        ));
+                    // The message's gameplay half runs inline, the same way
+                    // the beggar entry handoff applies it: for a selected PC
+                    // the action reselection stops the group at Normal
+                    // priority even though Listen is already the current
+                    // action, which discards anything the entry transition
+                    // postponed behind itself (a move instructed while the
+                    // PC was listening never resumes).  An unselected PC only
+                    // stores the action.
+                    self.set_pc_action_from_message(
+                        assets,
+                        0,
+                        actor_id,
+                        crate::profiles::Action::Listen,
+                    );
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        "Listen: entry transition done → CountingDown, MSG_SELECT_ACTION sent"
+                    );
+                }
+                AbilityTickResult::ListenDone {
+                    actor_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Player-character execution launches Wait synchronously
+                    // on the DONE edge of
+                    // TRANSITION_LISTENING_WAITING_UPRIGHT.  This is an
+                    // explicit priority-Wait launch, not the null-order
+                    // fallback installed at the start of the next actor
+                    // update: it must already be available when the exit
+                    // transition terminates and sends its consolation card.
+                    self.actor_wait(actor_id);
+                    // The original game branches immediately after waiting: an
+                    // unselected PC only stores NOACTION, while a selected PC
+                    // synchronously forwards MSG_UNSELECT_ACTION(Listen).
+                    // Apply that message's gameplay half inline, before a
+                    // later input-boundary SelectPC can restitute the stale
+                    // Listen action and Stop() the just-postponed Wait.
+                    self.apply_listen_done_action_handoff(actor_id);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        "Listen: exit transition done → Inactive, MSG_UNSELECT_ACTION sent"
+                    );
+                }
+                AbilityTickResult::ThrowNetDone {
+                    actor_id,
+                    target_pos,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Spawn a net projectile entity with ballistic
+                    // trajectory.  Launch origin is the thrower's hand
+                    // point, not their feet.
+                    let (throw_pos, layer) = self.projectile_throw_origin(actor_id, "ThrowNetDone");
+                    let target_3d = crate::coordinates::WorldPoint3D {
+                        x: target_pos.x,
+                        y: target_pos.y,
+                        z: 0.0,
+                    };
+                    let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+                        fast_find_grid: &self.world.fast_grid,
+                        sight_obstacles: self.sight_obstacles(assets),
+                        water_zones: Some(&assets.water_zones),
+                    };
+                    let net_entity = crate::bow_shot::spawn_net(
+                        actor_id,
+                        throw_pos,
+                        target_3d,
+                        layer,
+                        Some(&obstacle_check),
+                    );
+                    let net_id = self.add_entity(net_entity);
+                    self.attach_accessory_sprite(assets, net_id);
+                    // Run the landing-site crumple test at spawn time.
+                    // We keep the ballistic trajectory inside
+                    // `spawn_net` and run the crumple check here, where
+                    // we have engine access to obstacles +
+                    // fast_find_grid.
+                    self.detect_initial_net_crumple(assets, net_id);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        x = target_pos.x,
+                        y = target_pos.y,
+                        "ThrowNet: spawned net projectile"
+                    );
+                    self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Net);
+                }
+                AbilityTickResult::ThrowPurseDone {
+                    actor_id,
+                    target_pos,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Spawn the purse projectile.  The trajectory is
+                    // computed against the current sight obstacles so
+                    // the purse arcs over walls / falls onto roofs the
+                    // same way other ground-targeted throwables do.
+                    // Launch origin is the thrower's hand point.
+                    let (throw_pos, layer) =
+                        self.projectile_throw_origin(actor_id, "ThrowPurseDone");
+                    let target_3d = crate::coordinates::WorldPoint3D {
+                        x: target_pos.x,
+                        y: target_pos.y,
+                        z: 0.0,
+                    };
+                    let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+                        fast_find_grid: &self.world.fast_grid,
+                        sight_obstacles: self.sight_obstacles(assets),
+                        water_zones: Some(&assets.water_zones),
+                    };
+                    let purse_entity = crate::bow_shot::spawn_purse(
+                        actor_id,
+                        throw_pos,
+                        target_3d,
+                        layer,
+                        Some(&obstacle_check),
+                    );
+                    let purse_id = self.publish_new_purse(sim, assets, actor_id, purse_entity);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        x = target_pos.x,
+                        y = target_pos.y,
+                        "ThrowPurse: spawned purse projectile"
+                    );
+                    self.decrement_ability_ammo(assets, actor_id, crate::profiles::Action::Purse);
+                    // Deduct the thrown purse's face value from the
+                    // campaign ransom pool on throw.  Coin pickup later
+                    // credits `COIN_VALUE` per recovered coin, so
+                    // conservation holds: uncollected coins are a real
+                    // loss and fully-recovered purses wash out.
+                    let face_value = crate::inventory::COINS_PER_PURSE as i32
+                        * crate::inventory::COIN_VALUE as i32;
+                    self.add_campaign_value(crate::campaign::CampaignValue::Ransom, -face_value);
+                }
+                AbilityTickResult::ThrowWaspNestDone {
+                    actor_id,
+                    target_pos,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Spawn a wasp nest projectile entity with ballistic
+                    // trajectory.  Launch origin is the thrower's hand
+                    // point.
+                    let (throw_pos, layer) =
+                        self.projectile_throw_origin(actor_id, "ThrowWaspNestDone");
+                    let target_3d = crate::coordinates::WorldPoint3D {
+                        x: target_pos.x,
+                        y: target_pos.y,
+                        z: 0.0,
+                    };
+                    let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
+                        fast_find_grid: &self.world.fast_grid,
+                        sight_obstacles: self.sight_obstacles(assets),
+                        water_zones: Some(&assets.water_zones),
+                    };
+                    let wasp_entity = crate::bow_shot::spawn_wasp_nest(
+                        actor_id,
+                        throw_pos,
+                        target_3d,
+                        layer,
+                        Some(&obstacle_check),
+                    );
+                    let wasp_id = self.add_entity(wasp_entity);
+                    self.attach_accessory_sprite(assets, wasp_id);
+                    tracing::debug!(
+                        actor = ?actor_id,
+                        x = target_pos.x,
+                        y = target_pos.y,
+                        "ThrowWaspNest: spawned wasp nest projectile"
+                    );
+                    self.decrement_ability_ammo(
+                        assets,
+                        actor_id,
+                        crate::profiles::Action::WaspNest,
+                    );
+                }
+                AbilityTickResult::ThrowAppleDone {
+                    actor_id,
+                    target,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    self.on_throw_projectile_done(
+                        assets,
+                        actor_id,
+                        target,
+                        crate::profiles::Action::Apple,
+                        crate::element::ObjectType::Apple,
+                    );
+                }
+                AbilityTickResult::ThrowStoneDone {
+                    actor_id,
+                    target,
+                    ground_target,
+                    seq_id,
+                    elem_idx,
+                } => match (target, ground_target) {
+                    (Some(target), None) => self.on_throw_projectile_done(
+                        assets,
+                        actor_id,
+                        Some(target),
+                        crate::profiles::Action::Stone,
+                        crate::element::ObjectType::Stone,
+                    ),
+                    (None, Some(target)) => {
+                        self.on_throw_noise_distraction_done(assets, actor_id, target)
+                    }
+                    pair => panic!(
+                        "completed ThrowStone must carry exactly one target kind, got {pair:?}"
+                    ),
+                },
+                AbilityTickResult::PayDone {
+                    pc_id,
+                    beggar_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Paying validates again after action processing reports completion.
+                    // Ransom or distance may have changed while the PC was
+                    // turning/animating; Original aborts before launching the
+                    // antagonist response or deducting any money in that case.
+                    let (valid, order_id) = {
+                        let element = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "completed Pay owner {pc_id:?} lost element {seq_id:?}/{elem_idx}"
+                                )
+                            });
+                        assert_eq!(element.owner, Some(pc_id));
+                        assert_eq!(element.command, crate::element::Command::Pay);
+                        let order = element.current_order().unwrap_or_else(|| {
+                            panic!(
+                                "completed Pay element {seq_id:?}/{elem_idx} lost its selected order"
+                            )
+                        });
+                        assert_eq!(order.order_type, crate::order::OrderType::Paying);
+                        assert_eq!(order.target_actor, Some(beggar_id.index()));
+                        (
+                            self.check_sequence_element_validity(assets, pc_id, element, true),
+                            order.order_id,
+                        )
+                    };
+                    if !valid {
+                        self.cleanup_aborted_ability(
+                            pc_id,
+                            crate::movement::AbilityKind::Pay,
+                            seq_id,
+                            elem_idx,
+                            Some(order_id),
+                        );
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
+                        self.dispatch_condolations_for_owner_boundary(sim, pc_id, assets);
+                        continue;
+                    }
+
+                    // On Paying-animation completion: deduct
+                    // BEGGAR_SALARY from the ransom, and either launch
+                    // `Command::ActivateMoney` on an FX-target antagonist
+                    // or a `Command::ReceivePurse` sequence element on a
+                    // beggar NPC.
+                    let antagonist_is_fx_target = self
+                        .get_entity(beggar_id)
+                        .is_some_and(|e| e.kind().is_fx_target());
+                    if antagonist_is_fx_target {
+                        // FX target — fire the script's ActivatedByMoney
+                        // hook via the central `Command::Activate*`
+                        // dispatch.
+                        let mut activation = crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::ActivateMoney,
+                            Some(beggar_id),
+                        );
+                        activation.data = crate::sequence::SequenceElementData::Interaction {
+                            antagonist: Some(pc_id),
+                        };
+                        self.launch_element(activation);
+                    } else {
+                        let mut receive = crate::sequence::SequenceElement::new(
+                            1,
+                            crate::element::Command::ReceivePurse,
+                            Some(beggar_id),
+                        );
+                        receive.priority = crate::sequence::SequencePriority::Normal;
+                        self.launch_element(receive);
+                    }
+                    self.add_campaign_value(
+                        crate::campaign::CampaignValue::Ransom,
+                        -crate::engine::BEGGAR_SALARY,
+                    );
+                    tracing::debug!(
+                        pc = ?pc_id,
+                        beggar = ?beggar_id,
+                        "Pay: salary deducted, ACTIVATE_MONEY / RECEIVE_PURSE launched"
+                    );
+                }
+                AbilityTickResult::ReceivePurseRevealing { beggar_id } => {
+                    // Middle of the receive-purse chain — the beggar is
+                    // waving the purse.  `reveal_scrolls` runs on
+                    // WaitingWithPurse termination, driving the
+                    // delayed-highlight display flow.  The beggar's
+                    // CIV_REMARK_BEGGAR_* speech cue is queued inside
+                    // `reveal_scrolls` and later dispatched by
+                    // the owner-local speech drain.
+                    match self.reveal_scrolls(sim, assets, beggar_id) {
+                        Some(remark) => tracing::debug!(
+                            beggar = ?beggar_id,
+                            ?remark,
+                            "ReceivePurse: reveal_scrolls fired",
+                        ),
+                        None => tracing::debug!(
+                            beggar = ?beggar_id,
+                            "ReceivePurse: reveal_scrolls returned None \
+                             (non-beggar?), ignoring"
+                        ),
+                    }
+                    #[cfg(test)]
+                    RECEIVE_PURSE_REVEAL_OBSERVER.with(|observer| {
+                        if let Some(observer) = observer.borrow_mut().as_mut() {
+                            observer(self, beggar_id);
+                        }
+                    });
+                }
+                AbilityTickResult::ReceivePurseDone {
+                    beggar_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    tracing::debug!(
+                        beggar = ?beggar_id,
+                        "ReceivePurse: animation chain complete"
+                    );
+                }
+                AbilityTickResult::HitDone {
+                    actor_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    // Human hitting execution rechecks the live
+                    // interaction when motion completes, before applying damage.
+                    // Losing validity here merely makes the swing miss: the
+                    // Hitting order still completes through its normal Done
+                    // lifecycle and is not made Impossible.
+                    let valid = {
+                        let element = self
+                            .orders
+                            .sequence_manager
+                            .get_element(seq_id, elem_idx)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "completed Hit owner {actor_id:?} lost element \
+                                     {seq_id:?}/{elem_idx}"
+                                )
+                            });
+                        assert_eq!(element.owner, Some(actor_id));
+                        assert_eq!(element.command, crate::element::Command::HitCmd);
+                        let order = element.current_order().unwrap_or_else(|| {
+                            panic!(
+                                "completed Hit element {seq_id:?}/{elem_idx} lost its selected order"
+                            )
+                        });
+                        assert_eq!(order.order_type, crate::order::OrderType::Hitting);
+                        assert_eq!(order.target_actor, Some(target_id.index()));
+                        self.check_sequence_element_validity(assets, actor_id, element, true)
+                    };
+                    if !valid {
+                        let sprite = &mut self
+                            .get_entity_mut(actor_id)
+                            .unwrap_or_else(|| {
+                                panic!("completed Hit owner {actor_id:?} vanished after validation")
+                            })
+                            .element_data_mut()
+                            .sprite;
+                        sprite.perform_virgin_increment(
+                            sim,
+                            crate::sprite::FrameProgression::Default,
+                        );
+                        // The original game returns the pre-increment completed-motion state;
+                        // preserve that edge for end-of-tick order propagation.
+                        sprite.last_motion_state = Some(crate::sprite::MotionState::Done);
+                        tracing::debug!(
+                            attacker = ?actor_id,
+                            target = ?target_id,
+                            "Hit: terminal validity failed; suppressing damage"
+                        );
+                        continue;
+                    }
+
+                    // Resolve the final concussion payload from the attacker:
+                    //   if PC has HitHard action → 150,
+                    //   else PC → 80,
+                    //   else NPC hitter → 40.
+                    // Human hitting execution applies Hard's
+                    // enemy-life-point multiplier here, while the PC authors
+                    // the damage element. The receive side consumes this
+                    // stored payload verbatim, including NPC/domino hits.
+                    let (concussion, is_harder_hit) = {
+                        let attacker = self.get_entity(actor_id);
+                        if attacker.is_some_and(|e| e.kind().is_pc()) {
+                            let has_hit_hard = attacker
+                                .and_then(|e| e.pc_data())
+                                .map(|pc| pc.profile_index)
+                                .and_then(|idx| assets.profile_manager.get_character(idx))
+                                .is_some_and(|cp| cp.has_action(crate::profiles::Action::HitHard));
+                            let base = if has_hit_hard {
+                                (150u16, true)
+                            } else {
+                                (80u16, false)
+                            };
+                            let percent = self
+                                .control
+                                .sim_config
+                                .difficulty
+                                .rules()
+                                .pc_punch_concussion_percent;
+                            (
+                                (u32::from(base.0) * u32::from(percent) / 100) as u16,
+                                base.1,
+                            )
+                        } else {
+                            (40u16, false)
+                        }
+                    };
+
+                    // Launch a damage element on the target carrying the
+                    // attacker as antagonist and the resolved
+                    // concussion.
+                    let mut dmg = crate::sequence::SequenceElement::new_damage(
+                        1,
+                        crate::element::Command::ReceiveHitDamage,
+                        Some(target_id),
+                        Some(actor_id),
+                        0,
+                        concussion,
+                    );
+                    if let crate::sequence::SequenceElementData::Damage {
+                        is_harder_hit: ih, ..
+                    } = &mut dmg.data
+                    {
+                        *ih = is_harder_hit;
+                    }
+                    self.launch_element(dmg);
+
+                    tracing::debug!(
+                        attacker = ?actor_id,
+                        target = ?target_id,
+                        concussion,
+                        is_harder_hit,
+                        "Hit: launched RECEIVE_HIT_DAMAGE"
+                    );
+                }
+                AbilityTickResult::StrangleDone {
+                    actor_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    self.find_place_to_die(target_id);
+                    // A soldier flagged not-stranglable in their profile
+                    // survives the strangle — the AI lock is released
+                    // and the soldier gets an EventGotHit stimulus so
+                    // it retaliates.
+                    let stranglable = match self.get_entity(target_id) {
+                        Some(crate::element::Entity::Soldier(s)) => assets
+                            .profile_manager
+                            .get_soldier(s.soldier.soldier_profile_index)
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "strangle victim {target_id:?} has missing soldier profile {}",
+                                    s.soldier.soldier_profile_index
+                                )
+                            })
+                            .strangle,
+                        Some(crate::element::Entity::Civilian(_)) => true,
+                        Some(_) => panic!("strangle victim {target_id:?} is not an NPC human"),
+                        None => panic!("strangle victim {target_id:?} disappeared at termination"),
+                    };
+
+                    if !stranglable {
+                        self.get_entity_mut(target_id)
+                            .expect("validated non-stranglable victim disappeared")
+                            .ai_controller_mut()
+                            .expect("non-stranglable victim must have AI")
+                            .non_script_unlock(crate::ai::AiLockFlags::FREEZE);
+                        let stimulus = crate::ai::Stimulus::with_human(
+                            crate::ai::StimulusType::EventGotHit,
+                            actor_id.index(),
+                        );
+                        self.dispatch_synchronous_ai_think_preserving_detection_fifo(
+                            sim, target_id, assets, stimulus,
+                        );
+                        #[cfg(test)]
+                        crate::engine::soldier_helpers::observe_strangle_condolation_step(
+                            "TerminalEventGotHit",
+                        );
+                        tracing::debug!(
+                            attacker = ?actor_id,
+                            target = ?target_id,
+                            "Strangle: target not stranglable, completed EVENT_GOTHIT Think"
+                        );
+                        continue;
+                    }
+
+                    // Full-life-points kill — launch ReceiveDamage on
+                    // the victim with damage = current life and
+                    // concussion = 0 and no damage origin.
+                    let life = match self.get_entity(target_id) {
+                        Some(crate::element::Entity::Soldier(s)) => s.npc.life_points,
+                        Some(crate::element::Entity::Civilian(c)) => c.npc.life_points,
+                        Some(_) => unreachable!("strangle victim kind validated above"),
+                        None => panic!("strangle victim {target_id:?} disappeared before damage"),
+                    };
+                    let life = u16::try_from(life).unwrap_or_else(|_| {
+                        panic!("strangle victim {target_id:?} has invalid life {life}")
+                    });
+                    let dmg = crate::sequence::SequenceElement::new_damage(
+                        1,
+                        crate::element::Command::ReceiveDamage,
+                        Some(target_id),
+                        None,
+                        life,
+                        0,
+                    );
+                    self.launch_element(dmg);
+
+                    tracing::debug!(
+                        attacker = ?actor_id,
+                        target = ?target_id,
+                        life,
+                        "Strangle: launched RECEIVE_DAMAGE for kill"
+                    );
+                }
+                AbilityTickResult::StrangleSetupDone {
+                    actor_id,
+                    target_id,
+                    seq_id,
+                    elem_idx,
+                } => {
+                    let (position, action_point, direction, layer, sector, obstacle, plane) = {
+                        let attacker = self
+                            .get_entity(actor_id)
+                            .unwrap_or_else(|| panic!("strangler {actor_id:?} vanished at Done"));
+                        let position = attacker.element_data().position_map();
+                        let hotspot = attacker
+                            .sprite()
+                            .current_hotspot()
+                            .expect("strangler current animation has no action point");
+                        let sprite_pos = attacker.gameplay_sprite_position();
+                        (
+                            position,
+                            crate::coordinates::MapPoint::new(
+                                sprite_pos.x + hotspot.x,
+                                sprite_pos.y + hotspot.y,
+                            ),
+                            u16::try_from(attacker.element_data().direction()).expect(
+                                "strangler direction must be in the canonical 0..=15 range",
+                            ),
+                            attacker.element_data().layer(),
+                            attacker.element_data().sector(),
+                            attacker.element_data().obstacle_index(),
+                            attacker.position_iface().get_plane().copied(),
+                        )
+                    };
+                    {
+                        let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
+                            panic!("strangle victim {target_id:?} vanished at Done")
+                        });
+                        victim
+                            .element_data_mut()
+                            .set_obstacle_index(obstacle, plane);
+                        victim.element_data_mut().set_layer(layer);
+                        victim.element_data_mut().set_sector(sector);
+                        victim.element_data_mut().set_position_map(action_point);
+                        victim
+                            .element_data_mut()
+                            .set_direction_instantly(direction as i16);
+                    }
+                    let victim_move_box = {
+                        let victim = self.get_entity(target_id).unwrap_or_else(|| {
+                            panic!("strangle victim {target_id:?} vanished at Done")
+                        });
+                        *victim.position_iface().get_move_box()
+                    };
+                    let mut victim_box = victim_move_box.translated(action_point);
+                    if !victim_move_box.is_somewhere()
+                        || !self.world.fast_grid.find_authorized_position_toward(
+                            &mut victim_box,
+                            position,
+                            layer,
+                        )
+                    {
+                        self.cleanup_aborted_ability(
+                            actor_id,
+                            crate::movement::AbilityKind::Strangle,
+                            seq_id,
+                            elem_idx,
+                            self.get_entity(actor_id)
+                                .and_then(Entity::actor_data)
+                                .and_then(|actor| actor.active_ability.order_id),
+                        );
+                        self.orders
+                            .sequence_manager
+                            .element_impossible(seq_id, elem_idx);
+                        self.dispatch_condolations_for_owner_boundary(sim, actor_id, assets);
+                        continue;
+                    }
+                    let authorized_position = victim_box.center();
+                    {
+                        let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
+                            panic!("strangle victim {target_id:?} vanished at Done")
+                        });
+                        victim
+                            .element_data_mut()
+                            .set_position_map(authorized_position);
+                        victim.element_data_mut().sprite.display_order_ref = None;
+                        victim.element_data_mut().sprite.behind_display_order_ref = false;
+                    }
+                    self.actor_freeze_execution(target_id);
+                    let victim = self.get_entity_mut(target_id).unwrap_or_else(|| {
+                        panic!("strangle victim {target_id:?} vanished at Done")
+                    });
+                    victim
+                        .element_data_mut()
+                        .sprite
+                        .force_animation(crate::order::OrderType::BeingStrangled, direction);
+                    let remark = if matches!(victim, crate::element::Entity::Civilian(_)) {
+                        crate::ai::Remark::CivDies
+                    } else {
+                        crate::ai::Remark::Strangled
+                    };
+                    victim
+                        .ai_controller_mut()
+                        .expect("strangle victim must have AI")
+                        .say_with_flags(remark, crate::ai::SpeechFlags::EMERGENCY);
+                    self.drain_ai_owner_work_for(sim, assets, target_id);
+                    if !sprite_frozen {
+                        self.get_entity_mut(target_id)
+                            .expect("strangle victim disappeared after speech")
+                            .element_data_mut()
+                            .sprite
+                            .perform_virgin_increment(
+                                sim,
+                                crate::sprite::FrameProgression::Default,
+                            );
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn cleanup_aborted_ability(
+        &mut self,
+        actor_id: EntityId,
+        kind: crate::movement::AbilityKind,
+        seq_id: crate::sequence::SequenceId,
+        elem_idx: usize,
+        order_id: Option<std::num::NonZeroU32>,
+    ) {
+        // Every caller reaches this helper because the selected derived
+        // The execution arm returned an aborted motion. Publish that result for
+        // the actor-owner envelope as well. In particular, Tie deliberately
+        // fails validity one frame after DONE changed its victim from Lying
+        // to Tied; without replacing the sprite's previous-frame DONE latch,
+        // the envelope records DONE even though the element is made
+        // impossible in this frame.
+        if let Some(entity) = self.get_entity_mut(actor_id) {
+            entity.element_data_mut().sprite.last_motion_state =
+                Some(crate::sprite::MotionState::Aborted);
+            entity
+                .actor_data_mut()
+                .expect("ability owner must retain actor state during abort cleanup")
+                .continuation
+                .motion_state = crate::sprite::MotionState::Aborted;
+        }
+        if let Some(actor) = self
+            .get_entity_mut(actor_id)
+            .and_then(Entity::actor_data_mut)
+            && actor.active_ability.kind == Some(kind)
+            && actor.active_ability.sequence_id == Some(seq_id)
+            && actor.active_ability.element_index == elem_idx
+            && actor.active_ability.order_id == order_id
+        {
+            actor.active_ability.clear();
+            if kind == crate::movement::AbilityKind::Listen {
+                actor.listen_phase = crate::element::ListenPhase::Inactive;
+                actor.listen_wait_time = 0;
+            } else if kind == crate::movement::AbilityKind::ReceivePurse {
+                actor.receive_purse_phase = crate::element::ReceivePursePhase::Inactive;
+            }
+            actor.action_state = crate::element::ActionState::Waiting;
+        }
+    }
+
+    // ─── Shouldered-carry ceiling check ─────────────────────────────
+
+    /// Check PCs whose movement action executed this frame for the original
+    /// ceiling collision while walking with someone on the actor's shoulders.
+    ///
+    /// The original game checks shoulder-carrying only from that action's
+    /// player-character execution arm, after motion. In particular,
+    /// the persistent carrying-on-shoulders waiting posture does not
+    /// run this check.
+    pub(super) fn tick_shouldered_carry_ceiling(
+        &mut self,
+        assets: &LevelAssets,
+        executed_actions: &[(EntityId, crate::order::OrderType)],
+    ) {
+        if self.actors_frozen() {
+            return;
+        }
+
+        // Collect (carrier_id, victim_id) pairs first to avoid
+        // overlapping borrows with launch_element.
+        let mut drops: Vec<(crate::element::EntityId, crate::element::EntityId)> = Vec::new();
+        for &(carrier_id, action) in executed_actions {
+            if action != crate::order::OrderType::WalkingCarryingOnShoulders {
+                continue;
+            }
+            let Some(entity) = self.get_entity(carrier_id) else {
+                tracing::warn!(
+                    ?carrier_id,
+                    "shouldered-carry ceiling check lost executing carrier"
+                );
+                continue;
+            };
+            let elem = entity.element_data();
+            let carrier_pos = elem.position();
+
+            let obstacles = self.sight_obstacles(assets);
+            if crate::abilities::can_carry_on_shoulders(carrier_pos, obstacles) {
+                continue;
+            }
+
+            // Find the shouldered victim — the human whose `carrier`
+            // back-pointer references this carrier.  We track the
+            // relationship from the victim side only.
+            let victim_id = self.world.entities.humans().find_map(|(victim_id, v)| {
+                let victim_id: EntityId = victim_id.into();
+                let hd = v.human_data()?;
+                if hd.carrier == Some(carrier_id) {
+                    Some(victim_id)
+                } else {
+                    None
+                }
+            });
+            let Some(victim_id) = victim_id else {
+                tracing::warn!(
+                    ?carrier_id,
+                    "shouldered-carry ceiling check: executing carrier has no \
+                     shouldered victim — skipping"
+                );
+                continue;
+            };
+            drops.push((carrier_id, victim_id));
+        }
+
+        for (carrier_id, victim_id) in drops {
+            // Launch ReceiveDamage on the victim with damage = 0 and
+            // concussion = 0; the victim-side
+            // `translate_shoulder_damage` path uses the event as a
+            // trigger to drop off the shoulders rather than to apply HP
+            // loss.  Origin is the victim itself (no antagonist).
+            let dmg = crate::sequence::SequenceElement::new_damage(
+                1,
+                crate::element::Command::ReceiveDamage,
+                Some(victim_id),
+                Some(victim_id),
+                0,
+                0,
+            );
+            self.launch_element(dmg);
+            tracing::debug!(
+                ?carrier_id,
+                ?victim_id,
+                "shoulder carrying: ceiling blocked → launched drop damage"
+            );
+        }
+    }
+}

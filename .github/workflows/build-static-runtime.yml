@@ -1,0 +1,120 @@
+name: Build immutable browser runtime addition
+
+on:
+  workflow_dispatch:
+    inputs:
+      demo_content_identity_sha256:
+        description: Exact native Demo Data/locale closure SHA-256
+        required: true
+        type: string
+      demo_asset_sha256:
+        description: SHA-256 of the operator-staged Demo RHData object
+        required: true
+        type: string
+      demo_asset_byte_length:
+        description: Exact Demo RHData byte length, no larger than 25 MiB
+        required: true
+        type: string
+      full_content_manifest_sha256:
+        description: Optional exact local Full web-content manifest SHA-256
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-runtime-${{ github.sha }}
+  cancel-in-progress: false
+
+env:
+  RUSTC_WRAPPER: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # Compiled contract preflight builds the native exporter before wasm.
+    timeout-minutes: 90
+    steps:
+      - name: Check out the exact source revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+
+      - name: Install locked frontend tools
+        working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+
+      - name: Test runtime staging and discover the integrated protocol
+        run: |
+          node --test \
+            wasm-www/scripts/build-runtime.test.mjs \
+            wasm-www/scripts/stage-runtime-addition.test.mjs \
+            wasm-www/scripts/runtime-javascript-modules.test.mjs \
+            wasm-www/scripts/stage-browser-identity-origin.test.mjs \
+            wasm-www/scripts/stage-cloudflare-headers.test.mjs \
+            wasm-www/scripts/stage-engine-preload-assets.test.mjs \
+            wasm-www/scripts/verify-runtime-corpus.test.mjs \
+            wasm-www/scripts/verify-runtime-source-contract.test.mjs \
+            wasm-www/scripts/write-static-origin-inventory.test.mjs
+          node wasm-www/scripts/verify-runtime-source-contract.mjs
+
+      - name: Install Rust WebAssembly target
+        run: |
+          rustup target add wasm32-unknown-unknown
+          rustup component add rust-src
+
+      - name: Install pinned WebAssembly tools
+        id: wasm-tools
+        run: |
+          tools_root="${RUNNER_TEMP}/authoritative-wasm-tools"
+          scripts/install_pinned_wasm_tools.sh "${tools_root}"
+          printf '%s\n' "${tools_root}/binaryen/bin" "${tools_root}/wabt/bin" >> "${GITHUB_PATH}"
+          wasm_bindgen_root="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.127"
+          wasm_bindgen="$(scripts/install_pinned_wasm_bindgen.sh "${wasm_bindgen_root}")"
+          test "$("${wasm_bindgen}" --version)" = 'wasm-bindgen 0.2.127'
+          echo "wasm-bindgen=${wasm_bindgen}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and stage immutable runtime addition
+        id: stage
+        env:
+          ROBIN_REQUIRE_BUILD_IDENTITY: "1"
+          DEMO_CONTENT_IDENTITY_SHA256: ${{ inputs.demo_content_identity_sha256 }}
+          DEMO_ASSET_SHA256: ${{ inputs.demo_asset_sha256 }}
+          DEMO_ASSET_BYTE_LENGTH: ${{ inputs.demo_asset_byte_length }}
+          FULL_CONTENT_MANIFEST_SHA256: ${{ inputs.full_content_manifest_sha256 }}
+        run: |
+          node wasm-www/scripts/stage-runtime-addition.mjs \
+            --bindgen '${{ steps.wasm-tools.outputs.wasm-bindgen }}'
+          echo "short=$(git rev-parse --short=12 HEAD)" >> "${GITHUB_OUTPUT}"
+
+      - name: Emit the exact runtime-origin inventory
+        run: |
+          commit="$(git rev-parse HEAD)"
+          cargo_lock_sha256="$(sha256sum Cargo.lock | cut -d ' ' -f 1)"
+          node wasm-www/scripts/write-static-origin-inventory.mjs \
+            runtime target/static-runtime-addition "${commit}" "${cargo_lock_sha256}" \
+            target/static-runtime-authority.json
+
+      - name: Preserve the audited addition for operator corpus assembly
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: robinhood-runtime-addition-${{ steps.stage.outputs.short }}
+          path: |
+            target/static-runtime-addition
+            target/static-runtime-authority.json
+          if-no-files-found: error
+          retention-days: 30

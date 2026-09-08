@@ -1,0 +1,714 @@
+//! `MissionLuaState` — the per-mission Lua interpreter wrapper.
+//!
+//! Developer tools and direct native-binding tests create this host. It owns:
+//!
+//! - the `mlua::Lua` state itself (Luau dialect — see crate Cargo
+//!   feature note),
+//! - registered native bindings (callable from Lua as
+//!   `GetActor("Robin")`, `StartSequence()`, etc.),
+//! - a custom `require` function rooted at the mission directory
+//!   so `require("lib.common")` resolves to the Spellforge `lib/`
+//!   folder shipped with the mission.
+//!
+//! It does not own engine state — engine pointers are passed in per
+//! call via [`MissionLuaState::with_host`]. The Lua state lives on
+//! the host side (not in `Engine`) because `mlua::Lua` is not
+//! serializable. This direct-call adapter has no rollback or event driver;
+//! production mission execution and reconstruction belong to robin_spellforge.
+//!
+//! ## Why Luau, not Lua 5.4
+//!
+//! Luau's [`Lua::sandbox`] freezes the globals table and reroutes
+//! script-local writes through a per-script environment, which is
+//! the right safety primitive for running arbitrary downloaded
+//! missions. Luau also ships without `io`, `os.execute`, or
+//! `package.loadlib` — i.e. the destructive corners we'd otherwise
+//! have to strip by hand. The trade-off is that Luau has no
+//! built-in `require` (the `package` library isn't loaded); we
+//! supply our own (see [`install_require`]).
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
+
+use mlua::Lua;
+use robin_engine::natives::{NativeSessionCapabilities, ScriptEffects, ScriptState};
+
+use crate::natives::{AttachedNativeCall, NativeCallSession};
+
+/// Registry key for the `SequenceCallbacks` table. Hidden from
+/// the script's view of `_G` so the sandbox doesn't freeze it.
+pub(crate) const SEQUENCE_CALLBACKS_KEY: &str = "robin_lua.sequence_callbacks";
+const LUA_INTERRUPT_BUDGET: u64 = 1_000_000;
+const LUA_MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) struct NativeCallAttachment<'lua> {
+    lua: &'lua Lua,
+    attached: AttachedNativeCall,
+    _scope_gate: MutexGuard<'lua, ()>,
+}
+
+impl<'lua> NativeCallAttachment<'lua> {
+    fn attach(
+        lua: &'lua Lua,
+        scope_gate: &'lua Mutex<()>,
+        session: &mut NativeCallSession<'_, '_>,
+    ) -> mlua::Result<Self> {
+        let scope_gate = match scope_gate.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => {
+                return Err(mlua::Error::RuntimeError(
+                    "Lua native-call session is already active; nested and concurrent attachments are not supported"
+                        .to_owned(),
+                ));
+            }
+            // The attachment guard still removes app data while unwinding, so
+            // a prior panic does not leave unsafe state behind. Recover the
+            // otherwise healthy gate for the next event.
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+        };
+
+        if lua.app_data_ref::<AttachedNativeCall>().is_some() {
+            return Err(mlua::Error::RuntimeError(
+                "Lua native-call attachment remained after its scope ended".to_owned(),
+            ));
+        }
+        let attached = AttachedNativeCall::new(session);
+        let replaced = lua.set_app_data(attached.clone());
+        if let Some(previous) = replaced {
+            lua.set_app_data(previous);
+            return Err(mlua::Error::RuntimeError(
+                "Lua native-call attachment changed while the scope gate was held".to_owned(),
+            ));
+        }
+        Ok(Self {
+            lua,
+            attached,
+            _scope_gate: scope_gate,
+        })
+    }
+}
+
+impl Drop for NativeCallAttachment<'_> {
+    fn drop(&mut self) {
+        let removed = self.lua.remove_app_data::<AttachedNativeCall>();
+        self.attached.invalidate();
+        assert!(
+            removed
+                .as_ref()
+                .is_some_and(|removed| removed.is_same_attachment(&self.attached)),
+            "Lua native-call attachment changed before its scope ended"
+        );
+    }
+}
+
+/// Errors produced while loading or driving a mission `.lua`.
+#[derive(Debug, thiserror::Error)]
+pub enum MissionLuaError {
+    #[error("reading {0}: {1}")]
+    Io(PathBuf, #[source] std::io::Error),
+    #[error("lua error in {0}: {1}")]
+    Lua(PathBuf, #[source] mlua::Error),
+    #[error("lua error: {0}")]
+    Runtime(#[from] mlua::Error),
+}
+
+/// One mission's Lua state.
+///
+/// Created lazily when a mission's `.lua` companion file is present
+/// next to its `.rhm`. Dropped when the mission unloads.
+pub struct MissionLuaState {
+    lua: Lua,
+    /// Serializes the complete attach/use/detach scope for this Lua state.
+    /// `try_lock` makes accidental same-thread recursion a typed error rather
+    /// than a deadlock and closes the app-data check/set race across threads.
+    native_call_scope_gate: Mutex<()>,
+    /// Directory containing the mission's `.lua` file. Used as the
+    /// root for the custom `require` resolver.
+    mission_dir: PathBuf,
+    /// Whether `register_natives` has been called. Guards against
+    /// double-registration if a host accidentally rebinds twice.
+    natives_registered: bool,
+    execution_budget: Arc<AtomicU64>,
+    pub(crate) static_names: Arc<RwLock<robin_engine::natives::ScriptNameBindings>>,
+}
+
+impl MissionLuaState {
+    /// Create a fresh, empty Lua state for the mission at
+    /// `mission_dir`. Natives are not registered yet — the caller
+    /// must call [`crate::register_natives`] before loading scripts
+    /// (so script top-level code can already reference natives).
+    ///
+    /// Standard libraries loaded: Luau's default safe set (`string`,
+    /// `table`, `math`, `bit32`, `coroutine`, `utf8`, plus the
+    /// `buffer` and `vector` Luau-specifics). `io` and `package`
+    /// are absent by design — we supply our own scoped `require`.
+    pub fn new(mission_dir: impl Into<PathBuf>) -> Result<Self, MissionLuaError> {
+        let lua = Lua::new();
+        lua.set_memory_limit(LUA_MEMORY_LIMIT_BYTES)?;
+        let mission_dir = mission_dir.into();
+        let execution_budget = Arc::new(AtomicU64::new(LUA_INTERRUPT_BUDGET));
+        let static_names = Arc::new(RwLock::new(
+            robin_engine::natives::ScriptNameBindings::default(),
+        ));
+
+        let interrupt_budget = Arc::clone(&execution_budget);
+        lua.set_interrupt(move |_| {
+            let had_budget = interrupt_budget
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                    remaining.checked_sub(1)
+                })
+                .is_ok();
+            if had_budget {
+                Ok(mlua::VmState::Continue)
+            } else {
+                Err(mlua::Error::RuntimeError(
+                    "Spellforge Lua execution budget exceeded".to_owned(),
+                ))
+            }
+        });
+
+        // Custom require rooted at the mission dir. Installed
+        // before sandbox so it's part of the frozen baseline.
+        install_require(&lua, &mission_dir)?;
+        enforce_determinism(&lua)?;
+        install_log(&lua)?;
+
+        // `SequenceCallbacks` is the closure stash for
+        // `SequenceCall(fn)` — see the Spellforge sequence-callback
+        // contract. We keep it in the registry rather than
+        // `_G` so the sandbox's "globals are frozen" rule doesn't
+        // block `SequenceCall` from inserting new ids. Scripts
+        // never reach into the table directly (it's a private
+        // implementation detail of `SequenceCall`), so hiding it
+        // from globals is observation-preserving.
+        let sequence_callbacks = lua.create_table()?;
+        sequence_callbacks.set("__next_id", 10_000_i32)?;
+        lua.set_named_registry_value(SEQUENCE_CALLBACKS_KEY, sequence_callbacks)?;
+
+        // Freeze the global environment. After this call, scripts
+        // still read globals normally; writes to `_G` go into a
+        // per-script environment table that we can throw away
+        // between missions without leaking state.
+        //
+        // Doing this *after* native registration would freeze them
+        // unwritable — fine, since we never want scripts to
+        // overwrite engine bindings. Native registration runs in
+        // `register_natives` which is called after `new`, so we
+        // sandbox there instead. See `register_natives`.
+
+        Ok(Self {
+            lua,
+            native_call_scope_gate: Mutex::new(()),
+            mission_dir,
+            natives_registered: false,
+            execution_budget,
+            static_names,
+        })
+    }
+
+    /// Borrow the underlying `mlua::Lua`. Used by the natives module
+    /// to register functions onto `globals()`.
+    pub fn lua(&self) -> &Lua {
+        &self.lua
+    }
+
+    /// Whether [`crate::register_natives`] has run against this state.
+    pub fn natives_registered(&self) -> bool {
+        self.natives_registered
+    }
+
+    /// Install immutable RHM name tables used by tool-side `GetActor` and
+    /// related queries when no live host session is attached.
+    pub fn set_static_names(&self, names: robin_engine::natives::ScriptNameBindings) {
+        *self
+            .static_names
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = names;
+    }
+
+    /// Reset the bounded interrupt counter before loading source or invoking
+    /// one synchronous tool callback, so runaway code cannot block the host.
+    pub fn reset_execution_budget(&self) {
+        self.execution_budget
+            .store(LUA_INTERRUPT_BUDGET, Ordering::Release);
+    }
+
+    /// Mark natives as registered. Called by [`crate::register_natives`].
+    pub(crate) fn mark_natives_registered(&mut self) {
+        self.natives_registered = true;
+    }
+
+    /// Run `f` with the engine's [`ScriptEffects`] attached as Lua app
+    /// data. All registered natives can reach into the host while
+    /// `f` is on the stack; once `f` returns, the pointer is
+    /// removed so a stray Lua coroutine resumed later can't see
+    /// stale state.
+    ///
+    /// The stack-owned `NativeCallSession` holds all engine borrows together.
+    /// Registered shims can access it only synchronously; retained Lua
+    /// functions and coroutines perform a fresh app-data lookup and fail after
+    /// this method returns. `NativeCallAttachment` holds the Lua state's scope
+    /// gate and removes the sole erased session handle on normal, error, and
+    /// unwind paths.
+    pub fn with_host<R>(
+        &self,
+        host: &mut ScriptEffects,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
+        capabilities: &NativeSessionCapabilities<'_>,
+        f: impl FnOnce(&Lua) -> mlua::Result<R>,
+    ) -> mlua::Result<R> {
+        let mut script_state = ScriptState::default();
+        self.with_host_and_state(host, &mut script_state, script_domains, capabilities, f)
+    }
+
+    /// Variant used by mission execution, where script-owned state must
+    /// persist across Lua events alongside the SCB VMs.
+    pub fn with_host_and_state<R>(
+        &self,
+        host: &mut ScriptEffects,
+        script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
+        capabilities: &NativeSessionCapabilities<'_>,
+        f: impl FnOnce(&Lua) -> mlua::Result<R>,
+    ) -> mlua::Result<R> {
+        self.with_host_state_and_bindings(
+            host,
+            script_state,
+            script_domains,
+            robin_engine::natives::AttachedScriptBindings::empty_ref(),
+            capabilities,
+            f,
+        )
+    }
+
+    pub fn with_host_state_and_bindings<R>(
+        &self,
+        host: &mut ScriptEffects,
+        script_state: &mut ScriptState,
+        script_domains: &mut robin_engine::engine::ScriptDomains,
+        bindings: &robin_engine::natives::AttachedScriptBindings,
+        capabilities: &NativeSessionCapabilities<'_>,
+        f: impl FnOnce(&Lua) -> mlua::Result<R>,
+    ) -> mlua::Result<R> {
+        self.reset_execution_budget();
+        let mut session =
+            NativeCallSession::new(host, script_state, script_domains, bindings, capabilities);
+        let _attachment =
+            NativeCallAttachment::attach(&self.lua, &self.native_call_scope_gate, &mut session)?;
+        f(&self.lua)
+    }
+
+    /// Load and execute the mission's `.lua` file. The path is
+    /// `<mission_dir>/<stem>.lua`; the leading directory matches
+    /// what the custom `require` resolver expects, so `require()`
+    /// calls inside the script find their helpers.
+    pub fn load_script(&self, stem: &str) -> Result<(), MissionLuaError> {
+        let path = self.mission_dir.join(format!("{stem}.lua"));
+        let src = std::fs::read(&path).map_err(|e| MissionLuaError::Io(path.clone(), e))?;
+        self.reset_execution_budget();
+        self.lua
+            .load(&src)
+            .set_name(stem)
+            .exec()
+            .map_err(|e| MissionLuaError::Lua(path, e))?;
+        Ok(())
+    }
+}
+
+/// Install a `require(path)` global resolving `"foo.bar"` to
+/// `<mission_dir>/foo/bar.lua`. Caches each module's return value
+/// in a closed-over `HashMap` so repeated requires return the same
+/// table — matches Lua's standard semantics.
+///
+/// Luau doesn't ship `package` / `package.path` / `package.loaded`,
+/// so we replicate just the pieces Spellforge mission scripts use.
+/// In practice that's `require("lib.common")` and friends — a flat
+/// dotted name resolving to a single `.lua` file.
+fn install_require(lua: &Lua, mission_dir: &Path) -> Result<(), mlua::Error> {
+    let cache: Arc<Mutex<HashMap<String, mlua::Value>>> = Arc::new(Mutex::new(HashMap::new()));
+    let root = mission_dir.to_path_buf();
+
+    let require = lua.create_function(move |lua: &Lua, name: String| {
+        let rel = canonical_module_path(&name).map_err(mlua::Error::RuntimeError)?;
+        // The cache only holds fully-constructed module values, so a panic
+        // while another holder had the lock leaves it healthy — recover it.
+        if let Some(v) = cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&name)
+        {
+            return Ok(v.clone());
+        }
+        let direct = root.join(&rel);
+        let library = root.join("lib").join(&rel);
+        let (_path, src) = match std::fs::read(&direct) {
+            Ok(src) => (direct, src),
+            Err(direct_error) => match std::fs::read(&library) {
+                Ok(src) => (library, src),
+                Err(library_error) => {
+                    return Err(mlua::Error::RuntimeError(format!(
+                        "require('{name}'): cannot read {} ({direct_error}) or {} ({library_error})",
+                        direct.display(),
+                        library.display()
+                    )));
+                }
+            },
+        };
+        let chunk = lua.load(&src).set_name(name.clone());
+        let value: mlua::Value = chunk
+            .eval()
+            .map_err(|e| mlua::Error::RuntimeError(format!("require('{name}'): {e}")))?;
+        cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(name, value.clone());
+        Ok(value)
+    })?;
+    lua.globals().set("require", require)?;
+    Ok(())
+}
+
+fn canonical_module_path(name: &str) -> Result<String, String> {
+    if name.is_empty() || name.contains('\\') {
+        return Err(format!("require('{name}'): module name is not canonical"));
+    }
+    let components = name
+        .split(['.', '/'])
+        .map(|component| {
+            if component.is_empty()
+                || !component
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            {
+                return Err(format!(
+                    "require('{name}'): module component `{component}` is not canonical"
+                ));
+            }
+            Ok(component)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(format!("{}.lua", components.join("/")))
+}
+
+/// Strip variable host inputs from the standard library and reroute
+/// `math.random` through the engine's seeded RNG.
+///
+/// Tools consume the attached engine RNG and reject ambient clock input.
+/// Production cross-platform determinism is owned by robin_spellforge;
+/// this Luau adapter deliberately has no event tape or coroutine driver.
+fn enforce_determinism(lua: &Lua) -> mlua::Result<()> {
+    let globals = lua.globals();
+
+    // Direct tool sessions cannot suspend through the engine driver.
+    globals.set("coroutine", mlua::Value::Nil)?;
+
+    // Luau's stripped-down `os` still exposes wall-clock readers.
+    // Nil them so a script that calls `os.time()` produces a
+    // clear error rather than a silently-divergent value.
+    if let Ok(os) = globals.get::<mlua::Table>("os") {
+        for key in ["time", "clock", "date", "difftime"] {
+            os.set(key, mlua::Value::Nil)?;
+        }
+    }
+
+    // Reroute `math.random` through the explicit simulation context attached
+    // to this Lua event. Calling it outside an engine script session is a hard
+    // error; there is no ambient or fallback generator.
+    // Three calling conventions match stock Lua:
+    //
+    //   math.random()    -> float in [0, 1)
+    //   math.random(n)   -> int in [1, n]
+    //   math.random(a,b) -> int in [a, b]
+    let math: mlua::Table = globals.get("math")?;
+    let direct_rng = lua.create_function(
+        move |lua, args: mlua::Variadic<i32>| -> mlua::Result<mlua::Value> {
+            crate::natives::with_attached_simulation_context(lua, |simulation| match args.len() {
+                0 => Ok(mlua::Value::Number(robin_engine::sim_rng::f32(
+                    simulation,
+                    robin_engine::sim_rng::RngSite::LuaMathRandom,
+                ) as f64)),
+                1 => {
+                    let n = args[0];
+                    if n < 1 {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "math.random: upper bound must be >= 1, got {n}"
+                        )));
+                    }
+                    Ok(mlua::Value::Integer(
+                        robin_engine::sim_rng::i32(
+                            simulation,
+                            robin_engine::sim_rng::RngSite::LuaMathRandom,
+                            1..=n,
+                        )
+                        .into(),
+                    ))
+                }
+                2 => {
+                    let (a, b) = (args[0], args[1]);
+                    if a > b {
+                        return Err(mlua::Error::RuntimeError(format!(
+                            "math.random: empty interval [{a}, {b}]"
+                        )));
+                    }
+                    Ok(mlua::Value::Integer(
+                        robin_engine::sim_rng::i32(
+                            simulation,
+                            robin_engine::sim_rng::RngSite::LuaMathRandom,
+                            a..=b,
+                        )
+                        .into(),
+                    ))
+                }
+                n => Err(mlua::Error::RuntimeError(format!(
+                    "math.random: expected 0..=2 args, got {n}"
+                ))),
+            })
+        },
+    )?;
+    math.set("random", direct_rng)?;
+
+    // `math.randomseed(x)` becomes a no-op. The engine owns and seeds the
+    // simulation stream once at mission start via `EngineArgs::rng_seed`; the
+    // script cannot replace it with an untracked generator.
+    let noop_seed = lua.create_function(|_, _: mlua::Variadic<mlua::Value>| Ok(()))?;
+    math.set("randomseed", noop_seed)?;
+
+    Ok(())
+}
+
+/// Install `log(msg)` — a Factorio-style logging helper that
+/// routes script-side messages through `tracing` rather than
+/// stdout. Useful for debugging mods without enabling `print`
+/// (which would push lines straight at the terminal). The
+/// `target` of `rh_lua_script` lets users filter via
+/// `RUST_LOG=rh_lua_script=debug`.
+fn install_log(lua: &Lua) -> mlua::Result<()> {
+    let log = lua.create_function(|_, msg: mlua::Variadic<mlua::Value>| {
+        let mut buf = String::new();
+        for (i, v) in msg.iter().enumerate() {
+            if i > 0 {
+                buf.push('\t');
+            }
+            buf.push_str(&format_lua_value(v));
+        }
+        tracing::info!(target: "rh_lua_script", "{buf}");
+        Ok(())
+    })?;
+    lua.globals().set("log", log)?;
+    Ok(())
+}
+
+fn format_lua_value(v: &mlua::Value) -> String {
+    match v {
+        mlua::Value::Nil => "nil".to_owned(),
+        mlua::Value::Boolean(b) => b.to_string(),
+        mlua::Value::Integer(i) => i.to_string(),
+        mlua::Value::Number(n) => n.to_string(),
+        mlua::Value::String(s) => s.to_str().map(|s| s.to_string()).unwrap_or_default(),
+        other => format!("<{}>", other.type_name()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn make_state() -> (MissionLuaState, TempDir) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = MissionLuaState::new(dir.path()).expect("new");
+        (state, dir)
+    }
+
+    #[test]
+    fn require_is_installed() {
+        let (state, _dir) = make_state();
+        let kind: String = state.lua().load("return type(require)").eval().unwrap();
+        assert_eq!(kind, "function");
+    }
+
+    /// Confirms our `Lua::new()` baseline doesn't expose `os.execute`
+    /// or `io` — Luau doesn't ship them, so the sandbox surface
+    /// starts smaller than Lua 5.4. We don't need to nil them
+    /// ourselves.
+    #[test]
+    fn dangerous_libs_absent_by_default() {
+        let (state, _dir) = make_state();
+        let io_kind: String = state.lua().load("return type(io)").eval().unwrap();
+        assert_eq!(io_kind, "nil", "Luau must not load `io`");
+        // `os` is present in Luau but only with a minimal set
+        // (`os.time`, `os.clock`, `os.date`, `os.difftime`). The
+        // dangerous entries (`execute`, `remove`, `getenv`, …)
+        // aren't there. Spot-check `os.execute`.
+        let exec: String = state
+            .lua()
+            .load("return type((os or {}).execute)")
+            .eval()
+            .unwrap();
+        assert_eq!(exec, "nil");
+    }
+
+    /// `enforce_determinism` must strip every wall-clock reader on
+    /// `os` and the entire `coroutine` library. Without these,
+    /// rollback replay would diverge after the first `os.time()`
+    /// call or coroutine yield.
+    #[test]
+    fn non_deterministic_libs_stripped() {
+        let (state, _dir) = make_state();
+        for snippet in &[
+            "return type((os or {}).time)",
+            "return type((os or {}).clock)",
+            "return type((os or {}).date)",
+            "return type((os or {}).difftime)",
+            "return type(coroutine)",
+        ] {
+            let kind: String = state.lua().load(*snippet).eval().unwrap();
+            assert_eq!(kind, "nil", "stripped by enforce_determinism: {snippet}");
+        }
+    }
+
+    /// `math.random` must route through the explicitly attached simulation
+    /// context so all peers produce identical rolls.
+    #[test]
+    fn math_random_uses_sim_rng() {
+        let dir = tempfile::tempdir().unwrap();
+        let take5 = |seed: u64| {
+            let state = MissionLuaState::new(dir.path()).unwrap();
+            let mut host = ScriptEffects::new();
+            let mut script_domains = robin_engine::engine::ScriptDomains::default();
+            let mut entities = robin_engine::entities::Entities::new();
+            let mut ai_global = robin_engine::ai::AiGlobalState::default();
+            let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+            let simulation = robin_engine::sim_rng::SimulationContext::with_seed(seed);
+            let capabilities = NativeSessionCapabilities::new(
+                &simulation,
+                &mut entities,
+                &mut ai_global,
+                &mut fast_grid,
+            );
+            state
+                .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
+                    (0..5)
+                        .map(|_| lua.load("return math.random(1, 1000000)").eval::<i64>())
+                        .collect::<mlua::Result<Vec<_>>>()
+                })
+                .unwrap()
+        };
+        // Same seed → same sequence.
+        assert_eq!(take5(0xDEAD_BEEF), take5(0xDEAD_BEEF));
+        // Different seed → different sequence (vanishingly small
+        // chance of a false positive across 5 draws).
+        assert_ne!(take5(0xDEAD_BEEF), take5(0xC0FFEE));
+    }
+
+    /// `math.randomseed` is a no-op — letting Lua scripts reseed
+    /// the engine RNG would desync rollback (the replay can't see
+    /// the reseed). Confirm the call doesn't panic and the
+    /// following draw still comes from the engine seed.
+    #[test]
+    fn math_randomseed_is_a_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let roll = |source: &str| {
+            let state = MissionLuaState::new(dir.path()).unwrap();
+            let mut host = ScriptEffects::new();
+            let mut script_domains = robin_engine::engine::ScriptDomains::default();
+            let mut entities = robin_engine::entities::Entities::new();
+            let mut ai_global = robin_engine::ai::AiGlobalState::default();
+            let mut fast_grid = robin_engine::fast_find_grid::FastFindGrid::default();
+            let simulation = robin_engine::sim_rng::SimulationContext::with_seed(7);
+            let capabilities = NativeSessionCapabilities::new(
+                &simulation,
+                &mut entities,
+                &mut ai_global,
+                &mut fast_grid,
+            );
+            state
+                .with_host(&mut host, &mut script_domains, &capabilities, |lua| {
+                    lua.load(source).eval::<i64>()
+                })
+                .unwrap()
+        };
+        let baseline = roll("math.randomseed(999); return math.random(1, 1000000)");
+        let no_seed = roll("return math.random(1, 1000000)");
+        assert_eq!(
+            baseline, no_seed,
+            "math.randomseed must not advance the engine RNG"
+        );
+    }
+
+    #[test]
+    fn math_random_without_simulation_session_is_an_error() {
+        let (state, _dir) = make_state();
+        let error = state
+            .lua()
+            .load("return math.random(1, 10)")
+            .eval::<i64>()
+            .expect_err("random without an attached simulation context must fail");
+        assert!(error.to_string().contains("no simulation context attached"));
+    }
+
+    #[test]
+    fn load_script_runs_top_level() {
+        let (state, dir) = make_state();
+        fs::write(dir.path().join("mission.lua"), "_G.mission_loaded = 42\n").unwrap();
+        state.load_script("mission").unwrap();
+        let v: i64 = state.lua().globals().get("mission_loaded").unwrap();
+        assert_eq!(v, 42);
+    }
+
+    #[test]
+    fn require_resolves_lib_subdir() {
+        let (state, dir) = make_state();
+        fs::create_dir(dir.path().join("lib")).unwrap();
+        fs::write(
+            dir.path().join("lib/common.lua"),
+            "return { hello = 'world' }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("mission.lua"),
+            "_G.greeting = require('lib.common').hello\n",
+        )
+        .unwrap();
+        state.load_script("mission").unwrap();
+        let g: String = state.lua().globals().get("greeting").unwrap();
+        assert_eq!(g, "world");
+    }
+
+    #[test]
+    fn require_cannot_escape_the_package_root() {
+        let (state, _dir) = make_state();
+        for name in [
+            "../outside",
+            "lib/../../outside",
+            "/absolute",
+            "lib\\outside",
+        ] {
+            let error = state
+                .lua()
+                .load(format!("return require({name:?})"))
+                .eval::<mlua::Value>()
+                .expect_err("non-canonical module name must be rejected before filesystem access");
+            assert!(error.to_string().contains("not canonical"), "{error}");
+        }
+    }
+
+    /// Calling `require` twice on the same module returns the same
+    /// table — matches stock Lua's `package.loaded` caching, which
+    /// Spellforge's `lib/common.lua` relies on (it stashes
+    /// mission-scoped state on the returned table).
+    #[test]
+    fn require_caches_modules() {
+        let (state, dir) = make_state();
+        fs::write(dir.path().join("m.lua"), "return {}\n").unwrap();
+        let same: bool = state
+            .lua()
+            .load("return require('m') == require('m')")
+            .eval()
+            .unwrap();
+        assert!(same, "require must cache");
+    }
+}

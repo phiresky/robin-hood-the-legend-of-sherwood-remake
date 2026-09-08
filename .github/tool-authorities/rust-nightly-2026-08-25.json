@@ -1,0 +1,1 @@
+{"channel":"nightly-2026-08-25","components":["rust-src","rustc-codegen-cranelift-preview"],"schema_version":1,"targets":["wasm32-unknown-unknown"]}

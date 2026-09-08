@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit -m *)",
+      "Bash(cargo build *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo fmt *)",
+      "Bash(cargo test *)",
+      "Bash(cargo check *)",
+      "Bash(awk *)",
+      "Bash(sed *)",
+      "Bash(grep *)",
+      "Bash(ls *)",
+      "Bash(find *)"
+    ]
+  },
+  "sandbox": {
+    "enabled": false,
+    "autoAllowBashIfSandboxed": false
+  },
+  "enabledPlugins": {
+    "ast-grep@ast-grep-marketplace": true
+  }
+}

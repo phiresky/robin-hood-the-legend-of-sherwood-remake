@@ -1,0 +1,573 @@
+<title>The Sprite Codec</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #F6F4EC;
+  --ink: #232820;
+  --ink-soft: #57604F;
+  --green: #2E6B3F;
+  --russet: #96491E;
+  --rule: #DCDCCB;
+  --card: #EFEDE1;
+  --code-bg: #ECEADD;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141712;
+    --ink: #E4E6DC;
+    --ink-soft: #9AA394;
+    --green: #82BF92;
+    --russet: #D68F5A;
+    --rule: #2B3128;
+    --card: #1B1F19;
+    --code-bg: #1D221B;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141712;
+  --ink: #E4E6DC;
+  --ink-soft: #9AA394;
+  --green: #82BF92;
+  --russet: #D68F5A;
+  --rule: #2B3128;
+  --card: #1B1F19;
+  --code-bg: #1D221B;
+}
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 17px;
+  line-height: 1.65;
+  margin: 0;
+}
+.wrap { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+header { margin-bottom: 3rem; }
+.tile { display: inline-flex; gap: 2px; vertical-align: baseline; }
+.tile i { width: 10px; height: 10px; border-radius: 1px; }
+.tile.big i { width: 16px; height: 16px; border-radius: 2px; }
+h1 {
+  font-family: "Zilla Slab", "Source Serif 4", serif;
+  font-weight: 700;
+  font-size: 2.6rem;
+  line-height: 1.1;
+  margin: 0.75rem 0 0.5rem;
+  text-wrap: balance;
+}
+.dek {
+  color: var(--ink-soft);
+  font-size: 1.1rem;
+  max-width: 38rem;
+  margin: 0;
+}
+.meta {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--green);
+  margin-top: 1.1rem;
+}
+h2 {
+  font-family: "Zilla Slab", "Source Serif 4", serif;
+  font-weight: 600;
+  font-size: 1.55rem;
+  line-height: 1.2;
+  margin: 3rem 0 0.75rem;
+  text-wrap: balance;
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+h2 .no {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--green);
+}
+h3 {
+  font-family: "Zilla Slab", serif;
+  font-weight: 600;
+  font-size: 1.12rem;
+  margin: 1.8rem 0 0.4rem;
+}
+p { margin: 0 0 1rem; }
+strong { font-weight: 600; }
+a { color: var(--green); }
+code, pre {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.83em;
+}
+code { background: var(--code-bg); padding: 0.08em 0.32em; border-radius: 3px; color: var(--russet); }
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 0.9rem 1.1rem;
+  overflow-x: auto;
+  line-height: 1.55;
+  margin: 1.1rem 0 1.3rem;
+}
+pre code { background: none; padding: 0; color: var(--ink); }
+pre .hl { color: var(--russet); font-weight: 500; }
+.tablebox { overflow-x: auto; margin: 1.1rem 0 1.4rem; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+}
+th {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 500;
+  color: var(--ink-soft);
+  text-align: left;
+  padding: 0.4rem 0.9rem 0.4rem 0;
+  border-bottom: 1.5px solid var(--rule);
+}
+td {
+  padding: 0.45rem 0.9rem 0.45rem 0;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+td.num, th.num { text-align: right; font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; }
+.lesson td:first-child { width: 38%; }
+.callout {
+  background: var(--card);
+  border-left: 3px solid var(--green);
+  border-radius: 0 6px 6px 0;
+  padding: 0.85rem 1.1rem;
+  margin: 1.2rem 0 1.4rem;
+}
+.callout p:last-child { margin-bottom: 0; }
+figure { margin: 1.2rem 0 1.4rem; }
+figcaption {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--ink-soft);
+  margin-top: 0.45rem;
+  letter-spacing: 0.03em;
+}
+/* diagram figures */
+figure.diagram svg { display: block; width: 100%; height: auto; }
+svg.dg text {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  fill: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+svg.dg .sm { font-size: 10px; }
+svg.dg .xs { font-size: 9px; }
+svg.dg .up { font-size: 9px; letter-spacing: 0.09em; }
+svg.dg .soft { fill: var(--ink-soft); }
+svg.dg .grn { fill: var(--green); }
+svg.dg .rus { fill: var(--russet); }
+svg.dg .onbar { fill: var(--bg); }
+svg.dg .med { font-weight: 500; }
+svg.dg .node { fill: var(--card); stroke: var(--rule); }
+svg.dg .hair { stroke: var(--rule); stroke-width: 1; fill: none; }
+svg.dg .wire { stroke: var(--ink-soft); stroke-width: 1.1; fill: none; }
+svg.dg .wire-g { stroke: var(--green); stroke-width: 1.3; fill: none; }
+svg.dg .wire-r { stroke: var(--russet); stroke-width: 1.4; fill: none; }
+svg.dg .dash { stroke-dasharray: 4 3; }
+:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+<div class="wrap">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<marker id="aw-i" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0.8 0.8 L7 4 L0.8 7.2 Z" fill="var(--ink-soft)"/></marker>
+<marker id="aw-g" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0.8 0.8 L7 4 L0.8 7.2 Z" fill="var(--green)"/></marker>
+<marker id="aw-r" viewBox="0 0 8 8" refX="6.5" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0.8 0.8 L7 4 L0.8 7.2 Z" fill="var(--russet)"/></marker>
+</defs></svg>
+<header>
+  <span class="tile big" aria-hidden="true">
+    <i style="background:#2E6B3F"></i><i style="background:#5B8C4F"></i><i style="background:#96491E"></i><i style="background:#C8B98A"></i>
+  </span>
+  <h1>The Sprite Codec</h1>
+  <p class="dek">How the Robin Hood port compresses its pre-rendered sprites 2.3&times; past zstd: vector-quantized tiles, adaptive context modeling, and coding characters against each other.</p>
+  <p class="meta">robin hood rust port &middot; august 2026 &middot; companion to docs/COMPRESSION.md</p>
+</header>
+
+<h2><span class="no">1</span> What we are compressing</h2>
+<p>The game&rsquo;s characters are pre-rendered 3D: every character was rendered once per <strong>action &times; animation frame &times; 16 camera directions</strong>, producing 4,000&ndash;8,000 unique small images per character (RobinTown: 7,584 frames, average 37&times;56 pixels). Pixels are RGB565 (16-bit color) with two reserved values: a transparent key (<code>0x07C0</code>) and a shadow key (<code>0x001F</code>).</p>
+<p>Three generations of compression have touched this data, and it matters to keep them apart:</p>
+<div class="tablebox"><table>
+<tr><th>era</th><th>what it did</th></tr>
+<tr><td><strong>original game (2002)</strong></td><td>defined the sprite <em>representation</em>: RLE and VQ (below). The bank itself shipped uncompressed: 602&nbsp;MiB on disk for the fullgame</td></tr>
+<tr><td><strong>this port, schemas v1&ndash;v8</strong></td><td>added the first <em>entropy stage</em>: bitcode serialization + zstd-22 over the bank, plus JXL maps, Opus audio, per-mission chunking</td></tr>
+<tr><td><strong>this campaign, schema v9</strong></td><td>replaced zstd for the VQ grids with the custom codec this page explains</td></tr>
+</table></div>
+<p>The original engine&rsquo;s two sprite representations:</p>
+<p><strong>RLE sprites</strong> (menus, patches, accessories): each scanline stores <code>[first_x, last_x, pixels&hellip;]</code>, skipping transparent margins.</p>
+<p><strong>VQ sprites</strong> (all characters): <em>vector quantization</em>. Each character gets a dictionary of 4,096 <em>tiles</em>, where a tile is 4 horizontally adjacent pixels <span class="tile" aria-hidden="true"><i style="background:#2E6B3F"></i><i style="background:#5B8C4F"></i><i style="background:#96491E"></i><i style="background:#C8B98A"></i></span> . A sprite is then a grid of <code>(width/4) &times; height</code> dictionary indices. Twelve bits describe four pixels (3 bits per pixel before any entropy coding), and the 32&nbsp;KB dictionary holds all the color data. Decode is a table lookup; the quantizer ran once at authoring time.</p>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 240" role="img" aria-label="A 12 by 8 pixel sprite region is cut into 4-by-1 tiles; the outlined tile matches dictionary entry 1712, and the sprite stores only that 12-bit index in its width/4 by height index grid — 64 bits of pixels become one 12-bit index.">
+  <!-- panel A: pixel grid -->
+  <text x="16" y="22" class="up soft">SPRITE PIXELS — RGB565</text>
+  <g>
+    <rect x="81" y="46" width="26" height="13" fill="#C8B98A"/>
+    <rect x="68" y="59" width="13" height="13" fill="#96491E"/><rect x="81" y="59" width="26" height="13" fill="#C8B98A"/><rect x="107" y="59" width="13" height="13" fill="#96491E"/>
+    <rect x="55" y="72" width="13" height="13" fill="#5B8C4F"/><rect x="68" y="72" width="52" height="13" fill="#2E6B3F"/><rect x="120" y="72" width="13" height="13" fill="#5B8C4F"/>
+    <rect x="42" y="85" width="26" height="13" fill="#5B8C4F"/><rect x="68" y="85" width="13" height="13" fill="#2E6B3F"/><rect x="81" y="85" width="13" height="13" fill="#5B8C4F"/><rect x="94" y="85" width="13" height="13" fill="#96491E"/><rect x="107" y="85" width="13" height="13" fill="#C8B98A"/>
+    <rect x="55" y="98" width="13" height="13" fill="#96491E"/><rect x="68" y="98" width="52" height="13" fill="#2E6B3F"/><rect x="120" y="98" width="13" height="13" fill="#96491E"/>
+    <rect x="55" y="111" width="13" height="13" fill="#96491E"/><rect x="68" y="111" width="52" height="13" fill="#5B8C4F"/><rect x="120" y="111" width="13" height="13" fill="#96491E"/>
+    <rect x="68" y="124" width="52" height="13" fill="#2E6B3F"/>
+    <rect x="68" y="137" width="13" height="13" fill="#C8B98A"/><rect x="81" y="137" width="26" height="13" fill="#2E6B3F"/><rect x="107" y="137" width="13" height="13" fill="#C8B98A"/>
+  </g>
+  <path class="hair" d="M16 46H172 M16 59H172 M16 72H172 M16 85H172 M16 98H172 M16 111H172 M16 124H172 M16 137H172 M16 150H172"/>
+  <path class="hair" d="M16 46V150 M29 46V150 M42 46V150 M55 46V150 M68 46V150 M81 46V150 M94 46V150 M107 46V150 M120 46V150 M133 46V150 M146 46V150 M159 46V150 M172 46V150"/>
+  <rect x="68" y="85" width="52" height="13" fill="none" stroke="var(--russet)" stroke-width="1.5"/>
+  <text x="16" y="167" class="xs soft">one 4×1 tile = one symbol</text>
+  <!-- panel B: dictionary -->
+  <text x="235" y="22" class="up soft">DICTIONARY — 4,096 TILES</text>
+  <text x="235" y="57" class="sm soft">#0033</text>
+  <rect x="290" y="46" width="13" height="13" fill="#5B8C4F"/><rect x="303" y="46" width="13" height="13" fill="#96491E"/><rect x="316" y="46" width="13" height="13" fill="#96491E"/><rect x="329" y="46" width="13" height="13" fill="#5B8C4F"/>
+  <text x="235" y="83" class="sm soft">#0512</text>
+  <rect x="290" y="72" width="13" height="13" fill="#C8B98A"/><rect x="303" y="72" width="13" height="13" fill="#C8B98A"/><rect x="316" y="72" width="13" height="13" fill="#96491E"/><rect x="329" y="72" width="13" height="13" fill="#5B8C4F"/>
+  <text x="235" y="109" class="sm rus med">#1712</text>
+  <rect x="290" y="98" width="13" height="13" fill="#2E6B3F"/><rect x="303" y="98" width="13" height="13" fill="#5B8C4F"/><rect x="316" y="98" width="13" height="13" fill="#96491E"/><rect x="329" y="98" width="13" height="13" fill="#C8B98A"/>
+  <rect x="229" y="92" width="118" height="25" rx="4" fill="none" stroke="var(--russet)" stroke-width="1.5"/>
+  <text x="235" y="135" class="sm soft">#2049</text>
+  <rect x="290" y="124" width="13" height="13" fill="#2E6B3F"/><rect x="303" y="124" width="13" height="13" fill="#2E6B3F"/><rect x="316" y="124" width="13" height="13" fill="#5B8C4F"/><rect x="329" y="124" width="13" height="13" fill="#2E6B3F"/>
+  <circle cx="296" cy="144" r="1.2" fill="var(--ink-soft)"/><circle cx="296" cy="149" r="1.2" fill="var(--ink-soft)"/><circle cx="296" cy="154" r="1.2" fill="var(--ink-soft)"/>
+  <text x="235" y="167" class="xs soft">32 KB — carries all color</text>
+  <!-- panel C: index grid -->
+  <text x="455" y="22" class="up soft">INDEX GRID — (W/4) × H</text>
+  <path class="hair" d="M455 46H611 M455 59H611 M455 72H611 M455 85H611 M455 98H611 M455 111H611 M455 124H611 M455 137H611 M455 150H611"/>
+  <path class="hair" d="M455 46V150 M507 46V150 M559 46V150 M611 46V150"/>
+  <g text-anchor="middle">
+    <text x="481" y="56" class="xs soft">0007</text><text x="533" y="56" class="xs soft">0033</text><text x="585" y="56" class="xs soft">0007</text>
+    <text x="481" y="69" class="xs soft">0033</text><text x="533" y="69" class="xs soft">0512</text><text x="585" y="69" class="xs soft">0033</text>
+    <text x="481" y="82" class="xs soft">0810</text><text x="533" y="82" class="xs soft">2049</text><text x="585" y="82" class="xs soft">0810</text>
+    <text x="481" y="95" class="xs soft">0810</text><text x="533" y="95" class="xs rus med">1712</text><text x="585" y="95" class="xs soft">0810</text>
+    <text x="481" y="108" class="xs soft">2049</text><text x="533" y="108" class="xs soft">2049</text><text x="585" y="108" class="xs soft">0512</text>
+    <text x="481" y="121" class="xs soft">0512</text><text x="533" y="121" class="xs soft">0033</text><text x="585" y="121" class="xs soft">0512</text>
+    <text x="481" y="134" class="xs soft">0007</text><text x="533" y="134" class="xs soft">3105</text><text x="585" y="134" class="xs soft">0007</text>
+    <text x="481" y="147" class="xs soft">0033</text><text x="533" y="147" class="xs soft">3105</text><text x="585" y="147" class="xs soft">0033</text>
+  </g>
+  <rect x="507" y="85" width="52" height="13" fill="none" stroke="var(--russet)" stroke-width="1.5"/>
+  <text x="455" y="167" class="xs soft">3 × 8 = 24 × 12-bit indices</text>
+  <!-- arrows -->
+  <path class="wire" d="M122 91 C160 91 186 104 224 104" marker-end="url(#aw-i)"/>
+  <text x="182" y="115" class="sm soft" text-anchor="middle">look up</text>
+  <path class="wire" d="M349 104 C390 104 420 96 450 93" marker-end="url(#aw-i)"/>
+  <text x="405" y="86" class="sm soft" text-anchor="middle">store 12-bit index</text>
+  <!-- size arithmetic -->
+  <text x="16" y="215" class="sm">one tile:  4 px × 16 bit  =</text>
+  <rect x="186" y="200" width="60" height="22" rx="4" class="node"/>
+  <text x="216" y="215" class="sm med" text-anchor="middle">64 bit</text>
+  <path class="wire" d="M250 211 H272" marker-end="url(#aw-i)"/>
+  <rect x="276" y="200" width="104" height="22" rx="4" fill="none" stroke="var(--green)" stroke-width="1.3"/>
+  <text x="328" y="215" class="sm med grn" text-anchor="middle">12-bit index</text>
+  <text x="392" y="215" class="xs soft">5.3× before any entropy coding</text>
+</svg>
+<figcaption>Vector quantization: each 4&times;1 run of pixels becomes one 12-bit dictionary index; empty cells are the transparent key. The dictionary holds the colors, the index grid holds the sprite.</figcaption>
+</figure>
+<p>So a &ldquo;character&rdquo; on disk is one dictionary, a few thousand index grids, and animation metadata. The grids are the bulk: RobinTown&rsquo;s hold 3.9 million 12-bit indices, 7.8&nbsp;MB as raw words.</p>
+
+<h2><span class="no">2</span> Why zstd stalls: the order-0 wall</h2>
+<p>The port&rsquo;s earlier schemas compress the serialized bank with zstd (level 22, long-range matching). That beats raw storage 2.5&times;: RobinTown&rsquo;s grids go from 7.8&nbsp;MB to 3.09&nbsp;MB. The question is how much more is available.</p>
+<p>Information theory gives a yardstick. Count how often each of the 4,096 index values occurs and ignore everything else: an ideal coder using those frequencies alone needs 6.14 bits per tile, the <strong>order-0 entropy</strong>, or <strong>3.01&nbsp;MB</strong>. zstd landed at 3.09&nbsp;MB, within 3% of that limit.</p>
+<p>An LZ compressor saves bytes by finding <em>exact byte repeats</em> earlier in the stream. The structure in the index grids is <strong>two-dimensional</strong>: the tile <em>above</em> a cell is the same image content one pixel row up, and predicts it well. In the row-by-row stream, vertically correlated tiles sit <code>width/4</code> symbols apart with unrelated tiles between them, so exact repeats long enough for LZ to use are rare.</p>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 292" role="img" aria-label="In the 2-D tile grid the cell above X strongly predicts it, but in the raster-order 1-D stream those two symbols sit width/4 = 8 positions apart with unrelated symbols between them, so LZ finds no exact repeat to copy.">
+  <!-- 2-D grid -->
+  <text x="72" y="22" class="up soft">THE TILE GRID — 2-D NEIGHBOURS</text>
+  <text x="66" y="84" class="xs soft" text-anchor="end">row r−1</text>
+  <text x="66" y="108" class="xs soft" text-anchor="end">row r</text>
+  <rect x="288" y="92" width="36" height="24" fill="var(--ink-soft)" fill-opacity="0.15"/>
+  <rect x="324" y="68" width="36" height="24" fill="var(--green)" fill-opacity="0.18" stroke="var(--green)" stroke-width="1.2"/>
+  <rect x="324" y="92" width="36" height="24" fill="none" stroke="var(--russet)" stroke-width="1.5"/>
+  <path class="hair" d="M72 44H360 M72 68H360 M72 92H360 M72 116H360 M72 140H360"/>
+  <path class="hair" d="M72 44V140 M108 44V140 M144 44V140 M180 44V140 M216 44V140 M252 44V140 M288 44V140 M324 44V140 M360 44V140"/>
+  <text x="306" y="108" class="soft med" text-anchor="middle">L</text>
+  <text x="342" y="84" class="grn med" text-anchor="middle">A</text>
+  <text x="342" y="108" class="rus med" text-anchor="middle">X</text>
+  <path class="wire dash" d="M76 56 H346" marker-end="url(#aw-i)"/>
+  <path class="wire dash" d="M76 128 H346" marker-end="url(#aw-i)"/>
+  <text x="72" y="156" class="xs soft">→ serialized row by row (raster order)</text>
+  <path class="wire-g" d="M362 80 C378 84 378 100 364 104" marker-end="url(#aw-g)"/>
+  <!-- annotation -->
+  <text x="400" y="56" class="up soft">WHAT CORRELATES</text>
+  <text x="400" y="76" class="sm">A is the same content,</text>
+  <text x="400" y="92" class="sm">one pixel row up:</text>
+  <text x="400" y="112" class="grn med">H(X | A) = 3.61 bits</text>
+  <text x="400" y="130" class="xs soft">no context: 6.14 bits</text>
+  <!-- 1-D stream -->
+  <text x="72" y="190" class="up soft">THE 1-D STREAM LZ SEES</text>
+  <text x="72" y="205" class="xs soft">row r−1</text>
+  <text x="348" y="205" class="xs soft">row r</text>
+  <rect x="344" y="210" width="238" height="22" fill="var(--ink-soft)" fill-opacity="0.07"/>
+  <rect x="310" y="210" width="34" height="22" fill="var(--green)" fill-opacity="0.18" stroke="var(--green)" stroke-width="1.2"/>
+  <rect x="582" y="210" width="34" height="22" fill="none" stroke="var(--russet)" stroke-width="1.5"/>
+  <path class="hair" d="M72 210H616 M72 232H616"/>
+  <path class="hair" d="M72 210V232 M106 210V232 M140 210V232 M174 210V232 M208 210V232 M242 210V232 M276 210V232 M310 210V232 M344 210V232 M378 210V232 M412 210V232 M446 210V232 M480 210V232 M514 210V232 M548 210V232 M582 210V232 M616 210V232"/>
+  <text x="327" y="225" class="grn med" text-anchor="middle">A</text>
+  <text x="599" y="225" class="rus med" text-anchor="middle">X</text>
+  <path d="M327 240 V246 H599 V240" fill="none" stroke="var(--ink-soft)" stroke-width="1"/>
+  <text x="463" y="264" class="sm med" text-anchor="middle">width/4 = 8 symbols apart in the stream</text>
+  <text x="463" y="280" class="xs soft" text-anchor="middle">the 7 symbols between differ every row — no exact repeat for LZ to copy</text>
+</svg>
+<figcaption>In 2-D, A predicts X at 3.61 bits; in the raster stream the pair is split by width/4 unrelated symbols, so LZ&rsquo;s exact-match window sees nothing.</figcaption>
+</figure>
+<figure>
+<div class="tablebox"><table>
+<tr><th>context used to predict a tile</th><th class="num">bits/tile</th><th class="num">ideal size</th></tr>
+<tr><td>none (order-0; where zstd sits)</td><td class="num">6.14</td><td class="num">3.01 MB</td></tr>
+<tr><td>left neighbor</td><td class="num">4.75</td><td class="num">2.32 MB</td></tr>
+<tr><td>above neighbor</td><td class="num">3.61</td><td class="num">1.77 MB</td></tr>
+<tr><td>above <em>and</em> left</td><td class="num">1.81</td><td class="num">0.88 MB</td></tr>
+</table></div>
+<figcaption>Conditional entropy of RobinTown&rsquo;s 3.9M tile indices. Everything below the first row is invisible to a byte-stream compressor.</figcaption>
+</figure>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 226" role="img" aria-label="Horizontal bar chart of ideal bits per tile by context: no context 6.14, left only 4.75, above only 3.61, above plus left 1.81. zstd-22 sits just past the order-0 bar at 3.09 megabytes; the shipped codec's achieved 4.07 bits per tile is marked as a vertical line cutting below the order-0 and left-only bounds.">
+  <path class="hair" d="M230 40V184 M300 40V184 M370 40V184 M440 40V184 M510 40V184 M580 40V184"/>
+  <line x1="160" y1="40" x2="160" y2="184" stroke="var(--ink-soft)" stroke-width="1.2"/>
+  <text x="150" y="62" class="sm" text-anchor="end">no context (order-0)</text>
+  <text x="150" y="96" class="sm" text-anchor="end">left only</text>
+  <text x="150" y="130" class="sm" text-anchor="end">above only</text>
+  <text x="150" y="164" class="sm" text-anchor="end">above + left</text>
+  <path d="M160 48 H586 Q590 48 590 52 V64 Q590 68 586 68 H160 Z" fill="var(--green)"/>
+  <path d="M160 82 H488 Q492 82 492 86 V98 Q492 102 488 102 H160 Z" fill="var(--green)"/>
+  <path d="M160 116 H409 Q413 116 413 120 V132 Q413 136 409 136 H160 Z" fill="var(--green)"/>
+  <path d="M160 150 H283 Q287 150 287 154 V166 Q287 170 283 170 H160 Z" fill="var(--green)"/>
+  <text x="583" y="62" class="sm med onbar" text-anchor="end">6.14 · 3.01 MB</text>
+  <text x="485" y="96" class="sm med onbar" text-anchor="end">4.75 · 2.32 MB</text>
+  <text x="406" y="130" class="sm med onbar" text-anchor="end">3.61 · 1.77 MB</text>
+  <text x="280" y="164" class="sm med onbar" text-anchor="end">1.81 · 0.88 MB</text>
+  <line x1="601" y1="40" x2="601" y2="72" class="wire"/>
+  <text x="601" y="34" class="sm soft" text-anchor="middle">zstd-22 · 3.09 MB</text>
+  <line x1="445" y1="40" x2="445" y2="184" stroke="var(--russet)" stroke-width="1.5"/>
+  <text x="445" y="34" class="sm rus med" text-anchor="middle">shipped codec · 4.07 · 1.99 MB</text>
+  <g class="xs soft" text-anchor="middle">
+    <text x="160" y="198">0</text><text x="230" y="198">1</text><text x="300" y="198">2</text><text x="370" y="198">3</text><text x="440" y="198">4</text><text x="510" y="198">5</text><text x="580" y="198">6</text>
+  </g>
+  <text x="160" y="216" class="xs soft">bits per tile · ideal size for RobinTown’s 3.9M tiles</text>
+</svg>
+<figcaption>The same ladder as a chart: zstd stops at the order-0 wall; the shipped codec cuts through it to 4.07 bits/tile, still short of the two-context bound.</figcaption>
+</figure>
+
+<h2><span class="no">3</span> The codec in one sentence</h2>
+<div class="callout"><p>For every tile, predict a probability distribution over the 4,096 possible indices from the tiles <strong>above and to the left</strong> (already decoded), feed that distribution to an arithmetic coder, and update the statistics. The decoder runs the <em>same</em> statistics in lockstep, so no model is ever transmitted.</p></div>
+
+<h3>3a &middot; Adaptive contexts (the PPM family)</h3>
+<p>A <strong>context</strong> is what we know when predicting a tile; here, the pair (above-tile, left-tile). For each context the codec keeps counts of which symbols followed it before. RobinTown develops ~500,000 distinct contexts, and most are extremely sharp: a context that has produced tile #1712 fifty times in a row predicts it at over 98%.</p>
+<p>Sharp contexts have a weakness: the first time a context meets a <em>new</em> symbol it has no count for it. PPM (Prediction by Partial Matching, the family behind RAR and 7-Zip&rsquo;s PPMd) solves this with an <strong>escape chain</strong>: every context reserves a little probability for &ldquo;none of my known symbols,&rdquo; and on escape falls back to a simpler context:</p>
+<pre><code>(above, left)  &rarr;  above  &rarr;  left  &rarr;  no context  &rarr;  uniform over 4096</code></pre>
+<p>Two refinements matter measurably:</p>
+<p><strong>Exclusion</strong> (&minus;3%): when <code>(above,&nbsp;left)</code> escapes, the fallback level must not waste probability on symbols the escape already ruled out; the codec subtracts them from the fallback&rsquo;s interval.</p>
+<p><strong>SEE, secondary escape estimation</strong> (&minus;1&hellip;4%): how much probability to reserve for escapes is itself <em>learned</em>, in buckets keyed by chain level, context size, context maturity, and how dominant the context&rsquo;s top symbol is. The fixed heuristics (PPMC&rsquo;s one count per distinct symbol, PPMD&rsquo;s half counts) both measured worse on this data.</p>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 348" role="img" aria-label="Four context levels cascade by escape arrows: the (above, left) pair, then above only, then left only, then order-0, ending at a uniform fallback over 4096 tiles. At the above-only level the two symbols known to the pair context are struck out, because the escape already ruled them out.">
+  <text x="16" y="20" class="up soft">PPM ESCAPE CHAIN — SHARPEST CONTEXT FIRST</text>
+  <rect x="16" y="36" width="280" height="46" rx="6" class="node"/>
+  <text x="28" y="54" class="med"><tspan class="soft">L1 </tspan>(above #1712 , left #0033)</text>
+  <text x="28" y="72" class="sm soft">#1712 ×50 · #0810 ×3 · escape</text>
+  <path class="wire-g" d="M298 59 H336" marker-end="url(#aw-g)"/>
+  <text x="344" y="63" class="sm grn med">hit → code it · P(#1712) ≈ 0.93</text>
+  <path class="wire" d="M52 82 C52 96 100 90 100 104" marker-end="url(#aw-i)"/>
+  <text x="112" y="98" class="sm soft">escape — p(esc) learned (SEE)</text>
+  <rect x="64" y="104" width="280" height="46" rx="6" class="node"/>
+  <text x="76" y="122" class="med"><tspan class="soft">L2 </tspan>(above #1712)</text>
+  <text x="76" y="140" class="sm soft">#1712 ×41</text>
+  <line x1="74" y1="137" x2="132" y2="137" stroke="var(--russet)" stroke-width="1.2"/>
+  <text x="135" y="140" class="sm soft">·</text>
+  <text x="146" y="140" class="sm soft">#0810 ×9</text>
+  <line x1="144" y1="137" x2="196" y2="137" stroke="var(--russet)" stroke-width="1.2"/>
+  <text x="204" y="140" class="sm soft">· #2049 ×12 · escape</text>
+  <path class="wire-r dash" d="M196 132 C260 114 330 114 390 124" marker-end="url(#aw-r)"/>
+  <text x="398" y="122" class="sm rus med">exclusion (−3%)</text>
+  <text x="398" y="138" class="sm soft">the L1 escape already ruled</text>
+  <text x="398" y="154" class="sm soft">these out — L2 removes them</text>
+  <path class="wire" d="M100 150 C100 164 148 158 148 172" marker-end="url(#aw-i)"/>
+  <text x="160" y="166" class="sm soft">escape</text>
+  <rect x="112" y="172" width="280" height="46" rx="6" class="node"/>
+  <text x="124" y="190" class="med"><tspan class="soft">L3 </tspan>(left #0033)</text>
+  <text x="124" y="208" class="sm soft">#0033 ×18 · #0512 ×5 · escape</text>
+  <path class="wire" d="M148 218 C148 232 196 226 196 240" marker-end="url(#aw-i)"/>
+  <text x="208" y="234" class="sm soft">escape</text>
+  <rect x="160" y="240" width="280" height="46" rx="6" class="node"/>
+  <text x="172" y="258" class="med"><tspan class="soft">L4 </tspan>order-0 (no context)</text>
+  <text x="172" y="276" class="sm soft">counts over every tile seen · escape</text>
+  <path class="wire" d="M196 286 C196 300 244 294 244 308" marker-end="url(#aw-i)"/>
+  <text x="256" y="302" class="sm soft">escape</text>
+  <rect x="208" y="308" width="190" height="26" rx="6" class="node dash"/>
+  <text x="220" y="325" class="sm soft">uniform — 1 / 4096</text>
+</svg>
+<figcaption>One prediction: try the sharpest context; on a miss pay a learned escape and fall back — excluding the symbols the escape has already eliminated.</figcaption>
+</figure>
+<p>Adaptation is slow: increment 1, halve counts on saturation. The streams are stationary within a character, and a faster increment measured 4&ndash;9% worse.</p>
+
+<h3>3b &middot; Arithmetic (range) coding</h3>
+<p>Given &ldquo;the model says this tile has probability <em>p</em>,&rdquo; an arithmetic coder emits exactly &minus;log&#8322;(<em>p</em>) bits, so a sharp prediction costs a fraction of a bit. Ours is the LZMA-style range coder: a 32-bit interval repeatedly narrows in proportion to symbol probabilities and renormalizes a byte at a time. Coder overhead is a few bytes per million symbols; the compression ratio is determined by the model.</p>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 300" role="img" aria-label="The interval from zero to one is subdivided in proportion to the model's probabilities. Coding the 93-percent-likely tile 1712 keeps most of the interval, costing 0.10 bits; coding a 3-percent surprise collapses it, costing 5.1 bits. After both, the interval ends share leading binary digits, and those settled bits are streamed out.">
+  <text x="16" y="20" class="up soft">RANGE CODING — THE INTERVAL IS THE MESSAGE</text>
+  <!-- bar 1 -->
+  <text x="82" y="76" class="xs soft" text-anchor="end">[0, 1)</text>
+  <rect x="90" y="60" width="520" height="24" fill="none" stroke="var(--ink-soft)" stroke-width="1.1"/>
+  <line x1="100" y1="60" x2="100" y2="84" class="hair"/>
+  <rect x="116" y="60" width="484" height="24" fill="var(--green)" fill-opacity="0.18" stroke="var(--green)" stroke-width="1.2"/>
+  <text x="358" y="76" class="grn med" text-anchor="middle">#1712 · p = 0.93</text>
+  <path class="hair" d="M101 86 L99 96"/>
+  <text x="99" y="107" class="xs soft" text-anchor="end">esc · rare tiles</text>
+  <path class="wire dash" d="M116 84 L90 150"/>
+  <path class="wire dash" d="M600 84 L610 150"/>
+  <text x="350" y="122" class="sm" text-anchor="middle">code #1712 → keep 0.93 of the interval · <tspan class="grn med">−log₂ 0.93 = 0.10 bits</tspan></text>
+  <!-- bar 2 -->
+  <text x="82" y="166" class="xs soft" text-anchor="end">[0.050, 0.980)</text>
+  <rect x="90" y="150" width="520" height="24" fill="none" stroke="var(--ink-soft)" stroke-width="1.1"/>
+  <rect x="116" y="150" width="484" height="24" fill="var(--green)" fill-opacity="0.08"/>
+  <line x1="600" y1="150" x2="600" y2="174" class="hair"/>
+  <rect x="100" y="150" width="16" height="24" fill="var(--russet)" fill-opacity="0.28" stroke="var(--russet)" stroke-width="1.2"/>
+  <text x="100" y="142" class="sm rus med">#0810 · p = 0.03</text>
+  <text x="358" y="166" class="sm soft" text-anchor="middle">#1712 · 0.93 — not chosen this time</text>
+  <path class="wire dash" d="M100 174 L90 240"/>
+  <path class="wire dash" d="M116 174 L610 240"/>
+  <text x="110" y="200" class="sm">code #0810 — a surprise</text>
+  <text x="110" y="216" class="sm rus med">−log₂ 0.03 = 5.1 bits</text>
+  <!-- bar 3 -->
+  <text x="82" y="256" class="xs soft" text-anchor="end">[0.069, 0.097)</text>
+  <rect x="90" y="240" width="520" height="24" fill="none" stroke="var(--ink-soft)" stroke-width="1.1"/>
+  <path class="hair" d="M100 240V264 M116 240V264 M600 240V264"/>
+  <text x="358" y="256" class="xs soft" text-anchor="middle">subdivide again — the model has already updated its counts</text>
+  <text x="90" y="288" class="sm"><tspan class="soft">both ends start 0.0001…₂ → </tspan><tspan class="med">4 bits settled, streamed out</tspan><tspan class="soft"> · information so far 0.10 + 5.1 ≈ 5.2 bits</tspan></text>
+</svg>
+<figcaption>Each coded symbol scales the interval by its probability: sharp predictions barely narrow it, surprises collapse it, and settled leading bits leave a byte at a time.</figcaption>
+</figure>
+<p>rANS was considered and rejected. It emits symbols last-in-first-out, which suits <em>static</em> probability tables but not <em>adaptive</em> models: the decoder must replay model updates in encoder order, and that is the order rANS does not provide. A FIFO range coder has no such conflict.</p>
+
+<h3>3c &middot; The decoder is the encoder</h3>
+<p>There is no model in the file. Encoder and decoder run identical code over identical state: both start empty, update counts after every symbol, halve at the same thresholds, consult SEE identically. Every model improvement costs zero format bytes. It also means every model change changes the bitstream, so the chunk schema version pins the model.</p>
+<p>Result for RobinTown: <strong>1.99&nbsp;MB, 4.07 bits/tile, &minus;35% vs zstd-22</strong>. This is still above the 1.81-bit two-context estimate; part of that gap is overfit in the estimate and part is real headroom.</p>
+
+<h2><span class="no">4</span> Palette families: coding characters against each other</h2>
+<p>The game ships nine <em>families</em> of palette-swap soldiers (Archer00&ndash;05, Knight01&ndash;03, Guard&nbsp;A/B, &hellip;), 48 of 117 characters. Measurement showed they are <strong>not palette swaps at pixel level</strong>: the variants were re-rendered from re-textured 3D models, so lighting and dithering diverge in ~70% of opaque pixels, and no per-pixel color mapping exists. zstd finds no cross-variant byte repeats, and lossless video codecs fed the variants as frames lose by 15&times;.</p>
+<p>But at the <strong>tile level</strong> the mapping is nearly functional: where Knight01 has tile #a, Knight02 has one of a small, consistent set of tiles. Conditional entropy: H(Knight02-tile&nbsp;|&nbsp;Knight01-tile) = 0.96 bits, versus ~5.7 standalone. So variants are coded with the base character&rsquo;s aligned tile as the primary context:</p>
+<pre><code>(<span class="hl">base-tile</span>, above)  &rarr;  <span class="hl">base-tile</span>  &rarr;  above  &rarr;  order-0  &rarr;  uniform</code></pre>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 278" role="img" aria-label="Two aligned sprite grids: the already-decoded base Knight01 and the variant Knight02. The base's tile at the same row and column, plus the variant's own above neighbour, feed the prediction of the variant's next tile — 0.96 bits of surprise versus about 5.7 standalone.">
+  <text x="60" y="40" class="up soft">KNIGHT01 — BASE, ALREADY DECODED</text>
+  <text x="420" y="40" class="up soft">KNIGHT02 — VARIANT</text>
+  <!-- base body -->
+  <g fill="var(--green)" fill-opacity="0.12">
+    <rect x="120" y="64" width="60" height="22"/><rect x="90" y="86" width="120" height="22"/><rect x="90" y="108" width="120" height="22"/><rect x="90" y="130" width="120" height="22"/><rect x="120" y="152" width="60" height="22"/><rect x="120" y="174" width="60" height="22"/>
+  </g>
+  <!-- variant body: same geometry, different palette -->
+  <g fill="var(--russet)" fill-opacity="0.12">
+    <rect x="480" y="64" width="60" height="22"/><rect x="450" y="86" width="120" height="22"/><rect x="450" y="108" width="120" height="22"/><rect x="450" y="130" width="120" height="22"/><rect x="480" y="152" width="60" height="22"/><rect x="480" y="174" width="60" height="22"/>
+  </g>
+  <path class="hair" d="M60 64H240 M60 86H240 M60 108H240 M60 130H240 M60 152H240 M60 174H240 M60 196H240"/>
+  <path class="hair" d="M60 64V196 M90 64V196 M120 64V196 M150 64V196 M180 64V196 M210 64V196 M240 64V196"/>
+  <path class="hair" d="M420 64H600 M420 86H600 M420 108H600 M420 130H600 M420 152H600 M420 174H600 M420 196H600"/>
+  <path class="hair" d="M420 64V196 M450 64V196 M480 64V196 M510 64V196 M540 64V196 M570 64V196 M600 64V196"/>
+  <!-- alignment -->
+  <path class="hair dash" d="M246 64H414 M246 196H414"/>
+  <!-- context cells -->
+  <rect x="180" y="130" width="30" height="22" fill="var(--green)" fill-opacity="0.3" stroke="var(--green)" stroke-width="1.3"/>
+  <text x="195" y="145" class="grn med" text-anchor="middle">b</text>
+  <rect x="540" y="108" width="30" height="22" fill="var(--ink-soft)" fill-opacity="0.2" stroke="var(--ink-soft)" stroke-width="1.1"/>
+  <text x="555" y="123" class="soft med" text-anchor="middle">a</text>
+  <rect x="540" y="130" width="30" height="22" fill="var(--bg)" stroke="var(--russet)" stroke-width="1.6"/>
+  <text x="555" y="145" class="rus med" text-anchor="middle">?</text>
+  <!-- arrows -->
+  <path class="wire-g" d="M212 141 H536" marker-end="url(#aw-g)"/>
+  <text x="330" y="120" class="sm grn med" text-anchor="middle">primary context</text>
+  <text x="330" y="134" class="xs grn" text-anchor="middle">base tile, same (row, col)</text>
+  <path class="wire" d="M572 119 C590 123 590 141 574 143" marker-end="url(#aw-i)"/>
+  <text x="606" y="135" class="xs soft">above</text>
+  <text x="330" y="214" class="xs soft" text-anchor="middle">frame k ↔ frame k — dims verified per sprite</text>
+  <text x="330" y="244" class="sm med" text-anchor="middle">H(variant tile | base tile) = 0.96 bits<tspan class="soft"> — vs ~5.7 standalone</tspan></text>
+  <text x="330" y="264" class="xs soft" text-anchor="middle">(base, above) → base → above → order-0 → uniform</text>
+</svg>
+<figcaption>The variant is a separate render, but its tile at (row, col) is nearly a function of the base&rsquo;s tile there: 0.96 bits each on average.</figcaption>
+</figure>
+<p>Guard&nbsp;A01 drops from 2.34&nbsp;MB under zstd to <strong>459&nbsp;KB</strong>; the 39 variant characters compress 3.9&times; compared to coding them independently.</p>
+<p>Positional alignment makes this safe: family metadata is byte-identical apart from frame ids, so frame <em>k</em> of a variant pairs with frame <em>k</em> of the base, dimensions verified sprite by sprite. Mismatched sprites are coded standalone.</p>
+<p>Which member should be the base? Not the alphabetically first: a full pairwise matrix showed the best &ldquo;hub&rdquo; saves 4% over name order, so the converter picks it per family with a sampled conditional-entropy proxy.</p>
+
+<h2><span class="no">5</span> Shipping it: schema v9</h2>
+<p>The mission-chunked delivery format (schema v8: content-addressed chunks fetched per mission) gains, per character chunk:</p>
+<p>Sprite rows (id, dims, dictionary index) stay as before, but the VQ payloads move into <strong>one codec blob per chunk</strong>, grids concatenated in bank-id order (other orderings measured no better).</p>
+<p>Variant chunks record the base&rsquo;s name and per-sprite base ids, plus a <strong>dependency edge</strong> so the base chunk is always fetched and decoded first. A variant chunk whose base is missing fails with an error.</p>
+<figure class="diagram">
+<svg class="dg" viewBox="0 0 700 330" role="img" aria-label="Two mission core chunks reference variant, terrain, and audio chunks by content hash; each variant chunk carries a dependency edge to the Knight01 base chunk, which is fetched and decoded first. The terrain chunk is shared by both missions.">
+  <text x="16" y="20" class="up soft">SCHEMA V9 — CONTENT-ADDRESSED CHUNKS AND DEPENDENCY EDGES</text>
+  <rect x="16" y="48" width="150" height="44" rx="6" class="node"/>
+  <text x="28" y="66" class="med">mission 04 core</text>
+  <text x="28" y="82" class="xs soft">chunk refs · hash 5b12…</text>
+  <rect x="16" y="190" width="150" height="44" rx="6" class="node"/>
+  <text x="28" y="208" class="med">mission 07 core</text>
+  <text x="28" y="224" class="xs soft">chunk refs · hash e803…</text>
+  <rect x="250" y="32" width="150" height="44" rx="6" class="node"/>
+  <text x="262" y="50" class="med">Knight02 · variant</text>
+  <text x="262" y="66" class="xs soft">hash 2c70… · codec blob</text>
+  <rect x="250" y="96" width="150" height="44" rx="6" class="node"/>
+  <text x="262" y="114" class="med">Knight03 · variant</text>
+  <text x="262" y="130" class="xs soft">hash 84d9… · codec blob</text>
+  <rect x="490" y="58" width="180" height="48" rx="6" fill="var(--card)" stroke="var(--green)" stroke-width="1.3"/>
+  <text x="502" y="76" class="med">Knight01 · base</text>
+  <text x="502" y="94" class="xs soft">hash 9f31… · decodes first</text>
+  <rect x="250" y="170" width="150" height="44" rx="6" class="node"/>
+  <text x="262" y="188" class="med">terrain / props</text>
+  <text x="262" y="204" class="xs soft">hash 77aa… · shared</text>
+  <rect x="250" y="238" width="150" height="44" rx="6" class="node"/>
+  <text x="262" y="256" class="med">audio bank</text>
+  <text x="262" y="272" class="xs soft">hash c1d4…</text>
+  <path class="wire-g" d="M168 58 L246 52" marker-end="url(#aw-g)"/>
+  <path class="wire-g" d="M168 72 L246 114" marker-end="url(#aw-g)"/>
+  <path class="wire-g" d="M168 86 C200 130 216 158 246 180" marker-end="url(#aw-g)"/>
+  <path class="wire-g" d="M168 204 L246 196" marker-end="url(#aw-g)"/>
+  <path class="wire-g" d="M168 220 L246 254" marker-end="url(#aw-g)"/>
+  <path class="wire-r" d="M402 52 L486 74" marker-end="url(#aw-r)"/>
+  <path class="wire-r" d="M402 116 L486 92" marker-end="url(#aw-r)"/>
+  <path class="wire-g" d="M250 290 H282" marker-end="url(#aw-g)"/>
+  <text x="294" y="294" class="xs soft">mission manifest references chunk by content hash</text>
+  <path class="wire-r" d="M250 310 H282" marker-end="url(#aw-r)"/>
+  <text x="294" y="314" class="xs soft">variant depends on base — base decoded first; missing base = hard error</text>
+</svg>
+<figcaption>Delivery graph: missions pull chunks by content hash (shared chunks fetched once); a variant&rsquo;s dependency edge guarantees its base is present and decoded before it.</figcaption>
+</figure>
+<p>Dictionaries stay in the boot manifest, now <strong>frequency-ranked</strong> (most-used tile = index 0). The decoder never notices the permutation; it saves 3&ndash;5% on data still compressed with zstd.</p>
+<p>Conversion output is verified by decoding every shipped sprite back to pixels and comparing with the original bank: byte-identical across all 65,058 demo sprites and 146.6 million pixels, and across all 402,303 fullgame sprites (1.10 billion pixels).</p>
+<figure>
+<div class="tablebox"><table>
+<tr><th>corpus</th><th class="num">before</th><th class="num">after</th><th class="num">ratio</th></tr>
+<tr><td>fullgame characters (under the port&rsquo;s zstd pipeline)</td><td class="num">161.2 MB</td><td class="num">69.0 MB</td><td class="num">2.34&times;</td></tr>
+<tr><td>fullgame RHS chunk bucket, converted &amp; pixel-verified end to end</td><td class="num">193.7 MB</td><td class="num">97.8 MB</td><td class="num">1.98&times;</td></tr>
+<tr><td>demo web payload, whole <code>Data/</code></td><td class="num">51.2 MB</td><td class="num">42.4 MB</td><td class="num">1.21&times;</td></tr>
+</table></div>
+<figcaption>Lossless throughout; the demo carries no complete families, so its number is pure context modeling.</figcaption>
+</figure>
+
+<h2><span class="no">6</span> What didn&rsquo;t work</h2>
+<div class="tablebox"><table class="lesson">
+<tr><th>idea</th><th>result</th><th>lesson</th></tr>
+<tr><td>Image/video codecs (JXL, WebP, lossless AV1) over any layout, incl. direction-interleaved atlases</td><td>3&ndash;17&times; worse</td><td>the similarity between frames, directions and variants is not pixel-exact; motion compensation cannot use re-rendered content; tile-symbol statistics can</td></tr>
+<tr><td>Byte-plane splitting, numeric index deltas</td><td>up to +31%</td><td>tile ids are <em>names</em>, not quantities; arithmetic on them destroys the exact-match structure both LZ and CM rely on</td></tr>
+<tr><td>LZMA-style match layer (&ldquo;same as above?&rdquo; bit + run contexts)</td><td>+3&hellip;12%</td><td>a strong context model already prices the copy case, with more specificity than any flat match model; bolting LZ onto a CM double-charges</td></tr>
+<tr><td>PAQ-style bitwise context mixing</td><td>+1&hellip;7%</td><td>hashed, binarized models with a logistic mixer could not beat exact-keyed symbol contexts plus exclusion at this alphabet size</td></tr>
+<tr><td>Order-3 contexts, faster adaptation, PPMD escapes</td><td>&plusmn;0 to +9%</td><td>more specific &ne; better once escape costs and stationarity are priced in; measure every knob</td></tr>
+<tr><td>RDO tile re-assignment (lossy)</td><td>&minus;0.2% at best</td><td>the original VQ dictionaries contain no duplicate or near-duplicate tiles to exploit</td></tr>
+<tr><td>Shared family dictionaries / unified tile ids</td><td>+0.1&hellip;0.3%</td><td>family dictionaries are pixel-disjoint, and the PPM is invariant to id permutations, so relabeling changes nothing</td></tr>
+<tr><td>Mirrored-direction prediction</td><td>~1 bit/tile weaker than <code>above</code></td><td>pre-rendered lighting is directional; bilateral symmetry exists in the geometry, not the pixels</td></tr>
+<tr><td>Pixel-domain CM for the RLE bucket</td><td>loses to xz by 7%</td><td>animation overlays repeat whole regions across frames, which is LZ territory; the tool has to match the redundancy type</td></tr>
+</table></div>
+<div class="callout"><p>In summary, the data holds three kinds of redundancy: 2-D statistical (tile grids &rarr; context modeling), cross-stream functional (families &rarr; conditional coding), and long-range exact (RLE animations &rarr; LZ). Each bucket gets the coder that matches its redundancy; no single tool wins everywhere.</p></div>
+<h3>Why we beat codecs that also model 2-D context</h3>
+<p>JXL and AV1 also model 2-D context, and they lose 3&ndash;17&times; here. The advantage is inherited from the 2002 VQ pass, which performed the lossy step once at authoring time. That quantization turned a dithered pixel field into a <strong>discrete symbol process</strong>: 4,096 ids on a lattice. Everything we ship is lossless with respect to those ids (the original renders no longer exist; the quantized bank is what the game displays). An image codec has to reproduce the dither pixel-exactly, and dither is engineered noise. An id predictor works on a small alphabet where a context has either seen the exact symbol or it has not.</p>
+<p>Three more factors add to it. Tile ids are <em>categorical</em>, so the numeric prediction image codecs use (gradients, deltas) does not apply. Our statistics persist across a character&rsquo;s thousands of small frames, with no per-image headers and no shipped model. And cross-variant prediction needs a second character as context, which no standard codec interface accepts.</p>
+
+<h2><span class="no">7</span> Remaining headroom</h2>
+<p>The standalone gap to the (optimistic) two-context estimate is about 2&times;. <em>Sibling-context</em> coding, conditioning a variant on two already-decoded family members, measured &minus;22&ndash;25% on third-and-later members and is implemented in the codec; converter wiring is pending. It costs no shipped bytes because the decoder already holds the predecessors via the dependency edges. Decode speed (~1&ndash;2M tiles/s single-threaded) is the open engineering item before wasm shipping; chunks are independent, so parallel decode at install is the practical fix. For the animation/patch bucket an xz entropy stage saves 12% vs zstd; custom modeling measured worse there.</p>
+
+<h2><span class="no">8</span> Pointers</h2>
+<p><code>crates/robin_assets/src/sprite_codec.rs</code>: the codec (range coder, PPM chain, SEE, exclusion, cross-variant support). About a thousand lines, no dependencies beyond a hasher.</p>
+<p><code>crates/robin_rs/examples/sprite_compression_probe.rs</code>: every measurement mode used in the campaign (<code>--stats</code>, <code>--entropy*</code>, <code>--code*</code>, <code>--corpus</code>, <code>--verify-shipping</code>, &hellip;).</p>
+<p><code>docs/COMPRESSION.md</code>: the dated experiment log with all numbers. This page lives in the repo as <code>docs/SPRITE_COMPRESSION_EXPLAINED.html</code>.</p>
+</div>

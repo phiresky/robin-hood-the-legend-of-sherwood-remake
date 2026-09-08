@@ -1,0 +1,8 @@
+[Unit]
+Description=Robin Hood verified leaderboard services
+Requires=robin-highscores-api.service
+Wants=robin-highscores-worker.service
+After=robin-highscores-api.service
+
+[Install]
+WantedBy=default.target

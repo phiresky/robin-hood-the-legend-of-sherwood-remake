@@ -1,0 +1,291 @@
+name: Native release
+
+# Releases only — tags, the nightly schedule, and manual dispatch. PRs are
+# deliberately NOT built here: rust-quality covers them, and packaging both
+# platforms with Velopack on every PR push is expensive.
+on:
+  push:
+    tags: ["v[0-9]*"]
+  schedule:
+    # GitHub schedules are UTC. The change-detection job prevents unchanged
+    # commits from rebuilding or replacing the rolling nightly release.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional SemVer package version (defaults to a nightly prerelease)
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: native-release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTC_WRAPPER: ""
+  # The checked-in native Linux linker is the Wild driver script, a local
+  # development tool; use the runner's default toolchain in CI.
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
+  # NOTE: no RUSTFLAGS anywhere in this workflow. The RUSTFLAGS env var
+  # replaces every target.* rustflags source (no merging), so it would
+  # silently discard both the shared cfg-based `target-cpu=x86-64-v3`
+  # baseline from .cargo/config.toml and the Windows cross-link flags
+  # written by the MinGW step below. CARGO_TARGET_*_RUSTFLAGS, by contrast,
+  # merges with the config entries, so the baseline reaches both jobs.
+  VPK_VERSION: 1.2.0
+
+jobs:
+  changes:
+    name: Check for nightly changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - name: Compare with latest published nightly
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" != schedule ]]; then
+            echo "should_build=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          previous_sha="$(
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/repos/${GITHUB_REPOSITORY}/releases?per_page=20" \
+              --jq '[.[] | select(.prerelease and (.draft == false) and (.tag_name | startswith("nightly-"))) | .target_commitish][0] // ""'
+          )"
+          if [[ -n "${previous_sha}" && "${previous_sha}" == "${GITHUB_SHA}" ]]; then
+            echo "No repository changes since the published nightly (${GITHUB_SHA})."
+            echo "should_build=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Nightly build required: ${previous_sha:-<none>} -> ${GITHUB_SHA}."
+            echo "should_build=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+  package:
+    name: ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The Windows binary is cross-compiled from Linux with the
+          # windows-gnu toolchain (MinGW), matching local release builds.
+          # Keep pack_executable equal to the friendly Velopack title: the
+          # portable bundle names its root stub after the title, while updates
+          # maintain the stub named by mainExe. Different names leave both
+          # launchers behind after the first portable update.
+          - name: Windows x86-64
+            target: x86_64-pc-windows-gnu
+            runtime: win-x64
+            executable: robin.exe
+            pack_executable: Robin Hood - The Legend of Sherwood.exe
+            artifact: robin-windows-x86_64
+          - name: Linux x86-64
+            target: x86_64-unknown-linux-gnu
+            runtime: linux-x64
+            executable: robin
+            pack_executable: robin
+            artifact: robin-linux-x86_64
+    # Deliberately the oldest supported LTS image, not ubuntu-latest: the
+    # Linux binary links the runner's glibc, so building on the older image
+    # keeps the shipped tarball/AppImage running on older distros.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        if: matrix.runtime == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libasound2-dev libdbus-1-dev libudev-dev libwayland-dev libxkbcommon-dev pkg-config
+
+      - name: Install MinGW cross toolchain
+        if: matrix.runtime == 'win-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-mingw-w64-x86-64 zip
+          rustup target add x86_64-pc-windows-gnu
+          # The posix-threads MinGW variant provides the standard threading
+          # primitives the vendored native dependencies (Luau) may use.
+          #
+          # These flags merge with the checked-in .cargo/config.toml
+          # sources rather than replacing them (CARGO_TARGET_*_RUSTFLAGS
+          # joins the target.* config entries, unlike a real RUSTFLAGS env
+          # var, which must stay unset): the cfg-based `target-cpu=
+          # x86-64-v3` baseline and the windows-gnu section's
+          # -static-libstdc++/-static-libgcc driver args all still apply,
+          # so only the runner-specific bits live here. Ubuntu keeps
+          # mingw's libstdc++.a in a gcc-versioned dir that rustc does not
+          # search by default, so `-L native=` points at it (mlua-sys links
+          # `static=stdc++` for Luau); winpthread (pulled in by the posix
+          # variant) is forced static as well so the exe has no MinGW
+          # runtime DLL dependencies.
+          libfile="$(x86_64-w64-mingw32-g++-posix -print-file-name=libstdc++.a)"
+          if [[ ! -f "${libfile}" ]]; then
+            libfile="$(find /usr/lib/gcc /usr/x86_64-w64-mingw32 -name libstdc++.a 2>/dev/null | head -1)"
+          fi
+          if [[ ! -f "${libfile}" ]]; then
+            echo "libstdc++.a not found in the MinGW toolchain" >&2
+            exit 1
+          fi
+          libdir="$(dirname "${libfile}")"
+          echo "Static MinGW libstdc++: ${libfile}"
+          {
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc-posix"
+            echo "CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc-posix"
+            echo "CXX_x86_64_pc_windows_gnu=x86_64-w64-mingw32-g++-posix"
+            echo "CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS=-L native=${libdir} -C link-arg=-Wl,-Bstatic -C link-arg=-lwinpthread -C link-arg=-Wl,-Bdynamic"
+          } >> "${GITHUB_ENV}"
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.artifact }}
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install pinned Velopack CLI
+        shell: bash
+        run: |
+          dotnet tool install --global vpk --version "${VPK_VERSION}"
+          vpk --help
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ -n "${REQUESTED_VERSION}" ]]; then
+            version="${REQUESTED_VERSION}"
+          elif [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          elif [[ "${GITHUB_EVENT_NAME}" == schedule || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
+            base_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "robin_rs") | .version')"
+            version="${base_version}-nightly.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+          else
+            base_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "robin_rs") | .version')"
+            version="${base_version}-ci.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+          fi
+
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid SemVer package version: ${version}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build release binary
+        shell: bash
+        env:
+          ROBIN_PACKAGE_VERSION: ${{ steps.version.outputs.version }}
+          ROBIN_REQUIRE_BUILD_IDENTITY: "1"
+        run: |
+          # TODO: Bundle FFmpeg DLLs on Windows, then switch `release` to
+          # `full` so packaged builds also include video and RetroArch presets.
+          cargo build --locked --release --no-default-features --features release -p robin_rs --bin robin --target ${{ matrix.target }}
+
+      - name: Stage package input
+        shell: bash
+        run: |
+          mkdir -p target/package-input target/release-assets
+          cp \
+            "target/${{ matrix.target }}/release/${{ matrix.executable }}" \
+            "target/package-input/${{ matrix.pack_executable }}"
+          cp README.md target/package-input/
+          # Engine-shipped overlay datadirs, resolved relative to the
+          # executable at runtime: the core overlay (bitmap fonts, UI
+          # icons) is required; mods/ (e.g. hackable levels) ships when
+          # the checkout carries any.
+          mkdir -p target/package-input/assets
+          cp -R assets/core-datadir target/package-input/assets/
+          if [ -d mods ]; then
+            cp -R mods target/package-input/
+          fi
+
+      - name: Create Windows standalone binary
+        if: matrix.runtime == 'win-x64'
+        run: |
+          (cd target/package-input && zip -r ../release-assets/robin-windows-x86_64.zip .)
+
+      - name: Create Linux standalone binary
+        if: matrix.runtime == 'linux-x64'
+        run: tar -C target/package-input -czf target/release-assets/robin-linux-x86_64.tar.gz .
+
+      - name: Build Windows Velopack installers
+        if: matrix.runtime == 'win-x64'
+        run: |
+          # TODO: Add Authenticode signing when repository signing credentials
+          # are provisioned; unsigned public installers trigger OS warnings.
+          # No --msi: WiX-based MSI creation requires a Windows runner; the
+          # cross-built package ships the Setup.exe installer only.
+          # `[win]` is vpk's OS directive: without it vpk packages for the
+          # host OS (Linux) and refuses the win-x64 runtime. Quoted because
+          # the brackets are a bash glob.
+          vpk '[win]' pack \
+            --packId io.github.phiresky.robinhood \
+            --packVersion "${{ steps.version.outputs.version }}" \
+            --packDir target/package-input \
+            --mainExe "${{ matrix.pack_executable }}" \
+            --packTitle "Robin Hood - The Legend of Sherwood" \
+            --runtime win-x64 \
+            --outputDir target/velopack
+          cp target/velopack/* target/release-assets/
+
+      - name: Build Linux Velopack AppImage
+        if: matrix.runtime == 'linux-x64'
+        run: |
+          vpk pack \
+            --packId io.github.phiresky.robinhood \
+            --packVersion "${{ steps.version.outputs.version }}" \
+            --packDir target/package-input \
+            --mainExe "${{ matrix.pack_executable }}" \
+            --packTitle "Robin Hood - The Legend of Sherwood" \
+            --runtime linux-x64 \
+            --outputDir target/velopack
+          cp target/velopack/* target/release-assets/
+
+      - name: List release assets
+        shell: bash
+        run: find target/release-assets -maxdepth 1 -type f -print
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v5
+        with:
+          path: release-assets
+
+      - name: Verify and promote recoverable release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/release/publish_native_release.py release-assets

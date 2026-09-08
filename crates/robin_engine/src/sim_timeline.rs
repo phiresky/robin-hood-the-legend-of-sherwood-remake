@@ -1,0 +1,969 @@
+//! Shared simulation timeline checkpoint, retention, restore, and replay helpers.
+//!
+//! Rewind, rollback checking, and multiplayer correction all need the
+//! same primitive: start from a pre-tick snapshot, apply the recorded
+//! authoritative inputs for each frame, and run deterministic engine ticks until a
+//! target pre-tick frame is reconstructed. The policies below make the
+//! places where those callers intentionally differ explicit.
+//!
+//! The original game advances one simulation tick per eligible live update
+//! and restores whole savegames. The
+//! original has no in-memory replay, rollback, or rewind timeline; those
+//! policies are Rust-port infrastructure around the original tick boundary.
+
+use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
+use web_time::Instant;
+
+use crate::engine::{Engine, LevelAssets, SimulationFrameOutput};
+use crate::player_command::PlayerInput;
+
+/// Dense recent rollback snapshots retained for multiplayer correction.
+/// Two seconds at the fixed 25 Hz sim rate.
+pub const RECENT_TIMELINE_HISTORY_FRAMES: usize = 50;
+
+/// Decide which pre-tick frames are eligible to become checkpoints.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CheckpointPolicy {
+    EveryFrame,
+    EveryNthFrame { interval: u32 },
+}
+
+impl CheckpointPolicy {
+    pub fn should_checkpoint(self, frame: u32) -> bool {
+        match self {
+            Self::EveryFrame => true,
+            Self::EveryNthFrame { interval } => {
+                assert!(
+                    interval > 0,
+                    "timeline checkpoint interval must be non-zero"
+                );
+                frame.is_multiple_of(interval)
+            }
+        }
+    }
+}
+
+/// Decide which eligible checkpoints remain in memory.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum RetentionPolicy {
+    Latest { capacity: usize },
+    Exponential { interval: u32, growth: f32 },
+}
+
+impl RetentionPolicy {
+    fn validate(self) {
+        match self {
+            Self::Latest { capacity } => {
+                assert!(capacity > 0, "timeline retention capacity must be non-zero");
+            }
+            Self::Exponential { interval, growth } => {
+                assert!(interval > 0, "timeline retention interval must be non-zero");
+                assert!(
+                    growth.is_finite() && growth > 1.0,
+                    "timeline exponential growth must be finite and greater than one"
+                );
+            }
+        }
+    }
+}
+
+/// Decide whether restoring a target requires its exact checkpoint or
+/// may start from the newest retained checkpoint at or before it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RestorePolicy {
+    Exact,
+    LatestAtOrBefore,
+}
+
+/// Rollback state at the start of `frame`, before that frame's
+/// commands or engine tick have run.
+///
+/// `HostDisplayState` and `DevState` are intentionally excluded: they
+/// are host/display or developer overlay state. Reconstruction advances the
+/// serialized Engine directly and returns its typed host output for the caller
+/// to collect or explicitly discard; it never fabricates presentation state.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SimSnapshot {
+    pub frame: u32,
+    pub engine: Engine,
+}
+
+impl SimSnapshot {
+    pub fn new(frame: u32, engine: &Engine) -> Self {
+        Self {
+            frame,
+            engine: engine.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ReplayTiming {
+    pub replayed_frames: u32,
+    pub replay_us: u128,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ReplayFrameTiming {
+    pub apply_us: u128,
+    pub tick_us: u128,
+}
+
+/// One reconstructed authoritative frame plus its profiling split.
+///
+/// Engine output is deliberately surfaced instead of being applied to a fake
+/// host/display/input owner. Reconstruction callers must either collect these
+/// host events for diagnostics or explicitly discard them; applying them to the
+/// live host would duplicate presentation work from the original frame.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[must_use = "reconstruction output must be explicitly collected or discarded"]
+pub struct ReplayFrameResult {
+    pub timing: ReplayFrameTiming,
+    pub output: SimulationFrameOutput,
+}
+
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ReplayError {
+    #[error("cannot replay backward from checkpoint {checkpoint_frame} to target {target_frame}")]
+    TargetBeforeCheckpoint {
+        checkpoint_frame: u32,
+        target_frame: u32,
+    },
+    #[error("missing recorded authoritative input for replay frame {frame}")]
+    MissingCommands { frame: u32 },
+}
+
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum RestoreError {
+    #[error("no checkpoint satisfies {policy:?} restore for frame {target_frame}")]
+    CheckpointUnavailable {
+        target_frame: u32,
+        policy: RestorePolicy,
+    },
+}
+
+/// Chronological journal of the deterministic commands applied at each
+/// simulation frame.
+///
+/// Rewind and rollback verification intentionally retain different amounts of
+/// history, but they must agree on frame addressing, late-input edits, and
+/// branch truncation.  Keeping those rules here prevents each consumer from
+/// maintaining its own `oldest_frame + VecDeque` arithmetic.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CommandJournal {
+    frames: VecDeque<crate::engine::SimulationFrameInput>,
+    /// Frame represented by `frames[0]`. When truncation empties a journal,
+    /// this remains the frame at which its next branch must begin.
+    oldest_frame: u32,
+    /// Required frame for the next record. `None` only for a fresh or fully
+    /// cleared journal whose first record establishes a new timeline anchor.
+    next_frame: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+enum CommandRecordError {
+    #[error("timeline commands must be recorded contiguously: frame {actual}, expected {expected}")]
+    Discontinuous { actual: u32, expected: u32 },
+    #[error("simulation frame counter overflowed command journal")]
+    FrameOverflow,
+}
+
+impl CommandJournal {
+    /// Record one complete frame. Non-empty journals are strictly contiguous:
+    /// a gap or duplicate means a caller crossed a timeline discontinuity
+    /// without first clearing or truncating the journal.
+    pub fn record_frame(&mut self, frame: u32, input: crate::engine::SimulationFrameInput) {
+        let next_frame = self
+            .validate_record(frame)
+            .unwrap_or_else(|error| panic!("{error}"));
+        if self.frames.is_empty() && self.next_frame.is_none() {
+            self.oldest_frame = frame;
+        }
+        self.frames.push_back(input);
+        self.next_frame = Some(next_frame);
+    }
+
+    #[cfg(test)]
+    fn record_fixture_commands(&mut self, frame: u32, commands: Vec<PlayerInput>) {
+        self.record_frame(
+            frame,
+            crate::engine::SimulationFrameInput::from_player_inputs(commands),
+        );
+    }
+
+    /// Validate a record before either the journal or an associated
+    /// checkpoint store publishes state.
+    fn validate_record(&self, frame: u32) -> Result<u32, CommandRecordError> {
+        if let Some(expected) = self.next_frame
+            && frame != expected
+        {
+            return Err(CommandRecordError::Discontinuous {
+                actual: frame,
+                expected,
+            });
+        }
+        frame
+            .checked_add(1)
+            .ok_or(CommandRecordError::FrameOverflow)
+    }
+
+    pub fn commands_for(&self, frame: u32) -> Option<Vec<PlayerInput>> {
+        self.frame_for(frame).map(|frame| frame.player_inputs())
+    }
+
+    pub fn frame_for(&self, frame: u32) -> Option<&crate::engine::SimulationFrameInput> {
+        let index = frame.checked_sub(self.oldest_frame)? as usize;
+        self.frames.get(index)
+    }
+
+    pub fn oldest_frame(&self) -> Option<u32> {
+        (!self.frames.is_empty()).then_some(self.oldest_frame)
+    }
+
+    pub fn newest_frame(&self) -> Option<u32> {
+        (!self.frames.is_empty()).then(|| {
+            self.next_frame
+                .expect("non-empty command journal has a next frame")
+                - 1
+        })
+    }
+
+    pub fn next_frame(&self) -> u32 {
+        self.next_frame.unwrap_or(0)
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// Add an input to an already-recorded frame. Returns `false` when the
+    /// requested frame is outside the retained journal.
+    pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
+        let Some(index) = frame.checked_sub(self.oldest_frame) else {
+            return false;
+        };
+        let Some(frame) = self.frames.get_mut(index as usize) else {
+            return false;
+        };
+        frame.commands.push(input.into());
+        true
+    }
+
+    /// Discard commands for `frame` and its future, retaining the prefix that
+    /// remains valid on a newly-created branch.
+    pub fn truncate_from(&mut self, frame: u32) {
+        let Some(index) = frame.checked_sub(self.oldest_frame) else {
+            return;
+        };
+        let index = index as usize;
+        if index < self.frames.len() {
+            self.frames.truncate(index);
+            self.next_frame = Some(frame);
+            if self.frames.is_empty() {
+                self.oldest_frame = frame;
+            }
+        }
+    }
+
+    /// Drop commands older than the earliest checkpoint that can still be
+    /// restored.
+    pub fn discard_before(&mut self, frame: u32) {
+        while !self.frames.is_empty() && self.oldest_frame < frame {
+            self.frames.pop_front();
+            self.oldest_frame += 1;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.frames.clear();
+        self.oldest_frame = 0;
+        self.next_frame = None;
+    }
+}
+
+/// Policy-driven collection of pre-tick simulation checkpoints.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SnapshotHistory {
+    snapshots: VecDeque<SimSnapshot>,
+    checkpoint_policy: CheckpointPolicy,
+    retention_policy: RetentionPolicy,
+}
+
+impl SnapshotHistory {
+    pub fn new(checkpoint_policy: CheckpointPolicy, retention_policy: RetentionPolicy) -> Self {
+        retention_policy.validate();
+        // Validate a periodic checkpoint policy even before its first use.
+        if let CheckpointPolicy::EveryNthFrame { interval } = checkpoint_policy {
+            assert!(
+                interval > 0,
+                "timeline checkpoint interval must be non-zero"
+            );
+        }
+        Self {
+            snapshots: VecDeque::new(),
+            checkpoint_policy,
+            retention_policy,
+        }
+    }
+
+    pub fn should_checkpoint(&self, frame: u32) -> bool {
+        self.checkpoint_policy.should_checkpoint(frame)
+    }
+
+    /// Clone and retain `engine` when `frame` is eligible under the
+    /// checkpoint policy. Returns whether a checkpoint was retained.
+    pub fn checkpoint(&mut self, frame: u32, engine: &Engine) -> bool {
+        if !self.should_checkpoint(frame) {
+            return false;
+        }
+        self.remember(SimSnapshot::new(frame, engine));
+        true
+    }
+
+    /// Replace the retained timeline with one exact whole-state adoption
+    /// boundary, even when that frame is outside the periodic checkpoint
+    /// cadence. Reconnect snapshots are new authoritative timelines; making
+    /// their frame an explicit anchor avoids fabricating commands between the
+    /// nearest periodic frame and the adopted state.
+    pub fn replace_with_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.snapshots.clear();
+        self.snapshots.push_back(SimSnapshot::new(frame, engine));
+    }
+
+    /// Retain an already-cloned eligible checkpoint.
+    pub fn remember(&mut self, snapshot: SimSnapshot) {
+        assert!(
+            self.should_checkpoint(snapshot.frame),
+            "frame {} is ineligible under checkpoint policy {:?}",
+            snapshot.frame,
+            self.checkpoint_policy
+        );
+        if let Some(existing) = self.snapshots.back() {
+            assert!(
+                snapshot.frame >= existing.frame,
+                "timeline checkpoints must be remembered chronologically: {} after {}",
+                snapshot.frame,
+                existing.frame
+            );
+            if existing.frame == snapshot.frame {
+                self.snapshots.pop_back();
+            }
+        }
+        self.snapshots.push_back(snapshot);
+        prune_by_policy(
+            &mut self.snapshots,
+            |snapshot| snapshot.frame,
+            self.retention_policy,
+        );
+    }
+
+    pub fn restore(
+        &self,
+        target_frame: u32,
+        policy: RestorePolicy,
+    ) -> Result<SimSnapshot, RestoreError> {
+        let Some(index) = restore_index(
+            &self.snapshots,
+            |snapshot| snapshot.frame,
+            target_frame,
+            policy,
+        ) else {
+            return Err(RestoreError::CheckpointUnavailable {
+                target_frame,
+                policy,
+            });
+        };
+        Ok(self.snapshots[index].clone())
+    }
+
+    pub fn oldest_frame(&self) -> Option<u32> {
+        self.snapshots.front().map(|snapshot| snapshot.frame)
+    }
+
+    pub fn truncate_after(&mut self, frame: u32) {
+        while self
+            .snapshots
+            .back()
+            .is_some_and(|snapshot| snapshot.frame > frame)
+        {
+            self.snapshots.pop_back();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.snapshots.clear();
+    }
+}
+
+/// A checkpoint store and its command journal with one pre-tick frame
+/// lifecycle.
+///
+/// `begin_frame` captures the optional pre-tick checkpoint. `commit_frame_input`
+/// publishes that checkpoint and the commands together only after the tick
+/// completes. An abandoned host iteration may call `begin_frame` again; the
+/// previous pending capture was never authoritative and is replaced.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TimelineHistory {
+    checkpoints: SnapshotHistory,
+    commands: CommandJournal,
+    pending: Option<PendingFrame>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PendingFrame {
+    frame: u32,
+    checkpoint: Option<SimSnapshot>,
+}
+
+impl TimelineHistory {
+    pub fn new(checkpoint_policy: CheckpointPolicy, retention_policy: RetentionPolicy) -> Self {
+        Self {
+            checkpoints: SnapshotHistory::new(checkpoint_policy, retention_policy),
+            commands: CommandJournal::default(),
+            pending: None,
+        }
+    }
+
+    pub fn begin_frame(&mut self, frame: u32, engine: &Engine) {
+        let checkpoint = self
+            .checkpoints
+            .should_checkpoint(frame)
+            .then(|| SimSnapshot::new(frame, engine));
+        self.pending = Some(PendingFrame { frame, checkpoint });
+    }
+
+    /// Start a new journal at an exact externally adopted pre-tick state.
+    /// Subsequent `begin_frame`/`commit_frame_input` calls journal immediately even
+    /// if `frame` is between normal periodic checkpoint boundaries.
+    pub fn seed_initial_anchor(&mut self, frame: u32, engine: &Engine) {
+        self.clear();
+        self.checkpoints.replace_with_anchor(frame, engine);
+    }
+
+    /// Commit the open frame. Returns `false` only while the history has no
+    /// checkpoint anchor yet; commands before that first checkpoint cannot be
+    /// replayed and are deliberately not journaled.
+    pub fn commit_frame_input(&mut self, input: crate::engine::SimulationFrameInput) -> bool {
+        let pending = self
+            .pending
+            .as_ref()
+            .expect("timeline frame committed without a matching begin_frame");
+
+        if self.checkpoints.oldest_frame().is_none() && pending.checkpoint.is_none() {
+            self.pending = None;
+            return false;
+        }
+        // Validate command addressing and overflow before publishing the
+        // pending checkpoint. Otherwise a caught assertion would expose a
+        // checkpoint with no matching journal frame.
+        self.commands
+            .validate_record(pending.frame)
+            .unwrap_or_else(|error| panic!("{error}"));
+        let pending = self
+            .pending
+            .take()
+            .expect("validated pending timeline frame disappeared");
+        if let Some(checkpoint) = pending.checkpoint {
+            self.checkpoints.remember(checkpoint);
+        }
+        self.commands.record_frame(pending.frame, input);
+        if let Some(oldest_checkpoint) = self.checkpoints.oldest_frame() {
+            self.commands.discard_before(oldest_checkpoint);
+        }
+        true
+    }
+
+    #[cfg(test)]
+    fn commit_fixture_commands(&mut self, commands: Vec<PlayerInput>) -> bool {
+        self.commit_frame_input(crate::engine::SimulationFrameInput::from_player_inputs(
+            commands,
+        ))
+    }
+
+    pub fn restore(
+        &self,
+        target_frame: u32,
+        policy: RestorePolicy,
+    ) -> Result<SimSnapshot, RestoreError> {
+        self.checkpoints.restore(target_frame, policy)
+    }
+
+    pub fn commands_for(&self, frame: u32) -> Option<Vec<PlayerInput>> {
+        self.commands.commands_for(frame)
+    }
+
+    pub fn frame_for(&self, frame: u32) -> Option<&crate::engine::SimulationFrameInput> {
+        self.commands.frame_for(frame)
+    }
+
+    pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
+        if !self.commands.append_input(frame, input) {
+            return false;
+        }
+
+        // A checkpoint at `frame` is the state before this input and remains
+        // valid. Every later checkpoint was derived without the newly-added
+        // command and must not be selected as a replay starting point.
+        self.checkpoints.truncate_after(frame);
+        self.pending = None;
+        true
+    }
+
+    pub fn oldest_checkpoint_frame(&self) -> Option<u32> {
+        self.checkpoints.oldest_frame()
+    }
+
+    pub fn oldest_command_frame(&self) -> Option<u32> {
+        self.commands.oldest_frame()
+    }
+
+    pub fn next_record_frame(&self) -> u32 {
+        self.commands.next_frame()
+    }
+
+    pub fn truncate_future(&mut self, frame: u32) {
+        // Preserve the old rewind contract: a target before the command
+        // horizon cannot create a valid branch, so neither journal nor
+        // checkpoints are changed.
+        if self
+            .commands
+            .oldest_frame()
+            .is_some_and(|oldest| frame < oldest)
+        {
+            return;
+        }
+        self.commands.truncate_from(frame);
+        self.checkpoints.truncate_after(frame);
+
+        // The normal branch path opens the current pre-tick frame before
+        // discovering live input that diverges from recorded history. That
+        // pending capture is precisely the branch-point state and must still
+        // be committed with the replacement commands. A pending capture for
+        // any other frame belongs to the discarded future.
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.frame != frame)
+        {
+            self.pending = None;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.checkpoints.clear();
+        self.commands.clear();
+        self.pending = None;
+    }
+}
+
+fn restore_index<T>(
+    snapshots: &VecDeque<T>,
+    frame_of: impl Fn(&T) -> u32,
+    target_frame: u32,
+    policy: RestorePolicy,
+) -> Option<usize> {
+    snapshots.iter().rposition(|snapshot| match policy {
+        RestorePolicy::Exact => frame_of(snapshot) == target_frame,
+        RestorePolicy::LatestAtOrBefore => frame_of(snapshot) <= target_frame,
+    })
+}
+
+fn prune_by_policy<T>(
+    snapshots: &mut VecDeque<T>,
+    frame_of: impl Fn(&T) -> u32,
+    policy: RetentionPolicy,
+) {
+    match policy {
+        RetentionPolicy::Latest { capacity } => {
+            while snapshots.len() > capacity {
+                snapshots.pop_front();
+            }
+        }
+        RetentionPolicy::Exponential { interval, growth } => {
+            let Some(newest_frame) = snapshots.back().map(&frame_of) else {
+                return;
+            };
+            let mut kept: VecDeque<T> = VecDeque::with_capacity(snapshots.len());
+            let mut buckets = Vec::with_capacity(snapshots.len());
+
+            // Walk newest to oldest and replace a bucket's member as
+            // older candidates arrive. Keeping the oldest checkpoint
+            // in each bucket lets the reachable horizon grow over time.
+            while let Some(snapshot) = snapshots.pop_back() {
+                let age = newest_frame.saturating_sub(frame_of(&snapshot));
+                let bucket = exponential_bucket(age, interval, growth);
+                if let Some(position) = buckets.iter().position(|&seen| seen == bucket) {
+                    kept[position] = snapshot;
+                } else {
+                    buckets.push(bucket);
+                    kept.push_back(snapshot);
+                }
+            }
+            snapshots.extend(kept.into_iter().rev());
+        }
+    }
+}
+
+fn exponential_bucket(age_frames: u32, interval: u32, growth: f32) -> u32 {
+    if age_frames < interval {
+        return 0;
+    }
+    let ratio = age_frames as f32 / interval as f32;
+    (ratio.ln() / growth.ln()).floor() as u32 + 1
+}
+
+fn validate_replay_boundary(checkpoint_frame: u32, target_frame: u32) -> Result<(), ReplayError> {
+    if target_frame < checkpoint_frame {
+        return Err(ReplayError::TargetBeforeCheckpoint {
+            checkpoint_frame,
+            target_frame,
+        });
+    }
+    Ok(())
+}
+
+/// Replay phase-complete authoritative frame records. Rollback and rewind use
+/// this path so host facts, the hourglass gate, late commands, and lifecycle
+/// stages cannot disappear during reconstruction.
+pub fn replay_frames_to_frame<'a>(
+    mut snapshot: SimSnapshot,
+    assets: &LevelAssets,
+    target_frame: u32,
+    mut frame_for: impl FnMut(u32) -> Option<&'a crate::engine::SimulationFrameInput>,
+) -> Result<(SimSnapshot, ReplayTiming), ReplayError> {
+    validate_replay_boundary(snapshot.frame, target_frame)?;
+    let start = Instant::now();
+    let start_frame = snapshot.frame;
+
+    while snapshot.frame < target_frame {
+        let frame = frame_for(snapshot.frame).ok_or(ReplayError::MissingCommands {
+            frame: snapshot.frame,
+        })?;
+        let _discarded_frame_output =
+            replay_authoritative_frame(&mut snapshot, assets, frame).output;
+    }
+
+    Ok((
+        snapshot,
+        ReplayTiming {
+            replayed_frames: target_frame - start_frame,
+            replay_us: start.elapsed().as_micros(),
+        },
+    ))
+}
+
+pub fn replay_authoritative_frame(
+    snapshot: &mut SimSnapshot,
+    assets: &LevelAssets,
+    frame: &crate::engine::SimulationFrameInput,
+) -> ReplayFrameResult {
+    replay_authoritative_frame_profiled(snapshot, assets, frame)
+}
+
+/// Advance one complete recorded frame against serialized simulation state.
+///
+/// This is intentionally a direct [`Engine::advance_frame`] call. Host output
+/// remains in the returned [`ReplayFrameResult`] and is never interpreted via
+/// fabricated `Host`, input, display, or developer-overlay state.
+pub fn replay_authoritative_frame_profiled(
+    snapshot: &mut SimSnapshot,
+    assets: &LevelAssets,
+    frame: &crate::engine::SimulationFrameInput,
+) -> ReplayFrameResult {
+    let apply_start = Instant::now();
+    let frame = frame.clone();
+    let apply_us = apply_start.elapsed().as_micros();
+    let tick_start = Instant::now();
+    let output = snapshot
+        .engine
+        .advance_frame(assets, frame)
+        .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
+    let tick_us = tick_start.elapsed().as_micros();
+    snapshot.frame = snapshot
+        .frame
+        .checked_add(1)
+        .expect("reconstruction timeline frame counter overflowed");
+    ReplayFrameResult {
+        timing: ReplayFrameTiming { apply_us, tick_us },
+        output,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn periodic_checkpoint_policy_includes_interval_boundaries_only() {
+        let policy = CheckpointPolicy::EveryNthFrame { interval: 25 };
+        assert!(policy.should_checkpoint(0));
+        assert!(!policy.should_checkpoint(24));
+        assert!(policy.should_checkpoint(25));
+        assert!(!policy.should_checkpoint(26));
+    }
+
+    #[test]
+    #[should_panic(expected = "timeline checkpoint interval must be non-zero")]
+    fn zero_checkpoint_interval_is_rejected() {
+        SnapshotHistory::new(
+            CheckpointPolicy::EveryNthFrame { interval: 0 },
+            RetentionPolicy::Latest { capacity: 1 },
+        );
+    }
+
+    #[test]
+    fn latest_retention_keeps_exact_capacity_at_boundary() {
+        let mut frames: VecDeque<u32> = (10..=14).collect();
+        prune_by_policy(
+            &mut frames,
+            |frame| *frame,
+            RetentionPolicy::Latest { capacity: 3 },
+        );
+        assert_eq!(frames, VecDeque::from([12, 13, 14]));
+    }
+
+    #[test]
+    fn exponential_retention_keeps_old_horizon_bounded() {
+        let policy = RetentionPolicy::Exponential {
+            interval: 25,
+            growth: 1.3,
+        };
+        let mut frames = VecDeque::new();
+        for frame in (0..=1000).step_by(25) {
+            frames.push_back(frame);
+            prune_by_policy(&mut frames, |frame| *frame, policy);
+        }
+        assert_eq!(frames.back(), Some(&1000));
+        assert!(1000 - frames.front().expect("history is non-empty") >= 500);
+        assert!(frames.len() <= 20);
+    }
+
+    #[test]
+    fn restore_policy_distinguishes_exact_from_at_or_before() {
+        let frames = VecDeque::from([0, 25, 50]);
+        assert_eq!(
+            restore_index(&frames, |frame| *frame, 30, RestorePolicy::Exact),
+            None
+        );
+        assert_eq!(
+            restore_index(&frames, |frame| *frame, 30, RestorePolicy::LatestAtOrBefore),
+            Some(1)
+        );
+        assert_eq!(
+            restore_index(&frames, |frame| *frame, 0, RestorePolicy::LatestAtOrBefore),
+            Some(0)
+        );
+        assert_eq!(
+            restore_index(&frames, |frame| *frame, 51, RestorePolicy::LatestAtOrBefore),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn restore_before_oldest_checkpoint_is_unavailable() {
+        let frames = VecDeque::from([25, 50]);
+        assert_eq!(
+            restore_index(&frames, |frame| *frame, 24, RestorePolicy::LatestAtOrBefore),
+            None
+        );
+    }
+
+    #[test]
+    fn replay_rejects_target_before_checkpoint() {
+        assert_eq!(
+            validate_replay_boundary(10, 9),
+            Err(ReplayError::TargetBeforeCheckpoint {
+                checkpoint_frame: 10,
+                target_frame: 9,
+            })
+        );
+        assert_eq!(validate_replay_boundary(10, 10), Ok(()));
+        assert_eq!(validate_replay_boundary(10, 11), Ok(()));
+    }
+
+    #[test]
+    fn command_journal_addresses_edits_and_branches_by_absolute_frame() {
+        use crate::player_command::{PlayerCommand, PlayerId};
+
+        let mut journal = CommandJournal::default();
+        journal.record_fixture_commands(40, Vec::new());
+        journal.record_fixture_commands(41, Vec::new());
+        journal.record_fixture_commands(42, Vec::new());
+
+        let late = PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown);
+        assert!(journal.append_input(41, late));
+        assert_eq!(
+            journal.commands_for(41).map(|commands| commands.len()),
+            Some(1)
+        );
+        assert!(
+            !journal.append_input(39, PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown))
+        );
+
+        journal.truncate_from(42);
+        assert_eq!(journal.newest_frame(), Some(41));
+        assert_eq!(journal.next_frame(), 42);
+        assert!(journal.commands_for(42).is_none());
+
+        journal.record_fixture_commands(42, Vec::new());
+        journal.discard_before(41);
+        assert_eq!(journal.oldest_frame(), Some(41));
+        assert_eq!(
+            journal.commands_for(41).map(|commands| commands.len()),
+            Some(1)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "timeline commands must be recorded contiguously")]
+    fn command_journal_rejects_unannounced_discontinuity() {
+        let mut journal = CommandJournal::default();
+        journal.record_fixture_commands(7, Vec::new());
+        journal.record_fixture_commands(9, Vec::new());
+    }
+
+    #[test]
+    fn command_journal_overflow_does_not_publish_the_frame() {
+        let journal = CommandJournal::default();
+
+        assert_eq!(
+            journal.validate_record(u32::MAX),
+            Err(CommandRecordError::FrameOverflow)
+        );
+        assert!(journal.is_empty());
+        assert_eq!(journal.next_frame, None);
+    }
+
+    #[test]
+    fn timeline_history_commits_checkpoint_and_commands_at_one_boundary() {
+        use crate::campaign::Campaign;
+        use crate::player_command::{PlayerCommand, PlayerId};
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 2 },
+        );
+        let command = PlayerInput::new(PlayerId(1), PlayerCommand::CrouchDown);
+
+        history.begin_frame(12, &engine);
+        assert!(history.commit_fixture_commands(vec![command.clone()]));
+        assert_eq!(history.oldest_checkpoint_frame(), Some(12));
+        assert_eq!(history.oldest_command_frame(), Some(12));
+        let recorded = history.commands_for(12).expect("frame-12 commands");
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].player_id, command.player_id);
+        assert_eq!(
+            history
+                .restore(12, RestorePolicy::Exact)
+                .expect("frame-12 checkpoint")
+                .frame,
+            12
+        );
+
+        // Opening a replacement host iteration before either commits is safe:
+        // neither pending capture was published into the timeline yet.
+        history.begin_frame(13, &engine);
+        history.begin_frame(13, &engine);
+        assert!(history.commit_fixture_commands(Vec::new()));
+        assert_eq!(history.next_record_frame(), 14);
+    }
+
+    #[test]
+    fn branch_truncation_keeps_the_open_branch_frame_committable() {
+        use crate::campaign::Campaign;
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        for frame in 10..13 {
+            history.begin_frame(frame, &engine);
+            assert!(history.commit_fixture_commands(Vec::new()));
+        }
+
+        // The host opens frame 13 before input admission discovers that live
+        // input is replacing the already-recorded branch from frame 13.
+        history.begin_frame(13, &engine);
+        history.truncate_future(13);
+        assert!(history.commit_fixture_commands(Vec::new()));
+        assert_eq!(history.next_record_frame(), 14);
+        assert_eq!(
+            history
+                .restore(13, RestorePolicy::Exact)
+                .expect("branch-point checkpoint")
+                .frame,
+            13
+        );
+    }
+
+    #[test]
+    fn rejected_timeline_commit_does_not_publish_its_checkpoint() {
+        use crate::campaign::Campaign;
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        history.begin_frame(7, &engine);
+        assert!(history.commit_fixture_commands(Vec::new()));
+        history.begin_frame(9, &engine);
+
+        assert_eq!(
+            history.commands.validate_record(9),
+            Err(CommandRecordError::Discontinuous {
+                actual: 9,
+                expected: 8,
+            })
+        );
+        assert!(history.restore(9, RestorePolicy::Exact).is_err());
+        assert!(history.commands_for(9).is_none());
+
+        // The rejected capture was never consumed or published; a caller can
+        // replace it with the correct contiguous frame.
+        history.begin_frame(8, &engine);
+        assert!(history.commit_fixture_commands(Vec::new()));
+        assert!(history.restore(8, RestorePolicy::Exact).is_ok());
+    }
+
+    #[test]
+    fn late_input_invalidates_only_checkpoints_derived_after_its_frame() {
+        use crate::campaign::Campaign;
+        use crate::player_command::{PlayerCommand, PlayerId};
+
+        let mut assets = LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+            .expect("fixture engine");
+        let mut history = TimelineHistory::new(
+            CheckpointPolicy::EveryFrame,
+            RetentionPolicy::Latest { capacity: 8 },
+        );
+        for frame in 20..24 {
+            history.begin_frame(frame, &engine);
+            assert!(history.commit_fixture_commands(Vec::new()));
+        }
+
+        assert!(
+            history.append_input(21, PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown),)
+        );
+        assert!(history.restore(21, RestorePolicy::Exact).is_ok());
+        assert!(history.restore(22, RestorePolicy::Exact).is_err());
+        assert!(history.restore(23, RestorePolicy::Exact).is_err());
+        assert_eq!(history.next_record_frame(), 24);
+        assert!(history.commands_for(23).is_some());
+    }
+}

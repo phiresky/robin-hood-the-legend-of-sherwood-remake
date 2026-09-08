@@ -1,0 +1,110 @@
+{
+  "manifest_version": 1,
+  "provenance": "User-provided Original native corpus at /home/phire/robinhood/parity-save-replays, inspected 2026-09-07; selected short and median-size cases plus interactive predecessor dependencies. Full EOF is required; byte hashes pin these fixtures independently of local path.",
+  "artifacts": [
+    {
+      "path": "15-no-input/traces/Savegame_linux2/Profile_002/Savegame_004-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "fac93fe5652fa018e8e7ef5379a17dc4a77fc1f108cf879c33ab044f668e9b58",
+      "native_version": 68,
+      "frames": 375,
+      "final_frame": 388,
+      "run": true
+    },
+    {
+      "path": "30s-random-input/traces/Savegame_linux2/Profile_002/Savegame_005/replay-003-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "538cf4b9d28749e4b3a7ce0b958d7331cddf7275425b176c56a531a0e2f4556b",
+      "native_version": 68,
+      "frames": 750,
+      "final_frame": 2551,
+      "run": true
+    },
+    {
+      "path": "60s-random-input/schema12/traces/Savegame_linux2/Profile_002/Savegame_005/replay-003-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "95ced3dba46d320a0f739e6042b175f39a5ee824fff39e700d618bffe21d73a6",
+      "native_version": 68,
+      "frames": 1500,
+      "final_frame": 3301,
+      "run": true
+    },
+    {
+      "path": "interactive/interactive-session-001-session-0002.jsonl.zst.parity.bitcode.zst",
+      "sha256": "b24f0d19652ea74c0d637182de08987d02a7438399e3d61c5c0ecd4a99cabab0",
+      "native_version": 68,
+      "frames": 25,
+      "final_frame": 25,
+      "run": true
+    },
+    {
+      "path": "30s-random-input/traces/Savegame_linux3/Profile_001/Savegame_016/replay-003-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "5986b5cd25f4ea33243f93ffc49277bccfd84d4978b35c8b965630dfb7c2aac3",
+      "native_version": 68,
+      "frames": 750,
+      "final_frame": 7949,
+      "run": true
+    },
+    {
+      "path": "60s-random-input/schema16-seed2000000-20260820/traces/Savegame_linux3/Profile_001/Savegame_038/replay-012-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "a630708a226752de876289a2591d1c1ef4935910fd59cff05e2dbc476ee7f525",
+      "native_version": 68,
+      "frames": 1500,
+      "final_frame": 55906,
+      "run": true
+    },
+    {
+      "path": "interactive/interactive-session-002-session-0006.jsonl.zst.parity.bitcode.zst",
+      "sha256": "aa8f1fc66a16697b08ccfb5ac4a9dfa42102e640595521248e48b376b9610531",
+      "native_version": 68,
+      "frames": 1394,
+      "final_frame": 7802,
+      "run": true
+    },
+    {
+      "path": "interactive/interactive-session-001-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "580dcad46079bfd5aa3b9a66e661228d06a62b6bbc8d79003504ac20970b2aad",
+      "native_version": 68,
+      "frames": 706,
+      "final_frame": 706,
+      "run": false
+    },
+    {
+      "path": "interactive/interactive-session-002-session-0001.jsonl.zst.parity.bitcode.zst",
+      "sha256": "e7499a02486d102f76242fe1a7918557ce2aa84a911c263cd4004e8ca07385fd",
+      "native_version": 68,
+      "frames": 641,
+      "final_frame": 1347,
+      "run": false
+    },
+    {
+      "path": "interactive/interactive-session-002-session-0002.jsonl.zst.parity.bitcode.zst",
+      "sha256": "cda5b63e3607da407cce822a5c417e2f69a954371903c7ea1b9fd8b61a1874cf",
+      "native_version": 68,
+      "frames": 177,
+      "final_frame": 643,
+      "run": false
+    },
+    {
+      "path": "interactive/interactive-session-002-session-0003.jsonl.zst.parity.bitcode.zst",
+      "sha256": "622b7709c041ff0af39c69890b051fdcf3976a67b6b992e93f7ad859fa9703a9",
+      "native_version": 68,
+      "frames": 124,
+      "final_frame": 590,
+      "run": false
+    },
+    {
+      "path": "interactive/interactive-session-002-session-0004.jsonl.zst.parity.bitcode.zst",
+      "sha256": "c135fa5a33b472d958da4829832501dc67a7b889817ec45d0c853a81020c70a7",
+      "native_version": 68,
+      "frames": 6020,
+      "final_frame": 6020,
+      "run": false
+    },
+    {
+      "path": "interactive/interactive-session-002-session-0005.jsonl.zst.parity.bitcode.zst",
+      "sha256": "d28516e09a4673cd02276989a4fd503965f0b4265aa639e53b37162414672d1d",
+      "native_version": 68,
+      "frames": 607,
+      "final_frame": 6471,
+      "run": false
+    }
+  ]
+}

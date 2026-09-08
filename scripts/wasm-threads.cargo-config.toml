@@ -1,0 +1,34 @@
+# Extra cargo config for the THREADED wasm build (see
+# scripts/build-wasm-threads.sh). Passed via `cargo --config <this file>`,
+# whose arrays are MERGED with .cargo/config.toml — the flags below are
+# appended to the base wasm rustflags, so the plain single-threaded build
+# (which never loads this file) is completely unaffected.
+#
+# - atomics/bulk-memory/mutable-globals: wasm threads + shared memory.
+#   rustc then links with `--shared-memory` automatically; std must be
+#   rebuilt with the same features (-Zbuild-std, see the build script).
+#   simd128 is repeated because rustc treats a later `-C target-feature`
+#   as a full replacement of an earlier one, not a union.
+# - --max-memory: shared wasm memories must declare a maximum up front
+#   (rustc's default is 1 GiB). Mission install peaks past that comfortably,
+#   so declare the full wasm32 4 GiB; browsers reserve lazily.
+[target.wasm32-unknown-unknown]
+rustflags = [
+    "-C", "target-feature=+atomics,+bulk-memory,+mutable-globals,+simd128",
+    # This nightly's rustc no longer derives the wasm-ld shared-memory setup
+    # from `+atomics` on its own, so spell out the whole contract: a shared,
+    # imported memory (wasm-bindgen instantiates every worker against the
+    # same Memory object) plus the TLS plumbing exports wasm-bindgen's
+    # threads transform patches into per-thread stack/TLS initialization.
+    "-C", "link-arg=--shared-memory",
+    "-C", "link-arg=--import-memory",
+    "-C", "link-arg=--export=__wasm_init_tls",
+    "-C", "link-arg=--export=__tls_size",
+    "-C", "link-arg=--export=__tls_align",
+    "-C", "link-arg=--export=__tls_base",
+    # wasm-bindgen's threads transform reads `__heap_base` to carve out the
+    # per-thread stacks and thread-id slot.
+    "-C", "link-arg=--export=__heap_base",
+    "-C", "link-arg=--export=__data_end",
+    "-C", "link-arg=--max-memory=4294967296",
+]

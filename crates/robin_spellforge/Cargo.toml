@@ -1,0 +1,23 @@
+[package]
+name = "robin_spellforge"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "robin_spellforge"
+
+[dependencies]
+rilua.workspace = true
+robin_engine.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+thiserror.workspace = true
+zip.workspace = true
+
+[build-dependencies]
+sha2 = "0.11"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "=0.3.77"

@@ -1,0 +1,352 @@
+//! CPU / hardware feature detection.
+//!
+//! Uses `std::arch::is_x86_feature_detected!` on x86 targets and
+//! `libc::uname` for the machine identifier.
+
+use std::ffi::{CStr, CString};
+
+// ---------------------------------------------------------------------------
+// Processor type enum
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessorType {
+    Non586 = 0,
+    Pentium = 1,
+    PentiumMmx = 2,
+    PentiumPro = 3,
+    PentiumII = 4,
+    PentiumIII = 5,
+    Celeron = 6,
+    CeleronA = 7,
+    AmdK5 = 8,
+    AmdK6 = 9,
+    AmdK6II = 10,
+    AmdK6III = 11,
+    AmdK7 = 12,
+    Cyrix6x86 = 13,
+    CyrixMediaGx = 14,
+    Cyrix6x86Mx = 15,
+    CyrixGxm = 16,
+    PowerPcGeneric = 17,
+    PowerPcG4G5 = 18,
+    Unknown = 19,
+}
+
+// ---------------------------------------------------------------------------
+// Hardware info
+// ---------------------------------------------------------------------------
+
+pub struct Hardware {
+    processor_identifier: CString,
+    processor_type: ProcessorType,
+    /// CPU frequency in MHz. `None` when the platform cannot report it
+    /// (e.g. wasm) — callers must render "unknown", never a made-up number.
+    processor_speed_mhz: Option<u16>,
+    /// Total physical memory in MB. `None` when unknown (e.g. wasm).
+    physical_memory_mb: Option<u64>,
+
+    has_mmx: bool,
+    has_3dnow: bool,
+    has_ext_3dnow: bool,
+    has_sse: bool,
+    has_fpu: bool,
+    has_altivec: bool,
+    is_multiprocessor: bool,
+
+    cache_l1_data: i16,
+    cache_l1_code: i16,
+    cache_l2: i16,
+}
+
+impl Hardware {
+    /// Detect hardware features.
+    pub fn detect() -> Self {
+        // Detect SIMD features
+        let has_mmx = Self::detect_mmx();
+        let has_sse = Self::detect_sse();
+        let has_3dnow = Self::detect_3dnow();
+        let has_ext_3dnow = has_3dnow;
+        let has_altivec = Self::detect_altivec();
+
+        // Get machine name from uname
+        let machine_name = Self::get_machine_name();
+
+        // Build identifier and determine processor type
+        let mut identifier = machine_name;
+        let proc_type;
+
+        if has_mmx || has_sse || has_3dnow {
+            proc_type = if has_ext_3dnow {
+                ProcessorType::AmdK7
+            } else if has_3dnow {
+                ProcessorType::AmdK5
+            } else if has_sse {
+                ProcessorType::PentiumIII
+            } else {
+                ProcessorType::Pentium
+            };
+
+            if identifier.is_empty() {
+                identifier = "Generic x86".to_string();
+            }
+
+            if has_mmx {
+                identifier.push_str(" MMX");
+            }
+
+            if has_sse {
+                identifier.push_str(" SSE");
+            }
+
+            if has_3dnow {
+                identifier.push_str(" 3DNow");
+            }
+
+            if has_ext_3dnow {
+                identifier.push_str(" 3DNow2");
+            }
+        } else {
+            if identifier.is_empty() {
+                identifier = "Generic PowerPC".to_string();
+            }
+
+            if has_altivec {
+                identifier.push_str(" G4/G5 (ALTIVEC)");
+                proc_type = ProcessorType::PowerPcG4G5;
+            } else {
+                proc_type = ProcessorType::PowerPcGeneric;
+            }
+        }
+
+        let (processor_speed_mhz, physical_memory_mb) = Self::query_speed_and_memory();
+
+        Hardware {
+            processor_identifier: CString::new(identifier).unwrap_or_default(),
+            processor_type: proc_type,
+            processor_speed_mhz,
+            physical_memory_mb,
+            has_mmx,
+            has_3dnow,
+            has_ext_3dnow,
+            has_sse,
+            has_fpu: true, // all modern CPUs have FPU
+            has_altivec,
+            is_multiprocessor: false,
+            cache_l1_data: 0,
+            cache_l1_code: 0,
+            cache_l2: 0,
+        }
+    }
+
+    // -- Feature detection helpers --
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    fn detect_mmx() -> bool {
+        is_x86_feature_detected!("mmx")
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    fn detect_mmx() -> bool {
+        false
+    }
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    fn detect_sse() -> bool {
+        is_x86_feature_detected!("sse")
+    }
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    fn detect_sse() -> bool {
+        false
+    }
+
+    // 3DNow! detection is not available via std::arch on stable Rust,
+    // so we default to false.
+    fn detect_3dnow() -> bool {
+        false
+    }
+
+    #[cfg(target_arch = "powerpc")]
+    fn detect_altivec() -> bool {
+        // On PowerPC we'd check for Altivec; not easily available in
+        // stable Rust, so default false.
+        false
+    }
+    #[cfg(not(target_arch = "powerpc"))]
+    fn detect_altivec() -> bool {
+        false
+    }
+
+    /// Query CPU frequency (MHz) and total physical memory (MB) via
+    /// `sysinfo`. Values the platform cannot report stay `None`.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "hardware-info"))]
+    fn query_speed_and_memory() -> (Option<u16>, Option<u64>) {
+        use sysinfo::System;
+        let mut sys = System::new();
+        sys.refresh_memory();
+        sys.refresh_cpu_all();
+        let speed_mhz = sys
+            .cpus()
+            .first()
+            .map(|cpu| cpu.frequency())
+            .filter(|&mhz| mhz > 0)
+            .map(|mhz| u16::try_from(mhz).unwrap_or(u16::MAX));
+        let total_mb = sys.total_memory() / (1024 * 1024);
+        let memory_mb = (total_mb > 0).then_some(total_mb);
+        (speed_mhz, memory_mb)
+    }
+
+    /// This build has no host query backend — both values are honestly unknown.
+    #[cfg(any(target_arch = "wasm32", not(feature = "hardware-info")))]
+    fn query_speed_and_memory() -> (Option<u16>, Option<u64>) {
+        (None, None)
+    }
+
+    /// Get machine architecture name.
+    ///
+    /// Uses `std::env::consts::ARCH` which returns the same value as
+    /// `uname().machine` (e.g. "x86_64") without any unsafe FFI.
+    fn get_machine_name() -> String {
+        std::env::consts::ARCH.to_string()
+    }
+
+    // -- Accessors --
+
+    pub fn processor_identifier(&self) -> &CStr {
+        &self.processor_identifier
+    }
+
+    pub fn processor_type(&self) -> ProcessorType {
+        self.processor_type
+    }
+
+    /// CPU frequency in MHz, or `None` when the platform cannot report it.
+    pub fn processor_speed(&self) -> Option<u16> {
+        self.processor_speed_mhz
+    }
+
+    pub fn has_mmx(&self) -> bool {
+        self.has_mmx
+    }
+
+    pub fn has_sse(&self) -> bool {
+        self.has_sse
+    }
+
+    pub fn has_3dnow(&self) -> bool {
+        self.has_3dnow
+    }
+
+    pub fn has_ext_3dnow(&self) -> bool {
+        self.has_ext_3dnow
+    }
+
+    pub fn has_fpu(&self) -> bool {
+        self.has_fpu
+    }
+
+    pub fn has_altivec(&self) -> bool {
+        self.has_altivec
+    }
+
+    pub fn is_multiprocessor(&self) -> bool {
+        self.is_multiprocessor
+    }
+
+    pub fn cache_l1_data(&self) -> i16 {
+        self.cache_l1_data
+    }
+
+    pub fn cache_l1_code(&self) -> i16 {
+        self.cache_l1_code
+    }
+
+    pub fn cache_l2(&self) -> i16 {
+        self.cache_l2
+    }
+
+    /// Total physical memory in MB, or `None` when unknown.
+    pub fn physical_memory_mb(&self) -> Option<u64> {
+        self.physical_memory_mb
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_creates_valid_instance() {
+        let hw = Hardware::detect();
+        // On any modern x86 machine, MMX and SSE should be present
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+        {
+            assert!(hw.has_mmx());
+            assert!(hw.has_sse());
+            // With MMX+SSE detected, processor type should be PentiumIII
+            // (SSE sets it last in the chain, unless 3DNow overrides)
+            assert_ne!(hw.processor_type(), ProcessorType::Unknown);
+        }
+        // Identifier should be non-empty
+        assert!(
+            !hw.processor_identifier().to_bytes().is_empty(),
+            "processor identifier should not be empty"
+        );
+    }
+
+    #[test]
+    fn processor_type_enum_values_match_c() {
+        // Verify the explicit enum discriminants stay stable
+        assert_eq!(ProcessorType::Non586 as i32, 0);
+        assert_eq!(ProcessorType::Pentium as i32, 1);
+        assert_eq!(ProcessorType::PentiumMmx as i32, 2);
+        assert_eq!(ProcessorType::PentiumPro as i32, 3);
+        assert_eq!(ProcessorType::PentiumII as i32, 4);
+        assert_eq!(ProcessorType::PentiumIII as i32, 5);
+        assert_eq!(ProcessorType::Celeron as i32, 6);
+        assert_eq!(ProcessorType::CeleronA as i32, 7);
+        assert_eq!(ProcessorType::AmdK5 as i32, 8);
+        assert_eq!(ProcessorType::AmdK6 as i32, 9);
+        assert_eq!(ProcessorType::AmdK6II as i32, 10);
+        assert_eq!(ProcessorType::AmdK6III as i32, 11);
+        assert_eq!(ProcessorType::AmdK7 as i32, 12);
+        assert_eq!(ProcessorType::Cyrix6x86 as i32, 13);
+        assert_eq!(ProcessorType::CyrixMediaGx as i32, 14);
+        assert_eq!(ProcessorType::Cyrix6x86Mx as i32, 15);
+        assert_eq!(ProcessorType::CyrixGxm as i32, 16);
+        assert_eq!(ProcessorType::PowerPcGeneric as i32, 17);
+        assert_eq!(ProcessorType::PowerPcG4G5 as i32, 18);
+        assert_eq!(ProcessorType::Unknown as i32, 19);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "requires host hardware query access; see docs/TESTING.md"]
+    fn native_memory_query_reports_real_total() {
+        assert!(
+            cfg!(feature = "hardware-info"),
+            "real hardware query requires --features hardware-info; run bash scripts/check-quality.sh host"
+        );
+        let hw = Hardware::detect();
+        // Explicitly selected on a host with sysinfo access (including /proc
+        // on Linux), not on restricted sandboxes or builds without a backend.
+        let mb = hw
+            .physical_memory_mb()
+            .expect("native total memory must be known");
+        assert!(mb >= 128, "implausibly small memory total: {mb} MB");
+    }
+
+    #[test]
+    fn detect_roundtrip() {
+        let hw = Hardware::detect();
+        assert!(!hw.processor_identifier.to_bytes().is_empty());
+        assert!((hw.processor_type as i32) >= 0 && (hw.processor_type as i32) <= 19);
+        if let Some(mhz) = hw.processor_speed() {
+            assert!(mhz > 0);
+        }
+    }
+}

@@ -1,0 +1,148 @@
+name: Rust quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "1"
+  # The checked-in wrapper and linker are local development tools that are not
+  # available on GitHub-hosted runners; the linker override replaces the Wild
+  # driver script. The cfg-based `target-cpu=x86-64-v3` baseline from
+  # .cargo/config.toml still applies — do NOT set RUSTFLAGS here, it would
+  # replace (not merge with) that baseline.
+  RUSTC_WRAPPER: ""
+  CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install pinned Rust toolchain
+        # rustfmt is pinned in rust-toolchain.toml.
+        run: rustup show active-toolchain
+
+      - name: Check formatting
+        run: bash scripts/check-quality.sh format
+
+  test:
+    name: Rust / ${{ matrix.suite }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [core, scripting-llvm, engine, assets, protocols, services, parity, client, client-release, tools, wasm, gpu, gpu-gl, host]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang \
+            libasound2-dev \
+            libavcodec-dev \
+            libavdevice-dev \
+            libavfilter-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libdbus-1-dev \
+            libswresample-dev \
+            libswscale-dev \
+            libudev-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            pkg-config
+
+      - name: Install pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Install native GL software rendering prerequisites
+        if: matrix.suite == 'gpu-gl'
+        run: sudo apt-get install -y libegl1:amd64 libegl-mesa0:amd64 libgles2:amd64 xvfb xauth
+
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: tests-${{ matrix.suite }}
+
+      - name: Install wasm target
+        if: matrix.suite == 'wasm'
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Prepare software GPU runtime
+        if: matrix.suite == 'gpu' || matrix.suite == 'gpu-gl'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/xdg-runtime"
+          chmod 700 "${RUNNER_TEMP}/xdg-runtime"
+          echo "XDG_RUNTIME_DIR=${RUNNER_TEMP}/xdg-runtime" >> "$GITHUB_ENV"
+
+      - name: Run named suite
+        run: bash scripts/check-quality.sh "${{ matrix.suite }}"
+
+      - name: Check compiled runtime contract
+        if: matrix.suite == 'client'
+        run: |
+          cargo build --locked -p robin_rs --example export_runtime_contract
+          target/debug/examples/export_runtime_contract --check wasm-www/runtime-contract.json
+
+  tooling:
+    name: Fixture-free orchestration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y zstd rsync
+      - name: Test orchestration
+        run: bash scripts/check-quality.sh tooling
+
+  editor:
+    name: Editor / tests, types and build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 9.15.0
+      - name: Install pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: level-editor/pnpm-lock.yaml
+      - name: Install locked editor dependencies
+        run: pnpm --dir level-editor install --frozen-lockfile
+      - name: Verify editor
+        run: bash scripts/check-quality.sh editor
+      - name: Resolve Chromium prerequisite
+        run: |
+          if ! command -v google-chrome >/dev/null; then
+            curl --fail --location --retry 3 \
+              https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+              --output "${RUNNER_TEMP}/google-chrome.deb"
+            sudo apt-get update
+            sudo apt-get install -y "${RUNNER_TEMP}/google-chrome.deb"
+          fi
+          chrome=$(command -v google-chrome)
+          "$chrome" --version
+          echo "CHROME=$chrome" >> "$GITHUB_ENV"
+      - name: Exercise real browser lifecycle
+        run: bash scripts/check-quality.sh editor-browser

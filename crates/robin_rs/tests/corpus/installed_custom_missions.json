@@ -1,0 +1,216 @@
+{
+  "source_page": "https://rhmods.com/missions/",
+  "shared_archive": {
+    "relative_path": "lib/lib_2026_01_25_.zip",
+    "url": "https://rhmods.com/content/uploads/lib_2026_01_25_.zip",
+    "bytes": 17946,
+    "sha256": "64884ed1b0f02cf0e08e0c03c71f0cf1b6da714cd5236f845c5649ff092ba18b"
+  },
+  "archives": [
+    {
+      "relative_path": "defending-the-york-city/2025-01-07.zip",
+      "page_url": "https://rhmods.com/missions/defending-the-york-city/",
+      "url": "https://rhmods.com/content/uploads/usercontent/1/677d6bb3683f0.zip",
+      "bytes": 9709,
+      "sha256": "126b4e47508ffbd331c326b06529fc7c804a0e98bce3c5766d67fe47aa870af6"
+    },
+    {
+      "relative_path": "derby-attack-siege/2025-01-07.zip",
+      "page_url": "https://rhmods.com/missions/derby-attack-siege/",
+      "url": "https://rhmods.com/content/uploads/usercontent/2/677d789ecd66b.zip",
+      "bytes": 5184,
+      "sha256": "29372b246dfae147c9c815e4c32dd5215a432007f6de76a8e0ff76db588a123b"
+    },
+    {
+      "relative_path": "escape-from-lincoln-i-first-mission-remake/2025-01-11.zip",
+      "page_url": "https://rhmods.com/missions/escape-from-lincoln-i-first-mission-remake/",
+      "url": "https://rhmods.com/content/uploads/usercontent/4/67824426e9263.zip",
+      "bytes": 15876,
+      "sha256": "de2f7b2d7679a2fe7f928b2b78dd33ea3d27a73159817162f952b54e5a7a264a"
+    },
+    {
+      "relative_path": "first-lincoln-mission/v1.2.zip",
+      "page_url": "https://rhmods.com/missions/first-lincoln-mission/",
+      "url": "https://rhmods.com/content/uploads/usercontent/5/67a1cb1f0f10a.zip",
+      "bytes": 17083,
+      "sha256": "69ab3383e43333236fa395e56657a908c19943df6a4af9fbb0c6e1c6e1b9506e"
+    },
+    {
+      "relative_path": "first-lincoln-mission/2025-01-11.zip",
+      "page_url": "https://rhmods.com/missions/first-lincoln-mission/",
+      "url": "https://rhmods.com/content/uploads/usercontent/5/67825fa941490.zip",
+      "bytes": 17083,
+      "sha256": "69ab3383e43333236fa395e56657a908c19943df6a4af9fbb0c6e1c6e1b9506e"
+    },
+    {
+      "relative_path": "leicester-escape/2025-01-07.zip",
+      "page_url": "https://rhmods.com/missions/leicester-escape-2/",
+      "url": "https://rhmods.com/content/uploads/usercontent/3/677d7f49b5366.zip",
+      "bytes": 6020,
+      "sha256": "90f614856f9af25072efb8f4219cb1e21fef7cb9c19e2ce53287f9222de0e783"
+    },
+    {
+      "relative_path": "meet-the-spy/v1.2-EN.zip",
+      "page_url": "https://rhmods.com/missions/meet-the-spy/",
+      "url": "https://rhmods.com/content/uploads/usercontent/10/69d281ba78e90.zip",
+      "bytes": 13883104,
+      "sha256": "6bb38a317fe075d126ca49964f6134b9c3fe58435c33a4120a4c1660c0afdd68"
+    },
+    {
+      "relative_path": "meet-the-spy/v1.2-DE.zip",
+      "page_url": "https://rhmods.com/missions/meet-the-spy/",
+      "url": "https://rhmods.com/content/uploads/usercontent/10/69d28197570bf.zip",
+      "bytes": 13607886,
+      "sha256": "142ec02481e8e328611db30e95e00e2a4970d3723d247de81c9f3630436f6b20"
+    },
+    {
+      "relative_path": "rescue-allan-the-dale/v1.0.zip",
+      "page_url": "https://rhmods.com/missions/rescue-allan-the-dale/",
+      "url": "https://rhmods.com/content/uploads/usercontent/9/698dde0c88b6c.zip",
+      "bytes": 11420938,
+      "sha256": "02ebbe3ac68abbe520b80b6234ee657993789e02dcbe9bae7fd84744281c8b92"
+    }
+  ],
+  "rows": [
+    {
+      "name": "defending_york",
+      "archive": "defending-the-york-city/2025-01-07.zip",
+      "rhm_entry": "Str03_Yor_MK.rhm",
+      "mission_basename": "Str03_Yor_MK",
+      "proto_level_filename": "york",
+      "spellforge": false,
+      "strip_prefix": "",
+      "prepend_prefix": "data/levels/"
+    },
+    {
+      "name": "derby_attack",
+      "archive": "derby-attack-siege/2025-01-07.zip",
+      "rhm_entry": "Str02_Der_MP.rhm",
+      "mission_basename": "Str02_Der_MP",
+      "proto_level_filename": "Derby",
+      "spellforge": false,
+      "strip_prefix": "",
+      "prepend_prefix": "data/levels/"
+    },
+    {
+      "name": "escape_from_lincoln",
+      "archive": "escape-from-lincoln-i-first-mission-remake/2025-01-11.zip",
+      "rhm_entry": "H01_Lin_VL.rhm",
+      "mission_basename": "H01_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "escape_from_lincoln",
+      "strip_prefix": "",
+      "prepend_prefix": "data/levels/"
+    },
+    {
+      "name": "first_lincoln_v1_2",
+      "archive": "first-lincoln-mission/v1.2.zip",
+      "rhm_entry": "H01_Lin_VL/H01_Lin_VL.rhm",
+      "mission_basename": "H01_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "first_lincoln",
+      "strip_prefix": "h01_lin_vl/",
+      "prepend_prefix": "data/levels/"
+    },
+    {
+      "name": "first_lincoln_2025",
+      "archive": "first-lincoln-mission/2025-01-11.zip",
+      "rhm_entry": "H01_Lin_VL/H01_Lin_VL.rhm",
+      "mission_basename": "H01_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "first_lincoln_2025",
+      "strip_prefix": "h01_lin_vl/",
+      "prepend_prefix": "data/levels/"
+    },
+    {
+      "name": "leicester_escape",
+      "archive": "leicester-escape/2025-01-07.zip",
+      "rhm_entry": "S02_Lei_MP.rhm",
+      "mission_basename": "S02_Lei_MP",
+      "proto_level_filename": "leicester",
+      "spellforge": false,
+      "strip_prefix": "",
+      "prepend_prefix": "data/levels/"
+    },
+    {
+      "name": "meet_spy_english",
+      "archive": "meet-the-spy/v1.2-EN.zip",
+      "rhm_entry": "English/DATA/Levels/CR02_Yrk_VL.rhm",
+      "mission_basename": "CR02_Yrk_VL",
+      "proto_level_filename": "york",
+      "spellforge": true,
+      "spellforge_case": "meet_the_spy",
+      "strip_prefix": "english/",
+      "prepend_prefix": ""
+    },
+    {
+      "name": "meet_spy_english_bundled_rescue",
+      "archive": "meet-the-spy/v1.2-EN.zip",
+      "rhm_entry": "English/DATA/Levels/H06_Lin_VL.rhm",
+      "mission_basename": "H06_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "meet_the_spy_bundled_rescue",
+      "strip_prefix": "english/",
+      "prepend_prefix": ""
+    },
+    {
+      "name": "meet_spy_german",
+      "archive": "meet-the-spy/v1.2-DE.zip",
+      "rhm_entry": "German/DATA/Levels/CR02_Yrk_VL.rhm",
+      "mission_basename": "CR02_Yrk_VL",
+      "proto_level_filename": "york",
+      "spellforge": true,
+      "spellforge_case": "meet_the_spy_german",
+      "strip_prefix": "german/",
+      "prepend_prefix": ""
+    },
+    {
+      "name": "meet_spy_german_bundled_rescue",
+      "archive": "meet-the-spy/v1.2-DE.zip",
+      "rhm_entry": "German/DATA/Levels/H06_Lin_VL.rhm",
+      "mission_basename": "H06_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "meet_the_spy_german_bundled_rescue",
+      "strip_prefix": "german/",
+      "prepend_prefix": ""
+    },
+    {
+      "name": "rescue_allan_english",
+      "archive": "rescue-allan-the-dale/v1.0.zip",
+      "rhm_entry": "English/DATA/Levels/H06_Lin_VL.rhm",
+      "mission_basename": "H06_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "rescue_allan_english",
+      "strip_prefix": "english/",
+      "prepend_prefix": ""
+    },
+    {
+      "name": "rescue_allan_german",
+      "archive": "rescue-allan-the-dale/v1.0.zip",
+      "rhm_entry": "German/DATA/Levels/H06_Lin_VL.rhm",
+      "mission_basename": "H06_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "rescue_allan_german",
+      "strip_prefix": "german/",
+      "prepend_prefix": ""
+    },
+    {
+      "name": "rescue_allan_polish",
+      "archive": "rescue-allan-the-dale/v1.0.zip",
+      "rhm_entry": "Polish/DATA/Levels/H06_Lin_VL.rhm",
+      "mission_basename": "H06_Lin_VL",
+      "proto_level_filename": "lincoln",
+      "spellforge": true,
+      "spellforge_case": "rescue_allan_polish",
+      "strip_prefix": "polish/",
+      "prepend_prefix": ""
+    }
+  ]
+}

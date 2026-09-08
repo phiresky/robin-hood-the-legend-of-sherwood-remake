@@ -1,0 +1,163 @@
+{
+  "map": "Leicester",
+  "proposals": [
+    {
+      "name": "great hall",
+      "id": "leicester-great-hall",
+      "bbox": [640, 240, 410, 290],
+      "boxes": [[660, 260, 370, 250]],
+      "apply_patches": true,
+      "tags": ["building", "castle", "hall"]
+    },
+    {
+      "name": "castle west wing",
+      "id": "leicester-west-wing",
+      "bbox": [495, 375, 255, 245],
+      "boxes": [[515, 395, 215, 205]],
+      "apply_patches": true,
+      "tags": ["building", "castle"]
+    },
+    {
+      "name": "castle keep",
+      "id": "leicester-keep",
+      "bbox": [440, 710, 440, 305],
+      "boxes": [[460, 730, 400, 265]],
+      "apply_patches": true,
+      "tags": ["building", "castle", "keep"]
+    },
+    {
+      "name": "forest tower",
+      "id": "leicester-forest-tower",
+      "bbox": [595, 15, 290, 240],
+      "boxes": [[615, 35, 250, 200]],
+      "apply_patches": true,
+      "tags": ["tower", "castle"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower"
+    },
+    {
+      "name": "northwest tower",
+      "id": "leicester-nw-tower",
+      "bbox": [15, 360, 260, 340],
+      "boxes": [[35, 380, 220, 300]],
+      "apply_patches": true,
+      "tags": ["tower", "castle"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower"
+    },
+    {
+      "name": "southwest tower",
+      "id": "leicester-sw-tower",
+      "bbox": [35, 660, 305, 330],
+      "boxes": [[55, 680, 265, 290]],
+      "apply_patches": true,
+      "tags": ["tower", "castle"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower"
+    },
+    {
+      "name": "small turret",
+      "id": "leicester-small-turret",
+      "bbox": [1025, 280, 160, 135],
+      "boxes": [[1045, 300, 120, 95]],
+      "apply_patches": true,
+      "tags": ["tower", "castle", "turret"]
+    },
+    {
+      "name": "moat tower west",
+      "id": "leicester-moat-tower-west",
+      "bbox": [1490, 440, 280, 460],
+      "boxes": [[1510, 460, 250, 420]],
+      "apply_patches": true,
+      "tags": ["tower", "castle", "moat"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower"
+    },
+    {
+      "name": "moat tower east",
+      "id": "leicester-moat-tower-east",
+      "bbox": [1750, 430, 390, 490],
+      "boxes": [[1770, 450, 350, 470]],
+      "apply_patches": true,
+      "tags": ["tower", "castle", "moat"],
+      "scale_class": "variant",
+      "variant_group": "leicester-round-tower"
+    },
+    {
+      "name": "tower bridge",
+      "id": "leicester-tower-bridge",
+      "bbox": [1630, 480, 240, 160],
+      "boxes": [[1650, 500, 200, 120]],
+      "apply_patches": true,
+      "tags": ["bridge", "castle", "wood"]
+    },
+    {
+      "name": "north wall",
+      "id": "leicester-north-wall",
+      "bbox": [235, 370, 300, 215],
+      "boxes": [[255, 390, 260, 175]],
+      "apply_patches": true,
+      "tags": ["wall", "castle", "crenellated"],
+      "scale_class": "spline-segment"
+    },
+    {
+      "name": "west wall",
+      "id": "leicester-west-wall",
+      "bbox": [205, 1050, 300, 265],
+      "boxes": [[225, 1070, 260, 225]],
+      "apply_patches": true,
+      "tags": ["wall", "castle", "crenellated"],
+      "scale_class": "spline-segment"
+    },
+    {
+      "name": "east wall",
+      "id": "leicester-east-wall",
+      "bbox": [1260, 1160, 360, 300],
+      "boxes": [[1280, 1180, 320, 260]],
+      "apply_patches": true,
+      "tags": ["wall", "castle", "crenellated"],
+      "scale_class": "spline-segment"
+    },
+    {
+      "name": "castle well",
+      "id": "leicester-castle-well",
+      "bbox": [1225, 25, 80, 85],
+      "boxes": [[1230, 30, 70, 75]],
+      "tags": ["prop", "well"],
+      "min_area": 300,
+      "pad": 60
+    },
+    {
+      "name": "grass swatch",
+      "id": "leicester-grass-swatch",
+      "bbox": [2250, 200, 300, 190],
+      "mode": "crop",
+      "tags": ["terrain", "grass"],
+      "scale_class": "texture"
+    },
+    {
+      "name": "dirt road swatch",
+      "id": "leicester-dirt-road-swatch",
+      "bbox": [2300, 120, 140, 170],
+      "mode": "crop",
+      "tags": ["terrain", "road", "dirt"],
+      "scale_class": "texture"
+    },
+    {
+      "name": "moat water swatch",
+      "id": "leicester-moat-water-swatch",
+      "bbox": [140, 1490, 250, 150],
+      "mode": "crop",
+      "tags": ["terrain", "water", "moat"],
+      "scale_class": "texture"
+    },
+    {
+      "name": "forest canopy swatch",
+      "id": "leicester-forest-canopy-swatch",
+      "bbox": [200, 0, 350, 180],
+      "mode": "crop",
+      "tags": ["terrain", "forest", "trees"],
+      "scale_class": "texture"
+    }
+  ]
+}

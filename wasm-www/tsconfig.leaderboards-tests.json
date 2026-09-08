@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": false,
+    "noEmit": false,
+    "outDir": ".leaderboard-test-dist",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/network_deadline.ts",
+    "src/identity-signer/protocol.ts",
+    "src/identity-signer/protocol.test.ts",
+    "src/leaderboards/*.ts"
+  ]
+}

@@ -1,0 +1,253 @@
+name: Verify and manually deploy static Workers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - wasm-www/index.html
+      - wasm-www/identity-signer/**
+      - wasm-www/leaderboards/**
+      - wasm-www/deploy/**
+      - wasm-www/package.json
+      - wasm-www/pnpm-lock.yaml
+      - wasm-www/scripts/**
+      - wasm-www/src/**
+      - wasm-www/tsconfig*.json
+      - wasm-www/vite*.ts
+      - Cargo.lock
+      - Cargo.toml
+      - rust-toolchain.toml
+      - crates/robin_rs/Cargo.toml
+      - crates/robin_rs/js/browser_identity_*.js
+      - crates/robin_identity_signer/**
+      - crates/robin_rs/src/leaderboard_signing.rs
+      - crates/robin_run_protocol/**
+      - .github/tool-authorities/wasm-bindgen-cli-v0.2.127.json
+      - scripts/build_identity_signer.sh
+      - scripts/install_pinned_wasm_bindgen.sh
+      - .github/workflows/deploy-static-workers.yml
+  pull_request:
+    paths:
+      - wasm-www/index.html
+      - wasm-www/identity-signer/**
+      - wasm-www/leaderboards/**
+      - wasm-www/deploy/**
+      - wasm-www/package.json
+      - wasm-www/pnpm-lock.yaml
+      - wasm-www/scripts/**
+      - wasm-www/src/**
+      - wasm-www/tsconfig*.json
+      - wasm-www/vite*.ts
+      - Cargo.lock
+      - Cargo.toml
+      - rust-toolchain.toml
+      - crates/robin_rs/Cargo.toml
+      - crates/robin_rs/js/browser_identity_*.js
+      - crates/robin_identity_signer/**
+      - crates/robin_rs/src/leaderboard_signing.rs
+      - crates/robin_run_protocol/**
+      - .github/tool-authorities/wasm-bindgen-cli-v0.2.127.json
+      - scripts/build_identity_signer.sh
+      - scripts/install_pinned_wasm_bindgen.sh
+      - .github/workflows/deploy-static-workers.yml
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the already verified public and signer artifacts
+        required: true
+        default: false
+        type: boolean
+      runtime_version_id:
+        description: Exact deployed robinhood-runtime-assets Worker version UUID
+        required: false
+        type: string
+      datadir_version_id:
+        description: Exact deployed robinhood-datadir-assets Worker version UUID
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: static-workers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out the exact source revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+
+      - name: Install locked static deployment tools
+        working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+
+      - name: Install the accepted wasm-bindgen CLI authority
+        id: wasm-bindgen
+        run: |
+          destination="${RUNNER_TEMP}/wasm-bindgen-cli-0.2.127"
+          executable="$(scripts/install_pinned_wasm_bindgen.sh "${destination}")"
+          test "$("${executable}" --version)" = 'wasm-bindgen 0.2.127'
+          echo "executable=${executable}" >> "${GITHUB_OUTPUT}"
+
+      - name: Test topology, frontend, and deployment tooling
+        working-directory: wasm-www
+        run: |
+          test "$(pnpm exec wrangler --version)" = "4.127.1"
+          pnpm test
+          pnpm test:leaderboards
+          pnpm test:deployment
+          pnpm typecheck
+          pnpm verify:deployment-config
+
+      - name: Build and verify the public and signer origins
+        run: |
+          test ! -e wasm-www/dist
+          test ! -e wasm-www/signer-dist
+          pnpm --dir wasm-www build:site
+          pnpm --dir wasm-www verify:public
+          scripts/build_identity_signer.sh '${{ steps.wasm-bindgen.outputs.executable }}'
+          pnpm --dir wasm-www verify:signer
+          pnpm --dir wasm-www verify:wrangler
+
+      - name: Emit exact static-origin inventories
+        run: |
+          commit="$(git rev-parse HEAD)"
+          cargo_lock_sha256="$(sha256sum Cargo.lock | cut -d ' ' -f 1)"
+          mkdir -p target/static-authority
+          node wasm-www/scripts/write-static-origin-inventory.mjs \
+            public wasm-www/dist "${commit}" "${cargo_lock_sha256}" \
+            target/static-authority/public.json
+          node wasm-www/scripts/write-static-origin-inventory.mjs \
+            identity_signer wasm-www/signer-dist "${commit}" "${cargo_lock_sha256}" \
+            target/static-authority/identity-signer.json
+
+      - name: Reproduce exact public and signer inventories
+        run: |
+          node wasm-www/scripts/verify-static-origin-inventory.mjs \
+            public wasm-www/dist target/static-authority/public.json
+          node wasm-www/scripts/verify-static-origin-inventory.mjs \
+            identity_signer wasm-www/signer-dist target/static-authority/identity-signer.json
+
+      - name: Preserve verified deployment bundle
+        if: github.event_name == 'workflow_dispatch' && inputs.deploy
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: robinhood-static-workers-${{ github.sha }}
+          path: |
+            wasm-www/dist
+            wasm-www/signer-dist
+            target/static-authority/public.json
+            target/static-authority/identity-signer.json
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: build
+    environment:
+      name: cloudflare-production
+      url: https://robinhood.phiresky.xyz/
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Check out the exact source revision
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install pinned pnpm
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: wasm-www/package.json
+          version: 9.15.0
+
+      - name: Install pinned Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.19.0
+          cache: pnpm
+          cache-dependency-path: wasm-www/pnpm-lock.yaml
+
+      - name: Install locked deployment tools
+        working-directory: wasm-www
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore the exact verified static bundle
+        env:
+          PUBLIC_DIST: wasm-www/dist
+          SIGNER_DIST: wasm-www/signer-dist
+        run: |
+          test ! -e "${PUBLIC_DIST}"
+          test ! -e "${SIGNER_DIST}"
+
+      - name: Download the exact verified static bundle
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: robinhood-static-workers-${{ github.sha }}
+          path: .
+
+      - name: Re-verify downloaded artifacts and topology
+        run: |
+          test "$(pnpm --dir wasm-www exec wrangler --version)" = "4.127.1"
+          node wasm-www/scripts/verify-static-origin-inventory.mjs \
+            public wasm-www/dist target/static-authority/public.json
+          node wasm-www/scripts/verify-static-origin-inventory.mjs \
+            identity_signer wasm-www/signer-dist target/static-authority/identity-signer.json
+          pnpm --dir wasm-www verify:deployment-config
+          pnpm --dir wasm-www verify:public
+          pnpm --dir wasm-www verify:signer
+
+      - name: Establish API no-script route before changing public assets
+        working-directory: wasm-www
+        run: node scripts/sync-cloudflare-routes.mjs --prepare-api
+
+      - name: Prove the exact runtime Worker version before deploying public origins
+        working-directory: wasm-www
+        env:
+          ROBINHOOD_RUNTIME_VERSION_ID: ${{ inputs.runtime_version_id }}
+        run: node scripts/sync-cloudflare-routes.mjs --prove-runtime
+
+      - name: Prove the exact datadir Worker version before deploying public origins
+        working-directory: wasm-www
+        env:
+          ROBINHOOD_DATADIR_VERSION_ID: ${{ inputs.datadir_version_id }}
+        run: node scripts/sync-cloudflare-routes.mjs --prove-datadir
+
+      - name: Deploy isolated signer and public Static Assets
+        working-directory: wasm-www
+        run: |
+          pnpm exec wrangler deploy --config deploy/wrangler-signer.json
+          pnpm exec wrangler deploy --config deploy/wrangler-public.json
+
+      - name: Reconcile and smoke-test the exact live route closure
+        working-directory: wasm-www
+        env:
+          ROBINHOOD_RUNTIME_VERSION_ID: ${{ inputs.runtime_version_id }}
+          ROBINHOOD_DATADIR_VERSION_ID: ${{ inputs.datadir_version_id }}
+        run: |
+          node scripts/sync-cloudflare-routes.mjs --apply
+          node scripts/sync-cloudflare-routes.mjs --check
+          pnpm smoke:cloudflare
