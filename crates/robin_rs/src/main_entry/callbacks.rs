@@ -267,7 +267,7 @@ impl OperationOutcome {
     pub(crate) fn restart_requested(&self) -> bool {
         matches!(self.completion, OperationCompletion::RestartRequested)
     }
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(crate) fn transition(&self) -> Option<&PendingLevelLoad> {
         match &self.completion {
             OperationCompletion::Transition(load) => Some(load),
