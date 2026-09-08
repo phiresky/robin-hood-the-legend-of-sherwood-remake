@@ -2226,27 +2226,6 @@ pub(super) fn load_level_and_sprite_bank(
             .mission_filename
             .clone()
     });
-    let resources = match host.frontend.shipping.as_ref() {
-        Some(shipping) => match mission_name
-            .as_deref()
-            .ok_or_else(|| anyhow::anyhow!("shipping launch has no current mission"))
-            .and_then(|name| shipping.mission_resource_environment(name))
-        {
-            Ok(resources) => resources,
-            Err(error) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("prepare shipping mission resources: {error:#}"),
-                ));
-            }
-        },
-        None => std::sync::Arc::new(
-            engine_sprite_script::MissionResourceEnvironment::from_files(&files),
-        ),
-    };
-    assets.sprite_scriptor = std::sync::Arc::new(
-        engine_sprite_script::SpriteScriptor::with_resources(resources.clone()),
-    );
     assets.attachments.spellforge_runtime = host
         .scripting
         .lua_session
@@ -2325,6 +2304,34 @@ pub(super) fn load_level_and_sprite_bank(
         files.clone(),
     );
     timer.step("terrain decode start");
+
+    // TODO: To overlap the VQ tail as well, streaming install must hand off
+    // immutable terrain inputs; retaining its still-mutating shipping datadir
+    // here would violate the assembly ownership boundary.
+    // Resource environments clone/validate mission RHS and scripts. Start the
+    // independent terrain job first so this work overlaps pixel decoding.
+    let resources = match host.frontend.shipping.as_ref() {
+        Some(shipping) => match mission_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("shipping launch has no current mission"))
+            .and_then(|name| shipping.mission_resource_environment(name))
+        {
+            Ok(resources) => resources,
+            Err(error) => {
+                return Err(MissionLoadError::new(
+                    campaign,
+                    format!("prepare shipping mission resources: {error:#}"),
+                ));
+            }
+        },
+        None => std::sync::Arc::new(
+            engine_sprite_script::MissionResourceEnvironment::from_files(&files),
+        ),
+    };
+    assets.sprite_scriptor = std::sync::Arc::new(
+        engine_sprite_script::SpriteScriptor::with_resources(resources.clone()),
+    );
+    timer.step("mission resource environment");
 
     // Install the sprite bank — must happen before entity sprite
     // loading in initialize_for_mission. The parsed bank comes from the

@@ -780,8 +780,10 @@ pub fn apply_background_map(
     engine: &Engine,
     host: &mut Host,
     renderer: &mut Renderer,
-    decoded: PreDecodedBackground,
+    decoded: impl std::borrow::Borrow<PreDecodedBackground>,
 ) {
+    let decoded = decoded.borrow();
+    let mut timer = crate::game_session::PhaseTimer::new("background upload");
     if !renderer.upload_background_texture(
         decoded.width as u32,
         decoded.height as u32,
@@ -799,6 +801,10 @@ pub fn apply_background_map(
         decoded.height
     );
 
+    timer.step("terrain texture");
+
+    // TODO: Measure an atlas/staging upload for masks; individual textures currently
+    // require one allocation and queue write per mask, plus alpha expansion.
     // Upload each mask's static binary alpha once. Masked draws rasterize it
     // into stencil so occluded sprite fragments never overwrite the scene.
     renderer.clear_mask_alpha_cache();
@@ -815,6 +821,7 @@ pub fn apply_background_map(
     if mask_count > 0 {
         tracing::debug!("Uploaded {} mask alpha textures", mask_count);
     }
+    timer.step("mask textures");
     if let Some(depth) = decoded.occlusion_depth.as_deref() {
         assert!(
             renderer.upload_occlusion_depth(depth, decoded.width, decoded.height),
@@ -825,6 +832,7 @@ pub fn apply_background_map(
         );
     }
 
+    timer.step("occlusion depth");
     host.frontend.clear_background_decals();
 }
 
@@ -962,8 +970,10 @@ pub fn pre_decode_minimap_with_files(
 pub fn apply_minimap(
     host: &mut Host,
     renderer: &mut Renderer,
-    decoded: PreDecodedMinimap,
+    decoded: impl std::borrow::Borrow<PreDecodedMinimap>,
 ) -> MinimapBitmapSetup {
+    let decoded = decoded.borrow();
+    let mut timer = crate::game_session::PhaseTimer::new("minimap upload");
     let surface = renderer
         .create_surface_from_rgb565(decoded.width, decoded.height, &decoded.pixels)
         .expect("apply_minimap: decoded minimap dimensions must match RGB565 payload");
@@ -971,6 +981,7 @@ pub fn apply_minimap(
         .mission_surfaces
         .replace_map(renderer, surface);
 
+    timer.step("texture");
     let map_w = decoded.width as f32;
     let map_h = decoded.height as f32;
 
@@ -980,6 +991,8 @@ pub fn apply_minimap(
         &decoded.pixels,
         renderer.transparent_color(),
     );
+
+    timer.step("hit mask");
 
     // The sentinel `(65536, 65536)` is the per-profile "never written"
     // default (`PlayerProfile::new` initializes both fields to that

@@ -490,19 +490,18 @@ impl InteractiveRendererAssembly {
     ) {
         let initial_ambiance = engine.weather().ambiance;
         if let Some(decoded) = background {
-            self.ambience_backgrounds
-                .push((initial_ambiance, decoded.clone()));
             crate::level_loading_host::apply_background_map(
                 engine,
                 host,
                 &mut self.renderer,
-                decoded,
+                &decoded,
             );
+            self.ambience_backgrounds.push((initial_ambiance, decoded));
         }
         if let Some(map) = minimap.map(|decoded| {
-            self.ambience_minimaps
-                .push((initial_ambiance, decoded.clone()));
-            crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded)
+            let map = crate::level_loading_host::apply_minimap(host, &mut self.renderer, &decoded);
+            self.ambience_minimaps.push((initial_ambiance, decoded));
+            map
         }) {
             host.frontend.engine_display.setup_minimap_map(
                 map.hit_mask,
@@ -531,7 +530,7 @@ impl InteractiveRendererAssembly {
                     engine,
                     host,
                     &mut self.renderer,
-                    decoded.clone(),
+                    decoded,
                 );
             }
             if let Some((_, decoded)) = self
@@ -539,11 +538,8 @@ impl InteractiveRendererAssembly {
                 .iter()
                 .find(|(ambiance, _)| *ambiance == desired)
             {
-                let map = crate::level_loading_host::apply_minimap(
-                    host,
-                    &mut self.renderer,
-                    decoded.clone(),
-                );
+                let map =
+                    crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded);
                 host.frontend.engine_display.setup_minimap_map(
                     map.hit_mask,
                     map.map_size,
@@ -765,7 +761,7 @@ impl MissionPresentation {
                 engine,
                 host,
                 &mut self.renderer,
-                decoded.clone(),
+                decoded,
             );
         } else {
             tracing::warn!(?ambiance, "runtime ambience has no predecoded background");
@@ -775,8 +771,7 @@ impl MissionPresentation {
             .iter()
             .find(|(candidate, _)| *candidate == ambiance)
         {
-            let map =
-                crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded.clone());
+            let map = crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded);
             host.frontend.engine_display.setup_minimap_map(
                 map.hit_mask,
                 map.map_size,
