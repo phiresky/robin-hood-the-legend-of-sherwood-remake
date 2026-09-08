@@ -1103,7 +1103,6 @@ pub(super) fn render_frame(
     ctx: &mut RenderContext<'_>,
     cadence: RenderCadence,
 ) {
-    super::sprite_readiness::assert_render_sprites_ready(engine);
     // Rendering only reads the zoom presentation prepared at the update
     // boundary. A missing or stale snapshot is an ordering error, never a
     // reason to invent default button state.

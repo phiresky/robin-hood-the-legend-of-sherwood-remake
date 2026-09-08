@@ -107,7 +107,7 @@ struct SimulationVisualRefresh<'a> {
 }
 
 impl SimulationVisualRefresh<'_> {
-    async fn run(self) -> Result<(), String> {
+    fn run(self) {
         let Self {
             last_shadow_color,
             last_visual_ambiance,
@@ -135,9 +135,6 @@ impl SimulationVisualRefresh<'_> {
             manager.engine.initial_mission_night_color()
         };
         let ambiance_changed = current_visual_ambiance != *last_visual_ambiance;
-        if current_shadow_color != *last_shadow_color || ambiance_changed {
-            super::sprite_readiness::wait_for_all_sprites().await?;
-        }
         if ambiance_changed {
             presentation.apply_ambience_maps(&manager.engine, host, current_visual_ambiance);
             *last_visual_ambiance = current_visual_ambiance;
@@ -195,7 +192,6 @@ impl SimulationVisualRefresh<'_> {
                 tracing::warn!("cheat all_debriefings: level descriptors unavailable");
             }
         }
-        Ok(())
     }
 }
 
@@ -545,15 +541,15 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameSimulationOutcome, String> {
-        let state = Self::advance_simulation(self, mission, services).await?;
+        let state = Self::advance_simulation(self, mission, services);
         Self::drive_modals(mission, services, state).await
     }
 
-    async fn advance_simulation(
+    fn advance_simulation(
         this: Self,
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
-    ) -> Result<SimulationModalState, String> {
+    ) -> SimulationModalState {
         let window = &mut *services.window;
         let args = services.args;
         // File-backed screenshot runs have no player to dismiss a dialogue
@@ -615,10 +611,9 @@ impl InteractiveFrameSimulation {
             resources,
             window,
         }
-        .run()
-        .await?;
+        .run();
 
-        Ok(SimulationModalState {
+        SimulationModalState {
             frame,
             rewind_active,
             consumed_buffered,
@@ -627,7 +622,7 @@ impl InteractiveFrameSimulation {
             auto_dismiss_modals,
             tick_exit_code,
             history_commit_pending,
-        })
+        }
     }
 
     async fn drive_modals(
@@ -711,7 +706,6 @@ impl InteractiveFrameSimulation {
             let scene_screenshots =
                 crate::http_server::take_pending_scene_screenshots(runtime.frame_number());
             if !scene_screenshots.is_empty() {
-                super::sprite_readiness::wait_for_render_sprites(&manager.engine).await?;
                 pre_render_engine_setup(host);
                 update_mouse_and_cursor(
                     &manager.engine,
