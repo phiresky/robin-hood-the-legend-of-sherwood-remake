@@ -23,7 +23,7 @@ const { values } = parseArgs({ options: {
     mbit: { type: 'string', default: '16' }, chrome: { type: 'string', default: 'google-chrome' },
     mission: { type: 'string', default: 'auto' }, 'require-present': { type: 'boolean', default: false },
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
-    'http-wasm-br': { type: 'string' },
+    'http-wasm-br': { type: 'string' }, 'http-admission-br': { type: 'string' },
     replay: { type: 'string' },
     query: { type: 'string', multiple: true, default: [] },
 } });
@@ -42,6 +42,10 @@ const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const httpWasmBr = values['http-wasm-br'] ? await readFile(resolve(values['http-wasm-br'])) : undefined;
 if (httpWasmBr && !brotliDecompressSync(httpWasmBr).equals(await readFile(join(pkg, 'robin_bg.wasm')))) {
     throw new Error('--http-wasm-br does not decode to the supplied package WASM');
+}
+const httpAdmissionBr = values['http-admission-br'] ? await readFile(resolve(values['http-admission-br'])) : undefined;
+if (httpAdmissionBr && !brotliDecompressSync(httpAdmissionBr).equals(await readFile(join(pkg, 'replay_admission_bg.wasm')))) {
+    throw new Error('--http-admission-br does not decode to the supplied package admission WASM');
 }
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
@@ -81,6 +85,7 @@ async function asset(path) {
             file = safePath(suffix.startsWith('Data/') ? core : pkg, suffix);
             if (suffix === 'robin_bg.wasm.gz') body = execFileSync('gzip', ['-9', '-n', '-c', join(pkg, 'robin_bg.wasm')], { maxBuffer: 256 * 1024 * 1024 });
             if (suffix === 'robin_bg.wasm' && httpWasmBr) { body = httpWasmBr; encoding = 'br'; }
+            if (suffix === 'replay_admission_bg.wasm' && httpAdmissionBr) { body = httpAdmissionBr; encoding = 'br'; }
         } else if (path.startsWith(dataPrefix)) {
             const suffix = path.slice(dataPrefix.length);
             file = safePath(datadir, suffix === 'v8-web-opus-q80.rhdata.zst' ? 'Data/datadir.bin' : `Data/${suffix}`);
@@ -124,6 +129,7 @@ const profile = await mkdtemp(join(tmpdir(), 'robin-production-startup-'));
 let browser, socket;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let browserErrors = '';
+let bootstrapEpoch, presentEpoch, replayState;
 try {
     browser = spawn(values.chrome, ['--headless=new', `--user-data-dir=${profile}`, '--no-first-run', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', '--remote-debugging-port=0', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
     browser.stderr.on('data', data => { browserErrors += data; });
@@ -143,7 +149,7 @@ try {
     const send = (method, params = {}) => new Promise((resolve, reject) => {
         pending.set(++id, { resolve, reject }); socket.send(JSON.stringify({ id, method, params }));
     });
-    let bootstrapEpoch, presentEpoch, finishTrace;
+    let finishTrace;
     const traceComplete = new Promise(resolve => { finishTrace = resolve; });
     socket.addEventListener('message', event => {
         const message = JSON.parse(event.data);
@@ -181,7 +187,6 @@ try {
     const deadline = Date.now() + 180000;
     while ((!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) && Date.now() < deadline && !errors.length) await sleep(20);
     if (!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) throw new Error('Startup did not reach required endpoint: ' + JSON.stringify(errors));
-    let replayState;
     if (replayContent !== undefined) {
         if (!logs.some(({ line }) => line.includes('Loaded replay (decoded):'))) {
             throw new Error('Bootstrap completed without decoded replay playback');
@@ -225,6 +230,7 @@ try {
     const navigationServerAt = page.timeOrigin - performance.timeOrigin;
     const result = {
         inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
+        httpAdmissionBrotli: httpAdmissionBr ? { path: resolve(values['http-admission-br']), bytes: httpAdmissionBr.length, sha256: sha256(httpAdmissionBr), rawSha256: sha256(await readFile(join(pkg, 'replay_admission_bg.wasm'))), caveat: 'Supplied encoded fixture is verified against admission package bytes; retain capture provenance separately.' } : null,
         httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
         replay: replayContent === undefined ? null : { path: resolve(values.replay), sha256: sha256(Buffer.from(replayContent)), build: replayBuild, state: replayState },
         pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
@@ -243,7 +249,7 @@ try {
     await writeFile(output + '.json', JSON.stringify(result, null, 2));
     console.log(JSON.stringify(result.endpoints));
 } catch (error) {
-    await writeFile(output + '.failure.json', JSON.stringify({ error: String(error), errors, logs, records, browserErrors }, null, 2));
+    await writeFile(output + '.failure.json', JSON.stringify({ error: String(error), errors, logs, records, browserErrors, bootstrapEpoch, presentEpoch, replayState, replayPath: values.replay ? resolve(values.replay) : null }, null, 2));
     throw error;
 } finally {
     socket?.close();

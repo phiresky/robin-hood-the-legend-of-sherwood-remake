@@ -2793,8 +2793,7 @@ mod tests {
         assert_eq!(holder.simulation_opacity_sha256(&[0]), expected);
     }
 
-    #[test]
-    fn shadow_collision_requires_grid_and_discards_stale_opacity() {
+    fn shadow_collision_fixture() -> (FrameHolder, crate::late_sprites::LateGridCell) {
         let mut holder = FrameHolder::new();
         let dictionary_index = holder.add_dictionary(FrameDictionary::from_raw(
             1,
@@ -2816,13 +2815,19 @@ mod tests {
             })),
             ..Default::default()
         });
-        assert!(
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                || holder.apply_arno_law(SHADOW_KEY - 1)
-            ))
-            .is_err()
-        );
-        assert!(holder.sprites[0].resident_opacity.is_some());
+        (holder, cell)
+    }
+
+    #[test]
+    #[should_panic(expected = "shadow rebinding changes resident opacity")]
+    fn shadow_collision_rejects_pending_grid() {
+        let (mut holder, _cell) = shadow_collision_fixture();
+        holder.apply_arno_law(SHADOW_KEY - 1);
+    }
+
+    #[test]
+    fn shadow_collision_discards_stale_opacity_after_publication() {
+        let (mut holder, cell) = shadow_collision_fixture();
         cell.set(Arc::new(vec![0])).unwrap();
         holder.apply_arno_law(SHADOW_KEY - 1);
         assert!(holder.sprites[0].resident_opacity.is_none());

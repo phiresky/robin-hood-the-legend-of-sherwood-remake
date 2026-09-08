@@ -2081,9 +2081,26 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
     assert_eq!(cache.owners.len(), count);
     // Exercise the production lazy path with independently mutable sources.
     fn picture_manager(id: i32, picture: &Picture) -> ResourceManager {
-        let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
-        value["pictures"][id.to_string()] = serde_json::json!([picture]);
-        serde_json::from_value(value).unwrap()
+        let mut bytes = b"SRES".to_vec();
+        bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(b"BTTN");
+        bytes.extend_from_slice(&(id as u32).to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend(
+            picture
+                .write_sixteen_to_bytes(SixteenPacking::None)
+                .unwrap(),
+        );
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset("Data/fixture.res", bytes)
+            .unwrap();
+        let mut manager =
+            ResourceManager::with_files(Arc::new(robin_engine::sbfile::SbFileSystem::new(assets)));
+        manager.attach_resource_file("Data/fixture.res").unwrap();
+        manager
     }
     let mut external = picture_manager(42, &picture);
     let mut duplicate = external.duplicate();
@@ -2102,11 +2119,13 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         "generation changes retain queued-draw owners until retirement"
     );
 
-    let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
-    value["encoded_pictures"]["42"] = serde_json::json!([
-        robin_assets::resource_manager::EncodedPicture::jxl_rgba565_keyed(vec![0, 1, 2])
-    ]);
-    cache.res = serde_json::from_value(value).unwrap();
+    cache.res = picture_manager(42, &picture);
+    cache
+        .res
+        .encode_pictures_for_shipping(|_| {
+            Ok(robin_assets::resource_manager::EncodedPicture::jxl_rgba565_keyed(vec![0, 1, 2]))
+        })
+        .unwrap();
     assert!(
         cache.picture_from(renderer, &mut external, 42).is_none(),
         "broken local picture must not silently fall back to an external source"

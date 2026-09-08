@@ -92,3 +92,10 @@ non-null replay RPC state, then records the replay hash and observed playhead.
 Do not use a forced mission or a live-game bootstrap as a replay timing proxy.
 For cross-build controlled experiments, prepare explicitly identified compatible
 fixtures separately; the harness never rewrites the replay build identity.
+
+Use `--http-admission-br PATH` alongside `--replay` to serve the isolated
+`replay_admission_bg.wasm` with its separately captured HTTP Brotli response.
+The harness verifies it against the admission module and records both hashes.
+Capture it with `scripts/capture_wasm_http_brotli.mjs --worktree REPO
+--wasm PACKAGE/replay_admission_bg.wasm --output /tmp/admission.br`; retain its
+JSON provenance. Main-engine and admission modules require different captures.

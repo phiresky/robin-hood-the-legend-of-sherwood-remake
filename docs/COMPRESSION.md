@@ -30,6 +30,12 @@ five matched optimized Chrome pairs improve bootstrap from **4.276 s to
 raw mask atlases, and exported geometry metadata are implemented. Shipping
 schema is now **v16**; mission parts grow 3.15% in this fixture.
 
+[Replay startup follow-up](#replay-startup-and-boot-payload-reduction-2026-09-08):
+the browser boot bundle falls from **7,968,036 B to 3,702,350 B** by removing
+verified source-audio duplicates. Replay admission overlaps runtime loading;
+playback skips unrelated menu audio and live Restart capture. Final matched
+replay timings remain pending. Sprite pixel deferral is an opt-in experiment.
+
 ## Initial findings (superseded by later implementation sections)
 
 - **Character sprites (~78% of bank, ~67% of shipping blob)**: keep the existing shipping format, but trim demo shipping banks to the sprite IDs reachable from RHS profiles loaded by the demo mission. The current Leicester demo v4 q80 blob keeps 64 774 / 65 100 sprite slots and is **35 213 242 B**.
@@ -3759,3 +3765,115 @@ Bootstrap is an engine log endpoint. The first-present marker is return from a
 normal mission render/present call, not GPU/compositor completion. Screenshots
 are inspectable rendered-game evidence after bootstrap, two RAFs and a 500ms
 settle, not a timestamp of the first physically displayed frame.
+
+
+## Replay startup and boot payload reduction (2026-09-08)
+
+This round follows the production-loader measurements above, with the URL replay
+entry path as the target. Replay admission, command acceptance, bootstrap and
+first mission presentation are separate endpoints. The previous normal-demo
+bootstrap numbers are not measurements of this replay path.
+
+### Boot inventory and verified audio removal
+
+The actual baseline `Data/datadir.bin` is **7,968,036 B**. Removing redundant
+locale WAV payloads produces **3,702,350 B**, saving **4,265,686 B (53.53%)**.
+The decoded native-bitcode payload falls from 19,773,549 to 13,718,305 bytes.
+All 606 removed files (6,021,324 source bytes) have catalog-backed playback and
+match the source selected for conversion byte for byte. Distinct translations
+and unmapped audio remain. This applies to the browser Opus publication recipe;
+native/source recipes retain their original resources.
+
+The probe verifies all 1,095 external audio catalog ranges, unchanged audio
+references, unchanged mission references, and semantic encode/decode parity.
+HashMap iteration can change re-encoded bitcode ordering, so a re-encoding estimate
+must not replace the actual input file size. Production conversion trims before
+publishing its content inventory and hashes. A scratch boot rewrite alone does
+not refresh an authenticated web-content manifest.
+
+Local evidence: `/tmp/robin-startup-more/boot/{inventory.tsv,trim-report.json}`
+and `datadir-trimmed.bin`; input is
+`/tmp/robin-perf-next/corpus-1m/Data/datadir.bin`. These are session-local artifacts,
+not repository fixtures or hosted downloads.
+
+### WASM transport: offline ratios versus HTTP responses
+
+For the 21,446,680-byte baseline WASM, the offline Node Brotli quality-11 probe
+produces **5,418,754 B**. This is a compression experiment, not the payload observed
+from the production HTTP path. The local Wrangler HTTP Brotli capture is
+**6,617,749 B**, versus the fixture's reproducible system `gzip -9 -n` sidecar
+at **7,721,211 B**. Node's gzip probe produces a different 7,782,556-byte stream;
+keep those recipes separate. An older deployed build has its own captured
+ratio and cannot stand in for this build.
+
+The tested Chrome 152 lacks `DecompressionStream("brotli")`, while native HTTP
+Brotli decoding successfully feeds `WebAssembly.compileStreaming`. The loader
+therefore uses negotiated HTTP WASM compression on that browser, with the gzip
+fallback retained; optional raw Brotli streams require actual API support.
+Setting `Content-Encoding: br` on a precompressed static sidecar was rejected:
+the tested Wrangler path transformed it again, leaving compressed bytes after
+HTTP decoding. No such header override is part of the selected implementation.
+
+Local evidence: `/tmp/robin-startup-more/wasm/compression.json`,
+`captured-baseline.br.json`, `chrome-http-compile.json`, `live-compression.json`
+and `transport-findings.md`. Offline size savings are not browser latency claims.
+
+### Replay work and engine diagnostics
+
+Replay admission loads alongside the main runtime. The production package now
+includes its isolated admission module and verifies the published WASM memory
+contract: owned, nonshared memory capped at 6,144 pages (384 MiB). Replay build
+identity remains mandatory. The matching baseline admission module was built
+from `5db35596cc88c27fbcc9568a0545c070be6e5076`; it accepts that build's compact
+sample and rejects a substituted identity. This makes the baseline replay URL
+exercise real admission instead of substituting a bypass.
+
+Playback skips boot menu-audio prefetch and menu music, while retaining mixer
+initialization, volume/mute policy and mission audio. It also skips live Restart
+save creation during replay initialization. Immutable replay frame maps are
+shared through `Arc` instead of deep-cloned. These changes preserve replay
+commands and identities; they do not remove deterministic replay verification.
+
+Native mask decoding uses spans, and pathfinder initialization avoids redundant
+default construction. Sampled retired-instruction diagnostics support those
+local optimizations: the mask routine's samples fall from 2,933 to 220 and
+motion initialization from 3,040 to 309 in the retained profile. These are native
+profiling counts, not browser milliseconds or independently additive startup
+savings. Source and profile conditions are recorded in
+`/tmp/robin-startup-more/engine/{provenance.json,instruction-summary.json}`.
+
+Baseline admission provenance and functional validation are in
+`/tmp/robin-startup-more/replay-baseline-build.json` and
+`replay-baseline-admission-test.json`; the isolated package is
+`replay-baseline-pkg/`. Its one-shot Node validation time is not a browser startup
+measurement.
+
+### Opt-in sprite pixel deferral: bandwidth tradeoff still under test
+
+The threaded-browser experiment `?sprite-residency=first-frame` retains complete
+simulation opacity masks in the initial payload and defers selected pixel data.
+Rendering waits for actual current-frame residency; it must not draw missing
+sprites or substitute transparent pixels. The ordinary path remains the default.
+Initial shadow reclassification while pixels are pending currently fails
+explicitly. TODO: resolve that limitation before considering wider enablement.
+
+Across the 27 eligible parts, initial compressed bytes fall from **16,635,002 to
+12,419,123**, a **25.34%** reduction. Deferred tails add **14,182,095 B**, so the
+combined payload is 26,601,218 B: **9,966,216 B more** than the original. This is
+an initial eligible-parts saving, not a whole-startup or total-download saving.
+Exact grid hashes and initial-plus-tail metadata parity are checked. No final
+first-pose latency benefit is established by these byte counts.
+
+Local corpus evidence is
+`/tmp/robin-startup-more/mission/first1-opacity/partition.jsonl` and its `Data/`
+payloads. Experimental publication validates conflicts and preserves failures;
+session ownership and asynchronous readiness remain required for deferred work.
+
+### Final replay comparison
+
+TODO: add the final matched production URL replay benchmark table after validation,
+including exact source/package/corpus hashes, captured transport bytes, replay
+admission and queue-acceptance endpoints, bootstrap, and first-present return.
+Retain every sample and report throughput/RTT, worker count, cache/profile state,
+and endpoint limitations. Do not substitute normal-demo, native microbenchmark,
+or offline compression numbers for this missing replay comparison.
