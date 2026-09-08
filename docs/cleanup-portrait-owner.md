@@ -24,7 +24,13 @@ TODO: migrate remaining unrelated integer UI owners separately. A dropped cache
 outside MissionPresentation still requires explicit retirement before renderer
 teardown, consistent with the existing OwnedSurface contract.
 
-Validation pending: named Vulkan GPU gate (including reload, sparse slots,
+Validation: initial focused default client UI suite passed all 28 tests after
+8m24s cold compilation. Follow-up review combined paired dimension lookups,
+kept panel identity checking constant-time, and reused the owned upload helper
+for sparse requirements pictures so malformed RGB565 payloads fail consistently.
+
+Validation pending on the combined integration checkpoint: named Vulkan GPU gate (including reload, sparse slots,
 failed replacement, duplicate ownership, wrong renderer, repeated retirement),
-focused default client UI tests, cargo fmt and git diff --check. The coordinator
-owns the final combined binary build.
+successful public load with shipped PNGs, focused default client UI tests and
+full default client tests/build. Cargo fmt and git diff --check passed.
+The coordinator owns the final release binary runtime checks.

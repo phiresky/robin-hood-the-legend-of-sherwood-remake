@@ -239,22 +239,22 @@ pub struct PortraitCache {
     owned_surfaces: Vec<OwnedSurface>,
     /// Also binds the directly owned RGBA artwork to its originating renderer.
     renderer_identity: Option<u64>,
-    /// Renderer surface id for each character's face portrait.
+    /// Borrowed renderer surface for each character's face portrait.
     surfaces: [Option<SurfaceHandle>; CharacterKind::COUNT],
-    /// `[action1, action2, action3]` renderer surface ids per character
+    /// `[action1, action2, action3]` borrowed renderer surfaces per character
     /// (disabled state, sub_id 0).
     action_disabled_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
-    /// `[action1, action2, action3]` renderer surface ids per character
+    /// `[action1, action2, action3]` borrowed renderer surfaces per character
     /// (normal state, sub_id 1).
     action_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
-    /// `[action1, action2, action3]` renderer surface ids per character
+    /// `[action1, action2, action3]` borrowed renderer surfaces per character
     /// (focused/hover state, sub_id 2).
     action_hover_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
-    /// `[action1, action2, action3]` renderer surface ids per character
+    /// `[action1, action2, action3]` borrowed renderer surfaces per character
     /// (pressed/selected state, sub_id 3).  Used to highlight the
     /// currently active action button.
     action_pressed_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
-    /// `[action1, action2, action3]` renderer surface ids per character
+    /// `[action1, action2, action3]` borrowed renderer surfaces per character
     /// (focused selected state, sub_id 4).
     action_hover_pressed_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
     /// Localized display name per character.
@@ -394,12 +394,17 @@ impl PortraitCache {
         })
     }
 
-    fn validate_renderer(&self, renderer: &Renderer) -> anyhow::Result<()> {
+    fn validate_renderer_identity(&self, renderer: &Renderer) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.renderer_identity
                 .is_none_or(|identity| identity == renderer.identity()),
             "portrait cache belongs to another renderer"
         );
+        Ok(())
+    }
+
+    fn validate_renderer(&self, renderer: &Renderer) -> anyhow::Result<()> {
+        self.validate_renderer_identity(renderer)?;
         for surface in &self.owned_surfaces {
             renderer.validate_surface_retirement(surface)?;
         }
@@ -1023,44 +1028,22 @@ impl PortraitCache {
             resource_ids::RHID_REQUIRED_ACTION,
             resource_ids::RHID_OPTIONAL_PC,
         ] {
-            // Collect first to avoid re-borrowing `res` inside the loop.
-            let subs: Vec<(usize, u16, u16, Vec<u16>)> = match res.get_pictures(res_id) {
-                Ok(pics) => pics
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, opt)| {
-                        opt.as_ref().map(|pic| {
-                            let pixels: Vec<u16> = pic
-                                .data
-                                .as_chunks::<2>()
-                                .0
-                                .iter()
-                                .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                                .collect();
-                            (i, pic.width, pic.height, pixels)
-                        })
-                    })
-                    .collect(),
-                Err(e) => {
-                    tracing::warn!("Failed to load sub-pictures for resource {res_id}: {e}");
+            let pictures = match res.get_pictures(res_id) {
+                Ok(pictures) => pictures,
+                Err(error) => {
+                    tracing::warn!("Failed to load sub-pictures for resource {res_id}: {error}");
                     continue;
                 }
             };
-            for (sub_id, w, h, pixels) in subs {
-                let surface_id = renderer
-                    .create_surface_from_rgb565(w, h, &pixels)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "requirements sub-picture dimensions must match RGB565 payload"
-                        )
-                    })?;
-                let owned = renderer.try_adopt_surface(surface_id)?;
-                let surface_id = owned.handle();
-                self.owned_surfaces.push(owned);
+            for (sub_id, picture) in pictures.iter().enumerate() {
+                let Some(picture) = picture else { continue };
+                let surface = owned_picture_surface(renderer, &mut self.owned_surfaces, picture)?;
                 tracing::debug!(
-                    "Loaded requirements sub-picture: res {res_id} sub {sub_id}, surface {surface_id:?} ({w}x{h})"
+                    "Loaded requirements sub-picture: res {res_id} sub {sub_id}, surface {surface:?} ({}x{})",
+                    picture.width,
+                    picture.height,
                 );
-                self.sub_pictures.insert((res_id, sub_id), surface_id);
+                self.sub_pictures.insert((res_id, sub_id), surface);
             }
         }
         timer.step("requirements tables");
@@ -1710,14 +1693,9 @@ fn render_allied_portrait(
         } else {
             sh - CLOSE_POSITION_VISAGE
         };
-        let width = renderer
+        let (width, height) = renderer
             .surface_dimensions(surface)
-            .expect("live portrait surface")
-            .0;
-        let height = renderer
-            .surface_dimensions(surface)
-            .expect("live portrait surface")
-            .1;
+            .expect("live portrait surface");
         blit_to_screen_widget(
             renderer,
             surface,
@@ -1954,14 +1932,9 @@ fn render_health_gauge(
     let Some(normal_sid) = portraits.top_scroll_surface else {
         return;
     };
-    let w = renderer
+    let (w, h) = renderer
         .surface_dimensions(normal_sid)
-        .expect("live portrait surface")
-        .0;
-    let h = renderer
-        .surface_dimensions(normal_sid)
-        .expect("live portrait surface")
-        .1;
+        .expect("live portrait surface");
 
     let ratio = match entity {
         Some(Entity::Pc(pc)) => (pc.pc.life_points.max(0) as f32 / 100.0).clamp(0.0, 1.0),
@@ -2009,14 +1982,9 @@ fn blit_centered_between_scrolls(
     ref_bot: u16,
 ) {
     let Some(sid) = surface else { return };
-    let iw = renderer
+    let (iw, ih) = renderer
         .surface_dimensions(sid)
-        .expect("live portrait surface")
-        .0;
-    let ih = renderer
-        .surface_dimensions(sid)
-        .expect("live portrait surface")
-        .1;
+        .expect("live portrait surface");
     let ref_h = ref_bot.saturating_sub(ref_top);
     let ix = x + (ELEMENT_WIDTH.saturating_sub(iw)) / 2;
     let iy = ref_top + (ref_h.saturating_sub(ih)) / 2;
@@ -2051,7 +2019,7 @@ pub fn draw_panel(
     shift_held: bool,
 ) {
     portraits
-        .validate_renderer(renderer)
+        .validate_renderer_identity(renderer)
         .expect("HUD requires its originating renderer");
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
@@ -2064,58 +2032,34 @@ pub fn draw_panel(
     // Rendered BEFORE portrait widgets, in absolute screen coordinates.
     // Blit using source surface dimensions to avoid size mismatch issues.
     if let Some(sid) = portraits.border_top_left {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0
-            .min(sw);
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1
-            .min(sh);
+            .expect("live portrait surface");
+        let (w, h) = (w.min(sw), h.min(sh));
         let dst = bbox(0, 0, w, h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_top_right {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0
-            .min(sw);
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1
-            .min(sh);
+            .expect("live portrait surface");
+        let (w, h) = (w.min(sw), h.min(sh));
         let dst = bbox(sw - w, 0, sw, h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_bottom_left {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0
-            .min(sw);
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1
-            .min(sh);
+            .expect("live portrait surface");
+        let (w, h) = (w.min(sw), h.min(sh));
         let dst = bbox(0, sh - h, w, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_bottom_right {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0
-            .min(sw);
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1
-            .min(sh);
+            .expect("live portrait surface");
+        let (w, h) = (w.min(sw), h.min(sh));
         let dst = bbox(sw - w, sh - h, sw, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
@@ -2125,15 +2069,10 @@ pub fn draw_panel(
     if sw > 640
         && let Some(sid) = portraits.border_middle
     {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0;
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1
-            .min(sh);
+            .expect("live portrait surface");
+        let h = h.min(sh);
         let mut x = portraits
             .border_bottom_left
             .map_or(0, |id| {
@@ -2196,14 +2135,9 @@ pub fn draw_panel(
             (portraits.portrait_page_right, sw.saturating_sub(28)),
         ] {
             if let Some(surface) = surface {
-                let w = renderer
+                let (w, h) = renderer
                     .surface_dimensions(surface)
-                    .expect("live portrait surface")
-                    .0;
-                let h = renderer
-                    .surface_dimensions(surface)
-                    .expect("live portrait surface")
-                    .1;
+                    .expect("live portrait surface");
                 let y = sh.saturating_sub(PORTRAIT_TOTAL_HEIGHT / 2 + h / 2);
                 blit_to_screen_widget(
                     renderer,
@@ -2263,14 +2197,9 @@ pub fn draw_panel(
                 render_health_gauge(renderer, portraits, entity, x, burned_upper_top);
 
                 if let Some(sid) = portraits.bottom_scroll_surface {
-                    let w = renderer
+                    let (w, h) = renderer
                         .surface_dimensions(sid)
-                        .expect("live portrait surface")
-                        .0;
-                    let h = renderer
-                        .surface_dimensions(sid)
-                        .expect("live portrait surface")
-                        .1;
+                        .expect("live portrait surface");
                     let top = sh - POSITION_BOTTOM_SCROLL;
                     let dst = bbox(x, top, x + w, top + h);
                     blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
@@ -2337,14 +2266,9 @@ pub fn draw_panel(
 
             // Bottom scroll
             if let Some(sid) = portraits.bottom_scroll_surface {
-                let w = renderer
+                let (w, h) = renderer
                     .surface_dimensions(sid)
-                    .expect("live portrait surface")
-                    .0;
-                let h = renderer
-                    .surface_dimensions(sid)
-                    .expect("live portrait surface")
-                    .1;
+                    .expect("live portrait surface");
                 let top = sh - POSITION_BOTTOM_SCROLL;
                 let dst = bbox(x, top, x + w, top + h);
                 blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
@@ -2379,14 +2303,9 @@ pub fn draw_panel(
                 && let Some(kind) = pc_character_kind(ent)
                 && let Some(surface_id) = portraits.get_surface(kind)
             {
-                let src_w = renderer
+                let (src_w, src_h) = renderer
                     .surface_dimensions(surface_id)
-                    .expect("live portrait surface")
-                    .0;
-                let src_h = renderer
-                    .surface_dimensions(surface_id)
-                    .expect("live portrait surface")
-                    .1;
+                    .expect("live portrait surface");
                 if src_w > 0 && src_h > 0 {
                     let dst = bbox(x, vis_top, x + src_w, vis_top + src_h);
                     blit_to_screen_widget(
@@ -2414,14 +2333,9 @@ pub fn draw_panel(
                     && let Some(kind) = pc_action_character_kind(ent, profiles)
                     && let Some(sid) = portraits.get_fighting_surface(kind)
                 {
-                    let fw = renderer
+                    let (fw, fh) = renderer
                         .surface_dimensions(sid)
-                        .expect("live portrait surface")
-                        .0;
-                    let fh = renderer
-                        .surface_dimensions(sid)
-                        .expect("live portrait surface")
-                        .1;
+                        .expect("live portrait surface");
                     let dst = bbox(x, vis_top, x + fw, vis_top + fh);
                     blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
                 }
@@ -2566,14 +2480,9 @@ pub fn draw_panel(
                 let Some(sid) = sid_opt else { continue };
 
                 let icon_x = x + slot_idx * QA_ICON_WIDTH;
-                let iw = renderer
+                let (iw, ih) = renderer
                     .surface_dimensions(sid)
-                    .expect("live portrait surface")
-                    .0;
-                let ih = renderer
-                    .surface_dimensions(sid)
-                    .expect("live portrait surface")
-                    .1;
+                    .expect("live portrait surface");
                 let dst = bbox(icon_x, qa_strip_y, icon_x + iw, qa_strip_y + ih);
                 blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
 
@@ -2967,14 +2876,10 @@ pub fn draw_requirements_bar(
                 RequirementStatus::Missing => portraits.req_no,
             };
             if let Some(sid) = overlay {
-                let w = renderer
+                let (w, h) = renderer
                     .surface_dimensions(sid)
-                    .expect("live portrait surface")
-                    .0 as i32;
-                let h = renderer
-                    .surface_dimensions(sid)
-                    .expect("live portrait surface")
-                    .1 as i32;
+                    .expect("live portrait surface");
+                let (w, h) = (w as i32, h as i32);
                 let bx = icon_x + REQ_BAR_DIFFERENCE_X_YES_NO;
                 let by = icon_y + REQ_BAR_DIFFERENCE_Y_YES_NO;
                 let badge = bbox_i32(bx, by, bx + w, by + h);
@@ -2983,14 +2888,10 @@ pub fn draw_requirements_bar(
         }
         // Selected-ring overlay at (-1, +2) from the icon origin.
         if selected && let Some(sid) = portraits.req_selected {
-            let w = renderer
+            let (w, h) = renderer
                 .surface_dimensions(sid)
-                .expect("live portrait surface")
-                .0 as i32;
-            let h = renderer
-                .surface_dimensions(sid)
-                .expect("live portrait surface")
-                .1 as i32;
+                .expect("live portrait surface");
+            let (w, h) = (w as i32, h as i32);
             let rx = icon_x + REQ_BAR_DIFFERENCE_X_SELECTED;
             let ry = icon_y + REQ_BAR_DIFFERENCE_Y_SELECTED;
             let ring = bbox_i32(rx, ry, rx + w, ry + h);
@@ -3434,14 +3335,9 @@ pub fn draw_pc_info_overlay(
         portraits.info_popup_bg_tiny
     };
     if let Some(sid) = bg_sid {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0;
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1;
+            .expect("live portrait surface");
         let (x, y) = (frame_ov.position.0 as u16, frame_ov.position.1 as u16);
         let dst = bbox(x, y, x + w, y + h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
@@ -3449,14 +3345,9 @@ pub fn draw_pc_info_overlay(
 
     // ── Sword pips ──
     if let Some(sid) = portraits.info_popup_sword {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0;
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1;
+            .expect("live portrait surface");
         for i in 0..frame_ov.sword_pips.min(LEVEL_NUMBER) {
             let (px, py) = frame_ov.sword_pip_position(i);
             let dst = bbox(px as u16, py as u16, px as u16 + w, py as u16 + h);
@@ -3466,14 +3357,9 @@ pub fn draw_pc_info_overlay(
 
     // ── Bow pips (archer only) ──
     if is_archer && let Some(sid) = portraits.info_popup_bow {
-        let w = renderer
+        let (w, h) = renderer
             .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .0;
-        let h = renderer
-            .surface_dimensions(sid)
-            .expect("live portrait surface")
-            .1;
+            .expect("live portrait surface");
         for i in 0..frame_ov.bow_pips.min(LEVEL_NUMBER) {
             let (px, py) = frame_ov.bow_pip_position(i);
             let dst = bbox(px as u16, py as u16, px as u16 + w, py as u16 + h);
@@ -3906,6 +3792,11 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
     };
     cache.replace_with(renderer, install).unwrap();
     let first = cache.get_surface(kind).unwrap();
+    let mut peer = PortraitCache::new();
+    peer.replace_with(other, install).unwrap();
+    let foreign = peer.get_surface(kind).unwrap();
+    assert_eq!(first.legacy_id(), foreign.legacy_id());
+    assert_ne!(first, foreign);
     assert_eq!(cache.get_sub_picture(42, 3), Some(first));
     assert!(cache.get_sub_picture(42, 2).is_none());
     assert!(renderer.try_adopt_surface(first.legacy_id()).is_err());
@@ -3922,6 +3813,8 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
             .is_err()
     );
     assert_eq!(cache.get_surface(kind), Some(first));
+    assert!(other.surface_dimensions(foreign).is_ok());
+    peer.retire(other).unwrap();
 
     // A failed candidate has already uploaded a picture: it must be retired,
     // while the previous bank and metadata remain available.
@@ -3964,6 +3857,45 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
         assert_eq!(cache.get_sub_picture(42, 3), cache.get_surface(kind));
     }
     let last = cache.get_surface(kind).unwrap();
+    let assets = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+    let artwork = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../assets/core-datadir/Data/Interface/UI");
+    for entry in std::fs::read_dir(artwork).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|extension| extension == "png") {
+            assets
+                .install_preloaded_asset(
+                    format!(
+                        "Data/Interface/UI/{}",
+                        path.file_name().unwrap().to_str().unwrap()
+                    ),
+                    std::fs::read(&path).unwrap(),
+                )
+                .unwrap();
+        }
+    }
+    let complete_files = robin_engine::sbfile::SbFileSystem::new(assets);
+    for _ in 0..2 {
+        cache
+            .load(&mut ResourceManager::new(), renderer, &complete_files)
+            .unwrap();
+        assert!(
+            !cache.is_loaded(),
+            "absent optional portraits must clear stale slots"
+        );
+        assert!(cache.allied_portrait_background.is_some());
+        assert!(cache.allied_visages.iter().all(Option::is_some));
+        assert!(cache.allied_pin_icons.iter().all(Option::is_some));
+        assert!(cache.allied_action_surfaces.iter().all(Option::is_some));
+        // RGBA-only caches still require their originating renderer.
+        assert!(cache.retire(other).is_err());
+    }
+    assert!(
+        cache
+            .load(&mut ResourceManager::new(), renderer, &files)
+            .is_err()
+    );
+    assert!(cache.allied_portrait_background.is_some());
     cache.retire(renderer).unwrap();
     cache.retire(renderer).unwrap();
     assert!(renderer.surface_dimensions(last).is_err());
@@ -3973,6 +3905,11 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
     // A retired, empty cache can be loaded by a different renderer.
     cache.replace_with(other, install).unwrap();
     cache.retire(other).unwrap();
+    // The queued portrait remains renderable after its owner was retired.
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[255, 255, 255, 255]
+    );
 }
 
 #[cfg(test)]
