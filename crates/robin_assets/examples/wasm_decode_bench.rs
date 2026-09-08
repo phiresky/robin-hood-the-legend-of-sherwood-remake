@@ -72,6 +72,9 @@ pub fn bench_vq_chunk(
 }
 
 #[cfg(feature = "engine-adapters")]
+pub use mission::*;
+
+#[cfg(feature = "engine-adapters")]
 mod mission {
     use std::cell::RefCell;
     use std::collections::BTreeMap;
