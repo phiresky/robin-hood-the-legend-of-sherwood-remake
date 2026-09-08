@@ -24,6 +24,28 @@ use robin_engine::sector as engine_sector;
 use robin_engine::sight_obstacle as engine_sight_obstacle;
 use robin_engine::sprite::BBox;
 
+/// Conservative metadata-only preflight: include current frames even outside the
+/// viewport, hidden by fog, or inactive. Captures and camera interpolation can
+/// expose those sprites without another simulation tick. Background animations
+/// are included by `entities_iter` (the same table used by `bg_animation_ids`).
+pub(crate) fn required_render_sprite_ids(engine: &Engine) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for entity in engine.entities_iter() {
+        let sprite = &entity.element_data().sprite;
+        // Entities without an authored current frame use the existing renderer
+        // fallback; absence of pixel residency must never select that fallback.
+        if let Some(scripts) = sprite.current_scripts_opt()
+            && let Some(script) = scripts.get(sprite.current_row as usize)
+            && let Some(&id) = script.frame_ids.get(sprite.current_frame as usize)
+        {
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 mod debug;
 mod hud;
 mod minimap;

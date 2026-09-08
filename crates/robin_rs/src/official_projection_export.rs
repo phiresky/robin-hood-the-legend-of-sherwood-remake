@@ -13,9 +13,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use robin_run_protocol::{
-    CanonicalDocument as _, Digest32, OfficialContentSubjectV1,
-    SimulationContentComponentDocumentV1, SimulationContentComponentKindV1, Validate as _,
-    simulation_content_component_relative_path_v1,
+    Digest32, OfficialContentSubjectV1, SimulationContentComponentDocumentV1,
+    SimulationContentComponentKindV1, Validate as _, simulation_content_component_relative_path_v1,
 };
 use serde::{Deserialize, Serialize};
 
@@ -72,10 +71,10 @@ pub fn write_simulation_content_projection(
             component.document.kind == *expected_kind,
             "projection component order differs from the engine-owned order"
         );
-        let canonical = component.document.canonical_bytes()?;
+        let canonical = component.document.bitcode_bytes()?;
         ensure!(
             canonical == component.canonical_bytes,
-            "projection component bytes are not the document's canonical JSON"
+            "projection component bytes are not the document's canonical bitcode"
         );
         ensure!(
             Digest32::digest_bytes(&component.canonical_bytes) == component.sha256,
@@ -163,7 +162,7 @@ mod tests {
             component_schema_version: 1,
             payload: CanonicalValue::Null,
         };
-        let canonical_bytes = document.canonical_bytes().unwrap();
+        let canonical_bytes = document.bitcode_bytes().unwrap();
         CanonicalProjectionComponent {
             sha256: Digest32::digest_bytes(&canonical_bytes),
             document,

@@ -43,6 +43,30 @@ export function appendLogLine(
     msg: string,
     cls?: string,
 ): void {
+    appendLogLines(target, [{ text: msg, cls }]);
+}
+
+export interface LogLine {
+    text: string;
+    cls?: string | undefined;
+}
+
+/** Append a console batch with one layout read, retaining the newest lines. */
+export function appendLogLines(target: HTMLElement, messages: readonly LogLine[]): void {
+    if (messages.length === 0) return;
+    const retained = messages.slice(-MAX_LOG_LINES);
+    const fragment = target.ownerDocument.createDocumentFragment();
+    for (const { text, cls } of retained) {
+        fragment.appendChild(renderLogLine(target.ownerDocument, text, cls));
+    }
+    while (target.childElementCount + retained.length > MAX_LOG_LINES) {
+        target.firstElementChild!.remove();
+    }
+    target.appendChild(fragment);
+    target.scrollTop = target.scrollHeight;
+}
+
+function renderLogLine(document: Document, msg: string, cls?: string): HTMLDivElement {
     const line = document.createElement('div');
     if (cls !== undefined) line.className = cls;
 
@@ -74,9 +98,5 @@ export function appendLogLine(
         last = m.index + m[0].length;
     }
     flush(msg.length);
-    target.appendChild(line);
-    while (target.childElementCount > MAX_LOG_LINES) {
-        target.firstElementChild?.remove();
-    }
-    target.scrollTop = target.scrollHeight;
+    return line;
 }

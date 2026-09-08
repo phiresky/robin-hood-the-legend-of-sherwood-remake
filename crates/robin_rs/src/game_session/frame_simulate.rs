@@ -107,7 +107,7 @@ struct SimulationVisualRefresh<'a> {
 }
 
 impl SimulationVisualRefresh<'_> {
-    fn run(self) {
+    async fn run(self) -> Result<(), String> {
         let Self {
             last_shadow_color,
             last_visual_ambiance,
@@ -135,6 +135,9 @@ impl SimulationVisualRefresh<'_> {
             manager.engine.initial_mission_night_color()
         };
         let ambiance_changed = current_visual_ambiance != *last_visual_ambiance;
+        if current_shadow_color != *last_shadow_color || ambiance_changed {
+            super::sprite_readiness::wait_for_all_sprites().await?;
+        }
         if ambiance_changed {
             presentation.apply_ambience_maps(&manager.engine, host, current_visual_ambiance);
             *last_visual_ambiance = current_visual_ambiance;
@@ -192,6 +195,7 @@ impl SimulationVisualRefresh<'_> {
                 tracing::warn!("cheat all_debriefings: level descriptors unavailable");
             }
         }
+        Ok(())
     }
 }
 
@@ -541,15 +545,15 @@ impl InteractiveFrameSimulation {
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameSimulationOutcome, String> {
-        let state = Self::advance_simulation(self, mission, services);
+        let state = Self::advance_simulation(self, mission, services).await?;
         Self::drive_modals(mission, services, state).await
     }
 
-    fn advance_simulation(
+    async fn advance_simulation(
         this: Self,
         mission: &mut InteractiveMission,
         services: &mut MissionServices<'_>,
-    ) -> SimulationModalState {
+    ) -> Result<SimulationModalState, String> {
         let window = &mut *services.window;
         let args = services.args;
         // File-backed screenshot runs have no player to dismiss a dialogue
@@ -611,9 +615,10 @@ impl InteractiveFrameSimulation {
             resources,
             window,
         }
-        .run();
+        .run()
+        .await?;
 
-        SimulationModalState {
+        Ok(SimulationModalState {
             frame,
             rewind_active,
             consumed_buffered,
@@ -622,7 +627,7 @@ impl InteractiveFrameSimulation {
             auto_dismiss_modals,
             tick_exit_code,
             history_commit_pending,
-        }
+        })
     }
 
     async fn drive_modals(
@@ -706,6 +711,7 @@ impl InteractiveFrameSimulation {
             let scene_screenshots =
                 crate::http_server::take_pending_scene_screenshots(runtime.frame_number());
             if !scene_screenshots.is_empty() {
+                super::sprite_readiness::wait_for_render_sprites(&manager.engine).await?;
                 pre_render_engine_setup(host);
                 update_mouse_and_cursor(
                     &manager.engine,
@@ -1267,6 +1273,7 @@ impl InteractiveFrameSimulation {
 
         let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
+            playing_back: runtime.replay_player.is_some(),
             host,
             game,
             manager,
@@ -1470,13 +1477,11 @@ impl InteractiveFrameSimulation {
             || ui
                 .lost_sherwood_gate
                 .blocks_mission(game.is_sherwood, &manager.engine);
-        let mission_ui_block_reason = if terminal_exit_pending {
-            Some("terminal mission transition")
-        } else if campaign_ui_blocked {
-            Some("campaign UI")
-        } else {
-            None
-        };
+        let mission_ui_block_reason = manual_step_ui_block_reason(
+            terminal_exit_pending,
+            ui.terminal_debriefing.is_some(),
+            campaign_ui_blocked,
+        );
         let active_ui_task = &mut ui.active_ui_task;
         let pause_menu = &mut ui.pause_menu;
         let mut dismissed_ui_task = false;
@@ -1594,9 +1599,46 @@ impl InteractiveFrameSimulation {
     }
 }
 
+// The campaign-update handoff blocks all stepping, but a constructed terminal
+// modal must reach drain_steps' typed dismissal handler. That handler queues
+// its result and refuses to run simulation until the outer frame applies it.
+fn manual_step_ui_block_reason(
+    terminal_exit_pending: bool,
+    terminal_modal_active: bool,
+    campaign_ui_blocked: bool,
+) -> Option<&'static str> {
+    if terminal_modal_active {
+        None
+    } else if terminal_exit_pending {
+        Some("terminal mission transition")
+    } else if campaign_ui_blocked {
+        Some("campaign UI")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ScriptedModalMode, UiTaskKind, UiTaskModalAdmission, ui_task_modal_admission};
+
+    #[test]
+    fn terminal_http_dismissals_become_reachable_after_campaign_handoff() {
+        use super::manual_step_ui_block_reason;
+
+        // terminal_flow_active remains true across both phases. It cannot by
+        // itself decide whether typed Restart/Load outcomes may be submitted.
+        assert_eq!(
+            manual_step_ui_block_reason(true, false, false),
+            Some("terminal mission transition")
+        );
+        assert_eq!(manual_step_ui_block_reason(true, true, false), None);
+        assert_eq!(manual_step_ui_block_reason(false, false, false), None);
+        assert_eq!(
+            manual_step_ui_block_reason(false, false, true),
+            Some("campaign UI")
+        );
+    }
 
     #[test]
     fn terminal_child_runs_without_discarding_deferred_scripted_modals() {

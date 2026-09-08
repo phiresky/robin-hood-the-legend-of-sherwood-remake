@@ -2107,7 +2107,13 @@ mod mission_level_builder_tests {
                 underlying_sector: None,
             });
         }
+        let grid_allocation = std::sync::Arc::as_ptr(&engine.world.fast_grid.level);
         engine.populate_sector_gates_from_doors();
+        assert_eq!(
+            std::sync::Arc::as_ptr(&engine.world.fast_grid.level),
+            grid_allocation,
+            "resolving door endpoints must not clone the uniquely owned static grid"
+        );
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
             vec![
@@ -3562,6 +3568,7 @@ impl EngineInner {
             )))
         })?;
 
+        let startup_started = web_time::Instant::now();
         self.begin_mission_level_stage();
         self.load_environment_stage(assets, &mut loaded, config.script_enabled);
         progress(1.0);
@@ -3569,7 +3576,17 @@ impl EngineInner {
         self.load_sound_sources_stage(assets, &loaded)?;
         progress(1.0);
 
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: environment and sound"
+        );
+        let startup_started = web_time::Instant::now();
         self.load_motion_stage(assets, staging, &mut loaded, bg_pixel_dims)?;
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: motion"
+        );
+        let startup_started = web_time::Instant::now();
         self.spawn_proto_entities_stage(assets, &loaded);
         self.spawn_mission_patch_entities_stage(assets, &loaded);
         // Mission entity position integers are sparse sector slots,
@@ -3583,6 +3600,12 @@ impl EngineInner {
             self.reserve_null_ai_handle_slot_if_empty();
         }
         progress(1.0);
+
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: proto entities and topology"
+        );
+        let startup_started = web_time::Instant::now();
 
         // The original engine creates object masters before loading mission
         // entities. Its SpriteScriptor cache is keyed by filename/profile,
@@ -3631,6 +3654,12 @@ impl EngineInner {
             force_visible_scroll_ids,
         )?;
 
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: mission entities and scripts"
+        );
+        let startup_started = web_time::Instant::now();
+
         canonicalize_building_position_sectors(
             assets,
             &mut loaded,
@@ -3669,6 +3698,10 @@ impl EngineInner {
         self.cache_door_ai_metadata();
         self.sort_pc_ids_by_priority(assets);
         self.select_highest_priority_pc(assets, 0);
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: final identities and attachments"
+        );
 
         Ok(())
     }
@@ -4216,12 +4249,18 @@ impl EngineInner {
         }
 
         // ── Part 2: Pathfinder graph ──
+        let graph_started = web_time::Instant::now();
         if !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
                 .load_from_proto_stream(self.world.fast_grid_mut(), &motion_data.graph_bytes)
         {
             tracing::error!("Failed to load pathfinder graph: {e}");
         }
+        tracing::debug!(
+            bytes = motion_data.graph_bytes.len(),
+            elapsed_ms = graph_started.elapsed().as_secs_f64() * 1000.0,
+            "engine construction: proto pathfinder graph parsing"
+        );
         if motion_data.graph_bytes.is_empty() {
             // Hackable descriptors omit the legacy precomputed graph. Keep
             // its hierarchy/state topology faithful to the authored motion
@@ -5194,7 +5233,9 @@ impl EngineInner {
         // through the proto sparse-slot resolver. They may recover an exact
         // endpoint only when the public number names exactly one live motion
         // area; ambiguity is an error, never a guessed pointer.
-        let level = self.world.fast_grid.level.clone();
+        // Borrow the grid only through endpoint resolution. Holding an Arc clone
+        // into level_mut() below forces a deep copy of every static grid array.
+        let level = &self.world.fast_grid.level;
         let unique_runtime_sector = |number: crate::sector::SectorNumber| {
             let mut matches = level
                 .sectors

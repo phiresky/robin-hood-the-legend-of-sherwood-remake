@@ -1,10 +1,10 @@
 import { requestFullContentFolder } from './content-picker.js';
-import { fetchWithProgress, fetchJson, fetchPrecompressedWasm } from './boot-transport.js';
+import { fetchWithProgress, fetchJson, fetchRuntimeWasm } from './boot-transport.js';
 import { withAbort } from './cancellation.js';
 import { installCanvasBackingStore } from './canvas-lifecycle.js';
 import { preloadRuntimeAssets } from './asset-preload.js';
-import { bootGame, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
-import { appendLogLine } from './log.js';
+import { bootGame, loadRuntimeInParallel, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
+import { appendLogLine, appendLogLines } from './log.js';
 import {
     authenticateBrowserJoinTicket,
     captureAndScrubBrowserJoinCode,
@@ -21,7 +21,7 @@ import {
     wasInvitationRedeemed,
 } from './multiplayer_identity.js';
 import {
-    applyReplayFromQuery,
+    applyPreparedReplay, prepareReplayWithRuntime, replayFromQuery, type PreparedReplay,
     installShareButton,
     validateReplayInWorker,
     type RobinRpc,
@@ -52,23 +52,22 @@ const bpRoot = document.getElementById('boot-progress');
 const bpFill = document.getElementById('bp-fill');
 const bpLabel = document.getElementById('bp-label');
 const bpDetail = document.getElementById('bp-detail');
+const bootPhaseProgress = new Map<BootPhase, number>();
 
 function bootProgress(phase: BootPhase, label: string, frac: number, detail = ''): void {
     if (bpFill === null || bpLabel === null || bpDetail === null) {
         return;
     }
-    let base = 0;
-    let width = 0;
+    // Downloads overlap, so a later phase must not imply earlier ones finished.
+    const clamped = Math.min(Math.max(frac, 0), 1);
+    bootPhaseProgress.set(phase, Math.max(bootPhaseProgress.get(phase) ?? 0, clamped));
+    let completed = 0;
     let total = 0;
     for (const [name, weight] of BOOT_PHASES) {
-        if (name === phase) {
-            base = total;
-            width = weight;
-        }
+        completed += weight * (bootPhaseProgress.get(name) ?? 0);
         total += weight;
     }
-    const clamped = Math.min(Math.max(frac, 0), 1);
-    bpFill.style.width = `${(((base + width * clamped) / total) * 100).toFixed(1)}%`;
+    bpFill.style.width = `${((completed / total) * 100).toFixed(1)}%`;
     bpLabel.textContent = label;
     bpDetail.textContent = detail;
 }
@@ -139,9 +138,7 @@ function installConsoleMirror(target: HTMLElement): void {
     let flushScheduled = false;
     const flush = (): void => {
         flushScheduled = false;
-        for (const { text, cls } of pendingLines.splice(0)) {
-            appendLogLine(target, text, cls);
-        }
+        appendLogLines(target, pendingLines.splice(0));
     };
     const enqueue = (text: string, cls?: 'err'): void => {
         pendingLines.push(cls === undefined ? { text } : { text, cls });
@@ -292,6 +289,8 @@ window.addEventListener('pagehide', event => {
 });
 
 async function main(): Promise<void> {
+    const replayQuery = replayFromQuery(pageParams);
+    let preparedReplay: PreparedReplay | null = null;
     logOk(crossOriginIsolated
         ? `[cross-origin isolated: sprite decode may use ${navigator.hardwareConcurrency} threads]`
         : '[not cross-origin isolated: sprite decode stays single-threaded]');
@@ -300,7 +299,20 @@ async function main(): Promise<void> {
         prepareJoin: signal => prepareBrowserJoin(capturedBrowserJoinCode, signal),
         resolveBuild,
         loadManifest: async (base, ticket, signal) => parseMultiplayerBuildManifest(await fetchJson(`${base}/manifest.json`, signal), ticket),
-        loadRuntime: loadWasmModule,
+        loadRuntime: async (base, compressed, latest, signal) => {
+            const prepared = await prepareReplayWithRuntime(
+                replayQuery, base,
+                runtimeSignal => loadWasmModule(base, compressed, latest, runtimeSignal),
+                async (content, admissionSignal) => {
+                    performance.mark('robin-replay-admission-start');
+                    await validateReplayInWorker(content, `${base}/replay_admission.js`, `${base}/replay_admission_bg.wasm`, admissionSignal);
+                    admissionSignal.throwIfAborted();
+                    performance.mark('robin-replay-admission-accepted');
+                }, signal,
+            );
+            preparedReplay = prepared.replay;
+            return prepared.runtime;
+        },
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
         loadDefaultContent: async (latest, signal) => {
             const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`;
@@ -331,24 +343,15 @@ async function main(): Promise<void> {
             if (shareReplayButton !== null) {
                 installShareButton(shareReplayButton, rpc);
             }
-            const replayLoaded = await applyReplayFromQuery(rpc, {
-                validate: async (content): Promise<void> => {
-                    await validateReplayInWorker(
-                        content,
-                        `${buildBase}/replay_admission.js`,
-                        `${buildBase}/replay_admission_bg.wasm`,
-                        bootAbort.signal,
-                    );
-                },
-                markValidated: (content): void => {
-                    if (wasm.wasm_mark_compact_replay_validated === undefined) {
-                        throw new Error('selected wasm build cannot accept an isolated replay proof');
-                    }
-                    wasm.wasm_mark_compact_replay_validated(content);
-                },
-            });
+            const replayLoaded = await applyPreparedReplay(rpc, content => {
+                if (wasm.wasm_mark_compact_replay_validated === undefined) {
+                    throw new Error('selected wasm build cannot accept an isolated replay proof');
+                }
+                wasm.wasm_mark_compact_replay_validated(content);
+            }, preparedReplay, buildBase);
             if (replayLoaded) {
-                logOk('[replay queued from URL - start a mission to play it back]');
+                performance.mark('robin-replay-queue-accepted');
+                logOk('[replay queued from URL]');
                 if (replayTimeline !== null && !new URL(location.href).searchParams.has('notimeline')) {
                     installTimeline(replayTimeline, rpc);
                 }
@@ -375,8 +378,6 @@ async function loadWasmModule(
     // Worker re-imports the glue by that same URL; a blob: module would
     // break both. Static Assets serves JavaScript with ordinary compression,
     // so nothing is lost by skipping the precompressed `.gz` sibling.
-    const wasm = await withAbort(signal, () => import(/* @vite-ignore */ jsUrl)) as RobinWasmModule;
-    bootProgress('engine-js', 'loading engine…', 1);
 
     const onWasmBytes = (loaded: number, total: number): void => {
         bootProgress(
@@ -386,18 +387,18 @@ async function loadWasmModule(
             progressDetail(loaded, total),
         );
     };
-    // Runtime Static Assets may serve the checked-in `.gz` object without a
-    // Content-Encoding header. Decompress that sibling in the browser so the
-    // module does not cross the network uncompressed. Local development keeps
-    // the ordinary URL path. The counted body streams while WebAssembly
-    // compiles it, so the byte callback drives the progress bar.
-    const wasmResponse = preferPrecompressed
-        ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache, onWasmBytes, signal)
-        : undefined;
-    await wasm.default({
-        module_or_path: wasmResponse
-            ?? await fetchWithProgress(wasmUrl, cache, 'application/wasm', onWasmBytes, signal),
-    });
+    // Keep native HTTP compression and optional precompressed sidecars
+    // streaming into compilation; local builds use the ordinary URL directly.
+    const wasm = await loadRuntimeInParallel(
+        async loadingSignal => {
+            const module = await withAbort(loadingSignal, () => import(/* @vite-ignore */ jsUrl)) as RobinWasmModule;
+            loadingSignal.throwIfAborted();
+            bootProgress('engine-js', 'loading engine…', 1);
+            return module;
+        },
+        loadingSignal => fetchRuntimeWasm(wasmUrl, preferPrecompressed, cache, onWasmBytes, loadingSignal),
+        signal,
+    );
     signal.throwIfAborted();
     bootProgress('engine-start', 'engine ready', 1);
     return wasm;

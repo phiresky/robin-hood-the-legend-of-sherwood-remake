@@ -315,11 +315,11 @@ fn content_receipts(
                     let relative = simulation_content_component_relative_path_v1(subject, kind)?;
                     let bytes = std::fs::read(root.join(&relative))?;
                     let document: SimulationContentComponentDocumentV1 =
-                        serde_json::from_slice(&bytes)?;
+                        SimulationContentComponentDocumentV1::from_bitcode(&bytes)?;
                     document.validate()?;
                     ensure!(
-                        document.kind == kind && document.canonical_bytes()? == bytes,
-                        "component is not exact canonical schema v1: {relative}"
+                        document.kind == kind && document.bitcode_bytes()? == bytes,
+                        "component is not exact canonical bitcode v2: {relative}"
                     );
                     Ok(SimulationContentComponentV1 {
                         kind,
@@ -338,7 +338,7 @@ fn content_receipts(
                 edition,
                 subject: subject.clone(),
                 closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-                projection_schema_version: 1,
+                projection_schema_version: 2,
                 resource_locale_root: locale.clone(),
                 speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
                 components,

@@ -15,6 +15,8 @@ use super::*;
 /// These references are process resources and deliberately do not implement
 /// serde. They remain outside deterministic mission ownership.
 pub(super) struct MissionServices<'a> {
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    pub(super) startup_audio_pause: &'a mut Option<crate::web_audio_backend::StartupWarmupPause>,
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
@@ -173,6 +175,7 @@ impl InteractiveMission {
                 host.frontend.input.mouse_opacity = 0;
             }
             let display_snapshot = host.frontend.engine_display.clone();
+            super::sprite_readiness::wait_for_render_sprites(engine).await?;
             let capture_result = {
                 let mut render_ctx = presentation.render_context(
                     resources,
@@ -274,10 +277,15 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             timeline: runtime,
             ..
         } = runtime;
+        let mut startup_timer = (runtime.frame_number() <= 1)
+            .then(|| super::setup::PhaseTimer::new("first mission presentation"));
         let profiling = super::frame_perf::enabled();
         let phase_start = super::frame_perf::start(profiling);
         finish_interactive_audio(runtime, world, frontend, callbacks);
         super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("audio");
+        }
 
         let phase_start = super::frame_perf::start(profiling);
         runtime.begin_presentation();
@@ -339,6 +347,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // screenshot is rendered once immediately after the target frame.
         let mut fixed_tick_presented = false;
         if should_draw {
+            super::sprite_readiness::wait_for_render_sprites(engine)
+                .await
+                .unwrap_or_else(|error| panic!("frame sprite preflight failed: {error}"));
             let mut render_ctx = presentation.render_context(
                 resources,
                 hud,
@@ -405,6 +416,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 .unwrap_or(saved_camera);
             sampled_camera.apply(&mut host.frontend);
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
+            super::sprite_readiness::wait_for_render_sprites(render_engine)
+                .await
+                .unwrap_or_else(|error| {
+                    panic!("interpolated frame sprite preflight failed: {error}")
+                });
             host.frontend.draw_order = render_engine.compute_display_order();
             sync_render_camera(&mut host.frontend);
             render_frame(
@@ -426,8 +442,36 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 drain_print_screen_request(render_ctx.renderer, request);
             }
 
-            render_ctx.present();
-            fixed_tick_presented = true;
+            let presented = render_ctx.present();
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            if services.startup_audio_pause.take().is_some() {
+                // Actual playback bypasses this reservation. A failed surface
+                // acquisition must not indefinitely park speculative warmup.
+                if !presented {
+                    tracing::warn!(
+                        "startup audio warmup released after failed presentation attempt"
+                    );
+                }
+                tracing::info!(
+                    presented,
+                    "startup timing: audio warmup released after mission present attempt"
+                );
+            }
+            fixed_tick_presented = presented;
+            #[cfg(target_arch = "wasm32")]
+            {
+                // One process-startup endpoint, after the first normal mission
+                // render/present call (never a loading-screen or screenshot
+                // render). This is not a browser compositor/display timestamp:
+                // TODO: correlate this marker with browser presentation traces.
+                static FIRST_MISSION_PRESENT: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if presented
+                    && !FIRST_MISSION_PRESENT.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    tracing::info!("startup timing: first mission present returned");
+                }
+            }
             saved_camera.apply(&mut host.frontend);
             host.frontend.draw_order = saved_draw_order;
             sync_render_camera(&mut host.frontend);
@@ -437,6 +481,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         }
         // end if draw_result == 0 (skip render in fast-forward)
         super::frame_perf::record(super::frame_perf::Phase::Render, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("render and present");
+        }
 
         // The original game's ordering is refresh (including draw/flip),
         // then sound updates, then the one-shot engine
@@ -454,6 +501,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         } = world.mutation();
         run_interactive_post_initialize(runtime, host, manager, assets, dev, &mut frame);
         super::frame_perf::record(super::frame_perf::Phase::PostInitialize, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("post initialize");
+        }
 
         if history_commit_pending {
             runtime.commit_simulation_history(
@@ -473,6 +523,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         finalize_interactive_recording(runtime, &mut frame);
         runtime.seal_terminal_recording(&frame);
         super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("history and replay");
+        }
 
         let phase_start = super::frame_perf::start(profiling);
         let view = world.view();
@@ -496,6 +549,11 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     engine.campaign(),
                 ),
         };
+        if let Some(render_engine) = native_refresh_interpolation.engine() {
+            super::sprite_readiness::wait_for_render_sprites(render_engine)
+                .await
+                .unwrap_or_else(|error| panic!("display refresh sprite preflight failed: {error}"));
+        }
         pace_interactive_frame(host, target, presentation_deadline_ms, |host, now_ms| {
             let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
                 return presentation.renderer.present_cached();
@@ -552,6 +610,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
         }
         super::frame_perf::record(super::frame_perf::Phase::Pacing, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("pacing");
+        }
     }
 }
 
@@ -562,6 +623,9 @@ impl InteractiveMission {
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameControl, String> {
+        let first_frame = self.runtime.timeline.frame_number() == 0;
+        let mut startup_timer =
+            first_frame.then(|| super::setup::PhaseTimer::new("first mission frame"));
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
         let phase_start = super::frame_perf::start(profiling);
@@ -577,6 +641,9 @@ impl InteractiveMission {
             }
         };
         super::frame_perf::record(super::frame_perf::Phase::Prepare, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("input and saves");
+        }
         let PreparedFrame {
             frame,
             rewind_active,
@@ -601,6 +668,9 @@ impl InteractiveMission {
         .run(self, services)
         .await?;
         super::frame_perf::record(super::frame_perf::Phase::Simulation, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("simulation");
+        }
         let control = match outcome {
             FrameSimulationOutcome::Control(control) => control,
             FrameSimulationOutcome::Present(handoff) => {
@@ -616,6 +686,9 @@ impl InteractiveMission {
                     },
                 )
                 .await;
+                if let Some(timer) = startup_timer.as_mut() {
+                    timer.step("presentation and pacing");
+                }
                 // A debugger tick is a separate complete transaction. In
                 // particular, do not replace the normal frame's pre-command
                 // checkpoint before modal inputs, PostInitialize, history and

@@ -429,7 +429,7 @@ mod tests {
                 .iter()
                 .map(|document| {
                     let bytes = document
-                        .canonical_bytes()
+                        .bitcode_bytes()
                         .expect("canonical projected component");
                     SimulationContentComponentV1 {
                         kind: document.kind,

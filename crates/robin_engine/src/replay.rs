@@ -202,7 +202,8 @@ impl ReplayFrameOrdinal {
     bitcode::Decode,
 )]
 pub struct ReplayLoadBack {
-    /// Earlier save-marker frame whose captured state must be restored.
+    /// Earlier save-marker frame whose captured state must be restored. A
+    /// pristine Restart may pin and restore marker 0 at ordinal 0 itself.
     pub to_frame: u32,
     /// Whether the source slot was the Continue auto-save.
     pub is_continue: bool,
@@ -298,7 +299,8 @@ struct FrameRecord {
     sv: Option<ReplaySaveMarker>,
     /// Load-back record: at this frame's pre-command boundary the engine
     /// state was replaced with the state captured by the save marker at the
-    /// referenced (strictly earlier) frame.  Keeps the replay linear across
+    /// referenced earlier frame (or frame 0 itself for a pristine Restart).
+    /// Keeps the replay linear across
     /// in-mission loads instead of embedding save payloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lb: Option<ReplayLoadBack>,
@@ -379,20 +381,22 @@ fn detected_input_taints(
 }
 
 /// A complete recorded replay loaded into memory.
+/// Validated frame maps are immutable and shared across admission/player clones.
+/// The exported ReplayFile retains the exact existing wire representation.
 #[derive(Clone, Debug)]
 pub struct ReplayData {
     header: ReplayHeader,
     /// Dense logical sequence, keyed explicitly so marker records can remain
     /// independent JSONL lines. Every frame in `0..total_frames` is present.
-    frames: BTreeMap<u32, ReplayFrame>,
+    frames: std::sync::Arc<BTreeMap<u32, ReplayFrame>>,
     /// Sparse map: expected engine state hash at the start of frame N.
-    hashes: BTreeMap<u32, u64>,
+    hashes: std::sync::Arc<BTreeMap<u32, u64>>,
     /// Save markers: frame → state hash at the pre-command boundary of
     /// that frame, where an in-mission save captured the engine state.
-    save_markers: BTreeMap<u32, ReplaySaveMarker>,
+    save_markers: std::sync::Arc<BTreeMap<u32, ReplaySaveMarker>>,
     /// Load-back records: frame → earlier save-marker frame whose
     /// captured state replaced the engine at this frame's boundary.
-    load_backs: BTreeMap<u32, ReplayLoadBack>,
+    load_backs: std::sync::Arc<BTreeMap<u32, ReplayLoadBack>>,
 }
 
 /// Flat serde-compatible snapshot of a [`ReplayData`], used as the
@@ -415,10 +419,10 @@ impl TryFrom<ReplayFile> for ReplayData {
     fn try_from(f: ReplayFile) -> Result<Self, Self::Error> {
         let mut data = Self {
             header: f.header,
-            frames: f.frames,
-            hashes: f.hashes,
-            save_markers: f.save_markers,
-            load_backs: f.load_backs,
+            frames: f.frames.into(),
+            hashes: f.hashes.into(),
+            save_markers: f.save_markers.into(),
+            load_backs: f.load_backs.into(),
         };
         data.validate_layout()?;
         data.header.rankability = data.rankability().map_err(|error| error.to_string())?;
@@ -430,10 +434,10 @@ impl From<&ReplayData> for ReplayFile {
     fn from(d: &ReplayData) -> Self {
         Self {
             header: d.header.clone(),
-            frames: d.frames.clone(),
-            hashes: d.hashes.clone(),
-            save_markers: d.save_markers.clone(),
-            load_backs: d.load_backs.clone(),
+            frames: (*d.frames).clone(),
+            hashes: (*d.hashes).clone(),
+            save_markers: (*d.save_markers).clone(),
+            load_backs: (*d.load_backs).clone(),
         }
     }
 }
@@ -448,9 +452,12 @@ impl ReplayData {
     /// Apply metadata changes transactionally. An invalid edit leaves this
     /// replay unchanged, including its reconstructed provenance evidence.
     pub fn try_edit_header(&mut self, edit: impl FnOnce(&mut ReplayHeader)) -> Result<(), String> {
-        let mut candidate = ReplayFile::from(&*self);
+        let mut candidate = self.clone();
         edit(&mut candidate.header);
-        *self = candidate.try_into()?;
+        candidate.validate_layout()?;
+        candidate.header.rankability =
+            candidate.rankability().map_err(|error| error.to_string())?;
+        *self = candidate;
         Ok(())
     }
     /// Total number of simulation frames in the replay.
@@ -462,7 +469,7 @@ impl ReplayData {
     /// canonical timeline from frame zero.
     pub fn replace_state_hashes(&mut self, hashes: BTreeMap<u32, u64>) -> Result<(), String> {
         self.validate_metadata_ordinals("hash", hashes.keys().copied())?;
-        self.hashes = hashes;
+        self.hashes = hashes.into();
         Ok(())
     }
 
@@ -536,8 +543,14 @@ impl ReplayData {
                 ));
             }
         }
-        for (&frame, load_back) in &self.load_backs {
-            if load_back.to_frame >= frame {
+        for (&frame, load_back) in self.load_backs.iter() {
+            let pristine_restart = frame == 0
+                && load_back.to_frame == 0
+                && self
+                    .save_markers
+                    .get(&0)
+                    .is_some_and(|marker| marker.timeline_frame == 0);
+            if load_back.to_frame >= frame && !pristine_restart {
                 return Err(format!(
                     "load-back target {} is not before frame {frame}",
                     load_back.to_frame
@@ -551,7 +564,7 @@ impl ReplayData {
             }
         }
         let mut previous_after = None;
-        for (&ordinal, frame) in &self.frames {
+        for (&ordinal, frame) in self.frames.iter() {
             if frame.timeline_after < frame.timeline_before
                 || frame.timeline_after > frame.timeline_before.saturating_add(1)
             {
@@ -673,7 +686,12 @@ impl ReplayData {
                 save_markers.insert(rec.f, sv);
             }
             if let Some(lb) = rec.lb {
-                if lb.to_frame >= rec.f {
+                let pristine_restart = rec.f == 0
+                    && lb.to_frame == 0
+                    && save_markers
+                        .get(&0)
+                        .is_some_and(|marker| marker.timeline_frame == 0);
+                if lb.to_frame >= rec.f && !pristine_restart {
                     return Err(format!(
                         "bad line {}: load-back target {} is not before frame {}",
                         i + 2,
@@ -815,6 +833,26 @@ mod tests {
             load_backs: BTreeMap::new(),
         };
         let mut data = ReplayData::try_from(file).unwrap();
+        let mut shared = data.clone();
+        assert!(std::sync::Arc::ptr_eq(&data.frames, &shared.frames));
+        assert!(std::sync::Arc::ptr_eq(&data.hashes, &shared.hashes));
+        assert!(std::sync::Arc::ptr_eq(
+            &data.save_markers,
+            &shared.save_markers
+        ));
+        assert!(std::sync::Arc::ptr_eq(&data.load_backs, &shared.load_backs));
+        assert_eq!(
+            bitcode::encode(&ReplayFile::from(&data)),
+            bitcode::encode(&ReplayFile::from(&shared))
+        );
+        shared
+            .try_edit_header(|header| header.rng_seed = 42)
+            .unwrap();
+        assert_eq!(data.header().rng_seed, 17);
+        assert!(std::sync::Arc::ptr_eq(&data.frames, &shared.frames));
+        shared.replace_state_hashes(BTreeMap::new()).unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&data.hashes, &shared.hashes));
+        assert!(std::sync::Arc::ptr_eq(&data.frames, &shared.frames));
         assert!(
             data.try_edit_header(|header| {
                 header.rng_seed = 99;
@@ -1752,6 +1790,71 @@ mod tests {
     }
 
     #[test]
+    fn pristine_restart_boundary_round_trips_without_an_extra_frame() {
+        let path = unique_replay_path("pristine_restart");
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "restart".into(),
+            test_mission_assets("restart"),
+            17,
+            Default::default(),
+            &crate::campaign::Campaign::default(),
+        )
+        .unwrap();
+        recorder.write_save_marker(
+            0,
+            ReplaySaveMarker {
+                state_hash: 123,
+                timeline_frame: 0,
+            },
+        );
+        recorder.write_load_back(0, 0, false);
+        record_tick(&mut recorder, 0, SimulationFrameInput::default());
+        drop(recorder);
+        let data = ReplayData::from_file(&path).unwrap();
+        data.validate_layout().unwrap();
+        assert_eq!(data.frame_count(), 1);
+        assert_eq!(data.load_back_for_frame(0).unwrap().to_frame, 0);
+
+        let jsonl = std::fs::read_to_string(&path).unwrap();
+        // The JSONL parser and the shared compact-layout validator must both
+        // reject every other self/future load and a nonzero bootstrap timeline.
+        for (ordinal, target, marker_timeline) in [(1, 1, 0), (0, 1, 0), (0, 0, 1)] {
+            let mut invalid = data.clone();
+            std::sync::Arc::make_mut(&mut invalid.load_backs).clear();
+            std::sync::Arc::make_mut(&mut invalid.load_backs).insert(
+                ordinal,
+                ReplayLoadBack {
+                    to_frame: target,
+                    is_continue: false,
+                },
+            );
+            std::sync::Arc::make_mut(&mut invalid.save_markers)
+                .get_mut(&0)
+                .unwrap()
+                .timeline_frame = marker_timeline;
+            assert!(invalid.validate_layout().is_err());
+            let edited = jsonl
+                .lines()
+                .map(|line| {
+                    let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    if value.get("lb").is_some() {
+                        value["f"] = ordinal.into();
+                        value["lb"]["to_frame"] = target.into();
+                    }
+                    if value.get("sv").is_some() {
+                        value["sv"]["timeline_frame"] = marker_timeline.into();
+                    }
+                    serde_json::to_string(&value).unwrap()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(ReplayData::from_reader(std::io::Cursor::new(edited)).is_err());
+        }
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn save_markers_and_load_backs_round_trip_linearly() {
         let path = unique_replay_path("save_load_timeline");
         let campaign = crate::campaign::Campaign::default();
@@ -2014,10 +2117,10 @@ mod tests {
                 rankability: ReplayRankability::rankable(),
                 campaign: bitcode::encode(&crate::campaign::Campaign::default()),
             },
-            frames,
-            hashes: BTreeMap::new(),
-            save_markers: BTreeMap::new(),
-            load_backs: BTreeMap::new(),
+            frames: frames.into(),
+            hashes: std::sync::Arc::default(),
+            save_markers: std::sync::Arc::default(),
+            load_backs: std::sync::Arc::default(),
         };
         let mut player = ReplayPlayer::new(data);
         let _ = player.next_frame();

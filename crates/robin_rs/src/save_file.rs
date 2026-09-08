@@ -48,7 +48,11 @@ use sha2::{Digest, Sha256};
 /// display text. Two payloads compare equal only when their engine, sound, and
 /// host-owned persistent game state serialize identically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct ReplaySaveIdentity([u8; 32]);
+pub(crate) enum ReplaySaveIdentity {
+    Payload([u8; 32]),
+    /// Authority for one immutable checkpoint owned by this process only.
+    SessionRestart(u64),
+}
 
 /// Complete in-mission state needed to reproduce the effect of loading a save.
 ///
@@ -155,13 +159,22 @@ fn replay_identity_digest<T: Serialize + ?Sized>(value: &T) -> Result<ReplaySave
     let value = crate::json_value::to_json_value(value)
         .context("converting replay save identity to string-keyed JSON")?;
     let bytes = serde_json::to_vec(&value).context("serializing replay save identity")?;
-    Ok(ReplaySaveIdentity(Sha256::digest(bytes).into()))
+    Ok(ReplaySaveIdentity::Payload(Sha256::digest(bytes).into()))
 }
 
 /// Atomically replace one persisted save/index file from a same-directory
 /// temporary file. Keeping the temporary beside the destination ensures the
 /// final rename cannot cross filesystem boundaries.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_with_policy(path, bytes, true)
+}
+
+/// Publish a new slot without replacing a target created since allocation.
+pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_with_policy(path, bytes, false)
+}
+
+fn atomic_write_with_policy(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
     let parent = path
         .parent()
         .context("atomic write target has no parent directory")?;
@@ -189,8 +202,12 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .as_file_mut()
         .sync_all()
         .with_context(|| format!("syncing temporary file for {}", path.display()))?;
-    temporary
-        .persist(path)
+    let published = if overwrite {
+        temporary.persist(path)
+    } else {
+        temporary.persist_noclobber(path)
+    };
+    published
         .map_err(|error| error.error)
         .with_context(|| format!("atomically replacing {}", path.display()))?;
     #[cfg(all(unix, not(target_arch = "wasm32")))]
@@ -714,6 +731,96 @@ pub fn unix_timestamp_now() -> Result<u64> {
         .map(|duration| duration.as_secs())
 }
 
+/// Preflighted payload whose optional identity belongs to this exact immutable
+/// checkpoint. Unwrapping for mutation or transport deliberately drops that
+/// process-local authority; serialized saves can never acquire it.
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct PreparedGameSave {
+    payload: GameSaveFile,
+    #[serde(skip)]
+    session_identity: Option<ReplaySaveIdentity>,
+}
+
+impl std::fmt::Debug for PreparedGameSave {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedGameSave")
+            .field("header", &self.payload.header)
+            .field("session_identity", &self.session_identity)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::ops::Deref for PreparedGameSave {
+    type Target = GameSaveFile;
+    fn deref(&self) -> &Self::Target {
+        &self.payload
+    }
+}
+
+impl From<GameSaveFile> for PreparedGameSave {
+    fn from(payload: GameSaveFile) -> Self {
+        Self {
+            payload,
+            session_identity: None,
+        }
+    }
+}
+
+impl PreparedGameSave {
+    pub(crate) fn into_payload(self) -> GameSaveFile {
+        self.payload
+    }
+
+    pub(crate) fn session_identity(&self) -> Option<ReplaySaveIdentity> {
+        self.session_identity
+    }
+
+    pub(crate) fn replay_identity(&self) -> Result<ReplaySaveIdentity> {
+        match self.session_identity {
+            Some(identity) => Ok(identity),
+            None => self.payload.replay_identity(),
+        }
+    }
+
+    pub(crate) fn apply_to_with_game(
+        self,
+        engine: &mut Engine,
+        host: &mut Host,
+        game: &mut crate::game::Game,
+        assets: &LevelAssets,
+    ) -> std::result::Result<(), SnapshotRestoreError> {
+        self.payload.apply_to_with_game(engine, host, game, assets)
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(crate) fn capture_session_restart(
+        engine: &Engine,
+        host: &Host,
+        game: &crate::game::Game,
+        header: SaveHeader,
+    ) -> Result<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_CHECKPOINT: AtomicU64 = AtomicU64::new(1);
+        let snapshot = GameRuntimeSnapshot::capture(engine, host, game)?;
+        let payload = GameSaveFile {
+            header,
+            engine: Engine::from_persisted_state(snapshot.engine),
+            sound: snapshot.sound.into_runtime(),
+            game_persistent: snapshot.game_persistent,
+        };
+        payload.validate_current_schema()?;
+        let identity = NEXT_CHECKPOINT
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                next.checked_add(1)
+            })
+            .map_err(|_| anyhow::anyhow!("session restart identity space exhausted"))?;
+        Ok(Self {
+            payload,
+            session_identity: Some(ReplaySaveIdentity::SessionRestart(identity)),
+        })
+    }
+}
+
 // ─── Full save file ──────────────────────────────────────────────────
 
 /// A complete game save file.
@@ -846,6 +953,14 @@ impl GameSaveFile {
         let json = serde_json::to_string_pretty(self).context("serializing save file")?;
         atomic_write(path, json.as_bytes())
             .with_context(|| format!("writing save file {}", path.display()))
+    }
+
+    /// Publish a newly allocated manual slot, never an implicit overwrite.
+    pub(crate) fn write_new_to(&self, path: &Path) -> Result<()> {
+        self.validate_current_schema()?;
+        let json = serde_json::to_vec_pretty(self).context("serializing new save file")?;
+        atomic_write_new(path, &json)
+            .with_context(|| format!("publishing new save without replacing {}", path.display()))
     }
 
     /// Read a save file from disk.

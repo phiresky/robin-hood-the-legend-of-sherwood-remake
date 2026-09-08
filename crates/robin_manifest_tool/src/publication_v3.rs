@@ -3909,12 +3909,13 @@ fn load_admitted_profile_managers_from_inventory_v3(
                 )? == component.artifact,
                 "authenticated Profiles component differs from its content manifest"
             );
-            let document: SimulationContentComponentDocumentV1 = strict_json_from_slice(&bytes)
-                .context("decode authenticated Profiles component")?;
+            let document: SimulationContentComponentDocumentV1 =
+                SimulationContentComponentDocumentV1::from_bitcode(&bytes)
+                    .context("decode authenticated Profiles component")?;
             document.validate()?;
             ensure!(
                 document.kind == SimulationContentComponentKindV1::Profiles
-                    && document.canonical_bytes()? == bytes,
+                    && document.bitcode_bytes()? == bytes,
                 "authenticated Profiles component is not canonical typed Profiles"
             );
             if let Some(expected) = &admitted_document {

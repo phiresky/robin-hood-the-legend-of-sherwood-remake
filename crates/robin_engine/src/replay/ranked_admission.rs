@@ -34,7 +34,7 @@ impl ReplayData {
         for &frame in self.load_backs.keys() {
             rankability.taint(InputTaintKind::StateLoad, frame);
         }
-        for (&ordinal, frame) in &self.frames {
+        for (&ordinal, frame) in self.frames.iter() {
             for kind in detected_input_taints(&frame.input, &frame.host_controls) {
                 rankability.taint(kind, ordinal);
             }

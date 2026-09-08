@@ -4241,7 +4241,7 @@ mod tests {
                 mission_id: "Dem_Lei_MP".into(),
             },
             closure: crate::ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 1,
+            projection_schema_version: 2,
             resource_locale_root: ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SimulationSpeechTimingSourceV1::LanguagePack {
                 canonical_locale: "en-US".into(),

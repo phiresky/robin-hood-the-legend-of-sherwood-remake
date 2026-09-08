@@ -23,8 +23,22 @@ impl std::ops::Deref for CompressedPayload {
     }
 }
 
-#[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
 const MISSION_FETCH_CONCURRENCY: usize = 8;
+
+/// The generated layout is a scheduling hint, never a correctness filter.
+/// Unknown/legacy paths remain required and receive ordinary data priority.
+fn mission_download_priority(path: &str) -> u8 {
+    match path.split('/').next() {
+        Some("missions") => 0,
+        Some("terrain") => 1,
+        Some("audio") => 3,
+        _ => 2,
+    }
+}
+
+fn prioritize_mission_downloads(files: &mut [String]) {
+    files.sort_by_key(|path| mission_download_priority(path));
+}
 
 /// One observable step at the asynchronous shipping-data boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -132,6 +146,7 @@ where
     if datadir.missions.is_empty() {
         return Ok(());
     }
+    let plan_start = web_time::Instant::now();
     let dependencies = required_dependencies(
         datadir,
         mission,
@@ -139,6 +154,11 @@ where
         profiles,
         has_decoded_saved_world,
     )?;
+    tracing::info!(
+        mission,
+        elapsed_ms = plan_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: mission dependency planning"
+    );
     let total = dependencies.files.len();
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     let audio = if _warm_audio {
@@ -146,6 +166,14 @@ where
     } else {
         None
     };
+    // Pause speculative menu/mission warmup while critical data is loading.
+    // Required playback bypasses the pause; cancellation/errors release it.
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    let mut audio_download_pause = audio
+        .as_ref()
+        .map(|audio| audio.pause_startup_warmup())
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
     progress(MissionLoadProgress {
         phase: MissionLoadPhase::Data,
         completed: 0,
@@ -175,34 +203,64 @@ where
         });
         #[cfg(all(target_arch = "wasm32", feature = "audio"))]
         if _warm_audio {
-            crate::audio_backend::preload_active_mission(
+            crate::audio_backend::preload_active_mission_in_background(
                 audio
                     .as_ref()
                     .expect("warm audio session initialized above"),
-                |audio| {
-                    progress(MissionLoadProgress {
-                        phase: MissionLoadPhase::Audio,
-                        completed: audio.completed,
-                        total: audio.total,
-                        file: audio.file,
-                    });
-                },
             )
-            .await
             .map_err(anyhow::Error::msg)
-            .context("warm active mission browser audio")?;
+            .context("start active mission browser audio warmup")?;
         }
         return Ok(());
     }
-    let files = dependencies.files;
+    let mut files = dependencies.files;
+    prioritize_mission_downloads(&mut files);
     let exclamation_ids = dependencies.exclamation_ids;
     // Fresh install epoch: drops the previous mission's late-grid cells and
     // invalidates any still-running background sprite-streaming driver.
     // Deliberately after the loaded-mission early return above — a restart
     // of the same mission keeps its (possibly still-filling) cells.
     let install_epoch = robin_assets::late_sprites::begin_epoch();
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    let experimental_tail_files = {
+        let window = web_sys::window().context("sprite residency requires a browser window")?;
+        let query = web_sys::UrlSearchParams::new_with_str(
+            &window
+                .location()
+                .search()
+                .map_err(|e| anyhow!("read residency query: {e:?}"))?,
+        )
+        .map_err(|e| anyhow!("parse residency query: {e:?}"))?;
+        let requested = match query.get("sprite-residency").as_deref() {
+            None | Some("eager") => false,
+            Some("first-frame") => true,
+            Some(value) => return Err(anyhow!("unknown sprite-residency policy {value:?}")),
+        };
+        let tail = if requested && robin_assets::wasm_threads::pool_threads() > 0 {
+            separate_experimental_tail_files(&mut files)
+        } else {
+            Vec::new()
+        };
+        if !tail.is_empty() {
+            robin_assets::late_sprites::set_experimental(install_epoch, true);
+            robin_assets::late_sprites::begin_download_tail(install_epoch);
+            tracing::info!(
+                mission,
+                initial_files = files.len(),
+                tail_files = tail.len(),
+                "experimental sprite residency enabled"
+            );
+        }
+        tail
+    };
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
     let _ = install_epoch;
+    // Only the browser/audio closure mutates its captured pause guard.
+    #[cfg_attr(not(all(target_arch = "wasm32", feature = "audio")), allow(unused_mut))]
+    let mut downloads_finished = || {
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        drop(audio_download_pause.take());
+    };
     // Native (and plain single-threaded wasm) path: bounded-concurrency
     // fetch, merge on arrival, materialize inside `install_mission`.
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
@@ -239,16 +297,17 @@ where
             // builds make this a no-op.
             crate::window::yield_to_runtime().await;
         }
+        downloads_finished();
         (merged, fetched_bytes)
     };
-    // Browser worker-pool build: all requests in flight at once, parts merged
+    // Browser worker-pool build: prioritized requests, parts merged
     // as they arrive, and critical VQ sprite chunks materialized concurrently
     // with the remaining downloads; reinforcement-only chunks return as a
     // deferred tail that streams after activation. `install_mission` still
     // runs its own (now no-op for the critical set) materialization pass —
     // deferred chunks are held out of the bank's chunk list entirely.
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-    let (merged, fetched_bytes, deferred_tail) = fetch_merge_materialize_streaming(
+    let (merged, fetched_bytes, deferred_tail, early_terrain) = fetch_merge_materialize_streaming(
         datadir,
         mission,
         campaign,
@@ -256,11 +315,37 @@ where
         has_decoded_saved_world,
         &files,
         &mut progress,
+        &mut downloads_finished,
     )
     .await?;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if !experimental_tail_files.is_empty() {
+        for (key, bytes) in &merged.raw {
+            if key.starts_with("__startup_opacity/") {
+                let batch = robin_assets::sprite_residency::decode(bytes)
+                    .with_context(|| format!("decode resident opacity {key}"))?;
+                robin_assets::late_sprites::install_opacity(install_epoch, batch)?;
+            }
+        }
+    }
+    let install_start = web_time::Instant::now();
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
         .with_context(|| format!("install shipping mission {mission}"))?;
+    tracing::info!(
+        mission,
+        elapsed_ms = install_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: mission install"
+    );
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if let Some(job) = early_terrain {
+        _application
+            .asset_cache()
+            .map_err(anyhow::Error::msg)?
+            .publish_early_terrain(job, datadir)
+            .map_err(anyhow::Error::msg)
+            .context("publish early terrain decode for installed mission")?;
+    }
     datadir.set_active_exclamation_ids(exclamation_ids);
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
     if let Some(tail) = deferred_tail {
@@ -269,6 +354,16 @@ where
     let payload = datadir
         .loaded_mission(mission)
         .ok_or_else(|| anyhow!("shipping mission {mission} disappeared after installation"))?;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if !experimental_tail_files.is_empty() {
+        spawn_experimental_sprite_downloads(
+            Arc::clone(datadir),
+            mission.to_owned(),
+            install_epoch,
+            Arc::clone(&payload),
+            experimental_tail_files,
+        );
+    }
     tracing::info!(
         mission,
         files = files.len(),
@@ -279,24 +374,178 @@ where
     );
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     if _warm_audio {
-        crate::audio_backend::preload_active_mission(
+        crate::audio_backend::preload_active_mission_in_background(
             audio
                 .as_ref()
                 .expect("warm audio session initialized above"),
-            |audio| {
-                progress(MissionLoadProgress {
-                    phase: MissionLoadPhase::Audio,
-                    completed: audio.completed,
-                    total: audio.total,
-                    file: audio.file,
-                });
-            },
         )
-        .await
         .map_err(anyhow::Error::msg)
-        .context("warm active mission browser audio")?;
+        .context("start active mission browser audio warmup")?;
     }
     Ok(())
+}
+
+/// The opt-in experiment recognizes only converter-authored tails. Ordinary
+/// and unknown dependencies stay eager. All metadata remains in the head.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn separate_experimental_tail_files(files: &mut Vec<String>) -> Vec<String> {
+    let mut tails = Vec::new();
+    files.retain(|file| {
+        if file.starts_with("rhs-tail/") {
+            tails.push(file.clone());
+            false
+        } else {
+            true
+        }
+    });
+    tails
+}
+
+/// Experimental tail files may contain standalone pixels only. A format or
+/// converter mistake must fail before publishing a partial generation.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn experimental_tail_chunks(
+    mut part: ShippingMission,
+    bank: &robin_assets::shipping_datadir::ShippingSpriteBank,
+) -> Result<Vec<robin_assets::shipping_datadir::SpriteVqChunk>> {
+    anyhow::ensure!(
+        part.levels.is_empty()
+            && part.scripts.is_empty()
+            && part.rhs_files.is_empty()
+            && part.raw.is_empty()
+            && part.audio_durations_ms.is_empty(),
+        "sprite tail contains eager metadata"
+    );
+    let tail = part.sprite_bank.take().context("sprite tail has no bank")?;
+    anyhow::ensure!(
+        tail.signature == bank.signature && tail.sprite_count == bank.sprite_count,
+        "sprite tail bank generation mismatch"
+    );
+    anyhow::ensure!(
+        tail.sprites.is_empty() && tail.dictionaries.is_empty() && tail.rle_jxl_chunks.is_empty(),
+        "sprite tail contains eager bank data"
+    );
+    let mut ids = BTreeSet::new();
+    for chunk in &tail.vq_chunks {
+        anyhow::ensure!(
+            chunk.base_rhs.is_none()
+                && chunk.base2_rhs.is_empty()
+                && chunk.base_ids.iter().all(Option::is_none)
+                && chunk.base2_ids.iter().all(Option::is_none),
+            "experimental tail must not have cross-chunk dependencies"
+        );
+        for id in &chunk.sprite_ids {
+            anyhow::ensure!(ids.insert(*id), "sprite tail repeats sprite {id}");
+            let index = bank
+                .sprites
+                .binary_search_by_key(id, |(id, _)| *id)
+                .map_err(|_| anyhow!("sprite tail references missing head row {id}"))?;
+            anyhow::ensure!(
+                bank.sprites[index].1.packed_data.is_empty(),
+                "sprite tail overwrites resident sprite {id}"
+            );
+        }
+    }
+    Ok(tail.vq_chunks)
+}
+
+/// Fetch and decode after activation. Every missing selected frame has an
+/// explicit host await; replay/input opacity is already resident. Errors poison
+/// the epoch and propagate at that await, never produce empty render sprites.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+fn spawn_experimental_sprite_downloads(
+    datadir: Arc<ShippingDatadir>,
+    mission: String,
+    epoch: u64,
+    payload: Arc<ShippingMission>,
+    files: Vec<String>,
+) {
+    use futures::TryStreamExt as _;
+    use robin_assets::{late_sprites, shipping_datadir::VqDecodeScheduler, wasm_threads};
+    wasm_bindgen_futures::spawn_local(async move {
+        let started = web_time::Instant::now();
+        let result: Result<()> = async {
+            let bank = payload
+                .sprite_bank
+                .as_ref()
+                .context("experimental mission has no sprite bank")?;
+            let datadir = &datadir;
+            let payload = &payload;
+            // TODO: prioritize by replay pose lookahead once first-presentation
+            // traces establish which action chunks are actually demanded.
+            let mut downloads = futures::stream::iter(files.into_iter().map(|file| async move {
+                anyhow::ensure!(
+                    late_sprites::experimental_epoch() == Some(epoch),
+                    "sprite tail generation superseded"
+                );
+                // Threaded builds expose the streaming reader with byte
+                // accounting; keep tail progress separate from the completed
+                // initial mission-loading progress model.
+                let fetch_progress = FetchByteProgress::default();
+                let compressed = fetch_counted(datadir, &file, &fetch_progress)
+                    .await
+                    .with_context(|| format!("fetch experimental sprite tail {file}"))?;
+                let part =
+                    wasm_threads::run_on_pool(move || decode_mission_compressed(&compressed))
+                        .await?
+                        .with_context(|| format!("decode experimental sprite tail {file}"))?;
+                let mut pending = experimental_tail_chunks(part, bank)
+                    .with_context(|| format!("validate experimental sprite tail {file}"))?;
+                late_sprites::extend_tail_work(
+                    epoch,
+                    pending.len(),
+                    pending.iter().map(|chunk| chunk.blob.len() as u64).sum(),
+                );
+                let mut scheduler = VqDecodeScheduler::default();
+                loop {
+                    anyhow::ensure!(
+                        late_sprites::experimental_epoch() == Some(epoch),
+                        "sprite tail generation superseded"
+                    );
+                    scheduler.dispatch_ready_bounded(
+                        bank,
+                        &mut pending,
+                        &payload.rhs_files,
+                        true,
+                        2,
+                    )?;
+                    let Some((chunk, grids)) = scheduler.next_decoded().await? else {
+                        anyhow::ensure!(
+                            pending.is_empty(),
+                            "sprite tail dependencies cannot progress"
+                        );
+                        break;
+                    };
+                    let grids: Vec<_> = grids
+                        .into_iter()
+                        .map(|(id, grid)| (id, Arc::new(grid)))
+                        .collect();
+                    anyhow::ensure!(
+                        late_sprites::publish_chunk(epoch, chunk.blob.len() as u64, &grids),
+                        "sprite tail generation superseded"
+                    );
+                    crate::window::yield_to_runtime().await;
+                }
+                tracing::debug!(file, "experimental sprite tail ready");
+                Ok::<_, anyhow::Error>(())
+            }))
+            .buffer_unordered(MISSION_FETCH_CONCURRENCY);
+            while downloads.try_next().await?.is_some() {}
+            late_sprites::finish_download_tail(epoch);
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            late_sprites::fail_tail_with_error(epoch, format!("{error:#}"));
+            tracing::error!(mission, "experimental sprite residency failed: {error:#}");
+        } else {
+            tracing::info!(
+                mission,
+                elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                "experimental sprite tail downloads complete"
+            );
+        }
+    });
 }
 
 /// Deferred sprite-chunk work handed to [`spawn_deferred_sprite_tail`] after
@@ -660,14 +909,71 @@ impl SpriteDeferral {
     }
 }
 
+/// Leave one pool worker available to short part decompression jobs. A
+/// one-worker pool cannot reserve a worker and still make sprite progress.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn streaming_worker_budget(threads: usize, fetching: bool, reserved: usize) -> usize {
+    threads
+        .saturating_sub(usize::from(fetching))
+        .max(usize::from(threads > 0))
+        .saturating_sub(reserved)
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+fn dispatch_streaming_chunks(
+    bank: &robin_assets::shipping_datadir::ShippingSpriteBank,
+    pending: &mut Vec<robin_assets::shipping_datadir::SpriteVqChunk>,
+    scheduler: &mut robin_assets::shipping_datadir::VqDecodeScheduler,
+    pending_rle: &mut Vec<robin_assets::shipping_datadir::SpriteRleJxlChunk>,
+    rle_scheduler: &mut robin_assets::shipping_datadir::RleJxlDecodeScheduler,
+    rhs_files: &std::collections::BTreeMap<String, robin_assets::shipping_datadir::RhsData>,
+    bounded: bool,
+    balanced: bool,
+    fetching: bool,
+    reserved_workers: usize,
+) -> Result<()> {
+    if !bounded {
+        rle_scheduler.dispatch_ready(bank, pending_rle)?;
+        return scheduler.dispatch_ready(bank, pending, rhs_files, !fetching);
+    }
+    let budget = streaming_worker_budget(
+        robin_assets::wasm_threads::pool_threads(),
+        fetching,
+        reserved_workers,
+    );
+    // Keep one independent RLE job progressing even while VQ has a backlog.
+    // The existing counts include completed-but-unapplied jobs, so this
+    // reservation cannot overfill the shared admission budget.
+    if balanced {
+        rle_scheduler.dispatch_ready_prioritized(
+            bank,
+            pending_rle,
+            budget.saturating_sub(scheduler.in_flight_count()).min(1),
+        )?;
+    }
+    scheduler.dispatch_ready_bounded(
+        bank,
+        pending,
+        rhs_files,
+        !fetching,
+        budget.saturating_sub(rle_scheduler.in_flight_count()),
+    )?;
+    let rle_limit = budget.saturating_sub(scheduler.in_flight_count());
+    if balanced {
+        rle_scheduler.dispatch_ready_prioritized(bank, pending_rle, rle_limit)
+    } else {
+        rle_scheduler.dispatch_ready_bounded(bank, pending_rle, rle_limit)
+    }
+}
+
 /// Streaming mission load for the browser worker-pool build.
 ///
 /// Every part request is issued simultaneously — the browser's network stack
 /// multiplexes the actual transfers — and each response is processed the
 /// moment it arrives: the zstd+bitcode part decode runs on a rayon worker
 /// (inline on the serial fallback), the decoded part merges immediately, and
-/// every dependency-ready *critical* VQ sprite chunk is dispatched to the
-/// pool right away. The main thread never blocks: it awaits whichever event
+/// dependency-ready *critical* VQ sprite chunks are admitted within the
+/// worker budget. The main thread never blocks: it awaits whichever event
 /// completes next (a part arrival, a finished chunk decode, or a progress
 /// tick) via `futures::select!`.
 ///
@@ -685,7 +991,13 @@ async fn fetch_merge_materialize_streaming<F>(
     has_decoded_saved_world: bool,
     files: &[String],
     progress: &mut F,
-) -> Result<(ShippingMission, usize, Option<DeferredSpriteTail>)>
+    downloads_finished: &mut impl FnMut(),
+) -> Result<(
+    ShippingMission,
+    usize,
+    Option<DeferredSpriteTail>,
+    Option<crate::level_loading_host::EarlyTerrainDecode>,
+)>
 where
     F: FnMut(MissionLoadProgress<'_>),
 {
@@ -696,8 +1008,47 @@ where
     };
     use robin_assets::wasm_threads;
 
+    let stream_start = web_time::Instant::now();
+    tracing::info!(mission, "startup timing: mission streaming begin");
     let total = files.len();
     let pooled = wasm_threads::pool_threads() > 0;
+    // Diagnostic switch for paired browser measurements, without rebuilding.
+    let window =
+        web_sys::window().ok_or_else(|| anyhow!("mission streaming requires a browser window"))?;
+    let query = web_sys::UrlSearchParams::new_with_str(
+        &window
+            .location()
+            .search()
+            .map_err(|error| anyhow!("read startup query: {error:?}"))?,
+    )
+    .map_err(|error| anyhow!("parse startup query: {error:?}"))?;
+    let (bounded, balanced) = match query.get("streaming-scheduler").as_deref() {
+        None | Some("balanced") => (true, true),
+        Some("bounded") => (true, false),
+        Some("unbounded") => (false, false),
+        Some(value) => return Err(anyhow!("unknown streaming-scheduler policy {value:?}")),
+    };
+    tracing::info!(
+        bounded,
+        balanced,
+        workers = wasm_threads::pool_threads(),
+        "mission worker scheduling policy"
+    );
+    let mut download_files = files.to_vec();
+    let download_concurrency = match query.get("mission-downloads").as_deref() {
+        // Keep the browser's connections busy while short decompression jobs
+        // await worker/main-thread progress. Worker admission remains bounded
+        // independently; limiting both queues delayed transfers in Chrome.
+        None | Some("ordered") => total.max(1),
+        Some("prioritized") => MISSION_FETCH_CONCURRENCY,
+        Some("unbounded") => {
+            // Restore the original alphabetical all-at-once policy exactly.
+            download_files.sort();
+            total.max(1)
+        }
+        Some(value) => return Err(anyhow!("unknown mission-downloads policy {value:?}")),
+    };
+    tracing::info!(download_concurrency, "mission download scheduling policy");
     let fetch_progress = Arc::new(FetchByteProgress::default());
     let mut work = InstallWorkModel {
         files_total: total,
@@ -710,39 +1061,73 @@ where
     // A decoded saved world can contain any entity — reinforcements that
     // already spawned included — so "present at mission start" cannot be
     // derived from the authored level: keep every chunk activation-blocking.
-    let mut deferral = if pooled && !has_decoded_saved_world {
+    let mut deferral = if pooled
+        && !has_decoded_saved_world
+        && robin_assets::late_sprites::experimental_epoch().is_none()
+    {
         Some(SpriteDeferral::new(datadir, mission, campaign, profiles)?)
     } else {
         None
     };
-    let mut fetched = futures::stream::iter(files.iter().cloned().map(|file| {
+    let mut fetched = futures::stream::iter(download_files.into_iter().map(|file| {
         let fetch_progress = Arc::clone(&fetch_progress);
         async move {
             let compressed = fetch_counted(datadir, &file, &fetch_progress)
                 .await
                 .with_context(|| format!("fetch shipping file {file}"))?;
             let bytes = compressed.len();
+            let ready = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
             // Pure compute; overlap it with the remaining downloads when the
-            // pool exists.
-            let payload = if wasm_threads::pool_threads() > 0 {
-                wasm_threads::run_on_pool(move || decode_mission_compressed(&compressed)).await?
-            } else {
-                decode_mission_compressed(&compressed)
+            // pool exists. Carry worker timestamps back to the main thread;
+            // the browser workers do not necessarily have a log subscriber.
+            let decode = move || {
+                let worker_start = ready.map(|_| js_sys::Date::now());
+                let payload = decode_mission_compressed(&compressed);
+                let worker_end = ready.map(|_| js_sys::Date::now());
+                (payload, worker_start.zip(worker_end))
             };
+            let enqueued = ready.map(|_| js_sys::Date::now());
+            let (payload, timing) = if wasm_threads::pool_threads() > 0 {
+                wasm_threads::run_on_pool(decode).await?
+            } else {
+                decode()
+            };
+            if let Some(((ready_ms, enqueued_ms), (worker_start_ms, worker_end_ms))) =
+                ready.zip(enqueued).zip(timing)
+            {
+                tracing::debug!(
+                    file,
+                    ready_ms,
+                    enqueued_ms,
+                    worker_start_ms,
+                    worker_end_ms,
+                    received_ms = js_sys::Date::now(),
+                    "shipping part decoded on worker"
+                );
+            }
             let payload = payload.with_context(|| format!("decode shipping file {file}"))?;
             Ok::<_, anyhow::Error>((file, bytes, payload))
         }
     }))
-    .buffer_unordered(total.max(1))
+    .buffer_unordered(download_concurrency)
     .fuse();
 
     enum Event {
         Part(Option<Result<(String, usize, ShippingMission)>>),
         Decoded(Result<Option<(SpriteVqChunk, Vec<(u32, Vec<u16>)>)>>),
+        RleDecoded(
+            Result<
+                Option<(
+                    SpriteRleJxlChunk,
+                    Vec<(u32, robin_assets::frame_holder::SpriteRaster)>,
+                )>,
+            >,
+        ),
         Tick,
     }
 
     let mut merged = ShippingMission::default();
+    let mut early_terrain: Option<crate::level_loading_host::EarlyTerrainDecode> = None;
     let mut fetched_bytes = 0usize;
     let mut pending_chunks: Vec<SpriteVqChunk> = Vec::new();
     let mut scheduler = VqDecodeScheduler::default();
@@ -758,16 +1143,27 @@ where
         // `async fn` future is not. One small allocation per event is noise
         // next to a network fetch or chunk decode.
         let mut tick = Box::pin(crate::window::sleep_ms(150)).fuse();
-        let event = if pooled && scheduler.has_in_flight() {
-            let mut next_decoded = Box::pin(scheduler.next_decoded()).fuse();
+        let event = {
+            let mut next_decoded = Box::pin(async {
+                if pooled && scheduler.has_in_flight() {
+                    scheduler.next_decoded().await
+                } else {
+                    futures::future::pending().await
+                }
+            })
+            .fuse();
+            let mut next_rle = Box::pin(async {
+                if bounded && pooled && rle_scheduler.has_in_flight() {
+                    rle_scheduler.next_decoded().await
+                } else {
+                    futures::future::pending().await
+                }
+            })
+            .fuse();
             futures::select! {
                 part = fetched.next() => Event::Part(part),
                 decoded = next_decoded => Event::Decoded(decoded),
-                _ = tick => Event::Tick,
-            }
-        } else {
-            futures::select! {
-                part = fetched.next() => Event::Part(part),
+                decoded = next_rle => Event::RleDecoded(decoded),
                 _ = tick => Event::Tick,
             }
         };
@@ -777,12 +1173,38 @@ where
                 let (file, bytes, payload) = part?;
                 fetched_bytes += bytes;
                 tracing::debug!(mission, file, bytes, "shipping mission dependency fetched");
+                let apply_start = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
                 merged
                     .merge_part(payload)
                     .with_context(|| format!("merge shipping file {file}"))?;
+                if let Some(apply_start_ms) = apply_start {
+                    tracing::debug!(
+                        file,
+                        apply_start_ms,
+                        apply_end_ms = js_sys::Date::now(),
+                        "shipping part merged"
+                    );
+                }
                 label = file;
+                if pooled && early_terrain.is_none() {
+                    early_terrain = crate::level_loading_host::EarlyTerrainDecode::try_start(
+                        mission, datadir, &merged,
+                    );
+                }
                 if let Some(bank) = merged.payload.sprite_bank.as_mut() {
                     let mut incoming = std::mem::take(&mut bank.vq_chunks);
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        let discovered_ms = js_sys::Date::now();
+                        for chunk in &incoming {
+                            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(),
+                                bytes = chunk.blob.len(), discovered_ms, "VQ sprite chunk discovered");
+                        }
+                        for chunk in &bank.rle_jxl_chunks {
+                            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(),
+                                bytes = chunk.jxl_blobs.iter().map(Vec::len).sum::<usize>(),
+                                discovered_ms, "RLE-JXL sprite chunk discovered");
+                        }
+                    }
                     if let Some(deferral) = deferral.as_mut() {
                         if !deferral.level_filtered
                             && let Some(level) = merged.payload.levels.get(mission)
@@ -804,10 +1226,20 @@ where
                     let rhs_files = &merged.payload.rhs_files;
                     if pooled {
                         pending_rle.append(&mut bank.rle_jxl_chunks);
-                        rle_scheduler.dispatch_ready(bank, &mut pending_rle)?;
-                        // Lenient readiness: a missing row/base only means
-                        // its part has not arrived yet.
-                        scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                        dispatch_streaming_chunks(
+                            bank,
+                            &mut pending_chunks,
+                            &mut scheduler,
+                            &mut pending_rle,
+                            &mut rle_scheduler,
+                            rhs_files,
+                            bounded,
+                            balanced,
+                            true,
+                            usize::from(
+                                early_terrain.as_ref().is_some_and(|job| !job.is_finished()),
+                            ),
+                        )?;
                     } else {
                         // Serial fallback: no pool, but decode still overlaps
                         // the network by draining ready chunks between
@@ -839,17 +1271,75 @@ where
                 bank.apply_decoded_vq_chunk(&chunk, grids)?;
                 work.decode_done += chunk.blob.len() as u64;
                 let rhs_files = &merged.payload.rhs_files;
-                scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                dispatch_streaming_chunks(
+                    bank,
+                    &mut pending_chunks,
+                    &mut scheduler,
+                    &mut pending_rle,
+                    &mut rle_scheduler,
+                    rhs_files,
+                    bounded,
+                    balanced,
+                    true,
+                    usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
+                )?;
                 work.emit(progress, &chunk.rhs);
+            }
+            Event::RleDecoded(item) => {
+                let Some((chunk, rasters)) = item? else {
+                    continue;
+                };
+                let bank = merged
+                    .payload
+                    .sprite_bank
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("decoded RLE chunk without a sprite bank"))?;
+                bank.apply_decoded_rle_jxl_chunk(&chunk, rasters)?;
+                dispatch_streaming_chunks(
+                    bank,
+                    &mut pending_chunks,
+                    &mut scheduler,
+                    &mut pending_rle,
+                    &mut rle_scheduler,
+                    &merged.payload.rhs_files,
+                    bounded,
+                    balanced,
+                    true,
+                    usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
+                )?;
             }
             Event::Tick => {
                 // Real byte progress accrued inside the concurrent body
                 // reads; surface it even while no part has completed.
                 work.emit(progress, &label);
                 crate::window::yield_to_runtime().await;
+                if bounded
+                    && pooled
+                    && let Some(bank) = merged.payload.sprite_bank.as_ref()
+                {
+                    dispatch_streaming_chunks(
+                        bank,
+                        &mut pending_chunks,
+                        &mut scheduler,
+                        &mut pending_rle,
+                        &mut rle_scheduler,
+                        &merged.payload.rhs_files,
+                        bounded,
+                        balanced,
+                        true,
+                        usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
+                    )?;
+                }
             }
         }
     }
+    tracing::info!(
+        mission,
+        elapsed_ms = stream_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: all parts merged"
+    );
+    downloads_finished();
+    let vq_drain_start = web_time::Instant::now();
     if let Some(bank) = merged.payload.sprite_bank.as_mut() {
         // The level part has merged by now on any well-formed payload
         // (installation fails later otherwise); make sure its start-entity
@@ -866,19 +1356,94 @@ where
             );
         }
         let rhs_files = &merged.payload.rhs_files;
-        // Drain outstanding worker decodes; each applied chunk can unlock
-        // dependents that were still pending.
-        while let Some((chunk, grids)) = scheduler.next_decoded().await? {
-            bank.apply_decoded_vq_chunk(&chunk, grids)?;
-            work.decode_done += chunk.blob.len() as u64;
-            scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
-            work.emit(progress, &chunk.rhs);
+        if bounded && pooled {
+            loop {
+                dispatch_streaming_chunks(
+                    bank,
+                    &mut pending_chunks,
+                    &mut scheduler,
+                    &mut pending_rle,
+                    &mut rle_scheduler,
+                    rhs_files,
+                    true,
+                    balanced,
+                    false,
+                    usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
+                )?;
+                if !scheduler.has_in_flight() && !rle_scheduler.has_in_flight() {
+                    if (!pending_chunks.is_empty() || !pending_rle.is_empty())
+                        && early_terrain.as_ref().is_some_and(|job| !job.is_finished())
+                    {
+                        crate::window::sleep_ms(10).await;
+                        continue;
+                    }
+                    break;
+                }
+                let event = {
+                    let mut terrain_tick = Box::pin(async {
+                        if early_terrain.as_ref().is_some_and(|job| !job.is_finished()) {
+                            crate::window::sleep_ms(10).await;
+                        } else {
+                            futures::future::pending().await
+                        }
+                    })
+                    .fuse();
+                    let mut next_vq = Box::pin(async {
+                        if scheduler.has_in_flight() {
+                            scheduler.next_decoded().await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    })
+                    .fuse();
+                    let mut next_rle = Box::pin(async {
+                        if rle_scheduler.has_in_flight() {
+                            rle_scheduler.next_decoded().await
+                        } else {
+                            futures::future::pending().await
+                        }
+                    })
+                    .fuse();
+                    futures::select! {
+                        item = next_vq => Event::Decoded(item),
+                        item = next_rle => Event::RleDecoded(item),
+                        _ = terrain_tick => Event::Tick,
+                    }
+                };
+                match event {
+                    Event::Decoded(item) => {
+                        if let Some((chunk, grids)) = item? {
+                            bank.apply_decoded_vq_chunk(&chunk, grids)?;
+                            work.decode_done += chunk.blob.len() as u64;
+                            work.emit(progress, &chunk.rhs);
+                        }
+                    }
+                    Event::RleDecoded(item) => {
+                        if let Some((chunk, rasters)) = item? {
+                            bank.apply_decoded_rle_jxl_chunk(&chunk, rasters)?;
+                        }
+                    }
+                    Event::Tick => {}
+                    _ => {
+                        unreachable!("drain only polls sprite worker results and terrain readiness")
+                    }
+                }
+            }
+        } else {
+            // Drain outstanding worker decodes; each applied chunk can unlock
+            // dependents that were still pending.
+            while let Some((chunk, grids)) = scheduler.next_decoded().await? {
+                bank.apply_decoded_vq_chunk(&chunk, grids)?;
+                work.decode_done += chunk.blob.len() as u64;
+                scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, false)?;
+                work.emit(progress, &chunk.rhs);
+            }
         }
         // Strict pass for the critical remainder: with the whole payload
         // merged, "not fetched yet" is no longer an excuse, so unresolved
         // dependencies now surface as real manifest errors.
         if pooled {
-            loop {
+            while !bounded {
                 scheduler.dispatch_ready(bank, &mut pending_chunks, rhs_files, true)?;
                 let Some((chunk, grids)) = scheduler.next_decoded().await? else {
                     break;
@@ -904,6 +1469,13 @@ where
                 .await
                 .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
         }
+        tracing::info!(
+            mission,
+            elapsed_ms = vq_drain_start.elapsed().as_secs_f64() * 1000.0,
+            includes_rle = bounded,
+            "startup timing: VQ tail wait and apply"
+        );
+        let rle_drain_start = web_time::Instant::now();
         // Apply the worker-pool RLE-JXL decodes that ran alongside the
         // fetches; anything still pending falls to the strict serial pass.
         while let Some((chunk, packed)) = rle_scheduler.next_decoded().await? {
@@ -913,6 +1485,11 @@ where
         bank.rle_jxl_chunks.append(&mut pending_rle);
         bank.materialize_rle_jxl_chunks()
             .with_context(|| format!("materialize RLE-JXL sprite chunks for mission {mission}"))?;
+        tracing::info!(
+            mission,
+            elapsed_ms = rle_drain_start.elapsed().as_secs_f64() * 1000.0,
+            "startup timing: RLE tail wait and apply"
+        );
     }
     progress(MissionLoadProgress {
         phase: MissionLoadPhase::Data,
@@ -947,7 +1524,7 @@ where
         }
         _ => None,
     };
-    Ok((merged, fetched_bytes, tail))
+    Ok((merged, fetched_bytes, tail, early_terrain))
 }
 
 /// Stream the deferred (reinforcement-only) sprite chunks on the worker
@@ -1372,6 +1949,128 @@ mod tests {
     };
     use robin_engine::campaign::{Campaign, PcDescription};
     use robin_engine::profiles::{CharacterProfile, CharacterProfileIdx, ProfileManager};
+
+    #[test]
+    fn download_order_unblocks_terrain_and_sprites_before_audio_metadata() {
+        let original = [
+            "audio/voice",
+            "rhs/base",
+            "terrain/map",
+            "missions/header",
+            "custom/part",
+        ];
+        let mut files: Vec<String> = original.iter().map(|path| (*path).into()).collect();
+        super::prioritize_mission_downloads(&mut files);
+        assert_eq!(
+            files,
+            [
+                "missions/header",
+                "terrain/map",
+                "rhs/base",
+                "custom/part",
+                "audio/voice"
+            ]
+        );
+        let mut unchanged_set: Vec<_> = original.iter().map(|path| (*path).to_owned()).collect();
+        unchanged_set.sort();
+        files.sort();
+        assert_eq!(
+            files, unchanged_set,
+            "scheduling must never omit save/audio dependencies"
+        );
+    }
+
+    #[test]
+    fn experimental_partition_preserves_every_non_tail_dependency() {
+        let mut files = vec![
+            "rhs/a".into(),
+            "rhs-tail/rhs/a".into(),
+            "rhs-tailish/a".into(),
+            "missions/main".into(),
+            "rhs-tail/rhs/b".into(),
+        ];
+        assert_eq!(
+            super::separate_experimental_tail_files(&mut files),
+            ["rhs-tail/rhs/a", "rhs-tail/rhs/b"]
+        );
+        assert_eq!(files, ["rhs/a", "rhs-tailish/a", "missions/main"]);
+    }
+
+    #[test]
+    fn experimental_tail_rejects_metadata_and_wrong_bank_generation() {
+        use robin_assets::shipping_datadir::ShippingSpriteBank;
+        let bank = ShippingSpriteBank {
+            signature: 7,
+            sprite_count: 10,
+            dictionaries: vec![],
+            sprites: vec![],
+            vq_chunks: vec![],
+            rle_jxl_chunks: vec![],
+        };
+        let tail = || {
+            let mut part = ShippingMission::default();
+            part.sprite_bank = Some(bank.clone());
+            part
+        };
+        assert!(
+            super::experimental_tail_chunks(tail(), &bank)
+                .unwrap()
+                .is_empty()
+        );
+        let mut metadata = tail();
+        metadata.raw.insert("simulation-script".into(), vec![1]);
+        assert!(super::experimental_tail_chunks(metadata, &bank).is_err());
+        let mut mismatch = tail();
+        mismatch.sprite_bank.as_mut().unwrap().signature += 1;
+        assert!(super::experimental_tail_chunks(mismatch, &bank).is_err());
+        let mut missing_row = tail();
+        missing_row
+            .sprite_bank
+            .as_mut()
+            .unwrap()
+            .vq_chunks
+            .push(SpriteVqChunk {
+                rhs: "character".into(),
+                base_rhs: None,
+                base2_rhs: String::new(),
+                alphabet: 2,
+                sprite_ids: vec![3],
+                base_ids: vec![None],
+                base2_ids: vec![],
+                self_refs: false,
+                blob: vec![],
+            });
+        assert!(super::experimental_tail_chunks(missing_row, &bank).is_err());
+        let mut based = tail();
+        based
+            .sprite_bank
+            .as_mut()
+            .unwrap()
+            .vq_chunks
+            .push(SpriteVqChunk {
+                rhs: "character".into(),
+                base_rhs: Some("hub".into()),
+                base2_rhs: String::new(),
+                alphabet: 2,
+                sprite_ids: vec![],
+                base_ids: vec![],
+                base2_ids: vec![],
+                self_refs: false,
+                blob: vec![],
+            });
+        assert!(super::experimental_tail_chunks(based, &bank).is_err());
+    }
+
+    #[test]
+    fn streaming_budget_reserves_part_and_terrain_capacity() {
+        assert_eq!(super::streaming_worker_budget(8, true, 0), 7);
+        assert_eq!(super::streaming_worker_budget(8, true, 1), 6);
+        assert_eq!(super::streaming_worker_budget(8, false, 1), 7);
+        assert_eq!(super::streaming_worker_budget(8, false, 0), 8);
+        assert_eq!(super::streaming_worker_budget(1, true, 0), 1);
+        assert_eq!(super::streaming_worker_budget(1, true, 1), 0);
+        assert_eq!(super::streaming_worker_budget(0, false, 0), 0);
+    }
 
     fn description(profile: u32, instanced: bool) -> PcDescription {
         PcDescription {

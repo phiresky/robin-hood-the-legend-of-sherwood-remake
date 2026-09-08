@@ -9,10 +9,10 @@ use crate::window::GpuContext;
 
 use super::atlas::SpriteAtlas;
 use super::{
-    BackgroundTexture, FontAtlas, ManagedSurface, MaskAlpha, OUTLINE_PAD, SpriteCacheKey,
-    SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg, outline_cache_key,
-    rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_outline_rgba, sprite_rgba_for_upload,
-    upload_counter, upload_rgba_texture,
+    BackgroundTexture, FontAtlas, ManagedSurface, MaskAlpha, MaskAtlasBounds, OUTLINE_PAD,
+    SpriteCacheKey, SpriteResidency, SpriteTextureCache, TRANSPARENT_COLOR_KEY_16, make_tex_bg,
+    outline_cache_key, rgb565_to_rgba_opaque, shadow_alpha_from_level, sprite_outline_rgba,
+    sprite_rgba_for_upload, upload_counter, upload_rgba_texture,
 };
 
 pub(super) struct GpuResources {
@@ -189,6 +189,125 @@ impl GpuResources {
     /// Upload the static binary alpha for a sprite-occlusion mask. It is
     /// rasterized into stencil for each affected sprite, matching the
     /// original engine's temporary-sprite transparency operation.
+    pub(super) fn upload_mask_alphas<'a>(
+        &mut self,
+        gpu: &GpuContext,
+        masks: impl IntoIterator<Item = (u32, &'a [u8], u16, u16)>,
+    ) -> Result<(), String> {
+        let mut masks: Vec<_> = masks.into_iter().collect();
+        let limit = gpu.device.limits().max_texture_dimension_2d;
+        let mut ids = std::collections::HashSet::new();
+        for &(id, bytes, w, h) in &masks {
+            if w == 0
+                || h == 0
+                || bytes.len() < usize::from(w) * usize::from(h)
+                || u32::from(w).max(u32::from(h)) > limit
+                || !ids.insert(id)
+            {
+                return Err(format!(
+                    "invalid or duplicate sprite mask {id}: {w}x{h}, {} bytes (device limit {limit})",
+                    bytes.len()
+                ));
+            }
+        }
+        let enabled = mask_atlas_enabled();
+        let edge = limit.min(2048);
+        // Tall masks first keeps shelf waste small. Stable sorting keeps equal
+        // dimensions deterministic and leaves mission mask IDs unchanged.
+        masks.sort_by_key(|&(_, _, w, h)| std::cmp::Reverse((h, w)));
+        let mut pending = Vec::new();
+        for mask @ (id, bytes, w, h) in masks {
+            if !enabled || u32::from(w) + 2 > edge || u32::from(h) + 2 > edge {
+                assert!(self.upload_mask_alpha(gpu, id, bytes, w, h));
+            } else {
+                pending.push(mask);
+            }
+        }
+        let mut pages = 0;
+        let mut occupied_texels = 0u64;
+        let mut uploaded_texels = 0u64;
+        while !pending.is_empty() {
+            let mut packer = super::atlas::ShelfPacker::new(edge);
+            let mut slots = Vec::new();
+            let mut extent = [0, 0];
+            pending.retain(|&(id, bytes, w, h)| {
+                if let Some((x, y)) = packer.reserve(u32::from(w), u32::from(h)) {
+                    extent[0] = extent[0].max(x + u32::from(w) + 1);
+                    extent[1] = extent[1].max(y + u32::from(h) + 1);
+                    slots.push((
+                        id,
+                        bytes,
+                        MaskAtlasBounds {
+                            origin: [x, y],
+                            size: [u32::from(w), u32::from(h)],
+                        },
+                    ));
+                    false
+                } else {
+                    true
+                }
+            });
+            assert!(
+                !slots.is_empty(),
+                "validated mask must fit an empty atlas page"
+            );
+            uploaded_texels += u64::from(extent[0]) * u64::from(extent[1]);
+            let mut pixels = vec![0; (extent[0] * extent[1]) as usize];
+            for &(_, bytes, bounds) in &slots {
+                let [x, y] = bounds.origin;
+                let [w, h] = bounds.size;
+                occupied_texels += u64::from(w) * u64::from(h);
+                // Replicate edge texels in the one-pixel gutter. Shader clamps
+                // before textureLoad too, including far outside local 0..1 UV.
+                for dy in 0..h + 2 {
+                    let sy = dy.saturating_sub(1).min(h - 1);
+                    let source = &bytes[(sy * w) as usize..((sy + 1) * w) as usize];
+                    let start = ((y + dy - 1) * extent[0] + x - 1) as usize;
+                    let row = &mut pixels[start..start + w as usize + 2];
+                    row[0] = source[0];
+                    row[1..w as usize + 1].copy_from_slice(source);
+                    row[w as usize + 1] = source[w as usize - 1];
+                }
+            }
+            // Reuse the standalone allocation/upload contract once per page,
+            // then share its handles; no additional per-mask GPU allocations.
+            let page_id = slots[0].0;
+            assert!(self.upload_mask_alpha(
+                gpu,
+                page_id,
+                &pixels,
+                extent[0] as u16,
+                extent[1] as u16
+            ));
+            let page = self
+                .mask_alpha_cache
+                .remove(&page_id)
+                .expect("just uploaded mask page");
+            for (id, _, bounds) in slots {
+                self.mask_alpha_cache.insert(
+                    id,
+                    MaskAlpha {
+                        _texture: page._texture.clone(),
+                        _view: page._view.clone(),
+                        bind_group: page.bind_group.clone(),
+                        width: bounds.size[0],
+                        height: bounds.size[1],
+                        atlas: Some(bounds),
+                    },
+                );
+            }
+            pages += 1;
+        }
+        tracing::debug!(
+            pages,
+            enabled,
+            occupied_texels,
+            uploaded_texels,
+            "Uploaded binary mask atlas pages"
+        );
+        Ok(())
+    }
+
     pub(super) fn upload_mask_alpha(
         &mut self,
         gpu: &GpuContext,
@@ -204,13 +323,9 @@ impl GpuResources {
         if bitmap.len() < pixels {
             return false;
         }
-        // Spread the binary bitmap (`0` / `1`) into R8 (`0` / `255`) so
-        // the sampler returns full 0..1, matching the alpha falloff of
-        // the original RGBA compose at building edges.
-        let mut r8 = Vec::with_capacity(pixels);
-        for &b in &bitmap[..pixels] {
-            r8.push(if b != 0 { 0xFFu8 } else { 0x00 });
-        }
+        // Preserve original binary bytes. The nearest-sampled binary shader
+        // tests nonzero, so expanding every byte to 255 would only add a full
+        // bitmap allocation/pass (including unused atlas page space).
         upload_counter::inc("mask alpha");
         let tex = gpu.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&format!("mask alpha {mask_index}")),
@@ -233,7 +348,7 @@ impl GpuResources {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &r8,
+            &bitmap[..pixels],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(mask_w as u32),
@@ -261,6 +376,7 @@ impl GpuResources {
                 bind_group,
                 width: mask_w as u32,
                 height: mask_h as u32,
+                atlas: None,
             },
         );
         true
@@ -335,6 +451,7 @@ impl GpuResources {
                 bind_group,
                 width,
                 height,
+                atlas: None,
             },
         );
         true
@@ -505,5 +622,27 @@ impl GpuResources {
 
     pub(super) fn clear_font_atlas_cache(&mut self) {
         self.font_atlas_cache.clear();
+    }
+}
+
+/// Developer-only A/B control, deliberately absent from the product UI.
+fn mask_atlas_enabled() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    let value = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .and_then(|search| web_sys::UrlSearchParams::new_with_str(&search).ok())
+        .and_then(|params| params.get("mask-atlas"));
+    #[cfg(not(target_arch = "wasm32"))]
+    let value = std::env::var("ROBIN_MASK_ATLAS").ok();
+    match value.as_deref() {
+        None | Some("1") => true,
+        Some("0") => false,
+        Some(other) => {
+            tracing::warn!(
+                value = other,
+                "Invalid mask atlas override; expected 0 or 1"
+            );
+            true
+        }
     }
 }

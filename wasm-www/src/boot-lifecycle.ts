@@ -67,10 +67,35 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
         deps.log('[privacy: the selected relay can observe IP addresses, timing, and byte counts; game traffic is end-to-end encrypted]');
     }
     deps.log('[loading wasm module]');
-    const wasm = await withAbort(signal, () => deps.loadRuntime(base, build.short !== 'local', build.source === 'latest', signal));
-    signal.throwIfAborted();
+    const loadRuntime = (runtimeSignal: AbortSignal): Promise<RobinWasmModule> =>
+        withAbort(runtimeSignal, () => deps.loadRuntime(base, build.short !== 'local', build.source === 'latest', runtimeSignal));
+    let wasm: RobinWasmModule;
+    let content: BootContent;
     let multiplayer: PreparedMultiplayerContent | undefined;
-    if (join !== undefined && manifest !== undefined) {
+    if (join === undefined) {
+        // Default content is independent of WASM. Start core asset preloads as
+        // soon as WASM is ready, and cancel siblings if either branch fails.
+        const failed = new AbortController();
+        const loadingSignal = AbortSignal.any([signal, failed.signal]);
+        try {
+            [wasm, content] = await Promise.all([
+                loadRuntime(loadingSignal).then(async loaded => {
+                    loadingSignal.throwIfAborted();
+                    deps.log('[wasm module ready, preloading assets]');
+                    await withAbort(loadingSignal, () => deps.preloadAssets(loaded, base, build.source === 'latest', loadingSignal));
+                    return loaded;
+                }),
+                withAbort(loadingSignal, () => deps.loadDefaultContent(build.source === 'latest', loadingSignal)),
+            ]);
+        } catch (error) {
+            failed.abort(error);
+            throw error;
+        }
+    } else {
+        // Local content access stays behind authenticated runtime validation.
+        wasm = await loadRuntime(signal);
+        signal.throwIfAborted();
+        if (manifest === undefined) throw new Error('multiplayer build manifest is missing');
         assertMultiplayerWasmCompatibility(wasm, join.ticket);
         if (wasm.wasm_set_multiplayer_join_ticket === undefined) {
             throw new Error('selected browser artifact has no multiplayer ticket entry point');
@@ -78,14 +103,12 @@ export async function bootGame(deps: BootDependencies, signal: AbortSignal): Pro
         wasm.wasm_set_multiplayer_join_ticket(join.ticket.code, join.redeemed);
         multiplayer = await withAbort(signal, () => deps.prepareContent(join.ticket, manifest, signal));
         signal.throwIfAborted();
+        content = multiplayer;
+        deps.preloadLocalAssets(wasm, multiplayer.assets);
+        await withAbort(signal, () => deps.preloadAssets(wasm, base, build.source === 'latest', signal));
     }
-    deps.log('[wasm module ready, fetching datadir]');
-    const content = multiplayer ?? await withAbort(signal, () => deps.loadDefaultContent(build.source === 'latest', signal));
     signal.throwIfAborted();
-    if (multiplayer !== undefined) deps.preloadLocalAssets(wasm, multiplayer.assets);
     deps.log(`[datadir ready: ${content.datadir.byteLength} bytes]`);
-    await withAbort(signal, () => deps.preloadAssets(wasm, base, build.source === 'latest', signal));
-    signal.throwIfAborted();
     const rpc = deps.installRpc(wasm);
     deps.progress('boot', 'starting game…', 0.5);
     wasm.wasm_boot(content.datadir, content.dataBaseUrl);
@@ -120,5 +143,27 @@ export function assertMultiplayerWasmCompatibility(
         || object.ticketSchema !== ticket.payload.schema
     ) {
         throw new Error('loaded browser artifact does not exactly match the host-signed invitation');
+    }
+}
+
+/** Import URL-based worker glue while fetching the streaming WASM response. */
+export async function loadRuntimeInParallel(
+    importModule: (signal: AbortSignal) => Promise<RobinWasmModule>,
+    fetchModule: (signal: AbortSignal) => Promise<Response>,
+    signal: AbortSignal,
+): Promise<RobinWasmModule> {
+    const failed = new AbortController();
+    const loadingSignal = AbortSignal.any([signal, failed.signal]);
+    try {
+        const [wasm, response] = await Promise.all([
+            withAbort(loadingSignal, () => importModule(loadingSignal)),
+            withAbort(loadingSignal, () => fetchModule(loadingSignal)),
+        ]);
+        loadingSignal.throwIfAborted();
+        await withAbort(loadingSignal, () => wasm.default({ module_or_path: response }));
+        return wasm;
+    } catch (error) {
+        failed.abort(error);
+        throw error;
     }
 }
