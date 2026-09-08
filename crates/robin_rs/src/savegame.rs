@@ -2513,10 +2513,23 @@ mod tests {
             std::fs::write(root.path().join("saves.json"), &bytes).unwrap();
             std::fs::write(root.path().join("quick-save-recovery.json"), b"invalid").unwrap();
             let error = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap_err();
-            assert!(error.starts_with("validate:"), "{error}");
+            // Basenames are now validated while binding explicit runtime slot
+            // state; duplicate checks follow before recovery. Assert the
+            // actual rejected invariant rather than one former phase prefix.
+            let expected = if names.len() == 1 {
+                "invalid save slot basename"
+            } else {
+                "duplicate save slot name"
+            };
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains("recover quick saves"), "{error}");
             assert_eq!(
                 std::fs::read(root.path().join("saves.json")).unwrap(),
                 bytes
+            );
+            assert_eq!(
+                std::fs::read(root.path().join("quick-save-recovery.json")).unwrap(),
+                b"invalid"
             );
         }
     }
@@ -2803,12 +2816,14 @@ mod tests {
     fn display_metadata_copy_rejects_missing_slots() {
         let mut mgr = SaveGameManager::new("/tmp/test_saves".into());
         let slot = mgr.create("My Save".into(), 42);
+        let before = mgr.saves().to_vec();
 
         let missing_source = mgr.copy_display_metadata(usize::MAX, slot).unwrap_err();
-        assert!(
-            missing_source
-                .to_string()
-                .contains("cannot copy metadata from missing save slot")
+        // Stable-identity lookup rejects the missing source before attempting
+        // to read its explicit lifecycle state or copy any metadata.
+        assert_eq!(
+            missing_source.to_string(),
+            format!("missing save slot {}", usize::MAX)
         );
 
         let missing_destination = mgr.copy_display_metadata(slot, usize::MAX).unwrap_err();
@@ -2817,6 +2832,7 @@ mod tests {
                 .to_string()
                 .contains("cannot copy metadata to missing save slot")
         );
+        assert_eq!(mgr.saves(), before.as_slice());
     }
 
     #[test]
