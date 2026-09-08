@@ -18,6 +18,8 @@
 // restores by default, and exports the compact replay string to FILE.
 // --restart-cycles N changes that count. This mode uses a fixed CDP viewport;
 // ordinary startup measurements keep their original Chrome viewport.
+// --query KEY=VALUE selects an internal runtime experiment without rebuilding.
+// --viewport WIDTHxHEIGHT fixes the CDP viewport for explicit render comparisons.
 // --timings FILE saves browser-clock log timestamps and Resource Timing entries.
 // Worker-local resource entries are not included in the main-window buffer.
 // --serial withholds the COOP/COEP headers, so crossOriginIsolated is false
@@ -42,6 +44,8 @@ let failedRequest = null;
 let wasmLog = 'info';
 let restartReplay = null;
 let restartCycles = 2;
+const runtimeOptions = [];
+let viewport = null;
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--mission') mission = args[++i];
@@ -56,13 +60,29 @@ for (let i = 0; i < args.length; i++) {
     else if (arg === '--wasm-log') wasmLog = args[++i];
     else if (arg === '--verify-restart') restartReplay = args[++i];
     else if (arg === '--restart-cycles') restartCycles = Number(args[++i]);
+    else if (arg === '--query') {
+        const value = args[++i];
+        const split = value?.indexOf('=') ?? -1;
+        if (split < 1) throw new Error('--query requires KEY=VALUE');
+        runtimeOptions.push([value.slice(0, split), value.slice(split + 1)]);
+    }
+    else if (arg === '--viewport') {
+        const value = args[++i];
+        const match = /^(\d+)x(\d+)$/.exec(value ?? '');
+        if (!match) throw new Error('--viewport requires WIDTHxHEIGHT');
+        const [width, height] = match.slice(1).map(Number);
+        if (![width, height].every(n => Number.isSafeInteger(n) && n > 0)) {
+            throw new Error('--viewport dimensions must be positive integers');
+        }
+        viewport = { width, height };
+    }
     else positional.push(arg);
 }
 const [root] = positional;
 if (!root) {
     console.error(
         'usage: node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> ' +
-        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH] [--wasm-log LEVEL] [--verify-restart REPLAY_FILE] [--restart-cycles N]',
+        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH] [--wasm-log LEVEL] [--verify-restart REPLAY_FILE] [--restart-cycles N] [--query KEY=VALUE] [--viewport WIDTHxHEIGHT]',
     );
     process.exit(2);
 }
@@ -463,10 +483,10 @@ async function startCpuProfile(profileDir, pageUrl) {
         await send('Profiler.setSamplingInterval', { interval: 1000 });
         await send('Profiler.start');
     }
-    if (restartReplay) {
+    if (restartReplay || viewport) {
         // The default headless viewport clips the Restart seal below its edge.
         await send('Emulation.setDeviceMetricsOverride', {
-            width: 1024, height: 768, deviceScaleFactor: 1, mobile: false,
+            ...(viewport ?? { width: 1024, height: 768 }), deviceScaleFactor: 1, mobile: false,
         });
     }
     await send('Page.navigate', { url: pageUrl });
@@ -503,6 +523,8 @@ async function finish(code) {
         writeFileSync(timingsFile, JSON.stringify({
             mission, pkgDir: resolve(pkgDir), bootAt, activatedAt, inGameAt, bootstrapAt,
             ...(restartReplay ? { restartVerified, restartCycles } : {}),
+            ...(runtimeOptions.length ? { runtimeOptions } : {}),
+            ...(viewport ? { viewport } : {}),
             logs: timingLogs.sort((a, b) => a.pageMs - b.pageMs),
             resourceTimings, resourceSnapshots,
         }, null, 2));
@@ -521,6 +543,7 @@ server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
     profile = mkdtempSync(join(tmpdir(), 'robin-e2e-chrome-'));
     const query = new URLSearchParams({ mission, 'wasm-log': wasmLog });
+    for (const [key, value] of runtimeOptions) query.set(key, value);
     if (restartReplay) query.set('start-paused', 'true');
     const pageUrl = `http://127.0.0.1:${port}/?${query}`;
     chrome = spawn(chromeBin, [
@@ -529,9 +552,9 @@ server.listen(0, '127.0.0.1', () => {
         '--no-first-run',
         '--enable-unsafe-swiftshader',
         '--autoplay-policy=no-user-gesture-required',
-        ...((cpuProfile || restartReplay) ? ['--remote-debugging-port=0', 'about:blank'] : [pageUrl]),
+        ...((cpuProfile || restartReplay || viewport) ? ['--remote-debugging-port=0', 'about:blank'] : [pageUrl]),
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
-    if (cpuProfile || restartReplay) {
+    if (cpuProfile || restartReplay || viewport) {
         profileReady = startCpuProfile(profile, pageUrl);
         profileReady.catch(() => finish(1));
     }
