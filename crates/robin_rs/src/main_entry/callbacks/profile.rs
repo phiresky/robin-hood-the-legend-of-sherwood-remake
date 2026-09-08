@@ -14,38 +14,26 @@ pub(super) struct ProfileClockCredits {
 struct ClockReceipt {
     profile_id: u32,
     mission_id: u32,
-    run_id: Option<u64>,
-    preceding_attempt: Option<robin_engine::campaign_history::MissionAttemptKey>,
     seconds: u32,
 }
 
 impl ProfileClockCredits {
-    fn credit(
-        &mut self,
-        profile_id: u32,
-        mission_id: u32,
-        campaign: &Campaign,
-        seconds: u32,
-    ) -> u32 {
-        let run_id = campaign.history_run_id();
-        let preceding_attempt = campaign.latest_mission_attempt_key();
-        if let Some(receipt) = self.receipts.iter_mut().find(|receipt| {
-            receipt.profile_id == profile_id
-                && receipt.mission_id == mission_id
-                && receipt.run_id == run_id
-                && receipt.preceding_attempt == preceding_attempt
-        }) {
+    fn credit(&mut self, profile_id: u32, mission_id: u32, seconds: u32) -> u32 {
+        if let Some(receipt) = self
+            .receipts
+            .iter_mut()
+            .find(|receipt| receipt.profile_id == profile_id && receipt.mission_id == mission_id)
+        {
             let credit = seconds.saturating_sub(receipt.seconds);
             // Loading/rewinding an earlier clock must not credit the same
-            // interval twice. A new terminal attempt has a distinct identity.
+            // interval twice. Only mission bootstrap opens a new epoch;
+            // appending terminal history is not a new running mission.
             receipt.seconds = receipt.seconds.max(seconds);
             credit
         } else {
             self.receipts.push(ClockReceipt {
                 profile_id,
                 mission_id,
-                run_id,
-                preceding_attempt,
                 seconds,
             });
             seconds
@@ -65,12 +53,8 @@ pub(super) fn synchronize_metrics(
             let profile = manager
                 .get_active_mut()
                 .expect("profile synchronization requires an active profile");
-            let credit = credits.credit(
-                profile.id,
-                current_mission_id(campaign, profiles),
-                campaign,
-                seconds,
-            );
+            let credit =
+                credits.credit(profile.id, current_mission_id(campaign, profiles), seconds);
             robin_engine::player_profile::synchronize_with_campaign(
                 profile, campaign, profiles, credit,
             );
@@ -89,6 +73,13 @@ pub(super) fn synchronize_metrics(
 }
 
 impl RustCallbacks {
+    /// Open one running-mission clock epoch, including failed bootstrap.
+    /// Same-session restore/restart receipts retain their high-water mark;
+    /// authoritative teardown and fresh bootstrap explicitly start over.
+    pub(crate) fn begin_profile_clock_session(&mut self) {
+        self.profile_clock_credits = ProfileClockCredits::default();
+    }
+
     /// Call only after the terminal engine command and eligibility attestation.
     /// Repeating promotion refreshes attestations without duplicating history;
     /// persistence must run even when promotion reports no new attempts.
@@ -117,21 +108,20 @@ mod tests {
 
     #[test]
     fn repeated_sync_and_load_back_only_credit_new_clock_intervals() {
-        let campaign = Campaign::default();
         let mut credits = ProfileClockCredits::default();
-        assert_eq!(credits.credit(1, 17, &campaign, 60), 60);
-        assert_eq!(credits.credit(1, 17, &campaign, 60), 0);
-        assert_eq!(credits.credit(1, 17, &campaign, 20), 0);
-        assert_eq!(credits.credit(1, 17, &campaign, 70), 10);
-        assert_eq!(credits.credit(2, 17, &campaign, 70), 70);
-        assert_eq!(credits.credit(1, 18, &campaign, 70), 70);
+        assert_eq!(credits.credit(1, 17, 60), 60);
+        assert_eq!(credits.credit(1, 17, 60), 0);
+        assert_eq!(credits.credit(1, 17, 20), 0);
+        assert_eq!(credits.credit(1, 17, 70), 10);
+        assert_eq!(credits.credit(2, 17, 70), 70);
+        assert_eq!(credits.credit(1, 18, 70), 70);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn failed_persistence_retry_writes_applied_metrics_without_recrediting() {
         let directory = tempfile::tempdir().unwrap();
-        let (callbacks, _host, engine, _assets, _game, profiles) =
+        let (mut callbacks, _host, engine, _assets, _game, profiles) =
             super::super::operation_outcome_tests::diagnostic_callback_fixture(directory.path());
         let application = &callbacks.application_context;
         let campaign = engine.campaign();
@@ -186,10 +176,22 @@ mod tests {
             "history promotion does not credit time"
         );
         assert_eq!(stored.profiles[0].lifetime_campaign_totals().attempts, 1);
+        synchronize_metrics(application, &mut credits, &completed, &profiles, 70);
         assert_eq!(
-            credits.credit(stored.profiles[0].id, 17, &completed, 20),
+            application
+                .with_player_profiles_mut(|manager| manager.get_active_mut().unwrap().play_time)
+                .unwrap(),
+            70,
+            "post-terminal synchronization is still the same clock epoch"
+        );
+        callbacks.profile_clock_credits = credits;
+        callbacks.begin_profile_clock_session();
+        assert_eq!(
+            callbacks
+                .profile_clock_credits
+                .credit(stored.profiles[0].id, 17, 20),
             20,
-            "a subsequent attempt gets its own clock"
+            "fresh mission bootstrap opens another epoch"
         );
     }
 }
