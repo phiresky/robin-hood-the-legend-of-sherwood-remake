@@ -26,5 +26,20 @@ main before integration. Untracked `original-code/` remains untouched.
 
 ## Results
 
+### Review anchors
+
+- Session validation must precede ranked readiness resolution and remain valid
+  through local publication and transport effects. Replacement, reader teardown,
+  detached writers, handshake opening and timeout callbacks share that boundary.
+  Lock order is authority gate, ranked lifecycle, then peers; no guard across
+  asynchronous waits or shutdown joins, and no nested gate acquisition.
+- Required snapshot acknowledgements are not silently removed by a disconnect.
+- Mission staging preserves audio/opacity preparation before engine inputs seal,
+  the final authoritative network seed/configuration, browser inline work, and
+  interactive deferred terrain join versus headless immediate join.
+- Typed menu teardown belongs on the frontend owner, where menu resources and
+  renderer are both live, not the outer mission whose runtime moves into an exit
+  outcome. Standalone main-menu renderer lifetime already encloses its resources.
+
 TODO: record implementation commits, independent review findings, combined
 acceptance, exact binary/browser provenance, recovery bundle and remaining limits.
