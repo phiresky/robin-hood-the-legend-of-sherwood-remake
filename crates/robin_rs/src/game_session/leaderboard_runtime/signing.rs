@@ -1,7 +1,7 @@
 //! Post-mission host authorization and peer co-signing, independent of modal presentation.
 
 use super::*;
-use robin_run_protocol::{CanonicalDocument as _, Validate as _};
+use robin_run_protocol::Validate as _;
 
 /// Host-side coordinator for the only ranked multiplayer upload. Remote
 /// peers receive a typed, locally checkable context followed by the fixed
@@ -705,6 +705,13 @@ impl MultiplayerPeerCoSigner {
 
     fn local_public_key(&self) -> robin_run_protocol::PublicKey32 {
         self.client.admission.local_public_key
+    }
+
+    /// Only the locally authenticated campaign controller owns receipt watching.
+    /// Presentation does not need access to the peer's admission internals.
+    pub(super) fn receipt_controller_public_key(&self) -> Option<robin_run_protocol::PublicKey32> {
+        self.campaign_controller_public_key
+            .filter(|controller| *controller == self.local_public_key())
     }
 
     fn prepare_replay(&mut self) -> Result<bool, String> {

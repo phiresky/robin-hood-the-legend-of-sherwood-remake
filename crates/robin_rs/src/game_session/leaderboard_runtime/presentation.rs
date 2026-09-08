@@ -92,9 +92,8 @@ impl MissionEndLeaderboardTaskState {
                         preparation.starting_campaign_bytes.clone(),
                     ) {
                         Ok(peer) => {
-                            let receipt_controller_public_key = peer
-                                .campaign_controller_public_key
-                                .filter(|controller| *controller == peer.local_public_key());
+                            let receipt_controller_public_key =
+                                peer.receipt_controller_public_key();
                             Some((
                                 Box::new(peer) as Box<dyn MissionEndPeerCoSigner>,
                                 receipt_controller_public_key,
