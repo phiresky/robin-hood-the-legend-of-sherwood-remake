@@ -2112,15 +2112,15 @@ mod tests {
 
         // Index serialization and new profile managers cannot resurrect memory
         // checkpoints or their process-local identity authority.
-        let index = SaveIndex {
+        let index_data = SaveIndex {
             saves: manager.saves.clone(),
             next_id: manager.next_id,
         };
-        let index: SaveIndex =
-            serde_json::from_str(&serde_json::to_string(&index).unwrap()).unwrap();
+        let index_data: SaveIndex =
+            serde_json::from_str(&serde_json::to_string(&index_data).unwrap()).unwrap();
         let reopened = SaveGameManager {
-            saves: index.saves,
-            next_id: index.next_id,
+            saves: index_data.saves,
+            next_id: index_data.next_id,
             save_directory: blocked_root.to_str().unwrap().into(),
             session_restart: None,
         };
