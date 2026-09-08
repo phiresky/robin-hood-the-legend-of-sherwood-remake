@@ -21,9 +21,10 @@ keep their existing policies. Wire messages and the explicit campaign owner and
 lease are unchanged. Generation overflow is now checked before consuming any
 reservation or advancing allocation, so a rejected claim is transactional.
 
-Four focused registry tests cover detached and replaced streams, stale and
+Five focused registry tests cover detached and replaced streams, stale and
 wrong-owner release, readiness reset and admission, retained reconnect claims,
-overflow rejection for active/disconnected/fresh owners, and writer-free serde.
+overflow rejection for active/disconnected/fresh owners, writer-free serde, and
+readiness rejected with a protocol error after authenticated release.
 Existing snapshot and co-sign tests now claim actual authenticated records
 instead of constructing impossible partial map state.
 
@@ -32,6 +33,11 @@ policy; a broader stale-reader authorization audit belongs in a separate change.
 
 ## Validation
 
-`cargo fmt --all` and `git diff --check` passed. Native library release-feature
-tests are pending; the parent integration lane owns the combined binary build
-and browser/runtime acceptance.
+`cargo fmt --all` and `git diff --check` passed. On `715029976`, with
+`CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`:
+
+`cargo test --locked -p robin_rs --lib --no-default-features --features release multiplayer::native::tests`
+passed: 32 tests, zero failed/ignored, 2.91s after a 10m46s cold build. The small
+follow-up readiness-error test awaits the combined-source full library lane.
+The warm worktree will host combined native library and binary acceptance;
+the parent integration lane owns browser/runtime acceptance.

@@ -651,6 +651,14 @@ impl ServerPeers {
         }
     }
 
+    fn record_ready(&mut self, seat: u8, frame: u32) -> Result<(), String> {
+        let session = self.seats.get_mut(&seat).ok_or_else(|| {
+            format!("peer seat {seat} sent ReadyToSim without an authenticated session")
+        })?;
+        session.ready_frame = Some(frame);
+        Ok(())
+    }
+
     fn owner_seats(&self) -> HashMap<PeerOwner, u8> {
         let mut owners = self.disconnected_seats.clone();
         let mut occupied = owners.values().copied().collect::<HashSet<_>>();
@@ -3159,10 +3167,7 @@ async fn run_server_peer_reader(
                 resolve_ranked_before_ready(context);
                 let begin = {
                     let mut p = context.peers.lock();
-                    p.seats
-                        .get_mut(&seat.0)
-                        .expect("ready peer has an authenticated seat")
-                        .ready_frame = Some(frame);
+                    p.record_ready(seat.0, frame)?;
                     maybe_begin_sim_locked(&mut p)
                 };
                 let begin = match begin {
@@ -6579,7 +6584,7 @@ mod tests {
         for seat in [1, 2] {
             let (sender, _receiver) = unbounded_channel();
             claim_test_seat(&mut peers, seat, sender);
-            peers.seats.get_mut(&seat).unwrap().ready_frame = Some(10 + u32::from(seat));
+            peers.record_ready(seat, 10 + u32::from(seat)).unwrap();
         }
         peers.host_ready_frame = Some(9);
         peers.connect_sim_seat(2);
@@ -6592,15 +6597,43 @@ mod tests {
                 .values()
                 .all(|session| session.ready_frame.is_none())
         );
-        peers.seats.get_mut(&1).unwrap().ready_frame = Some(50);
+        peers.record_ready(1, 50).unwrap();
         assert!(super::maybe_begin_sim_locked(&mut peers).unwrap().is_none());
-        peers.seats.get_mut(&2).unwrap().ready_frame = Some(40);
+        peers.record_ready(2, 40).unwrap();
         let (frame, _, senders) = super::maybe_begin_sim_locked(&mut peers).unwrap().unwrap();
         assert_eq!(frame, 50);
         assert_eq!(senders.len(), 2);
         assert_eq!(peers.take_senders().len(), 2);
         assert_eq!(peers.owner_seats().len(), 2);
         assert_eq!(peers.sim_connected_seats().count(), 2);
+    }
+
+    #[test]
+    fn registry_rejects_readiness_without_an_authenticated_session() {
+        let mut peers = ServerPeers::new(2);
+        assert!(
+            peers
+                .record_ready(1, 10)
+                .unwrap_err()
+                .contains("without an authenticated session")
+        );
+        let (sender, _receiver) = unbounded_channel();
+        claim_test_seat(&mut peers, 1, sender);
+        peers.record_ready(1, 20).unwrap();
+        let session = &peers.seats[&1];
+        let (owner, generation) = (session.owner, session.generation);
+        assert_eq!(
+            peers.release_seat_if_owner(1, owner, generation),
+            Some(false)
+        );
+        assert!(
+            peers
+                .record_ready(1, 30)
+                .unwrap_err()
+                .contains("without an authenticated session")
+        );
+        assert!(peers.seats.is_empty());
+        assert_eq!(peers.owner_seat(owner), Some(1));
     }
 
     #[test]
