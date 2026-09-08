@@ -1273,6 +1273,7 @@ impl InteractiveFrameSimulation {
 
         let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
+            playing_back: runtime.replay_player.is_some(),
             host,
             game,
             manager,

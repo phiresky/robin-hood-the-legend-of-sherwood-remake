@@ -66,6 +66,57 @@ fn leaderboard_outcome(
     }
 }
 
+/// Recorded terminal commands are authoritative, including their clock and
+/// nonce. Only live play may produce another command at this host boundary.
+fn stage_terminal_campaign_update(
+    playing_back: bool,
+    transport: &crate::host::HostTransport,
+    frame: &mut MissionFrame,
+    exit_code: GameCode,
+    difficulty: robin_engine::player_profile::DifficultyLevel,
+    current_attempt_sequence: u64,
+) -> u64 {
+    if playing_back {
+        // A multiplayer echo can be a pre-command already applied before this
+        // tick. Its debrief is ready now; a post-command (or later echo) still
+        // needs the normal attempt-sequence advancement gate.
+        let applied = frame
+            .commands
+            .commands
+            .iter()
+            .filter(|input| {
+                matches!(
+                    &input.command,
+                    PlayerCommand::ApplyQuitMissionUpdates { .. }
+                )
+            })
+            .count();
+        assert!(
+            applied <= 1,
+            "one mission frame cannot contain multiple terminal updates"
+        );
+        return if applied == 1 {
+            current_attempt_sequence
+                .checked_sub(1)
+                .expect("applied terminal command must advance the campaign attempt sequence")
+        } else {
+            current_attempt_sequence
+        };
+    }
+    let (completed_at_unix_seconds, campaign_run_nonce) = mission_completion_clock();
+    dispatch_local_command(
+        transport,
+        &mut frame.post_commands,
+        &PlayerCommand::ApplyQuitMissionUpdates {
+            exit_code,
+            difficulty,
+            completed_at_unix_seconds,
+            campaign_run_nonce,
+        },
+    );
+    current_attempt_sequence
+}
+
 fn terminal_campaign_update_applied(current_sequence: u64, previous_sequence: u64) -> bool {
     current_sequence > previous_sequence
 }
@@ -134,6 +185,7 @@ pub(super) enum TerminalDebriefingProgress {
 /// Explicit owners borrowed by the blocking terminal graphical flow.
 pub(super) struct TerminalDebriefingContext<'a> {
     pub(super) tick_exit_code: Option<GameCode>,
+    pub(super) playing_back: bool,
     pub(super) host: &'a mut Host,
     pub(super) game: &'a mut Game,
     pub(super) manager: &'a mut robin_engine::engine_manager::EngineManager,
@@ -800,21 +852,15 @@ pub(super) fn drive_tick_exit_modals(
         context.manager.engine.campaign(),
         &context.assets.profile_manager,
     );
-    let (completed_at_unix_seconds, campaign_run_nonce) = mission_completion_clock();
-    let previous_attempt_sequence = context.manager.engine.campaign().mission_attempt_sequence;
-
-    // Campaign/stat updates precede both terminal graphical surfaces, matching
-    // The original game's mission-end operation handling.
-    let difficulty = context.manager.engine.sim_config().difficulty;
-    dispatch_local_command(
+    // Campaign/stat updates precede both terminal graphical surfaces. Playback
+    // consumes the recorded update instead of generating a second local one.
+    let previous_attempt_sequence = stage_terminal_campaign_update(
+        context.playing_back,
         &context.host.transport,
-        &mut context.frame.post_commands,
-        &PlayerCommand::ApplyQuitMissionUpdates {
-            exit_code,
-            difficulty,
-            completed_at_unix_seconds,
-            campaign_run_nonce,
-        },
+        context.frame,
+        exit_code,
+        context.manager.engine.sim_config().difficulty,
+        context.manager.engine.campaign().mission_attempt_sequence,
     );
     let popup_title =
         crate::ingame_menu::mission_state_text(exit_code).map(|(title, _)| title.to_owned());
@@ -833,6 +879,85 @@ pub(super) fn drive_tick_exit_modals(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn playback_terminal_keeps_recorded_update_and_debrief_progression() {
+        let host = Host::scratch(800.0, 600.0);
+        let command = PlayerCommand::ApplyQuitMissionUpdates {
+            exit_code: GameCode::LevelFailed,
+            difficulty: Default::default(),
+            completed_at_unix_seconds: Some(123),
+            campaign_run_nonce: Some(456),
+        };
+        for pre_command in [false, true] {
+            let mut frame = MissionFrame::new(0);
+            if pre_command {
+                frame.commands.push(command.clone());
+            } else {
+                frame.post_commands.push(command.clone());
+            }
+            let before =
+                bitcode::encode(&(&frame.commands.commands, &frame.post_commands.commands));
+            let current = if pre_command { 42 } else { 41 };
+            let previous = stage_terminal_campaign_update(
+                true,
+                &host.transport,
+                &mut frame,
+                GameCode::LevelFailed,
+                Default::default(),
+                current,
+            );
+            assert_eq!(previous, 41);
+            assert_eq!(
+                bitcode::encode(&(&frame.commands.commands, &frame.post_commands.commands)),
+                before,
+                "playback must retain exactly the recorded command, timestamp and nonce"
+            );
+            assert_eq!(
+                terminal_campaign_update_applied(current, previous),
+                pre_command
+            );
+            assert!(terminal_campaign_update_applied(42, previous));
+        }
+        let mut frame = MissionFrame::new(0);
+        let previous = stage_terminal_campaign_update(
+            true,
+            &host.transport,
+            &mut frame,
+            GameCode::LevelFailed,
+            Default::default(),
+            41,
+        );
+        assert!(
+            frame.post_commands.commands.is_empty(),
+            "await a later recorded multiplayer echo"
+        );
+        assert!(!terminal_campaign_update_applied(41, previous));
+        assert!(terminal_campaign_update_applied(42, previous));
+    }
+
+    #[test]
+    fn live_terminal_still_stages_one_campaign_update() {
+        let host = Host::scratch(800.0, 600.0);
+        let mut frame = MissionFrame::new(0);
+        let previous = stage_terminal_campaign_update(
+            false,
+            &host.transport,
+            &mut frame,
+            GameCode::LevelFailed,
+            Default::default(),
+            41,
+        );
+        assert_eq!(previous, 41);
+        assert_eq!(frame.post_commands.commands.len(), 1);
+        assert!(matches!(
+            frame.post_commands.commands[0].command,
+            PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: GameCode::LevelFailed,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn mission_completion_clock_returns_consistent_epoch_units() {
