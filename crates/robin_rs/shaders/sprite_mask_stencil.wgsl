@@ -21,6 +21,7 @@ struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) params: vec2<f32>,
+    @location(2) @interpolate(flat) atlas_bounds: vec4<u32>,
 };
 
 @vertex
@@ -31,15 +32,27 @@ fn vs_main(vin: VsIn) -> VsOut {
     out.clip_pos = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
     out.uv = vin.uv;
     out.params = vin.tint.rg;
+    // Exact integer encoding documented by MaskAtlasBounds::tint. The mask
+    // path alone uses blue/alpha; depth and white stencil clear ignore them.
+    let packed = vec2<u32>(vin.tint.ba);
+    out.atlas_bounds = vec4<u32>(packed % vec2<u32>(4096), packed / vec2<u32>(4096));
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) {
-    // RuntimeMask bitmaps are binary. Nearest sampling would visibly jump at
-    // non-integral zoom, so retain the renderer's linear sampler and choose
-    // the nearest binary result at the fragment boundary.
-    var value = textureSample(mask_alpha, samp, in.uv).r;
+    // Binary masks use the renderer's nearest sampler. Keep local UV until
+    // sampling, avoiding precision loss from interpolating tiny atlas regions.
+    var value = 0.0;
+    if (in.params.y < -0.5) {
+        let size = vec2<f32>(in.atlas_bounds.zw);
+        let local = vec2<u32>(clamp(floor(in.uv * size), vec2<f32>(0.0), size - vec2<f32>(1.0)));
+        value = textureLoad(mask_alpha, vec2<i32>(in.atlas_bounds.xy + local), 0).r;
+    } else if (in.params.y <= 0.5) {
+        // These textures have a single mip. Explicit LOD permits this branch
+        // without implicit-derivative uniformity requirements on WebGL.
+        value = textureSampleLevel(mask_alpha, samp, in.uv, 0.0).r;
+    }
     if (in.params.y > 0.5) {
         // Continuous depth is stored as big-endian high/low bytes in RG8.
         // Reconstruct before interpolation: interpolating either byte across

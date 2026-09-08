@@ -77,7 +77,7 @@ struct Shelf {
 ///
 /// Kept free of GPU types so the placement arithmetic — the part that
 /// has to be right — is directly unit-testable.
-struct ShelfPacker {
+pub(super) struct ShelfPacker {
     size: u32,
     shelves: Vec<Shelf>,
     /// Next unused y; where a new shelf would start.
@@ -87,7 +87,7 @@ struct ShelfPacker {
 }
 
 impl ShelfPacker {
-    fn new(size: u32) -> Self {
+    pub(super) fn new(size: u32) -> Self {
         Self {
             size,
             shelves: Vec::new(),
@@ -99,7 +99,7 @@ impl ShelfPacker {
     /// Reserve a `w × h` region. Returns the top-left texel of the
     /// *sprite*, with its gutter already skipped, or `None` when this
     /// layer cannot fit it.
-    fn reserve(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
+    pub(super) fn reserve(&mut self, w: u32, h: u32) -> Option<(u32, u32)> {
         let need_w = w + GUTTER * 2;
         let need_h = h + GUTTER * 2;
         if need_w > self.size || need_h > self.size {

@@ -187,6 +187,31 @@ struct MaskAlpha {
     bind_group: wgpu::BindGroup,
     width: u32,
     height: u32,
+    atlas: Option<MaskAtlasBounds>,
+}
+
+/// Mask-only vertex metadata, shared with sprite_mask_stencil.wgsl. Each axis
+/// packs origin + size * 4096 into an integer below 2^24, exactly representable
+/// in f32. Pages are at most 2048 square. Tint blue/alpha are unused by the
+/// standalone binary, depth and stencil-clear paths; negative green selects
+/// this encoding without adding attributes to every sprite vertex.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct MaskAtlasBounds {
+    origin: [u32; 2],
+    size: [u32; 2],
+}
+
+impl MaskAtlasBounds {
+    fn tint(self) -> [f32; 4] {
+        assert!(self.origin.into_iter().all(|v| v < 2048));
+        assert!(self.size.into_iter().all(|v| v > 0 && v <= 2048));
+        [
+            0.5,
+            -1.0,
+            (self.origin[0] + self.size[0] * 4096) as f32,
+            (self.origin[1] + self.size[1] * 4096) as f32,
+        ]
+    }
 }
 
 /// `MaskIndex` is a `NonMaxU32`, so this cannot collide with a legacy mask.
@@ -1817,6 +1842,15 @@ impl Renderer {
     /// Upload the static binary alpha for a sprite-occlusion mask. It is
     /// rasterized into stencil for each affected sprite, matching the
     /// original engine's temporary-sprite transparency operation.
+    /// Upload mission masks in shared R8 pages. Standalone uploads remain
+    /// available for oversized masks and the profiling override.
+    pub fn upload_mask_alphas<'a>(
+        &mut self,
+        masks: impl IntoIterator<Item = (u32, &'a [u8], u16, u16)>,
+    ) -> Result<(), String> {
+        self.resources.upload_mask_alphas(&self.gpu, masks)
+    }
+
     pub fn upload_mask_alpha(
         &mut self,
         mask_index: u32,
@@ -1927,7 +1961,9 @@ impl Renderer {
                 dst,
                 corners: None,
                 uv,
-                tint: [0.5, 0.0, 1.0, 1.0],
+                tint: self.resources.mask_alpha_cache[&mask_index]
+                    .atlas
+                    .map_or([0.5, 0.0, 1.0, 1.0], MaskAtlasBounds::tint),
                 operation: DrawOperation::MaskAlpha(mask_index),
             });
         }
@@ -3031,6 +3067,7 @@ mod bind_counter {
 
 #[cfg(test)]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    verify_mask_atlas_pixels(gpu.clone());
     let mut other_renderer =
         Renderer::with_optional_surface(gpu.clone(), None, None, 3, 2, TextureScaleMode::Nearest);
     let mut renderer =
@@ -3091,7 +3128,9 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     let image = renderer
         .create_rgba_gpu_image(3, 2, &pixels, "capture contract")
         .unwrap();
-    assert!(renderer.upload_mask_alpha(7, &[1, 0, 0, 1, 0, 0], 3, 2));
+    renderer
+        .upload_mask_alphas([(7, &[1, 0, 0, 1, 0, 0][..], 3, 2)])
+        .unwrap();
     let checkpoint = renderer.draw_queue_checkpoint();
     renderer.render_gpu_image(&image, None, None, BlendMode::None);
     renderer.mask_queued_draws(
@@ -3161,8 +3200,114 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
 }
 
 #[cfg(test)]
+fn verify_mask_atlas_pixels(gpu: GpuContext) {
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 31, 19, TextureScaleMode::Nearest);
+    let image = renderer
+        .create_rgba_gpu_image(31, 19, &[255; 31 * 19 * 4], "atlas parity")
+        .unwrap();
+    let filler = vec![1; 2040 * 8];
+    let narrow = [0, 2, 0, 255, 1, 0, 1];
+    let pattern = [0, 1, 0, 1, 0, 1];
+    let masks = [
+        (10, filler.as_slice(), 2040, 8),
+        (11, narrow.as_slice(), 1, 7),
+        (12, pattern.as_slice(), 3, 2),
+    ];
+    renderer.upload_mask_alphas(masks).unwrap();
+    assert!(
+        renderer.resources.mask_alpha_cache[&11]
+            .atlas
+            .unwrap()
+            .origin[0]
+            > 2000
+    );
+    assert!(renderer.upload_mask_alpha(21, &narrow, 1, 7));
+    assert!(renderer.upload_mask_alpha(22, &pattern, 3, 2));
+    assert!(renderer.upload_occlusion_depth(&[0, 255, 256, 65535, 32767, 32768], 3, 2));
+    for depth in [None, Some((Rect::new(0, 0, 31, 19), 0.4))] {
+        for (atlas_id, standalone_id) in [(11, 21), (12, 22)] {
+            for uv in [
+                [0.0, 0.0, 1.0, 1.0],
+                [-9.0, -3.0, 5.0, 8.0],
+                [0.125, 0.13, 0.91, 0.87],
+            ] {
+                let mut captures = Vec::new();
+                for id in [standalone_id, atlas_id] {
+                    renderer.render_gpu_rect(0, 0, 31, 19, 0, 0, 0, 255);
+                    let checkpoint = renderer.draw_queue_checkpoint();
+                    renderer.render_gpu_image(&image, None, None, BlendMode::None);
+                    renderer.mask_queued_draws_impl(
+                        checkpoint,
+                        &[(id, Rect::new(0, 0, 31, 19))],
+                        Rect::new(0, 0, 31, 19),
+                        depth,
+                    );
+                    for draw in &mut renderer.frame.queued[checkpoint..] {
+                        if matches!(draw.operation, DrawOperation::MaskAlpha(index) if index == id)
+                        {
+                            draw.uv = uv;
+                            draw.corners =
+                                Some([(0.25, 0.75), (30.5, 0.75), (0.25, 18.25), (30.5, 18.25)]);
+                        }
+                    }
+                    captures.push(renderer.try_capture_frame_rgba().unwrap().2);
+                }
+                assert_eq!(captures[0], captures[1], "atlas {atlas_id} UV {uv:?}");
+                assert!(captures[0].chunks_exact(4).any(|p| p[0] == 255));
+                assert!(captures[0].chunks_exact(4).any(|p| p[0] == 0));
+            }
+        }
+    }
+    assert!(
+        renderer.resources.mask_alpha_cache[&OCCLUSION_DEPTH_TEXTURE_INDEX]
+            .atlas
+            .is_none()
+    );
+    assert!(renderer.upload_mask_alphas([(50, &[][..], 0, 0)]).is_err());
+    assert!(renderer.upload_mask_alphas([(50, &[1][..], 2, 2)]).is_err());
+    let page = vec![1; 2046 * 2046];
+    let oversized = vec![1; 2048];
+    renderer
+        .upload_mask_alphas([
+            (60, page.as_slice(), 2046, 2046),
+            (61, page.as_slice(), 2046, 2046),
+            (62, oversized.as_slice(), 2048, 1),
+        ])
+        .unwrap();
+    assert!(renderer.resources.mask_alpha_cache[&60].atlas.is_some());
+    assert!(renderer.resources.mask_alpha_cache[&61].atlas.is_some());
+    assert!(renderer.resources.mask_alpha_cache[&62].atlas.is_none());
+    assert_ne!(
+        renderer.resources.mask_alpha_cache[&60]._texture,
+        renderer.resources.mask_alpha_cache[&61]._texture
+    );
+    renderer.clear_mask_alpha_cache();
+    renderer.upload_mask_alphas(std::iter::empty()).unwrap();
+    assert!(renderer.resources.mask_alpha_cache.is_empty());
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mask_atlas_vertex_encoding_is_exact_at_page_extremes() {
+        for origin in [0, 1, 2046, 2047] {
+            for size in [1, 2, 2046, 2048] {
+                let tint = MaskAtlasBounds {
+                    origin: [origin; 2],
+                    size: [size; 2],
+                }
+                .tint();
+                for encoded in [tint[2], tint[3]] {
+                    assert!(encoded < (1 << 24) as f32);
+                    assert_eq!((encoded as u32) % 4096, origin);
+                    assert_eq!((encoded as u32) / 4096, size);
+                }
+            }
+        }
+    }
 
     #[test]
     fn surface_diagnostics_never_restore_renderer_authority() {

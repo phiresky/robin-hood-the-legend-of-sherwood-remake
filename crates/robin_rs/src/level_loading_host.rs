@@ -839,24 +839,19 @@ pub fn apply_background_map(
 
     timer.step("terrain texture");
 
-    // TODO: Measure an atlas/staging upload for masks; individual textures currently
-    // require one allocation and queue write per mask, plus alpha expansion.
-    // Upload each mask's static binary alpha once. Masked draws rasterize it
-    // into stencil so occluded sprite fragments never overwrite the scene.
+    // Batch static binary masks into shared R8 pages before stencil drawing.
     renderer.clear_mask_alpha_cache();
-    let mask_count = engine.fast_grid().level.masks.len();
-    for (idx, mask) in engine.fast_grid().level.masks.iter().enumerate() {
-        assert!(
-            renderer.upload_mask_alpha(idx as u32, &mask.bitmap, mask.width, mask.height),
-            "invalid sprite mask {idx}: {}x{} bitmap has {} bytes",
-            mask.width,
-            mask.height,
-            mask.bitmap.len()
-        );
-    }
-    if mask_count > 0 {
-        tracing::debug!("Uploaded {} mask alpha textures", mask_count);
-    }
+    renderer
+        .upload_mask_alphas(
+            engine
+                .fast_grid()
+                .level
+                .masks
+                .iter()
+                .enumerate()
+                .map(|(idx, mask)| (idx as u32, mask.bitmap.as_slice(), mask.width, mask.height)),
+        )
+        .expect("valid mission sprite masks");
     timer.step("mask textures");
     if let Some(depth) = decoded.occlusion_depth.as_deref() {
         assert!(
