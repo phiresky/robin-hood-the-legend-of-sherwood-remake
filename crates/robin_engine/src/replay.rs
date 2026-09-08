@@ -1821,15 +1821,18 @@ mod tests {
         // reject every other self/future load and a nonzero bootstrap timeline.
         for (ordinal, target, marker_timeline) in [(1, 1, 0), (0, 1, 0), (0, 0, 1)] {
             let mut invalid = data.clone();
-            invalid.load_backs.clear();
-            invalid.load_backs.insert(
+            std::sync::Arc::make_mut(&mut invalid.load_backs).clear();
+            std::sync::Arc::make_mut(&mut invalid.load_backs).insert(
                 ordinal,
                 ReplayLoadBack {
                     to_frame: target,
                     is_continue: false,
                 },
             );
-            invalid.save_markers.get_mut(&0).unwrap().timeline_frame = marker_timeline;
+            std::sync::Arc::make_mut(&mut invalid.save_markers)
+                .get_mut(&0)
+                .unwrap()
+                .timeline_frame = marker_timeline;
             assert!(invalid.validate_layout().is_err());
             let edited = jsonl
                 .lines()

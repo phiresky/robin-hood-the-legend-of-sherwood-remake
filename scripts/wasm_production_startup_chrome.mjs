@@ -24,11 +24,16 @@ const { values } = parseArgs({ options: {
     mission: { type: 'string', default: 'auto' }, 'require-present': { type: 'boolean', default: false },
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
     'http-wasm-br': { type: 'string' },
+    replay: { type: 'string' },
     query: { type: 'string', multiple: true, default: [] },
 } });
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
 const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resolve(values.site), core = resolve(values.core);
 const output = resolve(values.output);
+const replayContent = values.replay ? (await readFile(resolve(values.replay), 'utf8')).trim() : undefined;
+const replayBuild = replayContent?.match(/^rhrec-([0-9a-f]{12})-/)?.[1];
+if (replayContent !== undefined && !replayBuild) throw new Error('--replay must contain a compact rhrec replay');
+if (replayContent !== undefined && values.mission !== 'auto') throw new Error('Replay header must select the mission; omit --mission');
 const rate = values.mbit === 'unlimited' ? null : Number(values.mbit) * 1_000_000 / 8;
 const throttle = rate === null ? null : new SharedBandwidth(rate);
 const records = [], logs = [], errors = [];
@@ -38,7 +43,7 @@ const httpWasmBr = values['http-wasm-br'] ? await readFile(resolve(values['http-
 if (httpWasmBr && !brotliDecompressSync(httpWasmBr).equals(await readFile(join(pkg, 'robin_bg.wasm')))) {
     throw new Error('--http-wasm-br does not decode to the supplied package WASM');
 }
-const hash = '000000000000'; // Local fixture name, not a claim about the supplied binary's source.
+const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
 const dataPrefix = '/datadirs/demo-leicester/';
 const preload = [];
@@ -162,6 +167,7 @@ try {
     const query = new URLSearchParams({ mission: values.mission, 'wasm-threads': '4', 'wasm-log': 'info' });
     if (values.mission === 'auto') query.delete('mission');
     for (const value of values.query) { const at = value.indexOf('='); if (at < 1) throw new Error('--query requires KEY=VALUE'); query.set(value.slice(0, at), value.slice(at + 1)); }
+    if (replayContent !== undefined) { query.set('replay', replayContent); query.set('paused', '0'); }
     if (values.trace) await send('Tracing.start', {
         categories: 'devtools.timeline,blink.user_timing,v8,gpu,disabled-by-default-v8.cpu_profiler',
         transferMode: 'ReturnAsStream',
@@ -173,8 +179,20 @@ try {
     
     await send('Page.navigate', { url: `http://127.0.0.1:${server.address().port}/?${query}` });
     const deadline = Date.now() + 180000;
-    while ((!bootstrapEpoch || (values['require-present'] && !presentEpoch)) && Date.now() < deadline && !errors.length) await sleep(20);
-    if (!bootstrapEpoch || (values['require-present'] && !presentEpoch)) throw new Error('Startup did not reach required endpoint: ' + JSON.stringify(errors));
+    while ((!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) && Date.now() < deadline && !errors.length) await sleep(20);
+    if (!bootstrapEpoch || ((values['require-present'] || replayContent !== undefined) && !presentEpoch)) throw new Error('Startup did not reach required endpoint: ' + JSON.stringify(errors));
+    let replayState;
+    if (replayContent !== undefined) {
+        if (!logs.some(({ line }) => line.includes('Loaded replay (decoded):'))) {
+            throw new Error('Bootstrap completed without decoded replay playback');
+        }
+        const state = await send('Runtime.evaluate', {
+            expression: 'globalThis.robinRpc("state")', awaitPromise: true, returnByValue: true,
+        });
+        if (state.exceptionDetails) throw new Error('Replay state RPC failed: ' + JSON.stringify(state.exceptionDetails));
+        replayState = state.result.value;
+        if (!replayState?.replay) throw new Error('Replay playback state is missing: ' + JSON.stringify(replayState));
+    }
     const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
     const page = probe.result.value;
     await sleep(500);
@@ -208,6 +226,7 @@ try {
     const result = {
         inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
         httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
+        replay: replayContent === undefined ? null : { path: resolve(values.replay), sha256: sha256(Buffer.from(replayContent)), build: replayBuild, state: replayState },
         pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
         diagnostics: { trace: values.trace, cpuProfile: values['cpu-profile'], caveat: 'Optional profiling adds overhead; use uninstrumented runs for timing comparisons.' },
         network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: 'fresh browser profile; normal intra-navigation HTTP caching', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },

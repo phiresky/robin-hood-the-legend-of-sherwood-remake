@@ -83,3 +83,12 @@ Retain compression-capture provenance: local Wrangler and deployed Cloudflare
 can produce different compressed sizes for the same content. Do not substitute
 offline Brotli quality 11 for the platform's actual HTTP response in Chrome
 measurements.
+
+`--replay FILE` launches the actual production URL replay path with `paused=0`.
+It preserves the compact envelope's build identity, requires the package's real
+isolated `replay_admission` module, and lets the replay header choose the mission.
+The harness requires decoded playback, the first mission-present marker, and a
+non-null replay RPC state, then records the replay hash and observed playhead.
+Do not use a forced mission or a live-game bootstrap as a replay timing proxy.
+For cross-build controlled experiments, prepare explicitly identified compatible
+fixtures separately; the harness never rewrites the replay build identity.
