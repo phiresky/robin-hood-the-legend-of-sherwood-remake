@@ -7,6 +7,9 @@
 //! the engine channel bundle in [`NetChannels`] so the channels and their
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
+#[cfg(feature = "multiplayer")]
+mod client_protocol;
+
 use robin_engine::multiplayer::LeaderboardAuthorizationInbox;
 use robin_engine::multiplayer::LeaderboardCoSignResponse;
 #[cfg(any(test, feature = "multiplayer"))]

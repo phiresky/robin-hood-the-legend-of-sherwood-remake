@@ -9,12 +9,13 @@
 //! TODO(browser-webrtc): if iroh gains a production WebRTC path, add it below
 //! this endpoint abstraction instead of inventing a second game protocol.
 
+use super::client_protocol::validate_reconnect_state;
 use super::join_ticket::BrowserJoinTicket;
 use super::{
-    InboundFramePolicy, NET_PROTOCOL_VERSION, NetEvent, NetFrameClass, NetMsg, NetOutbound,
+    InboundFramePolicy, NET_PROTOCOL_VERSION, NetEvent, NetMsg, NetOutbound,
     RankedBrowseOnlyReason, RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinResponse,
     RankedJoinUnavailableReason, RankedSessionConfigDocument, SharedClientLeaderboardCoSignState,
-    SharedClientRankedJoinState, decode_msg, encode_msg, net_frame_class,
+    SharedClientRankedJoinState,
 };
 use crate::leaderboard_ranked_session::{
     CampaignContinuationReceiptSelectionRequestV1, CampaignContinuationReceiptSelectionResponseV1,
@@ -260,19 +261,7 @@ pub fn connect_client(
 }
 
 async fn write_frame(send: &mut SendStream, message: &NetMsg) -> Result<(), String> {
-    let bytes = encode_msg(message);
-    let class = net_frame_class(message);
-    if bytes.len() > class.absolute_limit() {
-        return Err(format!(
-            "outbound {class:?} frame of {} bytes exceeds {}-byte limit",
-            bytes.len(),
-            class.absolute_limit()
-        ));
-    }
-    let len = u32::try_from(bytes.len()).map_err(|_| "outbound frame exceeds u32".to_string())?;
-    let mut header = [0_u8; 5];
-    header[0] = class as u8;
-    header[1..].copy_from_slice(&len.to_le_bytes());
+    let (header, bytes) = super::client_protocol::encode_frame(message)?;
     send.write_all(&header)
         .await
         .map_err(|error| format!("write frame header: {error}"))?;
@@ -289,28 +278,13 @@ async fn read_frame(recv: &mut RecvStream) -> Result<Option<NetMsg>, String> {
         Err(ReadExactError::FinishedEarly(0)) => return Ok(None),
         Err(error) => return Err(format!("read frame header: {error}")),
     }
-    let class = NetFrameClass::from_byte(header[0])?;
-    let len = u32::from_le_bytes(header[1..].try_into().expect("four-byte frame length")) as usize;
-    let limit = InboundFramePolicy::ServerToClient
-        .limit(class)
-        .ok_or_else(|| format!("server may not send {class:?} frames"))?;
-    if len > limit {
-        return Err(format!(
-            "inbound {class:?} frame of {len} bytes exceeds {limit}-byte browser limit"
-        ));
-    }
+    let (class, len) =
+        super::client_protocol::decode_header(header, InboundFramePolicy::ServerToClient)?;
     let mut bytes = vec![0; len];
     recv.read_exact(&mut bytes)
         .await
         .map_err(|error| format!("read frame body: {error}"))?;
-    let message = decode_msg(&bytes).map_err(|error| format!("decode frame: {error}"))?;
-    if net_frame_class(&message) != class {
-        return Err(format!(
-            "declared {class:?} frame decoded as {:?}",
-            net_frame_class(&message)
-        ));
-    }
-    Ok(Some(message))
+    super::client_protocol::decode_body(class, &bytes).map(Some)
 }
 
 async fn with_timeout<T>(millis: u32, future: impl Future<Output = T>) -> Result<T, ()> {
@@ -384,14 +358,11 @@ async fn run_client_io(
         endpoint.close().await;
         return;
     }
-    let invitation_session_id = match ticket.session_id() {
-        Ok(session_id) => robin_engine::multiplayer::MultiplayerSessionId(session_id),
-        Err(error) => {
-            publish_startup_error(&startup_error, &incoming_tx, error);
-            endpoint.close().await;
-            return;
-        }
-    };
+    if let Err(error) = ticket.session_id() {
+        publish_startup_error(&startup_error, &incoming_tx, error);
+        endpoint.close().await;
+        return;
+    }
 
     let ranked_state = BrowserRankedTransportState::default();
     ranked_state
@@ -445,7 +416,6 @@ async fn run_client_io(
                 &incoming_tx,
                 &mut outgoing_rx,
                 &cancellation,
-                invitation_session_id,
             )
             .await
             {
@@ -571,74 +541,70 @@ async fn run_client_io(
             )
             .await
             {
-                Ok(prelude) => {
-                    match resolve_reconnect(prelude, admitted_offer.as_ref(), session_id).await {
-                        Ok((
-                            next,
+                Ok(prelude) => match resolve_reconnect(prelude, admitted_offer.as_ref()).await {
+                    Ok((
+                        next,
+                        next_seat,
+                        next_mission,
+                        next_seed,
+                        next_config,
+                        next_speech_timing_locale,
+                        next_session_id,
+                    )) => {
+                        if let Err(error) = validate_reconnect_state(
+                            your_seat,
+                            &mission_id,
+                            mission_seed,
+                            sim_config,
+                            speech_timing_locale.as_deref(),
+                            session_id,
                             next_seat,
-                            next_mission,
+                            &next_mission,
                             next_seed,
                             next_config,
-                            next_speech_timing_locale,
+                            next_speech_timing_locale.as_deref(),
                             next_session_id,
-                        )) => {
-                            if let Err(error) = validate_reconnect_state(
-                                your_seat,
-                                &mission_id,
-                                mission_seed,
-                                sim_config,
-                                speech_timing_locale.as_deref(),
-                                session_id,
-                                next_seat,
-                                &next_mission,
-                                next_seed,
-                                next_config,
-                                next_speech_timing_locale.as_deref(),
-                                next_session_id,
-                            ) {
-                                let _ = incoming_tx.send(NetEvent::Fatal(error));
-                                endpoint.close().await;
-                                return;
-                            }
-                            let discarded = discard_session_outbound(&mut outgoing_rx);
-                            if discarded != 0 {
-                                tracing::warn!(
-                                    discarded,
-                                    "discarded browser commands queued for the abandoned prediction future"
-                                );
-                            }
-                            *assigned.borrow_mut() = Some(next_seat);
-                            ranked_state.welcomed_seat.set(Some(next_seat));
-                            *speech_timing_locale_slot.borrow_mut() =
-                                Some(next_speech_timing_locale.clone());
-                            let _ = incoming_tx.send(NetEvent::Reconnected);
-                            let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(next_seat));
-                            let _ = incoming_tx.send(NetEvent::MissionConfig {
-                                mission_id: next_mission,
-                                rng_seed: next_seed,
-                                sim_config: next_config,
-                                speech_timing_locale: next_speech_timing_locale,
-                            });
-                            backoff_ms = 500;
-                            break next;
+                        ) {
+                            let _ = incoming_tx.send(NetEvent::Fatal(error));
+                            endpoint.close().await;
+                            return;
                         }
-                        Err(error) => {
-                            if let Err(reset_error) =
-                                reset_ranked_after_failed_handshake(&ranked_state)
-                            {
-                                let _ = incoming_tx.send(NetEvent::Fatal(format!(
+                        let discarded = discard_session_outbound(&mut outgoing_rx);
+                        if discarded != 0 {
+                            tracing::warn!(
+                                discarded,
+                                "discarded browser commands queued for the abandoned prediction future"
+                            );
+                        }
+                        *assigned.borrow_mut() = Some(next_seat);
+                        ranked_state.welcomed_seat.set(Some(next_seat));
+                        *speech_timing_locale_slot.borrow_mut() =
+                            Some(next_speech_timing_locale.clone());
+                        let _ = incoming_tx.send(NetEvent::Reconnected);
+                        let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(next_seat));
+                        let _ = incoming_tx.send(NetEvent::MissionConfig {
+                            mission_id: next_mission,
+                            rng_seed: next_seed,
+                            sim_config: next_config,
+                            speech_timing_locale: next_speech_timing_locale,
+                        });
+                        backoff_ms = 500;
+                        break next;
+                    }
+                    Err(error) => {
+                        if let Err(reset_error) = reset_ranked_after_failed_handshake(&ranked_state)
+                        {
+                            let _ = incoming_tx.send(NetEvent::Fatal(format!(
                                     "could not reset ranked reconnect after content handshake failure: {reset_error}"
                                 )));
-                                endpoint.close().await;
-                                return;
-                            }
-                            tracing::warn!(%error, backoff_ms, "browser iroh relay reconnect failed");
-                            sleep_or_cancel(backoff_ms, &cancellation).await;
-                            backoff_ms =
-                                (backoff_ms.saturating_mul(2)).min(MAX_RECONNECT_BACKOFF_MS);
+                            endpoint.close().await;
+                            return;
                         }
+                        tracing::warn!(%error, backoff_ms, "browser iroh relay reconnect failed");
+                        sleep_or_cancel(backoff_ms, &cancellation).await;
+                        backoff_ms = (backoff_ms.saturating_mul(2)).min(MAX_RECONNECT_BACKOFF_MS);
                     }
-                }
+                },
                 Err(error) => {
                     if let Err(reset_error) = reset_ranked_after_failed_handshake(&ranked_state) {
                         let _ = incoming_tx.send(NetEvent::Fatal(format!(
@@ -748,6 +714,7 @@ struct ClientSession {
     _connection: Connection,
     send: SendStream,
     recv: RecvStream,
+    protocol: super::client_protocol::ClientHandshake,
 }
 
 async fn handshake(
@@ -777,108 +744,54 @@ async fn handshake(
     .await
     .map_err(|error| format!("send Hello: {error}"))?;
 
-    match read_frame(&mut recv).await? {
-        Some(NetMsg::Welcome {
-            your_seat,
-            mission_id,
-            mission_seed,
-            sim_config,
-            speech_timing_locale,
-            host_nickname,
-            session_id,
-        }) => {
-            if session_id != expected_session_id {
-                return Err("host Welcome session does not match the signed invitation".to_string());
-            }
-            tracing::info!(
-                ?your_seat,
-                seed = mission_seed,
-                host = %host_nickname,
-                "browser received authoritative mission metadata through iroh WebSocket relay"
-            );
+    let message = read_frame(&mut recv).await?;
+    let mut protocol = super::client_protocol::ClientHandshake::new(
+        server_addr.id.to_string(),
+        Some(expected_session_id),
+    );
+    let action = protocol.receive(message)?;
+    let session = ClientSession {
+        _connection: connection,
+        send,
+        recv,
+        protocol,
+    };
+    match action {
+        super::client_protocol::HandshakeAction::Welcome(welcome) => {
             Ok(HandshakePrelude::Welcome((
-                ClientSession {
-                    _connection: connection,
-                    send,
-                    recv,
-                },
-                your_seat,
-                mission_id,
-                mission_seed,
-                sim_config,
-                speech_timing_locale,
-                session_id,
+                session,
+                welcome.seat,
+                welcome.mission_id,
+                welcome.mission_seed,
+                welcome.sim_config,
+                welcome.speech_timing_locale,
+                welcome.session_id,
             )))
         }
-        Some(NetMsg::ContentOffer { offer }) => {
-            offer
-                .validate()
-                .map_err(|error| format!("invalid distributed-mod offer: {error}"))?;
-            let authenticated_host = server_addr.id.to_string();
-            if offer.host_endpoint_id != authenticated_host {
-                return Err(format!(
-                    "distributed-mod offer claims host `{}`, but the authenticated iroh endpoint is `{authenticated_host}`",
-                    offer.host_endpoint_id
-                ));
-            }
-            Ok(HandshakePrelude::Content(
-                ClientSession {
-                    _connection: connection,
-                    send,
-                    recv,
-                },
-                offer,
-            ))
+        super::client_protocol::HandshakeAction::PrepareContent(offer) => {
+            Ok(HandshakePrelude::Content(session, offer))
         }
-        Some(NetMsg::Reject { reason }) => Err(format!("host rejected connection: {reason}")),
-        Some(other) => Err(format!("expected Welcome or ContentOffer, got {other:?}")),
-        None => Err("host closed the stream before Welcome/content offer".to_string()),
     }
 }
 
-async fn read_welcome(
-    mut session: ClientSession,
-    expected_session_id: robin_engine::multiplayer::MultiplayerSessionId,
-) -> Result<Handshake, String> {
+async fn read_welcome(mut session: ClientSession) -> Result<Handshake, String> {
+    session.protocol.content_ready()?;
     let message = with_timeout(CONTENT_IDLE_TIMEOUT_MS, read_frame(&mut session.recv))
         .await
         .map_err(|()| "post-content Welcome timed out".to_string())??;
-    match message {
-        Some(NetMsg::Welcome {
-            your_seat,
-            mission_id,
-            mission_seed,
-            sim_config,
-            speech_timing_locale,
-            host_nickname,
-            session_id,
-        }) => {
-            if session_id != expected_session_id {
-                return Err(
-                    "post-content Welcome session does not match the signed invitation".to_string(),
-                );
-            }
-            tracing::info!(
-                ?your_seat,
-                seed = mission_seed,
-                host = %host_nickname,
-                "browser welcomed after exact content admission"
-            );
-            Ok((
-                session,
-                your_seat,
-                mission_id,
-                mission_seed,
-                sim_config,
-                speech_timing_locale,
-                session_id,
-            ))
-        }
-        Some(NetMsg::Reject { reason }) => Err(format!("host rejected connection: {reason}")),
-        Some(other) => Err(format!(
-            "expected Welcome after content admission, got {other:?}"
+    match session.protocol.receive(message)? {
+        super::client_protocol::HandshakeAction::Welcome(welcome) => Ok((
+            session,
+            welcome.seat,
+            welcome.mission_id,
+            welcome.mission_seed,
+            welcome.sim_config,
+            welcome.speech_timing_locale,
+            welcome.session_id,
         )),
-        None => Err("host closed the stream before post-content Welcome".to_string()),
+        super::client_protocol::HandshakeAction::PrepareContent(_) => {
+            unreachable!("post-content phase only accepts Welcome")
+        }
     }
 }
 
@@ -919,7 +832,6 @@ async fn complete_content_admission(
     incoming_tx: &Sender<NetEvent>,
     outgoing_rx: &mut Receiver<NetOutbound>,
     cancellation: &Cell<bool>,
-    expected_session_id: robin_engine::multiplayer::MultiplayerSessionId,
 ) -> Result<ContentCompletion, String> {
     let decision = next_local_outbound(
         outgoing_rx,
@@ -1046,9 +958,7 @@ async fn complete_content_admission(
             if full_mod_sha256 == offer.full_mod_sha256 =>
         {
             write_frame(&mut session.send, &NetMsg::ContentReady { full_mod_sha256 }).await?;
-            Ok(ContentCompletion::Join(
-                read_welcome(session, expected_session_id).await?,
-            ))
+            Ok(ContentCompletion::Join(read_welcome(session).await?))
         }
         NetOutbound::ContentPrepared { full_mod_sha256 }
             if full_mod_sha256 == offer.full_mod_sha256 =>
@@ -1085,11 +995,15 @@ async fn complete_content_admission(
 async fn resolve_reconnect(
     prelude: HandshakePrelude,
     admitted_offer: Option<&robin_engine::multiplayer::DistributedModOffer>,
-    expected_session_id: robin_engine::multiplayer::MultiplayerSessionId,
 ) -> Result<Handshake, String> {
-    match (prelude, admitted_offer) {
-        (HandshakePrelude::Welcome(handshake), None) => Ok(handshake),
-        (HandshakePrelude::Content(mut session, offer), Some(expected)) if &offer == expected => {
+    let offered = match &prelude {
+        HandshakePrelude::Welcome(_) => None,
+        HandshakePrelude::Content(_, offer) => Some(offer),
+    };
+    super::client_protocol::validate_reconnect_content(offered, admitted_offer)?;
+    match prelude {
+        HandshakePrelude::Welcome(handshake) => Ok(handshake),
+        HandshakePrelude::Content(mut session, offer) => {
             write_frame(
                 &mut session.send,
                 &NetMsg::ContentRequest {
@@ -1105,21 +1019,8 @@ async fn resolve_reconnect(
                 },
             )
             .await?;
-            read_welcome(session, expected_session_id).await
+            read_welcome(session).await
         }
-        (HandshakePrelude::Content(_, offer), Some(expected)) => Err(format!(
-            "browser reconnect changed host content from {} to {}",
-            robin_engine::spellforge::hex_hash(&expected.full_mod_sha256),
-            robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
-        )),
-        (HandshakePrelude::Content(_, offer), None) => Err(format!(
-            "browser reconnect unexpectedly introduced host content {}",
-            robin_engine::spellforge::hex_hash(&offer.full_mod_sha256)
-        )),
-        (HandshakePrelude::Welcome(_), Some(expected)) => Err(format!(
-            "browser reconnect omitted admitted host content {}",
-            robin_engine::spellforge::hex_hash(&expected.full_mod_sha256)
-        )),
     }
 }
 
@@ -1391,35 +1292,6 @@ fn validate_browser_ranked_challenge(
     Ok(claim)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_reconnect_state(
-    expected_seat: PlayerId,
-    expected_mission_id: &str,
-    expected_seed: u64,
-    expected_config: robin_engine::engine::SimConfig,
-    expected_speech_timing_locale: Option<&str>,
-    expected_session_id: robin_engine::multiplayer::MultiplayerSessionId,
-    seat: PlayerId,
-    mission_id: &str,
-    seed: u64,
-    config: robin_engine::engine::SimConfig,
-    speech_timing_locale: Option<&str>,
-    session_id: robin_engine::multiplayer::MultiplayerSessionId,
-) -> Result<(), String> {
-    if seat != expected_seat
-        || mission_id != expected_mission_id
-        || seed != expected_seed
-        || config != expected_config
-        || speech_timing_locale != expected_speech_timing_locale
-        || session_id != expected_session_id
-    {
-        return Err(format!(
-            "browser reconnect joined incompatible seat {seat:?} mission `{mission_id}` seed {seed} config {config:?} speech timing {speech_timing_locale:?} session {session_id:?}; expected seat {expected_seat:?} mission `{expected_mission_id}` seed {expected_seed} config {expected_config:?} speech timing {expected_speech_timing_locale:?} session {expected_session_id:?}"
-        ));
-    }
-    Ok(())
-}
-
 enum SessionEnd {
     Drop(String),
     Fatal(String),
@@ -1443,6 +1315,7 @@ async fn run_session(
         _connection,
         mut send,
         mut recv,
+        protocol: _,
     } = session;
     let (ranked_response_tx, ranked_response_rx) = async_channel::bounded(1);
     let reader = async {
