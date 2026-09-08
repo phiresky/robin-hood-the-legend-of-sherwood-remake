@@ -1072,6 +1072,8 @@ mod operation_outcome_tests {
             profile_idx: Some(0),
             ..Default::default()
         });
+        campaign.current_mission_idx = Some(0);
+        campaign.snapshot_preselected_with_simulation(7, engine_api::SimConfig::default());
         let mut assets = engine_api::LevelAssets::default();
         let engine = engine_api::Engine::new_for_test(640.0, 480.0, campaign, &mut assets).unwrap();
         let mut game = crate::game::Game::default();
