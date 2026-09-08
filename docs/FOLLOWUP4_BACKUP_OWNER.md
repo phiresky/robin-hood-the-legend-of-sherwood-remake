@@ -32,6 +32,10 @@ The private destination SQLite scrub has its own worker, separate from the live
 database pool. It now catches update/transaction unwind, lets any transaction
 rollback queue, and explicitly awaits connection close on success, error and
 panic before returning. A live-pool drain is not substituted for that close.
+Separately, failed-partial cleanup awaits the live pool becoming idle before
+removing the destination: source `VACUUM INTO` can deliver an error before its
+SQLite worker finishes statement cleanup. An idle-drain failure preserves the
+partial and original backup error. A held-checkout test verifies this ordering.
 
 The legacy `backup()` path is **test-only**, not another shipping command. Its
 whole invocation is also detached, including its former pre-gate destination
@@ -66,4 +70,32 @@ declare physical quiescence. The existing process-death recovery and stale-parti
 policy remain necessary. No detached async descendants are introduced, and no
 nested physical-work scope is used.
 
-Validation results will be recorded after frozen committed tests complete.
+## Validation
+
+Frozen code `19454c4bd` passed `cargo test --locked -p robin_highscores`:
+166 library, 35 admin, 5 server, 14 worker and 12 router tests (232 total).
+Seven existing/explicit-backend helper cases were ignored in that default run.
+All commands used `RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2` and the
+worktree-local default target directory.
+
+The two explicit admin unwind regressions passed with:
+
+```sh
+cargo test --locked -p robin_highscores --bin robin-highscores-admin \
+  --config 'profile.test.package.robin_highscores.codegen-backend="llvm"' \
+  backup_owner_unwind -- --ignored
+```
+
+This exercises actual LLVM unwinding in the affected package; the default
+Cranelift run is not presented as unwind/destructor proof.
+
+A temporary, uncommitted negative experiment replaced heartbeat-error draining
+with the old immediate return. The exact `tests::backup_owner_drains_physical_work`
+test failed in 0.45 seconds with `backup owner returned before physical mutation
+completed`. After restoring the exact committed source (`git diff --exit-code`
+clean), the same test passed in 1.28 seconds. No negative-policy changes remain.
+
+An initial new cleanup fixture used a non-private directory mode and was
+correctly rejected by existing cleanup validation; it was corrected to 0700
+before the final full passing run. `cargo fmt --all` and `git diff --check`
+passed. No performance changes or runtime deployment actions were included.
