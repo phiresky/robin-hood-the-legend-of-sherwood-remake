@@ -346,6 +346,17 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // screenshot is rendered once immediately after the target frame.
         let mut fixed_tick_presented = false;
         if should_draw {
+            super::render::prepare_fixed_tick_hud(
+                engine,
+                host,
+                assets,
+                game,
+                presentation,
+                hud,
+                input,
+                ui,
+                resources.hud_fonts.is_some(),
+            );
             let mut render_ctx = presentation.render_context(
                 resources,
                 hud,
@@ -421,7 +432,6 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 assets,
                 dev,
                 &mut render_ctx,
-                RenderCadence::FixedTick,
             );
 
             // PrintScreen keybind — capture the composited frame
@@ -561,7 +571,6 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 assets,
                 dev,
                 &mut render_ctx,
-                RenderCadence::DisplayRefresh,
             );
             render_ctx.present();
             saved_camera.apply(host.frontend);

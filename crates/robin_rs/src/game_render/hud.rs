@@ -468,17 +468,36 @@ fn substitute_int(template: &str, value: i32) -> String {
 ///   subsequent frames paint the box even if the pointer briefly
 ///   shrinks the rect below the threshold.
 /// * When latched, paint the four edges in the select/unselect color.
+pub(crate) fn prepare_multi_selection_box(host: &mut HostPresentation<'_>, engine: &Engine) {
+    if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {
+        host.frontend.input.cancel_selection_for_swordfight();
+        return;
+    }
+    if (host.frontend.input.multi_selection_active()
+        || host.frontend.input.multi_unselection_active())
+        && selection_outline_visible(host)
+    {
+        host.frontend.input.latch_selection_outline();
+    }
+}
+
+fn selection_outline_visible(host: &HostPresentation<'_>) -> bool {
+    let p1 = host.frontend.input.multi_selection_pt1();
+    let p2 = host.frontend.input.multi_selection_pt2();
+    let dx = p1.x - p2.x;
+    let dy = p1.y - p2.y;
+    host.frontend.input.draw_multi_selection() || dx * dx + dy * dy > MULTI_SELECTION_THRESHOLD
+}
+
+/// Compose the selection outline without changing drag/selection state.
+/// Captures before the live update can preview a newly crossed threshold,
+/// but only `prepare_multi_selection_box` commits the persistent latch.
 pub(crate) fn draw_multi_selection_box(
-    host: &mut HostPresentation<'_>,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
-    advance_transients: bool,
 ) {
-    // ── Swordfighting cancel ──
     if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {
-        if advance_transients {
-            host.frontend.input.cancel_selection_for_swordfight();
-        }
         return;
     }
 
@@ -491,22 +510,7 @@ pub(crate) fn draw_multi_selection_box(
     let p1 = host.frontend.input.multi_selection_pt1();
     let p2 = host.frontend.input.multi_selection_pt2();
 
-    // ── Latch draw_multi_selection once the drag clears the
-    //    threshold.  The square norm is in map units; compared to
-    //    `MULTI_SELECTION_THRESHOLD` (1600). ──
-    let mut draw_multi_selection = host.frontend.input.draw_multi_selection();
-    if !draw_multi_selection {
-        let dx = p1.x - p2.x;
-        let dy = p1.y - p2.y;
-        if dx * dx + dy * dy > MULTI_SELECTION_THRESHOLD {
-            draw_multi_selection = true;
-            if advance_transients {
-                host.frontend.input.latch_selection_outline();
-            }
-        }
-    }
-
-    if !draw_multi_selection {
+    if !selection_outline_visible(host) {
         return;
     }
 

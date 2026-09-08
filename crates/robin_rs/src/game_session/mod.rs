@@ -86,10 +86,9 @@ use multiplayer::{
 };
 pub use render::RenderContext;
 use render::{
-    RenderCadence, capture_screenshot_to_path, drain_presented_ui_screenshots,
-    drain_print_screen_request, drain_screenshot_requests, drain_screenshots,
-    drain_wide_print_screen, print_screen_request_from_modifiers, render_frame,
-    update_mouse_and_cursor,
+    capture_screenshot_to_path, drain_presented_ui_screenshots, drain_print_screen_request,
+    drain_screenshot_requests, drain_screenshots, drain_wide_print_screen,
+    print_screen_request_from_modifiers, render_frame, update_mouse_and_cursor,
 };
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element as engine_element;

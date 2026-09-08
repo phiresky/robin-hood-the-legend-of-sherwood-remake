@@ -189,7 +189,7 @@ impl MouseTrailRenderer {
     /// is complete, so display-refresh recompositions remain read-only. The
     /// caller should only invoke this while the player is dragging during a
     /// swordfight (dragging while the selected PC is swordfighting).
-    pub fn render(&self, mouse_way: &mut MouseWay, renderer: &mut Renderer) {
+    pub fn render(&self, mouse_way: &MouseWay, renderer: &mut Renderer) {
         let size = mouse_way.points.len();
         if size == 0 {
             return;

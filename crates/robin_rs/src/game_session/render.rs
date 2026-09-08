@@ -41,17 +41,200 @@ use robin_engine::sprite as engine_sprite;
 use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormation};
 use std::collections::HashSet;
 
-/// Whether a render is the single 25 Hz presentation boundary or an
-/// additional display-refresh sample of the same fixed tick.
+/// The draw pass receives tooltip decisions, never mutable hover clocks.
+/// Building another snapshot (including for an initial save thumbnail) is
+/// read-only; only the explicit live update below advances those clocks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(super) enum RenderCadence {
-    FixedTick,
-    DisplayRefresh,
+pub struct HudTooltipPresentation {
+    corner: Option<corner_hud::CornerButton>,
+    requirements: Option<usize>,
+    blazon: Option<usize>,
+    stature: Option<stature_hud::StatureButton>,
+    sherwood: Option<sherwood_hud::SherwoodButton>,
+    pc_action: Option<(u8, u8)>,
 }
 
-impl RenderCadence {
-    fn advances_transients(self) -> bool {
-        self == Self::FixedTick
+impl HudTooltipPresentation {
+    pub(super) fn prepare(
+        corner: &CornerTooltipTracker,
+        requirements: &crate::ui_panel::RequirementsTooltipTracker,
+        blazon: &crate::ui_panel::BlazonTooltipTracker,
+        stature: &StatureTooltipTracker,
+        sherwood: &SherwoodTooltipTracker,
+        pc_action: &crate::ui_panel::PcActionTooltipTracker,
+    ) -> Self {
+        Self {
+            corner: corner.ready_button(),
+            requirements: requirements.ready_slot(),
+            blazon: blazon.ready_slot(),
+            stature: stature.ready_button(),
+            sherwood: sherwood.ready_button(),
+            pc_action: pc_action.ready_button(),
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct HudTooltipUpdate {
+    is_sherwood: bool,
+    corner: Option<corner_hud::CornerButton>,
+    requirements: Option<Option<usize>>,
+    blazon: Option<Option<usize>>,
+    stature: Option<stature_hud::StatureButton>,
+    sherwood: Option<sherwood_hud::SherwoodButton>,
+    pc_action: Option<(u8, u8)>,
+}
+
+impl HudTooltipUpdate {
+    fn advance(
+        self,
+        corner: &mut CornerTooltipTracker,
+        requirements: &mut crate::ui_panel::RequirementsTooltipTracker,
+        blazon: &mut crate::ui_panel::BlazonTooltipTracker,
+        stature: &mut StatureTooltipTracker,
+        sherwood: &mut SherwoodTooltipTracker,
+        pc_action: &mut crate::ui_panel::PcActionTooltipTracker,
+    ) {
+        // Preserve the existing strip reset/re-arm sequence. TODO: establish
+        // original-game parity before changing the resulting hover delay.
+        requirements.update(None);
+        blazon.update(None);
+        if let Some(hovered) = self.requirements {
+            requirements.update(hovered);
+        }
+        if let Some(hovered) = self.blazon {
+            blazon.update(hovered);
+        }
+        sherwood.update(self.sherwood);
+        if !self.is_sherwood {
+            stature.update(self.stature);
+            corner.update(self.corner);
+        }
+        pc_action.update(self.pc_action);
+    }
+}
+
+/// Advance host-owned HUD state once at the live 25 Hz boundary, before any
+/// capture or display-refresh draw borrows it. This boundary intentionally is
+/// not keyed by the engine frame: paused frames must still age hover timers
+/// and animate the console. Save thumbnails do not call it.
+pub(super) fn prepare_fixed_tick_hud(
+    engine: &Engine,
+    host: &mut HostPresentation<'_>,
+    assets: &engine_api::LevelAssets,
+    game: &Game,
+    presentation: &super::interactive::MissionPresentation,
+    hud: &mut super::interactive::MissionHud,
+    input: &super::interactive::MissionInput,
+    ui: &mut super::interactive::MissionUi,
+    has_hud_fonts: bool,
+) {
+    let mp = input.threaded.position();
+    let sw = presentation.renderer.screen_width();
+    let sh = presentation.renderer.screen_height();
+    let local_seat = host.local_seat;
+    let campaign = engine.campaign();
+    let portrait_cache = &presentation.sprites.portrait_cache;
+    let mut tooltip_update = HudTooltipUpdate {
+        is_sherwood: game.is_sherwood,
+        ..Default::default()
+    };
+
+    if !host.frontend.input.draw_hidden
+        && host
+            .frontend
+            .selected_view_element
+            .is_some_and(|id| engine.get_entity(id).is_none() || !engine.fog_entity_visible(id))
+    {
+        host.frontend.selected_view_element = None;
+    }
+
+    if let Some(bb) = blazon_bar::build_blazon_bar_state(
+        campaign,
+        &assets.profile_manager,
+        engine.is_men_to_blazon_conversion_mode(),
+        engine.active_blinking_blazons(),
+    ) {
+        tooltip_update.blazon = Some(crate::ui_panel::hit_test_blazon_bar(
+            sw,
+            &bb,
+            mp.x as i32,
+            mp.y as i32,
+        ));
+    }
+    if game.is_sherwood
+        && let Some(next_idx) = campaign.next_mission_idx
+    {
+        let mission_team = campaign.mission_team_profile_indices();
+        let selected = selected_pc_profile_indices(engine, local_seat);
+        if let Some(req) = build_requirements_state(
+            campaign,
+            &assets.profile_manager,
+            next_idx,
+            &mission_team,
+            &selected,
+        ) {
+            let hovered = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp);
+            tooltip_update.requirements = Some(hovered);
+            if let Some(RequirementSlot::RequiredAction { action, .. }) =
+                hovered.and_then(|slot| req.slots.get(slot))
+            {
+                engine.collect_pcs_with_action(
+                    assets,
+                    *action,
+                    &mut host.frontend.input.marked_pc_ids,
+                );
+            }
+        }
+    }
+    if game.is_sherwood {
+        tooltip_update.sherwood =
+            hud.sherwood_layout
+                .hit_test_geometric(mp.x as i32, mp.y as i32, hud.sherwood_enable);
+    } else {
+        tooltip_update.stature = hud
+            .stature_layout
+            .hit_test_geometric(mp.x as i32, mp.y as i32);
+        tooltip_update.corner = hud
+            .corner_layout
+            .hit_test_geometric(mp.x as i32, mp.y as i32);
+    }
+    let hit = hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y);
+    tooltip_update.pc_action = hit.and_then(portrait_action_hover);
+    tooltip_update.advance(
+        &mut hud.corner_tooltip,
+        &mut hud.requirements_tooltip,
+        &mut hud.blazon_tooltip,
+        &mut hud.stature_tooltip,
+        &mut hud.sherwood_tooltip,
+        &mut hud.pc_action_tooltip,
+    );
+    if let Some(hit) = hit
+        && hit.is_burned
+        && hit.area == PortraitHitArea::Guard
+        && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(hit.pc_id)
+        && let Some(guard_id) = pc.pc.guard
+    {
+        host.frontend.input.marked_pc_ids.push(guard_id);
+    }
+    crate::game_render::prepare_multi_selection_box(host, engine);
+    if has_hud_fonts {
+        // Logging is independent of draws/captures, like the rest of this
+        // once-per-tick presentation work.
+        engine.display_ai_log_for_selected(host.frontend.selected_view_element);
+    }
+    ui.console_overlay
+        .drain_pending_output(&mut host.frontend.pending_console_output);
+    ui.console_overlay.tick_animation();
+}
+
+fn portrait_action_hover(hit: PortraitHit) -> Option<(u8, u8)> {
+    match hit.area {
+        PortraitHitArea::ActionButton(btn) | PortraitHitArea::AlliedAction(btn) => {
+            Some((hit.slot, btn))
+        }
+        PortraitHitArea::Pin if !matches!(hit.target, PortraitTarget::Pc(_)) => Some((hit.slot, 3)),
+        _ => None,
     }
 }
 
@@ -294,9 +477,8 @@ fn update_zoom_presentation(
 ///
 /// Each screenshot renders against a **clone** of `dev` with its own
 /// debug-flag overrides — the live `dev` is never mutated. Tooltip trackers
-/// that have not yet moved to immutable presentation data are snapshotted
-/// and restored around each render. The zoom HUD is prepared once per engine
-/// frame and needs no clone/restore workaround. `host.frontend.input` hover state
+/// and console presentation are immutable draw inputs, so captures require
+/// no transient state rollback. `host.frontend.input` hover state
 /// (focused_entity_id etc.) is not restored because the live `render_frame`
 /// overwrites it anyway.
 pub(super) fn drain_screenshots(
@@ -380,40 +562,18 @@ fn render_screenshot_rgba(
     let mut scratch_dev = dev.clone();
     crate::http_server::apply_screenshot_flags(&mut scratch_dev.debug, &request.flags);
 
-    // Snapshot update-owned presentation state so a throwaway screenshot
-    // cannot change the following live render.
-    let saved_corner = ctx.corner_tooltip.clone();
-    let saved_requirements = ctx.requirements_tooltip.clone();
-    let saved_blazon = ctx.blazon_tooltip.clone();
-    let saved_stature = ctx.stature_tooltip.clone();
-    let saved_sherwood = ctx.sherwood_tooltip.clone();
-    let saved_pc_action = ctx.pc_action_tooltip.clone();
     let saved_draw_hud = ctx.draw_hud;
     ctx.draw_hud = !request.hide_ui;
 
     let captured = if request.full_map {
         capture_wide_map_rgba(engine, display, host, assets, &scratch_dev, ctx)
     } else {
-        render_frame(
-            engine,
-            display,
-            host,
-            assets,
-            &scratch_dev,
-            ctx,
-            RenderCadence::DisplayRefresh,
-        );
+        render_frame(engine, display, host, assets, &scratch_dev, ctx);
         ctx.renderer
             .try_capture_frame_rgba()
             .map_err(|error| error.to_string())
     };
 
-    *ctx.corner_tooltip = saved_corner;
-    *ctx.requirements_tooltip = saved_requirements;
-    *ctx.blazon_tooltip = saved_blazon;
-    *ctx.stature_tooltip = saved_stature;
-    *ctx.sherwood_tooltip = saved_sherwood;
-    *ctx.pc_action_tooltip = saved_pc_action;
     ctx.draw_hud = saved_draw_hud;
     captured
 }
@@ -438,33 +598,12 @@ pub(super) fn begin_save_thumbnail(
     let mut timer = super::setup::PhaseTimer::new("save thumbnail");
     update_zoom_presentation(engine, display, host, ctx);
 
-    let saved_corner = ctx.corner_tooltip.clone();
-    let saved_requirements = ctx.requirements_tooltip.clone();
-    let saved_blazon = ctx.blazon_tooltip.clone();
-    let saved_stature = ctx.stature_tooltip.clone();
-    let saved_sherwood = ctx.sherwood_tooltip.clone();
-    let saved_pc_action = ctx.pc_action_tooltip.clone();
-
-    render_frame(
-        engine,
-        display,
-        host,
-        assets,
-        dev,
-        ctx,
-        RenderCadence::DisplayRefresh,
-    );
+    render_frame(engine, display, host, assets, dev, ctx);
 
     timer.step("compose");
     let capture = ctx.renderer.begin_capture_frame_rgba();
     timer.step("submit");
 
-    *ctx.corner_tooltip = saved_corner;
-    *ctx.requirements_tooltip = saved_requirements;
-    *ctx.blazon_tooltip = saved_blazon;
-    *ctx.stature_tooltip = saved_stature;
-    *ctx.sherwood_tooltip = saved_sherwood;
-    *ctx.pc_action_tooltip = saved_pc_action;
     ctx.renderer.reset_render_target();
 
     Box::pin(async move {
@@ -662,15 +801,7 @@ fn capture_wide_map_rgba(
         .set_screen_size(level_w as f32, render_h as f32);
     ctx.renderer.resize(level_w as u16, render_h as u16);
 
-    render_frame(
-        engine,
-        display,
-        host,
-        assets,
-        dev,
-        ctx,
-        RenderCadence::DisplayRefresh,
-    );
+    render_frame(engine, display, host, assets, dev, ctx);
     let captured = ctx.renderer.try_capture_frame_rgba();
 
     ctx.renderer.resize(saved_renderer_w, saved_renderer_h);
@@ -1026,7 +1157,7 @@ pub(super) fn update_mouse_and_cursor(
 }
 
 /// Bundle of render-only state threaded through [`render_frame`] —
-/// mutable GPU/render resources, mutable per-frame UI trackers,
+/// mutable GPU/render resources, immutable per-frame UI trackers,
 /// immutable resource tables, and a handful of outer-loop inputs
 /// (game, pause menu, shift_held).  Short-lived (`'a`) borrows from
 /// the [`run_mission`] stack frame.
@@ -1041,18 +1172,13 @@ pub struct RenderContext<'a> {
     pub cursor_renderer: &'a mut crate::cursor::CursorRenderer,
     pub selection_mark_renderer: &'a mut crate::markers::SelectionMarkRenderer,
     pub titbit_renderer: &'a mut crate::titbit_renderer::TitbitRenderer,
-    pub console_overlay: &'a mut crate::console_overlay::ConsoleOverlay,
+    pub console_overlay: &'a crate::console_overlay::ConsoleOverlay,
 
     // Update-owned per-frame UI trackers (tooltip hover timers). The zoom
-    // tracker is only mutated by `update_zoom_presentation`; remaining
-    // trackers still await migration out of the draw pass.
+    // tracker is only mutated by `update_zoom_presentation`. Other trackers
+    // are borrowed read-only after `prepare_fixed_tick_hud` advances them.
     pub zoom_tooltip: &'a mut ZoomTooltipTracker,
-    pub corner_tooltip: &'a mut CornerTooltipTracker,
-    pub requirements_tooltip: &'a mut crate::ui_panel::RequirementsTooltipTracker,
-    pub blazon_tooltip: &'a mut crate::ui_panel::BlazonTooltipTracker,
-    pub stature_tooltip: &'a mut StatureTooltipTracker,
-    pub sherwood_tooltip: &'a mut SherwoodTooltipTracker,
-    pub pc_action_tooltip: &'a mut crate::ui_panel::PcActionTooltipTracker,
+    pub hud_tooltips: HudTooltipPresentation,
 
     // Immutable resources.
     pub mouse_trail_renderer: Option<&'a crate::mouse_trail::MouseTrailRenderer>,
@@ -1114,7 +1240,6 @@ pub(super) fn render_frame(
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
-    cadence: RenderCadence,
 ) {
     // Rendering only reads the zoom presentation prepared at the update
     // boundary. A missing or stale snapshot is an ordering error, never a
@@ -1134,13 +1259,8 @@ pub(super) fn render_frame(
     let cursor_renderer = &mut *ctx.cursor_renderer;
     let selection_mark_renderer = &mut *ctx.selection_mark_renderer;
     let titbit_renderer = &mut *ctx.titbit_renderer;
-    let console_overlay = &mut *ctx.console_overlay;
-    let corner_tooltip = &mut *ctx.corner_tooltip;
-    let requirements_tooltip = &mut *ctx.requirements_tooltip;
-    let blazon_tooltip = &mut *ctx.blazon_tooltip;
-    let stature_tooltip = &mut *ctx.stature_tooltip;
-    let sherwood_tooltip = &mut *ctx.sherwood_tooltip;
-    let pc_action_tooltip = &mut *ctx.pc_action_tooltip;
+    let console_overlay = ctx.console_overlay;
+    let hud_tooltips = ctx.hud_tooltips;
     let mouse_trail_renderer = ctx.mouse_trail_renderer;
     let portrait_cache = ctx.portrait_cache;
     let menu_resources = ctx.menu_resources;
@@ -1163,6 +1283,12 @@ pub(super) fn render_frame(
     let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
     let draw_hud = ctx.draw_hud;
     let local_seat = host.local_seat;
+    // Pre-update captures may still hold a stale selection. Filter their
+    // presentation without committing live selected-view state.
+    let selected_view_element = host.frontend.selected_view_element.filter(|&id| {
+        host.frontend.input.draw_hidden
+            || (engine.get_entity(id).is_some() && engine.fog_entity_visible(id))
+    });
     // Queue the GPU background texture for the current camera view.
     // Engine-mutating pre-render bookkeeping (background blits, display sorting)
     // is hoisted to the main loop so `render_frame` itself observes an
@@ -1194,32 +1320,16 @@ pub(super) fn render_frame(
     // Darken the map inside the selected view element's vision cone (if
     // any). The original game draws this immediately after background animations and
     // before door overlays, selection marks, ground marks, and elements.
-    if !host.frontend.input.draw_hidden
-        && host
-            .frontend
-            .selected_view_element
-            .is_some_and(|entity_id| {
-                engine.get_entity(entity_id).is_none() || !engine.fog_entity_visible(entity_id)
-            })
-    {
-        host.frontend.selected_view_element = None;
-    }
     render_view_cone_overlay(
         host,
         &presentation,
         engine,
         assets,
-        host.frontend.selected_view_element,
+        selected_view_element,
         dev,
         renderer,
     );
-    render_shadow_polygon_sphere_debug(
-        host,
-        engine,
-        host.frontend.selected_view_element,
-        dev,
-        renderer,
-    );
+    render_shadow_polygon_sphere_debug(host, engine, selected_view_element, dev, renderer);
 
     // ── GPU phase: door / jump zone alpha overlays ──
     // Includes the shift-held `DisplayAllDoorsAndJumpZones` path and
@@ -1298,58 +1408,6 @@ pub(super) fn render_frame(
         titbit_renderer,
     );
 
-    // ── Host-side Mark() contributions ──
-    // Currently the requirements-bar hover (PC action marking) and
-    // the portrait guard-swap hover.  The sim-side call site
-    // (mission-team add) has already pushed into
-    // `host.frontend.input.marked_pc_ids` via `EngineCommand::MarkPc` →
-    // `SideEffects::pending_mark_pc_ids` → `apply_side_effects`.  All
-    // contributions accumulate into the shared list and the render
-    // pass drains it below.
-    if cadence.advances_transients() {
-        let mp = threaded_input.position();
-        let sw = renderer.screen_width();
-        let sh = renderer.screen_height();
-
-        // Requirements-bar hover (Sherwood only).
-        if game.is_sherwood
-            && let Some(next_idx) = engine.campaign().next_mission_idx
-        {
-            let campaign = engine.campaign();
-            let mission_team = campaign.mission_team_profile_indices();
-            let selected = selected_pc_profile_indices(engine, local_seat);
-            if let Some(req) = build_requirements_state(
-                campaign,
-                &assets.profile_manager,
-                next_idx,
-                &mission_team,
-                &selected,
-            ) && let Some(slot_idx) = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp)
-                && let Some(RequirementSlot::RequiredAction { action, .. }) =
-                    req.slots.get(slot_idx)
-            {
-                engine.collect_pcs_with_action(
-                    assets,
-                    *action,
-                    &mut host.frontend.input.marked_pc_ids,
-                );
-            }
-        }
-
-        // Portrait guard-swap hover: when hovering the guard
-        // indicator on a burned PC's portrait, flash the PC's
-        // guard NPC.
-        if let Some(hit) =
-            hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y)
-            && hit.is_burned
-            && hit.area == PortraitHitArea::Guard
-            && let Some(engine_element::Entity::Pc(pc)) = engine.get_entity(hit.pc_id)
-            && let Some(guard_id) = pc.pc.guard
-        {
-            host.frontend.input.marked_pc_ids.push(guard_id);
-        }
-    }
-
     // ── GPU phase: selection / hover outlines ──
     // Draws coloured outline masks for selected PCs and the hovered
     // entity (focused by the cursor).
@@ -1415,7 +1473,7 @@ pub(super) fn render_frame(
         assets,
         dev,
         hud_fonts,
-        host.frontend.selected_view_element,
+        selected_view_element,
         renderer,
     );
 
@@ -1438,12 +1496,7 @@ pub(super) fn render_frame(
     }
 
     // ── GPU phase: multi-selection rubber band box ──
-    crate::game_render::draw_multi_selection_box(
-        host,
-        engine,
-        renderer,
-        cadence.advances_transients(),
-    );
+    crate::game_render::draw_multi_selection_box(host, engine, renderer);
 
     // ── GPU phase: swordfight mouse-trail ──
     // While dragging during a swordfight, draw the recorded polyline
@@ -1455,7 +1508,7 @@ pub(super) fn render_frame(
         && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
         && !host.frontend.mouse_way.is_empty()
     {
-        trail.render(&mut host.frontend.mouse_way, renderer);
+        trail.render(&host.frontend.mouse_way, renderer);
     }
 
     // ── GPU phase: per-PC macro dotted chains (world space) ──
@@ -1501,14 +1554,6 @@ pub(super) fn render_frame(
     // Top-of-screen icon strips rebuilt each frame from campaign
     // state.
     //
-    // Default the requirements tooltip to "no hover" each frame so
-    // leaving Sherwood (or losing the requirements strip mid-frame)
-    // clears the idle timer; the block below re-arms it when the
-    // cursor is actually over a slot.
-    if cadence.advances_transients() {
-        requirements_tooltip.update(None);
-        blazon_tooltip.update(None);
-    }
     {
         let campaign = engine.campaign();
         let men_to_blazon = engine.is_men_to_blazon_conversion_mode();
@@ -1523,13 +1568,7 @@ pub(super) fn render_frame(
 
             // Per-slot hover tooltip with the standard hover timer.
             let mp = threaded_input.position();
-            let sw = renderer.screen_width();
-            let hovered_slot =
-                crate::ui_panel::hit_test_blazon_bar(sw, &bb, mp.x as i32, mp.y as i32);
-            if cadence.advances_transients() {
-                blazon_tooltip.update(hovered_slot);
-            }
-            if let Some(slot_idx) = blazon_tooltip.ready_slot()
+            if let Some(slot_idx) = hud_tooltips.blazon
                 && let Some(kind) = crate::ui_panel::blazon_bar_slot_kinds(&bb)
                     .get(slot_idx)
                     .copied()
@@ -1578,12 +1617,7 @@ pub(super) fn render_frame(
             // that with a slot-index tracker and paint once it
             // crosses the idle threshold.
             let mp = threaded_input.position();
-            let sw = renderer.screen_width();
-            let hovered_slot = crate::ui_panel::hit_test_requirements_bar(sw, &req, mp);
-            if cadence.advances_transients() {
-                requirements_tooltip.update(hovered_slot);
-            }
-            if let Some(slot_idx) = requirements_tooltip.ready_slot()
+            if let Some(slot_idx) = hud_tooltips.requirements
                 && let Some(slot) = req.slots.get(slot_idx)
                 && let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
             {
@@ -1636,16 +1670,13 @@ pub(super) fn render_frame(
         // text swaps with mode (Sherwood vs in-mission, regular vs
         // men-to-blazon) — `sherwood_button_tooltip_mt_id` owns that
         // 3-way switch.
-        if cadence.advances_transients() {
-            sherwood_tooltip.update(hovered_btn);
-        }
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();
             let is_sherwood = game.is_sherwood;
             let men_to_blazon = game.is_men_to_blazon_conversion();
             sherwood_hud::draw_tooltip(
                 renderer,
-                sherwood_tooltip,
+                hud_tooltips.sherwood,
                 |btn| {
                     sherwood_hud::sherwood_button_tooltip_mt_id(btn, is_sherwood, men_to_blazon)
                         .map(|mt_id| resources.menu_text.get(mt_id))
@@ -1656,16 +1687,6 @@ pub(super) fn render_frame(
                 mp.y as i32,
                 (cw as i32, ch as i32),
             );
-        }
-    } else {
-        // Outside Sherwood, the Start/Quit widgets are used as
-        // Mission-Finish / Mission-Abandon dialogs.  We don't draw
-        // those in this HUD pass — they're routed through the
-        // pause-menu flow — but we still clear the tooltip tracker
-        // so a hover accrued in Sherwood doesn't leak across a mode
-        // change.
-        if cadence.advances_transients() {
-            sherwood_tooltip.update(None);
         }
     }
 
@@ -1740,7 +1761,6 @@ pub(super) fn render_frame(
         let stature = engine.retrieve_stature(None);
         let stature_enable =
             StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
-        let stature_geom_hovered = stature_layout.hit_test_geometric(mp.x as i32, mp.y as i32);
         let stature_hovered = stature_layout.hit_test(mp.x as i32, mp.y as i32, stature_enable);
         let stature_hover = StatureHoverState {
             hovered: stature_hovered,
@@ -1758,14 +1778,11 @@ pub(super) fn render_frame(
         // Uses the geometric hit-test so the tooltip still appears
         // when the arrow is disabled (hover is tied to the widget
         // rect, not its enable state).
-        if cadence.advances_transients() {
-            stature_tooltip.update(stature_geom_hovered);
-        }
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts) {
             let (cw, ch) = cursor_renderer.current_frame_size();
             stature_hud::draw_tooltip(
                 renderer,
-                stature_tooltip,
+                hud_tooltips.stature,
                 |btn| {
                     let mt_id = stature_hud::stature_button_tooltip_mt_id(btn);
                     resources.menu_text.get(mt_id)
@@ -1778,11 +1795,8 @@ pub(super) fn render_frame(
             );
         }
 
-        if cadence.advances_transients() {
-            corner_tooltip.update(hovered_btn);
-        }
         if let (Some(resources), Some(fonts)) = (menu_resources, hud_fonts)
-            && let Some(btn) = corner_tooltip.ready_button()
+            && let Some(btn) = hud_tooltips.corner
         {
             let mt_id = corner_hud::corner_button_tooltip_mt_id(btn);
             let text = resources.menu_text.get(mt_id);
@@ -1825,19 +1839,7 @@ pub(super) fn render_frame(
         let sh = renderer.screen_height();
         let hovered_hit =
             hit_test_portrait_detailed(engine, local_seat, portrait_cache, sw, sh, mp.x, mp.y);
-        let hovered_action_btn = hovered_hit.and_then(|hit| match hit.area {
-            PortraitHitArea::ActionButton(btn) | PortraitHitArea::AlliedAction(btn) => {
-                Some((hit.slot, btn))
-            }
-            PortraitHitArea::Pin if !matches!(hit.target, PortraitTarget::Pc(_)) => {
-                Some((hit.slot, 3))
-            }
-            _ => None,
-        });
-        if cadence.advances_transients() {
-            pc_action_tooltip.update(hovered_action_btn);
-        }
-        if pc_action_tooltip.ready_button().is_some()
+        if hud_tooltips.pc_action.is_some()
             && let (Some(hit), Some(fonts)) = (hovered_hit, hud_fonts)
         {
             let text = match hit.area {
@@ -1948,9 +1950,6 @@ pub(super) fn render_frame(
 
         // AI log dump for the selected NPC.  Logged via
         // `tracing::trace!` rather than rendered on-screen as titbits.
-        if cadence.advances_transients() {
-            engine.display_ai_log_for_selected(host.frontend.selected_view_element);
-        }
 
         // Transient centered-banner message driven by
         // Message display / `message_delay`. Renders while the
@@ -1978,10 +1977,6 @@ pub(super) fn render_frame(
     // Pump host-side deferred console output into the overlay's history
     // so those lines surface in the scrollback even though they
     // originate outside the dispatcher.
-    if cadence.advances_transients() {
-        console_overlay.drain_pending_output(&mut host.frontend.pending_console_output);
-        console_overlay.tick_animation();
-    }
     if console_overlay.is_visible() {
         let console_font = menu_resources.and_then(|r| r.label_font_any());
         console_overlay.render(renderer, console_font);
@@ -2094,17 +2089,85 @@ mod tests {
     use super::*;
     use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
-    #[test]
-    fn display_refresh_cadence_never_advances_render_transients() {
-        assert!(RenderCadence::FixedTick.advances_transients());
-        assert!(!RenderCadence::DisplayRefresh.advances_transients());
+    type TooltipTrackers = (
+        CornerTooltipTracker,
+        crate::ui_panel::RequirementsTooltipTracker,
+        crate::ui_panel::BlazonTooltipTracker,
+        StatureTooltipTracker,
+        SherwoodTooltipTracker,
+        crate::ui_panel::PcActionTooltipTracker,
+    );
 
-        let encoded = serde_json::to_string(&RenderCadence::DisplayRefresh)
-            .expect("serialize render cadence");
-        assert_eq!(
-            serde_json::from_str::<RenderCadence>(&encoded).expect("deserialize render cadence"),
-            RenderCadence::DisplayRefresh
+    fn advance_tooltips(update: HudTooltipUpdate, trackers: &mut TooltipTrackers) {
+        update.advance(
+            &mut trackers.0,
+            &mut trackers.1,
+            &mut trackers.2,
+            &mut trackers.3,
+            &mut trackers.4,
+            &mut trackers.5,
         );
+    }
+
+    fn tooltip_snapshot(trackers: &TooltipTrackers) -> HudTooltipPresentation {
+        HudTooltipPresentation::prepare(
+            &trackers.0,
+            &trackers.1,
+            &trackers.2,
+            &trackers.3,
+            &trackers.4,
+            &trackers.5,
+        )
+    }
+
+    #[test]
+    fn tooltip_snapshot_reads_never_advance_the_fixed_tick_clock() {
+        let mut trackers = TooltipTrackers::default();
+        let update = HudTooltipUpdate {
+            pc_action: Some((0, 1)),
+            corner: Some(corner_hud::CornerButton::Clock),
+            ..Default::default()
+        };
+        // Initial thumbnails may read a snapshot without a live update.
+        assert_eq!(tooltip_snapshot(&trackers).pc_action, None);
+        for tick in 1..=crate::ui_panel::PC_ACTION_TOOLTIP_DELAY_TICKS {
+            advance_tooltips(update, &mut trackers);
+            let expected = tooltip_snapshot(&trackers);
+            for _ in 0..100 {
+                assert_eq!(tooltip_snapshot(&trackers), expected);
+            }
+            assert_eq!(
+                expected.pc_action,
+                (tick == crate::ui_panel::PC_ACTION_TOOLTIP_DELAY_TICKS).then_some((0, 1)),
+            );
+        }
+    }
+
+    #[test]
+    fn captured_tooltip_snapshots_leave_next_tick_equal_to_uncaptured_control() {
+        let mut control = TooltipTrackers::default();
+        let mut captured = control.clone();
+        for tick in 0..160 {
+            let update = HudTooltipUpdate {
+                pc_action: Some((0, u8::from(tick >= 90))),
+                corner: Some(corner_hud::CornerButton::Clock),
+                blazon: Some(Some(0)),
+                requirements: Some(Some(1)),
+                ..Default::default()
+            };
+            advance_tooltips(update, &mut control);
+            advance_tooltips(update, &mut captured);
+            let snapshot = tooltip_snapshot(&captured);
+            let encoded = serde_json::to_string(&snapshot).unwrap();
+            for _ in 0..4 {
+                assert_eq!(
+                    serde_json::from_str::<HudTooltipPresentation>(&encoded).unwrap(),
+                    snapshot
+                );
+                assert_eq!(tooltip_snapshot(&captured), snapshot);
+            }
+            assert_eq!(tooltip_snapshot(&captured), tooltip_snapshot(&control));
+        }
     }
 
     #[test]
