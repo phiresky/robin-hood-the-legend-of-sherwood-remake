@@ -11,6 +11,10 @@ This corrects a pre-existing direct-versus-campaign restart inconsistency;
 the ownership refactor exposed it rather than introducing it. A policy matrix
 covers host/client, restored/failed checkpoint, replay/live, and headless/windowed
 arguments without changing failed or replay admission.
+Both headless and graphical loops call the same checkpoint-restoration adapter;
+the headless loop uses a local argument clone and preserves its transport only
+when returning `LevelRestart`. An adapter test exercises missing, non-preselected,
+and valid preselected campaign checkpoints.
 
 Each owner generates a distinct ephemeral native client key. Its replacement
 mission clients reuse that key; durable ranked attestation still loads the

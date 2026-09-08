@@ -1086,7 +1086,12 @@ impl BuiltHeadlessMission {
         self.mission.run(args).await
     }
 
-    pub(super) fn finish(self, outcome: HeadlessMissionOutcome) -> MissionOutcome {
+    pub(super) fn finish(mut self, outcome: HeadlessMissionOutcome) -> MissionOutcome {
+        if outcome.code == GameCode::LevelRestart {
+            self.mission
+                .runtime
+                .preserve_multiplayer_session_for_next_mission();
+        }
         let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
         MissionOutcome::from_engine(campaign, rng_seed, sim_config, Ok(outcome.code))
     }

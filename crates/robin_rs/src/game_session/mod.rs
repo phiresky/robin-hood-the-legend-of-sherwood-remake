@@ -767,6 +767,10 @@ pub(crate) async fn run_mission_headless(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
+    // Direct headless restart must carry launch policy without mutating the
+    // caller's original arguments.
+    let mut session_args = args.clone();
+    let args = &mut session_args;
     if let Some(error) = unprepared_replay_launch_error(args) {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
@@ -830,10 +834,7 @@ pub(crate) async fn run_mission_headless(
             sim_config =
                 simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
-            let restored_checkpoint =
-                campaign.restore_snapshot() && campaign.pre_mission_was_preselected;
-            carry_direct_restart_multiplayer_continuation(&mut args, restored_checkpoint);
-            if !restored_checkpoint {
+            if !restore_direct_restart_boundary(&mut campaign, args) {
                 return MissionOutcome::new(
                     campaign,
                     rng_seed,
@@ -1546,7 +1547,7 @@ pub(crate) async fn run_mission(
             sim_config =
                 simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
-            if !campaign.restore_snapshot() || !campaign.pre_mission_was_preselected {
+            if !restore_direct_restart_boundary(&mut campaign, &mut args) {
                 return MissionOutcome::new(
                     campaign,
                     rng_seed,
@@ -1567,6 +1568,15 @@ pub(crate) async fn run_mission(
 
 /// Match campaign-loop handoff policy only after a direct, non-replay host
 /// restart has restored its checkpoint. Failed admission never changes policy.
+fn restore_direct_restart_boundary(
+    campaign: &mut Campaign,
+    args: &mut crate::main_entry::CliArgs,
+) -> bool {
+    let restored = campaign.restore_snapshot() && campaign.pre_mission_was_preselected;
+    carry_direct_restart_multiplayer_continuation(args, restored);
+    restored
+}
+
 fn carry_direct_restart_multiplayer_continuation(
     args: &mut crate::main_entry::CliArgs,
     restored_checkpoint: bool,
@@ -1707,6 +1717,32 @@ fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
 
 #[cfg(test)]
 mod required_state_tests {
+    #[test]
+    fn direct_restart_adapter_restores_checkpoint_before_admitting_continuation() {
+        let mut args = crate::main_entry::CliArgs::default();
+        args.server = true;
+        let mut campaign = Campaign::default();
+        assert!(!super::restore_direct_restart_boundary(
+            &mut campaign,
+            &mut args
+        ));
+        assert!(!args.mp_continue_session);
+        campaign.snapshot_with_simulation(7, robin_engine::engine::SimConfig::default());
+        assert!(!super::restore_direct_restart_boundary(
+            &mut campaign,
+            &mut args
+        ));
+        assert!(!args.mp_continue_session);
+        campaign
+            .snapshot_preselected_with_simulation(11, robin_engine::engine::SimConfig::default());
+        assert!(super::restore_direct_restart_boundary(
+            &mut campaign,
+            &mut args
+        ));
+        assert!(args.mp_continue_session);
+        assert_eq!(campaign.restart_simulation_checkpoint().0, 11);
+    }
+
     #[test]
     fn direct_restart_continuation_matches_campaign_only_for_restored_live_hosts() {
         for server in [false, true] {
