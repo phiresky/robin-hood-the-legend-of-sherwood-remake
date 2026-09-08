@@ -183,13 +183,16 @@ class LifecycleGateTests(unittest.TestCase):
         artifact.write_bytes(b"fixture wasm")
         event = {"reason": "compiler-artifact", "target": {"name": "robin_rs"},
                  "profile": {"test": True}, "executable": str(artifact)}
-        for count in (0, 5):
+        cases = ["web_audio_backend::ownership", "multiplayer::client_protocol::tests::admission",
+                 *sorted(gate.BROWSER_IDENTITY_CASES)]
+        for count in (0, len(cases)):
             def fake_run(argv, **kwargs):
                 if "log" in kwargs:
                     options = json.loads(Path(kwargs["env"]["WASM_BINDGEN_TEST_WEBDRIVER_JSON"]).read_text())
                     args = options["goog:chromeOptions"]["args"]
                     self.assertTrue(any(x.startswith("--user-data-dir=") for x in args))
-                    kwargs["log"].write_text(f"test web_audio_backend::ownership ... ok\ntest result: ok. {count} passed; 0 failed")
+                    kwargs["log"].write_text("\n".join(f"test {name} ... ok" for name in cases)
+                                             + f"\ntest result: ok. {count} passed; 0 failed")
                 else:
                     self.assertIn("audio", argv[argv.index("--features") + 1].split(","))
                     self.assertIn("check", argv)
@@ -208,6 +211,8 @@ class LifecycleGateTests(unittest.TestCase):
                     summary = {}
                     gate.browser(self.evidence, summary)
                     self.assertEqual(summary["browser_tests_passed"], count)
+                    self.assertEqual(set(summary["browser_passed_cases"]), set(gate.BROWSER_GROUPS))
+                    self.assertEqual(summary["browser_test_features"], "audio,multiplayer")
                 else:
                     with self.assertRaisesRegex(RuntimeError, "nonempty"):
                         gate.browser(self.evidence, {})
@@ -216,8 +221,31 @@ class LifecycleGateTests(unittest.TestCase):
                                     for call in run.call_args_list[:2]]
                 self.assertEqual(checked_features, ["audio", "audio,multiplayer"])
                 self.assertIn("--no-run", command)
+                self.assertEqual(command[command.index("--features") + 1], "audio,multiplayer")
                 self.assertIn("--locked", command)
                 self.assertNotIn("--target-dir", command)
+
+    def test_browser_requires_passed_cases_from_every_group_and_both_identity_cases(self):
+        cases = {"web_audio_backend::ownership", "multiplayer::client_protocol::tests::admission",
+                 *gate.BROWSER_IDENTITY_CASES}
+        for missing in [{name for name in cases if name.startswith(prefix)}
+                        for prefix in gate.BROWSER_GROUPS.values()] + [
+                            {name} for name in gate.BROWSER_IDENTITY_CASES]:
+            with self.subTest(missing=missing):
+                output = "\n".join(f"test {name} ... ok" for name in cases - missing)
+                output += "\n" + "\n".join(f"test {name} ... ignored" for name in missing)
+                output += f"\ntest result: ok. {len(cases - missing)} passed; 0 failed"
+                with self.assertRaisesRegex(RuntimeError, "did not execute"):
+                    gate.verify_browser_tests(output)
+
+    def test_browser_rejects_fabricated_count_and_non_result_mentions(self):
+        output = "\n".join(f"test {name} ... ok" for name in gate.BROWSER_IDENTITY_CASES)
+        output += "\nconsole: test web_audio_backend::ownership ... ok"
+        output += "\nconsole: test multiplayer::client_protocol::tests::admission ... ok"
+        with self.assertRaisesRegex(RuntimeError, "count does not match"):
+            gate.verify_browser_tests(output + "\ntest result: ok. 99 passed; 0 failed")
+        with self.assertRaisesRegex(RuntimeError, "did not execute audio"):
+            gate.verify_browser_tests(output + f"\ntest result: ok. {len(gate.BROWSER_IDENTITY_CASES)} passed; 0 failed")
 
     def test_timeout_reaps_owned_process(self):
         pid_file = self.root / "pid"

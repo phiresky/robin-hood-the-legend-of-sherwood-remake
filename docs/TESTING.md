@@ -36,7 +36,7 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `client-release` | `robin_rs`, `release` features | Client library tests and binary build with desktop/audio/Lua/multiplayer/updates; audio example check |
 | `tools` | `robin_rs`, `tools` and `projection-export` | Explicit converter/dump tests; minimal export example tests; check tool binaries and examples |
 | `wasm` | `robin_replay_admission_wasm`, `robin_rs`, `robin_identity_signer` | Target checks for `wasm32-unknown-unknown` using `wasm-dev` |
-| `browser-audio` | `robin_rs`, WASM `audio` | Target check, actual test-module link, real Chrome browser tests including ownership and residency |
+| `browser-audio` | `robin_rs`, WASM `audio,multiplayer` | Audio and multiplayer target checks, linked module, real Chrome audio ownership/residency, shared protocol and identity tests |
 | `native-lifecycle` | Provisioned prebuilt native `robin` and Leicester demo | Ordinary live/export plus save/load-back, each replayed headlessly and graphically to EOF |
 | `gpu` | `robin_rs` Vulkan execution | Explicit ignored GPU test; missing adapter is an error |
 | `gpu-gl` | `robin_rs` GL execution under Xvfb | Same required execution contract using the browser runtime's GL backend family |
