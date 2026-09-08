@@ -883,11 +883,19 @@ impl MinimapState {
 
     // ── Dragging ──
 
+    /// Whether the active gesture pans the camera through the map interior.
+    /// The decorative border remains available for repositioning the widget.
+    pub fn camera_drag_active(&self) -> bool {
+        self.drag_start
+            && usable_area(&self.map_box).contains_point(self.dragging_point)
+            && !self.dragged
+    }
+
     /// Begin or continue a drag operation.
     ///
     /// The first call (while `drag_start` is false) records the starting
-    /// position; subsequent calls move the minimap window once the
-    /// displacement exceeds 15 px.
+    /// position; interior drags pan the host camera, while border drags
+    /// move the minimap window once the displacement exceeds 15 px.
     pub(crate) fn manage_dragging(
         &mut self,
         mouse_pos: ScreenPoint,
@@ -905,7 +913,7 @@ impl MinimapState {
             self.dragging_point = mouse_pos;
             self.drag_start = true;
             self.restore = false;
-        } else {
+        } else if !self.camera_drag_active() {
             // Edge-scrolling suppression while dragging is handled by the
             // caller, which checks `drag_start` before issuing scroll
             // actions.
@@ -1484,6 +1492,34 @@ mod tests {
         // First element should be revealed now.
         assert!(mm.highlighted_elements[0].refresh);
         assert!(!mm.highlighted_elements[1].refresh);
+    }
+
+    #[test]
+    fn interior_drag_keeps_map_stationary_for_camera_navigation() {
+        let mut mm = MinimapState::new();
+        mm.map_displayed = true;
+        mm.map_size = MinimapSize::new(200.0, 200.0);
+        mm.map_box = ScreenBBox::from_coords(100.0, 100.0, 300.0, 300.0);
+        let original_box = mm.map_box;
+        mm.manage_dragging(ScreenPoint::new(180.0, 180.0), 1024.0, 768.0);
+        assert!(mm.camera_drag_active());
+        mm.manage_dragging(ScreenPoint::new(240.0, 240.0), 1024.0, 768.0);
+        assert_eq!(mm.map_box, original_box);
+        assert!(!mm.dragged);
+    }
+
+    #[test]
+    fn border_drag_still_repositions_minimap() {
+        let mut mm = MinimapState::new();
+        mm.map_displayed = true;
+        mm.map_size = MinimapSize::new(200.0, 200.0);
+        mm.map_box = ScreenBBox::from_coords(100.0, 100.0, 300.0, 300.0);
+        mm.manage_dragging(ScreenPoint::new(101.0, 101.0), 1024.0, 768.0);
+        assert!(!mm.camera_drag_active());
+        mm.manage_dragging(ScreenPoint::new(161.0, 161.0), 1024.0, 768.0);
+        assert_eq!(mm.map_box.top_left(), ScreenPoint::new(160.0, 160.0));
+        assert!(mm.dragged);
+        assert!(!mm.camera_drag_active());
     }
 
     #[test]

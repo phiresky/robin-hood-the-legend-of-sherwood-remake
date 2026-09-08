@@ -191,13 +191,16 @@ pub(super) fn handle_mouse_input(
 /// In particular this must not box-select, perform a sword gesture, center the
 /// minimap, or dispatch a world click when a second finger takes over.
 fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
-    if host.frontend.engine_display.minimap().drag_start() {
+    if host.frontend.pointer_capture.minimap_drag_active()
+        || host.frontend.engine_display.minimap().drag_start()
+    {
         dispatch_local_command(
             &host.transport,
             frame_cmds,
             &PlayerCommand::MinimapMouseUp { on_minimap: false },
         );
     }
+    host.frontend.pointer_capture.end_minimap_drag();
     host.frontend.input.cancel_left_pointer();
     host.frontend.mouse_way.clear();
 }
@@ -235,6 +238,24 @@ fn on_left_mouse_down(
             .is_over_widget(click_pt);
 
         if on_minimap {
+            let center = host.frontend.engine_display.resolve_minimap_center(
+                click_pt,
+                true,
+                host.frontend.viewport.level_size,
+            );
+            // Commands are queued until the simulation tick. Capture locally
+            // so a move in this same event batch cannot hit the world.
+            host.frontend
+                .pointer_capture
+                .begin_minimap_drag(center.is_some());
+            if let Some(point) = center {
+                host.frontend.viewport.center_on_point(point);
+                dispatch_local_command(
+                    &host.transport,
+                    frame_cmds,
+                    &PlayerCommand::CenterCameraOnPoint { point },
+                );
+            }
             // Minimap click — start drag if map is deployed.
             // In the event-driven model, MouseDown on the
             // minimap is inherently "entered nicely".
@@ -280,7 +301,7 @@ fn on_left_mouse_down(
                     }
                 }
                 Action::NoAction
-                    if !host.frontend.input.is_alt
+                    if !engine.is_alt_effective(&host.frontend.input)
                         && !engine.view_locked()
                         && !is_swordfighting =>
                 {
@@ -335,7 +356,7 @@ fn on_right_mouse_down(
         let guard_ok = !cancelling_planned_action
             && !crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
             && engine.selected_action_for_seat(local_seat) == engine_profiles::Action::NoAction
-            && !host.frontend.input.is_alt
+            && !engine.is_alt_effective(&host.frontend.input)
             && !engine.view_locked()
             && host.frontend.input.has_focus;
         if guard_ok
@@ -372,7 +393,7 @@ fn on_mouse_move(
         // `left_mouse_down`) so a portrait re-arm on a
         // double-click stops the append path.
         if host.frontend.input.is_dragging()
-            && !host.frontend.input.is_alt
+            && !engine.is_alt_effective(&host.frontend.input)
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
             && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
         {
@@ -390,12 +411,24 @@ fn on_mouse_move(
         };
         dispatch_local_command(&host.transport, frame_cmds, &cmd);
 
+        if host.frontend.input.left_mouse_down()
+            && host.frontend.pointer_capture.minimap_camera_drag_active()
+            && let Some(point) = host.frontend.engine_display.resolve_minimap_center(
+                mouse_pt,
+                true,
+                host.frontend.viewport.level_size,
+            )
+        {
+            host.frontend.viewport.center_on_point(point);
+        }
+
         // Multi-selection box drag (only when not minimap-dragging).
         // Skip the entire drag body while
         // `ignore_next_drag` is latched — the drag never
         // started (guarded at MouseDown), so nothing to
         // update either way; keep the guard for safety.
         if host.frontend.input.left_mouse_down()
+            && !host.frontend.pointer_capture.minimap_drag_active()
             && !host.frontend.engine_display.minimap().drag_start()
             && host.frontend.input.multi_selection_active()
             && !host.frontend.input.ignore_next_drag()
@@ -423,6 +456,7 @@ fn on_mouse_move(
         // cycle.
         if !planning_held
             && host.frontend.input.left_mouse_down()
+            && !host.frontend.pointer_capture.minimap_drag_active()
             && !host.frontend.engine_display.minimap().drag_start()
             && !host.frontend.input.ignore_next_drag()
             && let Some(map_pt) = host.frontend.viewport.screen_to_map(mouse_pt)
@@ -477,7 +511,10 @@ fn on_left_mouse_up(
             .engine_display
             .minimap()
             .is_over_widget(click_pt);
-        let minimap_handled = on_minimap || host.frontend.engine_display.minimap().drag_start();
+        let minimap_handled = on_minimap
+            || host.frontend.pointer_capture.minimap_drag_active()
+            || host.frontend.engine_display.minimap().drag_start();
+        host.frontend.pointer_capture.end_minimap_drag();
         if minimap_handled {
             let center_on = host.frontend.engine_display.resolve_minimap_center(
                 click_pt,
@@ -487,6 +524,7 @@ fn on_left_mouse_up(
             let cmd = PlayerCommand::MinimapMouseUp { on_minimap };
             dispatch_local_command(&host.transport, frame_cmds, &cmd);
             if let Some(point) = center_on {
+                host.frontend.viewport.center_on_point(point);
                 dispatch_local_command(
                     &host.transport,
                     frame_cmds,
@@ -1207,9 +1245,7 @@ fn on_right_mouse_up(
                 "Box-deselect: {} PCs remain selected",
                 engine.selected_hero_ids().len()
             );
-        } else if engine.is_alt_effective(&host.frontend.input)
-            && host.frontend.selected_view_element.is_some()
-        {
+        } else if engine.is_alt_effective(&host.frontend.input) {
             // Alt+right-click while the view cone overlay
             // is active swallows the click:
             //   - permanent alt (lock on): unlocks alt

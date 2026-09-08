@@ -300,29 +300,6 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
             }
         }
     });
-    if !input_suppressed {
-        let zoom_enable =
-            ZoomButtonEnable::from_engine(&manager.engine, &host.frontend.engine_display);
-        let zoom_hit = events.iter().find_map(|event| {
-            let GameEvent::MouseDown(mx, my, 1, _) = *event else {
-                return None;
-            };
-            hud.zoom_layout
-                .hit_test(mx, my, zoom_enable)
-                .map(|button| (button, mx, my))
-        });
-        if let Some((button, mx, my)) = zoom_hit {
-            let factor = match button {
-                ZoomButton::ZoomUp => 2.0,
-                ZoomButton::ZoomDown => 0.5,
-            };
-            host.frontend.viewport.zoom_by(
-                factor,
-                Some(engine_coordinates::ScreenPoint::new(mx as f32, my as f32)),
-            );
-        }
-    }
-
     let planning_active = {
         let keys = &input.threaded.keyboard_state().keys;
         input_modifiers(
@@ -335,14 +312,49 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         )
         .plan
     };
-    if !game.is_sherwood && !input_suppressed {
-        let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
-        for event in &events {
-            match *event {
-                GameEvent::MouseDown(mx, my, 1, _) => {
-                    let Some(button) = hud.corner_layout.hit_test(mx, my, corner_enable) else {
-                        continue;
-                    };
+    let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
+    let zoom_enable = ZoomButtonEnable::from_engine(&manager.engine, &host.frontend.engine_display);
+    let stature = manager.engine.retrieve_stature(None);
+    game.stature_focus.maybe_clear(stature);
+    let stature_enable = StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
+    // Widgets own the complete press/release gesture. Keeping their raw
+    // events in this batch also dispatched world actions behind the HUD.
+    events.retain(|event| {
+        if host.frontend.pointer_capture.route_hud_event(event, false) {
+            return false;
+        }
+        if input_suppressed {
+            return true;
+        }
+        let GameEvent::MouseDown(mx, my, button, _) = *event else {
+            return true;
+        };
+        let zoom = hud.zoom_layout.hit_test_geometric(mx, my);
+        let corner = (!game.is_sherwood)
+            .then(|| hud.corner_layout.hit_test_geometric(mx, my))
+            .flatten();
+        let stature_hit = (!game.is_sherwood)
+            .then(|| hud.stature_layout.hit_test_geometric(mx, my))
+            .flatten();
+        if zoom.is_none() && corner.is_none() && stature_hit.is_none() {
+            return true;
+        }
+        if button != 1 && button != 3 {
+            return true;
+        }
+        host.frontend.pointer_capture.route_hud_event(event, true);
+        if button == 1 {
+            if let Some(button) = hud.zoom_layout.hit_test(mx, my, zoom_enable) {
+                let factor = match button {
+                    ZoomButton::ZoomUp => 2.0,
+                    ZoomButton::ZoomDown => 0.5,
+                };
+                host.frontend.viewport.zoom_by(
+                    factor,
+                    Some(engine_coordinates::ScreenPoint::new(mx as f32, my as f32)),
+                );
+            } else if corner.is_some() {
+                if let Some(button) = hud.corner_layout.hit_test(mx, my, corner_enable) {
                     dispatch_corner_button_left_click(
                         button,
                         &manager.engine,
@@ -351,22 +363,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                         &mut frame.commands,
                     );
                 }
-                GameEvent::MouseDown(mx, my, 3, _) => {
-                    let Some(button) = hud.corner_layout.hit_test_geometric(mx, my) else {
-                        continue;
-                    };
-                    dispatch_corner_button_right_click(button, host, &mut frame.commands);
-                }
-                _ => {}
-            }
-        }
-
-        let stature = manager.engine.retrieve_stature(None);
-        game.stature_focus.maybe_clear(stature);
-        let stature_enable =
-            StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);
-        for event in &events {
-            if let GameEvent::MouseDown(mx, my, 1, _) = *event
+            } else if stature_hit.is_some()
                 && let Some(button) = hud.stature_layout.hit_test(mx, my, stature_enable)
             {
                 let command = if planning_active {
@@ -392,8 +389,11 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
                     }
                 }
             }
+        } else if let Some(button) = corner {
+            dispatch_corner_button_right_click(button, host, &mut frame.commands);
         }
-    }
+        false
+    });
 
     // These physical-key edges must be sampled before keyboard translation
     // advances the translator's previous-key buffer.
