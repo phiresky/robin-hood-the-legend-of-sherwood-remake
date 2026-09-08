@@ -8624,6 +8624,7 @@ mod tests {
             .path()
             .join(format!(".backup-v4-1-{}.partial", "a".repeat(32)));
         std::fs::create_dir(&partial).unwrap();
+        set_private_directory(&partial).await.unwrap();
         let connection = database.pool().acquire().await.unwrap();
         let cleanup = cleanup_failed_partial_backup(
             &database,
