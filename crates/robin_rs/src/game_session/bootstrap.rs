@@ -90,6 +90,7 @@ pub(super) struct MissionBootstrap {
     pub(super) loaded: LoadedMissionCore,
     lifecycle: MissionBootstrapLifecycle,
     restart_save_started: bool,
+    restart_save_identity: Option<crate::save_file::ReplaySaveIdentity>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +181,7 @@ impl MissionBootstrap {
             loaded,
             lifecycle: MissionBootstrapLifecycle::new(),
             restart_save_started: false,
+            restart_save_identity: None,
         };
         bootstrap.install_mission_assets(args);
         bootstrap
@@ -262,7 +264,10 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                Ok(()) => true,
+                Ok(()) => {
+                    self.restart_save_identity = callbacks.save_manager.restart_session_identity();
+                    true
+                }
                 Err(error) => {
                     tracing::error!("Restart save could not start: {error:#}");
                     false
@@ -479,6 +484,7 @@ impl MissionBootstrap {
             &self.host,
             &self.game,
             self.restart_save_started,
+            self.restart_save_identity,
         );
         let manager = robin_engine::engine_manager::EngineManager::new(self.loaded.engine);
         let dynamic_visuals = self
@@ -1265,6 +1271,10 @@ impl InteractiveMissionBuilder {
         sim_config: engine_api::SimConfig,
         multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
     ) -> InteractiveBuildOutcome {
+        // A checkpoint belongs to one running mission, including when entry
+        // into the next mission fails or takes the lost-Sherwood shortcut.
+        callbacks.save_manager.clear_session_restart();
+
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
             crate::http_server::peek_pending_replay_mission_id().is_some(),

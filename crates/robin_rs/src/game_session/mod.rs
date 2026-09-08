@@ -932,7 +932,7 @@ pub(crate) async fn run_session(
         callbacks.queue_operation(SaveLoadRequest::Load {
             slot: Some(slot),
             mission_id,
-            save: Some(save),
+            save: Some(save.into_payload()),
         });
     }
     let mut replay_restart: Option<crate::http_server::PendingReplay> = None;
@@ -1463,7 +1463,7 @@ fn prepare_quickload_cross_mission(
         callbacks.queue_operation(SaveLoadRequest::Load {
             slot: Some(idx),
             mission_id: current,
-            save: Some(save),
+            save: Some(save.into_payload()),
         });
         return None;
     }
@@ -1474,7 +1474,13 @@ fn prepare_quickload_cross_mission(
     callbacks.clear_operation();
     Some(ui_task_state::ActiveUiTask::QuickLoad(
         ui_task_state::QuickLoadTaskState::new(
-            event_pump, renderer, resources, msg, idx, current, save,
+            event_pump,
+            renderer,
+            resources,
+            msg,
+            idx,
+            current,
+            save.into_payload(),
         ),
     ))
 }

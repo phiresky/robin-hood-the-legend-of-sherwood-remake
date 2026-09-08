@@ -670,13 +670,13 @@ pub(crate) fn preflight_or_use_decoded_load(
     save_manager: &crate::savegame::SaveGameManager,
     slot: Option<usize>,
     save: Option<crate::save_file::GameSaveFile>,
-) -> anyhow::Result<Option<(usize, crate::save_file::GameSaveFile)>> {
+) -> anyhow::Result<Option<(usize, crate::save_file::PreparedGameSave)>> {
     match save {
         Some(save) => {
             let slot = slot.ok_or_else(|| {
                 anyhow::anyhow!("preflighted load is missing its exact decoded slot")
             })?;
-            Ok(Some((slot, save)))
+            Ok(Some((slot, save.into())))
         }
         None => save_manager.preflight_load(slot),
     }
@@ -763,7 +763,7 @@ fn replay_save_written_event(
 }
 
 fn replay_loaded_identity(
-    save: &crate::save_file::GameSaveFile,
+    save: &crate::save_file::PreparedGameSave,
 ) -> Option<crate::save_file::ReplaySaveIdentity> {
     match save.replay_identity() {
         Ok(identity) => Some(identity),
@@ -970,7 +970,8 @@ pub(crate) fn perform_pending_save_load(
             match resolved {
                 Some((idx, save)) => {
                     if host.transport.net.is_some() && !applying_multiplayer_transition {
-                        match begin_multiplayer_snapshot_transition(host, idx, save) {
+                        match begin_multiplayer_snapshot_transition(host, idx, save.into_payload())
+                        {
                             Ok(true) => return outcome,
                             Ok(false) => unreachable!("multiplayer transition guard checked net"),
                             Err(error) => {
@@ -1012,7 +1013,7 @@ pub(crate) fn perform_pending_save_load(
                             slot: idx,
                             target_mission_id,
                             origin,
-                            save,
+                            save: save.into_payload(),
                         });
                         return outcome;
                     }
@@ -1095,14 +1096,19 @@ pub(crate) fn perform_pending_save_load(
             ) {
                 tracing::error!("Restart save failed: {err:#}");
             } else {
-                event = replay_save_written_event(engine, host, game);
+                event = match callbacks.save_manager.restart_session_identity() {
+                    Some(identity) => Some(SaveLoadEvent::SaveWritten { identity }),
+                    None => replay_save_written_event(engine, host, game),
+                };
             }
         }
         SaveLoadRequest::LoadRestart => {
             if host.transport.net.is_some() {
                 match callbacks.save_manager.preflight_restart_save() {
                     Ok(Some((idx, save))) => {
-                        if let Err(error) = begin_multiplayer_snapshot_transition(host, idx, save) {
+                        if let Err(error) =
+                            begin_multiplayer_snapshot_transition(host, idx, save.into_payload())
+                        {
                             tracing::error!("Multiplayer restart rejected: {error}");
                         }
                     }
@@ -1261,8 +1267,11 @@ pub(crate) fn perform_pending_save_load(
                         }
                         Ok(Some((decoded_idx, save))) => {
                             if host.transport.net.is_some() {
-                                match begin_multiplayer_snapshot_transition(host, decoded_idx, save)
-                                {
+                                match begin_multiplayer_snapshot_transition(
+                                    host,
+                                    decoded_idx,
+                                    save.into_payload(),
+                                ) {
                                     Ok(true) => return outcome,
                                     Ok(false) => {
                                         unreachable!("multiplayer transition guard checked net")
@@ -1305,7 +1314,7 @@ pub(crate) fn perform_pending_save_load(
                                     slot: decoded_idx,
                                     target_mission_id,
                                     origin,
-                                    save,
+                                    save: save.into_payload(),
                                 });
                                 return outcome;
                             }

@@ -1557,6 +1557,7 @@ impl TimelineRuntime {
         host: &Host,
         game: &Game,
         restart_save_started: bool,
+        session_identity: Option<crate::save_file::ReplaySaveIdentity>,
     ) {
         if !restart_save_started {
             return;
@@ -1573,8 +1574,10 @@ impl TimelineRuntime {
             "bootstrap save must be registered before the first recorded frame"
         );
         let hash = robin_engine::replay::state_hash(engine);
-        let identity = GameRuntimeSnapshot::identity_of_live(engine, host, game)
-            .unwrap_or_else(|error| panic!("bootstrap save identity failed: {error:#}"));
+        let identity = session_identity.unwrap_or_else(|| {
+            GameRuntimeSnapshot::identity_of_live(engine, host, game)
+                .unwrap_or_else(|error| panic!("bootstrap save identity failed: {error:#}"))
+        });
         recorder.write_save_marker(
             0,
             robin_engine::replay::ReplaySaveMarker {
@@ -2182,7 +2185,7 @@ mod tests {
             .unwrap();
             let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
             timeline.replay_recorder = Some(recorder);
-            timeline.register_bootstrap_save(&engine, &host, &game, restart_save_started);
+            timeline.register_bootstrap_save(&engine, &host, &game, restart_save_started, None);
             if restart_save_started {
                 let identity =
                     GameRuntimeSnapshot::identity_of_live(&engine, &host, &game).unwrap();
@@ -2213,6 +2216,83 @@ mod tests {
                 }),
             );
         }
+    }
+
+    #[test]
+    fn session_restart_records_load_back_to_its_bootstrap_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session-restart.rhrec.jsonl");
+        let mut assets = LevelAssets::new();
+        let mut engine =
+            Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets).unwrap();
+        let mut host = Host::scratch(1024.0, 768.0);
+        let mut game = Game::default();
+        let header = crate::save_file::SaveHeader::new(
+            1,
+            test_mission_assets("restart"),
+            "Restart".into(),
+            crate::save_file::SaveProvenance::new("Restart".into(), 0, "Player".into()).unwrap(),
+        )
+        .unwrap();
+        let checkpoint = crate::save_file::PreparedGameSave::capture_session_restart(
+            &engine, &host, &game, header,
+        )
+        .unwrap();
+        let identity = checkpoint.replay_identity().unwrap();
+        let marker_hash = robin_engine::replay::state_hash(&engine);
+        let recorder = ReplayRecorder::new(
+            path.to_str().unwrap(),
+            "restart".into(),
+            test_mission_assets("restart"),
+            0,
+            Default::default(),
+            engine.campaign(),
+        )
+        .unwrap();
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        timeline.replay_recorder = Some(recorder);
+        timeline.register_bootstrap_save(&engine, &host, &game, true, Some(identity));
+        for _ in 0..3 {
+            timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+            let mut frame = MissionFrame::new(0);
+            frame.bind_timeline(timeline.current_frame());
+            timeline.begin_recording(&mut frame, true);
+            frame.commit_timeline_after(timeline.advance_frame());
+            timeline.finish_recording(&mut frame);
+        }
+        engine.test_set_frame_counter(123);
+        checkpoint
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        let mut frame = MissionFrame::new(0);
+        frame.bind_timeline(timeline.current_frame());
+        timeline.note_save_load_event(
+            crate::main_entry::SaveLoadEvent::LoadApplied {
+                identity,
+                is_continue: false,
+            },
+            &mut frame,
+            &engine,
+            &assets,
+        );
+        assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
+        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline.begin_recording(&mut frame, true);
+        frame.commit_timeline_after(timeline.advance_frame());
+        timeline.finish_recording(&mut frame);
+        drop(timeline);
+        let replay = robin_engine::replay::ReplayData::from_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            replay.save_marker_for_frame(0).unwrap().state_hash,
+            marker_hash
+        );
+        assert_eq!(
+            replay.load_back_for_frame(3),
+            Some(robin_engine::replay::ReplayLoadBack {
+                to_frame: 0,
+                is_continue: false
+            })
+        );
     }
 
     #[test]
