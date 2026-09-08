@@ -1613,8 +1613,8 @@ pub fn draw_tooltip(
     // Tooltip padding + anchor offset from the cursor hotspot
     // (virtual units).  Offset down-right so the box doesn't obscure
     // the target widget.
-    const PAD_X: i32 = 4;
-    const PAD_Y: i32 = 2;
+    const PAD_X: i32 = 8;
+    const PAD_Y: i32 = 5;
     const CURSOR_OFFSET_X: i32 = 12;
     const CURSOR_OFFSET_Y: i32 = 16;
 
@@ -1654,6 +1654,34 @@ pub fn draw_tooltip(
         box_y = (mouse_virt_y - CURSOR_OFFSET_Y - box_h).max(0);
     }
 
+    // Popup fonts use dark ink intended for parchment, not the dark forest.
+    // An opaque backing keeps that text readable over every menu background.
+    let (sx, sy) = transform.to_screen(box_x, box_y);
+    renderer.fill_screen(
+        Some(&BBox::from_coords(
+            (sx + 2) as f32,
+            (sy + 2) as f32,
+            (sx + box_w + 2) as f32,
+            (sy + box_h + 2) as f32,
+        )),
+        Renderer::create_color_16(25, 20, 12),
+    );
+    renderer.fill_screen(
+        Some(&BBox::from_coords(
+            sx as f32,
+            sy as f32,
+            (sx + box_w) as f32,
+            (sy + box_h) as f32,
+        )),
+        Renderer::create_color_16(245, 228, 180),
+    );
+    renderer.draw_rect_outline_screen(
+        sx,
+        sy,
+        sx + box_w,
+        sy + box_h,
+        Renderer::create_color_16(100, 70, 30),
+    );
     for (idx, line) in lines.iter().enumerate() {
         let line_x = box_x + PAD_X;
         let line_y = box_y + PAD_Y + idx as i32 * line_h;
