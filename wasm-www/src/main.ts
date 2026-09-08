@@ -21,7 +21,7 @@ import {
     wasInvitationRedeemed,
 } from './multiplayer_identity.js';
 import {
-    applyReplayFromQuery,
+    applyPreparedReplay, prepareReplayWithRuntime, replayFromQuery, type PreparedReplay,
     installShareButton,
     validateReplayInWorker,
     type RobinRpc,
@@ -289,6 +289,8 @@ window.addEventListener('pagehide', event => {
 });
 
 async function main(): Promise<void> {
+    const replayQuery = replayFromQuery(pageParams);
+    let preparedReplay: PreparedReplay | null = null;
     logOk(crossOriginIsolated
         ? `[cross-origin isolated: sprite decode may use ${navigator.hardwareConcurrency} threads]`
         : '[not cross-origin isolated: sprite decode stays single-threaded]');
@@ -297,7 +299,20 @@ async function main(): Promise<void> {
         prepareJoin: signal => prepareBrowserJoin(capturedBrowserJoinCode, signal),
         resolveBuild,
         loadManifest: async (base, ticket, signal) => parseMultiplayerBuildManifest(await fetchJson(`${base}/manifest.json`, signal), ticket),
-        loadRuntime: loadWasmModule,
+        loadRuntime: async (base, compressed, latest, signal) => {
+            const prepared = await prepareReplayWithRuntime(
+                replayQuery, base,
+                runtimeSignal => loadWasmModule(base, compressed, latest, runtimeSignal),
+                async (content, admissionSignal) => {
+                    performance.mark('robin-replay-admission-start');
+                    await validateReplayInWorker(content, `${base}/replay_admission.js`, `${base}/replay_admission_bg.wasm`, admissionSignal);
+                    admissionSignal.throwIfAborted();
+                    performance.mark('robin-replay-admission-accepted');
+                }, signal,
+            );
+            preparedReplay = prepared.replay;
+            return prepared.runtime;
+        },
         prepareContent: (ticket, manifest, signal) => prepareMultiplayerContent(ticket, manifest, requestFullContentFolder, signal),
         loadDefaultContent: async (latest, signal) => {
             const dataUrl = `${BINARIES_BASE}/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst`;
@@ -328,24 +343,15 @@ async function main(): Promise<void> {
             if (shareReplayButton !== null) {
                 installShareButton(shareReplayButton, rpc);
             }
-            const replayLoaded = await applyReplayFromQuery(rpc, {
-                validate: async (content): Promise<void> => {
-                    await validateReplayInWorker(
-                        content,
-                        `${buildBase}/replay_admission.js`,
-                        `${buildBase}/replay_admission_bg.wasm`,
-                        bootAbort.signal,
-                    );
-                },
-                markValidated: (content): void => {
-                    if (wasm.wasm_mark_compact_replay_validated === undefined) {
-                        throw new Error('selected wasm build cannot accept an isolated replay proof');
-                    }
-                    wasm.wasm_mark_compact_replay_validated(content);
-                },
-            });
+            const replayLoaded = await applyPreparedReplay(rpc, content => {
+                if (wasm.wasm_mark_compact_replay_validated === undefined) {
+                    throw new Error('selected wasm build cannot accept an isolated replay proof');
+                }
+                wasm.wasm_mark_compact_replay_validated(content);
+            }, preparedReplay, buildBase);
             if (replayLoaded) {
-                logOk('[replay queued from URL - start a mission to play it back]');
+                performance.mark('robin-replay-queue-accepted');
+                logOk('[replay queued from URL]');
                 if (replayTimeline !== null && !new URL(location.href).searchParams.has('notimeline')) {
                     installTimeline(replayTimeline, rpc);
                 }

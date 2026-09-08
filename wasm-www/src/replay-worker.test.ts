@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runReplayValidation, type ReplayValidationRequest, type ReplayValidationWorker } from './replay-worker.ts';
+import { runReplayValidation, validateReplayModule, type ReplayValidatorModule, type ReplayValidationRequest, type ReplayValidationWorker } from './replay-worker.ts';
 
 class WorkerFake extends EventTarget {
     sent: ReplayValidationRequest | undefined;
@@ -45,5 +45,40 @@ test('uncloneable replies and worker failures reject and clean up', async () => 
         worker.dispatchEvent(new Event(type));
         await rejection;
         assert.equal(worker.terminated, 1);
+    }
+});
+
+test('isolated validator fetch overlaps glue import and validates only after initialization', async () => {
+    let resolveImport!: (module: ReplayValidatorModule) => void;
+    const imported = new Promise<ReplayValidatorModule>(resolve => { resolveImport = resolve; });
+    let started!: () => void;
+    const fetched = new Promise<void>(resolve => { started = resolve; });
+    const response = new Response(new Uint8Array([0, 97, 115, 109]));
+    const calls: string[] = [];
+    const pending = validateReplayModule(request, {
+        importModule: async url => { assert.equal(url, request.jsUrl); return imported; },
+        fetchModule: async url => { assert.equal(url, request.wasmUrl); started(); return response; },
+    });
+    await fetched;
+    assert.equal(calls.length, 0);
+    resolveImport({
+        default: async init => { assert.equal(init.module_or_path, response); calls.push('initialized'); },
+        validate_compact_replay: content => { assert.equal(content, request.compact); calls.push('validated'); },
+    });
+    await pending;
+    assert.deepEqual(calls, ['initialized', 'validated']);
+});
+
+test('validator HTTP and module failures reject before untrusted replay decoding', async () => {
+    for (const failure of ['http', 'init', 'export']) {
+        let decoded = false;
+        await assert.rejects(validateReplayModule(request, {
+            importModule: async () => ({
+                default: async () => { if (failure === 'init') throw new Error('init failed'); },
+                ...(failure === 'export' ? {} : { validate_compact_replay: () => { decoded = true; } }),
+            }),
+            fetchModule: async () => new Response(null, { status: failure === 'http' ? 500 : 200 }),
+        }), /HTTP 500|init failed|no isolated replay validator/);
+        assert.equal(decoded, false);
     }
 });
