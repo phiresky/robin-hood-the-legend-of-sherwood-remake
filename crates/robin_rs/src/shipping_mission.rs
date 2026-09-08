@@ -223,6 +223,8 @@ where
     let install_epoch = robin_assets::late_sprites::begin_epoch();
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
     let _ = install_epoch;
+    // Only the browser/audio closure mutates its captured pause guard.
+    #[cfg_attr(not(all(target_arch = "wasm32", feature = "audio")), allow(unused_mut))]
     let mut downloads_finished = || {
         #[cfg(all(target_arch = "wasm32", feature = "audio"))]
         drop(audio_download_pause.take());
