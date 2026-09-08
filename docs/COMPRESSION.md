@@ -3157,3 +3157,49 @@ Raw logs, JSON timelines and packages are in `/tmp/robin-startup-detail/`.
 TODO: profile the remaining VQ critical path on workers. Also tune background
 warmup pacing separately: per-item yields are cheap before gameplay but
 become expensive while sharing a busy rendering event loop.
+
+
+### Parallel audit of startup phases above 100 ms (2026-09-08)
+
+Seven independent read-only investigations covered every >100 ms row above.
+These are opportunities, not measured speedups; their bounds overlap and must
+not be added together. The packages and game behavior were unchanged during
+this audit. Source references below are relative to the repository root.
+
+| Phase | Findings and next experiments |
+| --- | --- |
+| Pre-boot, 416 ms | The representative trace contains only 135 ms from module import to boot: 68 ms module/WASM load, 54 ms core preloads, 14 ms boot-data fetch. The preceding 281 ms lacked attribution. Start WASM fetch alongside JS import (`wasm-www/src/main.ts`); overlap independent default datadir fetch with runtime load (`boot-lifecycle.ts`). The harness serially preloads 20 assets while production already uses 12 workers: fixing that benchmark discrepancy is not a product speedup. |
+| Boot to streaming, 268 ms | Overlap worker-pool startup (~40 ms) with independent Rust/window initialization (~39 ms), joining before streaming chooses its pooled path (`bin/robin.rs`). Instrument the stable ~74 ms window-ready/loading-pak gap around event polling and surface resize; the missing pak lookup itself is in-memory. Instrument the ~35 ms plan-to-stream gap around `clear_mission`, which can lazily create an AudioContext. Avoid creating absent audio state solely to clear it if confirmed. |
+| Mission assembly, 679 ms | All 66 mission resources (14,952,131 bytes) finish delivery within 135 ms of streaming start, leaving 544 ms of overlapping queue/decompression/merge/dispatch/yield work. Batch per-part progress and browser-timer yields within a frame budget (`shipping_mission.rs`); prioritize dependency hubs instead of alphabetical request order. RobinTown's actual request begins ~82 ms after the first mission requests. Instrument shared Rayon queue delays before changing task concurrency. |
+| VQ tail, 1939 ms | Compile out disabled exclusion bookkeeping for WASM (`sprite_codec.rs`, runtime `ROBIN_EXCL_CAP` is zero for shipping). Allocate pair/auxiliary model maps only for modes used by a chunk. Try bounded dispatch with downstream dependency-path priority: current sorting only orders each newly ready batch before enqueueing all of it. Larger options are overlapping sprite-independent engine setup, or independently encoded restart groups for oversized chunks (format/compression tradeoff). |
+| Level/engine setup, 506 ms | A 174 ms pre-engine interval includes unintended synchronous JXL decoding: `extract_titbit_row_frame_counts` calls `get_pictures`; `get_picture_count` also decodes. Add a metadata-only nonempty-picture count with identical hole/zero-size semantics. Export ground-marker bounds and minimap hit masks to avoid other metadata queries decoding pixels. Motion/grid registration occupies at most 160 ms: row-bucket polygon edges or precompute cell membership while preserving exact boundary behavior and sector order. |
+| Frontend, 701 ms | Terrain starts only after VQ finishes; move it earlier to overlap the 327 ms residual join, checking worker contention. The 129 ms map phase contains only 23.5 ms background preparation/upload; the remaining 105.5 ms includes masks/depth/minimap and needs finer timers. Investigate batching mask textures and removing full-map clones/conversions. Renderer construction is 92 ms: build only the single used blit pipeline rather than four variants. Reusing a loading renderer can help when one exists, but this fixture has no loading pak and does not construct that renderer. |
+| Runtime/replay remainder, 196 ms | All five runs fail Restart save indexing (`mkdir: operation not supported`), yet still register its frame-0 marker. That computes an engine hash and a complete JSON save identity (`runtime.rs`, `save_file.rs`). Carry successful save creation/indexing status through bootstrap and register only on success. Current runtime timer is 180–186 ms; older named profiles attribute 94–96% of this path to save identity, suggesting ~170 ms potential, requiring a fresh paired measurement. Preserve successful native save markers. Separately migrate identities still needed for real saves to a typed canonical representation. |
+
+The 295 ms engine-construction timer includes sprite-variant/opacity publication
+before the constructor. Deterministic audio-duration tables take about 12 ms
+and use shipping metadata; they do not decode Opus. The VQ tail is an elapsed
+wait, not proven pure codec CPU time. Record ready/enqueue/worker-start/end/apply
+timestamps for VQ, RLE and part-decompression jobs to distinguish dependency
+stalls, occupied workers and main-thread application delay.
+
+The harness now saves NavigationTiming and its earliest inline-script timestamp.
+Two fresh runs with the same optimized background-audio package put script start
+at 341.2 and 338.5 ms. Fetch start to domain-lookup start consumes 323.0 and
+318.7 ms; DNS/connect take under 0.3 ms, and document response ends at 330.1 and
+327.7 ms. This locates most pre-script time before the document connection,
+not inside WASM or game code. It does not identify the browser-internal cause,
+and these new timings must not be substituted into the older representative
+run. Traces: `/tmp/robin-startup-opportunities/navigation-{0,1}.json`.
+
+TODO: first benchmark successful-save gating and metadata-only frame counts;
+then exclusion specialization and earlier terrain scheduling. Before a broader
+scheduler rewrite, capture the worker timeline. Validate startup through full
+bootstrap and first gameplay frame, using alternating optimized browser pairs;
+include a visible hardware-GPU canvas because the current SwiftShader fixture
+initially configures a 1x1 surface. Preserve corpus hashes, replay behavior,
+mission transitions and serial fallback. Do not retry the rejected bulk-merge
+or audio-yield experiments as established wins.
+
+Audit validation: both new browser runs reached bootstrap completion and saved
+NavigationTiming; `node --check` passed for the harness. No Rust code changed.

@@ -82,6 +82,7 @@ const page = `<!DOCTYPE html>
 <canvas id="canvas" width="1024" height="768"></canvas>
 <script>
 // Relay the console (tracing-wasm writes there) to the harness.
+const scriptStartedAt = performance.now();
 const relay = [];
 const collectTimings = ${JSON.stringify(Boolean(timingsFile))};
 const audioDecodes = [];
@@ -112,6 +113,8 @@ const post = (line) => {
             body: JSON.stringify({
                 reason: line.includes('Recording replay') ? 'recording' : 'audio complete',
                 capturedAt: performance.now(),
+                scriptStartedAt,
+                navigation: performance.getEntriesByType('navigation').map((entry) => entry.toJSON()),
                 audioDecodes,
                 resources: performance.getEntriesByType('resource').map((entry) => entry.toJSON()),
             }),
