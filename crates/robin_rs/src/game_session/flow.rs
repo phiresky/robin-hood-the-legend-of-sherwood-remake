@@ -481,7 +481,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
         let phase_start = super::frame_perf::start(profiling);
         let view = world.view();
-        let (target, remaining_wait_ms) =
+        let (target, presentation_deadline_ms) =
             plan_interactive_pacing(runtime, view.host, &view.manager.engine, &frame, args);
         let MissionPresentationPhase {
             host: mut presentation_host,
@@ -501,7 +501,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     engine.campaign(),
                 ),
         };
-        pace_interactive_frame(host, target, remaining_wait_ms, |host, now_ms| {
+        pace_interactive_frame(host, target, presentation_deadline_ms, |host, now_ms| {
             let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
                 return presentation.renderer.present_cached();
             };
@@ -893,20 +893,20 @@ fn plan_interactive_pacing(
         );
         net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms);
     }
-    // Hash publication and other pacing-tail work happened after the frame
-    // outcome was planned. Charge it against the same fixed-step deadline
-    // instead of blindly sleeping the stale original remainder.
-    let pacing_tail_ms = crate::window::process_uptime_ms().saturating_sub(frame_end_ms);
-    let remaining_wait_ms = remaining_sleep_ms.saturating_sub(pacing_tail_ms);
-    (target, remaining_wait_ms)
+    // Preserve the absolute deadline across the capability handoff. Hash
+    // publication and preparing the presentation borrow both consume this
+    // budget; neither may turn it into a fresh relative sleep.
+    (target, frame_end_ms.saturating_add(remaining_sleep_ms))
 }
 
 async fn pace_interactive_frame(
     host: &mut crate::host::HostPresentation<'_>,
     target: u32,
-    remaining_wait_ms: u32,
+    presentation_deadline_ms: u32,
     mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u32) -> bool,
 ) {
+    let remaining_wait_ms =
+        presentation_deadline_ms.saturating_sub(crate::window::process_uptime_ms());
     if remaining_wait_ms > 0 {
         let refresh_presentation = host.frontend.native_refresh_presentation
             && target >= engine_api::FRAME_TIME_MS
@@ -1040,6 +1040,10 @@ mod tests {
 
         assert!(pacing.contains("present_refresh_sample(host"));
         for forbidden in [
+            "&mut Host,",
+            ".transport",
+            "send_state_hash",
+            "publish_frame",
             "render_frame(",
             "update_mouse_and_cursor(",
             "advance_frame(",
