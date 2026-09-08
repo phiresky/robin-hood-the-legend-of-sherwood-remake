@@ -741,6 +741,14 @@ pub(super) struct RenderViewState {
     pub(super) display_info_elapsed_secs: u32,
 }
 
+impl Drop for MissionPresentation {
+    fn drop(&mut self) {
+        if let Err(error) = self.sprites.portrait_cache.retire(&mut self.renderer) {
+            tracing::error!("failed to retire portrait cache during mission teardown: {error}");
+        }
+    }
+}
+
 impl MissionPresentation {
     pub(super) fn apply_ambience_maps(
         &mut self,

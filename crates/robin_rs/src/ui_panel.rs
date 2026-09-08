@@ -26,8 +26,8 @@ use robin_engine::tactical_control::{CombatStance, TacticalDuty, TacticalFormati
 use std::collections::HashMap;
 
 use crate::gfx_types::{BlendMode, Rect};
-use crate::ingame_menu::{layout, widget_bridge};
-use crate::renderer::{BLIT_SOURCE_TRANSPARENT, GpuImage, Renderer};
+use crate::ingame_menu::layout;
+use crate::renderer::{BLIT_SOURCE_TRANSPARENT, GpuImage, OwnedSurface, Renderer, SurfaceHandle};
 use crate::widget::requirements::{RequirementSlot, RequirementStatus};
 use robin_assets::resource_manager::{ResourceId, ResourceManager};
 use robin_engine::element::{Entity, EntityId};
@@ -235,30 +235,34 @@ pub(crate) const MENU_TEXT_TABLE_ID_DEMO2: ResourceId = 1000034;
 /// indexed via `CharacterKind::as_index()` (`CharacterKind::COUNT`
 /// slots).
 pub struct PortraitCache {
+    /// Unique retirement authority for every managed upload in this cache.
+    owned_surfaces: Vec<OwnedSurface>,
+    /// Also binds the directly owned RGBA artwork to its originating renderer.
+    renderer_identity: Option<u64>,
     /// Renderer surface id for each character's face portrait.
-    surfaces: [Option<u32>; CharacterKind::COUNT],
+    surfaces: [Option<SurfaceHandle>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
     /// (disabled state, sub_id 0).
-    action_disabled_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    action_disabled_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
     /// (normal state, sub_id 1).
-    action_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    action_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
     /// (focused/hover state, sub_id 2).
-    action_hover_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    action_hover_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
     /// (pressed/selected state, sub_id 3).  Used to highlight the
     /// currently active action button.
-    action_pressed_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    action_pressed_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
     /// `[action1, action2, action3]` renderer surface ids per character
     /// (focused selected state, sub_id 4).
-    action_hover_pressed_surfaces: [Option<[Option<u32>; 3]>; CharacterKind::COUNT],
+    action_hover_pressed_surfaces: [Option<[Option<SurfaceHandle>; 3]>; CharacterKind::COUNT],
     /// Localized display name per character.
     localized_names: [Option<String>; CharacterKind::COUNT],
     /// Generic scroll decoration surfaces (shared by all portraits).
-    top_scroll_surface: Option<u32>,
-    top_scroll_alt_surface: Option<u32>,
-    bottom_scroll_surface: Option<u32>,
+    top_scroll_surface: Option<SurfaceHandle>,
+    top_scroll_alt_surface: Option<SurfaceHandle>,
+    bottom_scroll_surface: Option<SurfaceHandle>,
     /// Authored 112x134 transparent scroll background for allied groups.
     allied_portrait_background: Option<GpuImage>,
     /// Complete 112x50 visage strips for generic and named allied soldiers.
@@ -269,55 +273,55 @@ pub struct PortraitCache {
     /// formations, in that order.
     allied_action_surfaces: [Option<GpuImage>; 9],
     /// Panel border frame pieces.
-    border_top_left: Option<u32>,
-    border_top_right: Option<u32>,
-    border_bottom_left: Option<u32>,
-    border_bottom_right: Option<u32>,
-    border_middle: Option<u32>,
-    portrait_page_left: Option<u32>,
-    portrait_page_right: Option<u32>,
+    border_top_left: Option<SurfaceHandle>,
+    border_top_right: Option<SurfaceHandle>,
+    border_bottom_left: Option<SurfaceHandle>,
+    border_bottom_right: Option<SurfaceHandle>,
+    border_middle: Option<SurfaceHandle>,
+    portrait_page_left: Option<SurfaceHandle>,
+    portrait_page_right: Option<SurfaceHandle>,
     /// Fighting sword overlay surface per character.
-    fighting_surfaces: [Option<u32>; CharacterKind::COUNT],
+    fighting_surfaces: [Option<SurfaceHandle>; CharacterKind::COUNT],
     /// Guard indicator surface (RHID_GUARD=209).
-    guard_surface: Option<u32>,
+    guard_surface: Option<SurfaceHandle>,
     /// Trumpet/reinforcement indicator surface (RHID_TRUMPET=224).
-    trumpet_surface: Option<u32>,
+    trumpet_surface: Option<SurfaceHandle>,
     /// Amulet/clover indicator surface (RHID_CLOVER=165).
     /// Shown in burned state when PC is NOT guarded (player can click to revive).
-    amulet_surface: Option<u32>,
+    amulet_surface: Option<SurfaceHandle>,
     /// Pixel-level hit mask for the top scroll surface.
     /// Used to reject clicks on transparent curved parchment edges.
     top_scroll_hit_mask: Option<robin_engine::minimap::HitMask>,
     /// Quick-action slot icon (RHID_QUICKACTION, shared by all QA slots).
-    qa_icon_surface: Option<u32>,
+    qa_icon_surface: Option<SurfaceHandle>,
     /// Quick-action slot icon while recording (RHID_QUICKACTION_IN_PROGRESS).
-    qa_icon_recording_surface: Option<u32>,
+    qa_icon_recording_surface: Option<SurfaceHandle>,
     /// PC-info popup backgrounds (RHID_INFO_POPUP_BKGND_{TINY,HUGE}).
-    info_popup_bg_tiny: Option<u32>,
-    info_popup_bg_huge: Option<u32>,
+    info_popup_bg_tiny: Option<SurfaceHandle>,
+    info_popup_bg_huge: Option<SurfaceHandle>,
     /// PC-info popup pip sprites (RHID_INFO_POPUP_SWORD / BOW).  We blit
     /// the "on" pip for the first `n` slots and skip the rest.
-    info_popup_sword: Option<u32>,
-    info_popup_bow: Option<u32>,
+    info_popup_sword: Option<SurfaceHandle>,
+    info_popup_bow: Option<SurfaceHandle>,
     /// Blazon bar icon strip — sub_ids: 0 = empty, 1 = normal (won),
     /// 2 = castle (to-collect).  We load the tiny set (used when the bar
     /// is the thin top strip).
-    blazon_tiny_empty: Option<u32>,
-    blazon_tiny_normal: Option<u32>,
-    blazon_tiny_castle: Option<u32>,
+    blazon_tiny_empty: Option<SurfaceHandle>,
+    blazon_tiny_normal: Option<SurfaceHandle>,
+    blazon_tiny_castle: Option<SurfaceHandle>,
     /// Per-(resource, sub_id) surface cache for resources that carry a
     /// table of sub-pictures indexed by character profile / action
     /// (requirements bar per-slot icons).  Pre-loaded at level load so the
     /// HUD can blit any `(res_id, sub_id)` without holding a
     /// `ResourceManager` borrow across the draw path.
-    sub_pictures: HashMap<(ResourceId, usize), u32>,
+    sub_pictures: HashMap<(ResourceId, usize), SurfaceHandle>,
     /// `RHID_YES_NO` status overlay — sub_id 0 = yes (green tick),
     /// sub_id 1 = no (red cross).
-    req_yes: Option<u32>,
-    req_no: Option<u32>,
+    req_yes: Option<SurfaceHandle>,
+    req_no: Option<SurfaceHandle>,
     /// `RHID_SELECTED_ACTION` overlay marker used to highlight the
     /// currently-selected slot on the requirements bar.
-    req_selected: Option<u32>,
+    req_selected: Option<SurfaceHandle>,
 }
 
 impl Default for PortraitCache {
@@ -329,6 +333,8 @@ impl Default for PortraitCache {
 impl PortraitCache {
     pub fn new() -> Self {
         Self {
+            owned_surfaces: Vec::new(),
+            renderer_identity: None,
             surfaces: [None; CharacterKind::COUNT],
             action_disabled_surfaces: [None; CharacterKind::COUNT],
             action_surfaces: [None; CharacterKind::COUNT],
@@ -375,12 +381,68 @@ impl PortraitCache {
     ///
     /// Reads each portrait resource from the resource manager, converts
     /// to a renderer surface. Missing resources are logged and skipped.
+    /// Replace all artwork as one transaction. Optional resource misses remain empty.
+    /// Required-art or upload errors retire the candidate and preserve the live cache.
     pub fn load(
         &mut self,
         res: &mut ResourceManager,
         renderer: &mut Renderer,
         files: &robin_engine::sbfile::SbFileSystem,
-    ) {
+    ) -> anyhow::Result<()> {
+        self.replace_with(renderer, |candidate, renderer| {
+            candidate.load_contents(res, renderer, files)
+        })
+    }
+
+    fn validate_renderer(&self, renderer: &Renderer) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.renderer_identity
+                .is_none_or(|identity| identity == renderer.identity()),
+            "portrait cache belongs to another renderer"
+        );
+        for surface in &self.owned_surfaces {
+            renderer.validate_surface_retirement(surface)?;
+        }
+        Ok(())
+    }
+
+    fn replace_with(
+        &mut self,
+        renderer: &mut Renderer,
+        load: impl FnOnce(&mut Self, &mut Renderer) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        self.validate_renderer(renderer)?;
+        let mut candidate = Self::new();
+        candidate.renderer_identity = Some(renderer.identity());
+        if let Err(error) = load(&mut candidate, renderer) {
+            candidate.retire(renderer)?;
+            return Err(error);
+        }
+        candidate.validate_renderer(renderer)?;
+        self.retire(renderer)?;
+        candidate.localized_names = std::mem::take(&mut self.localized_names);
+        *self = candidate;
+        Ok(())
+    }
+
+    /// Validate the complete bank before changing residency. Repeated retirement is safe.
+    pub fn retire(&mut self, renderer: &mut Renderer) -> anyhow::Result<()> {
+        self.validate_renderer(renderer)?;
+        for surface in self.owned_surfaces.drain(..) {
+            renderer.retire_surface(surface);
+        }
+        let names = std::mem::take(&mut self.localized_names);
+        *self = Self::new(); // Drops the directly owned RGBA textures as well.
+        self.localized_names = names;
+        Ok(())
+    }
+
+    fn load_contents(
+        &mut self,
+        res: &mut ResourceManager,
+        renderer: &mut Renderer,
+        files: &robin_engine::sbfile::SbFileSystem,
+    ) -> anyhow::Result<()> {
         let mut timer = crate::game_session::PhaseTimer::new("portrait cache load");
         for kind in CharacterKind::VARIANTS {
             let slot = kind.as_index();
@@ -390,9 +452,10 @@ impl PortraitCache {
             // sub_id 0 is absent, sub_id 1 is the default portrait.
             match res.get_picture(res_id, 1) {
                 Ok(pic) => {
-                    let surface_id = pic_to_surface(renderer, pic);
+                    let surface_id =
+                        owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded portrait for {:?}: resource {res_id}, surface {surface_id} ({}x{})",
+                        "Loaded portrait for {:?}: resource {res_id}, surface {surface_id:?} ({}x{})",
                         kind,
                         pic.width,
                         pic.height,
@@ -412,17 +475,18 @@ impl PortraitCache {
         timer.step("character portraits");
 
         let (width, height, pixels) =
-            decode_embedded_png_rgba(&read_ui_asset("allied_portrait_background.png", files))
-                .expect("allied portrait background must be a valid RGB/RGBA PNG");
-        assert_eq!(
-            (width, height),
-            (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
+            decode_embedded_png_rgba(&read_ui_asset("allied_portrait_background.png", files)?)
+                .map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(
+            (width, height) == (ELEMENT_WIDTH, PORTRAIT_TOTAL_HEIGHT),
             "allied portrait background must match the native open HUD slot"
         );
         self.allied_portrait_background = Some(
             renderer
                 .create_rgba_gpu_image(width, height, &pixels, "allied portrait background")
-                .expect("allied portrait background dimensions must match its payload"),
+                .ok_or_else(|| {
+                    anyhow::anyhow!("allied portrait background dimensions must match its payload")
+                })?,
         );
 
         for (kind, file) in AlliedVisageKind::VARIANTS.into_iter().zip([
@@ -433,17 +497,16 @@ impl PortraitCache {
             "allied_portrait_scathlock.png",
             "allied_portrait_sheriff.png",
         ]) {
-            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files))
-                .unwrap_or_else(|error| panic!("decode allied visage {file}: {error}"));
-            assert_eq!(
-                (width, height),
-                (ELEMENT_WIDTH, VISAGE_HEIGHT),
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files)?)
+                .map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                (width, height) == (ELEMENT_WIDTH, VISAGE_HEIGHT),
                 "allied visage {file} must match the native 112x50 HUD visage slot"
             );
             self.allied_visages[kind.index()] = Some(
                 renderer
                     .create_rgba_gpu_image(width, height, &pixels, file)
-                    .unwrap_or_else(|| panic!("allied visage {file} dimensions mismatch")),
+                    .ok_or_else(|| anyhow::anyhow!("allied visage {file} dimensions mismatch"))?,
             );
         }
 
@@ -454,17 +517,18 @@ impl PortraitCache {
         .into_iter()
         .enumerate()
         {
-            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files))
-                .expect("allied pin icon must be a valid RGB/RGBA PNG");
-            assert_eq!(
-                (width, height),
-                (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE),
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files)?)
+                .map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                (width, height) == (ALLIED_PIN_ICON_SIZE, ALLIED_PIN_ICON_SIZE),
                 "allied pin icon must be 27x27"
             );
             self.allied_pin_icons[index] = Some(
                 renderer
                     .create_rgba_gpu_image(width, height, &pixels, label)
-                    .expect("allied pin icon dimensions must match its payload"),
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("allied pin icon dimensions must match its payload")
+                    })?,
             );
         }
 
@@ -482,11 +546,10 @@ impl PortraitCache {
         .into_iter()
         .enumerate()
         {
-            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files))
-                .unwrap_or_else(|error| panic!("decode allied state icon {file}: {error}"));
-            assert_eq!(
-                (width, height),
-                (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT),
+            let (width, height, pixels) = decode_embedded_png_rgba(&read_ui_asset(file, files)?)
+                .map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                (width, height) == (ALLIED_ACTION_ICON_WIDTH, ALLIED_ACTION_ICON_HEIGHT),
                 "embedded allied state icon must be 34x32"
             );
             self.allied_action_surfaces[index] = Some(
@@ -497,7 +560,9 @@ impl PortraitCache {
                         &pixels,
                         &format!("allied state icon {index}"),
                     )
-                    .unwrap_or_else(|| panic!("allied state icon {index} has invalid dimensions")),
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("allied state icon {index} has invalid dimensions")
+                    })?,
             );
         }
         timer.step("embedded allied art");
@@ -506,7 +571,7 @@ impl PortraitCache {
         for (res_id, field, label) in [
             (
                 RHID_TOP_SCROLL,
-                &mut self.top_scroll_surface as &mut Option<u32>,
+                &mut self.top_scroll_surface as &mut Option<SurfaceHandle>,
                 "top scroll",
             ),
             (
@@ -538,9 +603,9 @@ impl PortraitCache {
                         tracing::info!("Built top scroll hit mask ({}x{})", pic.width, pic.height);
                     }
 
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -555,7 +620,7 @@ impl PortraitCache {
         for (res_id, field, label) in [
             (
                 resource_ids::RHID_PORTRAIT_SCROLL_LEFT,
-                &mut self.portrait_page_left as &mut Option<u32>,
+                &mut self.portrait_page_left as &mut Option<SurfaceHandle>,
                 "portrait page left",
             ),
             (
@@ -569,7 +634,13 @@ impl PortraitCache {
                 Err(_) => res.get_picture(res_id, 0),
             };
             match picture {
-                Ok(pic) => *field = Some(pic_to_surface(renderer, pic)),
+                Ok(pic) => {
+                    *field = Some(owned_picture_surface(
+                        renderer,
+                        &mut self.owned_surfaces,
+                        pic,
+                    )?)
+                }
                 Err(error) => tracing::warn!("Failed to load {label}: {error}"),
             }
         }
@@ -584,7 +655,7 @@ impl PortraitCache {
         for (res_id, field, label) in [
             (
                 RHID_TOP_LEFT_CORNER,
-                &mut self.border_top_left as &mut Option<u32>,
+                &mut self.border_top_left as &mut Option<SurfaceHandle>,
                 "border top-left",
             ),
             (
@@ -606,9 +677,9 @@ impl PortraitCache {
         ] {
             match res.get_picture(res_id, 0) {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -638,7 +709,11 @@ impl PortraitCache {
                     // 3 = selected, 4 = focused selected.
                     match res.get_picture(*res_id, ACTION_SUB_ID_DISABLED) {
                         Ok(pic) => {
-                            disabled[i] = Some(pic_to_surface(renderer, pic));
+                            disabled[i] = Some(owned_picture_surface(
+                                renderer,
+                                &mut self.owned_surfaces,
+                                pic,
+                            )?);
                         }
                         Err(_) => {
                             // Fallback: disabled surface unavailable, will use normal.
@@ -646,9 +721,10 @@ impl PortraitCache {
                     }
                     match res.get_picture(*res_id, ACTION_SUB_ID_UNSELECTED) {
                         Ok(pic) => {
-                            let surface_id = pic_to_surface(renderer, pic);
+                            let surface_id =
+                                owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                             tracing::info!(
-                                "Loaded action icon for {kind:?} action {i}: resource {res_id}, surface {surface_id} ({}x{})",
+                                "Loaded action icon for {kind:?} action {i}: resource {res_id}, surface {surface_id:?} ({}x{})",
                                 pic.width,
                                 pic.height,
                             );
@@ -663,7 +739,11 @@ impl PortraitCache {
                     // Focused/hover state (sub_id 2).
                     match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED) {
                         Ok(pic) => {
-                            hover[i] = Some(pic_to_surface(renderer, pic));
+                            hover[i] = Some(owned_picture_surface(
+                                renderer,
+                                &mut self.owned_surfaces,
+                                pic,
+                            )?);
                         }
                         Err(_) => {
                             // Fallback: hover surface unavailable, will use normal.
@@ -672,7 +752,11 @@ impl PortraitCache {
                     // Pressed/selected state (sub_id 3).
                     match res.get_picture(*res_id, ACTION_SUB_ID_SELECTED) {
                         Ok(pic) => {
-                            pressed[i] = Some(pic_to_surface(renderer, pic));
+                            pressed[i] = Some(owned_picture_surface(
+                                renderer,
+                                &mut self.owned_surfaces,
+                                pic,
+                            )?);
                         }
                         Err(_) => {
                             // Fallback: pressed surface unavailable, will use normal
@@ -684,7 +768,11 @@ impl PortraitCache {
                     // frames.
                     match res.get_picture(*res_id, ACTION_SUB_ID_FOCUSED_SELECTED) {
                         Ok(pic) => {
-                            hover_pressed[i] = Some(pic_to_surface(renderer, pic));
+                            hover_pressed[i] = Some(owned_picture_surface(
+                                renderer,
+                                &mut self.owned_surfaces,
+                                pic,
+                            )?);
                         }
                         Err(_) => {
                             // Fallback: focused selected surface unavailable.
@@ -711,9 +799,9 @@ impl PortraitCache {
             // Fighting overlays are PICT type; sub_id 0 is the default picture.
             match res.get_picture(res_id, 0) {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded fighting overlay for {kind:?}: resource {res_id}, surface {sid} ({}x{})",
+                        "Loaded fighting overlay for {kind:?}: resource {res_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -722,7 +810,7 @@ impl PortraitCache {
                 Err(_) => {
                     // Try sub_id 1 as fallback (some resources use BTTN layout)
                     if let Ok(pic) = res.get_picture(res_id, 1) {
-                        let sid = pic_to_surface(renderer, pic);
+                        let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                         self.fighting_surfaces[slot] = Some(sid);
                     }
                 }
@@ -740,7 +828,7 @@ impl PortraitCache {
         for (res_id, field, label) in [
             (
                 resource_ids::RHID_GUARD,
-                &mut self.guard_surface as &mut Option<u32>,
+                &mut self.guard_surface as &mut Option<SurfaceHandle>,
                 "guard indicator",
             ),
             (
@@ -761,9 +849,9 @@ impl PortraitCache {
             };
             match pic {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -781,7 +869,7 @@ impl PortraitCache {
         for (res_id, field, label) in [
             (
                 resource_ids::RHID_QUICKACTION,
-                &mut self.qa_icon_surface as &mut Option<u32>,
+                &mut self.qa_icon_surface as &mut Option<SurfaceHandle>,
                 "QA icon",
             ),
             (
@@ -796,9 +884,9 @@ impl PortraitCache {
             };
             match pic {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -816,7 +904,7 @@ impl PortraitCache {
         for (res_id, field, label) in [
             (
                 resource_ids::RHID_INFO_POPUP_BKGND_TINY,
-                &mut self.info_popup_bg_tiny as &mut Option<u32>,
+                &mut self.info_popup_bg_tiny as &mut Option<SurfaceHandle>,
                 "info popup bg (tiny)",
             ),
             (
@@ -841,9 +929,9 @@ impl PortraitCache {
             };
             match pic {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {res_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {res_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -862,7 +950,7 @@ impl PortraitCache {
         for (sub_id, field, label) in [
             (
                 0usize,
-                &mut self.blazon_tiny_empty as &mut Option<u32>,
+                &mut self.blazon_tiny_empty as &mut Option<SurfaceHandle>,
                 "blazon tiny empty",
             ),
             (1, &mut self.blazon_tiny_normal, "blazon tiny normal"),
@@ -870,9 +958,9 @@ impl PortraitCache {
         ] {
             match res.get_picture(resource_ids::RHID_BLAZON_TINY, sub_id) {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {} sub {sub_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {} sub {sub_id}, surface {sid:?} ({}x{})",
                         resource_ids::RHID_BLAZON_TINY,
                         pic.width,
                         pic.height,
@@ -891,7 +979,7 @@ impl PortraitCache {
             (
                 resource_ids::RHID_YES_NO,
                 0usize,
-                &mut self.req_yes as &mut Option<u32>,
+                &mut self.req_yes as &mut Option<SurfaceHandle>,
                 "requirements yes overlay",
             ),
             (
@@ -909,9 +997,9 @@ impl PortraitCache {
         ] {
             match res.get_picture(res_id, sub_id) {
                 Ok(pic) => {
-                    let sid = pic_to_surface(renderer, pic);
+                    let sid = owned_picture_surface(renderer, &mut self.owned_surfaces, pic)?;
                     tracing::info!(
-                        "Loaded {label}: resource {res_id} sub {sub_id}, surface {sid} ({}x{})",
+                        "Loaded {label}: resource {res_id} sub {sub_id}, surface {sid:?} ({}x{})",
                         pic.width,
                         pic.height,
                     );
@@ -961,15 +1049,23 @@ impl PortraitCache {
             for (sub_id, w, h, pixels) in subs {
                 let surface_id = renderer
                     .create_surface_from_rgb565(w, h, &pixels)
-                    .expect("requirements sub-picture dimensions must match RGB565 payload");
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "requirements sub-picture dimensions must match RGB565 payload"
+                        )
+                    })?;
+                let owned = renderer.try_adopt_surface(surface_id)?;
+                let surface_id = owned.handle();
+                self.owned_surfaces.push(owned);
                 tracing::debug!(
-                    "Loaded requirements sub-picture: res {res_id} sub {sub_id}, surface {surface_id} ({w}x{h})"
+                    "Loaded requirements sub-picture: res {res_id} sub {sub_id}, surface {surface_id:?} ({w}x{h})"
                 );
                 self.sub_pictures.insert((res_id, sub_id), surface_id);
             }
         }
         timer.step("requirements tables");
         timer.total();
+        Ok(())
     }
 
     /// Install a pre-loaded localized-name map.  Read at render time
@@ -999,27 +1095,36 @@ impl PortraitCache {
     }
 
     /// Look up the renderer surface for a character's face portrait.
-    pub fn get_surface(&self, kind: CharacterKind) -> Option<u32> {
+    pub fn get_surface(&self, kind: CharacterKind) -> Option<SurfaceHandle> {
         self.surfaces[kind.as_index()]
     }
 
     /// Look up the action button surfaces for a character.
-    pub fn get_action_disabled_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+    pub fn get_action_disabled_surfaces(
+        &self,
+        kind: CharacterKind,
+    ) -> Option<&[Option<SurfaceHandle>; 3]> {
         self.action_disabled_surfaces[kind.as_index()].as_ref()
     }
 
     /// Look up the action button surfaces for a character.
-    pub fn get_action_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+    pub fn get_action_surfaces(&self, kind: CharacterKind) -> Option<&[Option<SurfaceHandle>; 3]> {
         self.action_surfaces[kind.as_index()].as_ref()
     }
 
     /// Look up the focused/hover action button surfaces for a character.
-    pub fn get_action_hover_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+    pub fn get_action_hover_surfaces(
+        &self,
+        kind: CharacterKind,
+    ) -> Option<&[Option<SurfaceHandle>; 3]> {
         self.action_hover_surfaces[kind.as_index()].as_ref()
     }
 
     /// Look up the pressed/selected action button surfaces for a character.
-    pub fn get_action_pressed_surfaces(&self, kind: CharacterKind) -> Option<&[Option<u32>; 3]> {
+    pub fn get_action_pressed_surfaces(
+        &self,
+        kind: CharacterKind,
+    ) -> Option<&[Option<SurfaceHandle>; 3]> {
         self.action_pressed_surfaces[kind.as_index()].as_ref()
     }
 
@@ -1027,12 +1132,12 @@ impl PortraitCache {
     pub fn get_action_hover_pressed_surfaces(
         &self,
         kind: CharacterKind,
-    ) -> Option<&[Option<u32>; 3]> {
+    ) -> Option<&[Option<SurfaceHandle>; 3]> {
         self.action_hover_pressed_surfaces[kind.as_index()].as_ref()
     }
 
     /// Look up the fighting sword overlay surface for a character.
-    pub fn get_fighting_surface(&self, kind: CharacterKind) -> Option<u32> {
+    pub fn get_fighting_surface(&self, kind: CharacterKind) -> Option<SurfaceHandle> {
         self.fighting_surfaces[kind.as_index()]
     }
 
@@ -1051,7 +1156,7 @@ impl PortraitCache {
     /// Populated at [`PortraitCache::load`] time for the requirements-bar
     /// icon tables (`RHID_REQUIRED_PC` / `RHID_REQUIRED_ACTION` /
     /// `RHID_OPTIONAL_PC`).
-    pub fn get_sub_picture(&self, res_id: ResourceId, sub_id: usize) -> Option<u32> {
+    pub fn get_sub_picture(&self, res_id: ResourceId, sub_id: usize) -> Option<SurfaceHandle> {
         self.sub_pictures.get(&(res_id, sub_id)).copied()
     }
 }
@@ -1082,6 +1187,31 @@ pub(crate) fn required_action_sub_id(action: robin_engine::profiles::Action) -> 
 }
 
 /// Upload a 16-bit picture into a new renderer surface.
+fn owned_picture_surface(
+    renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
+    pic: &Picture,
+) -> anyhow::Result<SurfaceHandle> {
+    let pixels: Vec<u16> = pic
+        .data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
+        .collect();
+    anyhow::ensure!(
+        pic.data.len() % 2 == 0,
+        "portrait RGB565 payload has an incomplete pixel"
+    );
+    let id = renderer
+        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
+        .ok_or_else(|| anyhow::anyhow!("portrait dimensions must match RGB565 payload"))?;
+    let owned = renderer.try_adopt_surface(id)?;
+    let handle = owned.handle();
+    owners.push(owned);
+    Ok(handle)
+}
+
 pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
     let pixels: Vec<u16> = pic
         .data
@@ -1102,10 +1232,13 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
 /// overlaying the same path. They are required — a failed read means the
 /// core overlay datadir is missing next to the game, which is an
 /// installation error worth failing loudly on.
-fn read_ui_asset(name: &str, files: &robin_engine::sbfile::SbFileSystem) -> Vec<u8> {
+fn read_ui_asset(
+    name: &str,
+    files: &robin_engine::sbfile::SbFileSystem,
+) -> anyhow::Result<Vec<u8>> {
     let path = format!("Data/Interface/UI/{name}");
-    files.read_all(&path).unwrap_or_else(|error| {
-        panic!(
+    files.read_all(&path).map_err(|error| {
+        anyhow::anyhow!(
             "required UI asset {path} could not be read (error {error}); \
              is the core overlay datadir (assets/core-datadir/) missing?"
         )
@@ -1272,37 +1405,38 @@ fn screen_bbox_to_sprite_bbox(bbox: ScreenBBox) -> BBox {
 
 fn blit_to_screen_widget(
     renderer: &mut Renderer,
-    surface_id: u32,
+    surface: SurfaceHandle,
     src: Option<&BBox>,
     dst: Option<&BBox>,
     flags: u32,
 ) {
-    let src_box = src.copied().unwrap_or_else(|| {
-        screen_bbox_to_sprite_bbox(ScreenBBox::from_coords(
-            0.0,
-            0.0,
-            renderer.surface_width(surface_id) as f32,
-            renderer.surface_height(surface_id) as f32,
-        ))
-    });
-    let dst_box = dst.copied().unwrap_or(src_box);
-    widget_bridge::draw_picture_surface_rect(
-        renderer,
-        layout::MenuTransform {
-            origin_x: 0,
-            origin_y: 0,
-        },
-        surface_id,
-        dst_box.min.x as i32,
-        dst_box.min.y as i32,
-        dst_box.width() as i32,
-        dst_box.height() as i32,
-        src_box.min.x as i32,
-        src_box.min.y as i32,
-        src_box.width() as i32,
-        src_box.height() as i32,
-        flags & BLIT_SOURCE_TRANSPARENT != 0,
-    );
+    // The old widget bridge used a zero-origin transform and integer rectangles.
+    // Preserve that geometry while retaining renderer provenance through submission.
+    let (width, height) = renderer
+        .surface_dimensions(surface)
+        .expect("live portrait surface");
+    let src = src
+        .copied()
+        .unwrap_or_else(|| BBox::from_coords(0.0, 0.0, width as f32, height as f32));
+    let dst = dst.copied().unwrap_or(src);
+    let integer_rect = |rect: BBox| {
+        let x = rect.min.x as i32;
+        let y = rect.min.y as i32;
+        BBox::from_coords(
+            x as f32,
+            y as f32,
+            (x + rect.width() as i32) as f32,
+            (y + rect.height() as i32) as f32,
+        )
+    };
+    renderer
+        .draw_surface(
+            surface,
+            Some(&integer_rect(src)),
+            Some(&integer_rect(dst)),
+            flags,
+        )
+        .expect("portrait draw requires the originating renderer and a live upload");
 }
 
 /// Check if a PC is in coma state (amulet death-save, still alive but burned).
@@ -1576,8 +1710,14 @@ fn render_allied_portrait(
         } else {
             sh - CLOSE_POSITION_VISAGE
         };
-        let width = renderer.surface_width(surface);
-        let height = renderer.surface_height(surface);
+        let width = renderer
+            .surface_dimensions(surface)
+            .expect("live portrait surface")
+            .0;
+        let height = renderer
+            .surface_dimensions(surface)
+            .expect("live portrait surface")
+            .1;
         blit_to_screen_widget(
             renderer,
             surface,
@@ -1814,8 +1954,14 @@ fn render_health_gauge(
     let Some(normal_sid) = portraits.top_scroll_surface else {
         return;
     };
-    let w = renderer.surface_width(normal_sid);
-    let h = renderer.surface_height(normal_sid);
+    let w = renderer
+        .surface_dimensions(normal_sid)
+        .expect("live portrait surface")
+        .0;
+    let h = renderer
+        .surface_dimensions(normal_sid)
+        .expect("live portrait surface")
+        .1;
 
     let ratio = match entity {
         Some(Entity::Pc(pc)) => (pc.pc.life_points.max(0) as f32 / 100.0).clamp(0.0, 1.0),
@@ -1857,14 +2003,20 @@ fn render_health_gauge(
 /// upper scroll top to lower scroll bottom.
 fn blit_centered_between_scrolls(
     renderer: &mut Renderer,
-    surface: Option<u32>,
+    surface: Option<SurfaceHandle>,
     x: u16,
     ref_top: u16,
     ref_bot: u16,
 ) {
     let Some(sid) = surface else { return };
-    let iw = renderer.surface_width(sid);
-    let ih = renderer.surface_height(sid);
+    let iw = renderer
+        .surface_dimensions(sid)
+        .expect("live portrait surface")
+        .0;
+    let ih = renderer
+        .surface_dimensions(sid)
+        .expect("live portrait surface")
+        .1;
     let ref_h = ref_bot.saturating_sub(ref_top);
     let ix = x + (ELEMENT_WIDTH.saturating_sub(iw)) / 2;
     let iy = ref_top + (ref_h.saturating_sub(ih)) / 2;
@@ -1898,6 +2050,9 @@ pub fn draw_panel(
     titbit_renderer: Option<&mut crate::titbit_renderer::TitbitRenderer>,
     shift_held: bool,
 ) {
+    portraits
+        .validate_renderer(renderer)
+        .expect("HUD requires its originating renderer");
     let sw = renderer.screen_width();
     let sh = renderer.screen_height();
 
@@ -1909,26 +2064,58 @@ pub fn draw_panel(
     // Rendered BEFORE portrait widgets, in absolute screen coordinates.
     // Blit using source surface dimensions to avoid size mismatch issues.
     if let Some(sid) = portraits.border_top_left {
-        let w = renderer.surface_width(sid).min(sw);
-        let h = renderer.surface_height(sid).min(sh);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0
+            .min(sw);
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1
+            .min(sh);
         let dst = bbox(0, 0, w, h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_top_right {
-        let w = renderer.surface_width(sid).min(sw);
-        let h = renderer.surface_height(sid).min(sh);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0
+            .min(sw);
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1
+            .min(sh);
         let dst = bbox(sw - w, 0, sw, h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_bottom_left {
-        let w = renderer.surface_width(sid).min(sw);
-        let h = renderer.surface_height(sid).min(sh);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0
+            .min(sw);
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1
+            .min(sh);
         let dst = bbox(0, sh - h, w, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
     if let Some(sid) = portraits.border_bottom_right {
-        let w = renderer.surface_width(sid).min(sw);
-        let h = renderer.surface_height(sid).min(sh);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0
+            .min(sw);
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1
+            .min(sh);
         let dst = bbox(sw - w, sh - h, sw, sh);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
     }
@@ -1938,16 +2125,33 @@ pub fn draw_panel(
     if sw > 640
         && let Some(sid) = portraits.border_middle
     {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid).min(sh);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0;
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1
+            .min(sh);
         let mut x = portraits
             .border_bottom_left
-            .map_or(0, |id| renderer.surface_width(id))
+            .map_or(0, |id| {
+                renderer
+                    .surface_dimensions(id)
+                    .expect("live portrait surface")
+                    .0
+            })
             .min(sw);
         let right = sw.saturating_sub(
             portraits
                 .border_bottom_right
-                .map_or(0, |id| renderer.surface_width(id))
+                .map_or(0, |id| {
+                    renderer
+                        .surface_dimensions(id)
+                        .expect("live portrait surface")
+                        .0
+                })
                 .min(sw),
         );
         while x < right && w > 0 {
@@ -1992,8 +2196,14 @@ pub fn draw_panel(
             (portraits.portrait_page_right, sw.saturating_sub(28)),
         ] {
             if let Some(surface) = surface {
-                let w = renderer.surface_width(surface);
-                let h = renderer.surface_height(surface);
+                let w = renderer
+                    .surface_dimensions(surface)
+                    .expect("live portrait surface")
+                    .0;
+                let h = renderer
+                    .surface_dimensions(surface)
+                    .expect("live portrait surface")
+                    .1;
                 let y = sh.saturating_sub(PORTRAIT_TOTAL_HEIGHT / 2 + h / 2);
                 blit_to_screen_widget(
                     renderer,
@@ -2053,8 +2263,14 @@ pub fn draw_panel(
                 render_health_gauge(renderer, portraits, entity, x, burned_upper_top);
 
                 if let Some(sid) = portraits.bottom_scroll_surface {
-                    let w = renderer.surface_width(sid);
-                    let h = renderer.surface_height(sid);
+                    let w = renderer
+                        .surface_dimensions(sid)
+                        .expect("live portrait surface")
+                        .0;
+                    let h = renderer
+                        .surface_dimensions(sid)
+                        .expect("live portrait surface")
+                        .1;
                     let top = sh - POSITION_BOTTOM_SCROLL;
                     let dst = bbox(x, top, x + w, top + h);
                     blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
@@ -2121,8 +2337,14 @@ pub fn draw_panel(
 
             // Bottom scroll
             if let Some(sid) = portraits.bottom_scroll_surface {
-                let w = renderer.surface_width(sid);
-                let h = renderer.surface_height(sid);
+                let w = renderer
+                    .surface_dimensions(sid)
+                    .expect("live portrait surface")
+                    .0;
+                let h = renderer
+                    .surface_dimensions(sid)
+                    .expect("live portrait surface")
+                    .1;
                 let top = sh - POSITION_BOTTOM_SCROLL;
                 let dst = bbox(x, top, x + w, top + h);
                 blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
@@ -2157,8 +2379,14 @@ pub fn draw_panel(
                 && let Some(kind) = pc_character_kind(ent)
                 && let Some(surface_id) = portraits.get_surface(kind)
             {
-                let src_w = renderer.surface_width(surface_id);
-                let src_h = renderer.surface_height(surface_id);
+                let src_w = renderer
+                    .surface_dimensions(surface_id)
+                    .expect("live portrait surface")
+                    .0;
+                let src_h = renderer
+                    .surface_dimensions(surface_id)
+                    .expect("live portrait surface")
+                    .1;
                 if src_w > 0 && src_h > 0 {
                     let dst = bbox(x, vis_top, x + src_w, vis_top + src_h);
                     blit_to_screen_widget(
@@ -2186,8 +2414,14 @@ pub fn draw_panel(
                     && let Some(kind) = pc_action_character_kind(ent, profiles)
                     && let Some(sid) = portraits.get_fighting_surface(kind)
                 {
-                    let fw = renderer.surface_width(sid);
-                    let fh = renderer.surface_height(sid);
+                    let fw = renderer
+                        .surface_dimensions(sid)
+                        .expect("live portrait surface")
+                        .0;
+                    let fh = renderer
+                        .surface_dimensions(sid)
+                        .expect("live portrait surface")
+                        .1;
                     let dst = bbox(x, vis_top, x + fw, vis_top + fh);
                     blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
                 }
@@ -2332,8 +2566,14 @@ pub fn draw_panel(
                 let Some(sid) = sid_opt else { continue };
 
                 let icon_x = x + slot_idx * QA_ICON_WIDTH;
-                let iw = renderer.surface_width(sid);
-                let ih = renderer.surface_height(sid);
+                let iw = renderer
+                    .surface_dimensions(sid)
+                    .expect("live portrait surface")
+                    .0;
+                let ih = renderer
+                    .surface_dimensions(sid)
+                    .expect("live portrait surface")
+                    .1;
                 let dst = bbox(icon_x, qa_strip_y, icon_x + iw, qa_strip_y + ih);
                 blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
 
@@ -2727,8 +2967,14 @@ pub fn draw_requirements_bar(
                 RequirementStatus::Missing => portraits.req_no,
             };
             if let Some(sid) = overlay {
-                let w = renderer.surface_width(sid) as i32;
-                let h = renderer.surface_height(sid) as i32;
+                let w = renderer
+                    .surface_dimensions(sid)
+                    .expect("live portrait surface")
+                    .0 as i32;
+                let h = renderer
+                    .surface_dimensions(sid)
+                    .expect("live portrait surface")
+                    .1 as i32;
                 let bx = icon_x + REQ_BAR_DIFFERENCE_X_YES_NO;
                 let by = icon_y + REQ_BAR_DIFFERENCE_Y_YES_NO;
                 let badge = bbox_i32(bx, by, bx + w, by + h);
@@ -2737,8 +2983,14 @@ pub fn draw_requirements_bar(
         }
         // Selected-ring overlay at (-1, +2) from the icon origin.
         if selected && let Some(sid) = portraits.req_selected {
-            let w = renderer.surface_width(sid) as i32;
-            let h = renderer.surface_height(sid) as i32;
+            let w = renderer
+                .surface_dimensions(sid)
+                .expect("live portrait surface")
+                .0 as i32;
+            let h = renderer
+                .surface_dimensions(sid)
+                .expect("live portrait surface")
+                .1 as i32;
             let rx = icon_x + REQ_BAR_DIFFERENCE_X_SELECTED;
             let ry = icon_y + REQ_BAR_DIFFERENCE_Y_SELECTED;
             let ring = bbox_i32(rx, ry, rx + w, ry + h);
@@ -3182,8 +3434,14 @@ pub fn draw_pc_info_overlay(
         portraits.info_popup_bg_tiny
     };
     if let Some(sid) = bg_sid {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0;
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1;
         let (x, y) = (frame_ov.position.0 as u16, frame_ov.position.1 as u16);
         let dst = bbox(x, y, x + w, y + h);
         blit_to_screen_widget(renderer, sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
@@ -3191,8 +3449,14 @@ pub fn draw_pc_info_overlay(
 
     // ── Sword pips ──
     if let Some(sid) = portraits.info_popup_sword {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0;
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1;
         for i in 0..frame_ov.sword_pips.min(LEVEL_NUMBER) {
             let (px, py) = frame_ov.sword_pip_position(i);
             let dst = bbox(px as u16, py as u16, px as u16 + w, py as u16 + h);
@@ -3202,8 +3466,14 @@ pub fn draw_pc_info_overlay(
 
     // ── Bow pips (archer only) ──
     if is_archer && let Some(sid) = portraits.info_popup_bow {
-        let w = renderer.surface_width(sid);
-        let h = renderer.surface_height(sid);
+        let w = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .0;
+        let h = renderer
+            .surface_dimensions(sid)
+            .expect("live portrait surface")
+            .1;
         for i in 0..frame_ov.bow_pips.min(LEVEL_NUMBER) {
             let (px, py) = frame_ov.bow_pip_position(i);
             let dst = bbox(px as u16, py as u16, px as u16 + w, py as u16 + h);
@@ -3613,6 +3883,98 @@ pub fn hit_test_portrait_detailed(
     None
 }
 
+/// Runs inside the named headless GPU gate, using two live renderer identities.
+#[cfg(test)]
+pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut Renderer) {
+    let picture = Picture {
+        width: 1,
+        height: 1,
+        pitch: 2,
+        pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+        data: vec![255, 255],
+        palette: None,
+    };
+    let kind = CharacterKind::VARIANTS[0];
+    let mut cache = PortraitCache::new();
+    cache.localized_names[kind.as_index()] = Some("Retained name".into());
+    let install = |cache: &mut PortraitCache, renderer: &mut Renderer| -> anyhow::Result<()> {
+        let handle = owned_picture_surface(renderer, &mut cache.owned_surfaces, &picture)?;
+        cache.surfaces[kind.as_index()] = Some(handle);
+        // Authored sparse subframe indices must not collapse on replacement.
+        cache.sub_pictures.insert((42, 3), handle);
+        Ok(())
+    };
+    cache.replace_with(renderer, install).unwrap();
+    let first = cache.get_surface(kind).unwrap();
+    assert_eq!(cache.get_sub_picture(42, 3), Some(first));
+    assert!(cache.get_sub_picture(42, 2).is_none());
+    assert!(renderer.try_adopt_surface(first.legacy_id()).is_err());
+    assert!(
+        renderer
+            .try_delete_legacy_surface(first.legacy_id())
+            .is_err()
+    );
+    assert!(other.draw_surface(first, None, None, 0).is_err());
+    assert!(cache.retire(other).is_err());
+    assert!(
+        cache
+            .replace_with(other, |_, _| panic!("must reject before loading"))
+            .is_err()
+    );
+    assert_eq!(cache.get_surface(kind), Some(first));
+
+    // A failed candidate has already uploaded a picture: it must be retired,
+    // while the previous bank and metadata remain available.
+    let mut failed = None;
+    assert!(
+        cache
+            .replace_with(renderer, |candidate, renderer| {
+                install(candidate, renderer)?;
+                failed = candidate.get_surface(kind);
+                let mut invalid = picture.clone();
+                invalid.data.pop();
+                owned_picture_surface(renderer, &mut candidate.owned_surfaces, &invalid)?;
+                Ok(())
+            })
+            .is_err()
+    );
+    assert!(renderer.surface_dimensions(failed.unwrap()).is_err());
+    assert_eq!(cache.get_surface(kind), Some(first));
+    assert_eq!(cache.get_localized_name(kind), Some("Retained name"));
+
+    // Exercise the public load failure as well: missing required PNG is an
+    // error, unlike absent optional portraits in an empty resource manager.
+    let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+        robin_util::asset_fs::AssetVfs::new(),
+    ));
+    assert!(
+        cache
+            .load(&mut ResourceManager::new(), renderer, &files)
+            .is_err()
+    );
+    assert_eq!(cache.get_surface(kind), Some(first));
+
+    renderer
+        .draw_surface(first, None, None, BLIT_SOURCE_TRANSPARENT)
+        .unwrap();
+    for _ in 0..3 {
+        let previous = cache.get_surface(kind).unwrap();
+        cache.replace_with(renderer, install).unwrap();
+        assert!(renderer.surface_dimensions(previous).is_err());
+        assert_eq!(cache.get_sub_picture(42, 3), cache.get_surface(kind));
+    }
+    let last = cache.get_surface(kind).unwrap();
+    cache.retire(renderer).unwrap();
+    cache.retire(renderer).unwrap();
+    assert!(renderer.surface_dimensions(last).is_err());
+    assert!(!cache.is_loaded());
+    assert!(cache.get_sub_picture(42, 3).is_none());
+    assert_eq!(cache.get_localized_name(kind), Some("Retained name"));
+    // A retired, empty cache can be loaded by a different renderer.
+    cache.replace_with(other, install).unwrap();
+    cache.retire(other).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -3625,12 +3987,18 @@ mod tests {
         };
         let first = make(b"first");
         let second = make(b"second");
-        assert_eq!(super::read_ui_asset("isolated-test.png", &first), b"first");
         assert_eq!(
-            super::read_ui_asset("isolated-test.png", &second),
+            super::read_ui_asset("isolated-test.png", &first).unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            super::read_ui_asset("isolated-test.png", &second).unwrap(),
             b"second"
         );
-        assert_eq!(super::read_ui_asset("isolated-test.png", &first), b"first");
+        assert_eq!(
+            super::read_ui_asset("isolated-test.png", &first).unwrap(),
+            b"first"
+        );
     }
     use super::*;
 
