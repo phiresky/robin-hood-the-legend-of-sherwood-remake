@@ -132,13 +132,17 @@ mod tests {
         let owner = EntityId::Pc(crate::entity_id::PcId(7));
         let mut manager = SequenceManager::new();
         let mut sequence = Sequence::new();
-        sequence.append_element(SequenceElement::new_movement(
-            1,
-            Command::Move,
-            Some(owner),
+        let mut element =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        element.push_order(crate::order::Order::new(
             OrderType::WalkingUpright,
+            0.0,
+            0.0,
+            std::num::NonZeroU32::new(1).unwrap(),
         ));
+        sequence.append_element(element);
         let id = manager.launch_sequence(sequence);
+        manager.element_in_progress(id, 0);
         (manager, owner, id)
     }
 
