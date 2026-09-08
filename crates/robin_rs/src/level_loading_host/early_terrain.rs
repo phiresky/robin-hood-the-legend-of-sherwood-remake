@@ -8,7 +8,7 @@ struct TerrainKey {
     mission: String,
     map: String,
     ambiance: String,
-    generation: u64,
+    mission_generation: u64,
 }
 
 #[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
@@ -110,7 +110,7 @@ impl EarlyTerrainDecode {
                     mission: mission.into(),
                     map,
                     ambiance,
-                    generation: 0,
+                    mission_generation: 0,
                 },
                 dimensions,
                 source,
@@ -146,7 +146,10 @@ impl EarlyTerrainDecode {
                 "early terrain handoff does not belong to selected shipping mission".into(),
             );
         }
-        self.key.generation = selection.generation;
+        // Exclamation selection/localization invalidates the broad asset
+        // generation immediately after shipping installation. Terrain belongs
+        // to the installed mission; final reader bytes are checked separately.
+        self.key.mission_generation = selection.mission_generation;
         Ok(())
     }
 
@@ -159,7 +162,7 @@ impl EarlyTerrainDecode {
     ) -> bool {
         let selection = datadir.selection_snapshot();
         self.key.installation == datadir.installation_id()
-            && self.key.generation == selection.generation
+            && self.key.mission_generation == selection.mission_generation
             && selection.mission.as_deref() == Some(mission)
             && self.key.mission == mission
             && self.key.map == map
@@ -280,7 +283,7 @@ mod tests {
                 mission: "first".into(),
                 map: "map".into(),
                 ambiance: "Day".into(),
-                generation: 0,
+                mission_generation: 0,
             },
             dimensions: (2, 1),
             source: Arc::new(vec![1, 2, 3]),
@@ -346,6 +349,30 @@ mod tests {
                 .is_none()
         );
         assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn shipping_exclamation_publication_preserves_terrain_handoff() {
+        let datadir = datadir();
+        let cache = crate::process_asset_cache::ApplicationAssetCache::default();
+        cache
+            .publish_early_terrain(job(&datadir), &datadir)
+            .unwrap();
+        let installed = datadir.selection_snapshot();
+        // ensure_loaded performs this immediately after publishing terrain.
+        datadir.set_active_exclamation_ids([1, 2].into_iter().collect());
+        let selected = datadir.selection_snapshot();
+        assert_ne!(selected.generation, installed.generation);
+        assert_eq!(selected.mission_generation, installed.mission_generation);
+        let pending = cache
+            .take_early_terrain(&datadir, "first", "map", "Day")
+            .unwrap();
+        let files = Arc::new(sbfile::SbFileSystem::new(datadir.asset_vfs().clone()));
+        let decoded = futures::executor::block_on(pending.finish("Levels".into(), datadir, files));
+        assert_eq!(
+            decoded.background.unwrap().unwrap().pixels,
+            vec![0x3412, 0x7856]
+        );
     }
 
     #[test]

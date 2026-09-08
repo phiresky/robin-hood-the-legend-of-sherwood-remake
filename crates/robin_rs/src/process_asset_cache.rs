@@ -606,7 +606,8 @@ impl ApplicationAssetCache {
         ambiance: &str,
     ) -> Option<crate::level_loading_host::EarlyTerrainDecode> {
         // Taking even a mismatched entry retires it; it must never be reused
-        // after an installation switch, failed restart, or locale change.
+        // after an installation switch or superseding mission activation.
+        // Locale/overlay changes are checked against the final reader bytes.
         self.early_terrain
             .lock()
             .expect("early terrain lock poisoned")
