@@ -337,26 +337,15 @@ impl PopupScrollModalState {
         };
         self.input_state.end_frame();
         if let Some(backend) = audio_backend {
-            // Tracked variant: buttons re-emit WidgetFocused every hovered
-            // frame, so the state-gate is what keeps the hover sound to one
-            // play per hover instead of one per frame.
-            for event in &events {
-                let state = self
-                    .frame
-                    .widget(event.origin_widget_id)
-                    .map(|w| w.base().state)
-                    .unwrap_or(crate::ui::UiState::Default);
-                widget_bridge::play_widget_noise_tracked(
-                    std::slice::from_ref(event),
-                    widget_bridge::WIDGET_NOISY_BUTTON,
-                    sound,
-                    Some(&mut *backend),
-                    sample_loader,
-                    Some(&mut self.noise_tracker),
-                    state,
-                    false,
-                );
-            }
+            widget_bridge::play_frame_widget_noise(
+                &events,
+                &self.frame,
+                widget_bridge::WIDGET_NOISY_BUTTON,
+                sound,
+                Some(backend),
+                sample_loader,
+                &mut self.noise_tracker,
+            );
         }
         if widget_bridge::find_activated(&events).is_some() {
             dismissed = true;

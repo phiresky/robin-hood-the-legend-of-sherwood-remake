@@ -33,11 +33,10 @@ const ID_NEXT_PAGE: u32 = 303;
 const ID_CONTENT: u32 = 304;
 const STANDALONE_OPTIONS_PER_PAGE: usize = 12;
 const OPTION_COLUMN_LEFT_X: i32 = 30;
-const OPTION_COLUMN_RIGHT_X: i32 = 320;
+const OPTION_COLUMN_RIGHT_X: i32 = 330;
 const OPTION_ROW_START_Y: i32 = 100;
-const OPTION_ROW_GAP: i32 = 2;
-const OPTION_COLUMN_WIDTH_LIMIT: i32 = 290;
-const OPTION_ROW_HEIGHT_LIMIT: i32 = 34;
+const OPTION_ROW_GAP: i32 = 6;
+const OPTION_COLUMN_WIDTH_LIMIT: i32 = 280;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 #[cfg(test)]
 pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
@@ -418,7 +417,7 @@ pub(crate) fn fit_button_label(
     resources.menu_button_font_any(enabled).map_or_else(
         || label.to_owned(),
         |font| {
-            elide_to_width_by(label, (width - 8).max(1), |candidate| {
+            elide_to_width_by(label, (width - 24).max(1), |candidate| {
                 font.text_width(candidate)
             })
         },
@@ -471,9 +470,8 @@ fn build_standalone_frame(
 
     let visible = standalone_visible_option_range(page);
     let visible_count = visible.len();
-    let (field_w, field_h) = resources.input_field_dimensions();
-    let field_w = field_w.min(OPTION_COLUMN_WIDTH_LIMIT);
-    let field_h = field_h.min(OPTION_ROW_HEIGHT_LIMIT);
+    let field_w = OPTION_COLUMN_WIDTH_LIMIT;
+    let field_h = btn_h;
     let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
@@ -518,7 +516,7 @@ fn build_standalone_frame(
         "Next Page",
         page + 1 < standalone_page_count(),
         30,
-        417,
+        388 + btn_h + OPTION_ROW_GAP,
         btn_w,
         btn_h,
     ));
@@ -1073,12 +1071,8 @@ mod tests {
         for page in 0..standalone_page_count() {
             let count = standalone_visible_option_range(page).len();
             for visible_index in 0..count {
-                let (x, y, width, height) = standalone_option_rect(
-                    visible_index,
-                    count,
-                    OPTION_COLUMN_WIDTH_LIMIT,
-                    OPTION_ROW_HEIGHT_LIMIT,
-                );
+                let (x, y, width, height) =
+                    standalone_option_rect(visible_index, count, OPTION_COLUMN_WIDTH_LIMIT, 34);
                 assert!(x >= 0 && x + width <= 640);
                 assert!(y >= OPTION_ROW_START_Y);
                 assert!(y + height < 388, "row overlaps page navigation");
