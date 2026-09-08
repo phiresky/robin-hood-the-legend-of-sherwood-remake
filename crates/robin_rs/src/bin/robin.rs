@@ -435,6 +435,12 @@ async fn wasm_main(
         elapsed_ms = init_start.elapsed().as_secs_f64() * 1000.0,
         "startup timing: rust initialization"
     );
+    let replay_preparation = robin_rs::main_entry::start_browser_replay_preparation(
+        &args,
+        profiles.clone(),
+        shipping.clone(),
+    )
+    .map_err(anyhow::Error::msg)?;
     let window_start = web_time::Instant::now();
     tracing::info!("Rust initialization complete.");
 
@@ -455,12 +461,13 @@ async fn wasm_main(
                 elapsed_ms = pool_join_start.elapsed().as_secs_f64() * 1000.0,
                 "startup timing: worker pool remaining wait"
             );
-            match robin_rs::main_entry::run_rust_game(
+            match robin_rs::main_entry::run_rust_game_with_browser_preparation(
                 &mut window,
                 campaign,
                 profiles.clone(),
                 shipping,
                 &args,
+                replay_preparation,
             )
             .await
             {

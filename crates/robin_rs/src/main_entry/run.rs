@@ -13,16 +13,191 @@ use robin_engine::profiles::MissionLocation;
 use super::callbacks::{RustCallbacks, detect_demo_mode_with_context, force_mission_launch};
 use super::cli::{CliArgs, requested_replay_data};
 
+type ReplayLaunch = (
+    Campaign,
+    usize,
+    MissionLocation,
+    CliArgs,
+    u64,
+    robin_engine::engine::SimConfig,
+);
+
+/// In-process ownership handoff, never serialized or reconstructed from JS.
+struct PreparedInitialReplay {
+    profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    launch: ReplayLaunch,
+    #[cfg(target_arch = "wasm32")]
+    downloads: Option<crate::shipping_mission::EarlyMissionDownloads>,
+}
+
+#[cfg(target_arch = "wasm32")]
+pub struct BrowserReplayPreparation {
+    receiver: async_channel::Receiver<Result<PreparedInitialReplay, String>>,
+    abort: futures::future::AbortHandle,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for BrowserReplayPreparation {
+    fn drop(&mut self) {
+        self.abort.abort();
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn replay_preparation_mode(value: Option<&str>) -> Result<bool, String> {
+    match value {
+        None | Some("late") => Ok(false),
+        Some("early") => Ok(true),
+        Some(value) => Err(format!(
+            "invalid replay-preparation {value:?}; expected early or late"
+        )),
+    }
+}
+
+/// Diagnostic ablation: retain the existing default until browser measurements
+/// establish a benefit. Interactive and multiplayer launch ordering is unchanged.
+#[cfg(target_arch = "wasm32")]
+pub fn start_browser_replay_preparation(
+    args: &CliArgs,
+    profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    context: crate::host::ReadyApplicationContext,
+) -> Result<Option<BrowserReplayPreparation>, String> {
+    let window = web_sys::window().ok_or_else(|| "browser window is unavailable".to_string())?;
+    let query = window
+        .location()
+        .search()
+        .map_err(|error| format!("read browser query: {error:?}"))?;
+    let query = web_sys::UrlSearchParams::new_with_str(&query)
+        .map_err(|error| format!("parse browser query: {error:?}"))?;
+    if !replay_preparation_mode(query.get("replay-preparation").as_deref())?
+        || !args.wait_for_command
+        || query.get("replay").is_none_or(|replay| replay.is_empty())
+        || args.join.is_some()
+        || args.force_main_menu
+        || query.has("join")
+    {
+        return Ok(None);
+    }
+    let context: ApplicationContext = context
+        .with_options(args.global_options.options().clone())
+        .into();
+    let mut args = args.clone();
+    args.global_options = context.clone();
+    let (sender, receiver) = async_channel::bounded(1);
+    let (abort, registration) = futures::future::AbortHandle::new_pair();
+    wasm_bindgen_futures::spawn_local(async move {
+        let prepare = async move {
+            // wasm_boot queues wasm_main before the shell awaits rpc(info)
+            // and sends load-replay. Wait for the admitted queue, not a timing
+            // assumption or another parse of URL bytes.
+            loop {
+                crate::http_server::drain_pre_engine();
+                if let Some(pending) = crate::http_server::take_pending_replay() {
+                    let mut prepared_profiles = profiles.clone();
+                    let launch = crate::game_session::prepare_replay_launch(
+                        &context,
+                        std::sync::Arc::make_mut(&mut prepared_profiles),
+                        &args,
+                        pending.data,
+                        pending.paused,
+                    )
+                    .await?;
+                    // Cold/custom resolution can yield. Respect a newer
+                    // queued replay before starting any earlier one's I/O.
+                    crate::http_server::drain_pre_engine();
+                    if crate::http_server::peek_pending_replay_mission_id().is_some() {
+                        continue;
+                    }
+                    let shipping = context.shipping_arc()?;
+                    let archive = launch
+                        .3
+                        .resolved_mission_assets
+                        .as_ref()
+                        .is_some_and(|resolved| resolved.is_archive());
+                    let mission = launch.0.missions[launch.1]
+                        .profile(&prepared_profiles)
+                        .mission_filename
+                        .clone();
+                    let downloads = match shipping {
+                        Some(datadir) if !archive && datadir.has_mission(&mission) => Some(
+                            crate::shipping_mission::start_early_downloads(
+                                datadir,
+                                &mission,
+                                &launch.0,
+                                &prepared_profiles,
+                            )
+                            .map_err(|error| format!("early replay downloads: {error:#}"))?,
+                        ),
+                        _ => None,
+                    };
+                    return Ok(PreparedInitialReplay {
+                        profiles: prepared_profiles,
+                        launch,
+                        downloads,
+                    });
+                }
+                crate::window::sleep_ms(1).await;
+            }
+        };
+        if let Ok(result) = futures::future::Abortable::new(prepare, registration).await {
+            let _ = sender.send(result).await;
+        }
+    });
+    Ok(Some(BrowserReplayPreparation { receiver, abort }))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn run_rust_game_with_browser_preparation(
+    window: &mut GameWindow,
+    campaign: Campaign,
+    profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    context: crate::host::ReadyApplicationContext,
+    args: &CliArgs,
+    preparation: Option<BrowserReplayPreparation>,
+) -> Result<i32, String> {
+    let prepared = match preparation {
+        Some(preparation) => {
+            let prepared = preparation
+                .receiver
+                .recv()
+                .await
+                .map_err(|error| format!("early replay preparation dropped: {error}"))??;
+            crate::http_server::drain_pre_engine();
+            if crate::http_server::peek_pending_replay_mission_id().is_some() {
+                // Supersession before mission construction releases and aborts
+                // the old prefix. The normal queue path takes the latest one.
+                drop(prepared);
+                None
+            } else {
+                Some(prepared)
+            }
+        }
+        None => None,
+    };
+    run_rust_game_inner(window, campaign, profiles, context, args, prepared).await
+}
+
 /// Run the game loop: main menu -> mission selection -> game -> repeat.
 ///
 /// Outer loop: main menu (Start/Exit) -> campaign map -> game loop ->
 /// back to menu.
 pub async fn run_rust_game(
     window: &mut GameWindow,
+    campaign: Campaign,
+    profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    application_context: crate::host::ReadyApplicationContext,
+    args: &CliArgs,
+) -> Result<i32, String> {
+    run_rust_game_inner(window, campaign, profiles, application_context, args, None).await
+}
+
+async fn run_rust_game_inner(
+    window: &mut GameWindow,
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
     args: &CliArgs,
+    prepared_replay: Option<PreparedInitialReplay>,
 ) -> Result<i32, String> {
     // Combine parsed launcher options with the services loaded by `rust_init`.
     // Every lock-backed value used below is copied into an owned snapshot
@@ -111,19 +286,32 @@ pub async fn run_rust_game(
     // selection without racing a hard-coded default.
     if wait_for_command {
         tracing::info!("--wait-for-command: data loaded, idling until load-replay RPC arrives");
-        wait_for_replay_command(window).await;
-        let Some(pending) = crate::http_server::take_pending_replay() else {
-            return Err("--wait-for-command: replay disappeared before mission start".into());
-        };
+        // Keep the I/O owner alive through the mission; all unused entries
+        // are canceled if setup fails or this replay is superseded.
+        #[cfg(target_arch = "wasm32")]
+        let mut _early_downloads = None;
         let (replay_campaign, idx, location, replay_args, replay_rng_seed, replay_sim_config) =
-            crate::game_session::prepare_replay_launch(
-                &application_context,
-                std::sync::Arc::make_mut(&mut profiles),
-                args,
-                pending.data,
-                pending.paused,
-            )
-            .await?;
+            if let Some(prepared) = prepared_replay {
+                profiles = prepared.profiles;
+                #[cfg(target_arch = "wasm32")]
+                {
+                    _early_downloads = prepared.downloads;
+                }
+                prepared.launch
+            } else {
+                wait_for_replay_command(window).await;
+                let pending = crate::http_server::take_pending_replay().ok_or_else(|| {
+                    "--wait-for-command: replay disappeared before mission start".to_string()
+                })?;
+                crate::game_session::prepare_replay_launch(
+                    &application_context,
+                    std::sync::Arc::make_mut(&mut profiles),
+                    args,
+                    pending.data,
+                    pending.paused,
+                )
+                .await?
+            };
         let mut callbacks = RustCallbacks::new(application_context.clone());
         let outcome = Box::pin(run_mission(
             window,
@@ -878,5 +1066,16 @@ async fn wait_for_replay_command(window: &mut GameWindow) {
         }
 
         crate::window::sleep_ms(50).await;
+    }
+}
+
+#[cfg(test)]
+mod early_replay_tests {
+    #[test]
+    fn diagnostic_mode_is_explicit_and_rejects_typos() {
+        assert_eq!(super::replay_preparation_mode(None), Ok(false));
+        assert_eq!(super::replay_preparation_mode(Some("late")), Ok(false));
+        assert_eq!(super::replay_preparation_mode(Some("early")), Ok(true));
+        assert!(super::replay_preparation_mode(Some("ealry")).is_err());
     }
 }
