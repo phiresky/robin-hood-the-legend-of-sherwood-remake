@@ -417,6 +417,7 @@ impl AssetVfs {
     fn locate(
         &self,
         path: impl AsRef<Path>,
+        // Memory mounts contain only files; only native mounts need this distinction.
         _require_file: bool,
     ) -> Result<Option<AssetLocation>, AssetError> {
         let requested = path.as_ref();
