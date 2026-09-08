@@ -47,5 +47,19 @@ Tests cover independent owner identity/storage, mismatch and failed-preparation
 retry, exclusive leases, repeated authenticated-seat publication, and opaque
 serialization. Existing exact authenticated-seat reconnect tests are retained.
 
-TODO: Record final focused native test and build results after the cold build
-completes. Browser transport ownership is unchanged in this native-only track.
+## Verification
+
+On source `1d8d3f09c`, with `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`:
+
+- `cargo test --locked -p robin_rs --lib multiplayer::native::tests --no-default-features --features multiplayer`:
+  28 passed, no failures or ignored tests (including real iroh ranked/reconnect
+  coverage), 3.33 seconds after the cold build.
+- `cargo test --locked -p robin_rs --lib --no-default-features --features multiplayer -- multiplayer:: direct_restart`:
+  82 passed, no failures or ignored tests, 7.90 seconds. This includes both new
+  direct-restart tests, snapshot admission, input roundtrip, content preflight,
+  authenticated reconnect, and deterministic runtime/worker teardown.
+- `cargo fmt --all` and `git diff --check` passed.
+
+The parent integration track owns the combined native executable build and
+runtime gates; no duplicate binary build was started here. Browser transport
+ownership is unchanged in this native-only track.
