@@ -913,7 +913,16 @@ pub(super) fn update_mouse_and_cursor(
         mouse_screen.x,
         mouse_screen.y,
     );
-    let mut new_cursor = if portrait_hit.is_some() {
+    // RHGame keeps widget-owned mouse handling outside Engine::UpdateMouse.
+    // The minimap (including its folded button and active drag) must not ask
+    // the occluded world cell which movement/action cursor to display.
+    let over_minimap = host
+        .frontend
+        .engine_display
+        .minimap()
+        .is_over_widget(mouse_screen)
+        || host.frontend.pointer_capture.minimap_drag_active();
+    let mut new_cursor = if portrait_hit.is_some() || over_minimap {
         engine_resource_ids::RHMOUSE_DEFAULT
     } else if let Some(mouse_map) = host.frontend.viewport.screen_to_map(mouse_screen) {
         let alt_for_cursor = engine.is_alt_effective(&host.frontend.input);
@@ -949,7 +958,8 @@ pub(super) fn update_mouse_and_cursor(
         engine_profiles::Action::Heal
             | engine_profiles::Action::Shield
             | engine_profiles::Action::BigShield
-    ) && let Some(hit) = portrait_hit
+    ) && !over_minimap
+        && let Some(hit) = portrait_hit
         && !hit.is_burned
     {
         let pc_id = hit.pc_id;

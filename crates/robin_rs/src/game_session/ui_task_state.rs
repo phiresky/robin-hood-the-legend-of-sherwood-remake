@@ -1980,13 +1980,13 @@ mod tests {
     #[test]
     fn options_pager_covers_every_integrated_gameplay_setting() {
         let total = crate::ingame_menu::gameplay::OPTION_LABELS.len();
-        assert_eq!(total, 45, "update this contract when settings are added");
+        assert_eq!(total, 46, "update this contract when settings are added");
         assert_eq!(OptionsPager::page_count(total), 4);
         let covered = (0..OptionsPager::page_count(total))
             .flat_map(|page| OptionsPager { page }.visible_range(total))
             .collect::<Vec<_>>();
         assert_eq!(covered, (0..total).collect::<Vec<_>>());
-        assert_eq!(OptionsPager { page: 3 }.visible_range(total), 36..45);
+        assert_eq!(OptionsPager { page: 3 }.visible_range(total), 36..46);
         assert!(
             OptionsPager { page: 3 }
                 .visible_range(total)
@@ -2003,7 +2003,7 @@ mod tests {
         ));
         assert_eq!(
             crate::ingame_menu::gameplay::OPTION_LABELS.len(),
-            45,
+            46,
             "Manage Content must not consume a gameplay-setting index"
         );
     }
