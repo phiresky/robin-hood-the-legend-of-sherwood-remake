@@ -46,16 +46,16 @@ impl Drop for BrowserReplayPreparation {
 #[cfg(any(target_arch = "wasm32", test))]
 fn replay_preparation_mode(value: Option<&str>) -> Result<bool, String> {
     match value {
-        None | Some("late") => Ok(false),
-        Some("early") => Ok(true),
+        Some("late") => Ok(false),
+        None | Some("early") => Ok(true),
         Some(value) => Err(format!(
             "invalid replay-preparation {value:?}; expected early or late"
         )),
     }
 }
 
-/// Diagnostic ablation: retain the existing default until browser measurements
-/// establish a benefit. Interactive and multiplayer launch ordering is unchanged.
+/// Start the admitted URL replay early; `replay-preparation=late` retains a
+/// same-package comparison. Interactive and multiplayer ordering is unchanged.
 #[cfg(target_arch = "wasm32")]
 pub fn start_browser_replay_preparation(
     args: &CliArgs,
@@ -1072,8 +1072,8 @@ async fn wait_for_replay_command(window: &mut GameWindow) {
 #[cfg(test)]
 mod early_replay_tests {
     #[test]
-    fn diagnostic_mode_is_explicit_and_rejects_typos() {
-        assert_eq!(super::replay_preparation_mode(None), Ok(false));
+    fn early_mode_is_default_and_late_ablation_rejects_typos() {
+        assert_eq!(super::replay_preparation_mode(None), Ok(true));
         assert_eq!(super::replay_preparation_mode(Some("late")), Ok(false));
         assert_eq!(super::replay_preparation_mode(Some("early")), Ok(true));
         assert!(super::replay_preparation_mode(Some("ealry")).is_err());
