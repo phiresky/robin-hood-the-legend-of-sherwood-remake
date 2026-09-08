@@ -986,6 +986,8 @@ impl LoadedInteractiveStage {
 /// engine until consuming finalization returns it in [`MissionOutcome`].
 pub(super) struct BuiltInteractiveMission {
     mission: InteractiveMission,
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    startup_audio_pause: Option<crate::web_audio_backend::StartupWarmupPause>,
 }
 
 impl BuiltInteractiveMission {
@@ -997,6 +999,8 @@ impl BuiltInteractiveMission {
         args: &crate::main_entry::CliArgs,
     ) -> Result<GameCode, String> {
         let mut services = MissionServices {
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause: &mut self.startup_audio_pause,
             window,
             callbacks,
             profiles,
@@ -1339,6 +1343,27 @@ impl InteractiveMissionBuilder {
             "interactive builder cannot construct headless shims"
         );
 
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        let startup_audio_pause = if args.global_options.sound_enabled {
+            match args
+                .global_options
+                .browser_audio()
+                .and_then(|audio| audio.pause_warmup_until_first_frame())
+            {
+                Ok(pause) => pause,
+                Err(error) => {
+                    return InteractiveBuildOutcome::Finished(MissionOutcome::new(
+                        campaign,
+                        rng_seed,
+                        sim_config,
+                        Err(error),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
         let graphic_config = args
             .global_options
             .active_profile_snapshot()
@@ -1537,7 +1562,11 @@ impl InteractiveMissionBuilder {
         let mission = bootstrap.finish_interactive(frontend, args);
         timer.step("runtime + replay init");
         timer.total();
-        InteractiveBuildOutcome::Ready(BuiltInteractiveMission { mission })
+        InteractiveBuildOutcome::Ready(BuiltInteractiveMission {
+            mission,
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            startup_audio_pause,
+        })
     }
 }
 

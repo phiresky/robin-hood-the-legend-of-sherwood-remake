@@ -15,6 +15,8 @@ use super::*;
 /// These references are process resources and deliberately do not implement
 /// serde. They remain outside deterministic mission ownership.
 pub(super) struct MissionServices<'a> {
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    pub(super) startup_audio_pause: &'a mut Option<crate::web_audio_backend::StartupWarmupPause>,
     pub(super) window: &'a mut GameWindow,
     pub(super) callbacks: &'a mut RustCallbacks,
     pub(super) profiles: &'a engine_profiles::ProfileManager,
@@ -427,6 +429,15 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
 
             render_ctx.present();
+            #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+            if services.startup_audio_pause.take().is_some() {
+                // A surface-acquisition failure also ends this reservation:
+                // presentation failure must not indefinitely park warmup.
+                // Actual music/briefing playback always bypasses the guard.
+                tracing::info!(
+                    "startup timing: audio warmup released after mission present attempt"
+                );
+            }
             fixed_tick_presented = true;
             #[cfg(target_arch = "wasm32")]
             {

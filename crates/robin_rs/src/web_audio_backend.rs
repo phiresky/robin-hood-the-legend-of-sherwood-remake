@@ -3,8 +3,8 @@
 use crate::sound::AudioBackend;
 use crate::web_audio_state::{
     CompletionDecision, ContentDedup, PendingPlayback, PlaybackGeneration, PlaybackKind,
-    ProgressCounter, RequestIds, WarmPriority, completion_decision, should_decode_during_warmup,
-    warm_priority,
+    ProgressCounter, RequestIds, StartupWarmupBoundary, WarmPriority, completion_decision,
+    should_decode_during_warmup, warm_priority,
 };
 use futures::StreamExt as _;
 use robin_assets::shipping_datadir::RemoteAudioAsset;
@@ -102,7 +102,7 @@ impl BrowserAudioSession {
         })
     }
 
-    pub(crate) fn pause_startup_warmup(&self) -> Result<Option<StartupWarmupPause>, String> {
+    fn startup_warmup_boundary(&self) -> Result<StartupWarmupBoundary, String> {
         let window = web_sys::window().ok_or("pause audio warmup: no window")?;
         let query = web_sys::UrlSearchParams::new_with_str(
             &window
@@ -111,10 +111,24 @@ impl BrowserAudioSession {
                 .map_err(|error| format!("read audio startup query: {error:?}"))?,
         )
         .map_err(|error| format!("parse audio startup query: {error:?}"))?;
-        match query.get("audio-downloads").as_deref() {
-            Some("eager") => return Ok(None),
-            None | Some("deferred") => {}
-            Some(value) => return Err(format!("unknown audio-downloads policy {value:?}")),
+        StartupWarmupBoundary::from_query(query.get("audio-downloads").as_deref())
+    }
+
+    pub(crate) fn pause_startup_warmup(&self) -> Result<Option<StartupWarmupPause>, String> {
+        if self.startup_warmup_boundary()? == StartupWarmupBoundary::Eager {
+            return Ok(None);
+        }
+        self.pause_warmup().map(Some)
+    }
+
+    /// A mission owns this reservation across bootstrap and presentation. Its
+    /// lexical owner releases it on aborted construction/session exit too.
+    /// The separate shipping reservation can finish without unpausing this one.
+    pub(crate) fn pause_warmup_until_first_frame(
+        &self,
+    ) -> Result<Option<StartupWarmupPause>, String> {
+        if self.startup_warmup_boundary()? != StartupWarmupBoundary::FirstFrame {
+            return Ok(None);
         }
         self.pause_warmup().map(Some)
     }
@@ -1559,6 +1573,35 @@ mod browser_lifecycle_tests {
         first.retire();
         assert!(waiting.now_or_never().unwrap().is_err());
         drop(retired_pause);
+        other.retire();
+    }
+
+    #[wasm_bindgen_test]
+    fn first_frame_reservation_outlives_downloads_and_wakes_live_waiters() {
+        use futures::FutureExt as _;
+        let first = session();
+        let other = session();
+        let frame = first.pause_warmup().unwrap();
+        let downloads = first.pause_warmup().unwrap();
+        let other_frame = other.pause_warmup().unwrap();
+        let mut waiting = Box::pin(first.wait_for_warmup_bandwidth());
+        assert!(waiting.as_mut().now_or_never().is_none());
+        drop(downloads);
+        assert!(waiting.as_mut().now_or_never().is_none());
+        // Successful presentation and early construction/session failure both
+        // release the same mission-owned guard; neither targets another session.
+        drop(frame);
+        assert!(waiting.now_or_never().unwrap().is_ok());
+        assert!(other.wait_for_warmup_bandwidth().now_or_never().is_none());
+        drop(other_frame);
+        assert!(
+            other
+                .wait_for_warmup_bandwidth()
+                .now_or_never()
+                .unwrap()
+                .is_ok()
+        );
+        first.retire();
         other.retire();
     }
 
