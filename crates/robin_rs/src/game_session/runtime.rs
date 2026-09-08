@@ -1598,7 +1598,7 @@ impl TimelineRuntime {
             // them. Never export the previous terminal attempt as this run.
             let reason = "replay unavailable after post-terminal load of a non-bootstrap save";
             crate::http_server::invalidate_replay_buffer(reason);
-            tracing::warn!(reason);
+            tracing::warn!("{reason}");
             return false;
         };
         match super::replay_init::restart_recording(header.clone()) {
@@ -1621,7 +1621,7 @@ impl TimelineRuntime {
                 let reason =
                     format!("replay unavailable: could not start restarted recording: {error}");
                 crate::http_server::invalidate_replay_buffer(reason.clone());
-                tracing::error!(reason);
+                tracing::error!("{reason}");
                 false
             }
         }
