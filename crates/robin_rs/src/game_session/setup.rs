@@ -1828,12 +1828,14 @@ pub(super) fn load_mission_sprites(
     // ── Portrait pictures (character faces in the bottom panel) ──
     // Portraits live in the same DEFAULT.RES file as cursors.
     let mut portrait_cache = PortraitCache::new();
-    portrait_cache.load(
-        cursor_res,
-        renderer,
-        host.preparation_files()
-            .expect("portrait preparation requires resource authority"),
-    );
+    portrait_cache
+        .load(
+            cursor_res,
+            renderer,
+            host.preparation_files()
+                .expect("portrait preparation requires resource authority"),
+        )
+        .expect("portrait artwork preparation failed");
     timer.step("portrait cache");
 
     // ── Localized character names ──

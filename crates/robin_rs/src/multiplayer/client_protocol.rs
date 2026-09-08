@@ -50,7 +50,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn every_direction_checks_exact_limit_before_allocation() {
         for policy in [
             InboundFramePolicy::ClientHello,
@@ -79,7 +80,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn frame_codec_preserves_wire_bytes_and_rejects_misclassification() {
         let message = welcome();
         let (header, bytes) = encode_frame(&message).unwrap();
@@ -94,7 +96,8 @@ mod tests {
         assert!(decode_body(class, &[]).is_err());
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn shared_native_and_browser_content_admission_trace() {
         // The only prelude policy difference is the signed browser invitation.
         for expected in [None, Some(MultiplayerSessionId([2; 32]))] {
@@ -119,7 +122,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn prelude_rejects_reordered_closed_and_late_events() {
         for expected in [None, Some(MultiplayerSessionId([2; 32]))] {
             for unexpected in [
@@ -161,7 +165,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn authenticated_host_and_signed_invitation_checks_survive_content_phase() {
         let mut state = ClientHandshake::new("other-endpoint".into(), None);
         assert!(
@@ -190,7 +195,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn reconnect_requires_exact_offer_not_just_same_content_hash() {
         let admitted = offer();
         assert!(validate_reconnect_content(None, None).is_ok());
@@ -205,7 +211,8 @@ mod tests {
         assert!(validate_reconnect_content(Some(&changed), Some(&admitted)).is_err());
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn reconnect_rejects_each_authoritative_metadata_change() {
         let HandshakeAction::Welcome(expected) = ClientHandshake::new("endpoint-key".into(), None)
             .receive(Some(welcome()))
