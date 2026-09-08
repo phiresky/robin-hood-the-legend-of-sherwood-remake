@@ -32,3 +32,12 @@ Tests cover concurrent callers, unlocked builders, invalidation during a blocked
 worker, wakeup and stale completion rejection, owner destruction, failed worker
 cleanup/retry, generation changes, stable-bank reuse, reader confinement and
 prepared-snapshot identity. Validation is pending the isolated worktree build.
+
+The real panic/retry test is explicitly ignored in the default Cranelift suite:
+`cfg(panic = "unwind")` alone does not guarantee destructor unwinding with this
+repository's native backend. The default suite directly exercises the same
+completion guard; run the real panic case with LLVM:
+
+```sh
+CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo --config 'profile.test.package.robin_rs.codegen-backend="llvm"' test --locked -p robin_rs --lib process_asset_cache::lifecycle_tests::panicking_worker_does_not_poison_owner_and_next_caller_retries -- --ignored --exact
+```
