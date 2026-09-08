@@ -19,7 +19,7 @@ Background Images contains the bare map and composite overlays, disabled
 initially. Enable either at 50% to check registration.
 
 **Sherwood Animation Reference** uses an independent 1–64 timeline at 25 fps.
-Six curved tree canopies retain all sixteen authored frames and changing offsets,
+Six tree canopies retain all sixteen authored frames and changing offsets,
 advancing every four ticks. They remain separate from the trunks. Original cards
 are preserved but hidden. Fourteen water, butterfly and fire references use
 their first frame; this is not a full runtime FX preview.
@@ -36,10 +36,16 @@ and textured renders, including foliage-hidden structure views. Generate these
 with `render_inspection.py` through MCP. The wire renders hide the clearing mesh
 so its dense grid does not obscure the structures.
 
-Canopy depth now follows supporting trunk footprints instead of the sprite's
-top-left/elevation billboard plane. The original image projection is preserved
-within 0.00015 pixels. Broad crowns interpolate between supporting trunks;
-the foreground Arbre05 root lies outside the image and remains inferred.
+Canopy depth follows supporting trunk footprints instead of the sprite's
+top-left/elevation billboard plane. The current geometry uses 470 separate,
+irregular rounded clumps distributed through crown depth. This replaces the
+warped mask shells and their long connecting walls. Broad crowns interpolate
+between supporting trunks; the foreground Arbre05 root remains inferred.
+The original animated image is projected onto these volumes, with explicit
+canvas clipping to prevent neighboring atlas frames bleeding into the borders.
+New images are named `inspection-depth/rounded-foliage-*.png`; the corresponding
+topology report is `rounded-foliage-validation.json`. The prior native scene is
+preserved as `sherwood-before-rounded-foliage.blend`.
 
 ## Geometry passes
 
@@ -48,7 +54,7 @@ the foreground Arbre05 root lies outside the image and remains inferred.
 | 03–06 | Long suspension bridge, ladder oak, three radial platforms, furniture supports |
 | 08 | 22 tapered/fluted trunks, root buttresses and traced branches |
 | 09 | Central oak fork; plank-built hut, peaked roof, porch rails and ladders |
-| 10 | Six closed, clustered canopy shells using original animated alpha atlases |
+| 10 | Six crowns containing 470 closed foliage clumps with animated alpha atlases |
 | 11 | Separate authored ambient overlay references |
 | 12 | 61 boards across two bridges/two landings, beams and rope rails |
 | 13 | 26 faceted boulders, river-fence posts/rails and fallen branches |
@@ -107,7 +113,8 @@ worktree path works. All geometry operations used Blender MCP.
 
 ## Validation and practical limits
 
-Checks cover 2,287 generated meshes, 134,029 vertices and 128,088 faces.
+Before the rounded foliage pass, checks covered 2,287 generated meshes,
+134,029 vertices and 128,088 faces.
 The 2,286 closed meshes have no non-manifold edges or zero-area faces. Terrain
 is one intentionally open surface with a clean boundary. All twelve atlas
 drivers are valid; all used file textures are packed. Reports are
@@ -124,7 +131,7 @@ TODOs for further art work:
 
 - Individually trace irregular board ends, roof breakage, lashings and joints.
 - Give foliage individual leaf clusters and hidden branch networks; current
-  shells retain the source alpha but infer canopy depth.
+  clumps retain the source alpha but still infer concealed branch structure.
 - Finish small bushes, baskets, utensils, chimney masonry and untouched
   background obstacle shapes.
 - Further fit the ladder oak and camp outlines against pixel residuals.

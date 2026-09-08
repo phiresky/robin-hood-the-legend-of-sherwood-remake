@@ -1,11 +1,13 @@
-"""Curved, closed canopy shells retaining all authored animated alpha frames.
+"""Rounded foliage clusters retaining all authored animated alpha frames.
 
 The image gives the silhouette and leaf colour. Depth is an inferred clustered
-shell, displaced along camera rays so the original projection stays registered.
+volume of separate leaf masses, anchored to the supporting trunks.
 TODO: replace concealed canopy colour with painted non-projective UVs if needed.
 """
 import json
 import math
+import random
+import bmesh
 import sys
 from pathlib import Path
 import bpy
@@ -45,83 +47,98 @@ def ground_depth(profile,x):
             return ay+(by-ay)*t
     return controls[-1][1]
 counts={}
+UP=Vector((0,SIN,COS))
 for record in records:
     if record['kind']!='tree':
         continue
     ref=next(o for o in references.objects if o.get('profile')==record['profile'])
-    material=ref.data.materials[0]
-    texture=next(n for n in material.node_tree.nodes if n.type=='TEX_IMAGE')
+    material=ref.data.materials[0].copy()
+    material.name=record['profile']+' - clustered animated foliage'
+    nodes=material.node_tree.nodes;links=material.node_tree.links
+    texture=next(n for n in nodes if n.type=='TEX_IMAGE')
+    # An atlas clips at its outer border, not each frame. Clip canvas UVs
+    # explicitly so rounded crowns cannot sample the neighboring frame.
+    uv_node=next(n for n in nodes if n.type=='TEX_COORD')
+    split=nodes.new('ShaderNodeSeparateXYZ');links.new(uv_node.outputs['UV'],split.inputs[0])
+    mask=None
+    for axis in ['X','Y']:
+        for operation,limit in [('GREATER_THAN',0),('LESS_THAN',1)]:
+            node=nodes.new('ShaderNodeMath');node.operation=operation;node.inputs[1].default_value=limit
+            links.new(split.outputs[axis],node.inputs[0])
+            if mask is None:mask=node.outputs[0]
+            else:
+                product=nodes.new('ShaderNodeMath');product.operation='MULTIPLY'
+                links.new(mask,product.inputs[0]);links.new(node.outputs[0],product.inputs[1]);mask=product.outputs[0]
+    product=nodes.new('ShaderNodeMath');product.operation='MULTIPLY'
+    links.new(mask,product.inputs[0]);links.new(texture.outputs['Alpha'],product.inputs[1])
+    mix=next(n for n in nodes if n.type=='MIX_SHADER')
+    links.new(product.outputs[0],mix.inputs[0])
     aw,ah=texture.image.size
-    pixels=np.empty(aw*ah*4,dtype=np.float32)
-    texture.image.pixels.foreach_get(pixels)
+    pixels=np.empty(aw*ah*4,dtype=np.float32);texture.image.pixels.foreach_get(pixels)
     alpha=pixels.reshape(ah,aw,4)[:,:,3]
-    width,height=record['canvas']; gutter=record['gutter']
+    width,height=record['canvas'];gutter=record['gutter']
     union=np.zeros((height,width),dtype=bool)
     for row in range(4):
         for col in range(4):
             union |= alpha[row*(height+2*gutter)+gutter:row*(height+2*gutter)+gutter+height,
                            col*(width+2*gutter)+gutter:col*(width+2*gutter)+gutter+width]>.01
     union=union[::-1,:]
-    nx,ny=math.ceil(width/7),math.ceil(height/7)
-    cells=set()
-    for y in range(ny):
-        for x in range(nx):
-            if union[int(y*height/ny):math.ceil((y+1)*height/ny),int(x*width/nx):math.ceil((x+1)*width/nx)].any():
-                cells.add((x,y))
-    # Diagonal-only cell contacts make four faces share a vertical shell edge.
-    # Fill one transparent grid cell at each contact; the authored alpha still
-    # controls its visibility, while the shell stays manifold.
-    changed=True
-    while changed:
-        changed=False
-        for y in range(ny-1):
-            for x in range(nx-1):
-                square=[(x,y),(x+1,y),(x+1,y+1),(x,y+1)]
-                present=[p in cells for p in square]
-                if present in ([True,False,True,False],[False,True,False,True]):
-                    cells.add(square[present.index(False)])
-                    changed=True
-    corner_keys=set()
-    for x,y in cells:
-        corner_keys.update([(x,y),(x+1,y),(x+1,y+1),(x,y+1)])
-    keys=sorted(corner_keys)
-    lookup={p:i for i,p in enumerate(keys)}
-    # Source quad order is top-left, top-right, bottom-right, bottom-left.
     p0,p1,p2,p3=[ref.matrix_world@v.co for v in ref.data.vertices]
-    depth=min(width,height)*.48
-    verts=[]
-    for side in [1,-1]:
-        for x,y in keys:
-            u,v=x/nx,y/ny
-            base=p0+(p1-p0)*u+(p3-p0)*v
-            pixel_y=-base.y*SIN-base.z*COS
+    # Independent rounded leaf masses have real backs and no extruded mask
+    # walls. Only cluster centers follow trunk depth, never individual vertices.
+    rng=random.Random(record['profile'])
+    step=38
+    nx,ny=math.ceil(width/step),math.ceil(height/step)
+    template=bmesh.new();bmesh.ops.create_icosphere(template,subdivisions=4,radius=1)
+    template.verts.ensure_lookup_table();template.verts.index_update()
+    unit=[v.co.copy() for v in template.verts]
+    unit_faces=[[v.index for v in f.verts] for f in template.faces]
+    template.free()
+    vertices=[];faces=[];clusters=0
+    for iy in range(ny):
+        for ix in range(nx):
+            x0,x1=int(ix*width/nx),math.ceil((ix+1)*width/nx)
+            y0,y1=int(iy*height/ny),math.ceil((iy+1)*height/ny)
+            if not union[y0:y1,x0:x1].any():continue
+            px=(ix+.5)*width/nx+rng.uniform(-step*.36,step*.36)
+            py=(iy+.5)*height/ny+rng.uniform(-step*.36,step*.36)
+            base=p0+(p1-p0)*(px/width)+(p3-p0)*(py/height)
+            screen_y=-base.y*SIN-base.z*COS
             gy=ground_depth(record['profile'],base.x)
-            base=game_point(base.x,gy,gy-pixel_y)
-            dome=max(0,1-((u-.5)/.65)**2-((v-.5)/.65)**2)**.5
-            clusters=max(math.exp(-((u-cu)**2+(v-cv)**2)/(2*radius**2))
-                         for cu,cv,radius in [(.18,.22,.24),(.48,.20,.26),(.78,.27,.24),
-                                             (.27,.52,.25),(.62,.53,.26),(.80,.70,.20),
-                                             (.27,.78,.20),(.52,.82,.22)])
-            displacement=side*(3+depth*dome*clusters)
-            verts.append(base+EYE*displacement)
-    n=len(keys);faces=[]
-    for x,y in sorted(cells):
-        a,b,d,e=[lookup[p] for p in [(x,y),(x+1,y),(x+1,y+1),(x,y+1)]]
-        faces.extend([(a,e,d,b),(a+n,b+n,d+n,e+n)])
-        for pair,neighbor in [((a,b),(x,y-1)),((b,d),(x+1,y)),((d,e),(x,y+1)),((e,a),(x-1,y))]:
-            if neighbor not in cells:
-                i,j=pair;faces.append((i,j,j+n,i+n))
-    data=bpy.data.meshes.new(record['profile']+' canopy shell')
-    data.from_pydata(verts,[],faces);data.update()
+            crown_y=-p0.y*SIN-p0.z*COS+height*.5
+            # Start on a camera-normal plane through the trunk-anchored crown
+            # center, then populate its depth. A constant ground-y per vertex
+            # would recreate the previous vertical wall of foliage.
+            center=game_point(base.x,gy,gy-crown_y)+UP*(crown_y-screen_y)
+            rx=width/nx*rng.uniform(.80,1.15)
+            ry=height/ny*rng.uniform(.76,1.12)
+            rz=(rx+ry)*rng.uniform(.45,.78)
+            vertical=(py/height-.5)/.58
+            dome=math.sqrt(max(.08,1-vertical*vertical))
+            volume_depth=min(width,height)*.40*dome
+            center+=EYE*rng.uniform(-volume_depth,volume_depth)
+            phase=rng.uniform(0,math.tau)
+            start=len(vertices)
+            for v in unit:
+                # Low-amplitude lobes avoid perfect repeated balls.
+                relief=(1+.13*math.sin(v.x*7+phase)*math.sin(v.y*6-phase)*math.cos(v.z*5)
+                        +.055*math.sin(v.z*9+phase)*math.cos(v.x*8-phase))
+                vertices.append(center+Vector((v.x*rx*relief,0,0))+UP*(v.y*ry*relief)+EYE*(v.z*rz*relief))
+            faces.extend([tuple(start+i for i in f) for f in unit_faces])
+            clusters+=1
+    data=bpy.data.meshes.new(record['profile']+' rounded leaf clusters')
+    data.from_pydata(vertices,[],faces);data.update()
     obj=bpy.data.objects.new(data.name,data);c.objects.link(obj)
     data.materials.append(material)
     uv=data.uv_layers.new(name='Authored animated canvas')
+    left=p0.x;top=-p0.y*SIN-p0.z*COS
     for loop in data.loops:
-        x,y=keys[loop.vertex_index%n]
-        uv.data[loop.index].uv=(x/nx,1-y/ny)
+        v=data.vertices[loop.vertex_index].co
+        uv.data[loop.index].uv=((v.x-left)/width,1-(-v.y*SIN-v.z*COS-top)/height)
     for polygon in data.polygons:polygon.use_smooth=True
     obj['profile']=record['profile'];obj['frame_count']=16
-    obj['inferred']='Closed clustered shell depth; source alpha, offsets and animation preserved'
+    obj['leaf_clusters']=clusters
+    obj['inferred']='Independent rounded foliage masses; source animated color/alpha projected onto clusters'
     obj['source_elevation']=record['elevation']
     obj['depth_anchor']='Supporting trunk footprints; foreground Arbre05 root inferred beyond image'
     ref.hide_render=True
@@ -129,7 +146,7 @@ for record in records:
         for layer in scene.view_layers:
             if ref.name in layer.objects:ref.hide_set(True,view_layer=layer)
     ref['replaced_by']=NAME
-    counts[record['profile']]={'vertices':len(verts),'faces':len(faces)}
+    counts[record['profile']]={'clusters':clusters,'vertices':len(vertices),'faces':len(faces)}
 
 # The remaining authored water/fire/butterfly overlays remain separate assets.
 ambient=collection('11 Authored ambient overlay references')

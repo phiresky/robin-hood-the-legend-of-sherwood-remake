@@ -19,6 +19,9 @@ report={'canopies':{}}
 if not previous:report['comparison_note']='No previous depth snapshot; only current topology is checked.'
 for obj in canopies.objects:
     old=previous.get(obj['profile'],[])
+    if len(old)!=len(obj.data.vertices):
+        old=[]
+        report['comparison_note']='Canopy topology changed; vertex-to-vertex depth comparison is not applicable.'
     errors=[];shifts=[]
     for a,v in zip(old,obj.data.vertices):
         b=v.co
