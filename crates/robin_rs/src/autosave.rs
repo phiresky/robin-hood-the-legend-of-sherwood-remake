@@ -514,23 +514,18 @@ impl AutosaveCoordinator {
             // write_job is synchronous on the browser thread, including both
             // payload and manifest publication. There is no await/reentrant
             // callback between this ordering check and advancing the watermark.
-            let completion = match thumbnail {
-                Some(thumbnail) => {
-                    job.thumbnail = Some(thumbnail);
-                    match write_job(&job) {
-                        Ok(completion) => {
-                            publication_order
-                                .borrow_mut()
-                                .published(job.capture_sequence);
-                            completion
-                        }
-                        Err(error) => AutosaveCompletion::failed(&job, error),
-                    }
+            // Thumbnail capture already logs its failure. Preserve the valid
+            // recovery payload even when the optional preview is unavailable,
+            // just as the awaited autosave path does.
+            job.thumbnail = thumbnail;
+            let completion = match write_job(&job) {
+                Ok(completion) => {
+                    publication_order
+                        .borrow_mut()
+                        .published(job.capture_sequence);
+                    completion
                 }
-                None => AutosaveCompletion::failed(
-                    &job,
-                    anyhow::anyhow!("initial autosave thumbnail capture failed"),
-                ),
+                Err(error) => AutosaveCompletion::failed(&job, error),
             };
             completions.borrow_mut().push_back(completion);
         });

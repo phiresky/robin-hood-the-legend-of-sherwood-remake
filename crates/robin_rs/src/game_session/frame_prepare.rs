@@ -1673,6 +1673,7 @@ mod tests {
 
     #[test]
     fn only_initial_nonurgent_autosave_can_defer_thumbnail_completion() {
+        use super::can_defer_initial_autosave;
         use crate::autosave::AutosaveReason;
         assert!(can_defer_initial_autosave(
             0,
