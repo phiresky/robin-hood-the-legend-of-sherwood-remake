@@ -89,7 +89,7 @@ impl SpatialPresentationPose {
             sector: element.sector(),
             obstacle: element.obstacle_index(),
             in_door_transit: element.is_in_door_transit(),
-            posture: element.posture,
+            posture: element.posture(),
             carrier: entity.human_data().and_then(|human| human.carrier),
             carried: entity.pc_data().and_then(|pc| pc.carried),
             display_order_ref: element.sprite.display_order_ref,
@@ -733,6 +733,7 @@ impl Engine {
         let obstacle = position.obstacle.map_or(Value::Null, |handle| {
             let handle = usize::from(handle);
             let obstacle = assets
+                .environment
                 .static_sight_obstacles
                 .get(handle)
                 .unwrap_or_else(|| {
@@ -741,7 +742,7 @@ impl Engine {
             if position.layer.is_none() {
                 json!({ "kind": "sight", "index": obstacle.id })
             } else {
-                let index = assets.static_sight_obstacles[..handle]
+                let index = assets.environment.static_sight_obstacles[..handle]
                     .iter()
                     .filter(|candidate| candidate.is_projection_area())
                     .count()
@@ -3392,7 +3393,7 @@ impl Engine {
         // script-before-AI order while still letting TestIfPathIsFine /
         // is_position_authorized see the real map and motion lines.
         inner.initialize(assets);
-        assets.level_grid = inner.world.fast_grid.level.clone();
+        assets.navigation.level_grid = inner.world.fast_grid.level.clone();
         assets.entities.mobile_element_count = inner.world.mobile_elements.len();
         assets.scripts.mission_name = inner
             .scripts
@@ -4305,7 +4306,7 @@ impl Engine {
     pub fn test_assert_level_assets_attached(&self, assets: &LevelAssets) {
         assert!(std::sync::Arc::ptr_eq(
             &self.inner.world.fast_grid.level,
-            &assets.level_grid
+            &assets.navigation.level_grid
         ));
         self.inner.scripts.assert_native_attachments_ready();
     }
@@ -4370,7 +4371,7 @@ impl Engine {
         saved: &Engine,
         assets: &LevelAssets,
     ) -> Result<(), SnapshotRestoreError> {
-        let level = &assets.level_grid;
+        let level = &assets.navigation.level_grid;
         let lengths = [
             (
                 SnapshotGridComponent::Lines,
@@ -4630,7 +4631,7 @@ impl ParityReplaySetup<'_> {
         if legacy_missing_presentation_view {
             return;
         }
-        let Some(frames) = assets.pixel_opacity.as_ref() else {
+        let Some(frames) = assets.attachments.pixel_opacity.as_ref() else {
             return;
         };
         let camera = &self.engine.inner.feedback.cutscene_camera;
@@ -4704,7 +4705,7 @@ impl ParityReplaySetup<'_> {
                         sprite_box.max.x,
                         sprite_box.max.y,
                     );
-                    let is_flying_human = element.posture == crate::element::Posture::Flying;
+                    let is_flying_human = element.posture() == crate::element::Posture::Flying;
                     if is_flying_human || kind.is_projectile() {
                         !self
                             .engine
@@ -4901,10 +4902,11 @@ mod tests {
         };
 
         let (mut engine, assets) = frame_api_fixture();
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element
             .sprite
@@ -4979,9 +4981,10 @@ mod tests {
         };
         let id = inner.add_entity(crate::element::Entity::Soldier(
             crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -5065,10 +5068,11 @@ mod tests {
             .world
             .entities
             .push(Some(Entity::Bonus(ElementBonus {
-                element: ElementData {
-                    kind: ElementKind::ObjectBonus,
-                    active: true,
-                    ..ElementData::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ObjectBonus;
+                    initial_element.active = true;
+                    initial_element
                 },
                 object: ObjectData {
                     associated_action: Action::Bow,
@@ -5415,11 +5419,13 @@ mod tests {
         let pc_id = engine
             .inner
             .add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    active: true,
-                    posture: crate::element::Posture::Upright,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::from_initial_posture(
+                        crate::element::Posture::Upright,
+                    );
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: crate::element::ActorData::default(),
                 human: crate::element::HumanData::default(),
@@ -5519,9 +5525,10 @@ mod tests {
             current
                 .inner
                 .add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::Fx,
-                        ..Default::default()
+                    element: {
+                        let mut initial_element = crate::element::ElementData::default();
+                        initial_element.kind = crate::element::ElementKind::Fx;
+                        initial_element
                     },
                     fx: Default::default(),
                 }));
@@ -5843,7 +5850,7 @@ mod tests {
                 exclamation_id,
                 variant,
             });
-        assets.speech_timing_catalog = Arc::new(crate::engine::SpeechTimingCatalog {
+        assets.audio.speech_timing_catalog = Arc::new(crate::engine::SpeechTimingCatalog {
             groups: BTreeMap::from([(
                 profile_id | u32::from(exclamation_id),
                 crate::engine::SpeechTimingGroup {
@@ -6251,9 +6258,10 @@ mod tests {
     #[test]
     fn parity_runtime_projects_current_sprite_top_left_for_ordinary_entities() {
         let mut inner = EngineInner::new();
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::Fx,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Fx;
+            initial_element
         };
         element.sprite.center = crate::coordinates::SpriteAnchor::new(150.0, 150.0);
         element
@@ -6277,9 +6285,10 @@ mod tests {
     #[test]
     fn parity_runtime_preserves_target_cached_sprite_anchor() {
         let mut inner = EngineInner::new();
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         };
         element.sprite.center = crate::coordinates::SpriteAnchor::new(30.0, 140.0);
         element
@@ -6346,16 +6355,20 @@ mod tests {
             ..Default::default()
         }]);
         let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: true,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = true;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: Default::default(),
         }));
         let assets = LevelAssets {
-            pixel_opacity: Some(std::sync::Arc::new(Frames)),
+            attachments: crate::engine::LevelRuntimeAttachments {
+                pixel_opacity: Some(std::sync::Arc::new(Frames)),
+                ..Default::default()
+            },
             ..LevelAssets::new()
         };
 
@@ -6411,16 +6424,20 @@ mod tests {
             ..Default::default()
         }]);
         let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: true,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = true;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: Default::default(),
         }));
         let assets = LevelAssets {
-            pixel_opacity: Some(std::sync::Arc::new(Frames)),
+            attachments: crate::engine::LevelRuntimeAttachments {
+                pixel_opacity: Some(std::sync::Arc::new(Frames)),
+                ..Default::default()
+            },
             ..LevelAssets::new()
         };
         let mut engine = Engine { inner };
@@ -6497,7 +6514,7 @@ mod tests {
         use crate::sight_obstacle::{SIGHTOBSTACLE_PROJECTION_AREA, SightObstacle};
 
         let mut assets = LevelAssets::new();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![
             SightObstacle::new_default(10),
             SightObstacle::new(11, SIGHTOBSTACLE_PROJECTION_AREA),
             SightObstacle::new_default(12),
@@ -6506,9 +6523,10 @@ mod tests {
 
         for (handle, expected_ordinal) in [(1_u32, 1_u64), (3, 2)] {
             let mut inner = EngineInner::new();
-            let mut element = crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                ..Default::default()
+            let mut element = {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element
             };
             element.set_layer(0);
             element.set_obstacle_index(
@@ -7119,10 +7137,11 @@ mod tests {
         inner.control.rng = SimulationRng::with_original_replay(vec![11, 22, 33, 44]);
         inner.control.arrow_refresh_pending = true;
         let projectile = crate::element::ElementProjectile {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: crate::element::ObjectData {
                 object_type: crate::element::ObjectType::Arrow,

@@ -32,10 +32,11 @@ fn entity_table(slots: Vec<Option<Entity>>) -> Entities {
 }
 
 fn make_pc(x: f32, y: f32) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ActorPc,
-        active: true,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ActorPc;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(MapPoint { x, y });
     Entity::Pc(ActorPc {
@@ -48,7 +49,8 @@ fn make_pc(x: f32, y: f32) -> Entity {
 
 fn make_anonymous_pc(x: f32, y: f32) -> Entity {
     let mut pc = make_pc(x, y);
-    pc.element_data_mut().posture = Posture::AnonymousArcher;
+    pc.element_data_mut()
+        .publish_order_posture(Posture::AnonymousArcher);
     pc
 }
 
@@ -57,10 +59,11 @@ fn make_soldier(x: f32, y: f32) -> Entity {
 }
 
 fn make_soldier_with_camp(x: f32, y: f32, camp: crate::element::Camp) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        active: true,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(MapPoint { x, y });
     let npc = NpcData {
@@ -90,10 +93,11 @@ fn existing_arrow_collision_uses_new_move_old_position() {
         .set_position(WorldPoint3D::new(1_040.648_1, 1_915.162_7, 0.0));
     let shooter = make_soldier_with_camp(772.0, 1796.0, crate::element::Camp::Lacklandists);
 
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     let saved_old = WorldPoint3D::new(987.105_4, 1_922.524_8, 68.750_26);
     element.set_position(saved_old);
@@ -163,10 +167,11 @@ fn existing_arrow_collision_uses_new_move_old_position() {
 }
 
 fn make_arrow_target(x: f32, y: f32) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::Target,
-        active: true,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(MapPoint { x, y });
     element.set_position(WorldPoint3D { x, y, z: 0.0 });
@@ -1103,7 +1108,9 @@ fn leaning_out_shot_initializes_from_live_map_positions_and_holds_while_turning(
         z: 100.0,
     });
     let mut shooter = make_soldier(0.0, 0.0);
-    shooter.element_data_mut().posture = Posture::LeaningOut;
+    shooter
+        .element_data_mut()
+        .publish_order_posture(Posture::LeaningOut);
     shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBowDown;
     shooter.element_data_mut().set_direction_instantly(14);
     bind_test_bow_release_rows(&mut shooter, OrderType::ShootingWithBowLeaningOut);
@@ -2058,12 +2065,16 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
         },
     });
     let mut earlier = make_soldier(80.0, 0.0);
-    earlier.element_data_mut().posture = Posture::LeaningOut;
+    earlier
+        .element_data_mut()
+        .publish_order_posture(Posture::LeaningOut);
     earlier.element_data_mut().set_direction_instantly(0);
     // The flight line is at the leaning eye height (z=45); the belt is
     // at z=25, outside HIT_DISTANCE, so only the eye retry can hit.
     let mut later = make_soldier(60.0, 0.0);
-    later.element_data_mut().posture = Posture::LeaningOut;
+    later
+        .element_data_mut()
+        .publish_order_posture(Posture::LeaningOut);
     later.element_data_mut().set_direction_instantly(0);
     let mut entities = entity_table(vec![
         Some(make_pc(0.0, -200.0)),
@@ -2090,10 +2101,11 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
 fn tick_arrows_stationary_projectile_does_not_hit_human() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
-    let mut arrow_element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        ..ElementData::default()
+    let mut arrow_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     arrow_element.set_position_map(MapPoint { x: 50.0, y: -25.0 });
     arrow_element.set_position(WorldPoint3D {
@@ -2274,10 +2286,11 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
     let target_pos = MapPoint { x: 50.0, y: 0.0 };
-    let mut target_element = ElementData {
-        kind: ElementKind::Target,
-        active: true,
-        ..ElementData::default()
+    let mut target_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
     };
     target_element.set_position_map(target_pos);
     // `compute_target_center` reads the 3D position; real loaded
@@ -2315,10 +2328,11 @@ fn tick_arrows_apple_projectile_activates_apple_target() {
             time: 2,
         },
     ];
-    let mut apple_element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        ..ElementData::default()
+    let mut apple_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     apple_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
     apple_element.set_position(WorldPoint3D {
@@ -2386,10 +2400,11 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
     let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = ElementData {
-        kind: ElementKind::Target,
-        active: true,
-        ..ElementData::default()
+    let mut target_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
     };
     target_element.set_position_map(MapPoint { x: 40.0, y: 0.0 });
     target_element.set_position(WorldPoint3D {
@@ -2406,10 +2421,11 @@ fn tick_arrows_arrow_target_uses_current_position_range_gate() {
         },
     });
 
-    let mut arrow_element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        ..ElementData::default()
+    let mut arrow_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
     arrow_element.set_position(WorldPoint3D {
@@ -2474,10 +2490,11 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
     let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = ElementData {
-        kind: ElementKind::Target,
-        active: true,
-        ..ElementData::default()
+    let mut target_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
     };
     target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
     target_element.set_position(WorldPoint3D {
@@ -2494,10 +2511,11 @@ fn tick_arrows_stationary_projectile_does_not_radius_hit_fx_target() {
         },
     });
 
-    let mut arrow_element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        ..ElementData::default()
+    let mut arrow_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     arrow_element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
     arrow_element.set_position(WorldPoint3D {
@@ -2612,10 +2630,11 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
     let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = ElementData {
-        kind: ElementKind::Target,
-        active: true,
-        ..ElementData::default()
+    let mut target_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
     };
     target_element.set_position_map(MapPoint { x: 50.0, y: 0.0 });
     target_element.set_position(WorldPoint3D {
@@ -2641,10 +2660,11 @@ fn tick_arrows_apple_projectile_ignores_non_apple_target() {
         time: 2,
     }];
     let apple = Entity::Projectile(ElementProjectile {
-        element: ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             associated_action: Action::Apple,
@@ -2680,10 +2700,11 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
     let sim = &sim_context;
     use crate::element::{ElementKind, ElementTarget, FxData, TargetData, TargetFilter};
 
-    let mut target_element = ElementData {
-        kind: ElementKind::Target,
-        active: true,
-        ..ElementData::default()
+    let mut target_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Target;
+        initial_element.active = true;
+        initial_element
     };
     target_element.set_position_map(MapPoint { x: 10.0, y: 0.0 });
     let target = Entity::Target(ElementTarget {
@@ -2695,10 +2716,11 @@ fn tick_arrows_apple_bursts_then_leaves_grounded_tail_to_virtual_owner() {
         },
     });
     let apple = Entity::Projectile(ElementProjectile {
-        element: ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Apple,
@@ -2760,10 +2782,11 @@ fn tick_arrows_impact_fx_per_projectile_type() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     fn spawn_projectile_at_impact(obj: ObjectType) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint { x: 0.0, y: 0.0 });
         element.set_position(WorldPoint3D {
@@ -3123,7 +3146,7 @@ fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
         OrderType::TransitionLoweringBowLeaningOut,
         SpriteMotionState::Done,
     );
-    assert_eq!(soldier.element_data().posture, Posture::LeaningOut);
+    assert_eq!(soldier.element_data().posture(), Posture::LeaningOut);
     assert_eq!(
         soldier.actor_data().unwrap().action_state,
         ActionState::AimingWithBowDown
@@ -3134,7 +3157,7 @@ fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
         OrderType::TransitionRaisingBowLeaningOut,
         SpriteMotionState::Done,
     );
-    assert_eq!(soldier.element_data().posture, Posture::Upright);
+    assert_eq!(soldier.element_data().posture(), Posture::Upright);
     assert_eq!(
         soldier.actor_data().unwrap().action_state,
         ActionState::AimingWithBow
@@ -3146,10 +3169,13 @@ fn down_bow_shot_release_keeps_leaning_out_posture() {
     let sim_context = crate::sim_rng::test_context();
     let sim = &sim_context;
     let mut pc = make_pc(0.0, 0.0);
-    pc.element_data_mut().posture = Posture::LeaningOut;
+    pc.element_data_mut()
+        .publish_order_posture(Posture::LeaningOut);
     bind_test_bow_release_rows(&mut pc, OrderType::ShootingWithBowLeaningOut);
     let mut target = make_soldier(50.0, 0.0);
-    target.element_data_mut().posture = Posture::LeaningOut;
+    target
+        .element_data_mut()
+        .publish_order_posture(Posture::LeaningOut);
     let mut entities = entity_table(vec![Some(pc), Some(target)]);
     let target_id = EntityId::Soldier(crate::entity_id::SoldierId(1));
     let (mut sm, seq_id, elem_idx) =
@@ -3182,7 +3208,7 @@ fn down_bow_shot_release_keeps_leaning_out_posture() {
             .map(|(_, entity)| entity)
             .unwrap()
             .element_data()
-            .posture,
+            .posture(),
         Posture::LeaningOut
     );
     assert_eq!(
@@ -4678,10 +4704,11 @@ fn projectile_landing_retains_exact_sector_identity() {
 }
 
 fn refresh_test_arrow() -> ElementProjectile {
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        ..Default::default()
+    let mut element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     element.sprite.current_row = 9;
     element.sprite.current_frame = 2;

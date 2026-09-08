@@ -1560,11 +1560,11 @@ mod shield_order_tests {
 
     fn lying_soldier() -> Entity {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Lying,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1596,7 +1596,7 @@ mod shield_order_tests {
         context.dispatch(owner, Command::RaiseShield, sequence_id, 0);
 
         assert_eq!(
-            entities.get(owner).unwrap().element_data().posture,
+            entities.get(owner).unwrap().element_data().posture(),
             Posture::Lying
         );
         assert_eq!(
@@ -1629,7 +1629,7 @@ mod shield_order_tests {
             .dispatch(owner, Command::RaiseShieldInstantly, sequence_id, 0);
 
         let entity = entities.get(owner).unwrap();
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::HoldingShield
@@ -1654,7 +1654,9 @@ mod shield_order_tests {
     fn parry_shield_translation_does_not_recheck_current_action_state() {
         let owner = EntityId::Soldier(SoldierId(0));
         let mut soldier = lying_soldier();
-        soldier.element_data_mut().posture = Posture::Upright;
+        soldier
+            .element_data_mut()
+            .publish_order_posture(Posture::Upright);
         soldier.actor_data_mut().unwrap().action_state = ActionState::Waiting;
         let mut entities = Entities::from_legacy_slots(vec![Some(soldier)]);
         let mut sequence_manager = SequenceManager::new();

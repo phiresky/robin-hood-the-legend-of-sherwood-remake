@@ -163,7 +163,7 @@ impl EngineInner {
 
             if let Some(assets) = assets {
                 let ambiance_mask = cue.ambiance.to_bitmask();
-                for &(sector, mask) in assets.ambience_shadow_sectors.iter() {
+                for &(sector, mask) in assets.environment.ambience_shadow_sectors.iter() {
                     self.world
                         .fast_grid_mut()
                         .set_sector_active(sector.get(), mask & ambiance_mask != 0);
@@ -192,7 +192,7 @@ impl EngineInner {
                         sample_id,
                         index,
                         self.control.frame_counter,
-                        &assets.source_durations,
+                        &assets.audio.source_durations,
                         &mut self.feedback.sound_sim.playing_sources,
                     );
                 }

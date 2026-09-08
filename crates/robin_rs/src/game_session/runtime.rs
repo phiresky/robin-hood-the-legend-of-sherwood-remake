@@ -114,15 +114,16 @@ pub(super) struct MissionPreTickPhase<'a> {
 
 /// Borrow issued only while process-side audio is drained.
 pub(super) struct MissionAudioPhase<'a> {
-    pub(super) host: &'a mut Host,
-    pub(super) manager: &'a mut EngineManager,
+    pub(super) audio: &'a mut crate::host::HostAudio,
+    pub(super) viewport: &'a crate::host::ViewportState,
+    pub(super) engine: &'a Engine,
     pub(super) assets: &'a Arc<LevelAssets>,
 }
 
 /// Render capability: host presentation can change, simulation and developer
 /// state cannot. There is deliberately no EngineManager or mutable Engine.
 pub(super) struct MissionPresentationPhase<'a> {
-    pub(super) host: &'a mut Host,
+    pub(super) host: crate::host::HostPresentation<'a>,
     pub(super) game: &'a mut Game,
     pub(super) engine: &'a Engine,
     pub(super) assets: &'a Arc<LevelAssets>,
@@ -208,6 +209,23 @@ impl MissionWorld {
         }
     }
 
+    /// Cursor/orientation producers run after simulation and append to the
+    /// post-command batch. They must never mutate the already-consumed inputs.
+    pub(super) fn post_tick_input_phase<'a>(
+        &'a mut self,
+        frame: &'a mut MissionFrame,
+    ) -> MissionInputPhase<'a> {
+        MissionInputPhase {
+            host: &mut self.host,
+            game: &mut self.game,
+            engine: &self.manager.engine,
+            assets: &self.assets,
+            dev: &mut self.dev,
+            commands: &mut frame.post_commands,
+            external_actions: &mut frame.post_external_actions,
+        }
+    }
+
     pub(super) fn pre_tick_phase(&mut self) -> MissionPreTickPhase<'_> {
         MissionPreTickPhase {
             host: &mut self.host,
@@ -219,15 +237,16 @@ impl MissionWorld {
 
     pub(super) fn audio_phase(&mut self) -> MissionAudioPhase<'_> {
         MissionAudioPhase {
-            host: &mut self.host,
-            manager: &mut self.manager,
+            audio: &mut self.host.audio,
+            viewport: &self.host.frontend.viewport,
+            engine: &self.manager.engine,
             assets: &self.assets,
         }
     }
 
     pub(super) fn presentation_phase(&mut self) -> MissionPresentationPhase<'_> {
         MissionPresentationPhase {
-            host: &mut self.host,
+            host: self.host.presentation(),
             game: &mut self.game,
             engine: &self.manager.engine,
             assets: &self.assets,
@@ -1250,6 +1269,42 @@ impl TimelineRuntime {
         self.trace(FrameContractStage::TimelineBegin);
     }
 
+    /// A second ingress drain may reconstruct the open frame after late input
+    /// invalidates both pending snapshot tiers. Re-open only that capture,
+    /// preserving this host iteration's commands, facts, clock and ordinal.
+    pub(super) fn reopen_after_pre_tick_network_rollback(
+        &mut self,
+        frame: &mut MissionFrame,
+        engine: &Engine,
+        assets: &LevelAssets,
+    ) {
+        assert_eq!(
+            self.phase,
+            MissionPhase::Input,
+            "network rollback must precede simulation"
+        );
+        assert_eq!(
+            frame.timeline_before,
+            Some(self.current_frame()),
+            "late-input rollback must reconstruct the already-open frame"
+        );
+        assert!(
+            frame.timeline_after.is_none(),
+            "cannot reopen an already committed frame"
+        );
+        self.rewind_buffer
+            .begin_frame(self.frame_number(), engine, assets);
+        // Recording samples the final pre-command state, not the speculative
+        // state captured before the late input arrived. Do not call open_frame:
+        // it would bind twice and consume external facts a second time.
+        frame.recorder_hash = self.replay_recorder.as_ref().and_then(|_| {
+            self.replay_ordinal
+                .number()
+                .is_multiple_of(25)
+                .then(|| robin_engine::replay::state_hash(engine))
+        });
+    }
+
     pub(super) fn queue_sound_boundary(&mut self, boundary: robin_engine::engine::SoundBoundary) {
         assert!(
             self.pending_external_facts.sound_boundary.is_none(),
@@ -1915,6 +1970,32 @@ mod tests {
             frame.commands.commands[0].command,
             PlayerCommand::SetLockAlt(true)
         ));
+        {
+            let phase = world.post_tick_input_phase(&mut frame);
+            phase
+                .commands
+                .push(PlayerCommand::ClearNpcDoubleStatusBarFlags);
+            phase
+                .external_actions
+                .push(robin_engine::engine::ExternalAction::Native {
+                    name: "post-tick cursor fixture".into(),
+                    args: Vec::new(),
+                    this_actor: None,
+                });
+            assert_eq!(robin_engine::replay::state_hash(phase.engine), original);
+        }
+        assert_eq!(frame.commands.commands.len(), 1);
+        assert!(frame.external_actions.is_empty());
+        assert_eq!(frame.post_commands.commands.len(), 1);
+        assert_eq!(frame.post_external_actions.len(), 1);
+        {
+            let phase = world.audio_phase();
+            phase.audio.sound.set_listen_point(
+                phase.viewport.sound_listen_point(),
+                phase.viewport.zoom_factor,
+            );
+            assert_eq!(robin_engine::replay::state_hash(phase.engine), original);
+        }
         {
             let MissionPresentationPhase {
                 host, game, engine, ..

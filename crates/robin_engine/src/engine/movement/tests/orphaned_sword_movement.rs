@@ -13,10 +13,10 @@ mod suite {
 
     fn make_test_pc(posture: Posture) -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(posture);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -126,20 +126,20 @@ mod suite {
         let mut engine = EngineInner::new();
         let start = MapPoint::new(100.0, 100.0);
         let destination = MapPoint::new(140.0, 100.0);
-        let mut element = ElementData {
-            kind: if owner_is_pc {
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = if owner_is_pc {
                 ElementKind::ActorPc
             } else {
                 ElementKind::ActorSoldier
-            },
-            active: true,
-            posture: Posture::Upright,
-            sprite: if install_shield_row {
+            };
+            initial_element.active = true;
+            initial_element.sprite = if install_shield_row {
                 shield_movement_sprite()
             } else {
                 crate::sprite::Sprite::default()
-            },
-            ..ElementData::default()
+            };
+            initial_element
         };
         element
             .sprite
@@ -450,15 +450,15 @@ mod suite {
         };
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[action as usize] = 0;
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            sprite: crate::sprite::Sprite::new(
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element.sprite = crate::sprite::Sprite::new(
                 std::sync::Arc::new(vec![script; 16]),
                 std::sync::Arc::new(conversion),
-            ),
-            ..ElementData::default()
+            );
+            initial_element
         };
         element.sprite.position_iface.set_anti_collision_on(false);
         element
@@ -569,11 +569,11 @@ mod suite {
         let mut engine = EngineInner::new();
         let start = MapPoint::new(100.0, 100.0);
         let destination = MapPoint::new(140.0, 100.0);
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(start);
 
@@ -869,11 +869,11 @@ mod suite {
     #[test]
     fn blocked_terminal_sword_execute_marks_impossible_without_entering_waiting_sword() {
         let (mut engine, owner, movement_sequence, order_id, _start) = install_sword_movement(true);
-        let mut opponent_element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut opponent_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         opponent_element.set_position_map(MapPoint::new(100.0, 50.0));
         let opponent = engine.add_entity(Entity::Pc(ActorPc {
@@ -1251,11 +1251,11 @@ mod suite {
             owner_element.set_direction_goal(9);
         }
 
-        let mut opponent_element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut opponent_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         opponent_element.set_position(
             engine
@@ -1329,11 +1329,11 @@ mod suite {
             11,
         );
 
-        let mut opponent_element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut opponent_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         opponent_element.set_position_map(opponent_position);
         let opponent = engine.add_entity(Entity::Pc(ActorPc {
@@ -1403,11 +1403,11 @@ mod suite {
         let mut engine = EngineInner::new();
         let start = MapPoint::new(100.0, 100.0);
         let destination = MapPoint::new(140.0, 100.0);
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element
             .sprite

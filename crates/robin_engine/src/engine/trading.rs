@@ -201,10 +201,11 @@ mod tests {
 
     fn bonus(action: Action, quantity: u16, active: bool) -> Entity {
         Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: ElementKind::ObjectBonus,
-                active,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectBonus;
+                initial_element.active = active;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::BonusArrow,
@@ -249,10 +250,11 @@ mod tests {
             .world
             .entities
             .push(Some(Entity::Projectile(ElementProjectile {
-                element: ElementData {
-                    kind: ElementKind::ObjectProjectile,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ObjectProjectile;
+                    initial_element.active = true;
+                    initial_element
                 },
                 object: ObjectData {
                     object_type: ObjectType::Arrow,

@@ -24,9 +24,10 @@ fn fresh_state() -> (MissionLuaState, tempfile::TempDir) {
 
 fn test_soldier() -> robin_engine::element::Entity {
     robin_engine::element::Entity::Soldier(robin_engine::element::ActorSoldier {
-        element: robin_engine::element::ElementData {
-            kind: robin_engine::element::ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = robin_engine::element::ElementData::default();
+            initial_element.kind = robin_engine::element::ElementKind::ActorSoldier;
+            initial_element
         },
         actor: robin_engine::element::ActorData::default(),
         human: robin_engine::element::HumanData::default(),

@@ -390,7 +390,7 @@ const RIDER_ELEVATION_BELT_UPRIGHT: f32 = 30.0;
 /// are kept and only z is offset.
 fn compute_belt_point(entity: &crate::element::Entity) -> crate::coordinates::WorldPoint3D {
     let pos = entity.element_data().position();
-    let posture = entity.element_data().posture;
+    let posture = entity.element_data().posture();
     let is_rider = entity.soldier_data().map(|s| s.rider).unwrap_or(false);
 
     let z_offset = match posture {
@@ -1191,7 +1191,7 @@ pub(crate) fn concussion_ctx_full(
     difficulty: crate::player_profile::DifficultyLevel,
 ) -> ConcussionContext {
     let human = entity.human_data();
-    let posture = entity.element_data().posture;
+    let posture = entity.element_data().posture();
     let is_in_coma = match entity {
         Entity::Pc(pc) => match campaign {
             // Pure/helper contexts can intentionally omit campaign state. A
@@ -2020,7 +2020,7 @@ pub(crate) fn is_possible_sword_strike_victim(
     {
         return false;
     }
-    let posture = target_entity.element_data().posture;
+    let posture = target_entity.element_data().posture();
     if posture == Posture::Tree
         || target_entity
             .human_data()

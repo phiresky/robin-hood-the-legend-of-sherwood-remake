@@ -3287,7 +3287,7 @@ fn soldier_leaning_out_to_upright_on_move() {
 
     let entity = engine.get_entity(soldier_id).expect("soldier present");
     assert_eq!(
-        entity.element_data().posture,
+        entity.element_data().posture(),
         Posture::Upright,
         "posture should snap to Upright"
     );
@@ -3317,7 +3317,7 @@ fn soldier_upright_move_skips_auto_leave() {
     assert!(!changed, "no transition needed for an Upright soldier");
 
     let entity = engine.get_entity(soldier_id).expect("soldier present");
-    assert_eq!(entity.element_data().posture, Posture::Upright);
+    assert_eq!(entity.element_data().posture(), Posture::Upright);
     assert!(
         engine
             .orders
@@ -3364,7 +3364,7 @@ fn fresh_wait_replaces_pre_init_upright_idle_with_authored_sitting_idle() {
             .get_entity(owner)
             .expect("soldier present")
             .element_data()
-            .posture,
+            .posture(),
         Posture::Sitting
     );
 }
@@ -5285,7 +5285,7 @@ fn soldier_leaning_out_keeps_pose_for_shoot_bow() {
     );
 
     let entity = engine.get_entity(soldier_id).expect("soldier present");
-    assert_eq!(entity.element_data().posture, Posture::LeaningOut);
+    assert_eq!(entity.element_data().posture(), Posture::LeaningOut);
     assert!(
         engine
             .orders
@@ -5594,7 +5594,7 @@ fn waking_up_done_clears_target_concussion_and_waits() {
         .expect("wake completion's fresh Wait should translate synchronously");
 
     let target_entity = engine.get_entity(target).expect("target present");
-    assert_eq!(target_entity.element_data().posture, Posture::Lying);
+    assert_eq!(target_entity.element_data().posture(), Posture::Lying);
     assert_eq!(
         target_entity.human_data().unwrap().concussion_of_the_brain,
         0
@@ -5775,7 +5775,7 @@ fn get_killed_at_bottom_kills_lying_victim_immediately() {
 
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(entity.is_dead());
-    assert_eq!(entity.element_data().posture, Posture::DeadBack);
+    assert_eq!(entity.element_data().posture(), Posture::DeadBack);
     assert!(!entity.human_data().unwrap().unconscious);
     assert_eq!(entity.human_data().unwrap().concussion_of_the_brain, 0);
     let ai = entity.ai_controller().expect("dead soldier retains its AI");
@@ -5832,7 +5832,7 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(!entity.is_dead());
     assert_eq!(entity.human_life_points(), 5);
-    assert_eq!(entity.element_data().posture, Posture::Lying);
+    assert_eq!(entity.element_data().posture(), Posture::Lying);
     assert!(
         entity.human_data().unwrap().unconscious,
         "the amulet coma save must skip the virtual Kill cascade"
@@ -5855,7 +5855,7 @@ fn get_killed_at_bottom_uses_vip_pc_amulet_coma_save_and_preserves_existing_coma
     let entity = engine.get_entity(victim).expect("victim still present");
     assert!(!entity.is_dead());
     assert_eq!(entity.human_life_points(), 5);
-    assert_eq!(entity.element_data().posture, Posture::Lying);
+    assert_eq!(entity.element_data().posture(), Posture::Lying);
 }
 
 /// When the `TransitionWaitingUprightSitting` animation completes,
@@ -5879,7 +5879,7 @@ fn npc_sit_down_anim_completion_flips_posture_to_sitting() {
         &mut outcomes,
     );
 
-    assert_eq!(entity.element_data().posture, Posture::Sitting);
+    assert_eq!(entity.element_data().posture(), Posture::Sitting);
     assert_eq!(
         entity.actor_data().expect("actor data").action_state,
         ActionState::Waiting,
@@ -5902,7 +5902,7 @@ fn sitting_npc_point_auto_stands_up() {
     assert!(changed, "auto-leave should fire for Sitting + Point");
 
     let entity = engine.get_entity(actor).expect("entity present");
-    assert_eq!(entity.element_data().posture, Posture::Upright);
+    assert_eq!(entity.element_data().posture(), Posture::Upright);
 
     let next_order = engine
         .orders
@@ -5933,7 +5933,7 @@ fn enter_leisure_on_leisuring_npc_skips_auto_leave() {
     );
 
     let entity = engine.get_entity(actor).expect("entity present");
-    assert_eq!(entity.element_data().posture, Posture::Leisure);
+    assert_eq!(entity.element_data().posture(), Posture::Leisure);
     assert!(
         engine
             .orders
@@ -5965,7 +5965,7 @@ fn npc_enter_leisure_anim_completion_flips_posture_to_leisure() {
         &mut outcomes,
     );
 
-    assert_eq!(entity.element_data().posture, Posture::Leisure);
+    assert_eq!(entity.element_data().posture(), Posture::Leisure);
     assert_eq!(
         entity.actor_data().expect("actor data").action_state,
         ActionState::Waiting,

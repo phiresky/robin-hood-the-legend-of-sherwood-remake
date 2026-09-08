@@ -481,7 +481,7 @@ fn retain_legacy_grid_topology(
     topology.sectors = sectors.slots;
     topology.position_sector_numbers = sectors.position_sector_numbers;
     topology.position_sector_indices = sectors.position_sector_indices;
-    assets.legacy_grid_topology = Some(topology);
+    assets.navigation.legacy_grid_topology = Some(topology);
     Ok(())
 }
 
@@ -569,6 +569,7 @@ fn canonicalize_building_position_sectors(
     level: &mut crate::fast_find_grid::LevelGrid,
 ) {
     let retained = assets
+        .navigation
         .legacy_grid_topology
         .as_ref()
         .expect("building identity canonicalization requires retained topology");
@@ -731,6 +732,7 @@ fn retain_script_location_sector_identities(
         return;
     };
     let topology = assets
+        .navigation
         .legacy_grid_topology
         .as_ref()
         .expect("script location resolution requires retained Original sector topology");
@@ -789,10 +791,11 @@ fn resolve_hiking_waypoint_sector_identities(
     runtime_sectors: &[crate::fast_find_grid::GridSector],
 ) {
     let topology = assets
+        .navigation
         .legacy_grid_topology
         .as_ref()
         .expect("waypoint sector resolution requires retained Original grid topology");
-    let paths = std::sync::Arc::make_mut(&mut assets.hiking_paths);
+    let paths = std::sync::Arc::make_mut(&mut assets.navigation.hiking_paths);
     let exact_paths = paths
         .iter_mut()
         .enumerate()
@@ -849,7 +852,7 @@ fn resolve_hiking_waypoint_sector_identities(
                 .collect()
         })
         .collect();
-    assets.hiking_waypoint_sectors = Some(std::sync::Arc::new(exact_paths));
+    assets.navigation.hiking_waypoint_sectors = Some(std::sync::Arc::new(exact_paths));
 }
 
 fn append_patch_sector_constructors(
@@ -1016,7 +1019,7 @@ mod legacy_grid_topology_tests {
 
         let mut assets = LevelAssets::new();
         retain_legacy_grid_topology(&mut assets, &loaded, false).unwrap();
-        let topology = assets.legacy_grid_topology.unwrap();
+        let topology = assets.navigation.legacy_grid_topology.unwrap();
 
         assert_eq!(
             topology.gates,
@@ -1074,7 +1077,7 @@ mod legacy_grid_topology_tests {
         let mut arena_indices = vec![None; 250];
         arena_indices[0] = crate::fast_find_grid::SectorIndex::new(0);
         arena_indices[249] = crate::fast_find_grid::SectorIndex::new(1);
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors,
             position_sector_numbers: public_numbers,
             position_sector_indices: arena_indices,
@@ -1118,7 +1121,7 @@ mod legacy_grid_topology_tests {
             engine.world.fast_grid_mut().level_mut(),
         );
         validate_legacy_position_sector_bijection(
-            assets.legacy_grid_topology.as_ref().unwrap(),
+            assets.navigation.legacy_grid_topology.as_ref().unwrap(),
             &engine.world.fast_grid.level.sectors,
         )
         .expect("sparse public numbers and dense arena indices stay a bijection");
@@ -1142,7 +1145,7 @@ mod legacy_grid_topology_tests {
     #[test]
     fn door_sparse_endpoints_resolve_distinct_arena_objects_with_same_public_number() {
         let mut assets = LevelAssets::new();
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -1174,7 +1177,7 @@ mod legacy_grid_topology_tests {
     #[test]
     fn mission_element_placement_retains_sparse_sector_object_identity() {
         let mut assets = LevelAssets::new();
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -1227,7 +1230,7 @@ mod legacy_grid_topology_tests {
 
         // The environment stage runs before the current mission retains its
         // topology. It must not install seek positions through stale assets.
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -1244,7 +1247,7 @@ mod legacy_grid_topology_tests {
 
         // The deferred stage observes only the newly retained topology and
         // preserves duplicate-public-sector object identity.
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -1272,7 +1275,7 @@ mod legacy_grid_topology_tests {
     #[test]
     fn tactic_ambush_position_resolves_sparse_slot_to_exact_sector_object() {
         let mut assets = LevelAssets::new();
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -1467,7 +1470,7 @@ mod legacy_grid_topology_tests {
         use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
         let mut assets = LevelAssets::new();
-        assets.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
+        assets.navigation.hiking_paths = std::sync::Arc::new(vec![RawHikingPath {
             waypoints: vec![RawWaypoint {
                 x: 1432,
                 y: 930,
@@ -1478,7 +1481,7 @@ mod legacy_grid_topology_tests {
                 command: WaypointCommand::None,
             }],
         }]);
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -1505,8 +1508,8 @@ mod legacy_grid_topology_tests {
 
         resolve_hiking_waypoint_sector_identities(&mut assets, &runtime);
 
-        assert_eq!(assets.hiking_paths[0].waypoints[0].sector, 82);
-        let exact = assets.hiking_waypoint_sectors.as_ref().unwrap()[0][0];
+        assert_eq!(assets.navigation.hiking_paths[0].waypoints[0].sector, 82);
+        let exact = assets.navigation.hiking_waypoint_sectors.as_ref().unwrap()[0][0];
         assert_eq!(exact.get(), 82);
         assert_eq!(
             exact.arena_index(),
@@ -1916,10 +1919,11 @@ mod mission_level_builder_tests {
 
     fn civilian() -> Entity {
         Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1938,7 +1942,7 @@ mod mission_level_builder_tests {
         let mut sectors = vec![LegacyGridSectorAsset::NullOrOrdinary; slot_count];
         sectors[building_slot] = LegacyGridSectorAsset::Building;
         let mut assets = LevelAssets::new();
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors,
             position_sector_numbers: (0..slot_count)
                 .map(|slot| Some(i16::try_from(slot).expect("test sector slot fits i16")))
@@ -2214,7 +2218,7 @@ mod mission_level_builder_tests {
             .map_bbox
             .expand_point(MapPoint::new(100.0, 100.0));
         let mut assets = LevelAssets::new();
-        assets.legacy_grid_topology = Some(LegacyGridTopologyAssets {
+        assets.navigation.legacy_grid_topology = Some(LegacyGridTopologyAssets {
             sectors: vec![
                 LegacyGridSectorAsset::NullOrOrdinary,
                 LegacyGridSectorAsset::NullOrOrdinary,
@@ -2412,10 +2416,11 @@ mod mission_level_builder_tests {
             carried.set_position_map(MapPoint::new(80.0, 90.0));
         }
         engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -2500,9 +2505,10 @@ mod all_sprite_ambiance_variant_tests {
 
     fn bonus() -> Entity {
         Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: ElementKind::ObjectBonus,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectBonus;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::BonusApple,
@@ -2513,9 +2519,10 @@ mod all_sprite_ambiance_variant_tests {
 
     fn fx(mobile_index: Option<u16>) -> Entity {
         Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
             },
             fx: FxData {
                 mobile_index,
@@ -2526,9 +2533,10 @@ mod all_sprite_ambiance_variant_tests {
 
     fn target() -> Entity {
         Entity::Target(ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: FxData::default(),
             target: TargetData::default(),
@@ -3148,11 +3156,12 @@ fn spawn_patch_fx_entities(
         }
 
         let entity = crate::element::Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: initially_active,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = initially_active;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: crate::element::FxData {
                 restore_background: raw.integrate_in_background,
@@ -3243,11 +3252,12 @@ fn spawn_proto_animation_fx_entities(
         }
         apply_animation_sprite_placement(&mut sprite, &raw.sprite);
         let entity = Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: raw.active,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = raw.active;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: crate::element::FxData {
                 restore_background: false,
@@ -3635,9 +3645,13 @@ impl EngineInner {
         // Validate the exact sparse-slot ↔ live-index bijection at the first
         // point where both sides exist, before doors or save adoption consume
         // it.
-        let retained_topology = assets.legacy_grid_topology.as_ref().unwrap_or_else(|| {
-            panic!("retaining Original grid topology completed without a topology value")
-        });
+        let retained_topology = assets
+            .navigation
+            .legacy_grid_topology
+            .as_ref()
+            .unwrap_or_else(|| {
+                panic!("retaining Original grid topology completed without a topology value")
+            });
         validate_legacy_position_sector_bijection(
             retained_topology,
             &self.world.fast_grid.level.sectors,
@@ -4195,7 +4209,7 @@ impl EngineInner {
                 });
             }
 
-            let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+            let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
             let static_data = graph.static_mut();
             static_data.move_layers.push(move_areas);
             static_data.alternative_move_layers.push(alt_move_areas);
@@ -4203,7 +4217,7 @@ impl EngineInner {
 
         // ── Part 2: Pathfinder graph ──
         if !motion_data.graph_bytes.is_empty()
-            && let Err(e) = std::sync::Arc::make_mut(&mut assets.pathfinder_graph)
+            && let Err(e) = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
                 .load_from_proto_stream(self.world.fast_grid_mut(), &motion_data.graph_bytes)
         {
             tracing::error!("Failed to load pathfinder graph: {e}");
@@ -4213,7 +4227,7 @@ impl EngineInner {
             // its hierarchy/state topology faithful to the authored motion
             // areas so PathFinder can apply obstacle state and use its
             // deterministic visibility-graph fallback for routing.
-            let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+            let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
             let shape: Vec<Vec<usize>> = graph
                 .static_data
                 .move_layers
@@ -4239,7 +4253,7 @@ impl EngineInner {
         }
 
         // ── Part 3: Build sector conversion table ──
-        std::sync::Arc::make_mut(&mut assets.pathfinder_graph).build_sector_conversion();
+        std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph).build_sector_conversion();
 
         // ── Part 4: Initialize pathfinder obstacle states ──
         // Must happen after graph is loaded, not during engine.initialize() which
@@ -4249,7 +4263,7 @@ impl EngineInner {
             let grid = std::sync::Arc::make_mut(&mut world.fast_grid);
             world
                 .pathfinder
-                .initialize_from_graph(assets.pathfinder_graph.as_ref(), grid);
+                .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
 
         // ── Part 5: Register sectors in grid blocks ──
@@ -4352,8 +4366,8 @@ impl EngineInner {
                             },
                             layer_idx as u16,
                         );
-                        let expected = assets.pathfinder_graph.static_data.move_layers[layer_idx]
-                            [area_idx]
+                        let expected = assets.navigation.pathfinder_graph.static_data.move_layers
+                            [layer_idx][area_idx]
                             .motion_obstacles[obstacle_idx]
                             .grid_sector_index
                             .expect("loaded motion obstacle has no fast-grid sector binding");
@@ -4375,7 +4389,7 @@ impl EngineInner {
             }
 
             self.world.pathfinder.synchronize_motion_obstacle_sectors(
-                assets.pathfinder_graph.as_ref(),
+                assets.navigation.pathfinder_graph.as_ref(),
                 std::sync::Arc::make_mut(&mut self.world.fast_grid),
             );
 
@@ -4648,7 +4662,8 @@ impl EngineInner {
                 sector_number += 1;
                 light_added += 1;
             }
-            assets.ambience_shadow_sectors = std::sync::Arc::new(ambience_shadow_sectors);
+            assets.environment.ambience_shadow_sectors =
+                std::sync::Arc::new(ambience_shadow_sectors);
             if light_added + light_skipped_ambience + light_skipped_layer + light_skipped_polygon
                 > 0
             {
@@ -4748,9 +4763,14 @@ impl EngineInner {
             "Motion initialized: {} layers, {} grid lines, {} path nodes, {} path links, {} pf sectors",
             motion_data.layers.len(),
             self.world.fast_grid.level.lines.len(),
-            assets.pathfinder_graph.nodes.len(),
-            assets.pathfinder_graph.static_data.links.len(),
-            assets.pathfinder_graph.static_data.sector_conversion.len(),
+            assets.navigation.pathfinder_graph.nodes.len(),
+            assets.navigation.pathfinder_graph.static_data.links.len(),
+            assets
+                .navigation
+                .pathfinder_graph
+                .static_data
+                .sector_conversion
+                .len(),
         );
 
         // ── Jump zones + jump line pairs ──
@@ -5078,6 +5098,7 @@ impl EngineInner {
     /// available.
     fn restore_jump_overlay_sector_numbers(&mut self, assets: &LevelAssets) {
         let jump_sector_numbers = &assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("jump identity restoration requires retained Original grid topology")
@@ -5363,6 +5384,7 @@ impl EngineInner {
         crate::fast_find_grid::SectorIndex,
     ) {
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("door endpoint resolution requires retained Original sector topology");
@@ -5420,6 +5442,7 @@ impl EngineInner {
         crate::fast_find_grid::SectorIndex,
     ) {
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("building door resolution requires retained Original sector topology");
@@ -6678,15 +6701,16 @@ impl EngineInner {
                         point.obstacle,
                         crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                             point.obstacle,
-                            assets.static_sight_obstacles.as_slice(),
+                            assets.environment.static_sight_obstacles.as_slice(),
                         ),
                     );
                     let entity = crate::element::Entity::Bonus(crate::element::ElementBonus {
-                        element: crate::element::ElementData {
-                            kind: crate::element::ElementKind::ObjectBonus,
-                            blipped,
-                            sprite,
-                            ..Default::default()
+                        element: {
+                            let mut initial_element = crate::element::ElementData::default();
+                            initial_element.kind = crate::element::ElementKind::ObjectBonus;
+                            initial_element.blipped = blipped;
+                            initial_element.sprite = sprite;
+                            initial_element
                         },
                         object: crate::element::ObjectData {
                             quantity,
@@ -6744,15 +6768,16 @@ impl EngineInner {
                         point.obstacle,
                         crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                             point.obstacle,
-                            assets.static_sight_obstacles.as_slice(),
+                            assets.environment.static_sight_obstacles.as_slice(),
                         ),
                     );
                     let entity = crate::element::Entity::Bonus(crate::element::ElementBonus {
-                        element: crate::element::ElementData {
-                            kind: crate::element::ElementKind::ObjectBonus,
-                            blipped,
-                            sprite,
-                            ..Default::default()
+                        element: {
+                            let mut initial_element = crate::element::ElementData::default();
+                            initial_element.kind = crate::element::ElementKind::ObjectBonus;
+                            initial_element.blipped = blipped;
+                            initial_element.sprite = sprite;
+                            initial_element
                         },
                         object: crate::element::ObjectData {
                             quantity: 1,

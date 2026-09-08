@@ -52,8 +52,9 @@ impl EngineInner {
         // `hiking_paths` arc in place through `Arc::make_mut` so
         // subsequent NPC clones see the beamed paths.
         {
-            let paths = std::sync::Arc::make_mut(&mut assets.hiking_paths);
+            let paths = std::sync::Arc::make_mut(&mut assets.navigation.hiking_paths);
             let waypoint_sectors = assets
+                .navigation
                 .hiking_waypoint_sectors
                 .as_mut()
                 .map(std::sync::Arc::make_mut);
@@ -73,7 +74,7 @@ impl EngineInner {
 
         // Initialize each NPC's AI.
         let npc_ids: Vec<EntityId> = self.world.entities.ai_owner_ids().collect();
-        let hiking_paths = assets.hiking_paths.clone();
+        let hiking_paths = assets.navigation.hiking_paths.clone();
         // Populate the handle → entity view map so the per-NPC
         // init_ctx hands each AI a usable map (even though init
         // mostly just reads self position).
@@ -109,7 +110,7 @@ impl EngineInner {
                 sim,
                 npc_id,
                 &hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_waypoint_sectors,
                 &potential_detectables,
                 ambush_points_count,
                 &entity_views,

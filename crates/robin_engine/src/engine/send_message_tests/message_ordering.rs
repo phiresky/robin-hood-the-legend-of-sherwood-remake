@@ -323,10 +323,11 @@ fn registered_send_message_callback_precedes_later_immediate_sibling() {
 fn target_activation_callback_precedes_later_engine_sibling() {
     let (mut engine, reader, _) = engine_with_receiver();
     let target = engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element.active = true;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),

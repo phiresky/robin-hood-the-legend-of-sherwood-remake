@@ -313,6 +313,12 @@ fn drain_pre_tick_network(
 
     runtime.trace(FrameContractStage::SecondNetworkDrain);
     let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms());
+    if drain.rollback.is_some() {
+        // Late input invalidates the capture opened before local input/UI.
+        // Reconstruction returns to this same pre-tick frame; retain its
+        // queued commands/facts but capture their corrected starting state.
+        runtime.reopen_after_pre_tick_network_rollback(frame, &manager.engine, assets);
+    }
     *mp_clock_pause |= drain.pause_simulation;
     frame.commands.commands.extend(drain.inputs);
     if host.transport.local_seat == engine_player_command::PlayerId::HOST
@@ -1122,7 +1128,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             capture_save_thumbnail(
                 &manager.engine,
                 &display_snapshot,
-                host,
+                &mut host.presentation(),
                 assets,
                 dev,
                 &mut render_ctx,
@@ -1420,6 +1426,188 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
 #[cfg(test)]
 mod tests {
+    fn second_drain_rollback_reopens_current_frame(use_recent_history: bool) {
+        use super::super::replay_init::ReplayAndRollback;
+        use super::super::runtime::{
+            FrameCommitPolicy, FrameContract, MissionFrame, TimelineRuntime,
+        };
+        use crate::host::Host;
+        use crate::multiplayer::{NetChannels, NetEvent};
+        use crate::rewind::RewindBuffer;
+        use robin_engine::engine::{Engine, LevelAssets, SimulationFrameInput};
+        use robin_engine::engine_manager::EngineManager;
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        use robin_engine::replay::{ReplayRecorder, state_hash};
+        use std::sync::Arc;
+
+        let mut assets = LevelAssets::new();
+        let mut manager = EngineManager::new(
+            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap(),
+        );
+        let mut assets = Arc::new(assets);
+        let directory = tempfile::tempdir().unwrap();
+        let recording_path = directory.path().join("second-drain.rhrec.jsonl");
+        let recorder = ReplayRecorder::new(
+            recording_path.to_str().unwrap(),
+            "boundary".into(),
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "boundary", "boundary", "boundary",
+            )
+            .unwrap(),
+            0,
+            Default::default(),
+            &Default::default(),
+        )
+        .unwrap();
+        let mut timeline = TimelineRuntime::new(
+            ReplayAndRollback {
+                recorder: Some(recorder),
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Graphical,
+            false,
+            true,
+        );
+        // Commit two ordinary historical frames before opening this host
+        // iteration, exactly as the graphical driver does before local UI.
+        for number in 0..2 {
+            timeline
+                .rewind_buffer
+                .begin_frame(number, &manager.engine, &assets);
+            let input = SimulationFrameInput::default()
+                .with_hourglass(false)
+                .with_post_initialize(false);
+            manager
+                .engine
+                .advance_frame(&assets, input.clone())
+                .unwrap();
+            timeline.rewind_buffer.end_frame_input(input);
+            timeline.advance_frame();
+        }
+        if !use_recent_history {
+            timeline.rewind_buffer.clear_recent_checkpoints();
+        }
+        let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+        let mut host = Host::scratch(640.0, 480.0);
+        host.transport.local_seat = PlayerId::HOST;
+        host.transport.net = Some(channels);
+        let mut frame = MissionFrame::new(17);
+        frame.run_hourglass = false;
+        frame.run_post_initialize = false;
+        timeline.open_frame(&mut frame, &manager.engine, &assets);
+        let original_hash = frame.recorder_hash.unwrap();
+        let local = PlayerInput::host(PlayerCommand::SetUnbindingEnabled { enabled: false });
+        let due = PlayerInput::host(PlayerCommand::SetAmountOfSpeaking { amount: 7 });
+        frame.commands.commands.push(local.clone());
+        frame.external_facts = robin_engine::engine::ExternalFacts::default()
+            .with_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
+        let facts_before = serde_json::to_value(&frame.external_facts).unwrap();
+        for (target_frame, input) in [
+            (
+                0,
+                PlayerInput::host(PlayerCommand::SetAmountOfSpeaking { amount: 9 }),
+            ),
+            (2, due.clone()),
+        ] {
+            incoming
+                .send(NetEvent::Input {
+                    server_frame: 2,
+                    origin_frame: target_frame,
+                    target_frame,
+                    input,
+                })
+                .unwrap();
+        }
+
+        let mut paused = false;
+        // This is the actual production second-drain adapter, not a direct
+        // call to a repair helper or a replacement mock network path.
+        super::drain_pre_tick_network(
+            &mut timeline,
+            &mut host,
+            &mut manager,
+            &mut assets,
+            &mut frame,
+            &mut paused,
+            false,
+        );
+        assert!(!paused);
+        assert_eq!(
+            timeline.last_mp_rollback.as_ref().unwrap().path,
+            if use_recent_history {
+                "recent-timeline-history"
+            } else {
+                "rewind-buffer"
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(&frame.commands.commands).unwrap(),
+            serde_json::to_value(vec![local, due]).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&frame.external_facts).unwrap(),
+            facts_before
+        );
+        assert_eq!(frame.started_at_ms, 17);
+        assert_eq!(timeline.frame_number(), 2);
+        let corrected_pre_tick_hash = state_hash(&manager.engine);
+        assert_ne!(corrected_pre_tick_hash, original_hash);
+
+        timeline.begin_simulation();
+        manager
+            .engine
+            .advance_frame(&assets, frame.authoritative_input())
+            .unwrap();
+        timeline.begin_bookkeeping();
+        timeline.commit_simulation_history(
+            &mut host,
+            &mut manager,
+            &frame,
+            FrameCommitPolicy {
+                store_rewind_commands: true,
+            },
+        );
+        assert_eq!(timeline.rewind_buffer.next_record_frame(), 3);
+        assert_eq!(frame.recorder_hash, Some(corrected_pre_tick_hash));
+        assert_eq!(timeline.rewind_buffer.commands_for(2).unwrap().len(), 2);
+        let checkpoint = timeline
+            .rewind_buffer
+            .restore_recent(2, robin_engine::sim_timeline::RestorePolicy::Exact)
+            .unwrap();
+        assert_eq!(state_hash(&checkpoint.engine), corrected_pre_tick_hash);
+
+        // The telemetry intentionally survives into the next host iteration.
+        // Its empty second drain must not re-open/re-sample based on stale
+        // last_mp_rollback. A sentinel makes an unwanted re-sample observable.
+        timeline.advance_frame();
+        let mut next_frame = MissionFrame::new(31);
+        timeline.open_frame(&mut next_frame, &manager.engine, &assets);
+        next_frame.recorder_hash = Some(0x55aa);
+        super::drain_pre_tick_network(
+            &mut timeline,
+            &mut host,
+            &mut manager,
+            &mut assets,
+            &mut next_frame,
+            &mut paused,
+            false,
+        );
+        assert_eq!(next_frame.recorder_hash, Some(0x55aa));
+    }
+
+    #[test]
+    fn second_network_drain_recent_rollback_reopens_pre_tick_boundary() {
+        second_drain_rollback_reopens_current_frame(true);
+    }
+
+    #[test]
+    fn second_network_drain_sparse_rollback_reopens_pre_tick_boundary() {
+        second_drain_rollback_reopens_current_frame(false);
+    }
+
     #[test]
     fn host_snapshot_reset_discards_inputs_accumulated_before_second_drain() {
         let mut frame = super::MissionFrame::new(0);

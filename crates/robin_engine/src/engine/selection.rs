@@ -42,7 +42,7 @@ impl EngineInner {
         // Out of order: dead / unconscious / stuck / tied / carried / coma.
         let is_dead = pc.pc.life_points == 0;
         let is_stuck_under_net = pc.human.stuck_under_nets_counter > 0;
-        let posture = pc.element.posture;
+        let posture = pc.element.posture();
         let bad_posture = matches!(
             posture,
             crate::element::Posture::Tied | crate::element::Posture::Carried
@@ -82,7 +82,7 @@ impl EngineInner {
         let Some(entity) = self.get_entity(id) else {
             return false;
         };
-        let posture = entity.element_data().posture;
+        let posture = entity.element_data().posture();
         if matches!(
             posture,
             crate::element::Posture::OnWall | crate::element::Posture::OnLadder
@@ -856,7 +856,7 @@ impl EngineInner {
         // variant (which has slightly different semantics).
         let is_climbing_or_in_building = |pc_id: EntityId| -> bool {
             let entity = self.expect_entity(pc_id, "retrieve_stature selected PC");
-            let posture = entity.element_data().posture;
+            let posture = entity.element_data().posture();
             if posture == Posture::OnWall || posture == Posture::OnLadder {
                 return true;
             }
@@ -883,7 +883,7 @@ impl EngineInner {
             let posture = self
                 .expect_entity(id, "retrieve_stature selected PC")
                 .element_data()
-                .posture;
+                .posture();
             return match posture {
                 Posture::Lying | Posture::Crouched => Stature::Down,
                 _ => Stature::Up,
@@ -898,7 +898,7 @@ impl EngineInner {
                 continue;
             }
             let posture = match self.get_entity(pc_id) {
-                Some(e) => e.element_data().posture,
+                Some(e) => e.element_data().posture(),
                 None => continue,
             };
             match posture {
@@ -967,7 +967,7 @@ impl EngineInner {
                 !pc.human.opponents.is_empty(),
                 pc.pc.current_action,
                 pc.actor.action_state,
-                pc.element.posture,
+                pc.element.posture(),
             ),
             _ => return,
         };
@@ -1435,11 +1435,11 @@ mod tests {
 
     fn add_selectable_test_pc(engine: &mut EngineInner) -> EntityId {
         engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                active: true,
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.active = true;
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1453,11 +1453,11 @@ mod tests {
         let mut engine = EngineInner::new();
         let previously_selected = add_selectable_test_pc(&mut engine);
         let rescued_pc = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                active: true,
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.active = true;
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1488,11 +1488,11 @@ mod tests {
         };
         let mut engine = EngineInner::new();
         let rescued_pc = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                active: true,
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.active = true;
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1524,11 +1524,11 @@ mod tests {
         let assets = LevelAssets::default();
         let mut engine = EngineInner::new();
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                active: true,
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.active = true;
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

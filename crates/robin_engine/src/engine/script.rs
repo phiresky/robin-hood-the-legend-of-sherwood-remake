@@ -320,7 +320,7 @@ impl EngineInner {
         frame: crate::natives::ScriptCallFrame,
         active: &mut Vec<ActiveScriptCall>,
     ) -> Result<i32, ScriptDriverError> {
-        let Some(runtime) = assets.spellforge_runtime.as_ref().cloned() else {
+        let Some(runtime) = assets.attachments.spellforge_runtime.as_ref().cloned() else {
             return self.call_scb_script_vm_inner(sim, assets, key, fn_name, params, frame, active);
         };
         let invocation = self.spellforge_invocation(assets, key, fn_name, params, frame)?;
@@ -583,6 +583,7 @@ impl EngineInner {
             }
             ScriptVmKey::Waypoint(path, waypoint) => {
                 let class = assets
+                    .navigation
                     .hiking_paths
                     .get(usize::from(path.get()))
                     .and_then(|path| path.waypoints.get(usize::from(waypoint)))
@@ -972,7 +973,7 @@ impl EngineInner {
                         && sim.config().script_enabled
                         && self.scripts.mission.as_ref().is_some_and(|script| {
                             script.actor_has_function(actor, "FilterAIEvent")
-                                || (assets.spellforge_runtime.is_some()
+                                || (assets.attachments.spellforge_runtime.is_some()
                                     && script.has_script_vm(ScriptVmKey::Actor(actor)))
                         });
                     let filter_accepted = if should_call {
@@ -1289,7 +1290,7 @@ impl EngineInner {
                     assignment,
                     current_position,
                     current_direction,
-                    &assets.hiking_paths,
+                    &assets.navigation.hiking_paths,
                 );
                 // Patrol-path assignment synchronously runs
                 // the EVENT_RETURN_TO_DUTY decision, including movement and its
@@ -1386,7 +1387,7 @@ impl EngineInner {
                         .expect("validated SwitchToAlertPath soldier lost its AI controller");
                     ai.path_id = Some(alert_path_id);
                     ai.patrol_path =
-                        crate::ai::PatrolPath::new(alert_path_id, &assets.hiking_paths);
+                        crate::ai::PatrolPath::new(alert_path_id, &assets.navigation.hiking_paths);
                     ai.has_patrol_path = ai.patrol_path.is_some();
                     entity
                         .enemy_ai_mut()
@@ -1419,8 +1420,8 @@ impl EngineInner {
                         &scratch.ai_entity_views,
                         &scratch.ai_sight_obstacles,
                         &self.world.fast_grid,
-                        &assets.hiking_paths,
-                        &assets.hiking_waypoint_sectors,
+                        &assets.navigation.hiking_paths,
+                        &assets.navigation.hiking_waypoint_sectors,
                         &self.ai.global.all_soldier_handles,
                         self.control.sim_config.difficulty,
                     );
@@ -1690,7 +1691,7 @@ impl EngineInner {
         let (current, is_npc) = self
             .get_entity(actor)
             .filter(|entity| entity.is_human())
-            .map(|entity| (entity.element_data().posture, entity.is_npc()))
+            .map(|entity| (entity.element_data().posture(), entity.is_npc()))
             .ok_or_else(|| format!("SetActorPosture target {actor_handle} is not human"))?;
 
         let set_posture = |engine: &mut Self, posture| {
@@ -1918,7 +1919,7 @@ impl EngineInner {
             )
             .with_pc_registry(&world.original_pc_registry_ids)
             .with_world_views(
-                assets.static_sight_obstacles.as_slice(),
+                assets.environment.static_sight_obstacles.as_slice(),
                 &world.dynamic_sight_obstacles,
                 &world.static_sight_obstacle_active,
             )
@@ -2049,7 +2050,7 @@ impl EngineInner {
                         // `stop_sound_source`.
                         schedule_source_finishes_for_all_active(
                             &mut self.feedback.sound_sim,
-                            &assets.source_durations,
+                            &assets.audio.source_durations,
                             self.control.frame_counter,
                         );
                     }
@@ -2080,7 +2081,7 @@ impl EngineInner {
                                         src.id,
                                         idx,
                                         self.control.frame_counter,
-                                        &assets.source_durations,
+                                        &assets.audio.source_durations,
                                         &mut self.feedback.sound_sim.playing_sources,
                                     );
                                 }
@@ -2380,7 +2381,7 @@ impl EngineInner {
     /// 3. **Global StartUp::Initialize(seed)** — the main mission script init.
     ///
     /// Called from `Engine::new` once the level loader has populated
-    /// `assets.hiking_paths`.
+    /// `assets.navigation.hiking_paths`.
     pub(crate) fn initialize_mission_script_with(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
@@ -2389,7 +2390,7 @@ impl EngineInner {
         hiking_paths: &[crate::level_data::RawHikingPath],
     ) {
         self.attach_script_bindings(assets);
-        if assets.spellforge_runtime.is_some() {
+        if assets.attachments.spellforge_runtime.is_some() {
             self.scripts
                 .mission
                 .as_mut()
@@ -2957,7 +2958,7 @@ impl EngineInner {
         let key = ScriptVmKey::Scroll(handle);
         let has_script = self.scripts.mission.as_ref().is_some_and(|script| {
             script.script_vm_has_function(key, "IsTaken")
-                || (assets.spellforge_runtime.is_some() && script.has_script_vm(key))
+                || (assets.attachments.spellforge_runtime.is_some() && script.has_script_vm(key))
         });
         if !has_script {
             return Ok(false);
@@ -3018,7 +3019,7 @@ impl EngineInner {
                     if let Some(class_idx) = script.manager.find_class(class_name) {
                         let zone_inst = script.manager.create_instance_idx(class_idx);
                         script.zone_instances.insert(*zone_idx, zone_inst);
-                    } else if assets.spellforge_runtime.is_some() {
+                    } else if assets.attachments.spellforge_runtime.is_some() {
                         script.bind_spellforge_virtual_zone(*zone_idx);
                     } else {
                         panic!(
@@ -3523,7 +3524,7 @@ impl EngineInner {
         let has_override = match self.scripts.mission.as_ref() {
             Some(s) => {
                 s.actor_has_function(handle, "FilterAIEvent")
-                    || (assets.spellforge_runtime.is_some()
+                    || (assets.attachments.spellforge_runtime.is_some()
                         && s.has_script_vm(ScriptVmKey::Actor(handle)))
             }
             None => return true,
@@ -3925,8 +3926,8 @@ impl EngineInner {
                 &fresh_scratch.ai_entity_views,
                 &fresh_scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             );
@@ -4273,8 +4274,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -4322,8 +4323,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -4374,8 +4375,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -4436,8 +4437,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -4506,8 +4507,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         )
@@ -4549,8 +4550,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         )
@@ -4989,8 +4990,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -5106,8 +5107,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -5238,8 +5239,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -5295,8 +5296,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -5526,8 +5527,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         );
@@ -5704,7 +5705,7 @@ impl EngineInner {
                 && sim.config().script_enabled
                 && self.scripts.mission.as_ref().is_some_and(|script| {
                     script.actor_has_function(handle, "FilterAIEvent")
-                        || (assets.spellforge_runtime.is_some()
+                        || (assets.attachments.spellforge_runtime.is_some()
                             && script.has_script_vm(ScriptVmKey::Actor(handle)))
                 });
             if !should_call {
@@ -6432,7 +6433,7 @@ impl EngineInner {
                         let new_obstacle_handle = new_obstacle;
                         let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                             new_obstacle_handle,
-                            assets.static_sight_obstacles.as_slice(),
+                            assets.environment.static_sight_obstacles.as_slice(),
                         );
                         if let Some(entity) = self.world.entities.get_mut(id) {
                             let ed = entity.element_data_mut();
@@ -6937,9 +6938,10 @@ mod owner_boundary_position_tests {
     use crate::element::{ElementData, ElementProjectile, ObjectData, ProjectileData};
 
     fn projectile_with_layer(layer: Option<u16>) -> Entity {
-        let mut element = ElementData {
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
         match layer {
@@ -7057,10 +7059,11 @@ mod script_context_tests {
             ..Default::default()
         });
 
-        let mut carried_element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorCivilian,
-            active: true,
-            ..Default::default()
+        let mut carried_element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorCivilian;
+            initial_element.active = true;
+            initial_element
         };
         carried_element.set_layer(2);
         carried_element.set_sector(crate::position_interface::SectorHandle::new(12));
@@ -7075,10 +7078,11 @@ mod script_context_tests {
             },
         ));
         let actor_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -7177,10 +7181,11 @@ mod script_context_tests {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorCivilian,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorCivilian;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -7190,10 +7195,11 @@ mod script_context_tests {
         ));
         let target = engine.add_entity(crate::element::Entity::Civilian(
             crate::element::ActorCivilian {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorCivilian,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorCivilian;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -7336,9 +7342,10 @@ mod script_context_tests {
             .entities
             .push(Some(crate::element::Entity::Soldier(
                 crate::element::ActorSoldier {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::ActorSoldier,
-                        ..Default::default()
+                    element: {
+                        let mut initial_element = crate::element::ElementData::default();
+                        initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                        initial_element
                     },
                     actor: crate::element::ActorData::default(),
                     human: crate::element::HumanData::default(),
@@ -7348,10 +7355,12 @@ mod script_context_tests {
             )));
         engine.world.entities.push(Some(crate::element::Entity::Fx(
             crate::element::ElementFx {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::Fx,
-                    custom_minimap_dot: crate::minimap::CustomDot::NotCustomized as u16,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::Fx;
+                    initial_element.custom_minimap_dot =
+                        crate::minimap::CustomDot::NotCustomized as u16;
+                    initial_element
                 },
                 fx: crate::element::FxData::default(),
             },
@@ -7499,13 +7508,17 @@ mod script_context_tests {
             replacement.material = crate::element::GameMaterial::Wood as u8;
             replacement.rebuild_geometry();
             let assets = LevelAssets {
-                static_sight_obstacles: std::sync::Arc::new(vec![replacement]),
+                environment: crate::engine::LevelEnvironmentAssets {
+                    static_sight_obstacles: std::sync::Arc::new(vec![replacement]),
+                    ..Default::default()
+                },
                 ..LevelAssets::default()
             };
-            let mut element = crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            let mut element = {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             };
             element.set_obstacle_index(Some(obstacle), Some(plane));
             element.set_material(crate::element::GameMaterial::Stone);
@@ -7564,10 +7577,11 @@ mod script_context_tests {
         let mut engine = EngineInner::new();
         engine.control.frame_counter = 48479;
 
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D::ZERO);
         let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
@@ -7679,9 +7693,10 @@ mod script_context_tests {
     fn external_remove_all_subordinates_finishes_clear_before_returning() {
         fn soldier() -> crate::element::Entity {
             crate::element::Entity::Soldier(crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: crate::element::ActorData::default(),
                 human: crate::element::HumanData::default(),

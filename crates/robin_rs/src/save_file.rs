@@ -1216,9 +1216,10 @@ mod tests {
         ai.base.engine_completion_verdict_resolved = true;
         let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
             robin_engine::element::ActorSoldier {
-                element: robin_engine::element::ElementData {
-                    kind: robin_engine::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = robin_engine::element::ElementData::default();
+                    initial_element.kind = robin_engine::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -1403,9 +1404,10 @@ mod tests {
         ai.base.primary_target = Some(robin_engine::ai::AiEntityHandle::new(0));
         let owner = engine.test_add_entity(robin_engine::element::Entity::Soldier(
             robin_engine::element::ActorSoldier {
-                element: robin_engine::element::ElementData {
-                    kind: robin_engine::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = robin_engine::element::ElementData::default();
+                    initial_element.kind = robin_engine::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),

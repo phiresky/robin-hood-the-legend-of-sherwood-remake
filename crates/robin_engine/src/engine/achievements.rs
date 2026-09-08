@@ -260,10 +260,11 @@ mod tests {
 
     fn test_soldier(camp: Camp) -> Entity {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

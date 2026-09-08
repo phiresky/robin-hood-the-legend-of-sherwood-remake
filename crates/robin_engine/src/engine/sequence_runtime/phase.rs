@@ -354,7 +354,7 @@ impl EngineInner {
 
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
             entity.is_pc()
-                && entity.element_data().posture == crate::element_kinds::Posture::AnonymousArcher
+                && entity.element_data().posture() == crate::element_kinds::Posture::AnonymousArcher
         });
         if is_anonymous_archer_pc {
             tracing::trace!(
@@ -789,7 +789,7 @@ impl EngineInner {
             .copied()
             .filter(|&pc_id| {
                 let posture_ready = self.get_entity(pc_id).is_some_and(|entity| {
-                    entity.element_data().posture == crate::element::Posture::HelpingToClimb
+                    entity.element_data().posture() == crate::element::Posture::HelpingToClimb
                 });
                 let entry_still_in_progress = self
                     .orders
@@ -1016,7 +1016,7 @@ impl EngineInner {
                                 });
                             let helper_is_entering = helper.is_some_and(|helper| {
                                 let posture_ready = self.get_entity(helper).is_some_and(|entity| {
-                                    entity.element_data().posture
+                                    entity.element_data().posture()
                                         == crate::element::Posture::HelpingToClimb
                                 });
                                 !posture_ready
@@ -1045,13 +1045,16 @@ impl EngineInner {
                                 && let Some(helper_position) = self
                                     .get_entity(helper_id)
                                     .filter(|entity| {
-                                        entity.element_data().posture
+                                        entity.element_data().posture()
                                             == crate::element::Posture::HelpingToClimb
                                     })
                                     .map(|entity| entity.position_iface().get_position())
                             {
                                 let obstacles = crate::sight_obstacle::ObstacleList {
-                                    static_obstacles: assets.static_sight_obstacles.as_slice(),
+                                    static_obstacles: assets
+                                        .environment
+                                        .static_sight_obstacles
+                                        .as_slice(),
                                     dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                                     static_active: &self.world.static_sight_obstacle_active,
                                 };
@@ -2488,7 +2491,10 @@ impl EngineInner {
                                 // can run alongside the `&mut self.world.entities`
                                 // borrow.
                                 let obstacles = crate::sight_obstacle::ObstacleList {
-                                    static_obstacles: assets.static_sight_obstacles.as_slice(),
+                                    static_obstacles: assets
+                                        .environment
+                                        .static_sight_obstacles
+                                        .as_slice(),
                                     dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                                     static_active: &self.world.static_sight_obstacle_active,
                                 };
@@ -2814,13 +2820,17 @@ impl EngineInner {
                                     };
                                     let object_type =
                                         crate::inventory::action_to_object_type(action);
-                                    let mut bonus_element = crate::element::ElementData {
-                                        kind: crate::element::ElementKind::ObjectBonus,
-                                        active: true,
+                                    let mut bonus_element = {
+                                        let mut initial_element =
+                                            crate::element::ElementData::default();
+                                        initial_element.kind =
+                                            crate::element::ElementKind::ObjectBonus;
+                                        initial_element.active = true;
                                         // Bonus default: blipped iff this
                                         // isn't a forest level.
-                                        blipped: !self.world.weather.is_forest_level,
-                                        ..Default::default()
+                                        initial_element.blipped =
+                                            !self.world.weather.is_forest_level;
+                                        initial_element
                                     };
                                     bonus_element.sprite.apply_placement(
                                     spawn_pos,
@@ -2831,7 +2841,7 @@ impl EngineInner {
                                     obstacle,
                                     crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                                         obstacle,
-                                        assets.static_sight_obstacles.as_slice(),
+                                        assets.environment.static_sight_obstacles.as_slice(),
                                     ),
                                 );
                                     let bonus = crate::element::Entity::Bonus(
@@ -2879,7 +2889,7 @@ impl EngineInner {
                             Command::DropAle => {
                                 let order_type = match self.get_entity(owner) {
                                     Some(entity)
-                                        if entity.element_data().posture
+                                        if entity.element_data().posture()
                                             == crate::element::Posture::Crouched =>
                                     {
                                         crate::order::OrderType::DroppingAleCrouched

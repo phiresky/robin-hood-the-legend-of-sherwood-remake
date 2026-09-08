@@ -38,7 +38,6 @@ use robin_assets::res_descr::LevelDescriptors;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates::ScreenBBox;
 use robin_engine::engine::{Engine, SpatialPresentationSnapshot};
-use robin_engine::engine_manager::EngineManager;
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::sound_cache::SampleLoader;
@@ -107,14 +106,16 @@ impl MissionAudio {
 
     pub(super) fn tick(
         &mut self,
-        manager: &mut EngineManager,
-        host: &mut Host,
+        engine: &robin_engine::engine::Engine,
+        audio: &mut crate::host::HostAudio,
+        viewport: &crate::host::ViewportState,
         assets: &robin_engine::engine::LevelAssets,
     ) -> Option<robin_engine::engine::SoundBoundary> {
         if let Some(backend) = self.backend.as_mut() {
             return tick_audio(
-                manager,
-                host,
+                engine,
+                audio,
+                viewport,
                 backend,
                 &*self.sample_loader,
                 &mut self.sound_rng,
@@ -261,20 +262,20 @@ pub(super) struct CameraPresentationPose {
 }
 
 impl CameraPresentationPose {
-    pub(super) fn capture(host: &Host) -> Self {
+    pub(super) fn capture(frontend: &crate::host::HostFrontend) -> Self {
         Self {
-            view_position: host.frontend.viewport.view_position,
-            old_view_position: host.frontend.viewport.old_view_position,
-            zoom_factor: host.frontend.viewport.zoom_factor,
-            old_zoom_factor: host.frontend.viewport.old_zoom_factor,
+            view_position: frontend.viewport.view_position,
+            old_view_position: frontend.viewport.old_view_position,
+            zoom_factor: frontend.viewport.zoom_factor,
+            old_zoom_factor: frontend.viewport.old_zoom_factor,
         }
     }
 
-    pub(super) fn apply(self, host: &mut Host) {
-        host.frontend.viewport.view_position = self.view_position;
-        host.frontend.viewport.old_view_position = self.old_view_position;
-        host.frontend.viewport.zoom_factor = self.zoom_factor;
-        host.frontend.viewport.old_zoom_factor = self.old_zoom_factor;
+    pub(super) fn apply(self, frontend: &mut crate::host::HostFrontend) {
+        frontend.viewport.view_position = self.view_position;
+        frontend.viewport.old_view_position = self.old_view_position;
+        frontend.viewport.zoom_factor = self.zoom_factor;
+        frontend.viewport.old_zoom_factor = self.old_zoom_factor;
     }
 
     fn interpolate(previous: Self, current: Self, alpha: f32) -> Self {

@@ -663,10 +663,11 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
     }];
 
     let mut target = Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            posture: crate::element::Posture::Upright,
-            ..Default::default()
+        element: {
+            let mut initial_element =
+                ElementData::from_initial_posture(crate::element::Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -746,9 +747,10 @@ fn friend_check_scans_a_detached_alert_path_without_consuming_the_following_wait
 #[test]
 fn consider_report_preserves_pc_body_kind_in_detectable_effect() {
     let pc = crate::element::Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),

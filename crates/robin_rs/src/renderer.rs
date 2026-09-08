@@ -40,22 +40,62 @@ use pipelines::PipelineStore;
 pub use readback::{CaptureError, CapturedFrame};
 use resources::GpuResources;
 
-/// Legacy surface identity. IDs 0 and 1 intentionally alias the screen.
+/// Borrowed identity minted by one renderer. Deserialization never restores authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct SurfaceHandle(u32);
+pub struct SurfaceHandle {
+    id: u32,
+    #[serde(skip)]
+    renderer: u64,
+}
 
 impl SurfaceHandle {
-    pub fn from_legacy(id: u32) -> Self {
-        Self(GpuResources::resolve_surface_id(id))
-    }
     pub fn legacy_id(self) -> u32 {
-        self.0
+        self.id
     }
 }
+
+/// Screen targets are not uploads and can never be adopted or retired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SurfaceTarget {
+    Screen,
+    Upload(SurfaceHandle),
+}
+
+/// Unique retirement authority. Borrowed draw handles cannot delete an upload.
+/// Explicit retirement requires the originating renderer; Drop does not touch GPU state.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct OwnedSurface {
+    handle: SurfaceHandle,
+}
+
+impl OwnedSurface {
+    pub fn handle(&self) -> SurfaceHandle {
+        self.handle
+    }
+
+    #[cfg(test)]
+    pub(crate) fn synthetic(id: u32) -> Self {
+        Self {
+            handle: SurfaceHandle { id, renderer: 0 },
+        }
+    }
+}
+
+static NEXT_RENDERER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Debug, thiserror::Error, serde::Serialize, serde::Deserialize)]
 #[error("renderer surface {0:?} is missing or has been deleted")]
 pub struct MissingSurface(pub SurfaceHandle);
+
+#[derive(Debug, thiserror::Error, serde::Serialize, serde::Deserialize)]
+pub enum SurfaceOwnershipError {
+    #[error(transparent)]
+    Missing(#[from] MissingSurface),
+    #[error("surface {0} cannot have multiple owners")]
+    AlreadyOwned(u32),
+    #[error("surface {0} has no retirement owner")]
+    NotOwned(u32),
+}
 
 /// Session-scoped atlas residency. Entries include outlines and baked shadow
 /// variants; distinct frames count only bank/variant identity. No entry-only
@@ -299,6 +339,8 @@ struct ScreenUniform {
 /// All resources are `Arc`-shared internally; `Renderer` itself owns
 /// no borrows.
 pub struct Renderer {
+    identity: u64,
+    owned_surfaces: std::collections::HashSet<u32>,
     /// Shared GPU context (device/queue/surface format).
     pub(crate) gpu: GpuContext,
     resources: GpuResources,
@@ -579,6 +621,14 @@ impl Renderer {
         );
 
         Renderer {
+            identity: NEXT_RENDERER_ID
+                .try_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |id| id.checked_add(1),
+                )
+                .expect("renderer identity exhausted"),
+            owned_surfaces: Default::default(),
             gpu,
             resources,
             pipelines,
@@ -776,27 +826,106 @@ impl Renderer {
     }
 
     pub fn delete_surface(&mut self, id: u32) -> bool {
-        self.resources.delete_managed_surface(id)
+        self.try_delete_legacy_surface(id)
+            .expect("owned upload must be retired with its ownership token")
+    }
+
+    pub fn try_delete_legacy_surface(&mut self, id: u32) -> Result<bool, SurfaceOwnershipError> {
+        if self.owned_surfaces.contains(&id) {
+            return Err(SurfaceOwnershipError::AlreadyOwned(id));
+        }
+        Ok(self.resources.delete_managed_surface(id))
+    }
+
+    /// Compatibility boundary: resolve legacy screen aliases or mint a local upload reference.
+    pub fn legacy_surface_target(&self, id: u32) -> Result<SurfaceTarget, MissingSurface> {
+        if id <= 1 {
+            Ok(SurfaceTarget::Screen)
+        } else {
+            self.surface_handle(id).map(SurfaceTarget::Upload)
+        }
+    }
+
+    /// Validate an existing compatibility upload ID. Screen IDs are rejected.
+    pub fn surface_handle(&self, id: u32) -> Result<SurfaceHandle, MissingSurface> {
+        let handle = SurfaceHandle {
+            id,
+            renderer: self.identity,
+        };
+        self.surface_dimensions(handle)?;
+        Ok(handle)
+    }
+
+    pub fn adopt_surface(&mut self, id: u32) -> OwnedSurface {
+        self.try_adopt_surface(id)
+            .expect("ownership requires a live unowned upload")
+    }
+
+    pub fn try_adopt_surface(&mut self, id: u32) -> Result<OwnedSurface, SurfaceOwnershipError> {
+        self.validate_surface_adoption(id)?;
+        let handle = self.surface_handle(id)?;
+        self.owned_surfaces.insert(id);
+        Ok(OwnedSurface { handle })
+    }
+
+    pub(crate) fn validate_surface_adoption(&self, id: u32) -> Result<(), SurfaceOwnershipError> {
+        self.surface_handle(id)?;
+        if self.owned_surfaces.contains(&id) {
+            return Err(SurfaceOwnershipError::AlreadyOwned(id));
+        }
+        Ok(())
+    }
+
+    pub fn retire_surface(&mut self, surface: OwnedSurface) {
+        self.try_retire_surface(surface)
+            .expect("retirement requires the originating renderer and a live owned upload");
+    }
+
+    /// On rejection the caller retains its token and can retire it with the correct renderer.
+    pub fn try_retire_surface(
+        &mut self,
+        surface: OwnedSurface,
+    ) -> Result<(), (SurfaceOwnershipError, OwnedSurface)> {
+        if let Err(error) = self.surface_dimensions(surface.handle) {
+            return Err((error.into(), surface));
+        }
+        if !self.owned_surfaces.remove(&surface.handle.id) {
+            return Err((SurfaceOwnershipError::NotOwned(surface.handle.id), surface));
+        }
+        assert!(
+            self.resources.delete_managed_surface(surface.handle.id),
+            "owned surface disappeared during retirement"
+        );
+        Ok(())
+    }
+
+    pub fn target_dimensions(&self, target: SurfaceTarget) -> Result<(u16, u16), MissingSurface> {
+        match target {
+            SurfaceTarget::Screen => Ok(self.frame.dimensions()),
+            SurfaceTarget::Upload(handle) => self.surface_dimensions(handle),
+        }
     }
 
     pub fn surface_width(&self, id: u32) -> u16 {
-        self.surface_dimensions(SurfaceHandle::from_legacy(id))
+        self.legacy_surface_target(id)
+            .and_then(|target| self.target_dimensions(target))
             .unwrap_or_else(|error| panic!("{error}"))
             .0
     }
 
     pub fn surface_height(&self, id: u32) -> u16 {
-        self.surface_dimensions(SurfaceHandle::from_legacy(id))
+        self.legacy_surface_target(id)
+            .and_then(|target| self.target_dimensions(target))
             .unwrap_or_else(|error| panic!("{error}"))
             .1
     }
 
     pub fn surface_dimensions(&self, handle: SurfaceHandle) -> Result<(u16, u16), MissingSurface> {
-        if handle.0 == 0 {
-            return Ok(self.frame.dimensions());
+        if handle.renderer != self.identity || handle.id <= 1 {
+            return Err(MissingSurface(handle));
         }
         self.resources
-            .surface_dimensions(handle.0)
+            .surface_dimensions(handle.id)
             .ok_or(MissingSurface(handle))
     }
 
@@ -1225,6 +1354,20 @@ impl Renderer {
         true
     }
 
+    /// Queue a borrowed upload only after checking its renderer and lifetime.
+    pub fn draw_surface(
+        &mut self,
+        handle: SurfaceHandle,
+        src_rect: Option<&BBox>,
+        dst_rect: Option<&BBox>,
+        flags: u32,
+    ) -> Result<(), MissingSurface> {
+        self.surface_dimensions(handle)?;
+        assert!(self.blit_to_screen(handle.id, src_rect, dst_rect, flags));
+        Ok(())
+    }
+
+    /// Legacy compatibility entry point; new resource owners should retain typed handles.
     /// Submit a managed surface as a GPU overlay quad. Lazy-uploads
     /// the surface to a wgpu texture (cached, invalidated on surface
     /// mutation) and queues a textured-quad draw at `dst_rect`.
@@ -2872,15 +3015,59 @@ mod bind_counter {
 
 #[cfg(test)]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    let mut other_renderer =
+        Renderer::with_optional_surface(gpu.clone(), None, None, 3, 2, TextureScaleMode::Nearest);
     let mut renderer =
         Renderer::with_optional_surface(gpu, None, None, 3, 2, TextureScaleMode::Nearest);
     assert_eq!(
-        renderer
-            .surface_dimensions(SurfaceHandle::from_legacy(0))
-            .unwrap(),
+        renderer.target_dimensions(SurfaceTarget::Screen).unwrap(),
         (3, 2)
     );
-    assert_eq!(SurfaceHandle::from_legacy(0), SurfaceHandle::from_legacy(1));
+    assert_eq!(
+        renderer.legacy_surface_target(0).unwrap(),
+        renderer.legacy_surface_target(1).unwrap()
+    );
+    assert!(renderer.surface_handle(0).is_err());
+    assert!(renderer.surface_handle(1).is_err());
+    let local_id = renderer
+        .create_surface_from_rgb565(1, 1, &[0xffff])
+        .unwrap();
+    let other_id = other_renderer
+        .create_surface_from_rgb565(1, 1, &[0xffff])
+        .unwrap();
+    assert_eq!(local_id, other_id);
+    let owned = renderer.adopt_surface(local_id);
+    assert!(other_renderer.surface_dimensions(owned.handle()).is_err());
+    assert!(
+        other_renderer
+            .draw_surface(owned.handle(), None, None, 0)
+            .is_err()
+    );
+    let restored: OwnedSurface =
+        serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
+    assert!(renderer.surface_dimensions(restored.handle()).is_err());
+    assert!(renderer.try_retire_surface(restored).is_err());
+    assert!(renderer.surface_dimensions(owned.handle()).is_ok());
+    let (_, owned) = other_renderer.try_retire_surface(owned).unwrap_err();
+    assert!(renderer.surface_dimensions(owned.handle()).is_ok());
+    let mut mission = crate::mission_render_resources::MissionRenderResources::default();
+    mission.replace_map(&mut other_renderer, other_id);
+    assert!(mission.try_retire(&mut renderer).is_err());
+    assert_eq!(mission.map(), Some(other_id));
+    assert!(other_renderer.surface_handle(other_id).is_ok());
+    assert!(
+        mission
+            .try_replace_map(&mut other_renderer, u32::MAX)
+            .is_err()
+    );
+    assert_eq!(mission.map(), Some(other_id));
+    assert!(renderer.try_adopt_surface(local_id).is_err());
+    assert!(renderer.try_delete_legacy_surface(local_id).is_err());
+    assert!(other_renderer.surface_handle(other_id).is_ok());
+    renderer.retire_surface(owned);
+    assert!(renderer.surface_handle(local_id).is_err());
+    assert!(other_renderer.surface_handle(other_id).is_ok());
+    mission.retire(&mut other_renderer);
     let pixels = [
         255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255,
         0, 255,
@@ -2929,7 +3116,7 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     let id = renderer
         .create_surface_from_rgb565(1, 1, &[0xffff])
         .unwrap();
-    let handle = SurfaceHandle::from_legacy(id);
+    let handle = renderer.surface_handle(id).unwrap();
     assert_eq!(renderer.surface_dimensions(handle).unwrap(), (1, 1));
     assert!(renderer.delete_surface(id));
     assert!(renderer.surface_dimensions(handle).is_err());
@@ -2943,6 +3130,23 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn surface_diagnostics_never_restore_renderer_authority() {
+        let handle = SurfaceHandle {
+            id: 42,
+            renderer: 7,
+        };
+        let json = serde_json::to_value(handle).unwrap();
+        assert_eq!(json, serde_json::json!({"id": 42}));
+        let restored: SurfaceHandle = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.legacy_id(), 42);
+        assert_eq!(restored.renderer, 0);
+        assert_ne!(restored, handle);
+        let forged: SurfaceHandle =
+            serde_json::from_value(serde_json::json!({"id": 42, "renderer": 7})).unwrap();
+        assert_eq!(forged.renderer, 0);
+    }
 
     fn queued_frame(index: u32) -> QueuedDraw {
         QueuedDraw {

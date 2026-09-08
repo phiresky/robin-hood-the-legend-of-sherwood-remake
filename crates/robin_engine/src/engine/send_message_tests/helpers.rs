@@ -995,11 +995,11 @@ pub(super) fn scripted_receiver() -> Entity {
 
 pub(super) fn scripted_soldier(script_class: &str) -> Entity {
     Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         },
         actor: ActorData {
             script_class: script_class.into(),

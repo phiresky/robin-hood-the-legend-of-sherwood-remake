@@ -182,7 +182,7 @@ impl EngineInner {
         let min_dist = thrust.minimal_distance as f32;
         let max_dist = thrust.maximal_distance as f32;
         let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
@@ -522,7 +522,7 @@ impl EngineInner {
     ) {
         let posture = self
             .get_entity(owner)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
 
         // Pick the fall animation by current posture and insert it
@@ -668,7 +668,7 @@ impl EngineInner {
                 Some(e) => e,
                 None => return,
             };
-            let posture = v.element_data().posture;
+            let posture = v.element_data().posture();
             let carrier = v.human_data().and_then(|h| h.carrier);
             let carried = v.pc_data().and_then(|p| p.carried);
             (posture, carrier, carried)
@@ -855,7 +855,7 @@ impl EngineInner {
         // base-class push-damage path.
         let victim_posture = self
             .get_entity(victim_id)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
         if matches!(
             victim_posture,
@@ -873,7 +873,7 @@ impl EngineInner {
         let victim_posture = if victim_posture == Posture::CarryingCorpse {
             self.force_drop_carried_corpse_instant(victim_id);
             self.get_entity(victim_id)
-                .map(|e| e.element_data().posture)
+                .map(|e| e.element_data().posture())
                 .unwrap_or_default()
         } else {
             victim_posture
@@ -896,7 +896,7 @@ impl EngineInner {
                 Some(e) => e,
                 None => return false,
             };
-            let posture = victim.element_data().posture;
+            let posture = victim.element_data().posture();
             let action = victim
                 .actor_data()
                 .map(|a| a.action_state)
@@ -1439,7 +1439,7 @@ impl EngineInner {
         let kind = thrust.kind;
 
         let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };

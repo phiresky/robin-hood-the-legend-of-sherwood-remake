@@ -688,9 +688,10 @@ mod tests {
     fn loaded_replaced_corpse_leaves_live_pc_registry_but_remains_an_entity() {
         fn pc(life_points: i16, hidden: bool, reinforcement_time: u32) -> Entity {
             Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),

@@ -149,6 +149,7 @@ pub(crate) fn retained_position_sector_handle(
     sparse_slot: u16,
 ) -> SectorHandle {
     let retained = assets
+        .navigation
         .legacy_grid_topology
         .as_ref()
         .expect("legacy computed location requires retained sparse sector topology");
@@ -247,7 +248,7 @@ impl LegacyLineTopology {
         assets: &LevelAssets,
     ) -> Result<Self, LegacyLineTopologyError> {
         let runtime = engine.world.fast_grid.level.jump_lines.len();
-        let Some(retained) = assets.legacy_grid_topology.as_ref() else {
+        let Some(retained) = assets.navigation.legacy_grid_topology.as_ref() else {
             if runtime == 0 {
                 return Ok(Self::default());
             }
@@ -725,7 +726,7 @@ pub fn derive_position_topology(
     engine: &EngineInner,
     assets: &LevelAssets,
 ) -> Result<LegacyPositionTopology, LegacySaveAdoptError> {
-    let retained = assets.legacy_grid_topology.as_ref().ok_or({
+    let retained = assets.navigation.legacy_grid_topology.as_ref().ok_or({
         LegacySaveAdoptError::Topology(LegacyTopologyAdapterError::MissingRetainedFact {
             fact: LegacyMissingTopologyFact::GridSparseSectorOrder,
             original_owner: "spatial-grid construction-time arrays",
@@ -779,7 +780,7 @@ pub fn derive_position_topology(
         sector_indices,
         sector_doors,
         &gate_order,
-        assets.static_sight_obstacles.as_slice(),
+        assets.environment.static_sight_obstacles.as_slice(),
     )
 }
 

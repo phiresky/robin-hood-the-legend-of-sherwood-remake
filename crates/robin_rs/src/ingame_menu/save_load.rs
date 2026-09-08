@@ -162,7 +162,7 @@ impl LoadPickerModalState {
                 self.selected = None;
                 self.scroll_offset = 0;
                 if let Some(old) = self.thumb_cache.take() {
-                    renderer.delete_surface(old.surface_id);
+                    renderer.retire_surface(old.surface);
                     self.thumb_widget.reset_alternate_picture();
                 }
             }
@@ -461,7 +461,7 @@ impl LoadPickerModalState {
 
     pub fn close(&mut self, renderer: &mut Renderer) {
         if let Some(cache) = self.thumb_cache.take() {
-            renderer.delete_surface(cache.surface_id);
+            renderer.retire_surface(cache.surface);
             self.thumb_widget.reset_alternate_picture();
         }
     }
@@ -1167,7 +1167,7 @@ pub async fn show_save_load(
                                 save_manager,
                             );
                             if let Some(old) = thumb_cache.take() {
-                                renderer.delete_surface(old.surface_id);
+                                renderer.retire_surface(old.surface);
                                 thumb_widget.reset_alternate_picture();
                             }
                         }
@@ -1332,7 +1332,7 @@ pub async fn show_save_load(
     // Make sure the cached thumbnail surface is returned to the renderer
     // pool before we unwind.
     if let Some(cache) = thumb_cache {
-        renderer.delete_surface(cache.surface_id);
+        renderer.retire_surface(cache.surface);
         thumb_widget.reset_alternate_picture();
     }
     if mode == SaveLoadMode::Save {
@@ -1344,9 +1344,10 @@ pub async fn show_save_load(
 
 /// Tracks a loaded thumbnail so we don't rebuild the GPU surface on
 /// every frame while the selection is stable.
+#[derive(serde::Serialize, serde::Deserialize)]
 struct ThumbnailCache {
     slot: usize,
-    surface_id: u32,
+    surface: crate::renderer::OwnedSurface,
     width: u16,
     height: u16,
 }
@@ -1360,6 +1361,11 @@ fn sync_thumbnail_cache(
     renderer: &mut Renderer,
     mode: SaveLoadMode,
 ) {
+    if let Some(current) = cache.as_ref() {
+        renderer
+            .surface_dimensions(current.surface.handle())
+            .expect("thumbnail cache requires its originating renderer");
+    }
     // Save-mode never previews a thumbnail — the picture widget stays
     // disabled and the entire reload branch is gated on Load mode.
     let target_slot = match (mode, selected) {
@@ -1370,13 +1376,13 @@ fn sync_thumbnail_cache(
         (Some(c), Some(slot)) if c.slot == slot => {}
         (_, None) => {
             if let Some(old) = cache.take() {
-                renderer.delete_surface(old.surface_id);
+                renderer.retire_surface(old.surface);
             }
             widget.reset_alternate_picture();
         }
         (_, Some(slot)) => {
             if let Some(old) = cache.take() {
-                renderer.delete_surface(old.surface_id);
+                renderer.retire_surface(old.surface);
             }
             widget.reset_alternate_picture();
             if let Some(thumb) = save_manager.load_thumbnail(slot) {
@@ -1386,7 +1392,7 @@ fn sync_thumbnail_cache(
                 widget.set_alternate_picture(id);
                 *cache = Some(ThumbnailCache {
                     slot,
-                    surface_id: id,
+                    surface: renderer.adopt_surface(id),
                     width: thumb.width,
                     height: thumb.height,
                 });
@@ -1513,6 +1519,9 @@ fn draw_preview(
     if let Some(cache) = thumb_cache
         && cache.slot == slot
     {
+        renderer
+            .surface_dimensions(cache.surface.handle())
+            .expect("thumbnail drawing requires its originating renderer");
         let mut widget = thumb_widget.clone();
         widget
             .base

@@ -242,7 +242,7 @@ impl EngineInner {
         if let Some(entity) = self.world.entities.get_mut(projectile_id) {
             let obstacle_plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 resolution.obstacle_index,
-                assets.static_sight_obstacles.as_slice(),
+                assets.environment.static_sight_obstacles.as_slice(),
             );
             bow_shot::apply_projectile_landing_resolution(
                 entity.element_data_mut(),
@@ -560,7 +560,7 @@ impl EngineInner {
             };
             let target_is_fx_target = target_entity.kind().is_fx_target();
             let target_is_human = target_entity.is_human();
-            let target_posture = target_entity.element_data().posture;
+            let target_posture = target_entity.element_data().posture();
 
             // ── Determine shoot mode from action state ───────────
             let shoot_mode = result.shoot_mode;
@@ -714,7 +714,7 @@ impl EngineInner {
             let obstacle_check = bow_shot::TrajectoryObstacleCheck {
                 fast_find_grid: &self.world.fast_grid,
                 sight_obstacles: obstacle_list,
-                water_zones: Some(&assets.water_zones),
+                water_zones: Some(&assets.environment.water_zones),
             };
             let collision_debug_identity =
                 crate::sight_obstacle::projectile_collision_debug_requested().then(|| {
@@ -943,6 +943,7 @@ impl EngineInner {
                         (obstacle.material, sectors)
                     });
                     let ground_material_inputs = assets
+                        .environment
                         .water_zones
                         .zones
                         .iter()
@@ -957,7 +958,7 @@ impl EngineInner {
                         })
                         .collect::<Vec<_>>();
                     let scoped_material = crate::water_zones::determine_water_hole_scoped(
-                        &assets.water_zones,
+                        &assets.environment.water_zones,
                         terminal_obstacle_ref,
                         landing,
                     )
@@ -1122,14 +1123,14 @@ impl EngineInner {
         arrow_id: EntityId,
     ) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles,
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let Some(entity) = self.world.entities.get_mut(arrow_id) else {
             return;
@@ -1638,7 +1639,7 @@ impl EngineInner {
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let mut projectile = match object_type {
             crate::element::ObjectType::Apple => crate::bow_shot::spawn_apple(
@@ -1705,7 +1706,7 @@ impl EngineInner {
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let mut projectile = crate::bow_shot::spawn_stone(
             actor_id,
@@ -2320,10 +2321,10 @@ mod tests {
 
     fn make_pc(posture: Posture) -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(posture);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::Waiting,
@@ -2348,9 +2349,10 @@ mod tests {
     fn distraction_projectile_latch_survives_serialization_and_emits_once_inner() {
         let mut engine = EngineInner::new();
         let mut projectile = Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element
             },
             object: ObjectData {
                 object_type: crate::element::ObjectType::Stone,
@@ -2381,10 +2383,11 @@ mod tests {
     #[test]
     fn water_splash_accepts_original_no_layer_sentinel() {
         let mut engine = EngineInner::new();
-        let mut element = ElementData {
-            active: true,
-            kind: ElementKind::ObjectProjectile,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element
         };
         element.clear_layer();
         element.set_position(crate::coordinates::WorldPoint3D::new(80.0, 120.0, 2.0));
@@ -2701,11 +2704,11 @@ mod tests {
 
     fn make_arrow_warning_soldier() -> Entity {
         let mut soldier = crate::element::ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2759,9 +2762,10 @@ mod tests {
         // Legacy human handles reserve zero as missing; production has a hidden
         // pre-level prefix, so keep the test shooter on a nonzero handle too.
         engine.add_entity(Entity::Target(crate::element::ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: Default::default(),
             target: Default::default(),
@@ -3215,9 +3219,10 @@ mod tests {
     fn task229_projectile_ai_origin_preserves_saved_sector_and_layer() {
         let exact_sector = crate::fast_find_grid::SectorIndex::new(41).unwrap();
         let mut projectile = Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element
             },
             object: ObjectData::default(),
             projectile: ProjectileData {
@@ -3343,7 +3348,7 @@ mod tests {
         ceiling.rebuild_geometry();
 
         let mut assets = LevelAssets::new();
-        assets.static_sight_obstacles = Arc::new(vec![ceiling]);
+        assets.environment.static_sight_obstacles = Arc::new(vec![ceiling]);
         (engine, assets, carrier_id, victim_id)
     }
 
@@ -3564,14 +3569,14 @@ impl EngineInner {
         projectile_id: EntityId,
     ) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles,
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_existing_projectile_in_actor_order(
@@ -3593,14 +3598,14 @@ impl EngineInner {
         arrow_id: EntityId,
     ) {
         let sight_obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles,
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let actor_order = self.world.actor_registry_order();
         let results = bow_shot::tick_arrow_in_actor_order_with_diplomacy(
@@ -4372,7 +4377,7 @@ impl EngineInner {
             Some(crate::sound_cache::Material::Water)
         } else {
             crate::water_zones::determine_water_hole_scoped(
-                &assets.water_zones,
+                &assets.environment.water_zones,
                 landing_obstacle,
                 landing_map,
             )
@@ -4557,7 +4562,7 @@ impl EngineInner {
         });
 
         if let Some(target) = self.get_entity_mut(target_id) {
-            let was_lying = target.element_data().posture.is_lying();
+            let was_lying = target.element_data().posture().is_lying();
             if let Some(human) = target.human_data_mut()
                 && human.last_is_lying_for_corpse_intersection.is_none()
             {
@@ -5746,7 +5751,7 @@ impl EngineInner {
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
                         sight_obstacles: self.sight_obstacles(assets),
-                        water_zones: Some(&assets.water_zones),
+                        water_zones: Some(&assets.environment.water_zones),
                     };
                     let net_entity = crate::bow_shot::spawn_net(
                         actor_id,
@@ -5792,7 +5797,7 @@ impl EngineInner {
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
                         sight_obstacles: self.sight_obstacles(assets),
-                        water_zones: Some(&assets.water_zones),
+                        water_zones: Some(&assets.environment.water_zones),
                     };
                     let purse_entity = crate::bow_shot::spawn_purse(
                         actor_id,
@@ -5837,7 +5842,7 @@ impl EngineInner {
                     let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
                         fast_find_grid: &self.world.fast_grid,
                         sight_obstacles: self.sight_obstacles(assets),
-                        water_zones: Some(&assets.water_zones),
+                        water_zones: Some(&assets.environment.water_zones),
                     };
                     let wasp_entity = crate::bow_shot::spawn_wasp_nest(
                         actor_id,

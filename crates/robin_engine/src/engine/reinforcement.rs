@@ -190,10 +190,11 @@ impl EngineInner {
         );
         let spawn_sector = Some(door_snap.sector_out);
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            sprite,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.sprite = sprite;
+            initial_element
         };
         element.set_position_map(door_snap.point_out);
         element.set_layer(door_snap.layer_out);
@@ -204,7 +205,7 @@ impl EngineInner {
             // the plane here.
             let plane = crate::position_interface::PlaneZCoeffs::resolve_for_obstacle(
                 Some(obs),
-                assets.static_sight_obstacles.as_slice(),
+                assets.environment.static_sight_obstacles.as_slice(),
             );
             element.sprite.position_iface.set_obstacle(Some(obs), plane);
         }

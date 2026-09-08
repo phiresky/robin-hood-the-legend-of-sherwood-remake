@@ -196,10 +196,11 @@ fn enemy_ai_hero_speech_completion_clears_enemy_ai_latch() {
     enemy.base.current_remark = Remark::Arrow;
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(Entity::Pc(ActorPc {
-        element: ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -4279,7 +4280,7 @@ fn nearby_fighters_keeps_inactive_self_and_filters_ineligible_others() {
     else {
         panic!("other fighter changed kind")
     };
-    other_soldier.element.posture = Posture::Tied;
+    other_soldier.element.publish_order_posture(Posture::Tied);
 
     let fighters = engine.build_nearby_fighters_for(
         self_id,
@@ -4674,10 +4675,11 @@ fn ai_position_ignores_misassociated_pass_door_for_non_actor() {
 
     let mut engine = EngineInner::new();
     let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
-        element: ElementData {
-            kind: ElementKind::ObjectBonus,
-            active: true,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectBonus;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Coin,
@@ -5587,9 +5589,10 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
     let mut engine = EngineInner::new();
     // Human handle zero means no entry in original-game AI lists.
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -5702,8 +5705,8 @@ fn reconsider_observation_uses_raw_positions_without_changing_shared_door_snapsh
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -5764,9 +5767,10 @@ fn seek_area_friend_scan_uses_selected_pass_door_without_runtime_latch() {
     let mut engine = EngineInner::new();
     // Preserve Original's null AI-handle slot.
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -5881,9 +5885,10 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -5944,8 +5949,8 @@ fn filtered_think_refreshes_live_friend_primary_target_for_battle_decisions() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6071,9 +6076,10 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
     // in AI handle space, so Charly must not land there or his viewer
     // identity cannot be resolved from the entity-view snapshot.
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -6144,8 +6150,8 @@ fn run_synchronous_charly_report(officer_state: crate::ai::AiState) -> EngineInn
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6217,9 +6223,10 @@ fn run_synchronous_civilian_alert(
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -6310,8 +6317,8 @@ fn run_synchronous_civilian_alert(
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6420,8 +6427,8 @@ fn civilian_alert_closes_recipient_and_result_continuation_synchronously() {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &accepted.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &accepted.ai.global.all_soldier_handles,
             accepted.control.sim_config.difficulty,
         )
@@ -6535,9 +6542,10 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
     engine.control.frame_counter = 100;
     // AI human handles use zero as missing, so keep production NPCs off slot 0.
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -6588,8 +6596,8 @@ fn review_officer_call_hey_refusal_returns_to_duty_synchronously() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6647,8 +6655,8 @@ fn review_officer_sees_soldier_rejects_non_soldier_rank_target() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -6673,9 +6681,10 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
     let mut engine = EngineInner::new();
     engine.control.frame_counter = 100;
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -6744,8 +6753,8 @@ fn review_soldier_alert_uses_live_caller_after_recipient_callback() {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &engine.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &engine.ai.global.all_soldier_handles,
             engine.control.sim_config.difficulty,
         )
@@ -6796,9 +6805,10 @@ fn setup_review2_officer_and_soldier() -> (EngineInner, EntityId, EntityId, Leve
     engine.control.frame_counter = 100;
     // AI human handles use zero as missing, so keep production NPCs off slot 0.
     engine.add_entity(Entity::Target(crate::element::ElementTarget {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         },
         fx: Default::default(),
         target: Default::default(),
@@ -6849,8 +6859,8 @@ fn review2_context_and_tick(
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -7927,7 +7937,7 @@ fn unalert_charly_seekers_uses_full_visibility_in_original_short_circuit_order()
     wall.bottom_plane_points = [[95.0, -10.0, 0.0], [105.0, -10.0, 0.0], [105.0, 10.0, 0.0]];
     wall.rebuild_geometry();
     let mut assets = LevelAssets::new();
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
     engine.world.static_sight_obstacle_active = vec![true];
     complete_test_runtime_fixture(&mut engine, &mut assets);
 
@@ -8498,7 +8508,7 @@ fn closure_review_combat_alert_uses_exact_is_able_to_fight_under_retained_lock()
                 .enemy_mut()
                 .expect("eligibility recipient has EnemyAi")
                 .set_state(AiState::Menacing, Substate::MenacingPcInComa),
-            Ineligible::Tied => soldier.element.posture = Posture::Tied,
+            Ineligible::Tied => soldier.element.publish_order_posture(Posture::Tied),
             Ineligible::Carried => soldier.human.carrier = Some(officer_id),
             Ineligible::GotHit => soldier
                 .npc
@@ -8617,7 +8627,7 @@ fn closure_review_alert_soldiers_keeps_tied_and_carried_able_to_help() {
         if carried {
             soldier.human.carrier = Some(officer_id);
         } else {
-            soldier.element.posture = Posture::Tied;
+            soldier.element.publish_order_posture(Posture::Tied);
         }
 
         let (snapshot_able_to_fight, snapshot_able_to_help) =

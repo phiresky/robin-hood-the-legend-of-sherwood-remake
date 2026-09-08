@@ -352,7 +352,7 @@ impl WorldState {
     /// complete candidate; this phase is then infallible and mutation-only.
     pub(crate) fn attach_preflighted_level_assets(&mut self, assets: &LevelAssets) {
         self.fast_grid_mut()
-            .attach_level_grid(assets.level_grid.clone());
+            .attach_level_grid(assets.navigation.level_grid.clone());
 
         for (_, entity) in self.entities.occupied_mut() {
             entity
@@ -386,19 +386,21 @@ impl WorldState {
             ));
         }
         for (zone_idx, &grid_idx) in assets.scripts.zone_grid_indices.iter().enumerate() {
-            if (grid_idx as usize) >= assets.level_grid.sectors.len() {
+            if (grid_idx as usize) >= assets.navigation.level_grid.sectors.len() {
                 return Err(format!(
                     "script zone {zone_idx} references grid sector {grid_idx}, but the level has {} sectors",
-                    assets.level_grid.sectors.len(),
+                    assets.navigation.level_grid.sectors.len(),
                 ));
             }
         }
 
-        if self.static_sight_obstacle_active.len() != assets.static_sight_obstacles.len() {
+        if self.static_sight_obstacle_active.len()
+            != assets.environment.static_sight_obstacles.len()
+        {
             return Err(format!(
                 "static sight-obstacle runtime length {} does not match level obstacle length {}",
                 self.static_sight_obstacle_active.len(),
-                assets.static_sight_obstacles.len(),
+                assets.environment.static_sight_obstacles.len(),
             ));
         }
         if self.mobile_elements.len() != assets.entities.mobile_element_count {
@@ -411,7 +413,7 @@ impl WorldState {
 
         self.validate_pathfinder_states_inner(assets)?;
         self.validate_fast_grid_runtime_lengths(assets)?;
-        self.validate_fast_grid_indices_against(assets.level_grid.sectors.len())?;
+        self.validate_fast_grid_indices_against(assets.navigation.level_grid.sectors.len())?;
 
         for (id, entity) in self.entities.occupied() {
             entity
@@ -495,18 +497,18 @@ impl WorldState {
     }
 
     fn validate_pathfinder_states_inner(&self, assets: &LevelAssets) -> Result<(), String> {
-        if self.pathfinder.states.len() != assets.pathfinder_graph.states.len() {
+        if self.pathfinder.states.len() != assets.navigation.pathfinder_graph.states.len() {
             return Err(format!(
                 "pathfinder state layer count {} does not match level graph layer count {}",
                 self.pathfinder.states.len(),
-                assets.pathfinder_graph.states.len(),
+                assets.navigation.pathfinder_graph.states.len(),
             ));
         }
         for (layer_idx, (runtime, level)) in self
             .pathfinder
             .states
             .iter()
-            .zip(&assets.pathfinder_graph.states)
+            .zip(&assets.navigation.pathfinder_graph.states)
             .enumerate()
         {
             if runtime.len() != level.len() {
@@ -525,17 +527,17 @@ impl WorldState {
             (
                 "line",
                 self.fast_grid.line_active.len(),
-                assets.level_grid.lines.len(),
+                assets.navigation.level_grid.lines.len(),
             ),
             (
                 "sector",
                 self.fast_grid.sector_active.len(),
-                assets.level_grid.sectors.len(),
+                assets.navigation.level_grid.sectors.len(),
             ),
             (
                 "mask",
                 self.fast_grid.mask_active.len(),
-                assets.level_grid.masks.len(),
+                assets.navigation.level_grid.masks.len(),
             ),
         ];
         for (name, runtime_len, level_len) in lengths {
@@ -620,9 +622,10 @@ mod tests {
         world
             .entities
             .push(Some(Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),

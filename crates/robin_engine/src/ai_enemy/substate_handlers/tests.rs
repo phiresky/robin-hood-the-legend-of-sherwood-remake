@@ -5,9 +5,10 @@ fn soldier_view_with_substate(
     substate: Substate,
 ) -> crate::ai_entity_view::AiEntityView {
     let entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -29,9 +30,10 @@ fn soldier_view_with_substate(
 
 fn civilian_view(handle: u32, position: Position) -> crate::ai_entity_view::AiEntityView {
     let entity = crate::element::Entity::Civilian(crate::element::ActorCivilian {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorCivilian,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorCivilian;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -2248,10 +2250,10 @@ fn parade_timer_stops_only_an_active_normal_parry() {
 
 fn pc_view(posture: crate::element::Posture) -> crate::ai_entity_view::AiEntityView {
     let entity = crate::element::Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            posture,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -3070,9 +3072,10 @@ fn goto_chief_reach_faces_live_chief_with_elevation() {
         crate::entity_id::SoldierId(47),
     ));
     let chief = crate::element::Entity::Soldier(crate::element::ActorSoldier {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),

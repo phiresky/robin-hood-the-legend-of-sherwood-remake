@@ -125,7 +125,8 @@ pub fn parse_connect_addr(raw: &str) -> Result<EndpointAddr, String> {
 mod tests {
     use super::*;
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn connect_addr_roundtrips_json_and_id() {
         let key = SecretKey::generate();
         let id = key.public();
@@ -139,6 +140,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn iroh_key_preserves_the_ed25519_game_identity() {
         let seed = [0x57; 32];
         let key = secret_key_from_seed(seed);
@@ -149,5 +151,13 @@ mod tests {
             key.public().as_bytes(),
             signing_key.verifying_key().as_bytes()
         );
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_refuses_a_second_durable_transport_identity() {
+        let error = game_secret_key().expect_err("browser must use the isolated durable signer");
+        assert!(error.contains("isolated durable identity signer"));
+        assert_eq!(local_endpoint_id_string().unwrap_err(), error);
     }
 }

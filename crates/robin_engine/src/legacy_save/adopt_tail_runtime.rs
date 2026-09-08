@@ -266,6 +266,7 @@ fn preflight_global_vm(
     let mut heap = current_heap.to_vec();
     let mut computed_locations = Vec::new();
     let sector_count = assets
+        .navigation
         .legacy_grid_topology
         .as_ref()
         .map_or(engine.world.fast_grid.level.sectors.len(), |topology| {

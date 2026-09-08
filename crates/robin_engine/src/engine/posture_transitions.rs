@@ -210,7 +210,7 @@ impl EngineInner {
         // or when standing in a motion sector that forces crouched
         // movement.
         let (posture, sector_handle) = match self.get_entity(entity) {
-            Some(e) => (e.element_data().posture, e.element_data().sector()),
+            Some(e) => (e.element_data().posture(), e.element_data().sector()),
             None => return,
         };
         if matches!(
@@ -296,7 +296,7 @@ impl EngineInner {
             // total no-transition arms, irrespective of posture/action state.
             None
         } else {
-            match owner.element_data().posture {
+            match owner.element_data().posture() {
                 // The transition selects the crouched posture
                 // transition before considering the action-state transition.
                 // This matters when acceleration rewrites the untranslated tail of a
@@ -713,7 +713,7 @@ impl EngineInner {
             // cannot invent a stop/start transition.
             let (cur_posture, cur_action_state) = if state == SequenceState::InProgress {
                 (
-                    ed.posture,
+                    ed.posture(),
                     entity
                         .actor_data()
                         .map(|a| a.action_state)
@@ -1333,11 +1333,11 @@ mod tests {
     fn selected_running_pc() -> (EngineInner, EntityId, SequenceId, std::num::NonZeroU32) {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1416,11 +1416,11 @@ mod tests {
     fn make_crouched_publishes_rewritten_walk_before_inserting_posture_transition() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::Moving,
@@ -1491,7 +1491,9 @@ mod tests {
         let (mut engine, owner, sequence, _) = selected_running_pc();
         {
             let entity = engine.get_entity_mut(owner).expect("test PC");
-            entity.element_data_mut().posture = Posture::Crouched;
+            entity
+                .element_data_mut()
+                .publish_order_posture(Posture::Crouched);
             let actor = entity.actor_data_mut().expect("test actor");
             actor.action_state = ActionState::Waiting;
             actor.active_door_pass = Some(ActiveDoorPass {
@@ -1555,11 +1557,11 @@ mod tests {
     fn sword_door_pass_make_fast_rewrites_lazy_tail_without_inserting_transition() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Crouched,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),

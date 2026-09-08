@@ -31,6 +31,7 @@ impl EngineInner {
                     reason: format!("mobile index {mobile_index} does not fit in u16"),
                 })?;
             let path = assets
+                .navigation
                 .hiking_paths
                 .get(usize::from(raw_mobile.path_index))
                 .ok_or_else(|| EngineError::MissionLevelStage {
@@ -136,12 +137,14 @@ impl EngineInner {
                 sprite.force_animation(crate::order::OrderType::WaitingUprightBored, 0);
 
                 let entity = Entity::Fx(crate::element::ElementFx {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::Fx,
-                        active: raw.active,
-                        posture: crate::element::Posture::Upright,
-                        sprite,
-                        ..Default::default()
+                    element: {
+                        let mut initial_element = crate::element::ElementData::from_initial_posture(
+                            crate::element::Posture::Upright,
+                        );
+                        initial_element.kind = crate::element::ElementKind::Fx;
+                        initial_element.active = raw.active;
+                        initial_element.sprite = sprite;
+                        initial_element
                     },
                     fx: crate::element::FxData {
                         restore_background: false,

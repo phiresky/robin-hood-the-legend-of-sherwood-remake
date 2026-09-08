@@ -387,7 +387,7 @@ impl EngineInner {
                     return None;
                 }
                 let eye = entity.compute_eyes_point(None)?;
-                let posture_factor = if element.posture == Posture::OnShoulders {
+                let posture_factor = if element.posture() == Posture::OnShoulders {
                     ON_SHOULDERS_FACTOR
                 } else {
                     1.0
@@ -399,7 +399,7 @@ impl EngineInner {
                 // the level. Use the horizontal slice through the actor's
                 // feet while preserving the real eye and obstacle volumes.
                 let plane = if matches!(
-                    element.posture,
+                    element.posture(),
                     Posture::OnLadder | Posture::OnWall | Posture::Flying
                 ) {
                     Some(crate::position_interface::PlaneZCoeffs {
@@ -1689,10 +1689,10 @@ mod tests {
     use geo::{Contains, Point};
 
     fn positioned_element(kind: ElementKind, x: f32, y: f32) -> ElementData {
-        let mut element = ElementData {
-            kind,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = kind;
+            initial_element
         };
         element.set_position(WorldPoint3D::new(x, y, 0.0));
         element
@@ -2025,7 +2025,9 @@ mod tests {
         engine.set_level_size(1_000.0, 1_000.0);
         let pc = engine.add_entity(pc_at(500.0, 500.0));
         let entity = engine.get_entity_mut(pc).expect("ladder PC fixture");
-        entity.element_data_mut().posture = Posture::OnLadder;
+        entity
+            .element_data_mut()
+            .publish_order_posture(Posture::OnLadder);
         entity
             .position_iface_mut()
             .set_position(WorldPoint3D::new(500.0, 700.0, 200.0));
@@ -2232,7 +2234,7 @@ mod tests {
         let mut assets = LevelAssets::default();
         let wall = opaque_wall_between_pc_and_enemy();
         let wall_bbox = wall.box_ground;
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 16);
@@ -2302,7 +2304,7 @@ mod tests {
         wall.rebuild_geometry();
         let wall_bbox = wall.box_ground;
         let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 32);
@@ -2370,7 +2372,7 @@ mod tests {
         bridge.rebuild_geometry();
         let bbox = bridge.box_ground;
         let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![bridge]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![bridge]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 32);
@@ -2552,7 +2554,7 @@ mod tests {
         wall.rebuild_geometry();
         let wall_bbox = wall.box_ground;
         let mut assets = LevelAssets::default();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![wall]);
         engine.world.static_sight_obstacle_active = vec![true];
         let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
         grid.size_map(32, 16);

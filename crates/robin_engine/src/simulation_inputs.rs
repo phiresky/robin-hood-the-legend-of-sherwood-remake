@@ -239,37 +239,47 @@ impl SimulationContentProjectionV1 {
         // Exhaustive destructuring is intentional. Adding a LevelAssets field
         // must force an explicit projection/derivation/exclusion decision.
         let LevelAssets {
+            navigation:
+                crate::engine::LevelNavigationAssets {
+                    level_grid,
+                    pathfinder_graph,
+                    hiking_paths,
+                    hiking_waypoint_sectors,
+                    legacy_grid_topology,
+                },
+            environment:
+                crate::engine::LevelEnvironmentAssets {
+                    ambience_shadow_sectors,
+                    water_zones,
+                    material_sectors,
+                    all_material_sectors,
+                    static_sight_obstacles,
+                },
+            audio:
+                crate::engine::LevelAudioAssets {
+                    exclamation_durations,
+                    speech_timing_catalog,
+                    required_exclamation_ids,
+                    source_durations,
+                    sound_source_required_ids,
+                },
+            attachments:
+                crate::engine::LevelRuntimeAttachments {
+                    pixel_opacity,
+                    // Executable attachment is excluded. Replay identity carries
+                    // the canonical package and engine tape; ranked rejects it.
+                    spellforge_runtime: _,
+                },
             sprite_scriptor,
-            level_grid,
-            pathfinder_graph,
-            hiking_paths,
-            hiking_waypoint_sectors,
             profile_manager,
             bank_signature,
             scripts,
             entities: _, // Run-derived handles; raw authored inputs are in LoadedLevel.
-            legacy_grid_topology,
-            pixel_opacity,
             peasant_firstnames,
             peasant_surnames,
             fixed_vip_names,
             accessory_sprite_prototypes,
             character_sprite_prototypes: _, // Run-derived from campaign; sealed in run projection.
-            exclamation_durations,
-            speech_timing_catalog,
-            required_exclamation_ids,
-            source_durations,
-            sound_source_required_ids,
-            water_zones,
-            material_sectors,
-            all_material_sectors,
-            static_sight_obstacles,
-            ambience_shadow_sectors,
-            // Process-local executable attachment. Custom replay identity is
-            // carried by the embedded, canonical Spellforge package and its
-            // deterministic engine tape; official ranked admission rejects
-            // any replay that has this attachment.
-            spellforge_runtime: _,
         } = assets;
 
         #[derive(Serialize)]
@@ -440,11 +450,7 @@ impl SimulationContentProjectionV1 {
                 .collect::<Vec<_>>(),
             SIMULATION_CONTENT_COMPONENT_ORDER_V1
         );
-        let ranked_timing_ready = !speech_timing_catalog.groups.is_empty()
-            && speech_timing_catalog.is_complete()
-            && sound_source_required_ids
-                .iter()
-                .all(|sample_id| source_durations.contains_key(sample_id));
+        let ranked_timing_ready = assets.audio.validate_ranked_timing().is_ok();
         let ranked_opacity_ready =
             pixel_opacity.is_some() && !sprite_scriptor.simulation_frame_ids().is_empty();
         Ok(Self {
@@ -514,7 +520,7 @@ impl PreparedMissionRunProjectionV1 {
         }
 
         let reachable_frame_ids = assets.sprite_scriptor.simulation_frame_ids();
-        let sprite_opacity_sha256 = assets.pixel_opacity.as_ref().map(|opacity| {
+        let sprite_opacity_sha256 = assets.attachments.pixel_opacity.as_ref().map(|opacity| {
             Digest32::from_bytes(opacity.simulation_opacity_sha256(&reachable_frame_ids))
         });
         let starting_campaign_bytes = bitcode::encode(campaign);

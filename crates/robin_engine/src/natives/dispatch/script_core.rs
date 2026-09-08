@@ -179,8 +179,9 @@ impl NativeContext<'_, '_> {
             }
             IsActorTied => {
                 let actor = stack.pop_i32();
-                self.get_entity(actor)
-                    .map_or(0, |e| i32::from(e.element_data().posture == Posture::Tied))
+                self.get_entity(actor).map_or(0, |e| {
+                    i32::from(e.element_data().posture() == Posture::Tied)
+                })
             }
             IsActorHS => {
                 // Requires an existing human, then checks whether the actor
@@ -197,7 +198,7 @@ impl NativeContext<'_, '_> {
                     tracing::warn!("Script Error: IsActorHS with non-actor handle {actor}");
                     return 0;
                 }
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let dead = e.is_dead();
                 let tied = posture == Posture::Tied;
                 let unconscious = e.human_data().is_some_and(|h| h.unconscious);

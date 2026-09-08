@@ -665,6 +665,8 @@ impl MultiplayerSetupFailurePolicy {
 impl InteractiveLoadStage {
     async fn begin(
         window: &mut GameWindow,
+        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+        multiplayer_campaign: &crate::multiplayer::MultiplayerCampaignSession,
         campaign: &Campaign,
         profiles: &ProfileManager,
         mission_idx: usize,
@@ -695,7 +697,16 @@ impl InteractiveLoadStage {
         install_cold_save_lua_session(&mut host, args, cold_save_lua)
             .map_err(|error| error.to_string())?;
         if let Some(code) = multiplayer_setup_failure_policy.resolve(
-            setup_multiplayer_session(&mut host, args, &mission_id, rng_seed, sim_config).await,
+            setup_multiplayer_session(
+                &mut host,
+                args,
+                &mission_id,
+                rng_seed,
+                sim_config,
+                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+                multiplayer_campaign,
+            )
+            .await,
         )? {
             loading.status("Multiplayer connection failed", 1.0);
             if let Some(renderer) = loading.renderer.as_mut() {
@@ -967,6 +978,8 @@ struct HeadlessLoadStage {
 
 impl HeadlessLoadStage {
     async fn begin(
+        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+        multiplayer_campaign: &crate::multiplayer::MultiplayerCampaignSession,
         location: MissionLocation,
         args: &crate::main_entry::CliArgs,
         mission_id: &str,
@@ -989,7 +1002,16 @@ impl HeadlessLoadStage {
         install_cold_save_lua_session(&mut host, args, cold_save_lua)
             .map_err(|error| error.to_string())?;
         let setup_exit = MultiplayerSetupFailurePolicy::Fatal.resolve(
-            setup_multiplayer_session(&mut host, args, mission_id, rng_seed, sim_config).await,
+            setup_multiplayer_session(
+                &mut host,
+                args,
+                mission_id,
+                rng_seed,
+                sim_config,
+                #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+                multiplayer_campaign,
+            )
+            .await,
         )?;
         debug_assert!(
             setup_exit.is_none(),
@@ -1064,7 +1086,12 @@ impl BuiltHeadlessMission {
         self.mission.run(args).await
     }
 
-    pub(super) fn finish(self, outcome: HeadlessMissionOutcome) -> MissionOutcome {
+    pub(super) fn finish(mut self, outcome: HeadlessMissionOutcome) -> MissionOutcome {
+        if outcome.code == GameCode::LevelRestart {
+            self.mission
+                .runtime
+                .preserve_multiplayer_session_for_next_mission();
+        }
         let (campaign, rng_seed, sim_config) = self.mission.runtime.into_campaign_and_simulation();
         MissionOutcome::from_engine(campaign, rng_seed, sim_config, Ok(outcome.code))
     }
@@ -1120,6 +1147,8 @@ impl HeadlessMissionBuilder {
             }
         };
         let loading = match HeadlessLoadStage::begin(
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+            &callbacks.multiplayer_campaign,
             location,
             args,
             &mission_id,
@@ -1300,6 +1329,8 @@ impl InteractiveMissionBuilder {
         let mut timer = super::setup::PhaseTimer::new("mission bootstrap");
         let mut loading = match InteractiveLoadStage::begin(
             window,
+            #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+            &callbacks.multiplayer_campaign,
             &campaign,
             profiles,
             mission_idx,

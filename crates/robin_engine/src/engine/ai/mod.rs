@@ -840,11 +840,11 @@ mod panic_boundary_tests {
             ..Default::default()
         };
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -868,11 +868,11 @@ mod panic_boundary_tests {
             ..Default::default()
         };
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1629,10 +1629,11 @@ mod parity_tests {
         let mut engine = EngineInner::new();
         let add_pc = |engine: &mut EngineInner, active, camp| {
             engine.add_entity(Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    active,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element.active = active;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -1697,10 +1698,12 @@ mod parity_tests {
     fn pending_move_condolation_owns_failure_before_engine_completion_surface() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1764,10 +1767,12 @@ mod parity_tests {
     fn selected_move_preflight_failure_has_condolation_provenance() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1821,10 +1826,12 @@ mod parity_tests {
     fn suspended_look_there_tail_surfaces_engine_deferred_route_rejection() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1888,10 +1895,12 @@ mod parity_tests {
     fn engine_deferred_completion_preserves_recursive_think_depth_until_success() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1970,10 +1979,12 @@ mod parity_tests {
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2044,10 +2055,12 @@ mod parity_tests {
     fn detached_goto_tail_does_not_turn_an_absent_verdict_into_success() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2113,10 +2126,12 @@ mod parity_tests {
     fn suspended_tower_guard_alert_tail_owns_deferred_route_rejection() {
         let mut engine = EngineInner::new();
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2317,9 +2332,10 @@ mod parity_tests {
         // A dead body's element can remain active outdoors. Life and
         // consciousness are intentionally absent from Original's gate.
         let mut civilian = crate::element::ActorCivilian {
-            element: crate::element::ElementData {
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -3451,7 +3467,7 @@ pub(super) fn build_ai_context_from_entity(
         self_body_position_world: elem.position(),
         frame,
         direction: elem.direction() as u16,
-        posture: elem.posture,
+        posture: elem.posture(),
         self_eye_position,
         self_eye_z,
         self_upright_eye_world,
@@ -3635,7 +3651,7 @@ fn resolve_ai_position_with_selected(
 
     let target_position = position_of(target_id);
     let carrier_id = match target {
-        Entity::Pc(pc) if pc.element.posture == crate::element::Posture::OnShoulders => {
+        Entity::Pc(pc) if pc.element.posture() == crate::element::Posture::OnShoulders => {
             Some(pc.human.carrier.unwrap_or_else(|| {
                 panic!("on-shoulders PC {target_id:?} has no carrier for AI Position")
             }))
@@ -3680,7 +3696,7 @@ pub(super) fn lookup_primary_target_metadata(
             }
         },
     );
-    let posture = elem.posture;
+    let posture = elem.posture();
     // Orders live on the target's owning `SequenceElement.orders` —
     // look up the current in-progress element for the target actor.
     let animation = engine
@@ -3957,7 +3973,7 @@ fn entity_view_stamp(
     nets_generation: u64,
 ) -> AiEntityViewStamp {
     let position_dependency_generation = match entity {
-        Entity::Pc(pc) if pc.element.posture == crate::element::Posture::OnShoulders => pc
+        Entity::Pc(pc) if pc.element.posture() == crate::element::Posture::OnShoulders => pc
             .human
             .carrier
             .map(|carrier| engine.world.entities.generation(carrier))
@@ -4215,19 +4231,22 @@ mod ai_view_position_sector_tests {
 
         let _legacy_null_slot =
             engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
                 pc: Default::default(),
             }));
         let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -4329,19 +4348,22 @@ mod ai_view_position_sector_tests {
 
         let _legacy_null_slot =
             engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
                 pc: Default::default(),
             }));
         let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -4604,9 +4626,10 @@ mod prepared_entity_view_cache_tests {
     use crate::element_kinds::ObjectType;
 
     fn active_bonus(x: f32) -> Entity {
-        let mut element = ElementData {
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, 0.0));
         Entity::Bonus(ElementBonus {
@@ -4616,9 +4639,10 @@ mod prepared_entity_view_cache_tests {
     }
 
     fn active_coin_projectile(x: f32) -> Entity {
-        let mut element = ElementData {
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, 0.0));
         Entity::Projectile(ElementProjectile {
@@ -4632,10 +4656,11 @@ mod prepared_entity_view_cache_tests {
     }
 
     fn active_soldier_without_layer() -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.clear_layer();
         Entity::Soldier(ActorSoldier {
@@ -4898,7 +4923,7 @@ impl EngineInner {
                         s.npc.life_points,
                         s.human.unconscious,
                         s.soldier.cached_camp,
-                        entity.element_data().posture
+                        entity.element_data().posture()
                     ),
                     Entity::Civilian(c) => format!(
                         "civilian lp={} unconscious={}",
@@ -5020,8 +5045,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -5121,8 +5146,8 @@ impl EngineInner {
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
+                    &assets.navigation.hiking_paths,
+                    &assets.navigation.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -5291,8 +5316,8 @@ impl EngineInner {
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
+                    &assets.navigation.hiking_paths,
+                    &assets.navigation.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 )
@@ -5372,13 +5397,13 @@ impl EngineInner {
             let Some(path) = ai.patrol_path.as_ref() else {
                 return;
             };
-            let Some(wp) = path.current_waypoint(&assets.hiking_paths) else {
+            let Some(wp) = path.current_waypoint(&assets.navigation.hiking_paths) else {
                 return;
             };
             crate::ai::Position {
                 x: wp.x as f32,
                 y: wp.y as f32,
-                sector: assets.hiking_waypoint_sector(
+                sector: assets.navigation.hiking_waypoint_sector(
                     usize::from(path.hiking_path_index),
                     usize::from(path.current_waypoint_index),
                     wp.sector,
@@ -5405,8 +5430,8 @@ impl EngineInner {
                 &scratch.ai_entity_views,
                 &scratch.ai_sight_obstacles,
                 &self.world.fast_grid,
-                &assets.hiking_paths,
-                &assets.hiking_waypoint_sectors,
+                &assets.navigation.hiking_paths,
+                &assets.navigation.hiking_waypoint_sectors,
                 &self.ai.global.all_soldier_handles,
                 self.control.sim_config.difficulty,
             )
@@ -5422,7 +5447,7 @@ impl EngineInner {
         };
         let will_stop = ai.will_stop_at_next_waypoint_debug(
             sim,
-            &assets.hiking_paths,
+            &assets.navigation.hiking_paths,
             &ctx,
             crate::ai::WillStopCaller::SetPathWalkingFlags,
         );
@@ -6126,8 +6151,8 @@ impl EngineInner {
             &scratch.ai_entity_views,
             &scratch.ai_sight_obstacles,
             &self.world.fast_grid,
-            &assets.hiking_paths,
-            &assets.hiking_waypoint_sectors,
+            &assets.navigation.hiking_paths,
+            &assets.navigation.hiking_waypoint_sectors,
             &self.ai.global.all_soldier_handles,
             self.control.sim_config.difficulty,
         );

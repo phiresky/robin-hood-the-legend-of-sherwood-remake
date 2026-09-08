@@ -563,7 +563,7 @@ impl EngineInner {
                 .unwrap_or_else(|| crate::entities::BoundaryPosition::of(&pc.element));
             let pos = {
                 let mut p = boundary.map;
-                if pc.element.posture == Posture::LeaningOut {
+                if pc.element.posture() == Posture::LeaningOut {
                     let (dx, dy) = crate::element::direction_vector_16(pc.element.direction());
                     p.x += 40.0 * dx;
                     p.y += 40.0 * dy;
@@ -639,13 +639,14 @@ impl EngineInner {
                 .is_using_emergency_lying_box();
             let eye_position = crate::stealth::eye_point_xy(
                 pos,
-                pc.element.posture,
+                pc.element.posture(),
                 pc.element.direction(),
                 emergency_lying,
             )
             .to_geo()
             .into();
-            let eye_z = pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture, false);
+            let eye_z =
+                pc_ground_z + crate::stealth::eye_z_for_posture(pc.element.posture(), false);
             let produced_noise = pc.actor.produced_noise.unwrap_or_else(|| {
                 panic!(
                     "PC {} has no initialized produced-noise record",
@@ -661,7 +662,7 @@ impl EngineInner {
                 position_world: boundary.world,
                 eye_position,
                 layer,
-                posture: pc.element.posture,
+                posture: pc.element.posture(),
                 action_state: pc.actor.action_state,
                 order_type,
                 building_sector,
@@ -673,7 +674,7 @@ impl EngineInner {
                 // in a disguised posture (Tree/Spy).
                 able_to_fight: element_active
                     && alive
-                    && !matches!(pc.element.posture, Posture::Tree | Posture::Spy),
+                    && !matches!(pc.element.posture(), Posture::Tree | Posture::Spy),
                 sword_range_default,
                 sword_range_maximal,
                 sword_range_uber,
@@ -975,7 +976,7 @@ impl EngineInner {
                 camp: s.soldier.cached_camp,
                 ai_state: s.npc.ai_state(),
                 ai_substate: s.npc.ai_substate(),
-                posture: s.element.posture,
+                posture: s.element.posture(),
                 rank,
                 company_number,
                 pride,
@@ -1244,7 +1245,7 @@ impl EngineInner {
             );
             let position = boundary.map;
             let layer = entity.element_data().layer();
-            let posture = entity.element_data().posture;
+            let posture = entity.element_data().posture();
             // These IDs came from a human-only detectable list.
             // A non-human entry is corrupt data, not
             // a waiting/conscious human.
@@ -1428,10 +1429,12 @@ mod tests {
         assert_ne!(wrong, exact);
 
         let target = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

@@ -93,7 +93,7 @@ fn attach_snapshot_spellforge_runtime(
     let Some(package) = snapshot.spellforge_package() else {
         return Ok(());
     };
-    if assets.spellforge_runtime.is_some() {
+    if assets.attachments.spellforge_runtime.is_some() {
         return Ok(());
     }
     if !spellforge_enabled()? {
@@ -108,7 +108,7 @@ fn attach_snapshot_spellforge_runtime(
             .map_err(|error| format!("host package validation failed: {error}"))?,
     );
     runtime.set_name_bindings(assets.scripts.names.as_ref().clone());
-    Arc::make_mut(assets).spellforge_runtime = Some(runtime);
+    Arc::make_mut(assets).attachments.spellforge_runtime = Some(runtime);
     Ok(())
 }
 
@@ -1005,12 +1005,15 @@ pub(super) async fn setup_multiplayer_session(
     authoritative_mission_id: &str,
     authoritative_rng_seed: u64,
     authoritative_sim_config: robin_engine::engine::SimConfig,
+    #[cfg(not(target_arch = "wasm32"))] campaign: &crate::multiplayer::MultiplayerCampaignSession,
 ) -> Result<(), String> {
+    use crate::multiplayer::NetChannels;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::multiplayer::NetEvent;
+    #[cfg(target_arch = "wasm32")]
+    use crate::multiplayer::connect_client;
     #[cfg(not(target_arch = "wasm32"))]
-    use crate::multiplayer::{HostedModContent, start_server, start_server_with_content};
-    use crate::multiplayer::{NetChannels, connect_client};
+    use crate::multiplayer::{HostedModContent, start_server_in_campaign};
     #[cfg(not(target_arch = "wasm32"))]
     use std::time::{Duration, Instant};
 
@@ -1033,7 +1036,7 @@ pub(super) async fn setup_multiplayer_session(
         #[cfg(not(target_arch = "wasm32"))]
         {
             if !args.mp_continue_session {
-                crate::multiplayer::discard_host_session_continuation();
+                campaign.discard_host_continuation()?;
             }
             let publish_browser_links = resolve_browser_join_publication(args)?;
             let speech_timing_locale = host
@@ -1048,7 +1051,8 @@ pub(super) async fn setup_multiplayer_session(
                     HostedModContent::from_encoded(encoded.to_vec()).map_err(|error| {
                         format!("multiplayer: invalid hosted full-mod package: {error}")
                     })?;
-                start_server_with_content(
+                start_server_in_campaign(
+                    campaign,
                     nickname.clone(),
                     authoritative_mission_id.to_string(),
                     authoritative_rng_seed,
@@ -1059,11 +1063,12 @@ pub(super) async fn setup_multiplayer_session(
                     frame_cursor,
                     snapshot_slot,
                     args.mp_expected_players.unwrap_or(1),
-                    content,
+                    Some(content),
                     publish_browser_links,
                 )
             } else {
-                start_server(
+                start_server_in_campaign(
+                    campaign,
                     nickname.clone(),
                     authoritative_mission_id.to_string(),
                     authoritative_rng_seed,
@@ -1074,6 +1079,7 @@ pub(super) async fn setup_multiplayer_session(
                     frame_cursor,
                     snapshot_slot,
                     args.mp_expected_players.unwrap_or(1),
+                    None,
                     publish_browser_links,
                 )
             };
@@ -1159,7 +1165,17 @@ pub(super) async fn setup_multiplayer_session(
     } else if let Some(addr) = args.connect.as_deref() {
         let (mut channels, in_tx, out_rx, _client_frame_cursor, _client_snapshot) =
             NetChannels::new();
-        match connect_client(addr, nickname.clone(), in_tx, out_rx) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let connection = crate::multiplayer::connect_client_in_campaign(
+            campaign,
+            addr,
+            nickname.clone(),
+            in_tx,
+            out_rx,
+        );
+        #[cfg(target_arch = "wasm32")]
+        let connection = connect_client(addr, nickname.clone(), in_tx, out_rx);
+        match connection {
             Ok(handle) => {
                 #[cfg(not(target_arch = "wasm32"))]
                 let offered_content = handle.content_offer();
@@ -1638,7 +1654,7 @@ mod tests {
             robin_spellforge::SpellforgeRuntime51::new(package.clone()).unwrap(),
         );
         let mut host_assets = LevelAssets::new();
-        host_assets.spellforge_runtime = Some(runtime);
+        host_assets.attachments.spellforge_runtime = Some(runtime);
         let snapshot = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut host_assets)
             .expect("Spellforge host snapshot");
 
@@ -1646,6 +1662,7 @@ mod tests {
         attach_snapshot_spellforge_runtime(&snapshot, &mut peer_assets, || Ok(true)).unwrap();
 
         let attached = peer_assets
+            .attachments
             .spellforge_runtime
             .as_ref()
             .expect("peer runtime attached");
@@ -1662,7 +1679,7 @@ mod tests {
             robin_spellforge::SpellforgeRuntime51::new(package.clone()).unwrap(),
         );
         let mut host_assets = LevelAssets::new();
-        host_assets.spellforge_runtime = Some(runtime);
+        host_assets.attachments.spellforge_runtime = Some(runtime);
         let snapshot = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut host_assets)
             .expect("Spellforge host snapshot");
 
@@ -1670,7 +1687,7 @@ mod tests {
         let error = attach_snapshot_spellforge_runtime(&snapshot, &mut peer_assets, || Ok(false))
             .expect_err("disabled Spellforge must reject host package");
         assert!(error.contains("disabled in Gameplay settings"));
-        assert!(peer_assets.spellforge_runtime.is_none());
+        assert!(peer_assets.attachments.spellforge_runtime.is_none());
     }
 
     #[test]

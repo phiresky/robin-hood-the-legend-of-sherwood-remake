@@ -61,7 +61,7 @@ impl EngineInner {
             let Some(entity) = self.world.entities.get_mut(id) else {
                 return;
             };
-            let is_lying = entity.element_data().posture.is_lying();
+            let is_lying = entity.element_data().posture().is_lying();
             let Some(human) = entity.human_data_mut() else {
                 return;
             };
@@ -101,7 +101,7 @@ impl EngineInner {
         let mut logically_lying: HashSet<EntityId> = HashSet::new();
 
         for (entity_id, entity) in self.world.entities.humans_mut() {
-            let is_lying = entity.element_data().posture.is_lying();
+            let is_lying = entity.element_data().posture().is_lying();
             let Some(human) = entity.human_data_mut() else {
                 continue;
             };
@@ -320,7 +320,7 @@ impl EngineInner {
         let ed = actor.element_data();
         let is_logically_lying = logically_lying
             .map(|lying| lying.contains(&candidate))
-            .unwrap_or_else(|| ed.posture.is_lying());
+            .unwrap_or_else(|| ed.posture().is_lying());
         if !is_logically_lying || ed.layer() != corpse_layer || ed.sector() != corpse_sector {
             return false;
         }
@@ -439,10 +439,10 @@ mod tests {
     use crate::engine::animation::{AnimCompletionOutcomes, ExecuteSideOutcomes};
 
     fn civilian_at(x: f32, y: f32, posture: Posture, sector: u16) -> ActorCivilian {
-        let mut element = ElementData {
-            kind: ElementKind::ActorCivilian,
-            posture,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(posture);
+            initial_element.kind = ElementKind::ActorCivilian;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint { x, y });
         element.set_layer(0);
@@ -459,10 +459,10 @@ mod tests {
     #[test]
     fn rejected_dead_idle_posture_request_still_rechecks_intersecting_corpses() {
         let mut engine = EngineInner::new();
-        let mut corpse_element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            posture: Posture::DeadBack,
-            ..ElementData::default()
+        let mut corpse_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::DeadBack);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         };
         corpse_element.set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
         corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
@@ -479,10 +479,10 @@ mod tests {
             soldier: SoldierData::default(),
         }));
 
-        let mut pc_element = ElementData {
-            kind: ElementKind::ActorPc,
-            posture: Posture::Lying,
-            ..ElementData::default()
+        let mut pc_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element
         };
         pc_element.set_position_map(crate::coordinates::MapPoint::new(110.0, 100.0));
         pc_element.set_sector(crate::position_interface::SectorHandle::new(1));
@@ -504,7 +504,7 @@ mod tests {
             .unwrap()
             .set_posture(Posture::Upright);
         assert_eq!(
-            engine.get_entity(corpse).unwrap().element_data().posture,
+            engine.get_entity(corpse).unwrap().element_data().posture(),
             Posture::DeadBack,
             "the base element rejects the requested upright posture"
         );
@@ -534,7 +534,7 @@ mod tests {
             );
         }
         assert_eq!(
-            engine.get_entity(corpse).unwrap().element_data().posture,
+            engine.get_entity(corpse).unwrap().element_data().posture(),
             Posture::DeadBack
         );
     }

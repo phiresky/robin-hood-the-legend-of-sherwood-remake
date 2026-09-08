@@ -7,6 +7,9 @@
 //! the engine channel bundle in [`NetChannels`] so the channels and their
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
+#[cfg(feature = "multiplayer")]
+mod client_protocol;
+
 use robin_engine::multiplayer::LeaderboardAuthorizationInbox;
 use robin_engine::multiplayer::LeaderboardCoSignResponse;
 #[cfg(any(test, feature = "multiplayer"))]
@@ -843,14 +846,9 @@ mod native;
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub use native::{
-    ClientHandle, HostedModContent, ServerHandle, connect_client, start_server,
-    start_server_with_content,
+    ClientHandle, HostedModContent, MultiplayerCampaignSession, ServerHandle, connect_client,
+    connect_client_in_campaign, start_server, start_server_in_campaign, start_server_with_content,
 };
-
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-pub(crate) fn discard_host_session_continuation() {
-    native::discard_host_session_continuation();
-}
 
 #[cfg(all(feature = "multiplayer", target_arch = "wasm32"))]
 mod wasm;

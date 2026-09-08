@@ -767,6 +767,10 @@ pub(crate) async fn run_mission_headless(
     mut rng_seed: u64,
     mut sim_config: engine_api::SimConfig,
 ) -> MissionOutcome {
+    // Direct headless restart must carry launch policy without mutating the
+    // caller's original arguments.
+    let mut session_args = args.clone();
+    let args = &mut session_args;
     if let Some(error) = unprepared_replay_launch_error(args) {
         return MissionOutcome::new(campaign, rng_seed, sim_config, Err(error));
     }
@@ -830,7 +834,7 @@ pub(crate) async fn run_mission_headless(
             sim_config =
                 simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
-            if !campaign.restore_snapshot() || !campaign.pre_mission_was_preselected {
+            if !restore_direct_restart_boundary(&mut campaign, args) {
                 return MissionOutcome::new(
                     campaign,
                     rng_seed,
@@ -854,18 +858,6 @@ pub(crate) async fn run_mission_headless(
 /// `initial_load` lets the caller pre-seed a load request — used by the
 /// main menu's "Load Game" entry to kick straight into a saved mission
 /// (see `main_menu::save_load`).
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-struct HostSessionContinuationCleanup(bool);
-
-#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-impl Drop for HostSessionContinuationCleanup {
-    fn drop(&mut self) {
-        if self.0 {
-            crate::multiplayer::discard_host_session_continuation();
-        }
-    }
-}
-
 pub(crate) async fn run_session(
     window: &mut GameWindow,
     mut campaign: Campaign,
@@ -875,8 +867,6 @@ pub(crate) async fn run_session(
     initial_load: Option<SaveLoadRequest>,
 ) -> SessionOutcome {
     let mut session_args = args.clone();
-    #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
-    let _host_continuation_cleanup = HostSessionContinuationCleanup(session_args.server);
     let mut callbacks = RustCallbacks::new(application_context.clone());
     if let Some(request) = initial_load {
         callbacks.queue_operation(request);
@@ -1557,7 +1547,7 @@ pub(crate) async fn run_mission(
             sim_config =
                 simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
-            if !campaign.restore_snapshot() || !campaign.pre_mission_was_preselected {
+            if !restore_direct_restart_boundary(&mut campaign, &mut args) {
                 return MissionOutcome::new(
                     campaign,
                     rng_seed,
@@ -1573,6 +1563,26 @@ pub(crate) async fn run_mission(
             sim_config =
                 simulation_config_for_level_restart(checkpoint.1, outcome_sim_config, false);
         }
+    }
+}
+
+/// Match campaign-loop handoff policy only after a direct, non-replay host
+/// restart has restored its checkpoint. Failed admission never changes policy.
+fn restore_direct_restart_boundary(
+    campaign: &mut Campaign,
+    args: &mut crate::main_entry::CliArgs,
+) -> bool {
+    let restored = campaign.restore_snapshot() && campaign.pre_mission_was_preselected;
+    carry_direct_restart_multiplayer_continuation(args, restored);
+    restored
+}
+
+fn carry_direct_restart_multiplayer_continuation(
+    args: &mut crate::main_entry::CliArgs,
+    restored_checkpoint: bool,
+) {
+    if restored_checkpoint && args.server && args.replay.is_none() && args.replay_data.is_none() {
+        args.mp_continue_session = true;
     }
 }
 
@@ -1707,6 +1717,56 @@ fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
 
 #[cfg(test)]
 mod required_state_tests {
+    #[test]
+    fn direct_restart_adapter_restores_checkpoint_before_admitting_continuation() {
+        let mut args = crate::main_entry::CliArgs::default();
+        args.server = true;
+        let mut campaign = Campaign::default();
+        assert!(!super::restore_direct_restart_boundary(
+            &mut campaign,
+            &mut args
+        ));
+        assert!(!args.mp_continue_session);
+        campaign.snapshot_with_simulation(7, robin_engine::engine::SimConfig::default());
+        assert!(!super::restore_direct_restart_boundary(
+            &mut campaign,
+            &mut args
+        ));
+        assert!(!args.mp_continue_session);
+        campaign
+            .snapshot_preselected_with_simulation(11, robin_engine::engine::SimConfig::default());
+        assert!(super::restore_direct_restart_boundary(
+            &mut campaign,
+            &mut args
+        ));
+        assert!(args.mp_continue_session);
+        assert_eq!(campaign.restart_simulation_checkpoint().0, 11);
+    }
+
+    #[test]
+    fn direct_restart_continuation_matches_campaign_only_for_restored_live_hosts() {
+        for server in [false, true] {
+            for restored in [false, true] {
+                for replay in [false, true] {
+                    for headless in [false, true] {
+                        let mut args = crate::main_entry::CliArgs::default();
+                        args.server = server;
+                        args.headless = headless;
+                        args.replay = replay.then(|| "recorded.rhrec".into());
+                        super::carry_direct_restart_multiplayer_continuation(&mut args, restored);
+                        assert_eq!(args.mp_continue_session, server && restored && !replay);
+                    }
+                }
+            }
+        }
+        // Ineligible transitions do not revoke already-established policy.
+        let mut args = crate::main_entry::CliArgs::default();
+        args.server = true;
+        args.mp_continue_session = true;
+        super::carry_direct_restart_multiplayer_continuation(&mut args, false);
+        assert!(args.mp_continue_session);
+    }
+
     use super::{
         MissionOutcome, allied_portrait_center, choose_pending_replay,
         establish_mission_restart_boundary, prepare_pending_direct_replay, prepare_replay_launch,
@@ -1775,10 +1835,11 @@ mod required_state_tests {
         )
         .expect("test engine");
         let mut add_member = |point: MapPoint| {
-            let mut element = ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            let mut element = {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             };
             element.set_position_map(point);
             engine.test_add_entity(Entity::Soldier(ActorSoldier {

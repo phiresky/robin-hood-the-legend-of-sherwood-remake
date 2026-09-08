@@ -7,7 +7,7 @@ cd -- "$repository"
 
 if (( $# != 1 )); then
     printf 'usage: bash scripts/check-quality.sh SUITE\n' >&2
-    printf 'suites: format core scripting-llvm engine assets protocols services parity client client-release tools wasm tooling web editor editor-browser gpu gpu-gl host fixtures-demo fixtures-fullgame\n' >&2
+    printf 'suites: format core scripting-llvm engine assets protocols services parity client client-release tools wasm browser-audio native-lifecycle tooling web editor editor-browser gpu gpu-gl host fixtures-demo fixtures-fullgame\n' >&2
     exit 2
 fi
 
@@ -31,7 +31,13 @@ case "$1" in
             --config 'profile.test.package.robin_lua.codegen-backend="llvm"'
         ;;
     engine) cargo test --locked -p robin_engine ;;
-    assets) cargo test --locked -p robin_assets -p robin_data_io ;;
+    assets)
+        cargo test --locked -p robin_content
+        cargo test --locked -p robin_content --features simulation-codecs
+        cargo test --locked -p robin_assets -p robin_data_io
+        cargo test --locked -p robin_assets --no-default-features
+        python3 scripts/check_asset_boundary.py
+        ;;
     protocols)
         cargo test --locked -p robin_run_protocol -p robin_replay_format -p robin_official_content -p robin_ranked_verification -p robin_identity_signer
         ;;
@@ -58,6 +64,11 @@ case "$1" in
         cargo check --locked --profile wasm-dev --target wasm32-unknown-unknown -p robin_replay_admission_wasm
         cargo check --locked --profile wasm-dev --target wasm32-unknown-unknown -p robin_rs --bin robin --no-default-features
         ;;
+    browser-audio|native-lifecycle)
+        # This delegated gate is the entire suite. Do not retain a suspended
+        # shell reader while a long compilation/runtime command is executing.
+        exec python3 scripts/validation/lifecycle_gate.py "$1"
+        ;;
     gpu)
         # This test also invokes renderer::verify_offscreen_gpu_contract.
         WGPU_BACKEND=vulkan cargo test --locked -p robin_rs --lib gpu_upscale::tests::headless_downlevel_device_executes_every_multipass_profile -- --ignored --exact
@@ -79,6 +90,7 @@ case "$1" in
         python3 -m unittest discover -s scripts -p test_portable_linker.py
         test -f scripts/validation/save_load_live_test.py
         python3 -m unittest discover -s scripts/validation -p save_load_live_test.py
+        python3 -m unittest discover -s scripts/validation -p lifecycle_gate_test.py
         bash scripts/test_parity_orchestration.sh
         ;;
     web) pnpm --dir wasm-www verify:web ;;

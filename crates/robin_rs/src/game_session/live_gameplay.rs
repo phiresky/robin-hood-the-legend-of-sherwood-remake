@@ -346,7 +346,7 @@ pub(super) async fn drive_live_gameplay_input(
     let planned_action = context
         .engine
         .planned_action_for_seat(context.host.transport.local_seat);
-    if context.assets.spellforge_runtime.is_some()
+    if context.assets.attachments.spellforge_runtime.is_some()
         && !context.ui.console_overlay.is_visible()
         && context.ui.pause_menu.is_none()
     {

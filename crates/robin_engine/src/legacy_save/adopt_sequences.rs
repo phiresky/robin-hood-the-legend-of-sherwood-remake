@@ -84,12 +84,14 @@ impl LegacySequenceTopology {
         assets: &LevelAssets,
         payloads: &LegacyElementPayloadStream,
     ) -> Result<Self, LegacySequenceAdoptError> {
-        let retained = assets.legacy_grid_topology.as_ref().ok_or_else(|| {
-            LegacySequenceAdoptError::MissingTopology {
+        let retained = assets
+            .navigation
+            .legacy_grid_topology
+            .as_ref()
+            .ok_or_else(|| LegacySequenceAdoptError::MissingTopology {
                 field: "sequence.topology",
                 identity: "retained Original grid topology".to_owned(),
-            }
-        })?;
+            })?;
         let gates =
             derive_legacy_gate_order(&retained.gates, &engine.script_domains.interactables.doors)
                 .map_err(|error| LegacySequenceAdoptError::MissingTopology {
