@@ -716,9 +716,9 @@ pub(super) fn setup_mission_audio(
             location == MissionLocation::Sherwood,
             &engine.sound_sim().sources,
         );
-        // Switch from menu music to mission music during the final loading
-        // stage. Entering mission mode halts the menu stream and
-        // re-raises load_music so mission music starts from the pool.
+        // Enter mission mode during the final loading stage, including
+        // replay viewers that skipped loading-screen menu music. This raises
+        // load_music so normal mission music starts from the pool.
         host.audio.sound.set_mode(SoundMode::Mission, backend);
         timer.step("mixer activation");
     }
@@ -1336,8 +1336,12 @@ impl HeadlessEngineResources {
 }
 
 impl MissionProcessResources {
-    pub(super) fn load(host: &mut Host, game: &Game) -> Result<Self, String> {
-        let audio_backend = init_audio_backend(host, game);
+    pub(super) fn load(
+        host: &mut Host,
+        game: &Game,
+        play_loading_menu_music: bool,
+    ) -> Result<Self, String> {
+        let audio_backend = init_audio_backend(host, game, play_loading_menu_music);
 
         let mut text = ResourceManager::with_files(host.preparation_files()?.clone());
         if let Err(error) =
@@ -3115,10 +3119,14 @@ fn spectator_actor_centroid(
         .then(|| engine_coordinates::MapPoint::new(sum_x / count as f32, sum_y / count as f32))
 }
 
-/// Initialize the Kira audio backend and switch the host sound
-/// manager into `SoundMode::Menu` so menu music plays during the
-/// loading screen.
-pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAudioBackend> {
+/// Initialize the mission mixer and optionally play loading-screen menu
+/// music. Replay startup skips that unrelated track; `prepare_audio` still
+/// enters mission mode and supplies the recorded mission's normal audio.
+pub(super) fn init_audio_backend(
+    host: &mut Host,
+    game: &Game,
+    play_loading_menu_music: bool,
+) -> Option<KiraAudioBackend> {
     if !game.global_options.sound_enabled {
         tracing::info!("sound disabled via `-NOSOUND`; skipping audio backend init");
         return None;
@@ -3153,7 +3161,9 @@ pub(super) fn init_audio_backend(host: &mut Host, game: &Game) -> Option<KiraAud
         }
         // Apply volumes before set_mode(Menu) so menu music isn't silent.
         host.audio.sound.apply_volumes(&sound_config);
-        host.audio.sound.set_mode(SoundMode::Menu, backend);
+        if play_loading_menu_music {
+            host.audio.sound.set_mode(SoundMode::Menu, backend);
+        }
     }
     audio_backend
 }

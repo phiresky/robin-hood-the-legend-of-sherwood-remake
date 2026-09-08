@@ -779,7 +779,11 @@ impl InteractiveLoadStage {
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
         loading.status("Loading process resources...", 0.11);
-        let process = MissionProcessResources::load(&mut host, &game)?;
+        let process = MissionProcessResources::load(
+            &mut host,
+            &game,
+            args.replay.is_none() && args.replay_data.is_none(),
+        )?;
         Ok(InteractiveLoadStart::Ready(Self {
             loading,
             host,

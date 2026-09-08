@@ -36,8 +36,18 @@ pub async fn run_rust_game(
     run_args.global_options = application_context.clone();
     let args = &run_args;
 
+    // Respect both launch forms before admitting speculative menu audio.
+    let wait_for_command =
+        args.wait_for_command || std::env::var_os("ROBIN_WAIT_FOR_COMMAND").is_some();
+
+    // Replay viewers bypass menus. Their mission audio is warmed by the
+    // mission loader; prefetching menu music here wastes replay bandwidth.
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
-    if application_context.options().sound_enabled {
+    if application_context.options().sound_enabled
+        && !wait_for_command
+        && args.replay.is_none()
+        && args.replay_data.is_none()
+    {
         match application_context.browser_audio() {
             Ok(session) => wasm_bindgen_futures::spawn_local(async move {
                 if let Err(error) = crate::audio_backend::preload_boot_catalog(&session).await {
@@ -89,12 +99,6 @@ pub async fn run_rust_game(
     // logical render size so cursor/mouse events get back-transformed
     // through the present-time letterbox into logical coords.
     window.set_logical_size(window.width, window.height);
-
-    // Env-var equivalent of `--wait-for-command`, used by the wasm
-    // host — `Module.arguments` doesn't reach `std::env::args()` on
-    // the `-sPROXY_TO_PTHREAD` worker, but `preRun`-set env vars do.
-    let wait_for_command =
-        args.wait_for_command || std::env::var_os("ROBIN_WAIT_FOR_COMMAND").is_some();
 
     // ── `--wait-for-command`: idle until a replay arrives via RPC ──
     // Data is fully loaded at this point (`rust_init` ran before
