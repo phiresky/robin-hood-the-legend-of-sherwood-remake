@@ -162,6 +162,15 @@ fn replay_identity_digest<T: Serialize + ?Sized>(value: &T) -> Result<ReplaySave
 /// temporary file. Keeping the temporary beside the destination ensures the
 /// final rename cannot cross filesystem boundaries.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_with_policy(path, bytes, true)
+}
+
+/// Publish a new slot without replacing a target created since allocation.
+pub(crate) fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+    atomic_write_with_policy(path, bytes, false)
+}
+
+fn atomic_write_with_policy(path: &Path, bytes: &[u8], overwrite: bool) -> Result<()> {
     let parent = path
         .parent()
         .context("atomic write target has no parent directory")?;
@@ -189,8 +198,12 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .as_file_mut()
         .sync_all()
         .with_context(|| format!("syncing temporary file for {}", path.display()))?;
-    temporary
-        .persist(path)
+    let published = if overwrite {
+        temporary.persist(path)
+    } else {
+        temporary.persist_noclobber(path)
+    };
+    published
         .map_err(|error| error.error)
         .with_context(|| format!("atomically replacing {}", path.display()))?;
     #[cfg(all(unix, not(target_arch = "wasm32")))]
@@ -846,6 +859,14 @@ impl GameSaveFile {
         let json = serde_json::to_string_pretty(self).context("serializing save file")?;
         atomic_write(path, json.as_bytes())
             .with_context(|| format!("writing save file {}", path.display()))
+    }
+
+    /// Publish a newly allocated manual slot, never an implicit overwrite.
+    pub(crate) fn write_new_to(&self, path: &Path) -> Result<()> {
+        self.validate_current_schema()?;
+        let json = serde_json::to_vec_pretty(self).context("serializing new save file")?;
+        atomic_write_new(path, &json)
+            .with_context(|| format!("publishing new save without replacing {}", path.display()))
     }
 
     /// Read a save file from disk.

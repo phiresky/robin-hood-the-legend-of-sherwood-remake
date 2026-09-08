@@ -41,8 +41,18 @@ impl TryFrom<String> for SlotName {
                 .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
             || matches!(
                 value.to_ascii_lowercase().as_str(),
-                "saves" | "quick-save-recovery" | "save-delete-recovery"
+                "saves"
+                    | "quick-save-recovery"
+                    | "save-delete-recovery"
+                    | "con"
+                    | "prn"
+                    | "aux"
+                    | "nul"
             )
+            || (value.len() == 4
+                && (value[..3].eq_ignore_ascii_case("com")
+                    || value[..3].eq_ignore_ascii_case("lpt"))
+                && matches!(value.as_bytes()[3], b'1'..=b'9'))
         {
             return Err(format!("invalid save slot basename {value:?}"));
         }
@@ -845,9 +855,18 @@ impl SaveGameManager {
         // Finish a previous intent before replacing its only recovery record.
         self.reconcile_delete()?;
         let bytes = serde_json::to_vec_pretty(&receipt)?;
-        save_file::atomic_write(&self.delete_recovery_path(), &bytes).context(
-            "publishing deletion intent; reopen store before retry if publication is uncertain",
-        )?;
+        if let Err(error) = save_file::atomic_write(&self.delete_recovery_path(), &bytes) {
+            // A directory-sync error may occur after rename. Reflect a
+            // visible committed intent immediately, but still return failure.
+            if std::fs::read(self.delete_recovery_path()).ok().as_deref() == Some(bytes.as_slice())
+            {
+                self.saves
+                    .retain(|slot| slot.filename != receipt.filename.as_str());
+            }
+            return Err(error).context(
+                "publishing deletion intent; reopen store before retry if publication is uncertain",
+            );
+        }
         self.finish_delete(receipt)
     }
 
@@ -1070,7 +1089,11 @@ impl SaveGameManager {
         )?;
         save.header.multiplayer_diagnostic = multiplayer_diagnostic;
         let path = self.save_path(index);
-        save.write_to(&path)?;
+        if !self.saves[index].is_special() && self.saves[index].timestamp.is_empty() {
+            save.write_new_to(&path)?;
+        } else {
+            save.write_to(&path)?;
+        }
 
         self.publish_thumbnail(index, thumbnail);
 
@@ -1391,6 +1414,324 @@ mod tests {
     use robin_engine::campaign::Campaign;
     use robin_engine::mission::Mission;
     use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
+
+    fn published_slot(filename: &str) -> SaveGame {
+        let mut slot = SaveGame::new(filename.into(), filename.into(), 1);
+        slot.timestamp = "123".into();
+        slot.mission_name = "Mission 1".into();
+        slot.player_profile_id = Some(0);
+        slot.player_name = "Player".into();
+        slot.campaign_progress = Some(0);
+        slot.missions_done = Some(0);
+        slot.missions_total = Some(1);
+        slot.gang_size = Some(1);
+        slot.ransom = Some(0);
+        slot.blazons = Some(0);
+        slot.amulets = Some(0);
+        slot.validate_published_metadata().unwrap();
+        slot
+    }
+
+    fn indexed_store(root: &Path, names: &[&str]) -> SaveGameManager {
+        let mut manager = SaveGameManager::new(root.to_str().unwrap().into());
+        manager.saves = names.iter().map(|name| published_slot(name)).collect();
+        manager.save_index().unwrap();
+        manager
+    }
+
+    #[test]
+    fn slot_names_reject_paths_devices_and_store_control_files() {
+        for name in [
+            "",
+            "..",
+            "../Savegame_000",
+            "/tmp/save",
+            "C:\\save",
+            "folder\\save",
+            "save.json",
+            "saves",
+            "CON",
+            "aux",
+            "Lpt9",
+            "COM1",
+            "quick-save-recovery",
+            "save-delete-recovery",
+        ] {
+            assert!(SlotName::new(name).is_err(), "accepted {name:?}");
+            assert!(serde_json::from_value::<SlotName>(serde_json::json!(name)).is_err());
+        }
+        for name in [
+            "Savegame_000",
+            "QuickSave",
+            "Autosave_123_0000",
+            "custom-save",
+        ] {
+            assert_eq!(SlotName::new(name).unwrap().as_str(), name);
+        }
+    }
+
+    #[test]
+    fn legacy_index_is_rebound_before_recovery_and_deletion() {
+        let old = tempfile::tempdir().unwrap();
+        let current = tempfile::tempdir().unwrap();
+        let original = indexed_store(old.path(), &["Savegame_000"]);
+        std::fs::write(original.save_path(0), b"old payload").unwrap();
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(old.path().join("saves.json")).unwrap()).unwrap();
+        json["save_directory"] = serde_json::json!(old.path().to_str().unwrap());
+        std::fs::write(
+            current.path().join("saves.json"),
+            serde_json::to_vec(&json).unwrap(),
+        )
+        .unwrap();
+        // A bad receipt in the old root must never be consulted.
+        std::fs::write(old.path().join("quick-save-recovery.json"), b"invalid").unwrap();
+        std::fs::write(current.path().join("Savegame_000.json"), b"copied payload").unwrap();
+        let mut reopened = SaveGameManager::load_index(current.path().to_str().unwrap()).unwrap();
+        assert_eq!(reopened.save_directory(), current.path().to_str().unwrap());
+        reopened.remove(0).unwrap();
+        assert_eq!(
+            std::fs::read(original.save_path(0)).unwrap(),
+            b"old payload"
+        );
+        assert!(
+            SaveGameManager::load_index(current.path().to_str().unwrap())
+                .unwrap()
+                .saves
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn invalid_and_duplicate_index_names_are_rejected_before_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        for names in [
+            vec!["../outside"],
+            vec!["Savegame_000", "Savegame_000"],
+            vec!["Savegame_000", "savegame_000"],
+        ] {
+            let slots: Vec<_> = names
+                .iter()
+                .map(|name| {
+                    let mut slot = published_slot("Savegame_000");
+                    slot.filename = (*name).into();
+                    slot
+                })
+                .collect();
+            let bytes = serde_json::to_vec(&SaveIndex {
+                saves: slots,
+                next_id: 0,
+            })
+            .unwrap();
+            std::fs::write(root.path().join("saves.json"), &bytes).unwrap();
+            std::fs::write(root.path().join("quick-save-recovery.json"), b"invalid").unwrap();
+            let error = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap_err();
+            assert!(error.starts_with("validate:"), "{error}");
+            assert_eq!(
+                std::fs::read(root.path().join("saves.json")).unwrap(),
+                bytes
+            );
+        }
+    }
+
+    #[test]
+    fn corrupt_obsolete_and_unreadable_indexes_do_not_reset_existing_saves() {
+        let root = tempfile::tempdir().unwrap();
+        let payload = root.path().join("Savegame_000.json");
+        let index = root.path().join("saves.json");
+        std::fs::write(&payload, b"precious payload").unwrap();
+        std::fs::write(&index, b"broken JSON").unwrap();
+        assert!(SaveGameManager::load_index(root.path().to_str().unwrap()).is_err());
+        let mut slot = published_slot("Savegame_000");
+        slot.version = 0;
+        std::fs::write(
+            &index,
+            serde_json::to_vec(&SaveIndex {
+                saves: vec![slot],
+                next_id: 0,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(SaveGameManager::load_index(root.path().to_str().unwrap()).is_err());
+        std::fs::remove_file(&index).unwrap();
+        // A directory at the index path is a deterministic read error even
+        // when tests run as a privileged user (unlike chmod-based fixtures).
+        std::fs::create_dir(&index).unwrap();
+        assert!(SaveGameManager::load_index(root.path().to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read(payload).unwrap(), b"precious payload");
+    }
+
+    #[test]
+    fn missing_and_stale_indexes_allocate_past_orphans_and_indexed_slots() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("Savegame_000.json"), b"orphan").unwrap();
+        std::fs::write(root.path().join("Savegame_001_thumb.png"), b"preview").unwrap();
+        let mut missing = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert!(missing.slot_name(missing.count()).is_err());
+        let slot = missing.create("New".into(), 1);
+        assert_eq!(missing.slot_name(slot).unwrap().as_str(), "Savegame_002");
+        let mut stale = indexed_store(root.path(), &["Savegame_002"]);
+        let slot = stale.create("Next".into(), 1);
+        assert_eq!(stale.slot_name(slot).unwrap().as_str(), "Savegame_003");
+        assert_eq!(
+            std::fs::read(root.path().join("Savegame_000.json")).unwrap(),
+            b"orphan"
+        );
+    }
+
+    #[test]
+    fn delete_is_durable_and_selection_survives_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Savegame_000", "Savegame_001"]);
+        std::fs::write(manager.save_path(0), b"first").unwrap();
+        std::fs::write(manager.save_path(1), b"selected").unwrap();
+        let selection = manager.slot_name(1).unwrap();
+        manager.remove(0).unwrap();
+        let reopened = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        let selected = reopened.find_by_filename(selection.as_str()).unwrap();
+        assert_eq!(selected, 0);
+        assert_eq!(
+            std::fs::read(reopened.save_path(selected)).unwrap(),
+            b"selected"
+        );
+        assert!(reopened.find_by_filename("Savegame_000").is_none());
+        assert!(!root.path().join("Savegame_000.json").exists());
+        assert!(!manager.delete_recovery_path().exists());
+    }
+
+    #[test]
+    fn delete_cleanup_failure_is_visible_and_recoverable() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Savegame_000"]);
+        let payload = manager.save_path(0);
+        std::fs::create_dir(&payload).unwrap();
+        let error = manager.remove(0).unwrap_err();
+        assert!(format!("{error:#}").contains("cleanup"));
+        assert!(manager.saves.is_empty());
+        assert!(
+            manager
+                .save_index()
+                .unwrap_err()
+                .contains("recovery is pending")
+        );
+        assert!(manager.delete_recovery_path().exists());
+        assert!(SaveGameManager::load_index(root.path().to_str().unwrap()).is_err());
+        std::fs::remove_dir(payload).unwrap();
+        assert!(
+            SaveGameManager::load_index(root.path().to_str().unwrap())
+                .unwrap()
+                .saves
+                .is_empty()
+        );
+        assert!(!manager.delete_recovery_path().exists());
+    }
+
+    #[test]
+    fn delete_index_failure_keeps_payload_and_intent_for_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Savegame_000"]);
+        let payload = manager.save_path(0);
+        std::fs::write(&payload, b"preserved until indexed").unwrap();
+        let index = root.path().join("saves.json");
+        std::fs::remove_file(&index).unwrap();
+        std::fs::create_dir(&index).unwrap();
+        assert!(manager.remove(0).is_err());
+        assert!(manager.saves.is_empty());
+        assert!(manager.delete_recovery_path().exists());
+        assert_eq!(std::fs::read(&payload).unwrap(), b"preserved until indexed");
+        std::fs::remove_dir(&index).unwrap();
+        let reopened = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert!(reopened.saves.is_empty());
+        assert!(!payload.exists());
+    }
+
+    #[test]
+    fn failed_delete_intent_does_not_remove_slot_or_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Savegame_000"]);
+        std::fs::write(manager.save_path(0), b"payload").unwrap();
+        std::fs::create_dir(manager.delete_recovery_path()).unwrap();
+        assert!(manager.remove(0).is_err());
+        assert_eq!(manager.count(), 1);
+        assert_eq!(std::fs::read(manager.save_path(0)).unwrap(), b"payload");
+    }
+
+    #[test]
+    fn quick_and_delete_receipts_recover_together_without_losing_quick_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = indexed_store(root.path(), &["Savegame_000"]);
+        std::fs::write(manager.save_path(0), b"delete me").unwrap();
+        let quick_bytes = b"digest bound quick payload";
+        std::fs::write(root.path().join("QuickSave.json"), quick_bytes).unwrap();
+        let quick = QuickSaveRecovery {
+            slots: vec![(
+                published_slot("QuickSave"),
+                Sha256::digest(quick_bytes).into(),
+            )],
+        };
+        std::fs::write(
+            manager.quick_recovery_path(),
+            serde_json::to_vec(&quick).unwrap(),
+        )
+        .unwrap();
+        let delete = DeleteRecovery {
+            filename: SlotName::new("Savegame_000").unwrap(),
+        };
+        std::fs::write(
+            manager.delete_recovery_path(),
+            serde_json::to_vec(&delete).unwrap(),
+        )
+        .unwrap();
+        let recovered = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(recovered.count(), 1);
+        assert_eq!(recovered.saves[0].filename, "QuickSave");
+        assert!(!manager.quick_recovery_path().exists());
+        assert!(!manager.delete_recovery_path().exists());
+        assert_eq!(
+            std::fs::read(root.path().join("QuickSave.json")).unwrap(),
+            quick_bytes
+        );
+    }
+
+    #[test]
+    fn corrupt_quick_receipt_blocks_open_and_preserves_index_and_payload() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = indexed_store(root.path(), &["Savegame_000"]);
+        std::fs::write(manager.save_path(0), b"payload").unwrap();
+        let before = std::fs::read(root.path().join("saves.json")).unwrap();
+        std::fs::write(manager.quick_recovery_path(), b"broken").unwrap();
+        assert!(
+            SaveGameManager::load_index(root.path().to_str().unwrap())
+                .unwrap_err()
+                .contains("recover quick saves")
+        );
+        assert_eq!(
+            std::fs::read(root.path().join("saves.json")).unwrap(),
+            before
+        );
+        assert_eq!(std::fs::read(manager.save_path(0)).unwrap(), b"payload");
+    }
+
+    #[test]
+    fn new_manual_save_cannot_clobber_a_payload_created_after_selection() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        let slot = manager.create("New".into(), 17);
+        let (engine, _assets, profiles, mut host) = fresh_save_session("Concurrent writer test");
+        let game = game_for_save(&profiles, 17);
+        std::fs::write(manager.save_path(slot), b"concurrent writer").unwrap();
+        assert!(
+            manager
+                .write_save_from_engine(&mut host, &game, slot, &engine, 17, Some(&profiles), None)
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read(manager.save_path(slot)).unwrap(),
+            b"concurrent writer"
+        );
+        assert!(manager.saves[slot].timestamp.is_empty());
+    }
     use robin_engine::profiles::{MissionProfile, ProfileManager};
 
     fn fresh_engine() -> (Engine, engine_api::LevelAssets) {
