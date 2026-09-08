@@ -1,8 +1,6 @@
 use super::super::fixtures::test_release_identity;
 use super::*;
 use robin_highscores::runtime_authority::BackupAuthorityStateV2;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 
 #[test]
 fn backup_authority_key_v2_cli_has_no_configurable_authority_paths() {

@@ -10,10 +10,6 @@ use sha2::Digest as _;
 use sha2::Sha256;
 use std::io::Read as _;
 use std::io::Write as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 

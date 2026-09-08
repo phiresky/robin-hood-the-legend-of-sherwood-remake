@@ -178,8 +178,20 @@ mod tests {
         let (_callbacks, host, engine, _assets, game, profiles) =
             diagnostic_callback_fixture(directory.path());
         let mut invalid = GameSaveFile::capture(&engine, &host, 17, "invalid".into());
-        invalid.header.mission_id = 999;
-        assert!(route(invalid.into(), &engine, &game, &profiles).is_err());
+        // The legacy capture helper chooses its own descriptor; bind this
+        // fixture to the active one before testing same-mission routing.
+        invalid.header.mission_assets = game.mission_assets().unwrap().clone();
+        assert!(matches!(
+            route(invalid.clone().into(), &engine, &game, &profiles).unwrap(),
+            LoadRoute::Current(_)
+        ));
+        // Another valid mission/descriptor means OtherMission, not rejection.
+        // Mutate one actual descriptor invariant instead.
+        invalid.header.mission_assets.mission_basename.clear();
+        match route(invalid.into(), &engine, &game, &profiles) {
+            Err(error) => assert!(error.contains("invalid current save schema")),
+            Ok(_) => panic!("invalid mission basename must be rejected before routing"),
+        }
         for (completion, reset, banner, continued) in [
             (LoadCompletion::Restart, false, None, false),
             (

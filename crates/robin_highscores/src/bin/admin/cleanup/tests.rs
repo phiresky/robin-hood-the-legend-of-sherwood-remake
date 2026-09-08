@@ -7,8 +7,6 @@ use super::super::filesystem::unlink_pinned_regular;
 use super::super::filesystem::unlink_pinned_regular_with_hook;
 use super::super::filesystem::write_private_file;
 use super::*;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 #[test]

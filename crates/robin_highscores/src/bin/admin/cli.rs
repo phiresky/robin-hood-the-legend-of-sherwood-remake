@@ -10,7 +10,6 @@ use super::policy::DEFAULT_BACKUP_STATUS;
 use super::sources::validate_backup_restore_source_contract;
 use super::verification::BackupVerificationMode;
 use super::verification::run_pinned_verifier_command;
-use anyhow::Context as _;
 use clap::Parser;
 use clap::Subcommand;
 use robin_highscores::Database;
@@ -26,6 +25,8 @@ use robin_run_protocol::canonical_json_bytes;
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::io::Write as _;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;

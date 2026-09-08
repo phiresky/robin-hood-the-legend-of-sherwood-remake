@@ -27,7 +27,6 @@ use super::filesystem::validate_managed_metadata;
 use super::filesystem::validate_private_pinned_file;
 use super::sources::load_preserved_release_authority;
 use super::verification::verify_backup_with_schema_policy;
-use anyhow::Context as _;
 use robin_highscores::Database;
 use robin_highscores::backup::BackupCleanupJournalV1;
 use robin_highscores::backup::BackupManifestV4 as BackupManifest;
@@ -40,9 +39,7 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
@@ -288,12 +285,11 @@ pub(super) fn recover_interrupted_complete_cleanups(
         );
         journal.verify(backup_authority_key)?;
         anyhow::ensure!(
-            backup_root_identity
-                == FileIdentity {
-                    device: journal.backup_root_device_id,
-                    inode: journal.backup_root_inode,
-                    owner: journal.backup_root_owner,
-                },
+            backup_root_identity.matches_parts(
+                journal.backup_root_device_id,
+                journal.backup_root_inode,
+                journal.backup_root_owner,
+            ),
             "cleanup journal belongs to a different backup-root inode"
         );
         anyhow::ensure!(
@@ -314,12 +310,11 @@ pub(super) fn recover_interrupted_complete_cleanups(
         if complete_exists {
             let complete = open_cap_directory_nofollow(&root, Path::new(&journal.backup_id))?;
             anyhow::ensure!(
-                metadata_identity(&complete.dir_metadata()?)
-                    == FileIdentity {
-                        device: journal.cleanup_root_device_id,
-                        inode: journal.cleanup_root_inode,
-                        owner: journal.cleanup_root_owner,
-                    },
+                metadata_identity(&complete.dir_metadata()?).matches_parts(
+                    journal.cleanup_root_device_id,
+                    journal.cleanup_root_inode,
+                    journal.cleanup_root_owner,
+                ),
                 "pre-rename cleanup journal differs from the complete backup inode"
             );
             remove_pinned_cleanup_journal(
@@ -416,12 +411,11 @@ where
     G: FnOnce() -> anyhow::Result<()>,
 {
     anyhow::ensure!(
-        metadata_identity(&backup_root.dir_metadata()?)
-            == FileIdentity {
-                device: journal.backup_root_device_id,
-                inode: journal.backup_root_inode,
-                owner: journal.backup_root_owner,
-            },
+        metadata_identity(&backup_root.dir_metadata()?).matches_parts(
+            journal.backup_root_device_id,
+            journal.backup_root_inode,
+            journal.backup_root_owner,
+        ),
         "cleanup journal belongs to a different backup-root inode"
     );
     let (_, journal_name, _) = cleanup_names(&journal.backup_id)?;
@@ -449,13 +443,12 @@ where
         journal.terminal_cleanup_directory_name.as_str()
     };
     let directory = open_cap_directory_nofollow(backup_root, Path::new(active_cleanup_name))?;
-    let expected_root = FileIdentity {
-        device: journal.cleanup_root_device_id,
-        inode: journal.cleanup_root_inode,
-        owner: journal.cleanup_root_owner,
-    };
     anyhow::ensure!(
-        metadata_identity(&directory.dir_metadata()?) == expected_root,
+        metadata_identity(&directory.dir_metadata()?).matches_parts(
+            journal.cleanup_root_device_id,
+            journal.cleanup_root_inode,
+            journal.cleanup_root_owner,
+        ),
         "quarantined backup root differs from its cleanup journal"
     );
     let cleanup_metadata = directory.dir_metadata()?;

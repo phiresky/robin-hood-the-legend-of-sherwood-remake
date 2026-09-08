@@ -24,11 +24,7 @@ use robin_highscores::ServerConfig;
 use robin_highscores::backup::BackupManifestV4 as BackupManifest;
 use robin_highscores::backup::BackupVerificationEnvelopeV2;
 use robin_run_protocol::canonical_json_bytes;
-use sha2::Digest as _;
 use sha2::Sha256;
-use sqlx::Connection as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 #[tokio::test]
@@ -210,7 +206,7 @@ async fn coordinated_backup_verifies_database_objects_and_cursor_key() {
             &backup_directory,
             interrupted_payload,
             *verified_tree
-                .file_identities
+                .file_identities()
                 .get(interrupted_payload)
                 .unwrap(),
             false,
@@ -256,7 +252,7 @@ async fn coordinated_backup_verifies_database_objects_and_cursor_key() {
             &backup_directory,
             &substituted_payload,
             *verified_tree
-                .file_identities
+                .file_identities()
                 .get(&substituted_payload)
                 .unwrap(),
             false,
@@ -287,7 +283,7 @@ async fn coordinated_backup_verifies_database_objects_and_cursor_key() {
             &backup_directory,
             &substituted_payload,
             *verified_tree
-                .file_identities
+                .file_identities()
                 .get(&substituted_payload)
                 .unwrap(),
             false,
@@ -323,7 +319,7 @@ async fn coordinated_backup_verifies_database_objects_and_cursor_key() {
             &backup_directory,
             &substituted_payload,
             *verified_tree
-                .file_identities
+                .file_identities()
                 .get(&substituted_payload)
                 .unwrap(),
             false,
