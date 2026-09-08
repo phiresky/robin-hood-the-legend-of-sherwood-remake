@@ -94,6 +94,10 @@ impl PlayerProfileStore {
         Ok(manager)
     }
 
+    /// Persist this snapshot without changing the caller's in-memory state.
+    /// Native publication failures include their publication stage in the
+    /// error; retain and retry the desired snapshot even when replacement was
+    /// visible but its directory synchronization could not be confirmed.
     pub fn save(&self, manager: &PlayerProfileManager) -> std::io::Result<()> {
         if manager.save_directory != self.directory()? {
             return Err(std::io::Error::new(
@@ -104,9 +108,7 @@ impl PlayerProfileStore {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Native { directory } => {
-                std::fs::create_dir_all(directory)?;
-                let data = serde_json::to_string_pretty(manager).map_err(std::io::Error::other)?;
-                std::fs::write(directory.join("profiles.json"), data)
+                crate::desktop_persistence::write_json(&directory.join("profiles.json"), manager)
             }
             #[cfg(target_arch = "wasm32")]
             Self::Browser { .. } => {
@@ -165,6 +167,28 @@ fn decode_native_archive(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn restart_ignores_incomplete_staging_without_regenerating_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().to_str().unwrap();
+        let store = PlayerProfileStore::for_directory(directory);
+        let mut manager = store.load().unwrap();
+        manager.profiles[0].name = "Retained Robin".into();
+        manager.default_profiles = false;
+        let identity = manager.profiles[0].id;
+        store.save(&manager).unwrap();
+        fs::write(
+            dir.path().join(".robin-user-store-staging-abandoned"),
+            b"{partial",
+        )
+        .unwrap();
+        let restarted = PlayerProfileStore::for_directory(directory).load().unwrap();
+        assert_eq!(restarted.profiles[0].name, "Retained Robin");
+        assert_eq!(restarted.profiles[0].id, identity);
+        assert!(!restarted.default_profiles);
+        store.save(&restarted).unwrap();
+    }
     #[test]
     fn load_creates_default_when_missing() {
         let dir = tempfile::tempdir().unwrap();
