@@ -24,6 +24,12 @@ four-worker RLE/JXL latency by a further 65% through image parallelism.
 matched headless Chrome startup falls from 9.433 s to 5.583 s; remaining
 simulation fingerprints migrate from JSON to native bitcode.
 
+[Startup follow-up](#independent-sprite-groups-early-terrain-and-mask-uploads-2026-09-08):
+five matched optimized Chrome pairs improve bootstrap from **4.276 s to
+3.755 s**. Independent sprite groups, balanced worker dispatch, early terrain,
+raw mask atlases, and exported geometry metadata are implemented. Shipping
+schema is now **v16**; mission parts grow 3.15% in this fixture.
+
 ## Initial findings (superseded by later implementation sections)
 
 - **Character sprites (~78% of bank, ~67% of shipping blob)**: keep the existing shipping format, but trim demo shipping banks to the sprite IDs reachable from RHS profiles loaded by the demo mission. The current Leicester demo v4 q80 blob keeps 64 774 / 65 100 sprite slots and is **35 213 242 B**.
@@ -3431,3 +3437,157 @@ resolved path to `ShippingDatadir::load_from_vfs`, which requires a relative
 mount path. Neither cross-format replay equivalence nor full headless EOF is
 claimed by this work. Logs: `restart-final-matched-playback.log` and
 `restart-final-shipping-playback.log` in the final artifact directory.
+
+## Independent sprite groups, early terrain and mask uploads (2026-09-08)
+
+Implemented the five follow-up opportunities together, with runtime switches
+for the scheduling/terrain/rendering comparisons:
+
+- The streaming loader bounds the combined VQ/RLE queue, reserves capacity
+  for short mission-part jobs and an active terrain decoder, and prioritizes
+  VQ dependencies by their downstream byte-weighted path. The measured
+  `balanced` policy admits one large RLE job before filling VQ capacity;
+  VQ-first `bounded` and legacy `unbounded` remain diagnostic alternatives.
+- Terrain pixels start decoding when the mission header and exact ambiance
+  map arrive. A single-use application cache handoff checks installation,
+  mission generation, mission/map/ambiance, and final installed source bytes.
+  PNG/reader overrides discard speculative pixels. Cancellation retires the
+  result. A browser smoke test caught a broad-generation mismatch caused by
+  publishing speech IDs; the regression test now reproduces that exact order.
+- The converter defaults to `--vq-group-tiles 1048576 --rle-group-blobs 1`.
+  Each whole-grid group restarts its VQ model and recomputes internal temporal
+  references, preserving external bases. Existing independent JXL atlases
+  become separate jobs without re-encoding pixels. Zero retains the old
+  grouping for comparisons; an individually oversized grid stays intact.
+- Binary masks upload as raw R8 bytes, with the shader preserving the exact
+  zero/nonzero predicate. Atlas pages share texture/view/bind-group handles;
+  integer local coordinates preserve nearest sampling and edge clamping.
+  Continuous RG8 depth is unchanged. The first atlas prototype regressed
+  against sorted standalone uploads; eliminating its full-page alpha
+  expansion removed the extra allocation and byte pass in both paths.
+- Shipping resource metadata now exports ground-marker opaque bounds and the
+  minimap corner's hit mask. Startup reads validated geometry without
+  decoding those pictures. Decoded/legacy pictures retain their original
+  extraction semantics, including holes and fully transparent frames.
+
+This last change advances shipping schema **15 to 16**, including the compiled
+runtime contract and core-overlay inventory. Reconvert shipping data, or use
+the offline `robin_assets` example `migrate_picture_metadata` for a trusted v15
+boot file. The runtime does not carry the old wire adapter. The benchmark
+migration changed no audio/JXL payloads: its normalized boot is 7,968,036 bytes
+versus 7,967,940 bytes before. HashMap serialization order means that 96-byte
+difference describes this fixture, not a fixed schema overhead.
+
+### Compression and grouping comparison
+
+The three fixture copies use an identical migrated boot file. Rechunking
+verified every decoded VQ grid; unsplit regeneration reproduced all 28
+original blobs and the original compressed mission-part size exactly.
+All nine native corpus checks produced SHA-256
+`3e80fe96ac7f5f20a422a8e1d60aeffeb4f28388944acb611da129b80a34b6c4`.
+
+| VQ tile budget / JXL blobs per job | VQ / RLE jobs | Mission-part bytes | Change |
+| --- | ---: | ---: | ---: |
+| Unsplit / unsplit | 28 / 5 | 14,952,131 | — |
+| 262,144 / 1 | 116 / 73 | 16,041,949 | +7.29% |
+| **1,048,576 / 1** | **45 / 73** | **15,423,484** | **+3.15%** |
+
+The larger budget won the exploratory optimized-browser comparison and costs
+less download space. Native timing measurements were affected by concurrent
+builds and were used for correctness/work-size evidence, not a speedup claim.
+Leipatch contains 55 independent atlases; its largest remaining individual
+atlas is 1,580,256 pixels. Splitting that further is a separate representation
+experiment, not safe arbitrary parallelism inside a JXL stream.
+
+### Matched browser results
+
+Fresh Chrome 152.0.7977.64 profiles, four WASM workers, loopback shipping
+`Dem_Lei_MP`, `wasm-release` plus Binaryen `-Oz`, same direct-WASM harness.
+Baseline source: `f27743e8b`, rebased onto main `9bed99516`. Candidate source:
+`347871367`. All task builds had finished before the five alternating pairs.
+Host/browser timing still varied, so retain all samples and compare matching
+pairs. These measurements precede the subsequent clean rebase onto
+`930eebbbc`; the saved artifacts retain the exact measured sources.
+
+| Endpoint | Baseline median | Final median |
+| --- | ---: | ---: |
+| Navigation → mission activation | 3.099 s | 2.887 s |
+| Navigation → recording begins | 4.269 s | 3.745 s |
+| **Navigation → bootstrap complete** | **4.276 s** | **3.755 s** |
+| WASM boot → bootstrap complete | 3.788 s | 3.183 s |
+
+All five pairs improve: **310–899 ms**, with **520 ms median paired saving**.
+The difference between navigation medians is **12.2%**. Absolute navigation
+ranges were 4.008–4.874 s before and 3.536–4.450 s after; these are not fixed
+latency promises. The WASM-boot-relative medians improve by 16.0%.
+
+Both navigation medians occur in pair 3, whose non-overlapping intervals are:
+
+| Phase | Before | After |
+| --- | ---: | ---: |
+| Navigation to WASM boot | 488 ms | 593 ms |
+| Boot/initialization to streaming | 272 ms | 254 ms |
+| Part fetch/decompression/merge, overlapping decodes | 539 ms | 269 ms |
+| Remaining critical sprite work and installation | 1801 ms | 1879 ms |
+| Level/engine setup and intervening work | 463 ms | 392 ms |
+| Frontend assembly and intervening work | 691 ms | 341 ms |
+| Remaining checkpoint/runtime setup | 23 ms | 27 ms |
+| **Bootstrap complete** | **4276 ms** | **3755 ms** |
+
+The sprite tail now includes RLE work on the bounded paths. It must not be
+compared in isolation with the old VQ-only timer or added to overlapped work.
+Small phase timers log at DEBUG below 50 ms. The final optimized diagnostic
+run measures a **10 ms terrain join** and **11 ms mask upload**, versus the
+baseline five-run medians of 311 and 104 ms respectively. Those diagnostic
+values are not another five-run median. The six mask pages contain 21,261,316
+occupied texels in 22,761,472 uploaded texels (93.4% occupancy).
+
+A separate three-round same-package ablation supports the chosen defaults:
+
+| Configuration, 1M-tile groups | Median navigation → bootstrap |
+| --- | ---: |
+| **Balanced + early terrain + atlas** | **3.171 s** |
+| VQ-first bounded scheduling | 3.432 s |
+| Legacy unbounded scheduling | 3.665 s |
+| Late terrain | 3.520 s |
+| Standalone masks, retaining raw-byte uploads | 3.284 s |
+
+These are interactions on a variable host, not additive independent savings.
+Exported picture metadata was not separately isolated. In the final DEBUG
+worker trace, RLE finishes before the VQ tail; part queue median/max is 2/12 ms,
+and VQ/RLE queue median/max is 0/1 ms. Worker execution intervals include
+scheduling effects and are not pure codec CPU measurements.
+
+Validation: 4,464 engine, 1,583 client, 152 asset and 22 converter tests pass;
+the pure-assets feature configuration passes 76 tests. Vulkan and OpenGL
+exact-pixel contracts cover atlas versus standalone masks, high origins,
+1-pixel widths, fractional placement, far-outside UV, noncanonical nonzero
+bytes, depth, and main's portrait ownership checks. The native binary builds
+and the exported runtime contract matches the checked-in JSON. Intentional
+unwind tests require LLVM cleanup and remain explicitly ignored under the
+normal Cranelift test profile.
+
+The measured optimized package also passes serial startup, all 489 background
+audio warmup items, two actual terminal → Restart cycles, and fresh compact
+replay export. The clean rebase to main `930eebbbc` retains all 42 commits;
+`8cd529f26` is the rebased code snapshot. Its client suite, both GPU contracts,
+native binary build, and compiled runtime contract check pass again. The rebuilt
+optimized WASM package also passes startup (confirming the early-terrain
+handoff), serial fallback, all 489 audio warmup items, and two actual Restart
+cycles with compact replay export after this rebase.
+
+Artifacts: `/tmp/robin-perf-next/` contains `provenance.json`, normalized
+`corpus-{unsplit,262k,1m}`, `groups-late-*`, `policy-late-*`, `final-ablation-*`,
+`final-comparison-*`, `validation-*`, `post-rebase-*`, and `final-restart.rhrec`. Packages
+`baseline` and `final` preserve the exact measured sources. The harness accepts
+`--query streaming-scheduler=balanced|bounded|unbounded`,
+`--query early-terrain=0`, `--query mask-atlas=0`, and `--viewport 1024x768`.
+`robin_assets`'s `rechunk_sprite_groups` example creates verified experimental
+copies; the production converter writes the selected groups normally.
+
+TODO: measure hosted network and hardware-GPU startup separately. This direct
+WASM harness uses loopback, a fresh profile, software WebGL, and an initially
+1×1 surface; it bypasses the production TypeScript loader. The endpoint is
+bootstrap completion; first-frame presentation is not measured. The 3.15%
+mission-byte cost can offset decode savings on a bandwidth-limited connection.
+Worker wall times and overlapping phases must not be added as CPU savings.
