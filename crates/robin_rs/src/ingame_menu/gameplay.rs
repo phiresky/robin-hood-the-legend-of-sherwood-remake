@@ -1147,7 +1147,7 @@ mod tests {
     #[test]
     fn every_gameplay_row_has_a_live_setting_mapping() {
         let baseline = GameplayConfig::default();
-        for index in 0..OPTION_LABELS.len() {
+        for (index, label) in OPTION_LABELS.iter().enumerate() {
             let mut config = baseline;
             let selected_before = is_option_selected(&config, index);
             apply_option_toggle(&mut config, index);
@@ -1155,14 +1155,14 @@ mod tests {
                 assert_ne!(
                     config.campaign_presentation, baseline.campaign_presentation,
                     "gameplay row {index} ({}) did not change its setting",
-                    OPTION_LABELS[index],
+                    label,
                 );
             } else {
                 assert_ne!(
                     is_option_selected(&config, index),
                     selected_before,
                     "gameplay row {index} ({}) did not change its setting",
-                    OPTION_LABELS[index],
+                    label,
                 );
             }
         }

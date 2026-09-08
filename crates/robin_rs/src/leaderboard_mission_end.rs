@@ -1288,8 +1288,10 @@ pub(crate) fn canonical_replay_artifact(
     let text = std::str::from_utf8(bytes).map_err(|_| {
         MissionEndLeaderboardError::ReplayExport("compact replay is not UTF-8".to_owned())
     })?;
-    let mut limits = robin_replay_format::ReplayAdmissionLimits::default();
-    limits.max_input_bytes = bytes.len();
+    let limits = robin_replay_format::ReplayAdmissionLimits {
+        max_input_bytes: bytes.len(),
+        ..Default::default()
+    };
     let (engine_hash, replay) = robin_replay_format::decode_compact_bounded(text, &limits)
         .map_err(|error| MissionEndLeaderboardError::ReplayExport(error.to_string()))?;
     robin_replay_format::validate_engine_hash(&engine_hash)

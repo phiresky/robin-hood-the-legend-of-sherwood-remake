@@ -1580,13 +1580,12 @@ pub fn decode_msg(bytes: &[u8]) -> Result<NetMsg, String> {
         } => {
             validate_display_name(nickname)
                 .map_err(|error| format!("invalid peer display name: {error}"))?;
-            if let Some(auth) = browser_auth {
-                if auth.join_code.len() > MAX_JOIN_CODE_BYTES
+            if let Some(auth) = browser_auth
+                && (auth.join_code.len() > MAX_JOIN_CODE_BYTES
                     || auth.durable_public_key == [0; 32]
-                    || auth.signature.len() != 64
-                {
-                    return Err("invalid bounded browser seat authentication".to_string());
-                }
+                    || auth.signature.len() != 64)
+            {
+                return Err("invalid bounded browser seat authentication".to_string());
             }
             if ranked_public_key.is_some_and(|public_key| public_key == [0; 32]) {
                 return Err("invalid zero ranked public key".to_string());
@@ -2336,8 +2335,10 @@ mod tests {
         rules.enemy_fighting_percent = 175;
         rules.reaction_time_percent = 65;
         rules.legacy_level = crate::player_profile::LegacyDifficultyLevel::Hard;
-        let mut sim_config = crate::engine::SimConfig::default();
-        sim_config.difficulty = crate::player_profile::DifficultyLevel::custom(rules).unwrap();
+        let sim_config = crate::engine::SimConfig {
+            difficulty: crate::player_profile::DifficultyLevel::custom(rules).unwrap(),
+            ..Default::default()
+        };
         let msg = NetMsg::Welcome {
             your_seat: PlayerId(1),
             session_id: MultiplayerSessionId([19; 32]),
@@ -2363,10 +2364,12 @@ mod tests {
     fn welcome_rejects_invalid_host_difficulty_rules() {
         let mut rules = crate::player_profile::DifficultyRules::MEDIUM;
         rules.enemy_fighting_percent = 0;
-        let mut sim_config = crate::engine::SimConfig::default();
         // Construct the malformed wire value directly to verify the network
         // boundary; ordinary callers must use `DifficultyLevel::custom`.
-        sim_config.difficulty = crate::player_profile::DifficultyLevel::Custom(rules);
+        let sim_config = crate::engine::SimConfig {
+            difficulty: crate::player_profile::DifficultyLevel::Custom(rules),
+            ..Default::default()
+        };
         let message = NetMsg::Welcome {
             your_seat: PlayerId(1),
             session_id: MultiplayerSessionId([1; 32]),

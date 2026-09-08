@@ -3283,17 +3283,18 @@ mod tests {
     }
 
     fn achievement_test_campaign(profiles: &ProfileManager) -> Campaign {
-        let mut campaign = Campaign::default();
-        campaign.missions = profiles
-            .missions
-            .iter()
-            .enumerate()
-            .map(|(index, _)| Mission {
-                profile_idx: Some(index as u32),
-                ..Mission::new()
-            })
-            .collect();
-        campaign
+        Campaign {
+            missions: profiles
+                .missions
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Mission {
+                    profile_idx: Some(index as u32),
+                    ..Mission::new()
+                })
+                .collect(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -3617,8 +3618,10 @@ mod tests {
         campaign.set_value(CampaignValue::Ransom, 321);
         campaign.set_value(CampaignValue::Custom1, 44);
         campaign.ares = 6;
-        let mut robin = PcDescription::default();
-        robin.character_profile_idx = Some(CharacterProfileIdx(3));
+        let mut robin = PcDescription {
+            character_profile_idx: Some(CharacterProfileIdx(3)),
+            ..Default::default()
+        };
         robin.status.num_ales = 1;
         robin.status.num_arrows = 2;
         robin.status.num_apples = 3;
@@ -3671,8 +3674,10 @@ mod tests {
         campaign.collected_relics.clear();
         campaign.production_sectors[0].amount = 0;
 
-        let mut stat = crate::mission_stat::MissionStat::default();
-        stat.added_score = 123;
+        let stat = crate::mission_stat::MissionStat {
+            added_score: 123,
+            ..Default::default()
+        };
         let results = achievement_results(
             AchievementId::Ghost,
             crate::achievement::AchievementEvaluation::Earned,

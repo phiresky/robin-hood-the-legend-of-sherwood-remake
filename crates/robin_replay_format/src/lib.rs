@@ -1208,7 +1208,7 @@ impl<'a> TypedBudget<'a> {
         self.total_work = self
             .total_work
             .checked_add(amount)
-            .ok_or_else(|| BudgetError::Overflow(ReplayLimitKind::TotalTypedWork))?;
+            .ok_or(BudgetError::Overflow(ReplayLimitKind::TotalTypedWork))?;
         self.enforce(
             ReplayLimitKind::TotalTypedWork,
             self.total_work,
@@ -1666,11 +1666,13 @@ mod tests {
         campaign
             .missions
             .push(robin_engine::mission::Mission::new());
-        let mut stats = robin_engine::mission_stat::MissionStat::default();
-        stats.pc_names = recruited_names
-            .into_iter()
-            .map(|name| robin_engine::mission_stat::PcStatName::new(name, None))
-            .collect();
+        let stats = robin_engine::mission_stat::MissionStat {
+            pc_names: recruited_names
+                .into_iter()
+                .map(|name| robin_engine::mission_stat::PcStatName::new(name, None))
+                .collect(),
+            ..Default::default()
+        };
         campaign.record_mission_attempt(
             0,
             robin_engine::campaign_history::MissionAttemptOutcome::Won,
@@ -1696,8 +1698,10 @@ mod tests {
 
     #[test]
     fn campaign_mission_and_character_limits_accept_boundary_and_reject_one_over() {
-        let mut missions = robin_engine::campaign::Campaign::default();
-        missions.missions = vec![robin_engine::mission::Mission::new(); 2];
+        let missions = robin_engine::campaign::Campaign {
+            missions: vec![robin_engine::mission::Mission::new(); 2],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &missions,
             2,
@@ -1705,8 +1709,10 @@ mod tests {
             |limits, value| limits.max_campaign_missions = value,
         );
 
-        let mut characters = robin_engine::campaign::Campaign::default();
-        characters.characters = vec![robin_engine::campaign::PcDescription::default(); 2];
+        let characters = robin_engine::campaign::Campaign {
+            characters: vec![robin_engine::campaign::PcDescription::default(); 2],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &characters,
             2,
@@ -1721,8 +1727,10 @@ mod tests {
             limits.max_campaign_collection_entries = value;
         };
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.accessible_mission_indices = vec![0, 1];
+        let campaign = robin_engine::campaign::Campaign {
+            accessible_mission_indices: vec![0, 1],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1730,8 +1738,10 @@ mod tests {
             collection_limit,
         );
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.pending_accessible_mission_indices = vec![0, 1];
+        let campaign = robin_engine::campaign::Campaign {
+            pending_accessible_mission_indices: vec![0, 1],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1739,8 +1749,10 @@ mod tests {
             collection_limit,
         );
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.gang_indices = vec![0, 1];
+        let campaign = robin_engine::campaign::Campaign {
+            gang_indices: vec![0, 1],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1748,8 +1760,10 @@ mod tests {
             collection_limit,
         );
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.reservist_indices = vec![0, 1];
+        let campaign = robin_engine::campaign::Campaign {
+            reservist_indices: vec![0, 1],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1757,8 +1771,10 @@ mod tests {
             collection_limit,
         );
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.mission_team_indices = vec![0, 1];
+        let campaign = robin_engine::campaign::Campaign {
+            mission_team_indices: vec![0, 1],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1766,8 +1782,10 @@ mod tests {
             collection_limit,
         );
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.peasant_names = vec!["a".into(), "b".into()];
+        let campaign = robin_engine::campaign::Campaign {
+            peasant_names: vec!["a".into(), "b".into()],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1775,8 +1793,10 @@ mod tests {
             collection_limit,
         );
 
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.collected_relics = vec![12, 13];
+        let campaign = robin_engine::campaign::Campaign {
+            collected_relics: vec![12, 13],
+            ..Default::default()
+        };
         assert_campaign_limit_boundary(
             &campaign,
             2,
@@ -1941,8 +1961,10 @@ mod tests {
 
     #[test]
     fn contained_compact_decode_invokes_campaign_specific_limits() {
-        let mut campaign = robin_engine::campaign::Campaign::default();
-        campaign.missions = vec![robin_engine::mission::Mission::new(); 2];
+        let campaign = robin_engine::campaign::Campaign {
+            missions: vec![robin_engine::mission::Mission::new(); 2],
+            ..Default::default()
+        };
         let mut file = sample_file();
         file.header.campaign = bitcode::encode(&campaign);
         let compact = encode_file(&file);
@@ -2286,8 +2308,10 @@ mod tests {
             Err(FormatError::NonCanonicalCampaign) | Err(FormatError::CampaignBitcode(_))
         ));
 
-        let mut invalid_history = robin_engine::campaign::Campaign::default();
-        invalid_history.mission_attempt_sequence = 1;
+        let invalid_history = robin_engine::campaign::Campaign {
+            mission_attempt_sequence: 1,
+            ..Default::default()
+        };
         let mut file = sample_file();
         file.header.campaign = bitcode::encode(&invalid_history);
         assert!(matches!(

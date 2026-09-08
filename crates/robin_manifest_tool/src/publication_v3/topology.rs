@@ -51,12 +51,11 @@ impl ExpectedPublicationTopologyV3 {
                     break;
                 }
                 let directory = path_to_manifest(directory)?;
-                match self.directories.insert(directory.clone(), 0o555) {
-                    Some(mode) => ensure!(
+                if let Some(mode) = self.directories.insert(directory.clone(), 0o555) {
+                    ensure!(
                         mode == 0o555,
                         "conflicting expected PublicationV3 directory mode at {directory}"
-                    ),
-                    None => {}
+                    )
                 }
                 parent = Path::new(&directory).parent().map(Path::to_path_buf);
             }
@@ -69,12 +68,11 @@ impl ExpectedPublicationTopologyV3 {
         } else {
             0o555
         };
-        match self.directories.insert(path.to_owned(), mode) {
-            Some(previous) => ensure!(
+        if let Some(previous) = self.directories.insert(path.to_owned(), mode) {
+            ensure!(
                 previous == mode,
                 "conflicting expected PublicationV3 directory mode at {path}"
-            ),
-            None => {}
+            )
         }
         Ok(())
     }

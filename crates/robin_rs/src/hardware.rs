@@ -326,6 +326,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     #[ignore = "requires host hardware query access; see docs/TESTING.md"]
+    // This ignored test must fail at runtime when explicitly selected without its backend.
+    #[allow(clippy::assertions_on_constants)]
     fn native_memory_query_reports_real_total() {
         assert!(
             cfg!(feature = "hardware-info"),

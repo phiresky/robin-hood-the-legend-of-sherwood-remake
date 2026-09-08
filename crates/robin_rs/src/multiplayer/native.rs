@@ -2225,157 +2225,151 @@ enum RankedAdmissionProgress {
 }
 
 fn progress_ranked_admission(context: &ServerContext) {
-    loop {
-        let progress = {
-            let mut lifecycle = ranked_lifecycle_lock(&context.ranked_lifecycle);
-            if lifecycle.is_awaiting_prepared_inputs() {
-                RankedAdmissionProgress::Idle
-            } else if lifecycle.browse_only_reason().is_some() {
-                RankedAdmissionProgress::BrowseOnly
+    let progress = {
+        let mut lifecycle = ranked_lifecycle_lock(&context.ranked_lifecycle);
+        if lifecycle.is_awaiting_prepared_inputs() {
+            RankedAdmissionProgress::Idle
+        } else if lifecycle.browse_only_reason().is_some() {
+            RankedAdmissionProgress::BrowseOnly
+        } else {
+            let session = lifecycle
+                .ranked_mut()
+                .expect("resolved non-browse ranked lifecycle has host state");
+            if let Err(detail) = validate_official_ranked_session(context, session) {
+                RankedAdmissionProgress::Downgrade {
+                    reason: RankedBrowseOnlyReason::HostRankedSessionUnavailable,
+                    detail,
+                }
             } else {
-                let session = lifecycle
-                    .ranked_mut()
-                    .expect("resolved non-browse ranked lifecycle has host state");
-                if let Err(detail) = validate_official_ranked_session(context, session) {
-                    RankedAdmissionProgress::Downgrade {
-                        reason: RankedBrowseOnlyReason::HostRankedSessionUnavailable,
-                        detail,
-                    }
+                let mut peers = context.peers.lock();
+                if let Some(pending) = peers.admission.pending()
+                    && (peers.generation(&pending.seat) != Some(&pending.generation)
+                        || peers.sender(&pending.seat).is_none())
+                {
+                    session.cancel_pending_join();
+                    peers.admission.clear();
+                }
+                if peers.admission.pending().is_some() {
+                    RankedAdmissionProgress::Idle
                 } else {
-                    let mut peers = context.peers.lock();
-                    if let Some(pending) = peers.admission.pending()
-                        && (peers.generation(&pending.seat) != Some(&pending.generation)
-                            || peers.sender(&pending.seat).is_none())
-                    {
-                        session.cancel_pending_join();
-                        peers.admission.clear();
-                    }
-                    if peers.admission.pending().is_some() {
-                        RankedAdmissionProgress::Idle
-                    } else {
-                        let next_seat = peers
-                            .senders()
-                            .map(|(seat, _)| seat)
-                            .copied()
-                            .filter(|seat| !peers.is_sim_connected(seat))
-                            .min();
-                        let Some(seat) = next_seat else {
-                            return;
+                    let next_seat = peers
+                        .senders()
+                        .map(|(seat, _)| seat)
+                        .copied()
+                        .filter(|seat| !peers.is_sim_connected(seat))
+                        .min();
+                    let Some(seat) = next_seat else {
+                        return;
+                    };
+                    let identity = *peers.ranked_identity(&seat).unwrap_or_else(|| {
+                        panic!("authenticated provisional seat {seat} has no ranked identity")
+                    });
+                    if let Some(durable_public_key) = identity.durable_public_key {
+                        let participant_exists = session
+                            .participant_claims()
+                            .iter()
+                            .any(|participant| participant.seat == u16::from(seat));
+                        let kind = if participant_exists {
+                            RankedAdmissionKind::Reconnect
+                        } else {
+                            RankedAdmissionKind::Fresh
                         };
-                        let identity = *peers.ranked_identity(&seat).unwrap_or_else(|| {
-                            panic!("authenticated provisional seat {seat} has no ranked identity")
-                        });
-                        if let Some(durable_public_key) = identity.durable_public_key {
-                            let participant_exists = session
-                                .participant_claims()
-                                .iter()
-                                .any(|participant| participant.seat == u16::from(seat));
-                            let kind = if participant_exists {
-                                RankedAdmissionKind::Reconnect
-                            } else {
-                                RankedAdmissionKind::Fresh
-                            };
-                            let challenge_claim = match kind {
-                                RankedAdmissionKind::Fresh => session.prepare_join(
-                                    u16::from(seat),
-                                    PublicKey32::from_bytes(durable_public_key),
-                                    PublicKey32::from_bytes(identity.transport_endpoint_id),
-                                    PublicKey32::from_bytes(*context.host_endpoint_id.as_bytes()),
-                                ),
-                                RankedAdmissionKind::Reconnect => session.prepare_reconnect(
-                                    u16::from(seat),
-                                    PublicKey32::from_bytes(durable_public_key),
-                                    PublicKey32::from_bytes(identity.transport_endpoint_id),
-                                    PublicKey32::from_bytes(*context.host_endpoint_id.as_bytes()),
-                                ),
-                            };
-                            match challenge_claim {
-                                Ok(claim) => {
-                                    let documents = encode_ranked_wire_document(session.genesis())
-                                        .map_err(|error| error.to_string())
-                                        .and_then(|bytes| {
-                                            RankedSessionGenesisDocument::new(bytes)
-                                                .map_err(str::to_string)
-                                        })
-                                        .and_then(|genesis| {
-                                            encode_ranked_wire_document(&claim)
-                                                .map_err(|error| error.to_string())
-                                                .and_then(|bytes| {
-                                                    RankedJoinClaimDocument::new(bytes)
-                                                        .map_err(str::to_string)
-                                                })
-                                                .map(|join_claim| RankedJoinChallenge {
-                                                    session_genesis: genesis,
-                                                    join_claim,
-                                                })
+                        let challenge_claim = match kind {
+                            RankedAdmissionKind::Fresh => session.prepare_join(
+                                u16::from(seat),
+                                PublicKey32::from_bytes(durable_public_key),
+                                PublicKey32::from_bytes(identity.transport_endpoint_id),
+                                PublicKey32::from_bytes(*context.host_endpoint_id.as_bytes()),
+                            ),
+                            RankedAdmissionKind::Reconnect => session.prepare_reconnect(
+                                u16::from(seat),
+                                PublicKey32::from_bytes(durable_public_key),
+                                PublicKey32::from_bytes(identity.transport_endpoint_id),
+                                PublicKey32::from_bytes(*context.host_endpoint_id.as_bytes()),
+                            ),
+                        };
+                        match challenge_claim {
+                            Ok(claim) => {
+                                let documents = encode_ranked_wire_document(session.genesis())
+                                    .map_err(|error| error.to_string())
+                                    .and_then(|bytes| {
+                                        RankedSessionGenesisDocument::new(bytes)
+                                            .map_err(str::to_string)
+                                    })
+                                    .and_then(|genesis| {
+                                        encode_ranked_wire_document(&claim)
+                                            .map_err(|error| error.to_string())
+                                            .and_then(|bytes| {
+                                                RankedJoinClaimDocument::new(bytes)
+                                                    .map_err(str::to_string)
+                                            })
+                                            .map(|join_claim| RankedJoinChallenge {
+                                                session_genesis: genesis,
+                                                join_claim,
+                                            })
+                                    });
+                                match documents {
+                                    Ok(challenge) => {
+                                        let generation = *peers
+                                            .generation(&seat)
+                                            .expect("provisional seat has a session generation");
+                                        let sender = peers
+                                            .sender(&seat)
+                                            .cloned()
+                                            .expect("provisional seat has a sender");
+                                        peers.admission.begin(PendingRankedAdmission {
+                                            seat,
+                                            generation,
+                                            kind,
+                                            challenge: challenge.clone(),
+                                            deadline: Instant::now() + RANKED_ADMISSION_TIMEOUT,
                                         });
-                                    match documents {
-                                        Ok(challenge) => {
-                                            let generation = *peers.generation(&seat).expect(
-                                                "provisional seat has a session generation",
-                                            );
-                                            let sender = peers
-                                                .sender(&seat)
-                                                .cloned()
-                                                .expect("provisional seat has a sender");
-                                            peers.admission.begin(PendingRankedAdmission {
-                                                seat,
-                                                generation,
-                                                kind,
-                                                challenge: challenge.clone(),
-                                                deadline: Instant::now() + RANKED_ADMISSION_TIMEOUT,
-                                            });
-                                            RankedAdmissionProgress::Challenge { sender, challenge }
-                                        }
-                                        Err(detail) => {
-                                            session.cancel_pending_join();
-                                            RankedAdmissionProgress::Downgrade {
-                                                reason:
-                                                    RankedBrowseOnlyReason::RankedProtocolViolation,
-                                                detail: format!(
-                                                    "could not encode ranked admission challenge: {detail}"
-                                                ),
-                                            }
+                                        RankedAdmissionProgress::Challenge { sender, challenge }
+                                    }
+                                    Err(detail) => {
+                                        session.cancel_pending_join();
+                                        RankedAdmissionProgress::Downgrade {
+                                            reason: RankedBrowseOnlyReason::RankedProtocolViolation,
+                                            detail: format!(
+                                                "could not encode ranked admission challenge: {detail}"
+                                            ),
                                         }
                                     }
                                 }
-                                Err(error) => RankedAdmissionProgress::Downgrade {
-                                    reason: RankedBrowseOnlyReason::PeerAttestationRejected,
-                                    detail: format!(
-                                        "could not prepare ranked admission for seat {seat}: {error}"
-                                    ),
-                                },
                             }
-                        } else {
-                            RankedAdmissionProgress::Downgrade {
-                                reason: RankedBrowseOnlyReason::PeerIdentityUnavailable,
-                                detail: format!("seat {seat} has no durable ranked identity"),
-                            }
+                            Err(error) => RankedAdmissionProgress::Downgrade {
+                                reason: RankedBrowseOnlyReason::PeerAttestationRejected,
+                                detail: format!(
+                                    "could not prepare ranked admission for seat {seat}: {error}"
+                                ),
+                            },
+                        }
+                    } else {
+                        RankedAdmissionProgress::Downgrade {
+                            reason: RankedBrowseOnlyReason::PeerIdentityUnavailable,
+                            detail: format!("seat {seat} has no durable ranked identity"),
                         }
                     }
                 }
             }
-        };
-        match progress {
-            RankedAdmissionProgress::Idle => return,
-            RankedAdmissionProgress::BrowseOnly => {
-                connect_all_provisional_seats(context);
-                return;
+        }
+    };
+    match progress {
+        RankedAdmissionProgress::Idle => (),
+        RankedAdmissionProgress::BrowseOnly => {
+            connect_all_provisional_seats(context);
+        }
+        RankedAdmissionProgress::Challenge { sender, challenge } => {
+            if sender.send(NetMsg::RankedJoinChallenge(challenge)).is_err() {
+                downgrade_ranked_session(
+                    context,
+                    RankedBrowseOnlyReason::RankedTransportInterrupted,
+                    "ranked admission target disconnected before challenge delivery",
+                );
             }
-            RankedAdmissionProgress::Challenge { sender, challenge } => {
-                if sender.send(NetMsg::RankedJoinChallenge(challenge)).is_err() {
-                    downgrade_ranked_session(
-                        context,
-                        RankedBrowseOnlyReason::RankedTransportInterrupted,
-                        "ranked admission target disconnected before challenge delivery",
-                    );
-                }
-                return;
-            }
-            RankedAdmissionProgress::Downgrade { reason, detail } => {
-                downgrade_ranked_session(context, reason, detail);
-                return;
-            }
+        }
+        RankedAdmissionProgress::Downgrade { reason, detail } => {
+            downgrade_ranked_session(context, reason, detail);
         }
     }
 }
@@ -2754,7 +2748,7 @@ fn prepare_peer_session(
             );
         }
         let (write_tx, write_rx) = unbounded_channel::<NetMsg>();
-        p.claim_seat(owner, &nickname, ranked_identity, write_tx)
+        p.claim_seat(owner, nickname, ranked_identity, write_tx)
             .map(|claim| (claim, write_rx))
     };
     let (seat_claim, write_rx) = seat_claim?;
@@ -2869,7 +2863,7 @@ fn prepare_peer_session(
             });
         if changes_ranked_transport {
             downgrade_ranked_session(
-                &context,
+                context,
                 RankedBrowseOnlyReason::RankedTransportInterrupted,
                 format!(
                     "active replacement for seat {assigned_seat_u8} changed its authenticated ranked transport"
@@ -2881,7 +2875,7 @@ fn prepare_peer_session(
     // The stream is gameplay-compatible after Welcome, but the deterministic
     // seat does not enter the replay until ranked admission succeeds or the
     // whole session irreversibly downgrades to browse-only.
-    progress_ranked_admission(&context);
+    progress_ranked_admission(context);
     Ok((seat_claim, write_rx))
 }
 
@@ -2916,7 +2910,7 @@ fn release_peer_session(
         };
         if let Some(Err(error)) = observation {
             downgrade_ranked_session(
-                &context,
+                context,
                 RankedBrowseOnlyReason::RankedProtocolViolation,
                 format!("could not record ranked disconnect for seat {assigned_seat_u8}: {error}"),
             );
@@ -2929,7 +2923,7 @@ fn release_peer_session(
                 player_id: assigned_seat,
             },
         );
-        broadcast_input(&context, now, now, target, inp);
+        broadcast_input(context, now, now, target, inp);
     } else if !release {
         let cancelled_pending = {
             let mut peers = context.peers.lock();
@@ -2937,13 +2931,13 @@ fn release_peer_session(
                 .admission
                 .cancel_for(assigned_seat_u8, session_generation)
         };
-        if cancelled_pending {
-            if let Some(session) = ranked_lifecycle_lock(&context.ranked_lifecycle).ranked_mut() {
-                session.cancel_pending_join();
-            }
+        if cancelled_pending
+            && let Some(session) = ranked_lifecycle_lock(&context.ranked_lifecycle).ranked_mut()
+        {
+            session.cancel_pending_join();
         }
     }
-    progress_ranked_admission(&context);
+    progress_ranked_admission(context);
 }
 
 async fn monitor_ranked_admission(context: Arc<ServerContext>, seat: u8, generation: u64) {
@@ -4066,7 +4060,7 @@ async fn complete_content_admission(
             )
             .await?;
             let (session, welcome) = read_welcome(session).await?;
-            return Ok(ContentAdmissionCompletion::Join(session, welcome));
+            Ok(ContentAdmissionCompletion::Join(session, welcome))
         }
         NetOutbound::ContentPrepared { full_mod_sha256 }
             if full_mod_sha256 == offer.full_mod_sha256 =>
@@ -4078,7 +4072,7 @@ async fn complete_content_admission(
                 "content prepared acknowledgement",
             )
             .await?;
-            return Ok(ContentAdmissionCompletion::Prepared);
+            Ok(ContentAdmissionCompletion::Prepared)
         }
         NetOutbound::ContentReject {
             full_mod_sha256,
@@ -4094,15 +4088,13 @@ async fn complete_content_admission(
                 "content rejection",
             )
             .await?;
-            return Err(format!(
+            Err(format!(
                 "downloaded host content failed local admission: {reason}"
-            ));
+            ))
         }
-        other => {
-            return Err(format!(
-                "expected local ContentReady/ContentPrepared/ContentReject, got {other:?}"
-            ));
-        }
+        other => Err(format!(
+            "expected local ContentReady/ContentPrepared/ContentReject, got {other:?}"
+        )),
     }
 }
 
@@ -5910,8 +5902,10 @@ mod tests {
 
     #[test]
     fn ready_barrier_requires_attached_connected_quorum_and_preserves_provisional_frame_maximum() {
-        let mut barrier = super::server_protocol::ReadyBarrier::default();
-        barrier.host_frame = Some(10);
+        let mut barrier = super::server_protocol::ReadyBarrier {
+            host_frame: Some(10),
+            ..Default::default()
+        };
         assert_eq!(barrier.candidate(2, [(true, false, Some(20))]), None);
         assert_eq!(barrier.candidate(2, [(true, true, None)]), None);
         assert_eq!(barrier.candidate(3, [(true, true, Some(20))]), None);

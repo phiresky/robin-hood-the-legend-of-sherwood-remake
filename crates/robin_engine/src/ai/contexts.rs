@@ -178,9 +178,11 @@ mod tests {
 
     #[test]
     fn authoritative_soldier_camps_override_legacy_presence_flags() {
-        let mut global = AiGlobalState::default();
-        global.there_are_royalist_soldiers = true;
-        global.there_are_lacklandist_soldiers = true;
+        let mut global = AiGlobalState {
+            there_are_royalist_soldiers: true,
+            there_are_lacklandist_soldiers: true,
+            ..Default::default()
+        };
         global.soldier_camps.extend([
             crate::element::Camp::Royalists,
             crate::element::Camp::Lacklandists,

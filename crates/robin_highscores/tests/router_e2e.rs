@@ -758,7 +758,7 @@ impl TestRig {
 
         let signed = &request.submission;
         let offer = &signed.submission.offer;
-        let final_campaign = self.store_campaign(&vec![final_byte; 97]).await;
+        let final_campaign = self.store_campaign(&[final_byte; 97]).await;
         let session_genesis_sha256 = offer.session_genesis.canonical_digest().unwrap();
         let claims = offer.participant_claims.clone();
         let named_participant_instance_count = claims
@@ -1225,7 +1225,7 @@ impl TestRig {
 
         let signed = &request.submission;
         let offer = &signed.submission.offer;
-        let final_campaign = self.store_campaign(&vec![final_byte; 113]).await;
+        let final_campaign = self.store_campaign(&[final_byte; 113]).await;
         let final_state_sha256 = Digest32::from_bytes([final_byte.wrapping_add(3); 32]);
         let session_genesis_sha256 = offer.session_genesis.canonical_digest().unwrap();
         match (&offer.starting_state, session_ordinal) {
@@ -1519,7 +1519,8 @@ impl TestRig {
             host_signature: Signature64::default(),
         };
         session_genesis.host_signature = sign(key, &session_genesis.signing_bytes().unwrap());
-        let request = SubmissionOfferRequestV1 {
+
+        SubmissionOfferRequestV1 {
             schema_version: SCHEMA_VERSION_V1,
             max_concurrent_players: 1,
             participant_instance_count: 1,
@@ -1535,8 +1536,7 @@ impl TestRig {
             scope_request,
             ruleset_manifest_sha256: self.ruleset_sha256,
             competition_manifest_sha256: None,
-        };
-        request
+        }
     }
 
     fn offer_request(&self, key: &SigningKey, sequence: u8) -> SubmissionOfferRequestV1 {
@@ -1646,7 +1646,8 @@ impl TestRig {
             host_signature: Signature64::default(),
         };
         session_genesis.host_signature = sign(key, &session_genesis.signing_bytes().unwrap());
-        let request = SubmissionOfferRequestV1 {
+
+        SubmissionOfferRequestV1 {
             schema_version: SCHEMA_VERSION_V1,
             max_concurrent_players: 1,
             participant_instance_count: 1,
@@ -1662,8 +1663,7 @@ impl TestRig {
             scope_request: ScopeRequestV1::IndividualLevel,
             ruleset_manifest_sha256: self.ruleset_sha256,
             competition_manifest_sha256,
-        };
-        request
+        }
     }
 }
 

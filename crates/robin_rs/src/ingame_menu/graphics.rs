@@ -882,7 +882,7 @@ mod tests {
         for id in [ID_OK, ID_CANCEL, ID_PAGE_BASE, ID_PAGE_BASE + 2] {
             assert_eq!(widget_page(id), None);
         }
-        assert!(PRESET_LIST_Y + 5 * PARAMETER_ROW_H < 410);
+        const { assert!(PRESET_LIST_Y + 5 * PARAMETER_ROW_H < 410) };
     }
 
     #[test]

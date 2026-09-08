@@ -429,6 +429,7 @@ async fn run() -> anyhow::Result<()> {
     process_jobs(runtime).await
 }
 
+#[cfg(test)]
 async fn run_worker_lifecycle<N, T, Startup, Process, ProcessFuture>(
     notifier: &N,
     startup: Startup,
@@ -919,8 +920,7 @@ fn validate_catalog_covers_server(
                     .map(Digest32::from_bytes)
                     .map(Some)
                 })
-                .collect::<anyhow::Result<Vec<_>>>()?
-                .into_iter(),
+                .collect::<anyhow::Result<Vec<_>>>()?,
         );
         let competition_digests = competition_digests.collect::<Vec<_>>();
         let mut scopes = profile

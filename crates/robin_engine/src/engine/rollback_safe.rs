@@ -739,9 +739,7 @@ impl Engine {
                 .unwrap_or_else(|| {
                     panic!("parity position references missing static obstacle {handle}")
                 });
-            if position.layer.is_none() {
-                json!({ "kind": "sight", "index": obstacle.id })
-            } else {
+            if let Some(layer) = position.layer {
                 let index = assets.environment.static_sight_obstacles[..handle]
                     .iter()
                     .filter(|candidate| candidate.is_projection_area())
@@ -753,10 +751,12 @@ impl Engine {
                 if !obstacle.is_projection_area() {
                     panic!(
                         "parity position on layer {} references non-projection obstacle {handle}",
-                        position.layer.expect("checked position layer").get()
+                        layer.get()
                     );
                 }
                 json!({ "kind": "projection", "index": index })
+            } else {
+                json!({ "kind": "sight", "index": obstacle.id })
             }
         });
         if sprite.anims_to_be_replaced.len() != sprite.replacing_anims.len() {
@@ -4683,18 +4683,11 @@ impl ParityReplaySetup<'_> {
                     return None;
                 }
                 let sprite = entity.sprite();
-                let Some(row) = sprite
+                let row = sprite
                     .current_scripts_opt()
-                    .and_then(|scripts| scripts.get(usize::from(sprite.current_row)))
-                else {
-                    return None;
-                };
-                let Some(&bank_id) = row.frame_ids.get(usize::from(sprite.current_frame)) else {
-                    return None;
-                };
-                let Some((width, height)) = frames.sprite_dimensions(bank_id) else {
-                    return None;
-                };
+                    .and_then(|scripts| scripts.get(usize::from(sprite.current_row)))?;
+                let &bank_id = row.frame_ids.get(usize::from(sprite.current_frame))?;
+                let (width, height) = frames.sprite_dimensions(bank_id)?;
                 // Screen visibility uses the current surface dimensions;
                 // the serialized cache is not consulted until target-sprite creation
                 // publishes those same dimensions. Using the stale cache here can
@@ -5006,9 +4999,13 @@ mod tests {
                 actor: Default::default(),
                 human: Default::default(),
                 npc: {
-                    let mut npc = crate::element::NpcData::default();
-                    npc.ai_brain = crate::element::AiBrain::Enemy(Box::new(ai));
-                    npc
+                    crate::element::NpcData {
+                        ai: crate::element::AiActorData {
+                            ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
                 },
                 soldier: Default::default(),
             },

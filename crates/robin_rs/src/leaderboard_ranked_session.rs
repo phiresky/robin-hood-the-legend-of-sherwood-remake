@@ -628,10 +628,14 @@ fn validate_run_preflight(setup: &OfficialRankedSessionSetupV1) -> Result<(), Ra
     Ok(())
 }
 fn random_digest() -> Digest32 {
+    // Session authentication runs outside simulation and requires fresh cryptographic entropy.
+    #[allow(clippy::disallowed_methods)]
     Digest32::from_bytes(rand::random())
 }
 
 fn random_nonce() -> robin_run_protocol::ChallengeNonce32 {
+    // Session authentication runs outside simulation and requires fresh cryptographic entropy.
+    #[allow(clippy::disallowed_methods)]
     robin_run_protocol::ChallengeNonce32::from_bytes(rand::random())
 }
 
@@ -1046,7 +1050,7 @@ impl RankedSessionLifecycle {
             participant_claims,
         };
         updated.validate().map_err(invalid_document)?;
-        *client = Box::new(updated);
+        **client = updated;
         Ok(())
     }
 

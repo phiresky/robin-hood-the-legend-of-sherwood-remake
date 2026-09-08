@@ -1055,7 +1055,7 @@ impl PersistedPathFinder {
             cache: _,
         } = value;
         Self {
-            number_of_attempts: value.number_of_attempts.clone(),
+            number_of_attempts: value.number_of_attempts,
             states: value.states.clone(),
         }
     }

@@ -395,7 +395,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
 
             let display_snapshot = host.frontend.engine_display.clone();
-            let saved_camera = CameraPresentationPose::capture(&host.frontend);
+            let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.draw_order.clone();
             let interpolation_enabled = host.frontend.native_refresh_presentation
                 && !args.fast_forward
@@ -410,10 +410,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let sampled_camera = native_refresh_interpolation
                 .sample(crate::window::process_uptime_ms())
                 .unwrap_or(saved_camera);
-            sampled_camera.apply(&mut host.frontend);
+            sampled_camera.apply(host.frontend);
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
             host.frontend.draw_order = render_engine.compute_display_order();
-            sync_render_camera(&mut host.frontend);
+            sync_render_camera(host.frontend);
             render_frame(
                 render_engine,
                 &display_snapshot,
@@ -463,9 +463,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     tracing::info!("startup timing: first mission present returned");
                 }
             }
-            saved_camera.apply(&mut host.frontend);
+            saved_camera.apply(host.frontend);
             host.frontend.draw_order = saved_draw_order;
-            sync_render_camera(&mut host.frontend);
+            sync_render_camera(host.frontend);
             post_render_engine_cleanup(&mut frame, host.local_seat);
         } else {
             native_refresh_interpolation.clear();
@@ -547,26 +547,26 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let render_engine = native_refresh_interpolation
                 .engine()
                 .expect("sampled native-refresh interpolation has a working engine");
-            let saved_camera = CameraPresentationPose::capture(&host.frontend);
+            let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.draw_order.clone();
-            sampled_camera.apply(&mut host.frontend);
+            sampled_camera.apply(host.frontend);
             host.frontend.draw_order = render_engine.compute_display_order();
-            sync_render_camera(&mut host.frontend);
+            sync_render_camera(host.frontend);
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
             render_frame(
                 render_engine,
                 &display_snapshot,
                 host,
-                &assets,
-                &dev,
+                assets,
+                dev,
                 &mut render_ctx,
                 RenderCadence::DisplayRefresh,
             );
             render_ctx.present();
-            saved_camera.apply(&mut host.frontend);
+            saved_camera.apply(host.frontend);
             host.frontend.draw_order = saved_draw_order;
-            sync_render_camera(&mut host.frontend);
+            sync_render_camera(host.frontend);
             true
         })
         .await;
@@ -981,7 +981,7 @@ async fn pace_interactive_frame(
             let presentation_start_us = crate::window::process_uptime_us();
             let mut schedule = RefreshPresentationSchedule::new(
                 presentation_start_us,
-                u64::from(remaining_wait_ms) * 1_000,
+                remaining_wait_ms * 1_000,
                 host.frontend.native_refresh_present_cost_us,
             );
             while schedule.should_present(crate::window::process_uptime_us()) {
@@ -999,7 +999,7 @@ async fn pace_interactive_frame(
                 crate::window::sleep_ms(residual_us.div_ceil(1_000)).await;
             }
         } else {
-            crate::window::sleep_ms(remaining_wait_ms as u64).await;
+            crate::window::sleep_ms(remaining_wait_ms).await;
         }
     } else {
         // An over-budget browser frame still must return control to the JS

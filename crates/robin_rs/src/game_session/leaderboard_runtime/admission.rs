@@ -1509,7 +1509,7 @@ pub(in crate::game_session) async fn fetch_single_player_authority(
             )),
         };
     };
-    let build_manifest_sha256 = select_current_build(&api, &published_ruleset).await?;
+    let build_manifest_sha256 = select_current_build(&api, published_ruleset).await?;
     Ok(RankedMissionAuthority {
         content_manifest,
         rules_config: rules_config.clone(),

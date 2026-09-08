@@ -893,7 +893,7 @@ pub(crate) async fn run_session(
                 };
             }
         };
-    retirement::run(&mut callbacks, async move |mut callbacks| {
+    retirement::run(&mut callbacks, async move |callbacks| {
     if let Some((name, mission_id)) = initial_load {
         let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
             return SessionOutcome {
@@ -958,7 +958,7 @@ pub(crate) async fn run_session(
             };
         }
         let (target_idx, _location, resolved) =
-            match prepare_cold_save_mission(application_context, profiles, &save).await {
+            match prepare_cold_save_mission(application_context, profiles, save).await {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     return SessionOutcome {
@@ -1061,7 +1061,7 @@ pub(crate) async fn run_session(
         tracing::info!("Starting mission idx={} at {:?}", mission_idx, location);
         let mission_outcome = run_mission_with_seed(
             window,
-            &mut callbacks,
+            callbacks,
             campaign,
             profiles,
             mission_idx,
@@ -1316,7 +1316,7 @@ async fn resolve_cold_save_mission_assets(
             )
             .map_err(|error| format!("restore exact save mission assets: {error}"))
         });
-        return match with_cache {
+        match with_cache {
             Ok(resolved) => Ok(resolved),
             Err(cache_error) => crate::mission_asset_restore::resolve_native_mission_assets(
                 descriptor,
@@ -1330,7 +1330,7 @@ async fn resolve_cold_save_mission_assets(
                     "restore save mission assets without cache: {without_cache}; cache attempt: {cache_error}"
                 )
             }),
-        };
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -1455,9 +1455,7 @@ fn prepare_quickload_cross_mission(
     } else {
         special_slots::QUICK
     };
-    let Some(idx) = callbacks.save_manager.find_by_filename(slot_name) else {
-        return None;
-    };
+    let idx = callbacks.save_manager.find_by_filename(slot_name)?;
     if !callbacks.save_manager.slot_file_exists(idx) {
         return None;
     }
@@ -1477,7 +1475,7 @@ fn prepare_quickload_cross_mission(
         }
     };
     let save = load.save();
-    if let Err(error) = callbacks.save_manager.validate_slot_identity(idx, &save) {
+    if let Err(error) = callbacks.save_manager.validate_slot_identity(idx, save) {
         tracing::error!("QuickLoad confirmation rejected stale {slot_name} slot: {error:#}");
         callbacks.clear_operation();
         return None;
@@ -1492,7 +1490,7 @@ fn prepare_quickload_cross_mission(
         }
     };
     let target_mission_id = match validated_save_reload_target(
-        &save,
+        save,
         profiles,
         current,
         active_mission_assets,
@@ -1764,8 +1762,10 @@ fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
 mod required_state_tests {
     #[test]
     fn direct_restart_adapter_restores_checkpoint_before_admitting_continuation() {
-        let mut args = crate::main_entry::CliArgs::default();
-        args.server = true;
+        let mut args = crate::main_entry::CliArgs {
+            server: true,
+            ..Default::default()
+        };
         let mut campaign = Campaign::default();
         assert!(!super::restore_direct_restart_boundary(
             &mut campaign,
@@ -1794,10 +1794,12 @@ mod required_state_tests {
             for restored in [false, true] {
                 for replay in [false, true] {
                     for headless in [false, true] {
-                        let mut args = crate::main_entry::CliArgs::default();
-                        args.server = server;
-                        args.headless = headless;
-                        args.replay = replay.then(|| "recorded.rhrec".into());
+                        let mut args = crate::main_entry::CliArgs {
+                            server,
+                            headless,
+                            replay: replay.then(|| "recorded.rhrec".into()),
+                            ..Default::default()
+                        };
                         super::carry_direct_restart_multiplayer_continuation(&mut args, restored);
                         assert_eq!(args.mp_continue_session, server && restored && !replay);
                     }
@@ -1805,9 +1807,11 @@ mod required_state_tests {
             }
         }
         // Ineligible transitions do not revoke already-established policy.
-        let mut args = crate::main_entry::CliArgs::default();
-        args.server = true;
-        args.mp_continue_session = true;
+        let mut args = crate::main_entry::CliArgs {
+            server: true,
+            mp_continue_session: true,
+            ..Default::default()
+        };
         super::carry_direct_restart_multiplayer_continuation(&mut args, false);
         assert!(args.mp_continue_session);
     }
@@ -2147,9 +2151,11 @@ mod required_state_tests {
     #[test]
     fn pending_direct_replay_absent_preserves_ordinary_launch() {
         let mut profiles = ProfileManager::new();
-        let mut args = crate::main_entry::CliArgs::default();
-        args.start_paused = true;
-        args.custom_mission = Some("ordinary-custom-mission".into());
+        let mut args = crate::main_entry::CliArgs {
+            start_paused: true,
+            custom_mission: Some("ordinary-custom-mission".into()),
+            ..Default::default()
+        };
         let mut pending = None;
         assert!(
             pollster::block_on(prepare_pending_direct_replay(
@@ -2489,8 +2495,10 @@ mod required_state_tests {
     #[test]
     fn current_replay_rejects_original_parity_capture_before_resolution() {
         let (mut profiles, data) = replay_fixture(Some(0));
-        let mut args = crate::main_entry::CliArgs::default();
-        args.mission_start_legacy_save = Some(vec![0; 4]);
+        let args = crate::main_entry::CliArgs {
+            mission_start_legacy_save: Some(vec![0; 4]),
+            ..Default::default()
+        };
 
         let error = pollster::block_on(prepare_replay_launch(
             &crate::host::ApplicationContext::default(),

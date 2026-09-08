@@ -2401,10 +2401,10 @@ pub enum InputProvenanceStatusV1 {
 
 impl InputProvenanceStatusV1 {
     pub fn validate(&self) -> Result<(), ValidationError> {
-        if let Self::Tainted { taints } = self {
-            if taints.is_empty() || !taints.windows(2).all(|pair| pair[0].kind < pair[1].kind) {
-                return Err(ValidationError::InvalidInputTaints);
-            }
+        if let Self::Tainted { taints } = self
+            && (taints.is_empty() || !taints.windows(2).all(|pair| pair[0].kind < pair[1].kind))
+        {
+            return Err(ValidationError::InvalidInputTaints);
         }
         Ok(())
     }
@@ -4320,7 +4320,7 @@ mod tests {
             submission.co_sign_request().unwrap().instance.purpose,
             LeaderboardCoSignPurposeV1::Submission
         );
-        let digest = Digest32::digest_bytes(&bytes);
+        let digest = Digest32::digest_bytes(bytes);
         submission.offer.expires_at_unix_ms -= 1;
         assert_ne!(
             digest,

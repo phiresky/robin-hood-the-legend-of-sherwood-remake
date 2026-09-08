@@ -1798,14 +1798,11 @@ impl AiController {
 
         // Charly merge plus missed-friend detectable registration.
         if (flags & REPORT_UPDATE_CHARLY) != 0
-            && other.charly.is_some()
+            && let Some(charly) = other.charly
             && self.my_reconnaissance_report.charly.is_none()
         {
             self.my_reconnaissance_report.charly = other.charly;
-            let charly = other
-                .charly
-                .expect("checked reconnaissance report charly")
-                .get();
+            let charly = charly.get();
             self.outbox.actor.append_detectables.push((
                 EntityId::Soldier(crate::entity_id::SoldierId(charly)),
                 DetectableType::MissedFriend,

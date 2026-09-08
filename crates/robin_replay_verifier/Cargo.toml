@@ -34,3 +34,6 @@ hex = "0.4"
 rand = "0.10"
 robin_highscores = { path = "../robin_highscores" }
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

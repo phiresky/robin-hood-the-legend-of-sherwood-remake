@@ -39,7 +39,7 @@ impl PersistedAiRuntime {
         } = value;
         Self {
             global: crate::ai::persisted::PersistedAiGlobalState::capture(&value.global),
-            standard_view_polygon_radius: value.standard_view_polygon_radius.clone(),
+            standard_view_polygon_radius: value.standard_view_polygon_radius,
             view_radius_cache: value.view_radius_cache.clone(),
         }
     }

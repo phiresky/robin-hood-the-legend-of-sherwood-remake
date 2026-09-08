@@ -414,9 +414,11 @@ impl DifficultyRules {
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    Default,
 )]
 pub enum DifficultyLevel {
     Easy,
+    #[default]
     Medium,
     Hard,
     Legendary,
@@ -462,12 +464,6 @@ impl<'de> Deserialize<'de> for DifficultyLevel {
                 Self::custom(rules).map_err(serde::de::Error::custom)
             }
         }
-    }
-}
-
-impl Default for DifficultyLevel {
-    fn default() -> Self {
-        Self::Medium
     }
 }
 

@@ -66,38 +66,6 @@ fn observe_view_build(
     }
 }
 
-#[cfg(test)]
-mod observation_tests {
-    use super::*;
-
-    #[test]
-    fn observation_metrics_preserve_views_hash_and_rng() {
-        let mut engine = EngineInner::new();
-        let mut assets = LevelAssets::new();
-        engine.add_entity(crate::engine::tests::scenarios::make_test_ai_soldier(
-            crate::element::Camp::Lacklandists,
-        ));
-        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
-        let hash = crate::replay::state_hash(&engine);
-        let sim = engine.control.simulation_context();
-        let seed = sim.seed();
-        let plain = engine.build_owner_context_scratch_without_forecast(&assets);
-        let subscriber = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_writer(std::io::sink)
-            .finish();
-        let measured = tracing::subscriber::with_default(subscriber, || {
-            engine.build_owner_context_scratch_without_forecast(&assets)
-        });
-        assert_eq!(
-            serde_json::to_value(&plain.ai_entity_views.entities).unwrap(),
-            serde_json::to_value(&measured.ai_entity_views.entities).unwrap()
-        );
-        assert_eq!(crate::replay::state_hash(&engine), hash);
-        assert_eq!(sim.seed(), seed);
-    }
-}
-
 impl EngineInner {
     pub(in crate::engine) fn debug_building_exit_wait_event_view(
         &self,
@@ -2241,5 +2209,37 @@ impl EngineInner {
             current = next.get();
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn observation_metrics_preserve_views_hash_and_rng() {
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        engine.add_entity(crate::engine::tests::scenarios::make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        ));
+        crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+        let hash = crate::replay::state_hash(&engine);
+        let sim = engine.control.simulation_context();
+        let seed = sim.seed();
+        let plain = engine.build_owner_context_scratch_without_forecast(&assets);
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::sink)
+            .finish();
+        let measured = tracing::subscriber::with_default(subscriber, || {
+            engine.build_owner_context_scratch_without_forecast(&assets)
+        });
+        assert_eq!(
+            serde_json::to_value(&plain.ai_entity_views.entities).unwrap(),
+            serde_json::to_value(&measured.ai_entity_views.entities).unwrap()
+        );
+        assert_eq!(crate::replay::state_hash(&engine), hash);
+        assert_eq!(sim.seed(), seed);
     }
 }

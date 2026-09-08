@@ -1546,7 +1546,7 @@ fn validate_leaderboard_order(
     prior: &LeaderboardOrderAnchorV1,
     current: &LeaderboardEntryV1,
 ) -> Result<(), ValidationError> {
-    if current.position != prior.position.checked_add(1).unwrap_or(u64::MAX) {
+    if current.position != prior.position.saturating_add(1) {
         return Err(ValidationError::ClaimMismatch {
             field: "leaderboard.order.position",
         });

@@ -118,9 +118,11 @@ mod tests {
 
     #[test]
     fn session_achievement_cli_path_flags_are_derived_once() {
-        let mut args = crate::main_entry::CliArgs::default();
-        args.custom_mission = Some("mission.rhm".into());
-        args.replay = Some("playback.rhrec".into());
+        let mut args = crate::main_entry::CliArgs {
+            custom_mission: Some("mission.rhm".into()),
+            replay: Some("playback.rhrec".into()),
+            ..Default::default()
+        };
         let eligibility =
             SessionAchievementEligibility::from_launch(&args, SessionExecutionMode::Interactive);
         args.custom_mission = None;

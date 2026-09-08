@@ -580,8 +580,10 @@ mod tests {
 
     #[test]
     fn disabling_adaptive_resolution_restores_fixed_canvas() {
-        let mut cfg = GraphicConfig::default();
-        cfg.adaptive_widescreen = false;
+        let cfg = GraphicConfig {
+            adaptive_widescreen: false,
+            ..Default::default()
+        };
         assert_eq!(cfg.logical_resolution_for_surface(1920, 1080), (1024, 768));
     }
 

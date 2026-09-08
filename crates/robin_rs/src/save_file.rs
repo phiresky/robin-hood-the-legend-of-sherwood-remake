@@ -1330,9 +1330,13 @@ mod tests {
                 actor: Default::default(),
                 human: Default::default(),
                 npc: {
-                    let mut npc = robin_engine::element::NpcData::default();
-                    npc.ai_brain = robin_engine::element::AiBrain::Enemy(Box::new(ai));
-                    npc
+                    robin_engine::element::NpcData {
+                        ai: robin_engine::element::AiActorData {
+                            ai_brain: robin_engine::element::AiBrain::Enemy(Box::new(ai)),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
                 },
                 soldier: Default::default(),
             },
@@ -1518,9 +1522,13 @@ mod tests {
                 actor: Default::default(),
                 human: Default::default(),
                 npc: {
-                    let mut npc = robin_engine::element::NpcData::default();
-                    npc.ai_brain = robin_engine::element::AiBrain::Enemy(Box::new(ai));
-                    npc
+                    robin_engine::element::NpcData {
+                        ai: robin_engine::element::AiActorData {
+                            ai_brain: robin_engine::element::AiBrain::Enemy(Box::new(ai)),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
                 },
                 soldier: Default::default(),
             },

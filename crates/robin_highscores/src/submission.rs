@@ -250,11 +250,9 @@ async fn finish_reserved_upload(
         abandon_failed_upload(database, lease).await;
         return Err(error);
     }
-    if !resume_uploaded {
-        if let Err(error) = database.mark_submission_upload_uploaded(lease).await {
-            abandon_failed_upload(database, lease).await;
-            return Err(error.into());
-        }
+    if !resume_uploaded && let Err(error) = database.mark_submission_upload_uploaded(lease).await {
+        abandon_failed_upload(database, lease).await;
+        return Err(error.into());
     }
     let submission = prepare_submission(authenticated, lease)?;
     Ok(database

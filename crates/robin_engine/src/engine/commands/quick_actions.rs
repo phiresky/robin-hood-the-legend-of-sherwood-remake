@@ -816,7 +816,7 @@ impl EngineInner {
                         continue;
                     }
                 };
-                let route = plan.route.clone();
+                let route = plan.route;
                 let before_len = self.players.auto_queues.len(actor);
                 self.record_resolved_group_move_step_in_store(
                     actor,

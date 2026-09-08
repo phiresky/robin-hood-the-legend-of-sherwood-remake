@@ -540,8 +540,8 @@ impl Ctx {
                 // skip sixteen complete intervals with one target comparison;
                 // only the containing block needs a per-symbol search.
                 let mut cum = count as u32;
-                let mut blocks = tail.chunks_exact(16);
-                for (block_index, block) in blocks.by_ref().enumerate() {
+                let (blocks, remainder) = tail.as_chunks::<16>();
+                for (block_index, block) in blocks.iter().enumerate() {
                     let packed =
                         std::simd::Simd::<u16, 32>::from_slice(bytemuck::cast_slice(block));
                     let counts: std::simd::Simd<u16, 16> = std::simd::simd_swizzle!(
@@ -557,8 +557,8 @@ impl Ctx {
                     }
                     cum = end;
                 }
-                let start = syms.len() - blocks.remainder().len();
-                for (offset, &SymbolCount(symbol, count)) in blocks.remainder().iter().enumerate() {
+                let start = syms.len() - remainder.len();
+                for (offset, &SymbolCount(symbol, count)) in remainder.iter().enumerate() {
                     if target < cum + count as u32 {
                         return (start + offset, symbol, cum, count as u32);
                     }
@@ -1250,8 +1250,8 @@ impl Model {
             &mut self.c0,
         ];
         let mut hit: Option<(usize, usize, u16)> = None;
-        for level in 0..chain.len() {
-            if let LevelCode::Hit(i, s) = decode_level(&*chain[level], level, dec, see, excl) {
+        for (level, context) in chain.iter().enumerate() {
+            if let LevelCode::Hit(i, s) = decode_level(context, level, dec, see, excl) {
                 hit = Some((level, i, s));
                 break;
             }
@@ -1298,8 +1298,8 @@ impl Model {
             &mut self.c0,
         ];
         let mut hit: Option<(usize, usize, u16)> = None;
-        for level in 0..chain.len() {
-            if let LevelCode::Hit(i, s) = decode_level(&*chain[level], level, dec, see, excl) {
+        for (level, context) in chain.iter().enumerate() {
+            if let LevelCode::Hit(i, s) = decode_level(context, level, dec, see, excl) {
                 hit = Some((level, i, s));
                 break;
             }
@@ -1342,8 +1342,8 @@ impl Model {
             &mut self.c0,
         ];
         let mut hit: Option<(usize, usize, u16)> = None;
-        for level in 0..chain.len() {
-            if let LevelCode::Hit(i, s) = decode_level(&*chain[level], level, dec, see, excl) {
+        for (level, context) in chain.iter().enumerate() {
+            if let LevelCode::Hit(i, s) = decode_level(context, level, dec, see, excl) {
                 hit = Some((level, i, s));
                 break;
             }

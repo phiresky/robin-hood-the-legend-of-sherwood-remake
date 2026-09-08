@@ -709,10 +709,10 @@ impl ApplicationAssetCache {
                 .lock()
                 .expect("application asset cache lock poisoned");
             let key = capture(state.localized_epoch);
-            if let Some(cache) = &state.ready {
-                if cache.key == key {
-                    return cache.clone();
-                }
+            if let Some(cache) = &state.ready
+                && cache.key == key
+            {
+                return cache.clone();
             }
             if state.loading.as_ref().is_some_and(|job| job.key != key) {
                 let stale = state.loading.take().expect("checked active cache job");
@@ -753,11 +753,11 @@ impl ApplicationAssetCache {
             state.loading = None;
             // A locale/mission can be published independently of this cache lock.
             // Never publish a result assembled across a changed generation.
-            if capture(state.localized_epoch) == key {
-                if let Some(cache) = result {
-                    state.ready = Some(cache.clone());
-                    return cache;
-                }
+            if capture(state.localized_epoch) == key
+                && let Some(cache) = result
+            {
+                state.ready = Some(cache.clone());
+                return cache;
             }
         }
     }

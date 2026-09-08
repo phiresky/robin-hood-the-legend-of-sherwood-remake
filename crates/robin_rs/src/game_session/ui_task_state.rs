@@ -486,7 +486,7 @@ impl OptionsTaskState {
         renderer: &mut Renderer,
         resources: &IngameMenuResources,
         cursor: Option<&ModalCursor<'_>>,
-        mut sound_manager: Option<&mut SoundManager>,
+        sound_manager: Option<&mut SoundManager>,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
@@ -623,7 +623,7 @@ impl OptionsTaskState {
                 &widget_events,
                 &self.frame,
                 &mut self.noise_tracker,
-                sound_manager.as_deref_mut(),
+                sound_manager,
                 audio_backend,
                 sample_loader,
             );
@@ -656,9 +656,7 @@ impl OptionsTaskState {
         resources: &IngameMenuResources,
     ) -> Option<UiTaskOutcome> {
         self.selected = index.min(self.rows.len().saturating_sub(1));
-        let Some(row) = self.rows.get(self.selected).cloned() else {
-            return None;
-        };
+        let row = self.rows.get(self.selected).cloned()?;
         if !row.enabled {
             return None;
         }
@@ -2049,7 +2047,7 @@ mod tests {
             let x = if visible_index < 6 { 30 } else { 330 };
             let y = OPTIONS_SETTING_ROW_START_Y
                 + column_index as i32 * (row_height + OPTIONS_SETTING_ROW_GAP);
-            assert!(x >= 0 && x < 640);
+            assert!((0..640).contains(&x));
             assert!(y >= OPTIONS_SETTING_ROW_START_Y && y + row_height < 350);
         }
         let manage = (330, SPELLFORGE_CONTENT_BUTTON_Y, 280, row_height);

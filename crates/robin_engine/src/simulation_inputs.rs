@@ -1032,14 +1032,16 @@ fn exact_array_wrapper<'a>(
 }
 
 fn decode_lower_hex(value: &str) -> Result<Vec<u8>, ProjectionError> {
-    if value.len() % 2 != 0 {
+    if !value.len().is_multiple_of(2) {
         return Err(ProjectionError::InvalidProfilesComponent(
             "bytes_hex has odd length".to_owned(),
         ));
     }
     value
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             fn nibble(value: u8) -> Option<u8> {
                 match value {

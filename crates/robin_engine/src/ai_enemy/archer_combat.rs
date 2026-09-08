@@ -153,17 +153,16 @@ impl EnemyAi {
                 continue;
             }
             let sub = f.current_substate;
-            if sub == Substate::AttackingBowShooting as u32
+            if (sub == Substate::AttackingBowShooting as u32
                 || sub == Substate::AttackingBowLoading as u32
-                || sub == Substate::AttackingBowAiming as u32
+                || sub == Substate::AttackingBowAiming as u32)
+                && let Some(target) = f.primary_target
             {
-                if let Some(target) = f.primary_target {
-                    let target = target.get();
-                    if let Some(entry) = bow_multiplicity.iter_mut().find(|e| e.0 == target) {
-                        entry.1 += 1;
-                    } else {
-                        bow_multiplicity.push((target, 1));
-                    }
+                let target = target.get();
+                if let Some(entry) = bow_multiplicity.iter_mut().find(|e| e.0 == target) {
+                    entry.1 += 1;
+                } else {
+                    bow_multiplicity.push((target, 1));
                 }
             }
         }

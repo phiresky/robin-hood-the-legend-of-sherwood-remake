@@ -880,22 +880,12 @@ mod tests {
     }
 
     /// Stub callbacks for testing state transitions.
+    #[derive(Default)]
     struct StubCallbacks {
         save_exists: bool,
         save_mission_id: u32,
         debriefing_load: Option<GameCode>,
         effects: Vec<AppEffect>,
-    }
-
-    impl Default for StubCallbacks {
-        fn default() -> Self {
-            Self {
-                save_exists: false,
-                save_mission_id: 0,
-                debriefing_load: None,
-                effects: Vec::new(),
-            }
-        }
     }
 
     impl GameCallbacks for StubCallbacks {

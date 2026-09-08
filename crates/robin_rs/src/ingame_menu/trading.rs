@@ -191,7 +191,7 @@ impl TradingModalState {
         self.update_button_enablement();
         let mut activated = None;
         for event in events {
-            self.input.update_from_event(&event, transform);
+            self.input.update_from_event(event, transform);
             let keyboard_activation = match event {
                 GameEvent::Quit
                 | GameEvent::KeyDown {

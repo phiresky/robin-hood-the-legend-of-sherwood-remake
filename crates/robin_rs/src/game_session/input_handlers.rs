@@ -17,46 +17,6 @@ use robin_engine::player_command::{FrameCommands, PlayerCommand};
 
 /// Translate persistent physical input only while gameplay owns the input
 /// surface. Suspension retains held hardware state but emits no world effects.
-#[cfg(test)]
-mod gamepad_admission_tests {
-    use super::*;
-
-    #[test]
-    fn modal_controller_input_cannot_move_viewport_or_admit_commands() {
-        let mut host = Host::scratch(640.0, 480.0);
-        host.frontend.viewport.view_position = engine_coordinates::MapPoint::new(400.0, 300.0);
-        let position = host.frontend.viewport.view_position;
-        let zoom = host.frontend.viewport.zoom_factor;
-        let mut assets = engine_api::LevelAssets::default();
-        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
-        let manager = engine_manager_api::EngineManager::new(engine);
-        let mut input = ThreadedInput::new();
-        let mut commands = FrameCommands::new();
-        let mut device = GamepadDeviceInput::default();
-        for button in [11, 14, 0, 1, 4] {
-            device.fold(&GameEvent::GamepadButton {
-                which: 1,
-                button,
-                pressed: true,
-            });
-        }
-        for _ in 0..3 {
-            handle_gamepad_events(
-                &mut host,
-                &manager,
-                &mut input,
-                &mut commands,
-                &mut device,
-                false,
-            );
-        }
-        assert_eq!(host.frontend.viewport.view_position, position);
-        assert_eq!(host.frontend.viewport.zoom_factor, zoom);
-        assert!(commands.commands.is_empty());
-        assert!(input.drain_synthetic_events().is_empty());
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn handle_gamepad_events(
     host: &mut Host,
@@ -293,5 +253,45 @@ pub(super) fn handle_console_overlay_events(
                     message: engine_messenger::SimpleMessage::HideConsole,
                 });
         }
+    }
+}
+
+#[cfg(test)]
+mod gamepad_admission_tests {
+    use super::*;
+
+    #[test]
+    fn modal_controller_input_cannot_move_viewport_or_admit_commands() {
+        let mut host = Host::scratch(640.0, 480.0);
+        host.frontend.viewport.view_position = engine_coordinates::MapPoint::new(400.0, 300.0);
+        let position = host.frontend.viewport.view_position;
+        let zoom = host.frontend.viewport.zoom_factor;
+        let mut assets = engine_api::LevelAssets::default();
+        let engine = Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap();
+        let manager = engine_manager_api::EngineManager::new(engine);
+        let mut input = ThreadedInput::new();
+        let mut commands = FrameCommands::new();
+        let mut device = GamepadDeviceInput::default();
+        for button in [11, 14, 0, 1, 4] {
+            device.fold(&GameEvent::GamepadButton {
+                which: 1,
+                button,
+                pressed: true,
+            });
+        }
+        for _ in 0..3 {
+            handle_gamepad_events(
+                &mut host,
+                &manager,
+                &mut input,
+                &mut commands,
+                &mut device,
+                false,
+            );
+        }
+        assert_eq!(host.frontend.viewport.view_position, position);
+        assert_eq!(host.frontend.viewport.zoom_factor, zoom);
+        assert!(commands.commands.is_empty());
+        assert!(input.drain_synthetic_events().is_empty());
     }
 }
