@@ -832,6 +832,7 @@ enum LevelCode {
 /// resolve the symbol from the context's plain frequency interval or record
 /// the escape (feeding the exclusion set). Shared by all three decoder
 /// chains; mirrors `Ctx::code_for` + the encode loops exactly.
+#[inline(always)]
 fn decode_level(
     ctx: &Ctx,
     level: usize,
@@ -839,51 +840,63 @@ fn decode_level(
     see: &mut See,
     excl: &mut Excl,
 ) -> LevelCode {
-    if excl.is_empty() {
-        // Fast path: the escape decision is one adaptive bit (no division),
-        // and on a hit the symbol scan stops at the target (hot symbols sit
-        // at the front).
-        if ctx.is_empty() {
-            return LevelCode::Miss;
-        }
-        let sum = ctx.sum();
-        let distinct = ctx.distinct();
-        let key = See::key(level, sum, distinct, ctx.top());
-        if dec.decode_bit(see.esc_prob(key)) {
-            ctx.exclude_into(excl);
-            return LevelCode::Miss;
-        }
-        // Hit. A single-candidate context codes no interval at all (it
-        // would span the whole range; the encoder skips it identically via
-        // the `freq == sum` check), so the division disappears too.
-        let (i, s, _, _) = if distinct == 1 {
-            ctx.find_by_target(0)
-        } else {
-            let target = dec.decode_target(sum);
-            let f = ctx.find_by_target(target);
-            dec.commit(f.2, f.3, sum);
-            f
-        };
-        LevelCode::Hit(i, s)
-    } else {
-        let (sum, distinct, key) = ctx.excl_stats(excl, level);
-        if distinct == 0 {
-            return LevelCode::Miss;
-        }
-        if dec.decode_bit(see.esc_prob(key)) {
-            ctx.exclude_into(excl);
-            return LevelCode::Miss;
-        }
-        let (i, s, _, _) = if distinct == 1 {
-            ctx.find_by_target_excl(excl, 0)
-        } else {
-            let target = dec.decode_target(sum);
-            let f = ctx.find_by_target_excl(excl, target);
-            dec.commit(f.2, f.3, sum);
-            f
-        };
-        LevelCode::Hit(i, s)
+    if !excl.is_empty() {
+        return decode_level_excluded(ctx, level, dec, see, excl);
     }
+    // Fast path: the escape decision is one adaptive bit (no division),
+    // and on a hit the symbol scan stops at the target (hot symbols sit
+    // at the front).
+    if ctx.is_empty() {
+        return LevelCode::Miss;
+    }
+    let sum = ctx.sum();
+    let distinct = ctx.distinct();
+    let key = See::key(level, sum, distinct, ctx.top());
+    if dec.decode_bit(see.esc_prob(key)) {
+        ctx.exclude_into(excl);
+        return LevelCode::Miss;
+    }
+    // Hit. A single-candidate context codes no interval at all (it
+    // would span the whole range; the encoder skips it identically via
+    // the `freq == sum` check), so the division disappears too.
+    let (i, s, _, _) = if distinct == 1 {
+        ctx.find_by_target(0)
+    } else {
+        let target = dec.decode_target(sum);
+        let f = ctx.find_by_target(target);
+        dec.commit(f.2, f.3, sum);
+        f
+    };
+    LevelCode::Hit(i, s)
+}
+
+// Shipping chunks disable exclusion. Keep the research-only filtered path
+// separate so the ordinary level can inline without copying these scans.
+#[inline(never)]
+fn decode_level_excluded(
+    ctx: &Ctx,
+    level: usize,
+    dec: &mut RangeDecoder,
+    see: &mut See,
+    excl: &mut Excl,
+) -> LevelCode {
+    let (sum, distinct, key) = ctx.excl_stats(excl, level);
+    if distinct == 0 {
+        return LevelCode::Miss;
+    }
+    if dec.decode_bit(see.esc_prob(key)) {
+        ctx.exclude_into(excl);
+        return LevelCode::Miss;
+    }
+    let (i, s, _, _) = if distinct == 1 {
+        ctx.find_by_target_excl(excl, 0)
+    } else {
+        let target = dec.decode_target(sum);
+        let f = ctx.find_by_target_excl(excl, target);
+        dec.commit(f.2, f.3, sum);
+        f
+    };
+    LevelCode::Hit(i, s)
 }
 
 /// Shared tail of every `Small` bump: account the increment and halve the
@@ -1850,6 +1863,51 @@ pub fn decode_grids_multi(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn singleton_hit_and_escape_preserve_the_following_range_interval() {
+        // Use the encoder's generic SEE formula and interleave uniform
+        // intervals, so a wrong bucket or an extra singleton interval also
+        // corrupts subsequent values instead of merely returning the same
+        // sole symbol.
+        let counts = [1u16, 2, 3, 15, 16, 255, 256, 4095, 8192, 16383];
+        for level in 0..6 {
+            let mut enc = RangeEncoder::new();
+            let mut encode_see = See::new();
+            for &count in &counts {
+                for escaped in [false, true, true, false] {
+                    enc.encode_bit(
+                        encode_see.esc_prob(See::key(level, count as u32, 1, count as u32)),
+                        escaped,
+                    );
+                    enc.encode(count as u32 % 251, 1, 251);
+                }
+            }
+            let blob = enc.finish();
+            let mut dec = RangeDecoder::new(&blob);
+            let mut decode_see = See::new();
+            let mut excl = Excl::new(4096);
+            for &count in &counts {
+                let ctx = Ctx::Small {
+                    syms: smallvec::smallvec![SymbolCount(1234, count)],
+                    sum: count as u32,
+                    dense: None,
+                };
+                for escaped in [false, true, true, false] {
+                    excl.begin();
+                    let result = decode_level(&ctx, level, &mut dec, &mut decode_see, &mut excl);
+                    assert!(matches!(
+                        (escaped, result),
+                        (true, LevelCode::Miss) | (false, LevelCode::Hit(0, 1234))
+                    ));
+                    let next = dec.decode_target(251);
+                    assert_eq!(next, count as u32 % 251);
+                    dec.commit(next, 1, 251);
+                }
+            }
+            assert_eq!(encode_see.prob, decode_see.prob);
+        }
+    }
 
     #[test]
     fn grouped_symbol_search_preserves_every_frequency_interval() {
