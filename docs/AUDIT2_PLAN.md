@@ -98,6 +98,17 @@ alive until menu retirement to protect already queued draws.
   failed command and are not claimed as passed.
 - New atomic API deprecation and obsolete release wrapper are cleaned separately;
   unrelated baseline warnings are intentionally untouched.
+- Corrected native checkpoint `9f0b52c2a`: six explicit package suites and all
+  their integration/doctests passed. Engine: 4472 passed/four ignored; asset
+  library: 142 passed/four ignored; highscores: 164 library, 31 admin, five server,
+  nine worker and 12 real-router tests passed; manifest: 150 passed; parity: 155
+  passed plus dependency closure; verifier: 36 library and 13 CLI tests passed
+  plus dependency closure. Expected ignored provisioned/helper tests remain
+  distinct from execution coverage.
+- Initial browser gate at `dad3bea0e` failed compilation before any Chrome run:
+  presentation needed a narrow sibling API for receipt-controller ownership.
+  `018c78214` adds that API without exposing admission internals. Failure evidence
+  remains in `browser-audio/`; a fresh evidence directory is used for reruns.
 
 TODO: record final corrected native suites, pure-assets boundary, client feature
 lanes, GPU, browser and replay/runtime acceptance. Retained runtime evidence root:
