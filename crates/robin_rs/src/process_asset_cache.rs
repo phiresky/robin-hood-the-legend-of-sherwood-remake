@@ -13,7 +13,7 @@
 //! it via `get_or_build`, which waits for a running warm-up or builds
 //! synchronously when none was started (wasm, tests).
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use robin_assets::frame_holder::FrameHolder;
 use robin_assets::resource_manager::ResourceManager;
@@ -55,75 +55,45 @@ mod lifecycle_tests {
         })
     }
 
+    fn resolve(
+        owner: &ApplicationAssetCache,
+        capture: impl Fn() -> CacheKey,
+        mut build: impl FnMut(CacheKey, Option<Arc<StableAssetCache>>) -> Arc<ProcessAssetCache>,
+    ) -> Arc<ProcessAssetCache> {
+        owner.resolve(
+            |epoch| CacheKey {
+                localized_epoch: epoch,
+                ..capture()
+            },
+            |key, stable, _| Some(build(key, stable)),
+        )
+    }
+
     #[test]
     fn application_owners_do_not_share_entries_or_invalidation() {
         let first = ApplicationAssetCache::default();
         let second = ApplicationAssetCache::default();
-        let first_entry = first.state.lock().unwrap().resolve(|| key(1), build_test);
-        let second_entry = second.state.lock().unwrap().resolve(|| key(1), build_test);
-        assert!(!Arc::ptr_eq(&first_entry, &second_entry));
+        let first_entry = resolve(&first, || key(1), build_test);
+        let second_entry = resolve(&second, || key(1), build_test);
         assert!(!Arc::ptr_eq(&first_entry.stable, &second_entry.stable));
         first.invalidate_localized();
-        assert_eq!(first.state.lock().unwrap().localized_epoch, 1);
-        let mut second_state = second.state.lock().unwrap();
-        assert_eq!(second_state.localized_epoch, 0);
+        let localized = resolve(&first, || key(1), build_test);
+        assert_eq!(localized.key.localized_epoch, 1);
+        assert!(Arc::ptr_eq(&first_entry.stable, &localized.stable));
         assert!(Arc::ptr_eq(
             &second_entry,
-            &second_state.resolve(|| key(1), build_test)
+            &resolve(&second, || key(1), build_test)
         ));
     }
 
     #[test]
-    fn another_application_builds_while_first_owner_is_busy() {
-        let first = ApplicationAssetCache::default();
-        let second = ApplicationAssetCache::default();
-        let _busy = first.state.lock().unwrap();
-        let (send, receive) = std::sync::mpsc::channel();
-        let worker = std::thread::spawn(move || {
-            let cache = second.state.lock().unwrap().resolve(|| key(1), build_test);
-            send.send(cache.key.generation).unwrap();
-        });
-        assert_eq!(
-            receive
-                .recv_timeout(std::time::Duration::from_secs(5))
-                .unwrap(),
-            1
-        );
-        worker.join().unwrap();
-    }
-
-    #[test]
-    fn independent_warmups_and_invalidation_keep_each_others_results() {
-        let first = ApplicationAssetCache::default();
-        let second = ApplicationAssetCache::default();
-        first.state.lock().unwrap().warming = Some(std::thread::spawn(|| build_test(key(1), None)));
-        second.state.lock().unwrap().warming =
-            Some(std::thread::spawn(|| build_test(key(2), None)));
-        first.invalidate_localized();
-        let second_entry = second.state.lock().unwrap().resolve(
-            || key(2),
-            |_, _| panic!("the second application's completed warmup must be reused"),
-        );
-        assert_eq!(second_entry.key.generation, 2);
-        let mut first_state = first.state.lock().unwrap();
-        let first_entry = first_state.resolve(
-            || CacheKey {
-                localized_epoch: 1,
-                ..key(1)
-            },
-            build_test,
-        );
-        assert_eq!(first_entry.key.localized_epoch, 1);
-        assert!(!Arc::ptr_eq(&first_entry.stable, &second_entry.stable));
-    }
-
-    #[test]
     fn locale_reuses_banks_but_mission_replaces_them() {
-        let mut state = State::default();
-        let first = state.resolve(|| key(1), build_test);
-        let localized = state.resolve(|| key(2), build_test);
+        let owner = ApplicationAssetCache::default();
+        let first = resolve(&owner, || key(1), build_test);
+        let localized = resolve(&owner, || key(2), build_test);
         assert!(Arc::ptr_eq(&first.stable, &localized.stable));
-        let mission = state.resolve(
+        let mission = resolve(
+            &owner,
             || CacheKey {
                 mission_generation: 3,
                 ..key(3)
@@ -134,14 +104,12 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn changed_generation_and_stale_warmup_never_publish_old_result() {
-        let mut state = State {
-            warming: Some(std::thread::spawn(|| build_test(key(0), None))),
-            ..State::default()
-        };
+    fn changed_generation_never_publishes_old_result() {
+        let owner = ApplicationAssetCache::default();
         let generation = AtomicU64::new(1);
         let calls = AtomicUsize::new(0);
-        let result = state.resolve(
+        let result = resolve(
+            &owner,
             || key(generation.load(Ordering::SeqCst)),
             |key, stable| {
                 if calls.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -152,25 +120,38 @@ mod lifecycle_tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert_eq!(result.key.generation, 2);
-        assert_eq!(state.ready.unwrap().key.generation, 2);
+        assert_eq!(
+            owner
+                .state
+                .lock()
+                .unwrap()
+                .ready
+                .as_ref()
+                .unwrap()
+                .key
+                .generation,
+            2
+        );
     }
 
     #[test]
-    fn failed_worker_rebuilds_and_concurrent_callers_share_one_result() {
-        let mut failed = State::default();
-        // Inject the join failure, rather than relying on unwinding support
-        // in every codegen/linker profile used by the host test binary.
-        failed.finish_warmup(Err(Box::new("test warmup failure")));
-        let state = Arc::new(Mutex::new(failed));
+    fn concurrent_callers_share_one_result_without_holding_owner_lock() {
+        let owner = Arc::new(ApplicationAssetCache::default());
         let calls = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(std::sync::Barrier::new(4));
         let handles: Vec<_> = (0..4)
             .map(|_| {
-                let state = state.clone();
+                let owner = owner.clone();
                 let calls = calls.clone();
+                let barrier = barrier.clone();
                 std::thread::spawn(move || {
-                    state.lock().unwrap().resolve(
+                    barrier.wait();
+                    resolve(
+                        &owner,
                         || key(1),
                         |key, stable| {
+                            // A builder can access owner state: it is not running under its lock.
+                            assert_eq!(owner.state.lock().unwrap().localized_epoch, 0);
                             calls.fetch_add(1, Ordering::SeqCst);
                             build_test(key, stable)
                         },
@@ -188,6 +169,107 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn invalidation_releases_waiters_and_rejects_blocked_worker_completion() {
+        let owner = Arc::new(ApplicationAssetCache::default());
+        let job = LoadingJob::new(key(1));
+        owner.state.lock().unwrap().loading = Some(job.clone());
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, running) = std::sync::mpsc::channel();
+        let worker_job = job.clone();
+        let worker = std::thread::spawn(move || {
+            worker_job.run(|| {
+                started.send(()).unwrap();
+                blocked.recv().unwrap();
+                Some(build_test(key(1), None))
+            })
+        });
+        running
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let waiter_job = job.clone();
+        let (done, result) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || done.send(waiter_job.wait().is_none()).unwrap());
+        // Invalidation must complete while the old worker is still blocked.
+        owner.invalidate_localized();
+        assert!(
+            result
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap()
+        );
+        let fresh = resolve(&owner, || key(1), build_test);
+        assert_eq!(fresh.key.localized_epoch, 1);
+        release.send(()).unwrap();
+        worker.join().unwrap();
+        waiter.join().unwrap();
+        assert!(job.wait().is_none());
+        assert!(Arc::ptr_eq(&fresh, &resolve(&owner, || key(1), build_test)));
+    }
+
+    #[test]
+    fn stale_warmup_key_does_not_block_current_generation() {
+        let owner = ApplicationAssetCache::default();
+        let stale = LoadingJob::new(key(0));
+        owner.state.lock().unwrap().loading = Some(stale.clone());
+        let result = resolve(&owner, || key(1), build_test);
+        assert_eq!(result.key.generation, 1);
+        assert!(stale.is_cancelled());
+    }
+
+    #[test]
+    fn completed_warmup_keeps_stable_banks_across_locale_invalidation() {
+        let owner = ApplicationAssetCache::default();
+        let job = LoadingJob::new(key(1));
+        let warmed = build_test(key(1), None);
+        job.finish(JobResult::Complete(warmed.clone()));
+        owner.state.lock().unwrap().loading = Some(job);
+        owner.invalidate_localized();
+        let fresh = resolve(&owner, || key(1), build_test);
+        assert_eq!(fresh.key.localized_epoch, 1);
+        assert!(Arc::ptr_eq(&warmed.stable, &fresh.stable));
+    }
+
+    #[test]
+    fn dropping_owner_cancels_detached_job_without_joining() {
+        let owner = ApplicationAssetCache::default();
+        let job = LoadingJob::new(key(1));
+        owner.state.lock().unwrap().loading = Some(job.clone());
+        drop(owner);
+        job.finish(JobResult::Complete(build_test(key(1), None)));
+        assert!(job.is_cancelled());
+        assert!(job.wait().is_none());
+    }
+
+    #[test]
+    fn abandoned_worker_releases_waiters_and_allows_retry() {
+        let owner = ApplicationAssetCache::default();
+        let job = LoadingJob::new(key(1));
+        owner.state.lock().unwrap().loading = Some(job.clone());
+        // Exercise the exact unwind cleanup without panicking in abort profiles.
+        drop(JobCompletionGuard { job: Some(&job) });
+        assert!(job.wait().is_none());
+        let result = resolve(&owner, || key(1), build_test);
+        assert_eq!(result.key.generation, 1);
+    }
+
+    #[test]
+    #[cfg(panic = "unwind")]
+    fn panicking_worker_does_not_poison_owner_and_next_caller_retries() {
+        let owner = Arc::new(ApplicationAssetCache::default());
+        let worker_owner = owner.clone();
+        let failed = std::thread::spawn(move || {
+            resolve(
+                &worker_owner,
+                || key(1),
+                |_, _| {
+                    panic!("injected cache worker panic");
+                },
+            )
+        });
+        assert!(failed.join().is_err());
+        assert_eq!(resolve(&owner, || key(1), build_test).key.generation, 1);
+    }
+
+    #[test]
     fn confining_an_existing_primary_reader_invalidates_all_cached_banks() {
         let files = Arc::new(SbFileSystem::new(Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
@@ -195,14 +277,14 @@ mod lifecycle_tests {
         let root = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
         assert_eq!(files.set_primary_path(root.to_str().unwrap()), 0);
         let before = CacheKey::capture(None, 0, &files);
-        let mut state = State::default();
-        let unconfined = state.resolve(|| before.clone(), build_test);
+        let state = ApplicationAssetCache::default();
+        let unconfined = resolve(&state, || before.clone(), build_test);
         assert_eq!(files.lock_ranked_verifier_primary_path(&root), 0);
         let after = CacheKey::capture(None, 0, &files);
         assert_eq!(before.mounts.primary_path, after.mounts.primary_path);
         assert_ne!(before, after);
         assert!(!before.same_stable_assets(&after));
-        let confined = state.resolve(|| after.clone(), build_test);
+        let confined = resolve(&state, || after.clone(), build_test);
         assert!(!Arc::ptr_eq(&unconfined.stable, &confined.stable));
     }
 
@@ -238,18 +320,22 @@ mod lifecycle_tests {
             CacheKey::capture(None, 0, &live),
             CacheKey::capture(None, 0, &prepared)
         );
-        let mut state = State::default();
-        let warmup = state.resolve(|| CacheKey::capture(None, 0, &live), build_test);
-        let mission = state.resolve(|| CacheKey::capture(None, 0, &prepared), build_test);
+        let state = ApplicationAssetCache::default();
+        let warmup = resolve(&state, || CacheKey::capture(None, 0, &live), build_test);
+        let mission = resolve(&state, || CacheKey::capture(None, 0, &prepared), build_test);
         assert!(Arc::ptr_eq(&warmup, &mission));
-        let other = state.resolve(|| CacheKey::capture(None, 0, &independent), build_test);
+        let other = resolve(
+            &state,
+            || CacheKey::capture(None, 0, &independent),
+            build_test,
+        );
         assert!(!Arc::ptr_eq(&warmup.stable, &other.stable));
         assert_eq!(live.add_alternate_path("changed-root"), 0);
         assert_ne!(
             CacheKey::capture(None, 0, &live),
             CacheKey::capture(None, 0, &prepared)
         );
-        let changed = state.resolve(|| CacheKey::capture(None, 0, &live), build_test);
+        let changed = resolve(&state, || CacheKey::capture(None, 0, &live), build_test);
         assert!(!Arc::ptr_eq(&warmup.stable, &changed.stable));
     }
 }
@@ -340,8 +426,111 @@ impl std::ops::Deref for ProcessAssetCache {
 struct State {
     ready: Option<Arc<ProcessAssetCache>>,
     #[serde(skip)]
-    warming: Option<std::thread::JoinHandle<Arc<ProcessAssetCache>>>,
+    loading: Option<Arc<LoadingJob>>,
     localized_epoch: u64,
+}
+
+/// A job never retains its application owner. Cancellation wakes consumers
+/// immediately, even when an underlying asset read cannot be interrupted.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LoadingJob {
+    key: CacheKey,
+    #[serde(skip)]
+    result: Mutex<JobResult>,
+    #[serde(skip)]
+    changed: Condvar,
+}
+
+#[derive(Default)]
+enum JobResult {
+    #[default]
+    Pending,
+    Complete(Arc<ProcessAssetCache>),
+    Cancelled,
+    Failed,
+}
+
+impl LoadingJob {
+    fn new(key: CacheKey) -> Arc<Self> {
+        Arc::new(Self {
+            key,
+            result: Mutex::new(JobResult::Pending),
+            changed: Condvar::new(),
+        })
+    }
+
+    fn is_cancelled(&self) -> bool {
+        matches!(
+            *self.result.lock().expect("asset loading job lock poisoned"),
+            JobResult::Cancelled
+        )
+    }
+
+    fn completed(&self) -> Option<Arc<ProcessAssetCache>> {
+        match &*self.result.lock().expect("asset loading job lock poisoned") {
+            JobResult::Complete(cache) => Some(cache.clone()),
+            _ => None,
+        }
+    }
+
+    fn cancel(&self) {
+        *self.result.lock().expect("asset loading job lock poisoned") = JobResult::Cancelled;
+        self.changed.notify_all();
+    }
+
+    fn finish(&self, result: JobResult) {
+        let mut current = self.result.lock().expect("asset loading job lock poisoned");
+        if matches!(*current, JobResult::Pending) {
+            *current = result;
+        }
+        self.changed.notify_all();
+    }
+
+    fn wait(&self) -> Option<Arc<ProcessAssetCache>> {
+        let mut result = self.result.lock().expect("asset loading job lock poisoned");
+        while matches!(*result, JobResult::Pending) {
+            result = self
+                .changed
+                .wait(result)
+                .expect("asset loading job lock poisoned");
+        }
+        match &*result {
+            JobResult::Complete(cache) => Some(cache.clone()),
+            JobResult::Cancelled | JobResult::Failed => None,
+            JobResult::Pending => unreachable!("asset loading wait must finish"),
+        }
+    }
+
+    fn run(&self, build: impl FnOnce() -> Option<Arc<ProcessAssetCache>>) {
+        let guard = JobCompletionGuard { job: Some(self) };
+        if self.is_cancelled() {
+            return;
+        }
+        self.finish(match build() {
+            Some(cache) => JobResult::Complete(cache),
+            None => JobResult::Cancelled,
+        });
+        drop(guard);
+    }
+}
+
+/// Unwinding must release single-flight waiters without poisoning the owner's
+/// lock. Abort-on-panic builds still terminate the process, as before.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct JobCompletionGuard<'a> {
+    #[serde(skip)]
+    job: Option<&'a LoadingJob>,
+}
+
+impl Drop for JobCompletionGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(job) = self.job {
+            if std::thread::panicking() {
+                tracing::warn!("asset loading worker panicked; a subsequent caller can retry");
+            }
+            job.finish(JobResult::Failed);
+        }
+    }
 }
 
 /// Runtime cache ownership is never restored from serialized parsed products.
@@ -371,6 +560,12 @@ impl ApplicationAssetCache {
             .localized_epoch
             .checked_add(1)
             .expect("asset cache epoch exhausted");
+        if let Some(job) = state.loading.take() {
+            if let Some(cache) = job.completed() {
+                state.ready = Some(cache);
+            }
+            job.cancel();
+        }
     }
 
     pub fn start_background_warmup(
@@ -389,75 +584,124 @@ impl ApplicationAssetCache {
                 .state
                 .lock()
                 .expect("application asset cache lock poisoned");
-            if state.warming.is_some() || state.ready.is_some() {
+            if state.loading.is_some() || state.ready.is_some() {
                 return;
             }
             let key = CacheKey::capture(shipping.as_deref(), state.localized_epoch, &files);
+            let job = LoadingJob::new(key.clone());
+            state.loading = Some(job.clone());
+            drop(state);
+            let worker = job.clone();
             match std::thread::Builder::new()
                 .name("asset-warmup".into())
-                .spawn(move || Arc::new(build(shipping.as_deref(), &profiles, key, None, files)))
-            {
-                Ok(handle) => state.warming = Some(handle),
-                Err(error) => tracing::warn!("asset warm-up thread failed to spawn: {error}"),
+                .spawn(move || {
+                    worker.run(|| {
+                        build(shipping.as_deref(), &profiles, key, None, files, &worker)
+                            .map(Arc::new)
+                    })
+                }) {
+                Ok(_) => {} // Detached: shutdown cancels; it never joins an asset read.
+                Err(error) => {
+                    job.finish(JobResult::Failed);
+                    tracing::warn!("asset warm-up thread failed to spawn: {error}");
+                }
             }
         }
     }
 
-    /// One caller owns a build/join. The worker never acquires this owner's lock,
-    /// so waiting prevents redundant builds without blocking other applications.
+    /// One caller owns a build. Other callers wait on its job, never on the
+    /// owner's state lock; invalidation can cancel a blocked load immediately.
     pub fn get_or_build(
         &self,
         shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
         profiles: &ProfileManager,
         files: Arc<SbFileSystem>,
     ) -> Arc<ProcessAssetCache> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("application asset cache lock poisoned");
-        let epoch = state.localized_epoch;
-        state.resolve(
-            || CacheKey::capture(shipping, epoch, &files),
-            |key, stable| Arc::new(build(shipping, profiles, key, stable, files.clone())),
+        self.resolve(
+            |epoch| CacheKey::capture(shipping, epoch, &files),
+            |key, stable, job| {
+                build(shipping, profiles, key, stable, files.clone(), job).map(Arc::new)
+            },
         )
-    }
-}
-
-impl State {
-    fn finish_warmup(&mut self, result: std::thread::Result<Arc<ProcessAssetCache>>) {
-        match result {
-            Ok(cache) => self.ready = Some(cache),
-            Err(_) => tracing::warn!("asset warm-up thread panicked; rebuilding synchronously"),
-        }
     }
 
     fn resolve(
-        &mut self,
-        capture: impl Fn() -> CacheKey,
-        mut build_cache: impl FnMut(CacheKey, Option<Arc<StableAssetCache>>) -> Arc<ProcessAssetCache>,
+        &self,
+        capture: impl Fn(u64) -> CacheKey,
+        mut build_cache: impl FnMut(
+            CacheKey,
+            Option<Arc<StableAssetCache>>,
+            &LoadingJob,
+        ) -> Option<Arc<ProcessAssetCache>>,
     ) -> Arc<ProcessAssetCache> {
-        if let Some(handle) = self.warming.take() {
-            self.finish_warmup(handle.join());
-        }
         loop {
-            let key = capture();
-            if let Some(cache) = &self.ready {
+            let mut state = self
+                .state
+                .lock()
+                .expect("application asset cache lock poisoned");
+            let key = capture(state.localized_epoch);
+            if state.loading.as_ref().is_some_and(|job| job.key != key) {
+                let stale = state.loading.take().expect("checked active cache job");
+                if let Some(cache) = stale.completed() {
+                    state.ready = Some(cache);
+                }
+                stale.cancel();
+            }
+            if let Some(cache) = &state.ready {
                 if cache.key == key {
                     return cache.clone();
                 }
             }
-            let stable = self
+            let stable = state
                 .ready
                 .as_ref()
                 .filter(|cache| cache.key.same_stable_assets(&key))
                 .map(|cache| cache.stable.clone());
-            let cache = build_cache(key.clone(), stable);
+            let (job, build_here) = match &state.loading {
+                Some(job) if job.key == key => (job.clone(), false),
+                _ => {
+                    let job = LoadingJob::new(key.clone());
+                    state.loading = Some(job.clone());
+                    (job, true)
+                }
+            };
+            drop(state);
+            if build_here {
+                job.run(|| build_cache(key.clone(), stable, &job));
+            }
+            let result = job.wait();
+            let mut state = self
+                .state
+                .lock()
+                .expect("application asset cache lock poisoned");
+            if !state
+                .loading
+                .as_ref()
+                .is_some_and(|active| Arc::ptr_eq(active, &job))
+            {
+                continue;
+            }
+            state.loading = None;
             // A locale/mission can be published independently of this cache lock.
             // Never publish a result assembled across a changed generation.
-            if capture() == key {
-                self.ready = Some(cache.clone());
-                return cache;
+            if capture(state.localized_epoch) == key {
+                if let Some(cache) = result {
+                    state.ready = Some(cache.clone());
+                    return cache;
+                }
             }
+        }
+    }
+}
+
+impl Drop for ApplicationAssetCache {
+    fn drop(&mut self) {
+        let state = self
+            .state
+            .get_mut()
+            .expect("application asset cache lock poisoned");
+        if let Some(job) = state.loading.take() {
+            job.cancel();
         }
     }
 }
@@ -468,8 +712,14 @@ fn build(
     key: CacheKey,
     stable: Option<Arc<StableAssetCache>>,
     files: Arc<SbFileSystem>,
-) -> ProcessAssetCache {
-    let stable = stable.unwrap_or_else(|| {
+    job: &LoadingJob,
+) -> Option<ProcessAssetCache> {
+    if job.is_cancelled() {
+        return None;
+    }
+    let stable = if let Some(stable) = stable {
+        stable
+    } else {
         let sprite_bank = {
             let mut holder = FrameHolder::new();
             match holder.initialize_sprite_bank_with_progress_and_files(
@@ -485,6 +735,12 @@ fn build(
                 }
             }
         };
+
+        // TODO: Make sprite decoding and individual file reads cancellable.
+        // For now retirement stops work at expensive stage boundaries.
+        if job.is_cancelled() {
+            return None;
+        }
 
         let fx_bank_path = "Data/Sounds/robin hood.fxg";
         let fx_bank = match files.read_all(fx_bank_path) {
@@ -505,7 +761,11 @@ fn build(
             sprite_bank,
             fx_bank,
         })
-    });
+    };
+
+    if job.is_cancelled() {
+        return None;
+    }
 
     let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
     let menu_bank = match files.read_all(menu_bank_path) {
@@ -522,15 +782,21 @@ fn build(
         }
     };
 
+    if job.is_cancelled() {
+        return None;
+    }
     let exclamations = build_exclamations(shipping, profiles, files.clone());
+    if job.is_cancelled() {
+        return None;
+    }
 
-    ProcessAssetCache {
+    Some(ProcessAssetCache {
         _files: Some(files),
         key,
         stable,
         menu_bank,
         exclamations,
-    }
+    })
 }
 
 /// Load actors.res for variant-index → WAV-filename resolution, then
