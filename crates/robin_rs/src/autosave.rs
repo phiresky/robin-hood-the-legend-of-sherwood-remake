@@ -390,7 +390,6 @@ impl AutosaveCoordinator {
             version: AUTOSAVE_MANIFEST_VERSION,
             saves: manager
                 .saves()
-                .iter()
                 .filter(|save| save.is_autosave())
                 .cloned()
                 .collect(),
@@ -824,7 +823,6 @@ pub(crate) fn load_into_manager(manager: &mut SaveGameManager) -> Result<()> {
         version: AUTOSAVE_MANIFEST_VERSION,
         saves: manager
             .saves()
-            .iter()
             .filter(|save| save.is_autosave())
             .cloned()
             .collect(),
@@ -1469,7 +1467,7 @@ mod tests {
         let newest = published_autosave("Autosave_200_0000", 200);
         let existing = AutosaveManifest {
             version: AUTOSAVE_MANIFEST_VERSION,
-            saves: manager.saves().to_vec(),
+            saves: manager.saves().cloned().collect(),
         };
         let (manifest, evicted) = staged_manifest(existing, newest);
         assert_eq!(manifest.saves.len(), AUTOSAVE_SLOT_COUNT);
@@ -1804,6 +1802,6 @@ mod tests {
 
         let error = load_into_manager(&mut manager).unwrap_err();
         assert!(error.to_string().contains("validating published autosave"));
-        assert_eq!(manager.saves(), &[manual]);
+        assert!(manager.saves().eq([manual].iter()));
     }
 }

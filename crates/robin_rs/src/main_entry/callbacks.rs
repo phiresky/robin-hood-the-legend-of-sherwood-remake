@@ -8,7 +8,7 @@ use crate::leaderboard_mission_end::{
 };
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
-use crate::savegame::{SaveGameManager, SlotHandle, SpecialSlot};
+use crate::savegame::{SaveGameManager, SlotHandle};
 use crate::sound::{Jingle as SoundJingle, SoundMode as AudioSoundMode};
 use robin_assets::picture::Picture;
 use robin_engine::campaign as engine_campaign;
@@ -19,6 +19,8 @@ use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 
 use super::cli::CliArgs;
+
+mod executor;
 
 /// Real implementation of [`GameCallbacks`](crate::game::GameCallbacks)
 /// for the pure-Rust path.  Owns the [`SaveGameManager`] and serves as
@@ -970,636 +972,18 @@ pub(crate) fn perform_pending_save_load(
             ..OperationOutcome::NO_EVENT
         };
     }
-    let mut outcome = OperationOutcome::NO_EVENT;
-    let thumb_ref = thumbnail.as_ref();
-    let mut event = None;
-    match request {
-        SaveLoadRequest::Save { slot, mission_id } => {
-            let slot = match slot
-                .as_ref()
-                .map(|handle| callbacks.save_manager.resolve_handle(handle))
-                .transpose()
-            {
-                Ok(slot) => slot,
-                Err(error) => {
-                    tracing::error!("Save rejected stale slot handle: {error:#}");
-                    outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    return outcome;
-                }
-            };
-            if host.transport.net.is_some() {
-                let idx = match slot.map(Ok).unwrap_or_else(|| {
-                    let handle = callbacks
-                        .save_manager
-                        .create_draft("Multiplayer diagnostic".to_string(), mission_id)?;
-                    callbacks.save_manager.resolve_handle(&handle)
-                }) {
-                    Ok(idx) => idx,
-                    Err(error) => {
-                        tracing::error!("Multiplayer diagnostic draft failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                        return outcome;
-                    }
-                };
-                let result = callbacks
-                    .save_manager
-                    .write_multiplayer_diagnostic_from_engine(
-                        host,
-                        game,
-                        idx,
-                        engine,
-                        mission_id,
-                        Some(profiles),
-                        thumb_ref,
-                    )
-                    .and_then(|()| {
-                        callbacks
-                            .save_manager
-                            .save_index()
-                            .map_err(anyhow::Error::msg)
-                    });
-                match result {
-                    Ok(()) => {
-                        outcome.banner = Some(SaveBannerKind::Saved);
-                        tracing::info!(
-                            slot = idx,
-                            mission_id,
-                            "multiplayer diagnostic save written locally"
-                        );
-                    }
-                    Err(error) => {
-                        tracing::error!("Multiplayer diagnostic save failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    }
-                }
-                return outcome;
-            }
-            // `slot = None` ⇒ auto Continue-save.
-            // `slot = Some(idx)` ⇒ player-chosen slot.
-            let (result, explicit_slot) = match slot {
-                Some(idx) => (
-                    callbacks
-                        .save_manager
-                        .write_save_from_engine(
-                            host,
-                            game,
-                            idx,
-                            engine,
-                            mission_id,
-                            Some(profiles),
-                            thumb_ref,
-                        )
-                        .and_then(|()| {
-                            callbacks
-                                .save_manager
-                                .save_index()
-                                .map_err(|e| anyhow::anyhow!(e))
-                        }),
-                    true,
-                ),
-                None => (
-                    callbacks.save_manager.write_continue_save(
-                        host,
-                        game,
-                        engine,
-                        mission_id,
-                        Some(profiles),
-                        thumb_ref,
-                    ),
-                    false,
-                ),
-            };
-            if let Err(err) = result {
-                tracing::error!("Save failed: {err:#}");
-                outcome.banner = Some(SaveBannerKind::SaveFailed);
-            } else {
-                tracing::info!("Save completed (mission={mission_id})");
-                event = replay_save_written_event(engine, host, game);
-                // Mirror the manual save into the Continue slot. The
-                // guard keeps Continue→Continue copies from clobbering
-                // themselves; Restart / Sherwood slots also skip the
-                // mirror and the banner branch.
-                if explicit_slot {
-                    let is_special = slot
-                        .and_then(|idx| callbacks.save_manager.get(idx))
-                        .and_then(|s| s.special);
-                    let is_continue_or_restart = matches!(
-                        is_special,
-                        Some(SpecialSlot::Continue) | Some(SpecialSlot::Restart)
-                    );
-                    if !is_continue_or_restart
-                        && let Err(err) = callbacks.save_manager.write_continue_save(
-                            host,
-                            game,
-                            engine,
-                            mission_id,
-                            Some(profiles),
-                            thumb_ref,
-                        )
-                    {
-                        tracing::warn!("Continue-mirror after save failed: {err:#}");
-                        callbacks
-                            .autosave_notices
-                            .enqueue_save_failed(format!("Continue mirror: {err:#}"));
-                    }
-                    // Show "Game saved." banner unless the slot is one
-                    // of the filtered types (Restart / Sherwood).
-                    let is_sherwood = matches!(is_special, Some(SpecialSlot::Sherwood));
-                    if !is_continue_or_restart && !is_sherwood {
-                        outcome.banner = Some(SaveBannerKind::Saved);
-                    }
-                }
-            }
-        }
-        SaveLoadRequest::Load {
-            slot,
-            mission_id: _,
-            save,
-        } => {
-            let applying_multiplayer_transition = origin == OperationOrigin::CommittedMultiplayer;
-            // If the save targets a different mission than the one currently
-            // running, stash a `PendingLevelLoad` and let the session loop
-            // switch missions before re-applying. This replaces the previous
-            // warn-and-apply behaviour, which corrupted engine state when
-            // the payload's mission didn't match the active level.
-            let resolved =
-                match preflight_load_with_origin(&callbacks.save_manager, slot, save, origin) {
-                    Ok(resolved) => resolved,
-                    Err(error) => {
-                        tracing::error!("Load preflight failed: {error:#}");
-                        return outcome;
-                    }
-                };
-            match resolved {
-                Some((slot, save)) => {
-                    // Remote committed snapshots have no local slot metadata;
-                    // all locally selected handles were validated by preflight.
-                    let idx = match slot
-                        .as_ref()
-                        .map(|handle| callbacks.save_manager.resolve_handle(handle))
-                        .transpose()
-                    {
-                        Ok(index) => index,
-                        Err(error) => {
-                            tracing::error!("Load rejected stale slot handle: {error:#}");
-                            return outcome;
-                        }
-                    };
-                    if host.transport.net.is_some() && !applying_multiplayer_transition {
-                        let Some(slot) = slot else {
-                            tracing::error!("Local multiplayer load is missing its selected slot");
-                            return outcome;
-                        };
-                        match begin_multiplayer_snapshot_transition(host, slot, save.into_payload())
-                        {
-                            Ok(true) => return outcome,
-                            Ok(false) => unreachable!("multiplayer transition guard checked net"),
-                            Err(error) => {
-                                tracing::error!("Load rejected: {error}");
-                                return outcome;
-                            }
-                        }
-                    }
-                    let active_mission_id = current_mission_id(engine.campaign(), profiles);
-                    let active_mission_assets = match game.mission_assets() {
-                        Ok(descriptor) => descriptor,
-                        Err(error) => {
-                            tracing::error!("Load rejected: {error}");
-                            return outcome;
-                        }
-                    };
-                    let active_spellforge_package = engine.spellforge_package();
-                    let reload_target = match validated_save_reload_target(
-                        &save,
-                        profiles,
-                        active_mission_id,
-                        active_mission_assets,
-                        active_spellforge_package.as_deref(),
-                    ) {
-                        Ok(target) => target,
-                        Err(error) => {
-                            tracing::error!("Load preflight rejected slot {idx:?}: {error}");
-                            return outcome;
-                        }
-                    };
-                    if let Some(target_mission_id) = reload_target {
-                        tracing::info!(
-                            "Load slot {idx:?}: cross-mission load (header={}, current={}) — \
-                             routing through session LevelLoad",
-                            target_mission_id,
-                            active_mission_id,
-                        );
-                        outcome.transition = Some(PendingLevelLoad {
-                            slot,
-                            target_mission_id,
-                            origin,
-                            save: save.into_payload(),
-                        });
-                        return outcome;
-                    }
-                    let validated_mission_id = save.header.mission_id;
-                    let replay_identity = replay_loaded_identity(&save);
-                    match save.apply_to_with_game(engine, host, game, assets) {
-                        Err(err) => {
-                            tracing::error!("Load failed: {err:#}");
-                        }
-                        _ => {
-                            // Thread the slot type through so the frame loop
-                            // can replay the continue / campaign-map fix-ups.
-                            let (is_continue, is_restart, is_sherwood) = match idx {
-                                Some(idx) => {
-                                    let Some(metadata) = callbacks.save_manager.get(idx) else {
-                                        tracing::error!(
-                                            "Loaded slot metadata disappeared after preflight"
-                                        );
-                                        return outcome;
-                                    };
-                                    (
-                                        metadata.is_continue(),
-                                        metadata.is_restart(),
-                                        metadata.is_sherwood(),
-                                    )
-                                }
-                                // A remote snapshot is deliberately not any of
-                                // this peer's local special slots.
-                                None => (false, false, false),
-                            };
-                            outcome.restore = Some(PostLoadSync { is_continue });
-                            // The frame loop clears the translator's
-                            // key-edge state so half-pressed keys at save
-                            // time don't stick across the load.
-                            outcome.reset_input = true;
-                            // Mirror the load into the Continue slot,
-                            // guarded by IsContinue/IsRestart so we
-                            // don't clobber the slot we just loaded.
-                            if !is_continue
-                                && !is_restart
-                                && let Err(error) =
-                                    callbacks.save_manager.write_continue_save_background(
-                                        host,
-                                        game,
-                                        engine,
-                                        validated_mission_id,
-                                        Some(profiles),
-                                        thumb_ref,
-                                    )
-                            {
-                                tracing::warn!(
-                                    "Continue-mirror after load could not start: {error:#}"
-                                );
-                            }
-                            // Show "Game loaded." banner unless the slot
-                            // is Restart / Sherwood.
-                            if !is_restart && !is_sherwood {
-                                outcome.banner = Some(SaveBannerKind::Loaded);
-                            }
-                            tracing::info!("Load completed from slot {idx:?}");
-                            event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
-                                identity,
-                                is_continue,
-                            });
-                        }
-                    }
-                }
-                None => {
-                    tracing::warn!("Load requested but no matching save slot found");
-                }
-            }
-        }
-        SaveLoadRequest::Restart => {
-            let campaign = engine.campaign();
-            let mid = current_mission_id(campaign, profiles);
-            if let Err(err) = callbacks.save_manager.write_restart_save(
-                host,
-                game,
-                engine,
-                mid,
-                Some(profiles),
-                thumb_ref,
-            ) {
-                tracing::error!("Restart save failed: {err:#}");
-                outcome.banner = Some(SaveBannerKind::SaveFailed);
-            } else {
-                event = match callbacks.save_manager.restart_session_identity() {
-                    Some(identity) => Some(SaveLoadEvent::SaveWritten { identity }),
-                    None => replay_save_written_event(engine, host, game),
-                };
-            }
-        }
-        SaveLoadRequest::LoadRestart => {
-            if host.transport.net.is_some() {
-                match callbacks.save_manager.preflight_restart_save() {
-                    Ok(Some((idx, save))) => {
-                        let slot = match callbacks.save_manager.slot_handle(idx) {
-                            Ok(slot) => slot,
-                            Err(error) => {
-                                tracing::error!(
-                                    "Multiplayer restart rejected stale slot: {error:#}"
-                                );
-                                return outcome;
-                            }
-                        };
-                        if let Err(error) =
-                            begin_multiplayer_snapshot_transition(host, slot, save.into_payload())
-                        {
-                            tracing::error!("Multiplayer restart rejected: {error}");
-                        }
-                    }
-                    Ok(None) => {
-                        tracing::error!("Multiplayer restart rejected: no restart snapshot exists")
-                    }
-                    Err(error) => {
-                        tracing::error!("Multiplayer restart snapshot preflight failed: {error:#}")
-                    }
-                }
-                return outcome;
-            }
-            let restore_result = (|| -> anyhow::Result<_> {
-                let (_idx, save) = callbacks
-                    .save_manager
-                    .preflight_restart_save()?
-                    .ok_or_else(|| anyhow::anyhow!("no restart snapshot exists"))?;
-                let active_mission_id = current_mission_id(engine.campaign(), profiles);
-                let active_spellforge_package = engine.spellforge_package();
-                if let Some(target_mission_id) = validated_save_reload_target(
-                    &save,
-                    profiles,
-                    active_mission_id,
-                    game.mission_assets().map_err(anyhow::Error::msg)?,
-                    active_spellforge_package.as_deref(),
-                )
-                .map_err(anyhow::Error::msg)?
-                {
-                    anyhow::bail!(
-                        "save mission {target_mission_id} does not match active mission {active_mission_id}"
-                    );
-                }
-                let replay_identity = replay_loaded_identity(&save);
-                save.apply_to_with_game(engine, host, game, assets)?;
-                Ok(replay_identity)
-            })();
-            match restore_result {
-                Ok(replay_identity) => {
-                    // Restart = never Continue slot; still sync campaign-map state.
-                    outcome.restore = Some(PostLoadSync { is_continue: false });
-                    tracing::info!("Restart snapshot restored");
-                    event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
-                        identity,
-                        is_continue: false,
-                    });
-                }
-                Err(error) => {
-                    tracing::error!(
-                        "Restart snapshot could not be restored; routing through authoritative LevelRestart: {error:#}"
-                    );
-                    outcome.restart_requested = true;
-                    game.operation.set(GameCode::LevelRestart);
-                }
-            }
-        }
-        SaveLoadRequest::Continue { mission_id } => {
-            if let Err(err) = callbacks.save_manager.write_continue_save(
-                host,
-                game,
-                engine,
-                mission_id,
-                Some(profiles),
-                thumb_ref,
-            ) {
-                tracing::error!("Continue save failed: {err:#}");
-                outcome.banner = Some(SaveBannerKind::SaveFailed);
-            } else {
-                event = replay_save_written_event(engine, host, game);
-            }
-        }
-        SaveLoadRequest::QuickSave { mission_id } => {
-            if host.transport.net.is_some() {
-                let idx = match callbacks
-                    .save_manager
-                    .create_draft("Multiplayer quick diagnostic".to_string(), mission_id)
-                    .and_then(|handle| callbacks.save_manager.resolve_handle(&handle))
-                {
-                    Ok(idx) => idx,
-                    Err(error) => {
-                        tracing::error!("Multiplayer quick diagnostic draft failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                        return outcome;
-                    }
-                };
-                let result = callbacks
-                    .save_manager
-                    .write_multiplayer_diagnostic_from_engine(
-                        host,
-                        game,
-                        idx,
-                        engine,
-                        mission_id,
-                        Some(profiles),
-                        thumb_ref,
-                    )
-                    .and_then(|()| {
-                        callbacks
-                            .save_manager
-                            .save_index()
-                            .map_err(anyhow::Error::msg)
-                    });
-                match result {
-                    Ok(()) => {
-                        outcome.banner = Some(SaveBannerKind::Saved);
-                        tracing::info!(
-                            slot = idx,
-                            mission_id,
-                            "multiplayer quick-save captured as a local diagnostic"
-                        );
-                    }
-                    Err(error) => {
-                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}");
-                        outcome.banner = Some(SaveBannerKind::SaveFailed);
-                    }
-                }
-                return outcome;
-            }
-            match callbacks.save_manager.write_quick_save(
-                host,
-                game,
-                engine,
-                mission_id,
-                Some(profiles),
-                thumb_ref,
-            ) {
-                Err(err) => {
-                    tracing::error!("Quick save failed: {err:#}");
-                    outcome.banner = Some(SaveBannerKind::SaveFailed);
-                }
-                _ => {
-                    tracing::info!("Quick save written (mission={mission_id})");
-                    event = replay_save_written_event(engine, host, game);
-                    // QuickSave is neither Continue nor Restart, so the
-                    // Continue-slot mirror runs.
-                    if let Err(err) = callbacks.save_manager.write_continue_save(
-                        host,
-                        game,
-                        engine,
-                        mission_id,
-                        Some(profiles),
-                        thumb_ref,
-                    ) {
-                        tracing::warn!("Continue-mirror after quick-save failed: {err:#}");
-                        callbacks
-                            .autosave_notices
-                            .enqueue_save_failed(format!("Continue mirror: {err:#}"));
-                    }
-                    outcome.banner = Some(SaveBannerKind::Saved);
-                }
-            }
-        }
-        SaveLoadRequest::QuickLoad { use_backup } => {
-            // Shift+F12 loads `ExQuickSave` (the backup).
-            // Plain F12 loads `QuickSave`.
-            let slot_name = if use_backup {
-                special_slots::EX_QUICK
-            } else {
-                special_slots::QUICK
-            };
-            let idx = callbacks.save_manager.find_by_filename(slot_name);
-            match idx {
-                Some(i) if callbacks.save_manager.slot_file_exists(i) => {
-                    match callbacks.save_manager.preflight_load(Some(i)) {
-                        Err(error) => {
-                            tracing::error!("Quick load ({slot_name}) preflight failed: {error:#}");
-                        }
-                        Ok(None) => {
-                            tracing::error!(
-                                "Quick load ({slot_name}) lost its selected slot during preflight"
-                            );
-                        }
-                        Ok(Some((decoded_idx, save))) => {
-                            let slot = match callbacks.save_manager.slot_handle(decoded_idx) {
-                                Ok(slot) => slot,
-                                Err(error) => {
-                                    tracing::error!(
-                                        "Quick load ({slot_name}) rejected stale slot: {error:#}"
-                                    );
-                                    return outcome;
-                                }
-                            };
-                            if host.transport.net.is_some() {
-                                match begin_multiplayer_snapshot_transition(
-                                    host,
-                                    slot,
-                                    save.into_payload(),
-                                ) {
-                                    Ok(true) => return outcome,
-                                    Ok(false) => {
-                                        unreachable!("multiplayer transition guard checked net")
-                                    }
-                                    Err(error) => {
-                                        tracing::error!(
-                                            "Quick load ({slot_name}) rejected: {error}"
-                                        );
-                                        return outcome;
-                                    }
-                                }
-                            }
-                            let active_mission_id = current_mission_id(engine.campaign(), profiles);
-                            let active_mission_assets = match game.mission_assets() {
-                                Ok(descriptor) => descriptor,
-                                Err(error) => {
-                                    tracing::error!("Quick load ({slot_name}) rejected: {error}");
-                                    return outcome;
-                                }
-                            };
-                            let active_spellforge_package = engine.spellforge_package();
-                            let reload_target = match validated_save_reload_target(
-                                &save,
-                                profiles,
-                                active_mission_id,
-                                active_mission_assets,
-                                active_spellforge_package.as_deref(),
-                            ) {
-                                Ok(target) => target,
-                                Err(error) => {
-                                    tracing::error!("Quick load ({slot_name}) rejected: {error}");
-                                    return outcome;
-                                }
-                            };
-                            if let Some(target_mission_id) = reload_target {
-                                tracing::info!(
-                                    "Quick load ({slot_name}): routing mission {target_mission_id} through session LevelLoad"
-                                );
-                                outcome.transition = Some(PendingLevelLoad {
-                                    slot: Some(slot),
-                                    target_mission_id,
-                                    origin,
-                                    save: save.into_payload(),
-                                });
-                                return outcome;
-                            }
-                            let validated_mission_id = save.header.mission_id;
-                            let replay_identity = replay_loaded_identity(&save);
-                            if let Err(error) = save.apply_to_with_game(engine, host, game, assets)
-                            {
-                                tracing::error!("Quick load ({slot_name}) failed: {error:#}");
-                                return outcome;
-                            }
-                            // QuickSave is not the Continue slot; just re-sync
-                            // campaign-map state.
-                            outcome.restore = Some(PostLoadSync { is_continue: false });
-                            outcome.reset_input = true;
-                            // Mirror into the Continue slot — QuickSave is
-                            // neither Continue nor Restart so it always
-                            // mirrors.
-                            if let Err(error) =
-                                callbacks.save_manager.write_continue_save_background(
-                                    host,
-                                    game,
-                                    engine,
-                                    validated_mission_id,
-                                    Some(profiles),
-                                    thumb_ref,
-                                )
-                            {
-                                tracing::warn!(
-                                    "Continue-mirror after quick-load could not start: {error:#}"
-                                );
-                            }
-                            outcome.banner = Some(SaveBannerKind::Loaded);
-                            tracing::info!("Quick save loaded from {slot_name}");
-                            event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
-                                identity,
-                                is_continue: false,
-                            });
-                        }
-                    }
-                }
-                _ => tracing::warn!("Quick load requested but no {slot_name} save on disk"),
-            }
-        }
-        SaveLoadRequest::Sherwood { mission_id } => {
-            match callbacks.save_manager.write_sherwood_save(
-                host,
-                game,
-                engine,
-                mission_id,
-                Some(profiles),
-                thumb_ref,
-            ) {
-                Err(err) => {
-                    tracing::error!("Sherwood checkpoint save failed: {err:#}");
-                    outcome.banner = Some(SaveBannerKind::SaveFailed);
-                }
-                _ => {
-                    tracing::info!("Sherwood checkpoint saved (mission={mission_id})");
-                    event = replay_save_written_event(engine, host, game);
-                }
-            }
-        }
-    }
-    OperationOutcome {
-        processed: true,
-        event,
-        ..outcome
-    }
+    executor::execute(
+        request,
+        origin,
+        &mut callbacks.save_manager,
+        &mut callbacks.autosave_notices,
+        host,
+        game,
+        engine,
+        assets,
+        profiles,
+        thumbnail.as_ref(),
+    )
 }
 
 // ─── Resource helpers ───────────────────────────────────────────────
@@ -1645,7 +1029,7 @@ mod operation_outcome_tests {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn diagnostic_callback_fixture(
+    pub(super) fn diagnostic_callback_fixture(
         directory: &std::path::Path,
     ) -> (
         RustCallbacks,
@@ -1701,6 +1085,76 @@ mod operation_outcome_tests {
         )
         .unwrap();
         (callbacks, host, engine, assets, game, profiles)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn retirement_drains_autosave_after_manual_failure_and_barrier_consumes_request_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
+            diagnostic_callback_fixture(directory.path());
+        host.transport.net = None;
+        let reason = callbacks
+            .plan_autosave(true, true, 17, 0, false, false)
+            .unwrap();
+        callbacks
+            .enqueue_autosave(&host, &game, &engine, 17, &profiles, None, reason)
+            .unwrap();
+        let root = std::path::Path::new(callbacks.save_manager.save_directory()).to_path_buf();
+        std::fs::create_dir_all(root.join("Continue.json")).unwrap();
+        callbacks
+            .save_manager
+            .write_continue_save_background(&mut host, &game, &engine, 17, Some(&profiles), None)
+            .unwrap();
+
+        let error = callbacks.finish_save_operations().unwrap_err();
+        assert!(!error.is_empty());
+        // Autosave publication is independently durable even if integration
+        // into the failed manual owner reports another retirement error.
+        let manifest: crate::autosave::AutosaveManifest =
+            serde_json::from_slice(&std::fs::read(root.join("autosaves.json")).unwrap()).unwrap();
+        assert_eq!(manifest.saves.len(), 1);
+        assert!(
+            crate::autosave::payload_exists(root.to_str().unwrap(), &manifest.saves[0].filename)
+                .unwrap()
+        );
+        assert!(
+            callbacks
+                .autosave
+                .shutdown_and_poll(&mut callbacks.save_manager)
+                .is_empty()
+        );
+
+        let frame = engine.frame_counter();
+        callbacks.queue_operation(SaveLoadRequest::LoadRestart);
+        let rejected = perform_pending_save_load(
+            &mut host,
+            &mut game,
+            &mut callbacks,
+            &mut engine,
+            &assets,
+            &profiles,
+            None,
+        );
+        assert!(rejected.processed);
+        assert_eq!(rejected.banner, Some(SaveBannerKind::SaveFailed));
+        assert!(
+            rejected.event.is_none() && rejected.restore.is_none() && rejected.transition.is_none()
+        );
+        assert!(!rejected.restart_requested && !rejected.reset_input);
+        assert_eq!(engine.frame_counter(), frame);
+        assert!(callbacks.pending_request().is_none());
+        let idle = perform_pending_save_load(
+            &mut host,
+            &mut game,
+            &mut callbacks,
+            &mut engine,
+            &assets,
+            &profiles,
+            None,
+        );
+        assert!(!idle.processed);
+        assert!(idle.banner.is_none());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
