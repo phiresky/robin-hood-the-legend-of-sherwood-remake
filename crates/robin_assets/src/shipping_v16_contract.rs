@@ -55,8 +55,10 @@ struct FrozenShippingV16 {
 
 #[test]
 fn v16_wire_and_json_match_frozen_descriptor_with_runtime_state() {
-    let mut datadir = ShippingDatadir::default();
-    datadir.profiles = Some(ProfileManager::default());
+    let mut datadir = ShippingDatadir::from_payload(ShippingDatadirPayload {
+        profiles: Some(ProfileManager::default()),
+        ..Default::default()
+    });
     datadir
         .res_files
         .insert("fixture.res".into(), ResourceManager::new());

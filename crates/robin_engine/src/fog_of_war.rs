@@ -330,13 +330,13 @@ impl PersistedFogOfWarState {
             scan_cache: _,
         } = value;
         Self {
-            level_size: value.level_size.clone(),
+            level_size: value.level_size,
             explored: value.explored.clone(),
             visible: value.visible.clone(),
             explored_projection: value.explored_projection.clone(),
             visible_projection: value.visible_projection.clone(),
             intelligence: value.intelligence.clone(),
-            generation: value.generation.clone(),
+            generation: value.generation,
         }
     }
 

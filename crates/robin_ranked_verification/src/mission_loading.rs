@@ -25,87 +25,6 @@ use robin_run_protocol::SpeechTimingAuthorityV1;
 
 use crate::ranked_verifier::RankedVerifierLoadError;
 
-#[cfg(test)]
-mod resource_tests {
-    use super::*;
-
-    #[test]
-    fn concurrent_ranked_readers_and_sample_loaders_keep_independent_roots() {
-        use robin_engine::sbfile::SBFILE_NO_ERROR;
-        use robin_util::asset_fs::AssetVfs;
-
-        let before = std::env::current_dir().unwrap();
-        let roots = [
-            Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf(),
-            Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("robin_engine"),
-        ];
-        let expected = [
-            include_bytes!("lib.rs").as_slice(),
-            include_bytes!("../../robin_engine/src/lib.rs").as_slice(),
-        ];
-        std::thread::scope(|scope| {
-            for (root, expected) in roots.iter().zip(expected) {
-                scope.spawn(move || {
-                    let files = SbFileSystem::new(Arc::new(AssetVfs::new()));
-                    assert_eq!(
-                        files.lock_ranked_verifier_primary_path(root),
-                        SBFILE_NO_ERROR
-                    );
-                    for _ in 0..20 {
-                        let (bytes, _, _) = read_sample(&files, "src", "lib.rs").unwrap();
-                        assert_eq!(bytes, expected);
-                        assert!(read_sample(&files, "src", "../../Cargo.toml").is_none());
-                    }
-                });
-            }
-        });
-        assert_eq!(std::env::current_dir().unwrap(), before);
-    }
-
-    #[test]
-    fn captured_ranked_resources_preserve_confined_reads_and_reject_late_ambient_assets() {
-        use robin_engine::sbfile::{SBFILE_NO_ERROR, SbFileSystem};
-        use robin_engine::sprite_script::{FrameKind, MissionResourceEnvironment, SpriteScriptor};
-        use robin_util::asset_fs::{AssetVfs, Bundle};
-
-        let vfs = Arc::new(AssetVfs::new());
-        let files = SbFileSystem::new(vfs.clone());
-        assert_eq!(
-            files.lock_ranked_verifier_primary_path(Path::new(env!("CARGO_MANIFEST_DIR"))),
-            SBFILE_NO_ERROR,
-        );
-        let prepared = files.snapshot();
-        let resources = Arc::new(MissionResourceEnvironment::from_files(&prepared));
-        vfs.mount_bundle_first(Arc::new(Bundle::from([(
-            "cargo.toml".into(),
-            b"unapproved ambient replacement".as_slice().into(),
-        )])))
-        .unwrap();
-        assert_eq!(
-            resources.read_required_asset("Cargo.toml").unwrap(),
-            include_bytes!("../Cargo.toml").as_slice(),
-        );
-        assert!(
-            resources
-                .read_required_asset("../robin_engine/Cargo.toml")
-                .is_err()
-        );
-        let scriptor = SpriteScriptor::with_resources(resources);
-        let error = scriptor
-            .resolve_rhs_path(
-                FrameKind::Animation,
-                "Data/Animations",
-                "deliberately-absent",
-                None,
-            )
-            .unwrap_err();
-        assert!(
-            !error.contains("unbound"),
-            "bound lookup should report absent RHS: {error}"
-        );
-    }
-}
-
 pub(crate) struct RawMissionInputs {
     pub(crate) assets: LevelAssets,
     pub(crate) loaded: robin_engine::level_data::LoadedLevel,
@@ -859,5 +778,86 @@ fn initialize_sprite_variants_for_ambiance(
             frame_holder.set_global_shadow(40);
             frame_holder.set_global_blip_shadow(60);
         }
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_ranked_readers_and_sample_loaders_keep_independent_roots() {
+        use robin_engine::sbfile::SBFILE_NO_ERROR;
+        use robin_util::asset_fs::AssetVfs;
+
+        let before = std::env::current_dir().unwrap();
+        let roots = [
+            Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf(),
+            Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("robin_engine"),
+        ];
+        let expected = [
+            include_bytes!("lib.rs").as_slice(),
+            include_bytes!("../../robin_engine/src/lib.rs").as_slice(),
+        ];
+        std::thread::scope(|scope| {
+            for (root, expected) in roots.iter().zip(expected) {
+                scope.spawn(move || {
+                    let files = SbFileSystem::new(Arc::new(AssetVfs::new()));
+                    assert_eq!(
+                        files.lock_ranked_verifier_primary_path(root),
+                        SBFILE_NO_ERROR
+                    );
+                    for _ in 0..20 {
+                        let (bytes, _, _) = read_sample(&files, "src", "lib.rs").unwrap();
+                        assert_eq!(bytes, expected);
+                        assert!(read_sample(&files, "src", "../../Cargo.toml").is_none());
+                    }
+                });
+            }
+        });
+        assert_eq!(std::env::current_dir().unwrap(), before);
+    }
+
+    #[test]
+    fn captured_ranked_resources_preserve_confined_reads_and_reject_late_ambient_assets() {
+        use robin_engine::sbfile::{SBFILE_NO_ERROR, SbFileSystem};
+        use robin_engine::sprite_script::{FrameKind, MissionResourceEnvironment, SpriteScriptor};
+        use robin_util::asset_fs::{AssetVfs, Bundle};
+
+        let vfs = Arc::new(AssetVfs::new());
+        let files = SbFileSystem::new(vfs.clone());
+        assert_eq!(
+            files.lock_ranked_verifier_primary_path(Path::new(env!("CARGO_MANIFEST_DIR"))),
+            SBFILE_NO_ERROR,
+        );
+        let prepared = files.snapshot();
+        let resources = Arc::new(MissionResourceEnvironment::from_files(&prepared));
+        vfs.mount_bundle_first(Arc::new(Bundle::from([(
+            "cargo.toml".into(),
+            b"unapproved ambient replacement".as_slice().into(),
+        )])))
+        .unwrap();
+        assert_eq!(
+            resources.read_required_asset("Cargo.toml").unwrap(),
+            include_bytes!("../Cargo.toml").as_slice(),
+        );
+        assert!(
+            resources
+                .read_required_asset("../robin_engine/Cargo.toml")
+                .is_err()
+        );
+        let scriptor = SpriteScriptor::with_resources(resources);
+        let error = scriptor
+            .resolve_rhs_path(
+                FrameKind::Animation,
+                "Data/Animations",
+                "deliberately-absent",
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            !error.contains("unbound"),
+            "bound lookup should report absent RHS: {error}"
+        );
     }
 }

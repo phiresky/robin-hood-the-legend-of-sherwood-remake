@@ -123,7 +123,7 @@ pub(crate) fn build_vector_fog_mask_rgba(fog: &robin_engine::fog_of_war::FogOfWa
         0,
     );
     let mut rgba = vec![0; alpha.len() * 4];
-    for (pixel, alpha) in rgba.chunks_exact_mut(4).zip(alpha) {
+    for (pixel, alpha) in rgba.as_chunks_mut::<4>().0.iter_mut().zip(alpha) {
         pixel[3] = alpha;
     }
     rgba
@@ -183,7 +183,7 @@ fn rasterize_fog_region(
                 }
             }
             crossings.sort_by(f32::total_cmp);
-            for span in crossings.chunks_exact(2) {
+            for span in crossings.as_chunks::<2>().0 {
                 let first = (span[0] * scale_x - 0.5).ceil().max(0.0) as u32;
                 let last = (span[1] * scale_x - 0.5)
                     .floor()
@@ -244,56 +244,6 @@ pub(crate) fn zoomed_sprite_rect(x: i32, y: i32, width: u16, height: u16, zoom: 
         (width as f32 * zoom).round().max(1.0) as u32,
         (height as f32 * zoom).round().max(1.0) as u32,
     )
-}
-
-#[cfg(test)]
-mod fog_render_tests {
-    use super::*;
-    use robin_engine::coordinates::MapSize;
-    use robin_engine::element::{ElementData, ElementFx, FxData};
-
-    #[test]
-    fn sprite_destinations_scale_with_the_map() {
-        for (zoom, width, height) in [(0.5, 20, 40), (1.0, 40, 80), (2.0, 80, 160)] {
-            let rect = zoomed_sprite_rect(120, 90, 40, 80, zoom);
-            assert_eq!((rect.x, rect.y, rect.w, rect.h), (120, 90, width, height));
-        }
-    }
-
-    #[test]
-    fn cache_key_tracks_polygon_generation() {
-        let mut fog = robin_engine::fog_of_war::FogOfWarState::default();
-        fog.initialize(MapSize::new(96.0, 96.0));
-        let before = fog_mask_cache_key(&fog);
-        fog.initialize(MapSize::new(96.0, 96.0));
-        assert_ne!(before, fog_mask_cache_key(&fog));
-    }
-
-    #[test]
-    fn patch_fx_defers_visibility_to_the_pixel_fog_composite() {
-        let ordinary = Entity::Fx(ElementFx {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::Fx;
-                initial_element
-            },
-            fx: FxData::default(),
-        });
-        assert!(!uses_pixel_fog_visibility(&ordinary));
-
-        let patch = Entity::Fx(ElementFx {
-            element: {
-                let mut initial_element = ElementData::default();
-                initial_element.kind = ElementKind::Fx;
-                initial_element
-            },
-            fx: FxData {
-                patch_index: robin_engine::patch::PatchIndex::new(0),
-                ..FxData::default()
-            },
-        });
-        assert!(uses_pixel_fog_visibility(&patch));
-    }
 }
 
 // ─── Door / jump zone alpha overlays ──────────────────────────────────
@@ -2203,4 +2153,54 @@ fn render_text_with_shadow(renderer: &mut Renderer, fonts: &HudFonts, text: &str
             layout::render_text_screen_font(renderer, f, t, fx, fy);
         },
     );
+}
+
+#[cfg(test)]
+mod fog_render_tests {
+    use super::*;
+    use robin_engine::coordinates::MapSize;
+    use robin_engine::element::{ElementData, ElementFx, FxData};
+
+    #[test]
+    fn sprite_destinations_scale_with_the_map() {
+        for (zoom, width, height) in [(0.5, 20, 40), (1.0, 40, 80), (2.0, 80, 160)] {
+            let rect = zoomed_sprite_rect(120, 90, 40, 80, zoom);
+            assert_eq!((rect.x, rect.y, rect.w, rect.h), (120, 90, width, height));
+        }
+    }
+
+    #[test]
+    fn cache_key_tracks_polygon_generation() {
+        let mut fog = robin_engine::fog_of_war::FogOfWarState::default();
+        fog.initialize(MapSize::new(96.0, 96.0));
+        let before = fog_mask_cache_key(&fog);
+        fog.initialize(MapSize::new(96.0, 96.0));
+        assert_ne!(before, fog_mask_cache_key(&fog));
+    }
+
+    #[test]
+    fn patch_fx_defers_visibility_to_the_pixel_fog_composite() {
+        let ordinary = Entity::Fx(ElementFx {
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
+            },
+            fx: FxData::default(),
+        });
+        assert!(!uses_pixel_fog_visibility(&ordinary));
+
+        let patch = Entity::Fx(ElementFx {
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
+            },
+            fx: FxData {
+                patch_index: robin_engine::patch::PatchIndex::new(0),
+                ..FxData::default()
+            },
+        });
+        assert!(uses_pixel_fog_visibility(&patch));
+    }
 }

@@ -1147,12 +1147,12 @@ pub(super) fn cleanup_journal_for_verified_tree(
 ) -> anyhow::Result<(BackupCleanupJournalV1, Vec<u8>, String, String, String)> {
     let (cleanup_name, journal_name, partial_journal_name) = cleanup_names(backup_id)?;
     let manifest_bytes = read_cap_regular_bounded(
-        &directory,
+        directory,
         Path::new("backup-manifest.json"),
         u64::try_from(robin_highscores::backup::MAX_BACKUP_MANIFEST_BYTES)?,
     )?;
     let envelope_bytes = read_cap_regular_bounded_with_mode(
-        &directory,
+        directory,
         Path::new("backup-verification-envelope.json"),
         u64::try_from(robin_highscores::backup::MAX_BACKUP_STATUS_BYTES)?,
         0o400,
@@ -1316,7 +1316,7 @@ pub(super) async fn retain_complete_backups(
             "aggregate retained-backup topology exceeds its verification bound"
         );
         let preserved =
-            load_preserved_release_authority(backup_root, &(*verified.release_identity())).await?;
+            load_preserved_release_authority(backup_root, verified.release_identity()).await?;
         anyhow::ensure!(
             preserved == (*verified.release_identity()),
             "retained backup differs from its independent preserved release authority"

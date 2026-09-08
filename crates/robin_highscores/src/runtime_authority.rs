@@ -581,7 +581,7 @@ fn load_candidate_server_config(
 ) -> anyhow::Result<ServerConfig> {
     let bytes =
         authenticated_candidate_file(tree, "config/highscores-server.toml", MAX_CONFIG_BYTES)?;
-    let mut config: ServerConfig = toml::from_str(std::str::from_utf8(&bytes)?)?;
+    let mut config: ServerConfig = toml::from_str(std::str::from_utf8(bytes)?)?;
     config.manifests = std::sync::Arc::new(ManifestRegistry::load_from_candidate(
         &tree.authenticated_semantic_files,
     )?);
@@ -630,7 +630,7 @@ fn load_candidate_worker_config(
 ) -> anyhow::Result<ProbeWorkerConfigV2> {
     let bytes =
         authenticated_candidate_file(tree, "config/highscores-worker.toml", MAX_CONFIG_BYTES)?;
-    let worker: ProbeWorkerConfigV2 = toml::from_str(std::str::from_utf8(&bytes)?)?;
+    let worker: ProbeWorkerConfigV2 = toml::from_str(std::str::from_utf8(bytes)?)?;
     let release = Path::new(RELEASES_ROOT).join(source_commit);
     let minimum_lease = worker
         .verifier_launcher
@@ -795,10 +795,10 @@ fn load_candidate_catalog(
     let bytes =
         authenticated_candidate_file(tree, &relative, MAX_VERIFIER_JOB_CONFIG_BYTES_V1 as u64)?;
     anyhow::ensure!(
-        hex::encode(Sha256::digest(&bytes)) == worker.verifier_job_config_catalog_sha256,
+        hex::encode(Sha256::digest(bytes)) == worker.verifier_job_config_catalog_sha256,
         "candidate worker catalog differs from its configured digest"
     );
-    let catalog: VerifierJobConfigCatalogV1 = serde_json::from_slice(&bytes)?;
+    let catalog: VerifierJobConfigCatalogV1 = serde_json::from_slice(bytes)?;
     catalog.validate()?;
     anyhow::ensure!(
         catalog.canonical_bytes()? == bytes,
@@ -857,7 +857,7 @@ fn validate_worker_authority(
         "private/raw-root-declarations-v2.json",
         MAX_CONFIG_BYTES,
     )?;
-    let declarations: RawRootDeclarationsV2 = serde_json::from_slice(&declarations_bytes)?;
+    let declarations: RawRootDeclarationsV2 = serde_json::from_slice(declarations_bytes)?;
     anyhow::ensure!(
         canonical_json_bytes(&declarations)? == declarations_bytes
             && declarations
@@ -913,10 +913,10 @@ fn validate_worker_authority(
         let relative = format!("private/source-tree-manifests-v2/{name}");
         let bytes = authenticated_candidate_file(tree, &relative, 64 * 1024 * 1024)?;
         anyhow::ensure!(
-            hex::encode(Sha256::digest(&bytes)) == digest,
+            hex::encode(Sha256::digest(bytes)) == digest,
             "raw source manifest differs from its digest filename"
         );
-        let manifest: OfficialSourceTreeManifestV2 = serde_json::from_slice(&bytes)?;
+        let manifest: OfficialSourceTreeManifestV2 = serde_json::from_slice(bytes)?;
         manifest.validate()?;
         anyhow::ensure!(
             manifest.canonical_bytes()? == bytes && manifest.edition == edition,
@@ -1347,7 +1347,7 @@ fn scan_tree(
                 && scanned.files.keys().eq(expected.files.keys()),
             "authority tree differs from its typed closure"
         );
-        return Ok(scanned);
+        Ok(scanned)
     }
     #[cfg(not(unix))]
     anyhow::bail!("authority tree scanning requires Unix metadata")
@@ -1631,7 +1631,7 @@ fn open_candidate_file(root: &Dir, relative: &Path) -> anyhow::Result<File> {
             file.metadata()?.is_file(),
             "candidate path is not a regular file"
         );
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("candidate authority reads require Linux openat2")
@@ -1654,7 +1654,7 @@ fn open_candidate_directory(root: &Dir, relative: &Path) -> anyhow::Result<Dir> 
             file.metadata()?.is_dir(),
             "candidate path is not a directory"
         );
-        return Ok(Dir::from_std_file(file));
+        Ok(Dir::from_std_file(file))
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("candidate authority reads require Linux openat2")
@@ -1794,7 +1794,7 @@ fn read_private_secret(path: &Path, expected_length: u64) -> anyhow::Result<Vec<
             bytes.len() as u64 == expected_length,
             "secret changed length while reading"
         );
-        return Ok(bytes);
+        Ok(bytes)
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("runtime secret validation requires Linux openat2")
@@ -1842,7 +1842,7 @@ fn open_ambient_directory(path: &Path) -> anyhow::Result<File> {
             Mode::empty(),
             ResolveFlags::NO_SYMLINKS | ResolveFlags::NO_MAGICLINKS,
         )?;
-        return Ok(File::from(fd));
+        Ok(File::from(fd))
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("raw authority validation requires Linux openat2")
@@ -1919,7 +1919,7 @@ fn path_to_manifest(path: &Path) -> anyhow::Result<String> {
 
 fn validate_authority_relative_path(path: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
-        path.as_bytes().len() <= MAX_AUTHORITY_RELATIVE_PATH_BYTES,
+        path.len() <= MAX_AUTHORITY_RELATIVE_PATH_BYTES,
         "authority tree path exceeds its byte limit"
     );
     let components = Path::new(path).components().collect::<Vec<_>>();

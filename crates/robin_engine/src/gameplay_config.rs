@@ -172,9 +172,11 @@ impl Default for ItemPreviewConfig {
     robin_state_hash_derive::StateHash,
     bitcode::Encode,
     bitcode::Decode,
+    Default,
 )]
 pub enum CampaignPresentationMode {
     ClassicMap = 0,
+    #[default]
     ProgressTree = 1,
     SherwoodMuseum = 2,
 }
@@ -194,12 +196,6 @@ impl CampaignPresentationMode {
             Self::ProgressTree => "Progress tree",
             Self::SherwoodMuseum => "Sherwood museum",
         }
-    }
-}
-
-impl Default for CampaignPresentationMode {
-    fn default() -> Self {
-        Self::ProgressTree
     }
 }
 

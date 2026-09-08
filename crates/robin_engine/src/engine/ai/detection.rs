@@ -5759,7 +5759,7 @@ mod tests {
             npc: crate::element::NpcData::default(),
             soldier: crate::element::SoldierData::default(),
         });
-        let resolved_map = crate::coordinates::MapPoint::new(1898.5637, 790.8220);
+        let resolved_map = crate::coordinates::MapPoint::new(1898.5637, 790.822);
         entity.position_iface_mut().set_map_position(resolved_map);
         let position = entity.position_iface_mut();
         let mut state = position.v48_serialized_state();

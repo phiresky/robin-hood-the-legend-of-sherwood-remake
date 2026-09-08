@@ -1358,7 +1358,7 @@ mod tests {
             let mut unique_rgb = std::collections::BTreeSet::new();
             for row in 0..16usize {
                 let start = row * padded_bytes_per_row as usize;
-                for pixel in mapped[start..start + 64].chunks_exact(4) {
+                for pixel in mapped[start..start + 64].as_chunks::<4>().0 {
                     unique_rgb.insert([pixel[0], pixel[1], pixel[2]]);
                     assert_ne!(pixel[3], 0, "profile output unexpectedly transparent");
                 }

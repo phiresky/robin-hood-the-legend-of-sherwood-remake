@@ -2992,8 +2992,8 @@ impl Database {
                         .to_owned(),
                 ));
             }
-            if ordinal == 0 {
-                if campaign_controller_public_key
+            if ordinal == 0
+                && campaign_controller_public_key
                     .replace(
                         signed
                             .submission
@@ -3003,11 +3003,10 @@ impl Database {
                             .host_public_key,
                     )
                     .is_some()
-                {
-                    return Err(DbError::ResultInvariant(
-                        "campaign chain contains multiple ordinal-zero controllers".to_owned(),
-                    ));
-                }
+            {
+                return Err(DbError::ResultInvariant(
+                    "campaign chain contains multiple ordinal-zero controllers".to_owned(),
+                ));
             }
             let build_manifest_sha256 = stored_result.build_manifest_sha256;
             if verified.starting_campaign != starting_campaign
@@ -3924,8 +3923,10 @@ mod tests {
 
     async fn test_database() -> (tempfile::TempDir, Database) {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         (directory, database)
     }
@@ -4544,8 +4545,10 @@ mod tests {
     #[tokio::test]
     async fn serving_connection_refuses_to_create_or_migrate_schema() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            ..Default::default()
+        };
         assert!(Database::connect(&config).await.is_err());
         assert!(!config.database_path.exists());
         drop(Database::migrate(&config).await.unwrap());
@@ -4589,8 +4592,10 @@ mod tests {
     #[tokio::test]
     async fn migration_refuses_a_tampered_canonical_schema_checksum() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("tampered.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("tampered.sqlite3"),
+            ..Default::default()
+        };
         drop(Database::migrate(&config).await.unwrap());
 
         let options = SqliteConnectOptions::new().filename(&config.database_path);
@@ -4827,10 +4832,12 @@ mod tests {
     #[tokio::test]
     async fn maintenance_writer_class_limits_match_the_capacity_model() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.max_concurrent_requests = 2;
-        config.max_concurrent_uploads = 2;
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            max_concurrent_requests: 2,
+            max_concurrent_uploads: 2,
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
 
         let mut leases = Vec::new();
@@ -5120,8 +5127,10 @@ mod tests {
         std::fs::write(&target, []).unwrap();
         let link = directory.path().join("database.sqlite3");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = link;
+        let config = ServerConfig {
+            database_path: link,
+            ..Default::default()
+        };
         let error = Database::connect(&config).await.err().unwrap();
         assert!(matches!(error, DbError::Corrupt(_) | DbError::Sql(_)));
     }
@@ -5134,8 +5143,10 @@ mod tests {
         std::fs::create_dir(&real).unwrap();
         let link = directory.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = link.join("highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: link.join("highscores.sqlite3"),
+            ..Default::default()
+        };
         assert!(Database::connect(&config).await.is_err());
     }
 
@@ -5144,8 +5155,10 @@ mod tests {
     async fn pinned_database_and_wal_survive_ancestor_swap_and_reopen() {
         let directory = tempfile::tempdir().unwrap();
         let live = directory.path().join("live");
-        let mut config = ServerConfig::default();
-        config.database_path = live.join("data/highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: live.join("data/highscores.sqlite3"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         insert_acceptance_sequence(&database, 101).await;
 
@@ -5203,8 +5216,10 @@ mod tests {
     #[tokio::test]
     async fn pinned_database_and_wal_survive_leaf_replacement_and_reopen() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("data/highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("data/highscores.sqlite3"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         insert_acceptance_sequence(&database, 201).await;
         let pinned_path = config.database_path.with_file_name("pinned.sqlite3");
@@ -5332,9 +5347,11 @@ mod tests {
     #[tokio::test]
     async fn purpose_quotas_reserve_submission_offer_capacity() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.max_pending_submissions = 2;
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            max_pending_submissions: 2,
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         for key in [[1_u8; 32], [2_u8; 32]] {
             database
@@ -5975,8 +5992,10 @@ mod tests {
     #[tokio::test]
     async fn concurrent_cross_instance_reservation_has_one_ingestion_lease() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            ..Default::default()
+        };
         let left_db = Database::migrate(&config).await.unwrap();
         let right_db = Database::connect(&config).await.unwrap();
         let submission = submission_fixture(&left_db).await;

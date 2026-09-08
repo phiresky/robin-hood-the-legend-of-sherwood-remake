@@ -975,7 +975,7 @@ fn decode_complete_ranked_rules_config_v1(
         .validate()
         .context("validate official SimConfig")?;
     let canonical_round_trip: CanonicalValue = serde_json::from_value(
-        serde_json::to_value(&sim_config).context("encode engine SimConfig")?,
+        serde_json::to_value(sim_config).context("encode engine SimConfig")?,
     )
     .context("canonicalize engine SimConfig")?;
     ensure!(

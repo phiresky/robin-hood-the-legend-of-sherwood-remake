@@ -636,7 +636,7 @@ where
             backup_root,
             &complete,
             &identifier,
-            &(*verified.tree()),
+            verified.tree(),
             &backup_authority_key,
         )?;
         return Err(error.context("backup authority changed before status publication"));
@@ -648,7 +648,7 @@ where
                 backup_root,
                 &complete,
                 &identifier,
-                &(*verified.tree()),
+                verified.tree(),
                 &backup_authority_key,
             )
             .with_context(|| {
@@ -712,7 +712,7 @@ where
     match (result, release) {
         (Ok(value), Ok(true)) => Ok(value),
         (Ok(_), Ok(false)) => anyhow::bail!("backup writer gate disappeared before release"),
-        (Ok(_), Err(error)) => Err(error.into()),
+        (Ok(_), Err(error)) => Err(error),
         (Err(operation), Ok(true)) => Err(operation),
         (Err(operation), Ok(false)) => {
             Err(operation.context("backup failed and its writer gate disappeared before release"))
@@ -841,7 +841,7 @@ async fn acquire_backup_write_authority(
         Ok(operation) => operation,
         Err(error) => {
             let original = anyhow::Error::from(error);
-            return match close_pre_exclusive_database_pool(&database, None).await {
+            return match close_pre_exclusive_database_pool(database, None).await {
                 Ok(_) => Err(original),
                 Err(cleanup) => Err(original.context(format!(
                     "closing the pre-exclusive database pool also failed: {cleanup:#}"
@@ -857,7 +857,7 @@ async fn acquire_backup_write_authority(
         (Ok(token), Ok(())) => token,
         (Ok(token), Err(error)) => {
             let original = anyhow::Error::from(error);
-            return match close_pre_exclusive_database_pool(&database, Some(&token)).await {
+            return match close_pre_exclusive_database_pool(database, Some(&token)).await {
                 Ok(Some(true)) => Err(original),
                 Ok(Some(false)) => Err(original.context(
                     "gate publication succeeded but its exact token disappeared during pre-exclusive cleanup",
@@ -872,7 +872,7 @@ async fn acquire_backup_write_authority(
         }
         (Err(error), Ok(())) => {
             let original = anyhow::Error::from(error);
-            return match close_pre_exclusive_database_pool(&database, None).await {
+            return match close_pre_exclusive_database_pool(database, None).await {
                 Ok(_) => Err(original),
                 Err(cleanup) => Err(original.context(format!(
                     "closing the pre-exclusive database pool also failed: {cleanup:#}"
@@ -882,7 +882,7 @@ async fn acquire_backup_write_authority(
         (Err(operation), Err(finish)) => {
             let original = anyhow::Error::from(operation)
                 .context(format!("database fence drain also failed: {finish}"));
-            return match close_pre_exclusive_database_pool(&database, None).await {
+            return match close_pre_exclusive_database_pool(database, None).await {
                 Ok(_) => Err(original),
                 Err(cleanup) => Err(original.context(format!(
                     "closing the pre-exclusive database pool also failed: {cleanup:#}"
@@ -890,13 +890,13 @@ async fn acquire_backup_write_authority(
             };
         }
     };
-    let exclusive_fence = match acquire_exclusive_backup_database_fence(&database, &backup_lock)
+    let exclusive_fence = match acquire_exclusive_backup_database_fence(database, &backup_lock)
         .await
     {
         Ok(fence) => fence,
         Err(error) => {
             return match close_pre_exclusive_database_pool(
-                    &database,
+                    database,
                     Some(&backup_lock),
                 )
                 .await
@@ -1342,7 +1342,7 @@ async fn backup_test_owned(
     match (result, release) {
         (Ok(value), Ok(true)) => Ok(value),
         (Ok(_), Ok(false)) => anyhow::bail!("backup lock was lost before release"),
-        (Ok(_), Err(error)) => Err(error.into()),
+        (Ok(_), Err(error)) => Err(error),
         (Err(operation), Ok(true)) => Err(operation),
         (Err(operation), Ok(false)) => {
             Err(operation.context("backup failed and its writer gate disappeared"))

@@ -10071,7 +10071,7 @@ fn enter_swordfight_los_uses_retained_raw_eye_points() {
     };
     let raw_opponent = WorldPoint3D {
         x: 1171.0991,
-        y: 1784.0210,
+        y: 1_784.021,
         z: 18.865936,
     };
     let initiator = engine.add_entity(make_pc(raw_initiator, None));

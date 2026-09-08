@@ -241,7 +241,7 @@ fn read_bounded(path: &Path) -> Vec<u8> {
 fn decode_hash(encoded: &str) -> [u8; 32] {
     assert_eq!(encoded.len(), 64, "SHA-256 must contain 64 hex digits");
     let mut decoded = [0; 32];
-    for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
+    for (index, pair) in encoded.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let high = hex_digit(pair[0]);
         let low = hex_digit(pair[1]);
         decoded[index] = (high << 4) | low;

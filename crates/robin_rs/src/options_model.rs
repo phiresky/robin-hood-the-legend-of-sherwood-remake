@@ -444,225 +444,6 @@ pub(crate) fn is_reserved_shortcut_key(key: winit::keyboard::KeyCode) -> bool {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    fn controller() -> super::OptionsController {
-        super::OptionsController::new(
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            Default::default(),
-            crate::key_config::KeyConfig::default_preset(),
-            crate::key_config::KeyConfig::alternate_preset(),
-        )
-    }
-
-    #[test]
-    fn both_adapters_share_transactions_for_every_graphics_and_sound_setting() {
-        use super::*;
-        for setting in available_graphics_settings() {
-            for accepted in [false, true] {
-                let mut original = controller();
-                let mut cooperative = controller();
-                original.enter_page(OptionsPage::Graphics);
-                cooperative.enter_page(OptionsPage::Graphics);
-                // The legacy screen returns only its committed values; the
-                // cooperative screen edits the page transaction in place.
-                let mut page = GraphicsEdit::new(original.graphic.working.clone());
-                adjust_graphics_setting(&mut page.working, setting, 1);
-                let (changed, _) = page.commit(accepted, &mut original.graphic.working);
-                original.accept_page(changed);
-                adjust_graphics_setting(&mut cooperative.graphic.working, setting, 1);
-                if accepted {
-                    cooperative.accept_page(false);
-                } else {
-                    cooperative.cancel_page();
-                }
-                assert!(
-                    graphic_eq(&original.graphic.working, &cooperative.graphic.working),
-                    "{setting:?}"
-                );
-                assert_eq!(original.page, OptionsPage::Hub);
-                assert_eq!(cooperative.page, OptionsPage::Hub);
-            }
-        }
-        for setting in SoundSetting::ALL {
-            for accepted in [false, true] {
-                let mut original = controller();
-                let mut cooperative = controller();
-                original.enter_page(OptionsPage::Sounds);
-                cooperative.enter_page(OptionsPage::Sounds);
-                let mut page = SoundEdit::new(original.sound.working);
-                adjust_sound_setting(&mut page.working, setting, 1, true, true);
-                let changed = page.commit(accepted, &mut original.sound.working);
-                original.accept_page(changed);
-                adjust_sound_setting(&mut cooperative.sound.working, setting, 1, true, true);
-                if accepted {
-                    cooperative.accept_page(false);
-                } else {
-                    cooperative.cancel_page();
-                }
-                assert!(
-                    sound_eq(&original.sound.working, &cooperative.sound.working),
-                    "{setting:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn cancel_restores_page_entry_not_the_start_of_the_options_session() {
-        use super::*;
-        let mut editor = controller();
-        editor.enter_page(OptionsPage::Graphics);
-        editor.graphic.working.adaptive_widescreen = !editor.graphic.working.adaptive_widescreen;
-        assert!(editor.accept_page(false).resolution_changed);
-        let accepted = editor.graphic.working.clone();
-        editor.enter_page(OptionsPage::Graphics);
-        editor.graphic.working.adaptive_widescreen = !editor.graphic.working.adaptive_widescreen;
-        editor.cancel_page();
-        assert!(graphic_eq(&editor.graphic.working, &accepted));
-        assert!(editor.graphic.changed());
-    }
-
-    #[test]
-    fn shortcut_custom_preset_policies_preserve_both_existing_adapter_contracts() {
-        use super::*;
-        use winit::keyboard::KeyCode;
-        for policy in [ShortcutPolicy::OriginalLayout, ShortcutPolicy::Cooperative] {
-            let mut active = crate::key_config::KeyConfig::default_preset();
-            let mut custom = active.clone();
-            let original = shortcut_keys(&custom);
-            active.set_key_by_index(0, Some(KeyCode::F3));
-            let mut dirty = true;
-            select_shortcut_preset(
-                &mut active,
-                &mut custom,
-                &mut dirty,
-                ShortcutPreset::Custom,
-                policy,
-            );
-            assert!(!dirty);
-            match policy {
-                ShortcutPolicy::OriginalLayout => assert_eq!(shortcut_keys(&active), original),
-                ShortcutPolicy::Cooperative => {
-                    assert_eq!(active.get_key_by_index(0), Some(KeyCode::F3))
-                }
-            }
-        }
-    }
-
-    use super::*;
-
-    #[test]
-    fn sound_adjustment_enforces_device_and_simulation_authority() {
-        let mut config = SoundConfig::default();
-        let original = config;
-        assert!(!adjust_sound_setting(
-            &mut config,
-            SoundSetting::ThreeDimensional,
-            1,
-            false,
-            true
-        ));
-        assert!(!adjust_sound_setting(
-            &mut config,
-            SoundSetting::CommentFrequency,
-            1,
-            true,
-            false
-        ));
-        assert!(sound_eq(&config, &original));
-        assert!(adjust_sound_setting(
-            &mut config,
-            SoundSetting::FxVolume,
-            100,
-            false,
-            false
-        ));
-        assert_eq!(config.fx_volume, 9);
-        assert_eq!(config.amount_of_speaking, original.amount_of_speaking);
-        assert!(adjust_sound_setting(
-            &mut config,
-            SoundSetting::FxVolume,
-            -100,
-            false,
-            false
-        ));
-        assert_eq!(config.fx_volume, 0);
-    }
-
-    #[test]
-    fn cancelling_every_sound_setting_preserves_original_config() {
-        for setting in SoundSetting::ALL {
-            let mut config = SoundConfig::default();
-            let original = config;
-            let mut edit = SoundEdit::new(config);
-            assert!(adjust_sound_setting(
-                &mut edit.working,
-                setting,
-                1,
-                true,
-                true
-            ));
-            assert!(!edit.commit(false, &mut config));
-            assert!(sound_eq(&config, &original), "{setting:?}");
-        }
-    }
-
-    #[test]
-    fn cancelling_every_available_graphics_setting_preserves_original_config() {
-        for setting in available_graphics_settings() {
-            let mut config = GraphicConfig::default();
-            let original = serde_json::to_value(&config).unwrap();
-            let mut edit = GraphicsEdit::new(config.clone());
-            assert!(adjust_graphics_setting(&mut edit.working, setting, 1));
-            assert_eq!(edit.commit(false, &mut config), (false, false));
-            assert_eq!(
-                serde_json::to_value(&config).unwrap(),
-                original,
-                "{setting:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn accept_classifies_only_resolution_policy_changes_as_resize() {
-        for setting in available_graphics_settings() {
-            let mut config = GraphicConfig::default();
-            let mut edit = GraphicsEdit::new(config.clone());
-            adjust_graphics_setting(&mut edit.working, setting, 1);
-            let expected_resize = matches!(
-                setting,
-                GraphicsSetting::Resolution | GraphicsSetting::AdaptiveWidescreen
-            );
-            let expected = serde_json::to_value(&edit.working).unwrap();
-            let (_, resize) = edit.commit(true, &mut config);
-            assert_eq!(resize, expected_resize, "{setting:?}");
-            assert_eq!(
-                serde_json::to_value(config).unwrap(),
-                expected,
-                "{setting:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn reverted_toggle_is_clean_but_explicit_reapply_remains_supported() {
-        let mut config = GraphicConfig::default();
-        let mut edit = GraphicsEdit::new(config.clone());
-        for _ in 0..2 {
-            adjust_graphics_setting(
-                &mut edit.working,
-                GraphicsSetting::QuickActionCursorPulse,
-                1,
-            );
-        }
-        assert!(!edit.changed());
-        assert_eq!(edit.commit(true, &mut config), (true, false));
-    }
-}
-
 impl GraphicsSetting {
     pub(crate) const ALL: [Self; 25] = [
         Self::Resolution,
@@ -913,4 +694,223 @@ pub(crate) fn graphics_setting_label(
 
 pub(crate) fn toggle_label(label: &str, selected: bool) -> String {
     format!("{} {label}", if selected { "[x]" } else { "[ ]" })
+}
+
+#[cfg(test)]
+mod tests {
+    fn controller() -> super::OptionsController {
+        super::OptionsController::new(
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            Default::default(),
+            crate::key_config::KeyConfig::default_preset(),
+            crate::key_config::KeyConfig::alternate_preset(),
+        )
+    }
+
+    #[test]
+    fn both_adapters_share_transactions_for_every_graphics_and_sound_setting() {
+        use super::*;
+        for setting in available_graphics_settings() {
+            for accepted in [false, true] {
+                let mut original = controller();
+                let mut cooperative = controller();
+                original.enter_page(OptionsPage::Graphics);
+                cooperative.enter_page(OptionsPage::Graphics);
+                // The legacy screen returns only its committed values; the
+                // cooperative screen edits the page transaction in place.
+                let mut page = GraphicsEdit::new(original.graphic.working.clone());
+                adjust_graphics_setting(&mut page.working, setting, 1);
+                let (changed, _) = page.commit(accepted, &mut original.graphic.working);
+                original.accept_page(changed);
+                adjust_graphics_setting(&mut cooperative.graphic.working, setting, 1);
+                if accepted {
+                    cooperative.accept_page(false);
+                } else {
+                    cooperative.cancel_page();
+                }
+                assert!(
+                    graphic_eq(&original.graphic.working, &cooperative.graphic.working),
+                    "{setting:?}"
+                );
+                assert_eq!(original.page, OptionsPage::Hub);
+                assert_eq!(cooperative.page, OptionsPage::Hub);
+            }
+        }
+        for setting in SoundSetting::ALL {
+            for accepted in [false, true] {
+                let mut original = controller();
+                let mut cooperative = controller();
+                original.enter_page(OptionsPage::Sounds);
+                cooperative.enter_page(OptionsPage::Sounds);
+                let mut page = SoundEdit::new(original.sound.working);
+                adjust_sound_setting(&mut page.working, setting, 1, true, true);
+                let changed = page.commit(accepted, &mut original.sound.working);
+                original.accept_page(changed);
+                adjust_sound_setting(&mut cooperative.sound.working, setting, 1, true, true);
+                if accepted {
+                    cooperative.accept_page(false);
+                } else {
+                    cooperative.cancel_page();
+                }
+                assert!(
+                    sound_eq(&original.sound.working, &cooperative.sound.working),
+                    "{setting:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cancel_restores_page_entry_not_the_start_of_the_options_session() {
+        use super::*;
+        let mut editor = controller();
+        editor.enter_page(OptionsPage::Graphics);
+        editor.graphic.working.adaptive_widescreen = !editor.graphic.working.adaptive_widescreen;
+        assert!(editor.accept_page(false).resolution_changed);
+        let accepted = editor.graphic.working.clone();
+        editor.enter_page(OptionsPage::Graphics);
+        editor.graphic.working.adaptive_widescreen = !editor.graphic.working.adaptive_widescreen;
+        editor.cancel_page();
+        assert!(graphic_eq(&editor.graphic.working, &accepted));
+        assert!(editor.graphic.changed());
+    }
+
+    #[test]
+    fn shortcut_custom_preset_policies_preserve_both_existing_adapter_contracts() {
+        use super::*;
+        use winit::keyboard::KeyCode;
+        for policy in [ShortcutPolicy::OriginalLayout, ShortcutPolicy::Cooperative] {
+            let mut active = crate::key_config::KeyConfig::default_preset();
+            let mut custom = active.clone();
+            let original = shortcut_keys(&custom);
+            active.set_key_by_index(0, Some(KeyCode::F3));
+            let mut dirty = true;
+            select_shortcut_preset(
+                &mut active,
+                &mut custom,
+                &mut dirty,
+                ShortcutPreset::Custom,
+                policy,
+            );
+            assert!(!dirty);
+            match policy {
+                ShortcutPolicy::OriginalLayout => assert_eq!(shortcut_keys(&active), original),
+                ShortcutPolicy::Cooperative => {
+                    assert_eq!(active.get_key_by_index(0), Some(KeyCode::F3))
+                }
+            }
+        }
+    }
+
+    use super::*;
+
+    #[test]
+    fn sound_adjustment_enforces_device_and_simulation_authority() {
+        let mut config = SoundConfig::default();
+        let original = config;
+        assert!(!adjust_sound_setting(
+            &mut config,
+            SoundSetting::ThreeDimensional,
+            1,
+            false,
+            true
+        ));
+        assert!(!adjust_sound_setting(
+            &mut config,
+            SoundSetting::CommentFrequency,
+            1,
+            true,
+            false
+        ));
+        assert!(sound_eq(&config, &original));
+        assert!(adjust_sound_setting(
+            &mut config,
+            SoundSetting::FxVolume,
+            100,
+            false,
+            false
+        ));
+        assert_eq!(config.fx_volume, 9);
+        assert_eq!(config.amount_of_speaking, original.amount_of_speaking);
+        assert!(adjust_sound_setting(
+            &mut config,
+            SoundSetting::FxVolume,
+            -100,
+            false,
+            false
+        ));
+        assert_eq!(config.fx_volume, 0);
+    }
+
+    #[test]
+    fn cancelling_every_sound_setting_preserves_original_config() {
+        for setting in SoundSetting::ALL {
+            let mut config = SoundConfig::default();
+            let original = config;
+            let mut edit = SoundEdit::new(config);
+            assert!(adjust_sound_setting(
+                &mut edit.working,
+                setting,
+                1,
+                true,
+                true
+            ));
+            assert!(!edit.commit(false, &mut config));
+            assert!(sound_eq(&config, &original), "{setting:?}");
+        }
+    }
+
+    #[test]
+    fn cancelling_every_available_graphics_setting_preserves_original_config() {
+        for setting in available_graphics_settings() {
+            let mut config = GraphicConfig::default();
+            let original = serde_json::to_value(&config).unwrap();
+            let mut edit = GraphicsEdit::new(config.clone());
+            assert!(adjust_graphics_setting(&mut edit.working, setting, 1));
+            assert_eq!(edit.commit(false, &mut config), (false, false));
+            assert_eq!(
+                serde_json::to_value(&config).unwrap(),
+                original,
+                "{setting:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn accept_classifies_only_resolution_policy_changes_as_resize() {
+        for setting in available_graphics_settings() {
+            let mut config = GraphicConfig::default();
+            let mut edit = GraphicsEdit::new(config.clone());
+            adjust_graphics_setting(&mut edit.working, setting, 1);
+            let expected_resize = matches!(
+                setting,
+                GraphicsSetting::Resolution | GraphicsSetting::AdaptiveWidescreen
+            );
+            let expected = serde_json::to_value(&edit.working).unwrap();
+            let (_, resize) = edit.commit(true, &mut config);
+            assert_eq!(resize, expected_resize, "{setting:?}");
+            assert_eq!(
+                serde_json::to_value(config).unwrap(),
+                expected,
+                "{setting:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reverted_toggle_is_clean_but_explicit_reapply_remains_supported() {
+        let mut config = GraphicConfig::default();
+        let mut edit = GraphicsEdit::new(config.clone());
+        for _ in 0..2 {
+            adjust_graphics_setting(
+                &mut edit.working,
+                GraphicsSetting::QuickActionCursorPulse,
+                1,
+            );
+        }
+        assert!(!edit.changed());
+        assert_eq!(edit.commit(true, &mut config), (true, false));
+    }
 }

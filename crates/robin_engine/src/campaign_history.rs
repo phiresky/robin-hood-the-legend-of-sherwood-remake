@@ -696,7 +696,7 @@ impl LifetimeCampaignAchievementEnvelope {
                 self.campaign_run_id
             ));
         }
-        if self.required_mission_ids.iter().any(|&id| id == 0) {
+        if self.required_mission_ids.contains(&0) {
             return Err(format!(
                 "completed campaign achievement envelope {} contains mission ID zero",
                 self.campaign_run_id
@@ -1215,17 +1215,18 @@ mod tests {
     }
 
     fn aggregation_campaign(profiles: &ProfileManager) -> crate::campaign::Campaign {
-        let mut campaign = crate::campaign::Campaign::default();
-        campaign.missions = profiles
-            .missions
-            .iter()
-            .enumerate()
-            .map(|(index, _)| crate::mission::Mission {
-                profile_idx: Some(index as u32),
-                ..crate::mission::Mission::new()
-            })
-            .collect();
-        campaign
+        crate::campaign::Campaign {
+            missions: profiles
+                .missions
+                .iter()
+                .enumerate()
+                .map(|(index, _)| crate::mission::Mission {
+                    profile_idx: Some(index as u32),
+                    ..crate::mission::Mission::new()
+                })
+                .collect(),
+            ..Default::default()
+        }
     }
 
     fn achievement_result(

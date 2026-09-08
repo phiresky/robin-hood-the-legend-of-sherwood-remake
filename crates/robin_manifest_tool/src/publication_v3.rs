@@ -2194,7 +2194,7 @@ pub fn validate_publication_v3(root: &Path) -> Result<Digest32> {
     validate_mount_root(root)?;
     #[cfg(target_os = "linux")]
     {
-        return Ok(validate_publication_v3_authority(root)?.lock_sha256);
+        Ok(validate_publication_v3_authority(root)?.lock_sha256)
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("PublicationV3 validation requires Linux openat2 filesystem authority")
@@ -5059,6 +5059,7 @@ enum TransitionRule {
     Exact,
 }
 
+#[cfg(test)]
 fn compare_transition(previous: &Path, candidate: &Path, rule: TransitionRule) -> Result<()> {
     let previous_root = open_publication_root_v3(previous)?;
     let candidate_root = open_publication_root_v3(candidate)?;
@@ -5235,14 +5236,6 @@ impl ValidatedPublicationV3 {
 
     pub(crate) const fn lock_sha256(&self) -> Digest32 {
         self.lock_sha256
-    }
-
-    pub(crate) fn snapshot(&self) -> PublicationTreeSnapshotV3 {
-        self.inventory.snapshot()
-    }
-
-    pub(crate) fn read_file(&mut self, path: &str, maximum: u64) -> Result<Vec<u8>> {
-        read_inventory_file_v3(&mut self.inventory, path, maximum)
     }
 
     pub(crate) fn load_document<T>(&mut self, path: &str) -> Result<T>
@@ -5995,7 +5988,7 @@ fn publication_tree_inventory_v3(root: &Path) -> Result<PublicationTreeInventory
     #[cfg(target_os = "linux")]
     {
         let descriptor = open_publication_root_v3(root)?;
-        return publication_tree_inventory_v3_from_fd(root, &descriptor);
+        publication_tree_inventory_v3_from_fd(root, &descriptor)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -6004,6 +5997,7 @@ fn publication_tree_inventory_v3(root: &Path) -> Result<PublicationTreeInventory
     }
 }
 
+#[cfg(test)]
 fn publication_directories(root: &Path) -> Result<Vec<PublicationDirectoryV3>> {
     Ok(publication_tree_inventory_v3(root)?.directories)
 }

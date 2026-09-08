@@ -637,13 +637,15 @@ pub fn rust_init_official_projection(
         }
     };
 
-    let mut options = engine_api::GlobalOptions::default();
-    options.script_enabled = sim_config.script_enabled;
-    options.highlander = sim_config.highlander;
-    options.highlander2 = sim_config.highlander2;
-    options.golden_eye = sim_config.golden_eye;
-    options.ignore_default_loose = sim_config.ignore_default_loose;
-    options.bypass_fog_sprites_crash = sim_config.bypass_fog_sprites_crash;
+    let options = engine_api::GlobalOptions {
+        script_enabled: sim_config.script_enabled,
+        highlander: sim_config.highlander,
+        highlander2: sim_config.highlander2,
+        golden_eye: sim_config.golden_eye,
+        ignore_default_loose: sim_config.ignore_default_loose,
+        bypass_fog_sprites_crash: sim_config.bypass_fog_sprites_crash,
+        ..Default::default()
+    };
     let profiles = std::sync::Arc::new(load_profiles_with_files(
         shipping.as_deref(),
         &options,

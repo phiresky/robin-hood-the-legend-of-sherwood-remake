@@ -2269,7 +2269,7 @@ async fn submission_accepted_response(
     lifecycle: crate::model::SubmissionLifecycle,
 ) -> Result<(StatusCode, Json<SubmissionAcceptedV1>), ApiError> {
     let accepted_submission_id = lifecycle.id.clone();
-    let state_value = lifecycle_state(&state, lifecycle).await?;
+    let state_value = lifecycle_state(state, lifecycle).await?;
     if !matches!(
         state_value,
         SubmissionLifecycleV1::Queued
@@ -3233,13 +3233,13 @@ fn active_ruleset_ids(config: &ServerConfig) -> Vec<[u8; 32]> {
         .manifests
         .rulesets
         .iter()
-        .filter_map(|(digest, published)| {
+        .filter(|&(_digest, published)| {
             matches!(
                 published.operational_status,
                 RulesetOperationalStatusV1::Active
             )
-            .then(|| digest.into_bytes())
         })
+        .map(|(digest, _published)| digest.into_bytes())
         .collect()
 }
 
@@ -3677,7 +3677,7 @@ async fn abuse_report(
     let (report_id, received_at_unix_ms) = state
         .database
         .insert_abuse_report(
-            &target_kind,
+            target_kind,
             &target_id,
             &active_ruleset_ids,
             category,
@@ -4249,24 +4249,22 @@ fn select_profile<'a>(
             if !(manifest.starts_at_unix_ms..manifest.ends_at_unix_ms).contains(&now) {
                 return Err(ApiError::Conflict("competition is not active".to_owned()));
             }
-            let category_matches = match (scope, &manifest.subject) {
+            let category_matches = matches!(
+                (scope, &manifest.subject),
                 (
                     "individual_level",
                     LeaderboardSubjectV1::Mission {
                         category: BoardCategoryV1::IndividualLevel,
                         ..
                     },
-                ) => true,
-                (
+                ) | (
                     "campaign_genesis" | "campaign_continuation",
                     LeaderboardSubjectV1::Mission {
                         category: BoardCategoryV1::Campaign,
                         ..
-                    }
-                    | LeaderboardSubjectV1::FullCampaign,
-                ) => true,
-                _ => false,
-            };
+                    } | LeaderboardSubjectV1::FullCampaign,
+                )
+            );
             if !category_matches {
                 return Err(ApiError::BadRequest(
                     "competition category does not match the requested run scope".to_owned(),
@@ -4442,8 +4440,7 @@ fn profile_for_filter<'a>(
         config
             .admission_profiles
             .iter()
-            .filter(profile_matches)
-            .next()
+            .find(profile_matches)
             .ok_or(ApiError::NotFound)?
     };
     let published = config
@@ -4818,7 +4815,7 @@ fn decode_cursor(
     let signing_key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key);
     ring::hmac::verify(&signing_key, bytes, signature)
         .map_err(|_| ApiError::BadRequest("cursor authentication failed".to_owned()))?;
-    let cursor: CursorToken = serde_json::from_slice(&bytes)
+    let cursor: CursorToken = serde_json::from_slice(bytes)
         .map_err(|_| ApiError::BadRequest("cursor is not valid".to_owned()))?;
     if cursor.filter_sha256 != expected_filter {
         return Err(ApiError::BadRequest(
@@ -4959,8 +4956,10 @@ pub(crate) mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
 
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let started = std::sync::Arc::new(tokio::sync::Notify::new());
         let unblock = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -5030,8 +5029,10 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn detached_outer_fence_survives_timeout_and_avoids_nested_admission_deadlock() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let outer_shared_acquired = std::sync::Arc::new(tokio::sync::Barrier::new(2));
         let allow_mutation_start = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -5115,9 +5116,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn saturated_lane_does_not_admit_queued_request_before_backup_gate() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let state = AppState {
             database: database.clone(),
@@ -5256,10 +5259,12 @@ pub(crate) mod tests {
 
     #[test]
     fn single_replay_submission_limit_is_checked_and_exact() {
-        let mut config = ServerConfig::default();
-        config.max_replay_bytes = 11;
-        config.max_campaign_bytes = 13;
-        config.max_metadata_bytes = 17;
+        let mut config = ServerConfig {
+            max_replay_bytes: 11,
+            max_campaign_bytes: 13,
+            max_metadata_bytes: 17,
+            ..Default::default()
+        };
         assert_eq!(
             submission_body_limit(&config).unwrap(),
             11 + 13 + 17 + MULTIPART_ENVELOPE_OVERHEAD_BYTES
@@ -5851,9 +5856,11 @@ pub(crate) mod tests {
         registry
             .rulesets
             .insert(published.ruleset_manifest_sha256, published.clone());
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
+        let mut config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            ..Default::default()
+        };
         for (id, mission_id, display_name) in [
             ("z-profile", "z-mission", "A"),
             ("a-profile", "a-mission", "Z"),
@@ -5936,10 +5943,12 @@ pub(crate) mod tests {
         let loaded = crate::config::LoadedBuildManifest::new(public).unwrap();
         let mut registry = crate::config::ManifestRegistry::default();
         registry.builds.insert(public_digest, loaded);
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.manifests = Arc::new(registry);
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            manifests: Arc::new(registry),
+            ..Default::default()
+        };
         let state = AppState {
             database: Database::migrate(&config).await.unwrap(),
             replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
@@ -6007,7 +6016,7 @@ pub(crate) mod tests {
         ];
         let private_document_digests =
             std::iter::once(semantic_digest).chain(private_documents.iter().map(|document| {
-                Digest32::digest_bytes(&robin_run_protocol::canonical_json_bytes(document).unwrap())
+                Digest32::digest_bytes(robin_run_protocol::canonical_json_bytes(document).unwrap())
             }));
         for private_digest in private_document_digests {
             let response = app
@@ -6031,10 +6040,12 @@ pub(crate) mod tests {
         let digest = published.ruleset_manifest_sha256;
         let mut registry = crate::config::ManifestRegistry::default();
         registry.rulesets.insert(digest, published.clone());
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.manifests = Arc::new(registry);
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            manifests: Arc::new(registry),
+            ..Default::default()
+        };
         let state = AppState {
             database: Database::migrate(&config).await.unwrap(),
             replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
@@ -6102,10 +6113,12 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn uploaded_reservation_recovery_treats_replay_as_opaque_storage() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.campaign_state_directory = directory.path().join("campaigns");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            campaign_state_directory: directory.path().join("campaigns"),
+            ..Default::default()
+        };
         let replay_store = ReplayStore::create(config.replay_directory.clone(), 1024)
             .await
             .unwrap();
@@ -6157,9 +6170,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn replay_http_responses_serve_exact_compact_bytes() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let replay_store = ReplayStore::create(config.replay_directory.clone(), 1024)
             .await
@@ -6698,10 +6713,12 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn deletion_challenge_is_not_an_unsigned_ownership_oracle() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.challenge_requests_per_minute_per_ip = 20;
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            challenge_requests_per_minute_per_ip: 20,
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let owner_signing_key = ed25519_dalek::SigningKey::from_bytes(&[0xd4; 32]);
         let owner_key = PublicKey32::from_bytes(owner_signing_key.verifying_key().to_bytes());
@@ -6949,12 +6966,13 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn operator_router_requires_token_and_audits_actions() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.moderation_bearer_token =
-            Some(Arc::new(b"0123456789abcdef0123456789abcdef".to_vec()));
-        config.moderation_bearer_token_path = Some(directory.path().join("token"));
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            moderation_bearer_token: Some(Arc::new(b"0123456789abcdef0123456789abcdef".to_vec())),
+            moderation_bearer_token_path: Some(directory.path().join("token")),
+            ..Default::default()
+        };
         let database = Database::migrate(&config).await.unwrap();
         let key = [5; 32];
         let challenge = database
@@ -7058,9 +7076,11 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn operator_routes_are_absent_without_a_configured_secret() {
         let directory = tempfile::tempdir().unwrap();
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
+        let config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            ..Default::default()
+        };
         let state = AppState {
             database: Database::migrate(&config).await.unwrap(),
             replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)
@@ -7375,12 +7395,14 @@ pub(crate) mod tests {
         .await;
         symlink(&target, &link).unwrap();
 
-        let mut config = ServerConfig::default();
-        config.database_path = directory.path().join("highscores.sqlite3");
-        config.replay_directory = directory.path().join("replays");
-        config.campaign_state_directory = directory.path().join("campaigns");
-        config.backup_manifest_path = Some(link.clone());
-        config.release_manifest_path = Some(release_manifest);
+        let mut config = ServerConfig {
+            database_path: directory.path().join("highscores.sqlite3"),
+            replay_directory: directory.path().join("replays"),
+            campaign_state_directory: directory.path().join("campaigns"),
+            backup_manifest_path: Some(link.clone()),
+            release_manifest_path: Some(release_manifest),
+            ..Default::default()
+        };
         let state = AppState {
             database: Database::migrate(&config).await.unwrap(),
             replay_store: ReplayStore::create(config.replay_directory.clone(), 1024)

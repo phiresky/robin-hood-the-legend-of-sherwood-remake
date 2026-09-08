@@ -486,7 +486,7 @@ mod tests {
         // First poll consumes the typed public-key task and starts HTTP. It
         // never asks the signer for generic bytes.
         assert!(coordinator.poll().unwrap());
-        assert!(coordinator.poll().unwrap_or(false) == false);
+        assert!(!coordinator.poll().unwrap_or(false));
     }
 
     #[test]

@@ -162,7 +162,9 @@ pub(super) fn picture_rgb16_canvas(pic: &Picture) -> Result<Vec<u16>> {
             .get(y * pitch..y * pitch + width * 2)
             .ok_or_else(|| anyhow!("picture row {y} is short of {width} RGB565 pixels"))?;
         canvas.extend(
-            row.chunks_exact(2)
+            row.as_chunks::<2>()
+                .0
+                .iter()
                 .map(|c| u16::from_le_bytes([c[0], c[1]])),
         );
     }

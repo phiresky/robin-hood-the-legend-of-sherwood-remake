@@ -3289,10 +3289,8 @@ impl EnemyAi {
                 nearest_friend_solo,
             );
         }
-        if primary_outnumbered && nearest_friend_solo.is_some() {
-            let nearest_friend_solo = nearest_friend_solo
-                .expect("checked solo-friend presence")
-                .get();
+        if primary_outnumbered && let Some(nearest_friend_solo) = nearest_friend_solo {
+            let nearest_friend_solo = nearest_friend_solo.get();
             let nearest_enemy_of_solo = calculate_opponent_nearest_to_rene(
                 |handle| self.find_fighter(handle, tick),
                 nearest_friend_solo,

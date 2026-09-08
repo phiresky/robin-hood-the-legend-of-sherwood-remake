@@ -155,13 +155,16 @@ fn load_terrain_candidate(
 /// references `FrameHolder`.
 pub fn initialize_sprite_variants(host: &mut Host, engine: &Engine) {
     let bypass_fog_sprites_crash = engine.sim_config().bypass_fog_sprites_crash;
-    let visual_ambiance = host
+    let visual_ambiance = if host
         .application_context()
         .active_profile_snapshot()
         .map(|profile| profile.graphic_config.dynamic_ambience_visuals)
         .unwrap_or(true)
-        .then_some(engine.weather().ambiance)
-        .unwrap_or_else(|| engine.initial_mission_ambiance());
+    {
+        engine.weather().ambiance
+    } else {
+        engine.initial_mission_ambiance()
+    };
     initialize_sprite_variants_for_ambiance(host, visual_ambiance, bypass_fog_sprites_crash);
 }
 

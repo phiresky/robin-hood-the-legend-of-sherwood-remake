@@ -124,7 +124,9 @@ impl PictureOpacityMetadata {
             hit_mask: with_mask.then(|| {
                 picture
                     .data
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|px| {
                         u16::from_le_bytes([px[0], px[1]])
                             != crate::frame_holder::TRANSPARENT_COLOR_16
@@ -138,14 +140,13 @@ impl PictureOpacityMetadata {
         if (self.width, self.height) != dimensions {
             bail!("engine picture metadata dimensions disagree with image header");
         }
-        if let Some((x, y, width, height)) = self.opaque_bounds {
-            if width == 0
+        if let Some((x, y, width, height)) = self.opaque_bounds
+            && (width == 0
                 || height == 0
                 || u32::from(x) + u32::from(width) > u32::from(self.width)
-                || u32::from(y) + u32::from(height) > u32::from(self.height)
-            {
-                bail!("engine picture metadata opaque bounds exceed picture dimensions");
-            }
+                || u32::from(y) + u32::from(height) > u32::from(self.height))
+        {
+            bail!("engine picture metadata opaque bounds exceed picture dimensions");
         }
         match &self.hit_mask {
             Some(mask) if mask.len() != usize::from(self.width) * usize::from(self.height) => {

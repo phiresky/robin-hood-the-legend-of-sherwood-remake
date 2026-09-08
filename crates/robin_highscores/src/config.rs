@@ -1419,7 +1419,7 @@ where
             bytes.len() <= usize::try_from(HARD_MAX_OPERATOR_DOCUMENT_BYTES)?,
             "candidate manifest document exceeds its byte limit"
         );
-        let document: T = serde_json::from_slice(&bytes)?;
+        let document: T = serde_json::from_slice(bytes)?;
         let actual = identity(&document)?;
         anyhow::ensure!(
             actual == expected,
@@ -2082,41 +2082,56 @@ mod tests {
 
     #[test]
     fn unsafe_limits_and_origins_are_rejected() {
-        let mut config = ServerConfig::default();
-        config.max_replay_bytes = HARD_MAX_REPLAY_BYTES + 1;
+        let config = ServerConfig {
+            max_replay_bytes: HARD_MAX_REPLAY_BYTES + 1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.max_concurrent_requests = 0;
+        let config = ServerConfig {
+            max_concurrent_requests: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
         let mut config = ServerConfig::default();
         config.upload_reservation_ttl_seconds = config.upload_timeout_seconds + 29;
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.upload_reservation_ttl_seconds = 24 * 60 * 60 + 1;
+        let config = ServerConfig {
+            upload_reservation_ttl_seconds: 24 * 60 * 60 + 1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.minimum_storage_free_bytes =
-            crate::storage_admission::MINIMUM_STORAGE_RESERVE_BYTES - 1;
+        let config = ServerConfig {
+            minimum_storage_free_bytes: crate::storage_admission::MINIMUM_STORAGE_RESERVE_BYTES - 1,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.allowed_origins = vec!["http://example.com".to_owned()];
+        let config = ServerConfig {
+            allowed_origins: vec!["http://example.com".to_owned()],
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.allowed_origins = vec!["http://localhost.evil.example".to_owned()];
+        let config = ServerConfig {
+            allowed_origins: vec!["http://localhost.evil.example".to_owned()],
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
 
-        let mut config = ServerConfig::default();
-        config.allowed_origins = vec!["http://127.0.0.1:3000".to_owned()];
+        let config = ServerConfig {
+            allowed_origins: vec!["http://127.0.0.1:3000".to_owned()],
+            ..Default::default()
+        };
         assert!(config.validate().is_ok());
 
-        let mut config = ServerConfig::default();
-        config.allowed_origins = vec!["http://127.0.0.2:3000".to_owned()];
+        let config = ServerConfig {
+            allowed_origins: vec!["http://127.0.0.2:3000".to_owned()],
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
@@ -2129,10 +2144,12 @@ mod tests {
             std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
                 .unwrap();
         }
-        let mut config = ServerConfig::default();
-        config.cursor_secret_path = directory.path().join("cursor.key");
-        config.competition_run_grant_secret_path = directory.path().join("grant.key");
-        config.run_preflight_grant_secret_path = directory.path().join("preflight.key");
+        let config = ServerConfig {
+            cursor_secret_path: directory.path().join("cursor.key"),
+            competition_run_grant_secret_path: directory.path().join("grant.key"),
+            run_preflight_grant_secret_path: directory.path().join("preflight.key"),
+            ..Default::default()
+        };
         assert!(config.load_cursor_key().is_err());
         let first = config.load_or_create_cursor_key().unwrap();
         assert_eq!(config.load_cursor_key().unwrap(), first);
@@ -2173,8 +2190,10 @@ mod tests {
         let link = directory.path().join("cursor.key");
         symlink(&target, &link).unwrap();
 
-        let mut config = ServerConfig::default();
-        config.cursor_secret_path = link;
+        let config = ServerConfig {
+            cursor_secret_path: link,
+            ..Default::default()
+        };
         assert!(config.load_or_create_cursor_key().is_err());
         assert_eq!(std::fs::read(target).unwrap(), [7_u8; 32]);
     }
@@ -2187,8 +2206,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
         let authority = directory.path().join("backup-authority.key");
-        let mut config = ServerConfig::default();
-        config.backup_authority_hmac_secret_path = authority.clone();
+        let mut config = ServerConfig {
+            backup_authority_hmac_secret_path: authority.clone(),
+            ..Default::default()
+        };
 
         assert!(config.load_backup_authority_hmac_key().is_err());
         let initialized = config.initialize_backup_authority_hmac_key().unwrap();
@@ -2373,8 +2394,10 @@ mod tests {
             std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o400)).unwrap();
         }
 
-        let mut original = ServerConfig::default();
-        original.moderation_bearer_token_path = Some(configured_token.clone());
+        let original = ServerConfig {
+            moderation_bearer_token_path: Some(configured_token.clone()),
+            ..Default::default()
+        };
         let config_path = directory.path().join("server.toml");
         std::fs::write(&config_path, toml::to_string(&original).unwrap()).unwrap();
         assert!(ServerConfig::load(&config_path).is_err());
@@ -2395,16 +2418,20 @@ mod tests {
     fn worker_config_load_never_opens_api_moderation_token() {
         let directory = tempfile::tempdir().unwrap();
         let missing_token = directory.path().join("api-only-token-does-not-exist");
-        let mut config = ServerConfig::default();
-        config.moderation_bearer_token_path = Some(missing_token.clone());
-        config.cursor_secret_path = directory.path().join("cursor-key-must-not-be-opened");
-        config.competition_run_grant_secret_path =
-            directory.path().join("grant-key-must-not-be-opened");
-        config.run_preflight_grant_secret_path =
-            directory.path().join("preflight-key-must-not-be-opened");
-        config.backup_authority_hmac_secret_path = directory
-            .path()
-            .join("backup-authority-key-must-not-be-opened");
+        let config = ServerConfig {
+            moderation_bearer_token_path: Some(missing_token.clone()),
+            cursor_secret_path: directory.path().join("cursor-key-must-not-be-opened"),
+            competition_run_grant_secret_path: directory
+                .path()
+                .join("grant-key-must-not-be-opened"),
+            run_preflight_grant_secret_path: directory
+                .path()
+                .join("preflight-key-must-not-be-opened"),
+            backup_authority_hmac_secret_path: directory
+                .path()
+                .join("backup-authority-key-must-not-be-opened"),
+            ..Default::default()
+        };
         let config_path = directory.path().join("server.toml");
         std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
 

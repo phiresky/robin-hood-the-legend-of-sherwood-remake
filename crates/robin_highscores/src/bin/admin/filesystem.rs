@@ -58,7 +58,7 @@ pub(super) fn pinned_file_target(file: &std::fs::File) -> anyhow::Result<PathBuf
     {
         use std::os::fd::AsRawFd as _;
         let fd = u32::try_from(file.as_raw_fd())?;
-        return inherited_fd_target(fd);
+        inherited_fd_target(fd)
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("inherited-FD backup verification requires Linux procfs")
@@ -83,7 +83,7 @@ pub(super) fn duplicate_pinned_file(
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd as _;
-        return duplicate_inherited_fd(u32::try_from(file.as_raw_fd())?, directory);
+        duplicate_inherited_fd(u32::try_from(file.as_raw_fd())?, directory)
     }
     #[cfg(not(target_os = "linux"))]
     anyhow::bail!("inherited-FD backup verification requires Linux procfs")
@@ -698,9 +698,9 @@ pub(super) fn open_cap_directory_nofollow(
                 | rustix::fs::ResolveFlags::NO_MAGICLINKS
                 | rustix::fs::ResolveFlags::NO_XDEV,
         )?;
-        return Ok(cap_std::fs::Dir::from_std_file(std::fs::File::from(
+        Ok(cap_std::fs::Dir::from_std_file(std::fs::File::from(
             descriptor,
-        )));
+        )))
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -734,7 +734,7 @@ pub(super) fn open_cap_regular_nofollow(
             file.metadata()?.is_file(),
             "managed node is not a regular file"
         );
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1151,7 +1151,7 @@ pub(super) fn open_directory_nofollow(path: &Path) -> anyhow::Result<std::fs::Fi
         )?;
         let file = std::fs::File::from(descriptor);
         anyhow::ensure!(file.metadata()?.is_dir(), "path is not a directory");
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1177,7 +1177,7 @@ pub(super) fn open_regular_nofollow(path: &Path) -> anyhow::Result<std::fs::File
         )?;
         let file = std::fs::File::from(descriptor);
         anyhow::ensure!(file.metadata()?.is_file(), "path is not a regular file");
-        return Ok(file);
+        Ok(file)
     }
     #[cfg(not(target_os = "linux"))]
     {
