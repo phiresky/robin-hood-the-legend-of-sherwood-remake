@@ -53,7 +53,7 @@ completion. It does not retain browser identity keys or assert audible sound.
 
 ## Native lifecycle
 
-Requires Linux user/network namespaces, `unshare`, `ip`, `Xvfb`, `xdotool`,
+Requires Linux user/network namespaces, `unshare`, `ip`, `Xvfb`, `libX11`,
 Vulkan, and a Leicester demo root containing `Data/`. The development binary
 must include the release feature set (desktop, replay HTTP hooks and audio
 dependencies); the runtime gate disables sound explicitly. Build separately:

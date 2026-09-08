@@ -174,7 +174,8 @@ def native(evidence, summary):
     binary = Path(os.environ["ROBIN_LIFECYCLE_BINARY"]).resolve(strict=True)
     data = Path(os.environ["ROBINHOOD_DATA_DIR"]).resolve(strict=True)
     require_game_data(data)
-    for tool in ("unshare", "ip", "Xvfb", "xdotool"):
+    # Input helpers use libX11 directly; no xdotool executable is involved.
+    for tool in ("unshare", "ip", "Xvfb"):
         executable(tool)
     expected = os.environ["ROBIN_LIFECYCLE_BINARY_SHA256"]
     if digest(binary) != expected:

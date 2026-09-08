@@ -74,12 +74,14 @@ class LifecycleGateTests(unittest.TestCase):
                 gate.lock_bindgen_version()
 
     def test_native_requires_matching_binary_before_execution(self):
-        with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
+        with patch.dict(os.environ, self.env), patch.object(gate, "executable") as executable, \
                 patch.object(gate, "run") as run:
             os.environ["ROBIN_LIFECYCLE_BINARY_SHA256"] = "bad"
             with self.assertRaisesRegex(RuntimeError, "SHA256"):
                 gate.native(self.evidence, {})
             run.assert_not_called()
+            self.assertEqual([call.args[0] for call in executable.call_args_list],
+                             ["unshare", "ip", "Xvfb"])
 
     def test_native_requires_real_data_layout(self):
         (self.root / "Data").rmdir()
