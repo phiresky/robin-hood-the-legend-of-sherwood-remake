@@ -1132,21 +1132,19 @@ impl IngameMenuResources {
         let menu_text = MenuText::load(&mut text_res);
         timer.step("menu text");
 
-        let (button_w, button_h, button_surfaces) = load_sprite_pack(
+        let button = load_sprite_pack(
             &mut res,
             renderer,
             &mut owners,
             resource_ids::RHID_MENU_BUTTON,
         );
-        let (ok_button_w, ok_button_h, ok_button_surfaces) =
-            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_OK);
-        let (cancel_button_w, cancel_button_h, cancel_button_surfaces) =
+        let ok_button = load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_OK);
+        let cancel_button =
             load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_CANCEL);
-        let (radio_w, radio_h, radio_surfaces) =
-            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_RADIO);
-        let (restart_button_w, restart_button_h, restart_button_surfaces) =
+        let radio = load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_RADIO);
+        let restart_button =
             load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_RESTART);
-        let (load_button_w, load_button_h, load_button_surfaces) =
+        let load_button =
             load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_LOAD);
 
         timer.step("button sprite packs");
@@ -1189,14 +1187,13 @@ impl IngameMenuResources {
             ),
         ];
 
-        let (input_field_w, input_field_h, input_field) = load_sprite_pack(
+        let input_field = load_sprite_pack(
             &mut res,
             renderer,
             &mut owners,
             resource_ids::RHID_MENU_INPUT_FIELD,
         );
-        let (slider_w, slider_h, slider_frames) =
-            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_SLIDER);
+        let slider = load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_SLIDER);
         let list_box = load_surface(
             &mut res,
             renderer,
@@ -1312,60 +1309,28 @@ impl IngameMenuResources {
 
         tracing::info!(
             "Ingame menus: button={}x{} ({} frames), input_field={}x{}, parchment={:?}, menu_text={} entries",
-            button_w,
-            button_h,
-            button_surfaces.len(),
-            input_field_w,
-            input_field_h,
+            button.width,
+            button.height,
+            button.frames.len(),
+            input_field.width,
+            input_field.height,
             parchment_huge.is_some(),
             menu_text.strings.len(),
         );
 
         Some(Self {
             res,
-            button: SpriteBank {
-                frames: button_surfaces,
-                width: button_w,
-                height: button_h,
-            },
-            ok_button: SpriteBank {
-                frames: ok_button_surfaces,
-                width: ok_button_w,
-                height: ok_button_h,
-            },
-            cancel_button: SpriteBank {
-                frames: cancel_button_surfaces,
-                width: cancel_button_w,
-                height: cancel_button_h,
-            },
-            restart_button: SpriteBank {
-                frames: restart_button_surfaces,
-                width: restart_button_w,
-                height: restart_button_h,
-            },
-            load_button: SpriteBank {
-                frames: load_button_surfaces,
-                width: load_button_w,
-                height: load_button_h,
-            },
+            button,
+            ok_button,
+            cancel_button,
+            restart_button,
+            load_button,
             parchment_huge,
             menu_bg_small,
             menu_bg,
-            input_field: SpriteBank {
-                frames: input_field,
-                width: input_field_w,
-                height: input_field_h,
-            },
-            radio: SpriteBank {
-                frames: radio_surfaces,
-                width: radio_w,
-                height: radio_h,
-            },
-            slider: SpriteBank {
-                frames: slider_frames,
-                width: slider_w,
-                height: slider_h,
-            },
+            input_field,
+            radio,
+            slider,
             list_box,
             list_scrollbar,
             separator,
@@ -1684,35 +1649,15 @@ impl IngameMenuResources {
                 height: 25,
                 ..SpriteBank::default()
             },
-            ok_button: SpriteBank {
-                width: 0,
-                height: 0,
-                ..SpriteBank::default()
-            },
-            cancel_button: SpriteBank {
-                width: 0,
-                height: 0,
-                ..SpriteBank::default()
-            },
-            restart_button: SpriteBank {
-                width: 0,
-                height: 0,
-                ..SpriteBank::default()
-            },
-            load_button: SpriteBank {
-                width: 0,
-                height: 0,
-                ..SpriteBank::default()
-            },
+            ok_button: SpriteBank::default(),
+            cancel_button: SpriteBank::default(),
+            restart_button: SpriteBank::default(),
+            load_button: SpriteBank::default(),
             parchment_huge: None,
             menu_bg_small: None,
             menu_bg: [None, None, None, None],
             input_field: SpriteBank::default(),
-            radio: SpriteBank {
-                width: 0,
-                height: 0,
-                ..SpriteBank::default()
-            },
+            radio: SpriteBank::default(),
             slider: SpriteBank::default(),
             list_box: None,
             list_scrollbar: [None, None, None, None, None, None],
@@ -1878,7 +1823,7 @@ fn load_sprite_pack(
     renderer: &mut Renderer,
     owners: &mut Vec<OwnedSurface>,
     id: i32,
-) -> (i32, i32, Vec<Option<SurfaceHandle>>) {
+) -> SpriteBank {
     let dims = res.get_dimension(id).ok();
     let surfaces: Vec<Option<SurfaceHandle>> = match res.get_pictures(id) {
         Ok(pics) => pics
@@ -1905,7 +1850,11 @@ fn load_sprite_pack(
         Err(_) => Vec::new(),
     };
     let (w, h) = dims.map(|(w, h)| (w as i32, h as i32)).unwrap_or((0, 0));
-    (w, h, surfaces)
+    SpriteBank {
+        frames: surfaces,
+        width: w,
+        height: h,
+    }
 }
 
 #[cfg(test)]
