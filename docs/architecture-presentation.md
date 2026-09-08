@@ -39,7 +39,26 @@ batch and that presentation/audio leave simulation hashes unchanged. A console
 test checks exact once-only queue consumption. Existing cadence, frame trace,
 camera interpolation, screenshot and frame-contract tests remain applicable.
 
-TODO: record completed package/test commands after the isolated build finishes.
+At source `5b7e7d515`, isolated validation passed:
+
+```sh
+RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_rs --lib -- game_session::runtime::tests game_session::render::tests game_session::flow::tests game_session::interactive::tests console_overlay::tests
+RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_rs --test simulation_frame_contract
+```
+
+The focused unit suites passed **66 tests**; the frame-contract suite passed
+**15 tests**, including the structural authority guards. No tests failed or
+were ignored. `cargo fmt --all`, `git diff --check`, and the default client
+library check also passed. The first check encountered a shared sccache
+connection reset while compiling an external dependency; subsequent validation
+disabled that wrapper locally without changing the worktree's target directory.
+
+The pacing handoff uses a wide process-clock deadline, with a regression for
+both handoff elapsed time and crossing the simulation clock's u32 wrap point.
+Simulation and wire timestamps retain their existing u32 representation.
+
+The coordinator owns the combined-source native binary/runtime acceptance;
+this isolated track does not claim a standalone live graphical run.
 
 ## Remaining scope
 
