@@ -2676,6 +2676,8 @@ pub(super) fn load_level_and_sprite_bank(
         }
     }
 
+    timer.step("scheduled ambiance preparation");
+
     // Resolve the engine's initial RNG seed before construction so
     // `Engine::new` is the only site that touches RNG state during
     // setup. Campaign selection has already advanced the single-player /
@@ -2721,12 +2723,14 @@ pub(super) fn load_level_and_sprite_bank(
         presentation_initial_ambiance,
         sim_config.bypass_fog_sprites_crash,
     );
+    timer.step("initial sprite variants");
     let (night_r, night_g, night_b) = presentation_initial_ambiance.night_color_rgb();
     let initial_shadow_key = robin_util::color::rgb565(night_r, night_g, night_b);
     host.frontend
         .frame_holder_mut()
         .apply_arno_law(initial_shadow_key);
     assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    timer.step("initial sprite shadow and opacity publication");
 
     // This is the only point at which setup transfers campaign ownership.
     // Every fallible file/decode step above borrows the session campaign, and

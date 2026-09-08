@@ -2107,7 +2107,13 @@ mod mission_level_builder_tests {
                 underlying_sector: None,
             });
         }
+        let grid_allocation = std::sync::Arc::as_ptr(&engine.world.fast_grid.level);
         engine.populate_sector_gates_from_doors();
+        assert_eq!(
+            std::sync::Arc::as_ptr(&engine.world.fast_grid.level),
+            grid_allocation,
+            "resolving door endpoints must not clone the uniquely owned static grid"
+        );
         assert_eq!(
             engine.world.fast_grid.level.sectors[0].gate_indices,
             vec![
@@ -5194,7 +5200,9 @@ impl EngineInner {
         // through the proto sparse-slot resolver. They may recover an exact
         // endpoint only when the public number names exactly one live motion
         // area; ambiguity is an error, never a guessed pointer.
-        let level = self.world.fast_grid.level.clone();
+        // Borrow the grid only through endpoint resolution. Holding an Arc clone
+        // into level_mut() below forces a deep copy of every static grid array.
+        let level = &self.world.fast_grid.level;
         let unique_runtime_sector = |number: crate::sector::SectorNumber| {
             let mut matches = level
                 .sectors
