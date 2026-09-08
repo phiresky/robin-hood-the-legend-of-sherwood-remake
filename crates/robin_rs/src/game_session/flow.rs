@@ -959,7 +959,12 @@ fn plan_interactive_pacing(
             remaining_sleep_ms,
             "multiplayer: host sending state hash timing sample"
         );
-        net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms);
+        if let Err(error) =
+            net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms)
+        {
+            // NetChannels latches the worker failure for the next ingress poll.
+            tracing::error!(%error, "multiplayer state hash publication failed");
+        }
     }
     // Preserve the absolute deadline across the capability handoff. Hash
     // publication and preparing the presentation borrow both consume this
