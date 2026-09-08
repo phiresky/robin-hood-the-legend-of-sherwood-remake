@@ -969,6 +969,24 @@ impl SaveGameManager {
             .filter(|&i| self.slot_file_exists(i))
     }
 
+    /// Play resumes the latest published checkpoint. A lifecycle autosave can
+    /// be newer than Continue, particularly after advancing to another mission.
+    pub fn find_resume_target(&self) -> Option<usize> {
+        self.saves()
+            .enumerate()
+            .filter(|(_, save)| save.is_continue() || save.is_autosave())
+            .max_by_key(|(_, save)| {
+                (
+                    save.timestamp
+                        .parse::<u64>()
+                        .expect("published resume checkpoint has an invalid timestamp"),
+                    save.is_continue(),
+                    save.filename.as_str(),
+                )
+            })
+            .map(|(index, _)| index)
+    }
+
     /// Decode and validate the selected save before constructing a
     /// destination mission Engine. Callers use its campaign, RNG state, and
     /// SimConfig for level initialization, then apply the full payload once
@@ -1872,6 +1890,28 @@ mod tests {
     use robin_engine::campaign::Campaign;
     use robin_engine::mission::Mission;
     use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
+
+    #[test]
+    fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
+        let mut manager = SaveGameManager::new(String::new());
+        assert_eq!(manager.find_resume_target(), None);
+        let mut first = published_slot("Continue");
+        first.timestamp = "100".into();
+        let mut second = published_slot("Autosave_200_0003");
+        second.timestamp = "200".into();
+        second.mission_id = 2;
+        let mut restart = published_slot("Restart");
+        restart.timestamp = "300".into();
+        for save in [first, second, restart] {
+            manager.insert_test_slot(save, SlotState::Published);
+        }
+        assert_eq!(manager.find_resume_target(), Some(1));
+        assert_eq!(manager.slot_mission_id(1), Some(2));
+        manager.catalog[0].timestamp = "400".into();
+        assert_eq!(manager.find_resume_target(), Some(0));
+        manager.catalog[1].timestamp = "400".into();
+        assert_eq!(manager.find_resume_target(), Some(0));
+    }
 
     fn published_slot(filename: &str) -> SaveGame {
         let mut slot = SaveGame::new(filename.into(), filename.into(), 1);

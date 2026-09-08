@@ -1221,17 +1221,6 @@ pub(super) fn render_frame(
         renderer,
     );
 
-    // ── GPU phase: door / jump zone alpha overlays ──
-    // Includes the shift-held `DisplayAllDoorsAndJumpZones` path and
-    // the patch-FX overlay.
-    let physical_shift_held = threaded_input.keyboard_state().keys.iter().any(|key| {
-        matches!(
-            key,
-            winit::keyboard::KeyCode::ShiftLeft | winit::keyboard::KeyCode::ShiftRight
-        )
-    });
-    render_door_overlays(host, engine, assets, renderer, physical_shift_held);
-
     // Draw rotating selection circles BELOW the characters' feet for
     // every selected hero and directly controlled ally. The original game draws selection marks after
     // ShowDetectionPolygon and before ground marks/entities.  Skipped when
@@ -1428,6 +1417,19 @@ pub(super) fn render_frame(
     titbit_renderer.render_up_to(host, engine, assets, renderer, f32::INFINITY);
 
     render_fog_of_war(host, engine, renderer);
+
+    // ── GPU phase: door / jump zone alpha overlays ──
+    // Tint the completed scene so foreground sprites and fog cannot hide
+    // interactive door highlights.
+    // Includes the shift-held `DisplayAllDoorsAndJumpZones` path and
+    // the patch-FX overlay.
+    let physical_shift_held = threaded_input.keyboard_state().keys.iter().any(|key| {
+        matches!(
+            key,
+            winit::keyboard::KeyCode::ShiftLeft | winit::keyboard::KeyCode::ShiftRight
+        )
+    });
+    render_door_overlays(host, engine, assets, renderer, physical_shift_held);
 
     // Scene-only captures deliberately stop at the last world-space pass.
     // Keeping this boundary after titbits preserves entity status effects and

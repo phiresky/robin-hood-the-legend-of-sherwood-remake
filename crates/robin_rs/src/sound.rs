@@ -933,6 +933,18 @@ impl SoundManager {
 
     /// Adjust music mode weights based on gameplay alerts.
     pub fn set_music_mode(&mut self, mode: MusicMode) {
+        let effective = if self.persisted.forest_level && mode == MusicMode::Quiet {
+            MusicMode::Alert
+        } else {
+            mode
+        };
+        // Escalation already replaces the stream immediately. Retire the old
+        // combat weights on de-escalation too, so calm gameplay cannot keep
+        // selecting the previous combat pool until its weights decay.
+        if effective < self.persisted.music_mode {
+            self.force_music_mode(mode);
+            return;
+        }
         match mode {
             MusicMode::Quiet => {
                 if !self.persisted.forest_level {
@@ -1275,6 +1287,8 @@ impl SoundManager {
         if jingle == Jingle::MissionWon || jingle == Jingle::MissionLost {
             backend.halt_music();
             self.runtime.has_mission_music = false;
+            self.persisted.load_music = false;
+            self.persisted.start_music = false;
         }
 
         if let Some(channel) = backend.play_jingle(&path) {
@@ -2583,6 +2597,33 @@ mod tests {
         assert_eq!(mgr.quiet_mode_weight(), 0);
         assert_eq!(mgr.alert_mode_weight(), MUSIC_MODE_WEIGHT);
         assert_eq!(mgr.fight_mode_weight(), 0);
+    }
+
+    #[test]
+    fn calm_music_replaces_stale_combat_weights() {
+        let mut mgr = SoundManager::new();
+        mgr.persisted.music_mode = MusicMode::Fight;
+        mgr.persisted.fight_mode_weight = 256;
+        mgr.set_music_mode(MusicMode::Quiet);
+        assert!(mgr.persisted.load_music);
+        assert_eq!(mgr.fight_mode_weight(), 0);
+        assert_eq!(mgr.alert_mode_weight(), 0);
+        assert_eq!(mgr.quiet_mode_weight(), MUSIC_MODE_WEIGHT);
+    }
+
+    #[test]
+    fn terminal_jingle_cancels_pending_mission_music() {
+        let mut mgr = SoundManager::new();
+        let mut backend = MockBackend::new();
+        mgr.initialize(&mut backend, false).unwrap();
+        mgr.persisted.load_music = true;
+        mgr.persisted.start_music = true;
+        mgr.runtime.has_mission_music = true;
+        mgr.play_jingle(Jingle::MissionWon, &mut backend);
+        assert!(mgr.runtime.jingle_channel.is_some());
+        assert!(!mgr.persisted.load_music);
+        assert!(!mgr.persisted.start_music);
+        assert!(!mgr.runtime.has_mission_music);
     }
 
     #[test]
