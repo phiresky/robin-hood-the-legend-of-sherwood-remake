@@ -707,6 +707,13 @@ impl MultiplayerPeerCoSigner {
         self.client.admission.local_public_key
     }
 
+    /// Only the locally authenticated campaign controller owns receipt watching.
+    /// Presentation does not need access to the peer's admission internals.
+    pub(super) fn receipt_controller_public_key(&self) -> Option<robin_run_protocol::PublicKey32> {
+        self.campaign_controller_public_key
+            .filter(|controller| *controller == self.local_public_key())
+    }
+
     fn prepare_replay(&mut self) -> Result<bool, String> {
         if self.replay_bytes.is_some() && self.local_replay.is_some() {
             return Ok(true);

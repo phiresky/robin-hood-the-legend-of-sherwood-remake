@@ -1,7 +1,6 @@
 //! Pre-frame authority discovery and signing. Never reconstruct authority from a debrief.
 
 use super::*;
-use robin_run_protocol::{CanonicalDocument as _, Validate as _};
 
 /// Server-published immutable authorities selected before the prepared engine
 /// capability is consumed. The setup layer still has to compare the exact
