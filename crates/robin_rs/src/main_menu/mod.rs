@@ -222,6 +222,10 @@ pub(crate) async fn show_main_menu(
     open_options_initially: bool,
     initial_direct_invite: Option<&str>,
 ) -> Result<MainMenuChoice, String> {
+    #[cfg(not(feature = "multiplayer"))]
+    if initial_direct_invite.is_some() {
+        return Err("multiplayer invitation requires the multiplayer feature".to_owned());
+    }
     let shipping = application_context.shipping()?;
     let initial_profile = application_context
         .active_profile_snapshot()
