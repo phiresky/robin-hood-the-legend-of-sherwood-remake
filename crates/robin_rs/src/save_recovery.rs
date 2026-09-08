@@ -71,6 +71,15 @@ async fn choose_recovery(
 ) -> RecoveryChoice {
     let mut input = ModalInputState::new();
     let mut scroll = 0;
+    let (width, height) = resources.button_dimensions();
+    let labels = [
+        // No Retry token exists in the original game's menu table.
+        // TODO(i18n): add a translated recovery Retry action.
+        "Retry".to_string(),
+        resources.menu_text.get(MT_BTN_CANCEL),
+        resources.menu_text.get(MT_BTN_QUIT_GAME),
+    ];
+    let mut frame = recovery_frame(&labels, width, height);
     loop {
         context.poll_leaderboard_receipts();
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
@@ -84,19 +93,6 @@ async fn choose_recovery(
                 }
             }
         }
-        let (width, height) = resources.button_dimensions();
-        let labels = [
-            // No Retry token exists in the original game's menu table.
-            // TODO(i18n): add a translated recovery Retry action.
-            "Retry".to_string(),
-            resources.menu_text.get(MT_BTN_CANCEL),
-            resources.menu_text.get(MT_BTN_QUIT_GAME),
-        ];
-        let mut frame = widget_bridge::make_button_frame(&[
-            (0, &labels[0], 70, 360, width, height),
-            (1, &labels[1], 260, 360, width, height),
-            (2, &labels[2], 450, 360, width, height),
-        ]);
         let events = frame.process_input(&input.as_widget_input());
         input.end_frame();
         if choice != Some(RecoveryChoice::Exit)
@@ -143,6 +139,18 @@ async fn choose_recovery(
         renderer.present();
         crate::window::sleep_ui_frame().await;
     }
+}
+
+fn recovery_frame(labels: &[String; 3], width: i32, height: i32) -> crate::widget::FrameWnd {
+    widget_bridge::make_button_frame(&[
+        (0, &labels[0], 70, 360, width, height),
+        (1, &labels[1], 260, 360, width, height),
+        (2, &labels[2], 450, 360, width, height),
+    ])
+}
+
+fn notice_frame(label: &str, width: i32, height: i32) -> crate::widget::FrameWnd {
+    widget_bridge::make_button_frame(&[(0, label, (640 - width) / 2, 360, width, height)])
 }
 
 fn scroll_diagnostic(scroll: &mut usize, event: &crate::gfx_types::GameEvent) {
@@ -197,6 +205,7 @@ pub(crate) struct ErrorNotice {
     message: String,
     scroll: usize,
     input: ModalInputState,
+    frame: Option<crate::widget::FrameWnd>,
 }
 
 impl ErrorNotice {
@@ -205,6 +214,7 @@ impl ErrorNotice {
             message,
             scroll: 0,
             input: ModalInputState::new(),
+            frame: None,
         }
     }
 
@@ -231,8 +241,9 @@ impl ErrorNotice {
         }
         let (width, height) = resources.button_dimensions();
         let label = resources.menu_text.get(MT_BTN_OK);
-        let mut frame =
-            widget_bridge::make_button_frame(&[(0, &label, (640 - width) / 2, 360, width, height)]);
+        let frame = self
+            .frame
+            .get_or_insert_with(|| notice_frame(&label, width, height));
         let events = frame.process_input(&self.input.as_widget_input());
         self.input.end_frame();
         if widget_bridge::find_activated(&events).is_some() {
@@ -260,7 +271,7 @@ impl ErrorNotice {
             &self.message,
             &mut self.scroll,
         );
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, frame);
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input);
         }
