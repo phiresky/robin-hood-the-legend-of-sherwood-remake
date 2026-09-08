@@ -1,7 +1,8 @@
 # Audit 3: save-store authority, recovery, allocation and deletion
 
 Implements findings 2, 3 and 4 of `CODE_QUALITY_AUDIT_3.md`. The source lane
-starts at `7be45078e`; subsequent performance changes are integrated separately.
+starts at `7be45078e` and merges the user's main `246d6cd86`, preserving its
+prepared-save identity, in-memory browser Restart and autosave sequencing work.
 
 ## Ownership and compatibility
 
@@ -22,6 +23,10 @@ The public metadata list remains mutable for existing in-process game and
 autosave callers. Paths revalidate slot identities and index publication rejects
 duplicate names. This is not descriptor-pinned filesystem isolation: local
 symlink replacement by another process is outside this desktop storage contract.
+
+Session-only Restart remains entirely memory-owned. Its upsert and deletion do
+not consult desktop recovery receipts or require a writable directory; opening
+an index cannot reconstruct its process-local payload or identity authority.
 
 ## Open and allocation policy
 
