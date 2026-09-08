@@ -342,6 +342,23 @@ pub enum SaveWriteStatus {
     Completed,
 }
 
+/// Evidence returned only after payload, index and receipt retirement succeed.
+/// Deserialization does not restore the handle's process-local authority.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommittedSave {
+    slot: SlotHandle,
+    digest: [u8; 32],
+}
+
+impl CommittedSave {
+    pub fn slot(&self) -> &SlotHandle {
+        &self.slot
+    }
+    pub fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+}
+
 /// Stable in-process selection. Serialized data cannot restore owner authority:
 /// decoded handles have owner/generation zero and are rejected by every manager.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -492,11 +509,7 @@ impl SaveGameManager {
             let index = self
                 .find_by_filename(name.as_str())
                 .context("completed save lost its owned slot")?;
-            metadata.validate_published_metadata()?;
-            self.catalog
-                .replace(index, metadata, SlotState::Published)?;
-            self.publish_index().map_err(anyhow::Error::msg)?;
-            self.retire_owned_receipt()
+            self.finish_publication(index, metadata)
         })();
         if let Err(error) = &result {
             self.operation_error = Some(format!(
@@ -586,8 +599,8 @@ impl SaveGameManager {
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let idx = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
-        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
-        self.save_index_anyhow()
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
+            .map(|_| ())
     }
 
     /// Like [`write_continue_save`](Self::write_continue_save), but moves
@@ -722,8 +735,8 @@ impl SaveGameManager {
         {
             let idx =
                 self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point")?;
-            self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
-            self.save_index_anyhow()
+            self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
+                .map(|_| ())
         }
     }
 
@@ -833,8 +846,7 @@ impl SaveGameManager {
                     slot: metadata.clone(),
                     digest: Sha256::digest(&bytes).into(),
                 };
-                save_file::atomic_write(&recovery_path, &serde_json::to_vec(&receipt)?)?;
-                save_file::atomic_write(&path, &bytes)?;
+                persistence::publish_payload(&recovery_path, &path, &receipt, &bytes, true)?;
                 if let Some(thumb) = thumb_data
                     && let Err(err) = thumb.write_to(&thumb_path)
                 {
@@ -932,8 +944,8 @@ impl SaveGameManager {
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
         let idx = self.ensure_special_slot(save_file::special_slots::SHERWOOD, "Sherwood")?;
-        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
-        self.save_index_anyhow()
+        self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)
+            .map(|_| ())
     }
 
     /// Find the save file to load given the user's request:
@@ -1012,10 +1024,6 @@ impl SaveGameManager {
                     slot.filename
                 )
             })
-    }
-
-    fn save_index_anyhow(&self) -> Result<()> {
-        self.save_index().map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Allocate a draft and return its stable owner-bound identity.
@@ -1363,7 +1371,7 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
+    ) -> Result<CommittedSave> {
         self.write_save_from_engine_with_diagnostic(
             host, game, index, engine, mission_id, profiles, thumbnail, false,
         )
@@ -1381,7 +1389,7 @@ impl SaveGameManager {
         mission_id: u32,
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
-    ) -> Result<()> {
+    ) -> Result<CommittedSave> {
         self.write_save_from_engine_with_diagnostic(
             host, game, index, engine, mission_id, profiles, thumbnail, true,
         )
@@ -1398,7 +1406,8 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
         multiplayer_diagnostic: bool,
-    ) -> Result<()> {
+    ) -> Result<CommittedSave> {
+        Self::require_synchronous_storage()?;
         self.finish_background()?;
         self.ensure_no_pending_delete()?;
         self.reconcile_quick_slots()?;
@@ -1419,21 +1428,106 @@ impl SaveGameManager {
             provenance,
         )?;
         save.header.multiplayer_diagnostic = multiplayer_diagnostic;
-        let path = self.save_path(index);
-        if !self.catalog[index].is_special()
-            && self.slot_state(&self.slot_name(index).map_err(anyhow::Error::msg)?)?
-                == SlotState::Draft
-        {
-            save.write_new_to(&path)?;
-        } else {
-            save.write_to(&path)?;
+        let mut metadata = self.catalog[index].clone();
+        Self::sync_slot_metadata_from_header(&mut metadata, &save.header)?;
+        Self::sync_slot_campaign_metadata(
+            &mut metadata,
+            save.engine.campaign(),
+            profiles.context("save metadata requires mission profiles")?,
+        );
+        metadata.validate_published_metadata()?;
+        save.validate_current_schema()?;
+        let bytes =
+            serde_json::to_vec_pretty(&save).context("serialize synchronous save payload")?;
+        self.commit_synchronous(index, metadata, &bytes, thumbnail)
+    }
+
+    fn commit_synchronous(
+        &mut self,
+        index: usize,
+        metadata: SaveGame,
+        bytes: &[u8],
+        thumbnail: Option<&Thumbnail>,
+    ) -> Result<CommittedSave> {
+        Self::require_synchronous_storage()?;
+        let handle = self.slot_handle(index)?;
+        anyhow::ensure!(
+            metadata.filename == handle.name().as_str(),
+            "publication changed slot identity"
+        );
+        metadata.validate_published_metadata()?;
+        let receipt = SpecialSaveRecovery {
+            slot: metadata.clone(),
+            digest: Sha256::digest(bytes).into(),
+        };
+        let overwrite =
+            self.catalog[index].is_special() || self.slot_state(handle.name())? != SlotState::Draft;
+        let payload_path = self.save_path(index);
+        if let Err(error) = persistence::publish_payload(
+            &self.owned_recovery_path(),
+            &payload_path,
+            &receipt,
+            bytes,
+            overwrite,
+        ) {
+            // Atomic publication may fail after rename. Only a definitely
+            // uncommitted payload permits retiring prospective evidence.
+            let rejected_new_target = !overwrite
+                && error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::AlreadyExists)
+                });
+            let recovery = if rejected_new_target {
+                // The no-clobber primitive explicitly rejected this write.
+                // Even identical bytes belong to the pre-existing orphan.
+                Ok(None)
+            } else {
+                recovery::owned_candidate(&self.save_directory, &self.owned_recovery_path())
+            };
+            match recovery {
+                Ok(None) => {
+                    if let Err(retirement) = self.retire_owned_receipt() {
+                        self.operation_error = Some(format!(
+                            "save receipt cleanup failed: {retirement:#}; reopen the save store"
+                        ));
+                    }
+                }
+                Ok(Some(_)) | Err(_) => {
+                    self.operation_error = Some(format!(
+                        "save payload publication uncertain: {error:#}; reopen the save store"
+                    ));
+                }
+            }
+            return Err(error).context("save payload publication failed");
         }
-
         self.publish_thumbnail(index, thumbnail);
+        let result = self.finish_publication(index, metadata);
+        if let Err(error) = &result {
+            self.operation_error = Some(format!(
+                "save index publication failed: {error:#}; reopen the save store"
+            ));
+        }
+        result?;
+        Ok(CommittedSave {
+            slot: handle,
+            digest: receipt.digest,
+        })
+    }
 
-        // Sync slot metadata from the save we just wrote.
-        self.sync_slot_metadata_from_save(index, &save, profiles)?;
+    fn require_synchronous_storage() -> Result<()> {
+        anyhow::ensure!(
+            !cfg!(target_arch = "wasm32"),
+            "browser manual-save persistence is unavailable; use durable autosaves"
+        );
         Ok(())
+    }
+
+    fn finish_publication(&mut self, index: usize, metadata: SaveGame) -> Result<()> {
+        self.catalog
+            .replace(index, metadata, SlotState::Published)?;
+        self.publish_index().map_err(anyhow::Error::msg)?;
+        self.retire_owned_receipt()
     }
 
     fn publish_thumbnail(&self, index: usize, thumbnail: Option<&Thumbnail>) {
@@ -1798,6 +1892,237 @@ mod tests {
         manager
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn synchronous_publication_failure_matrix_recovers_only_completed_payloads() {
+        use persistence::FailurePoint::*;
+        let (engine, _, profiles, mut host) = fresh_save_session("Transaction player");
+        let game = game_for_save(&profiles, 17);
+        for overwrite in [false, true] {
+            for diagnostic in [false, true] {
+                for stage in [
+                    BeforeReceipt,
+                    BeforePayload,
+                    AfterPayload,
+                    BeforeIndex,
+                    AfterIndex,
+                ] {
+                    let root = tempfile::tempdir().unwrap();
+                    let mut manager = indexed_store(root.path(), &["Unrelated"]);
+                    let untouched = manager.get(0).unwrap().clone();
+                    std::fs::write(manager.save_path(0), b"unrelated payload").unwrap();
+                    let handle = manager.create_draft("Transaction".into(), 17).unwrap();
+                    let index = manager.resolve_handle(&handle).unwrap();
+                    if overwrite {
+                        manager
+                            .write_save_from_engine(
+                                &mut host,
+                                &game,
+                                index,
+                                &engine,
+                                17,
+                                Some(&profiles),
+                                None,
+                            )
+                            .unwrap();
+                    }
+                    let old = manager.get(index).unwrap().clone();
+                    let old_payload = std::fs::read(manager.save_path(index)).ok();
+                    // Distinguish the replacement from the previous successful
+                    // write even when wall-clock timestamps have not advanced.
+                    manager
+                        .rename_slot(&handle, format!("Replacement {stage:?}"))
+                        .unwrap();
+                    persistence::inject_failure(stage);
+                    let error = manager
+                        .write_save_from_engine_with_diagnostic(
+                            &mut host,
+                            &game,
+                            index,
+                            &engine,
+                            17,
+                            Some(&profiles),
+                            None,
+                            diagnostic,
+                        )
+                        .unwrap_err();
+                    assert!(
+                        format!("{error:#}").contains("injected"),
+                        "{stage:?}: {error:#}"
+                    );
+                    let landed = matches!(stage, AfterPayload | BeforeIndex | AfterIndex);
+                    if landed {
+                        assert!(manager.owned_recovery_path().exists());
+                        assert!(manager.create_draft("Blocked".into(), 17).is_err());
+                    } else {
+                        assert!(!manager.owned_recovery_path().exists());
+                        assert_eq!(std::fs::read(manager.save_path(index)).ok(), old_payload);
+                        assert_eq!(
+                            manager.slot_state(handle.name()).unwrap(),
+                            if overwrite {
+                                SlotState::Published
+                            } else {
+                                SlotState::Draft
+                            }
+                        );
+                    }
+                    let recovered =
+                        SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+                    assert_eq!(
+                        recovered
+                            .get(recovered.find_by_filename("Unrelated").unwrap())
+                            .unwrap(),
+                        &untouched
+                    );
+                    assert_eq!(
+                        std::fs::read(root.path().join("Unrelated.json")).unwrap(),
+                        b"unrelated payload"
+                    );
+                    let recovered_index = recovered.find_by_filename(handle.name().as_str());
+                    if landed {
+                        let recovered_index = recovered_index.unwrap();
+                        let payload =
+                            GameSaveFile::read_from(&recovered.save_path(recovered_index)).unwrap();
+                        recovered
+                            .validate_slot_identity(recovered_index, &payload)
+                            .unwrap();
+                        assert_eq!(payload.header.multiplayer_diagnostic, diagnostic);
+                        assert_eq!(
+                            recovered
+                                .get(recovered_index)
+                                .unwrap()
+                                .multiplayer_diagnostic,
+                            diagnostic
+                        );
+                        assert_eq!(
+                            recovered.get(recovered_index).unwrap().text,
+                            format!("Replacement {stage:?}")
+                        );
+                    } else if overwrite {
+                        assert_eq!(recovered.get(recovered_index.unwrap()).unwrap(), &old);
+                    } else {
+                        assert!(recovered_index.is_none());
+                    }
+                    assert!(!recovered.owned_recovery_path().exists());
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn synchronous_commit_evidence_requires_durable_index_and_preserves_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Unrelated"]);
+        let (engine, _, profiles, mut host) = fresh_save_session("Committed player");
+        let game = game_for_save(&profiles, 17);
+        let handle = manager.create_draft("New".into(), 17).unwrap();
+        let index = manager.resolve_handle(&handle).unwrap();
+        for diagnostic in [false, true] {
+            let committed = if diagnostic {
+                manager.write_multiplayer_diagnostic_from_engine(
+                    &mut host,
+                    &game,
+                    index,
+                    &engine,
+                    17,
+                    Some(&profiles),
+                    None,
+                )
+            } else {
+                manager.write_save_from_engine(
+                    &mut host,
+                    &game,
+                    index,
+                    &engine,
+                    17,
+                    Some(&profiles),
+                    None,
+                )
+            }
+            .unwrap();
+            assert_eq!(committed.slot(), &handle);
+            assert_eq!(
+                *committed.digest(),
+                <[u8; 32]>::from(Sha256::digest(
+                    std::fs::read(manager.save_path(index)).unwrap()
+                ))
+            );
+            assert_eq!(
+                manager.slot_state(handle.name()).unwrap(),
+                SlotState::Published
+            );
+            assert!(!manager.owned_recovery_path().exists());
+            let reopened = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+            assert_eq!(reopened.count(), 2);
+            assert_eq!(
+                reopened
+                    .get(reopened.find_by_filename(handle.name().as_str()).unwrap())
+                    .unwrap()
+                    .multiplayer_diagnostic,
+                diagnostic
+            );
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn synchronous_new_target_collision_never_promotes_identical_orphan_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = indexed_store(root.path(), &["Unrelated"]);
+        let handle = manager.create_draft("New".into(), 1).unwrap();
+        let index = manager.resolve_handle(&handle).unwrap();
+        std::fs::write(manager.save_path(index), b"identical payload").unwrap();
+        let metadata = published_slot(handle.name().as_str());
+        assert!(
+            manager
+                .commit_synchronous(index, metadata, b"identical payload", None)
+                .is_err()
+        );
+        assert_eq!(manager.slot_state(handle.name()).unwrap(), SlotState::Draft);
+        assert!(!manager.owned_recovery_path().exists());
+        assert!(manager.operation_error.is_none());
+        manager.remove(index).unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join(format!("{}.json", handle.name().as_str()))).unwrap(),
+            b"identical payload"
+        );
+        let reopened = SaveGameManager::load_index(root.path().to_str().unwrap()).unwrap();
+        assert_eq!(reopened.count(), 1);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_sync_publication_rejects_without_changing_session_or_autosave_catalog() {
+        let mut manager = SaveGameManager::new("browser-memory".into());
+        manager.insert_test_slot(published_slot("Restart"), SlotState::Session);
+        manager.insert_test_slot(published_slot("Autosave_1_0000"), SlotState::Published);
+        let handle = manager.create_draft("Manual".into(), 17).unwrap();
+        let before = manager.saves().cloned().collect::<Vec<_>>();
+        let index = manager.resolve_handle(&handle).unwrap();
+        let error = manager
+            .commit_synchronous(
+                index,
+                published_slot(handle.name().as_str()),
+                b"payload",
+                None,
+            )
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("browser manual-save persistence is unavailable")
+        );
+        assert!(manager.saves().eq(before.iter()));
+        assert_eq!(
+            manager
+                .slot_state(&SlotName::new("Restart").unwrap())
+                .unwrap(),
+            SlotState::Session
+        );
+        assert!(manager.operation_error.is_none());
+    }
+
     #[test]
     fn stable_handles_reject_retired_generations_other_owners_and_serde() {
         let root = tempfile::tempdir().unwrap();
@@ -1951,12 +2276,12 @@ mod tests {
     }
 
     #[test]
-    fn owned_receipt_cannot_publish_arbitrary_or_control_slots() {
+    fn owned_receipt_cannot_publish_autosave_or_control_slots() {
         let root = tempfile::tempdir().unwrap();
         let manager = indexed_store(root.path(), &["Continue"]);
         let before = std::fs::read(root.path().join("saves.json")).unwrap();
         for name in [
-            "Savegame_000",
+            "Autosave_1_0000",
             "autosaves",
             "../escape",
             "owned-save-recovery",

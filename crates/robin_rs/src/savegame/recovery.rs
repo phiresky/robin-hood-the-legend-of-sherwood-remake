@@ -15,12 +15,11 @@ pub(super) fn owned_candidate(root: &str, receipt_path: &Path) -> Result<Option<
     let receipt: SpecialSaveRecovery =
         serde_json::from_slice(&bytes).context("decode owned save recovery receipt")?;
     receipt.slot.validate_published_metadata()?;
+    // Manual saves share this receipt. Basename and exact special-kind
+    // agreement are validated above; autosaves retain manifest authority.
     anyhow::ensure!(
-        matches!(
-            receipt.slot.filename.as_str(),
-            save_file::special_slots::CONTINUE | save_file::special_slots::RESTART
-        ),
-        "owned recovery receipt names a non-background slot"
+        !receipt.slot.is_autosave(),
+        "owned recovery receipt cannot target an autosave"
     );
     let path = Path::new(root).join(format!("{}.json", receipt.slot.filename));
     let payload = match std::fs::read(&path) {
