@@ -497,6 +497,7 @@ mod browser_ownership_tests {
         assert!(missing.await.is_err());
         assert!(
             bad.with_audio(|audio| audio.assets.encoded_loads.is_empty()
+                && audio.assets.retain_encoded.is_empty()
                 && audio.assets.cancellations.is_empty())
                 .unwrap()
         );
@@ -508,6 +509,7 @@ mod browser_ownership_tests {
         assert!(
             bad.with_audio(|audio| audio.assets.decode_loads.is_empty()
                 && audio.assets.encoded_loads.is_empty()
+                && audio.assets.retain_encoded.is_empty()
                 && audio.assets.cancellations.is_empty())
                 .unwrap()
         );
