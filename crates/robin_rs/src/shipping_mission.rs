@@ -771,6 +771,12 @@ where
     // the bank and `install_mission` decodes them.
     let mut pending_rle: Vec<SpriteRleJxlChunk> = Vec::new();
     let mut rle_scheduler = RleJxlDecodeScheduler::default();
+    // A timer yield per tiny part can incur browser timer clamping and
+    // postpone dispatch of the next dependency hub. Keep a bounded main-thread
+    // work slice instead, including completed VQ chunks in the same budget.
+    // TODO: tune this budget against visible-canvas startup measurements.
+    const STREAM_WORK_BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
+    let mut last_yield = web_time::Instant::now();
     loop {
         // Boxed: `select!` polls through `&mut`, which needs `Unpin`, and an
         // `async fn` future is not. One small allocation per event is noise
@@ -845,14 +851,13 @@ where
                             .materialize_next_ready_vq_chunk(&mut pending_chunks, rhs_files)?
                         {
                             crate::window::yield_to_runtime().await;
+                            last_yield = web_time::Instant::now();
                         }
                         let after: u64 = pending_chunks.iter().map(|c| c.blob.len() as u64).sum();
                         work.decode_done += before - after;
                     }
                 }
                 work.emit(progress, &label);
-                // Present the observer's progress frame.
-                crate::window::yield_to_runtime().await;
             }
             Event::Decoded(item) => {
                 let Some((chunk, grids)) = item? else {
@@ -874,7 +879,12 @@ where
                 // reads; surface it even while no part has completed.
                 work.emit(progress, &label);
                 crate::window::yield_to_runtime().await;
+                last_yield = web_time::Instant::now();
             }
+        }
+        if last_yield.elapsed() >= STREAM_WORK_BUDGET {
+            crate::window::yield_to_runtime().await;
+            last_yield = web_time::Instant::now();
         }
     }
     tracing::info!(
