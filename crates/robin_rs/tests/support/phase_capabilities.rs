@@ -170,6 +170,47 @@ fn production_render_and_audio_capabilities_exclude_broad_authority() {
     }
 }
 
+#[test]
+fn render_consumers_cannot_request_a_whole_host() {
+    for source in [
+        include_str!("../../src/game_render.rs"),
+        include_str!("../../src/game_render/debug.rs"),
+        include_str!("../../src/game_render/hud.rs"),
+        include_str!("../../src/game_render/minimap.rs"),
+        include_str!("../../src/game_session/render.rs"),
+    ] {
+        let syntax = syn::parse_file(source).unwrap();
+        for item in &syntax.items {
+            let syn::Item::Fn(function) = item else {
+                continue;
+            };
+            // This is an explicit command producer called before granting the
+            // render capability, not a draw consumer.
+            if function.sig.ident == "update_mouse_and_cursor" {
+                continue;
+            }
+            for input in &function.sig.inputs {
+                let syn::FnArg::Typed(argument) = input else {
+                    continue;
+                };
+                if readonly_reference_to(&argument.ty, "Engine") {
+                    continue;
+                }
+                let mut authority = BroadAuthority {
+                    forbid_host: true,
+                    ..Default::default()
+                };
+                authority.visit_type(&argument.ty);
+                assert!(
+                    !authority.found,
+                    "{} exposes unrestricted simulation/host authority",
+                    function.sig.ident
+                );
+            }
+        }
+    }
+}
+
 pub(super) fn assert_production_views_are_readonly() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/game_session");
     for (file, name, presentation) in [

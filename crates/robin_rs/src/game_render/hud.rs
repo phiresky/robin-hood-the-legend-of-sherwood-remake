@@ -1,7 +1,7 @@
 //! Mission HUD and player-feedback rendering helpers.
 
 use super::{FramePresentationInputs, render_text_with_shadow};
-use crate::host::Host;
+use crate::host::HostPresentation;
 use crate::hud_text::HudFonts;
 use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
 use crate::renderer::Renderer;
@@ -60,7 +60,11 @@ pub(crate) fn render_mission_countdown(
 /// The `NpcData::display_double_status_bar` flag (set by the soldier
 /// hover path, currently unimplemented) is also honoured so the feature is
 /// ready once that call site lands.
-pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn render_combat_status_bars(
+    host: &mut HostPresentation<'_>,
+    engine: &Engine,
+    renderer: &mut Renderer,
+) {
     use robin_engine::element::{Entity, EntityId, Human};
     use std::collections::HashSet;
 
@@ -72,7 +76,7 @@ pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, render
     }
 
     // Each selected PC currently swordfighting — bars for PC + all opponents.
-    for &pc_id in engine.hero_selection(host.transport.local_seat) {
+    for &pc_id in engine.hero_selection(host.local_seat) {
         let Some(pc) = engine.get_entity(pc_id) else {
             continue;
         };
@@ -160,7 +164,7 @@ pub(crate) fn render_combat_status_bars(host: &mut Host, engine: &Engine, render
 /// gameplay draw-manager semantics than this fixed HUD overlay.
 #[allow(clippy::too_many_arguments)]
 fn draw_status_bar(
-    host: &Host,
+    host: &HostPresentation<'_>,
     renderer: &mut Renderer,
     x_world: f32,
     y_world: f32,
@@ -210,7 +214,7 @@ const TRAJECTORY_DOT_INTERVAL: f32 = 7.0;
 ///
 /// Draws filled 1-pixel squares at regular intervals along the
 /// ballistic arc.
-pub(crate) fn render_trajectory_preview(host: &Host, renderer: &mut Renderer) {
+pub(crate) fn render_trajectory_preview(host: &HostPresentation<'_>, renderer: &mut Renderer) {
     if !host.frontend.trajectory_preview.is_valid() {
         return;
     }
@@ -308,7 +312,7 @@ pub(crate) fn render_trajectory_preview(host: &Host, renderer: &mut Renderer) {
 /// currently being aimed. This deliberately reads no simulation-owned state:
 /// disabling it changes neither commands nor rollback hashes.
 pub(crate) fn render_item_effect_preview(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     renderer: &mut Renderer,
     fonts: Option<&HudFonts>,
 ) {
@@ -346,7 +350,11 @@ pub(crate) fn render_item_effect_preview(
 /// Draws an ellipse with a radius growing from 0 → `DISTANCE_LISTEN`
 /// (Listen) or `NOISE_VOLUME_PFIIIT` (Whistle) over `TIME_LISTEN`
 /// frames.
-pub(crate) fn render_listen_ping(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn render_listen_ping(
+    host: &mut HostPresentation<'_>,
+    engine: &Engine,
+    renderer: &mut Renderer,
+) {
     const TIME_LISTEN: u32 = 5;
     const DISTANCE_LISTEN: f32 = 750.0;
     const NOISE_VOLUME_PFIIIT: f32 = 400.0;
@@ -461,13 +469,13 @@ fn substitute_int(template: &str, value: i32) -> String {
 ///   shrinks the rect below the threshold.
 /// * When latched, paint the four edges in the select/unselect color.
 pub(crate) fn draw_multi_selection_box(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
     advance_transients: bool,
 ) {
     // ── Swordfighting cancel ──
-    if crate::game_input::is_selected_unit_swordfighting(engine, host.transport.local_seat) {
+    if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {
         if advance_transients {
             host.frontend.input.cancel_selection_for_swordfight();
         }
