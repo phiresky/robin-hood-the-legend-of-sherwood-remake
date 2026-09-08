@@ -950,11 +950,7 @@ fn restore_position_and_gameplay_posture(
     // gameplay-facing posture, so adoption must install both from the same
     // serialized value. Assign directly instead of calling set_posture:
     // restoration must not apply the runtime corpse-transition guard.
-    element.posture = position.posture;
-    element
-        .sprite
-        .position_iface
-        .restore_v48_serialized_state(position);
+    element.restore_v48_position_and_posture(position);
 }
 
 fn convert_element(
@@ -4292,17 +4288,15 @@ mod tests {
 
     #[test]
     fn position_adoption_restores_the_original_single_posture_source() {
-        let mut element = crate::element::ElementData {
-            posture: crate::element::Posture::Spy,
-            ..Default::default()
-        };
+        let mut element =
+            crate::element::ElementData::from_initial_posture(crate::element::Posture::Spy);
         let mut position = element.sprite.position_iface.v48_serialized_state();
         position.posture = crate::element::Posture::LeaningOut;
         position.old_posture = crate::element::Posture::Upright;
 
         restore_position_and_gameplay_posture(&mut element, position);
 
-        assert_eq!(element.posture, crate::element::Posture::LeaningOut);
+        assert_eq!(element.posture(), crate::element::Posture::LeaningOut);
         let restored = element.sprite.position_iface.v48_serialized_state();
         assert_eq!(restored.posture, crate::element::Posture::LeaningOut);
         assert_eq!(restored.old_posture, crate::element::Posture::Upright);

@@ -635,7 +635,7 @@ impl SoldierSightContext {
         if (!entity.is_active() && viewer_building_sector.is_none())
             || entity.is_dead()
             || entity.human_data().is_some_and(|human| human.unconscious)
-            || entity.element_data().posture == crate::element::Posture::Tied
+            || entity.element_data().posture() == crate::element::Posture::Tied
         {
             return None;
         }
@@ -1319,7 +1319,7 @@ impl EngineInner {
             let dx = eyes.x - bonus_position.x;
             let dy = (eyes.y - bonus_position.y) * crate::position_interface::INVERSE_ASPECT_RATIO;
             let dz = eyes.z - bonus_position.z;
-            let threshold = if pc.element.posture == crate::element::Posture::OnShoulders {
+            let threshold = if pc.element.posture() == crate::element::Posture::OnShoulders {
                 1.3
             } else {
                 1.0
@@ -1427,7 +1427,7 @@ impl EngineInner {
                 continue;
             }
             let (_pc_eye_xy, pc_eye_world) = human_eye_point_for_visibility(pc_entity);
-            let super_detection = if pc.element.posture == Posture::OnShoulders {
+            let super_detection = if pc.element.posture() == Posture::OnShoulders {
                 BLIP_SUPER_DETECTION * BLIP_ON_SHOULDERS_FACTOR
             } else {
                 BLIP_SUPER_DETECTION
@@ -1446,7 +1446,7 @@ impl EngineInner {
                     crate::sight_obstacle::SIGHTOBSTACLE_OPAQUE,
                 )
             {
-                detecting_pc = Some((pc_id, pc.element.posture == Posture::OnShoulders));
+                detecting_pc = Some((pc_id, pc.element.posture() == Posture::OnShoulders));
                 break;
             }
         }
@@ -1516,7 +1516,7 @@ impl EngineInner {
             if entity.ai_actor_data().is_none() {
                 return;
             }
-            if entity.is_dead() || entity.element_data().posture == Posture::Tied {
+            if entity.is_dead() || entity.element_data().posture() == Posture::Tied {
                 return;
             }
             if entity.human_data().map(|h| h.unconscious).unwrap_or(false) {
@@ -1978,7 +1978,7 @@ impl EngineInner {
                 entered_refresh
                     && !entity.is_dead()
                     && entity.human_data().is_none_or(|human| !human.unconscious)
-                    && elem.posture != Posture::Tied
+                    && elem.posture() != Posture::Tied
             });
             self.tick_enemy_ai_acoustic_detection_for_npc(
                 sim,
@@ -4208,7 +4208,7 @@ impl EngineInner {
                                 character.detection_speed_in_city,
                             )
                         });
-                    let posture = pc.element.posture;
+                    let posture = pc.element.posture();
                     let ground_z = pc.element.position().z;
                     let boundary = owner_boundary
                         .map(|(owner, positions)| {
@@ -4272,7 +4272,7 @@ impl EngineInner {
                 }
                 Entity::Soldier(soldier) => {
                     let entity_id: EntityId = id.into();
-                    let posture = soldier.element.posture;
+                    let posture = soldier.element.posture();
                     let is_rider = soldier.soldier.rider;
                     let dead = soldier.npc.life_points <= 0;
                     let boundary = owner_boundary
@@ -4418,7 +4418,7 @@ impl EngineInner {
             return false;
         };
         let target_element = target.element_data();
-        let target_posture = target_element.posture;
+        let target_posture = target_element.posture();
         let target_is_rider = matches!(target, Entity::Soldier(soldier) if soldier.soldier.rider);
         let target_position = target_element.position_map();
         let target_direction = target_element.direction();
@@ -5790,11 +5790,12 @@ mod tests {
         // marker; resolving the new plane changes
         // every visibility origin and therefore accumulated detection.
         let raw_feet = crate::coordinates::WorldPoint3D::new(1898.5637, 836.4165, 0.594492);
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            active: true,
-            posture: crate::element::Posture::Flying,
-            ..crate::element::ElementData::default()
+        let mut element = {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Flying);
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(raw_feet);
         let mut entity = Entity::Soldier(crate::element::ActorSoldier {

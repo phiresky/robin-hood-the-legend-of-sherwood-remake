@@ -54,7 +54,7 @@ impl EngineInner {
                 .world
                 .entities
                 .get(*actor)
-                .is_some_and(|entity| entity.element_data().posture == Posture::Cloaked) =>
+                .is_some_and(|entity| entity.element_data().posture() == Posture::Cloaked) =>
             {
                 self.players.seats[seat].selection.contains(actor)
             }
@@ -84,7 +84,7 @@ impl EngineInner {
                 let pc = entity
                     .as_pc()
                     .unwrap_or_else(|| panic!("selected cloak actor {actor:?} is not a PC"));
-                if matches!(pc.element.posture, Posture::Cloaked | Posture::Spy) {
+                if matches!(pc.element.posture(), Posture::Cloaked | Posture::Spy) {
                     return Some(PlayerCommand::LaunchSelfAbility {
                         actor,
                         command: Command::LeaveSpy,
@@ -93,7 +93,7 @@ impl EngineInner {
                 let may_enter = pc.element.active
                     && pc.pc.life_points > 0
                     && !pc.human.unconscious
-                    && pc.element.posture == Posture::Upright
+                    && pc.element.posture() == Posture::Upright
                     && pc.actor.action_state == ActionState::Waiting
                     && pc.element.sprite.has_animation(OrderType::WaitingCape)
                     && pc
@@ -134,12 +134,12 @@ impl EngineInner {
             if !pc.element.active
                 || pc.pc.life_points <= 0
                 || pc.human.unconscious
-                || pc.element.posture != Posture::Upright
+                || pc.element.posture() != Posture::Upright
                 || pc.actor.action_state != ActionState::Waiting
             {
                 tracing::debug!(
                     ?actor,
-                    posture = ?pc.element.posture,
+                    posture = ?pc.element.posture(),
                     action_state = ?pc.actor.action_state,
                     "reusable cloak command rejected by actor state"
                 );
@@ -233,7 +233,7 @@ impl EngineInner {
             .world
             .entities
             .pcs()
-            .filter_map(|(id, pc)| (pc.element.posture == Posture::Cloaked).then_some(id.into()))
+            .filter_map(|(id, pc)| (pc.element.posture() == Posture::Cloaked).then_some(id.into()))
             .collect();
         for actor in cloaked {
             let mut sequence = Sequence::new();
@@ -268,9 +268,10 @@ mod tests {
 
     fn selected_pc(engine: &mut EngineInner) -> EntityId {
         let actor = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -347,7 +348,7 @@ mod tests {
             .get_mut(actor)
             .expect("test PC exists")
             .element_data_mut()
-            .posture = Posture::Cloaked;
+            .publish_order_posture(Posture::Cloaked);
 
         engine.set_reusable_cloaks_enabled(false);
 

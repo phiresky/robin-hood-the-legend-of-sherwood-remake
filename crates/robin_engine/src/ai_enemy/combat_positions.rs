@@ -4568,10 +4568,12 @@ mod tests {
         const TARGET: u32 = 295;
 
         let target = crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -5657,10 +5659,12 @@ mod tests {
 
         const TARGET: u32 = 137;
         let target = crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -5805,10 +5809,12 @@ mod tests {
         const TARGET: u32 = 20;
 
         let target = crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

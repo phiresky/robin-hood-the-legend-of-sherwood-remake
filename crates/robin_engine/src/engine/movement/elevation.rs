@@ -689,7 +689,7 @@ impl EngineInner {
                 entity.position_iface().old_map_position(),
                 entity.element_data().position_map(),
                 entity.element_data().layer(),
-                entity.element_data().posture,
+                entity.element_data().posture(),
                 entity
                     .human_data()
                     .is_some_and(|human| human.carrier.is_some()),

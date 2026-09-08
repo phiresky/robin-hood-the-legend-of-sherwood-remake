@@ -1095,10 +1095,11 @@ mod tests {
     }
 
     fn make_net(landing: WorldPoint3D) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectNet,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectNet;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(landing);
         element.set_position_map(MapPoint::from_world_xyz(landing.x, landing.y, landing.z));
@@ -1275,11 +1276,11 @@ mod tests {
     }
 
     fn make_soldier(pos: WorldPoint3D, profile_idx: u32, rider: bool) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(pos);
         element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
@@ -1333,11 +1334,11 @@ mod tests {
     }
 
     fn make_pc(pos: WorldPoint3D, profile_idx: u32) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(pos);
         element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));
@@ -1450,7 +1451,7 @@ mod tests {
                 "counter should be incremented eagerly on capture"
             );
             assert_eq!(
-                engine.get_entity(*s).unwrap().element_data().posture,
+                engine.get_entity(*s).unwrap().element_data().posture(),
                 Posture::Upright,
                 "posture stays Upright until the ReceiveNet handler runs"
             );
@@ -1888,7 +1889,11 @@ mod tests {
             "apply_net_falling_effect should eagerly increment counter to 1"
         );
         assert_eq!(
-            engine.get_entity(victim_id).unwrap().element_data().posture,
+            engine
+                .get_entity(victim_id)
+                .unwrap()
+                .element_data()
+                .posture(),
             Posture::StuckUnderNet
         );
 
@@ -1901,7 +1906,7 @@ mod tests {
         assert!(net.net.victims.is_empty(), "victims drained");
         let v = engine.get_entity(victim_id).unwrap();
         assert_eq!(v.human_data().unwrap().stuck_under_nets_counter, 0);
-        assert_eq!(v.element_data().posture, Posture::Lying);
+        assert_eq!(v.element_data().posture(), Posture::Lying);
         assert!(
             v.npc_data().expect("test victim NPC").detectable_lists[body_slot]
                 .iter()

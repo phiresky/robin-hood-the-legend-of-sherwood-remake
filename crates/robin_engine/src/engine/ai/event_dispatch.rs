@@ -1118,10 +1118,10 @@ impl EngineInner {
 
             ai_vision::RefreshViewContext {
                 body_direction: edata.direction(),
-                posture: edata.posture,
+                posture: edata.posture(),
                 animation,
                 is_unconscious,
-                is_tied: edata.posture == crate::element::Posture::Tied,
+                is_tied: edata.posture() == crate::element::Posture::Tied,
                 is_dead: entity.is_dead(),
                 is_active_and_outside_building,
                 is_rider: matches!(entity, Entity::Soldier(s) if s.soldier.rider),
@@ -1297,7 +1297,7 @@ impl EngineInner {
             element.blipped,
             element.sector(),
             element.is_in_door_transit(),
-            element.posture,
+            element.posture(),
             entity.actor_data().map(|actor| actor.action_state),
             element.sprite.last_action,
             ai.forbidden_remark_ids.contains(&(attempt.remark as u32)),

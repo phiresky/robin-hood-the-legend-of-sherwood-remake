@@ -364,10 +364,10 @@ mod tests {
     #[test]
     fn reversed_cape_transition_enters_cloaked_and_honors_switch_off_at_completion() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -430,10 +430,11 @@ mod tests {
     #[test]
     fn leaving_beggar_state_effect_does_not_overwrite_a_newer_pc_action() {
         let mut entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: crate::element::Posture::SimulatingBeggar,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    ElementData::from_initial_posture(crate::element::Posture::SimulatingBeggar);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -455,7 +456,7 @@ mod tests {
             "state assignment on the exit edge precedes a separately gated beggar-action deselection"
         );
         assert_eq!(
-            entity.element_data().posture,
+            entity.element_data().posture(),
             crate::element::Posture::Upright
         );
         assert_eq!(
@@ -519,9 +520,10 @@ mod tests {
     fn raising_sword_preserves_soldier_map_vs_human_ground_facing() {
         let mut soldier = weak_soldier_at_action_done(0);
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -560,9 +562,10 @@ mod tests {
     #[test]
     fn raising_sword_state_changes_follow_human_start_and_soldier_done() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -610,9 +613,10 @@ mod tests {
     #[test]
     fn standing_up_sword_refreshes_new_principal_after_sprite_and_turns() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -660,9 +664,10 @@ mod tests {
     #[test]
     fn perform_flight_toggles_anti_collision_and_clears_deviation_before_stand_up_turn() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -744,7 +749,9 @@ mod tests {
                 .npc_data_mut()
                 .expect("soldier has NPC data")
                 .life_points = 0;
-            entity.element_data_mut().posture = Posture::DeadBack;
+            entity
+                .element_data_mut()
+                .publish_order_posture(Posture::DeadBack);
             entity
                 .actor_data_mut()
                 .expect("soldier has actor data")
@@ -810,9 +817,10 @@ mod tests {
     #[test]
     fn standing_up_sword_turns_toward_existing_goal_outside_swordfight() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -835,10 +843,10 @@ mod tests {
     #[test]
     fn lowering_sword_start_restores_upright_waiting_state() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Crouched,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: crate::element::ActorData {
                 action_state: ActionState::WaitingSword,
@@ -854,17 +862,17 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(pc.element_data().posture, Posture::Upright);
+        assert_eq!(pc.element_data().posture(), Posture::Upright);
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
     }
 
     #[test]
     fn helping_climb_done_applies_posture_and_toolbar_action() {
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -877,7 +885,7 @@ mod tests {
             MotionState::Done,
         );
 
-        assert_eq!(pc.element_data().posture, Posture::HelpingToClimb);
+        assert_eq!(pc.element_data().posture(), Posture::HelpingToClimb);
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
         assert_eq!(
             pc.pc_data().unwrap().current_action,
@@ -889,10 +897,10 @@ mod tests {
     fn generic_crouch_transitions_apply_state_at_done_and_terminated() {
         for motion in [MotionState::Done, MotionState::Terminated] {
             let mut pc = Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    posture: Posture::Crouched,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: crate::element::ActorData {
                     action_state: ActionState::Waiting,
@@ -907,7 +915,7 @@ mod tests {
                 OrderType::TransitionCrouchingUp,
                 motion,
             );
-            assert_eq!(pc.element_data().posture, Posture::Upright);
+            assert_eq!(pc.element_data().posture(), Posture::Upright);
             assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
 
             apply_active_animation_start_state_side_effect(
@@ -915,16 +923,17 @@ mod tests {
                 OrderType::TransitionCrouchingDown,
                 motion,
             );
-            assert_eq!(pc.element_data().posture, Posture::Crouched);
+            assert_eq!(pc.element_data().posture(), Posture::Crouched);
             assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
         }
     }
 
     fn civilian_actor() -> Entity {
         Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -954,11 +963,12 @@ mod tests {
         sprite.current_frame = 0;
         sprite.frame_count = 0;
         Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                active: true,
-                sprite,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element.active = true;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: FxData {
                 patch_index,
@@ -1124,7 +1134,7 @@ mod tests {
         );
 
         assert_eq!(callback_action, Some(ActionState::Moving));
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1158,7 +1168,7 @@ mod tests {
 
             apply_arrow_extraction_start_side_effect(&mut entity, anim_type, MotionState::Start);
 
-            assert_eq!(entity.element_data().posture, posture, "{anim_type:?}");
+            assert_eq!(entity.element_data().posture(), posture, "{anim_type:?}");
             assert_eq!(
                 entity.actor_data().unwrap().action_state,
                 action_state,
@@ -1179,7 +1189,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Crouched);
+        assert_eq!(entity.element_data().posture(), Posture::Crouched);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -1189,10 +1199,10 @@ mod tests {
     #[test]
     fn bow_equip_start_enters_aiming_state() {
         let mut entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1205,7 +1215,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::AimingWithBow
@@ -1230,10 +1240,10 @@ mod tests {
     #[test]
     fn bored_exit_completion_changes_pc_to_waiting() {
         let mut entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1273,10 +1283,10 @@ mod tests {
             ),
         ] {
             let mut entity = Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    posture: Posture::Upright,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -1286,7 +1296,7 @@ mod tests {
 
             apply_active_animation_start_state_side_effect(&mut entity, animation, motion);
 
-            assert_eq!(entity.element_data().posture, expected_posture);
+            assert_eq!(entity.element_data().posture(), expected_posture);
             assert_eq!(
                 entity.actor_data().unwrap().action_state,
                 ActionState::Waiting,
@@ -1325,7 +1335,7 @@ mod tests {
             MotionState::Terminated,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Moving
@@ -1340,7 +1350,7 @@ mod tests {
 
         apply_standing_up_start_side_effect(&mut entity, OrderType::StandingUp, MotionState::Start);
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -1359,7 +1369,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1378,7 +1388,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::AimingWithBowUp
@@ -1397,7 +1407,7 @@ mod tests {
 
             apply_carried_start_side_effect(&mut entity, anim, MotionState::Start);
 
-            assert_eq!(entity.element_data().posture, Posture::Carried);
+            assert_eq!(entity.element_data().posture(), Posture::Carried);
             assert_eq!(
                 entity.actor_data().unwrap().action_state,
                 ActionState::Waiting
@@ -1417,7 +1427,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1436,7 +1446,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::HoldingShield
@@ -1460,7 +1470,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -1488,7 +1498,7 @@ mod tests {
             MotionState::Done,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Crouched);
+        assert_eq!(entity.element_data().posture(), Posture::Crouched);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Moving
@@ -1507,7 +1517,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Flying);
+        assert_eq!(entity.element_data().posture(), Posture::Flying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Moving
@@ -1519,7 +1529,7 @@ mod tests {
             MotionState::Terminated,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1538,7 +1548,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Menacing
@@ -1550,7 +1560,7 @@ mod tests {
             MotionState::Done,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Menacing,
@@ -1563,7 +1573,7 @@ mod tests {
             MotionState::Terminated,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1607,7 +1617,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Flying);
+        assert_eq!(entity.element_data().posture(), Posture::Flying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1619,7 +1629,7 @@ mod tests {
             MotionState::Terminated,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::AimingWithBow
@@ -1645,7 +1655,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1679,7 +1689,7 @@ mod tests {
             &mut outcomes,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -1720,10 +1730,10 @@ mod tests {
 
         let mut engine = EngineInner::new();
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1755,7 +1765,9 @@ mod tests {
         let owner = engine.add_entity(pc);
         let mut soldier = weak_soldier_at_action_done(0);
         soldier.element_data_mut().kind = ElementKind::ActorSoldier;
-        soldier.element_data_mut().posture = Posture::Lying;
+        soldier
+            .element_data_mut()
+            .publish_order_posture(Posture::Lying);
         soldier.human_data_mut().expect("human data").unconscious = true;
         soldier.npc_data_mut().expect("NPC data").life_points = 100;
         let victim = engine.add_entity(soldier);
@@ -2251,7 +2263,7 @@ mod tests {
             MotionState::Start,
         );
 
-        assert_eq!(entity.element_data().posture, Posture::Lying);
+        assert_eq!(entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -2291,7 +2303,7 @@ mod tests {
             MotionState::Start,
         );
         assert_eq!(
-            entity.element_data().posture,
+            entity.element_data().posture(),
             Posture::DeadBack,
             "the callback is driven by the rejected Upright request, not an actual posture change"
         );
@@ -2326,7 +2338,7 @@ mod tests {
 
         apply_under_net_initialization_side_effect(sim, &mut entity, OrderType::LyingStuckUnderNet);
 
-        assert_eq!(entity.element_data().posture, Posture::StuckUnderNet);
+        assert_eq!(entity.element_data().posture(), Posture::StuckUnderNet);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -2352,7 +2364,7 @@ mod tests {
             );
         });
 
-        assert_eq!(entity.element_data().posture, Posture::StuckUnderNet);
+        assert_eq!(entity.element_data().posture(), Posture::StuckUnderNet);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -3466,7 +3478,7 @@ fn apply_active_animation_start_state_side_effect(
             OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous,
             MotionState::Start,
         ) => {
-            if entity.element_data().posture != Posture::AnonymousArcher {
+            if entity.element_data().posture() != Posture::AnonymousArcher {
                 entity.set_posture(Posture::Upright);
             }
             if let Some(actor) = entity.actor_data_mut() {
@@ -3478,7 +3490,7 @@ fn apply_active_animation_start_state_side_effect(
             OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous,
             MotionState::Start,
         ) => {
-            if entity.element_data().posture != Posture::AnonymousArcher {
+            if entity.element_data().posture() != Posture::AnonymousArcher {
                 entity.set_posture(Posture::Upright);
             }
             if let Some(actor) = entity.actor_data_mut() {
@@ -3548,7 +3560,7 @@ fn rejected_dead_idle_posture_callback_required(
                 | OrderType::WaitingUprightBoredRandom
         )
         && matches!(
-            entity.element_data().posture,
+            entity.element_data().posture(),
             Posture::Dead | Posture::DeadBack
         )
 }
@@ -4398,7 +4410,7 @@ fn apply_under_net_initialization_side_effect(
     }
 
     let is_unconscious = entity.human_data().map(|h| h.unconscious).unwrap_or(false);
-    let is_tied = entity.element_data().posture == Posture::Tied;
+    let is_tied = entity.element_data().posture() == Posture::Tied;
     if !entity.is_dead() && !is_unconscious && !is_tied {
         entity.set_posture(Posture::StuckUnderNet);
     }
@@ -7167,10 +7179,11 @@ mod shoulder_idle_initialization_tests {
         let mut engine = EngineInner::new();
 
         let mut helper = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::CarryingOnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    ElementData::from_initial_posture(Posture::CarryingOnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -7196,10 +7209,10 @@ mod shoulder_idle_initialization_tests {
         );
         let helper_id = engine.add_entity(helper);
         let climber_id = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::OnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::OnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -7265,9 +7278,10 @@ mod shoulder_idle_initialization_tests {
         let mut engine = EngineInner::new();
 
         let mut helper = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -7277,10 +7291,10 @@ mod shoulder_idle_initialization_tests {
         let helper_id = engine.add_entity(Entity::Pc(helper));
 
         let mut climber = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::OnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::OnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),

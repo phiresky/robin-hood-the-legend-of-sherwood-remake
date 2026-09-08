@@ -22,22 +22,22 @@ mod suite {
         let assets = LevelAssets::new();
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
             pc: PcData::default(),
         }));
         let target = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -101,11 +101,11 @@ mod suite {
     #[test]
     fn map_exit_move_bypasses_ordinary_level_bounds_preflight() {
         fn make_owner(engine: &mut EngineInner) -> EntityId {
-            let mut element = ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            let mut element = {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             };
             element.set_position_map(MapPoint::new(90.0, 90.0));
             let npc = NpcData {
@@ -236,10 +236,11 @@ mod suite {
         let lift_sector = SectorNumber::new(7);
 
         let mut opponent = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -251,11 +252,11 @@ mod suite {
         let opponent = engine.add_entity(opponent);
 
         let mut owner_entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::MovingSword,
@@ -449,10 +450,11 @@ mod suite {
         // The actor's upright-walking arm before motion processing replaces
         // the trajectory cache for the new destination.
         let mut opponent = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -464,11 +466,11 @@ mod suite {
         let opponent = engine.add_entity(opponent);
 
         let mut owner_entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::MovingSword,
@@ -564,11 +566,11 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[transition as usize] = 0;
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
@@ -741,11 +743,11 @@ mod suite {
         conversion[start_transition as usize] = 16;
         conversion[OrderType::RunningUpright as usize] = 32;
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(scripts),
@@ -1030,11 +1032,11 @@ mod suite {
     fn stale_nonselected_final_pop_does_not_clear_live_replacement_goal() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1154,11 +1156,11 @@ mod suite {
     fn terminal_movement_handoff_advances_live_move_waiting_order_without_seek_metadata() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Crouched,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1290,11 +1292,11 @@ mod suite {
     fn terminal_group_move_handoff_requires_causally_released_successor() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Crouched,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Crouched);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1365,11 +1367,11 @@ mod suite {
     fn normally_arrived_group_move_has_no_completed_sibling_handoff() {
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1498,11 +1500,11 @@ mod suite {
             );
             engine.world.fast_grid = std::sync::Arc::new(fast_grid);
 
-            let mut element = ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            let mut element = {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             };
             element
                 .sprite
@@ -1655,11 +1657,11 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[transition as usize] = 0;
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
@@ -1767,11 +1769,11 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[transition as usize] = 0;
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
@@ -1845,10 +1847,10 @@ mod suite {
     #[test]
     fn terminal_door_pass_goal_clear_follows_crossing_recompute() {
         let mut entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1972,11 +1974,11 @@ mod suite {
         conversion[transition as usize] = 0;
         conversion[OrderType::TransitionWaitingUprightWalkingUpright as usize] = 16;
 
-        let mut owner_element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut owner_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         owner_element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 32]),
@@ -2012,15 +2014,16 @@ mod suite {
             pc: PcData::default(),
         }));
 
-        let mut target_element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: if command == Command::TieCmd {
-                Posture::Lying
-            } else {
-                Posture::Upright
-            },
-            ..ElementData::default()
+        let mut target_element = {
+            let mut initial_element =
+                ElementData::from_initial_posture(if command == Command::TieCmd {
+                    Posture::Lying
+                } else {
+                    Posture::Upright
+                });
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         target_element.sprite.position_iface.set_move_box(
             crate::coordinates::MoveBox::from_coords(-4.0, -4.0, 4.0, 4.0),

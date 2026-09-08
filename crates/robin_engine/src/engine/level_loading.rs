@@ -1919,10 +1919,11 @@ mod mission_level_builder_tests {
 
     fn civilian() -> Entity {
         Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -2415,10 +2416,11 @@ mod mission_level_builder_tests {
             carried.set_position_map(MapPoint::new(80.0, 90.0));
         }
         engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -2503,9 +2505,10 @@ mod all_sprite_ambiance_variant_tests {
 
     fn bonus() -> Entity {
         Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: ElementKind::ObjectBonus,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectBonus;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::BonusApple,
@@ -2516,9 +2519,10 @@ mod all_sprite_ambiance_variant_tests {
 
     fn fx(mobile_index: Option<u16>) -> Entity {
         Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
             },
             fx: FxData {
                 mobile_index,
@@ -2529,9 +2533,10 @@ mod all_sprite_ambiance_variant_tests {
 
     fn target() -> Entity {
         Entity::Target(ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element
             },
             fx: FxData::default(),
             target: TargetData::default(),
@@ -3151,11 +3156,12 @@ fn spawn_patch_fx_entities(
         }
 
         let entity = crate::element::Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: initially_active,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = initially_active;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: crate::element::FxData {
                 restore_background: raw.integrate_in_background,
@@ -3246,11 +3252,12 @@ fn spawn_proto_animation_fx_entities(
         }
         apply_animation_sprite_placement(&mut sprite, &raw.sprite);
         let entity = Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: raw.active,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = raw.active;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: crate::element::FxData {
                 restore_background: false,
@@ -6698,11 +6705,12 @@ impl EngineInner {
                         ),
                     );
                     let entity = crate::element::Entity::Bonus(crate::element::ElementBonus {
-                        element: crate::element::ElementData {
-                            kind: crate::element::ElementKind::ObjectBonus,
-                            blipped,
-                            sprite,
-                            ..Default::default()
+                        element: {
+                            let mut initial_element = crate::element::ElementData::default();
+                            initial_element.kind = crate::element::ElementKind::ObjectBonus;
+                            initial_element.blipped = blipped;
+                            initial_element.sprite = sprite;
+                            initial_element
                         },
                         object: crate::element::ObjectData {
                             quantity,
@@ -6764,11 +6772,12 @@ impl EngineInner {
                         ),
                     );
                     let entity = crate::element::Entity::Bonus(crate::element::ElementBonus {
-                        element: crate::element::ElementData {
-                            kind: crate::element::ElementKind::ObjectBonus,
-                            blipped,
-                            sprite,
-                            ..Default::default()
+                        element: {
+                            let mut initial_element = crate::element::ElementData::default();
+                            initial_element.kind = crate::element::ElementKind::ObjectBonus;
+                            initial_element.blipped = blipped;
+                            initial_element.sprite = sprite;
+                            initial_element
                         },
                         object: crate::element::ObjectData {
                             quantity: 1,

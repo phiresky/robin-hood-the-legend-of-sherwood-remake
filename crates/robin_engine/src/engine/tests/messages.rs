@@ -260,10 +260,11 @@ fn change_way_enemy_assignment_consumes_ale_before_explicit_patrol_tail() {
     let mut engine = EngineInner::new();
     let soldier = engine.add_entity(make_test_soldier(crate::element::Posture::Upright));
     let ale_destination = crate::coordinates::MapPoint::new(40.0, 20.0);
-    let mut ale_element = crate::element::ElementData {
-        kind: crate::element::ElementKind::ObjectOther,
-        active: true,
-        ..crate::element::ElementData::default()
+    let mut ale_element = {
+        let mut initial_element = crate::element::ElementData::default();
+        initial_element.kind = crate::element::ElementKind::ObjectOther;
+        initial_element.active = true;
+        initial_element
     };
     ale_element.set_position_map(ale_destination);
     ale_element.set_sector(crate::ai::SectorHandle::new(1));

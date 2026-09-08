@@ -1063,7 +1063,7 @@ impl EngineInner {
         if !entity.is_pc() {
             return;
         }
-        let posture = entity.element_data().posture;
+        let posture = entity.element_data().posture();
         let actor = entity
             .actor_data()
             .unwrap_or_else(|| panic!("posture-recovery PC {pc_id:?} has no actor state"));

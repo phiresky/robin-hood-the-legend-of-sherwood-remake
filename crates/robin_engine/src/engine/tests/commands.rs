@@ -752,9 +752,10 @@ fn sort_for_minimap_priority_order() {
 
     // Add entities of each priority tier.  Minimap priority ranking:
     // soldier (low) < pc < object (high).
-    let mut soldier_elem = ElementData {
-        kind: ElementKind::ActorSoldier,
-        ..Default::default()
+    let mut soldier_elem = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     soldier_elem.set_position_map(MapPoint::new(20.0, 20.0));
     let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
@@ -765,9 +766,10 @@ fn sort_for_minimap_priority_order() {
         soldier: Default::default(),
     }));
 
-    let mut pc_elem = ElementData {
-        kind: ElementKind::ActorPc,
-        ..Default::default()
+    let mut pc_elem = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ActorPc;
+        initial_element
     };
     pc_elem.set_position_map(MapPoint::new(30.0, 30.0));
     let pc_id = engine.add_entity(Entity::Pc(ActorPc {
@@ -777,9 +779,10 @@ fn sort_for_minimap_priority_order() {
         pc: Default::default(),
     }));
 
-    let mut bonus_elem = ElementData {
-        kind: ElementKind::ObjectBonus,
-        ..Default::default()
+    let mut bonus_elem = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::ObjectBonus;
+        initial_element
     };
     bonus_elem.set_position_map(MapPoint::new(40.0, 40.0));
     let object_id = engine.add_entity(Entity::Bonus(ElementBonus {
@@ -814,10 +817,10 @@ fn swordfight_los_ignores_crossing_motion_line() {
     );
 
     let make_fighter = |x| {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         };
         element.set_position(WorldPoint3D {
             x,
@@ -886,10 +889,10 @@ fn swordfight_elevation_prune_skips_visibility_and_tears_down_both_fighters() {
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
     let make_fighter = |position, sector| {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element
         };
         element.set_position(position);
         element.set_sector(crate::position_interface::SectorHandle::new(sector));
@@ -963,10 +966,10 @@ fn swordfight_prune_resets_survivors_smalltalk_initiative_through_delete_opponen
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
     let make_fighter = |position, sector| {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element
         };
         element.set_position(position);
         element.set_sector(crate::position_interface::SectorHandle::new(sector));
@@ -1061,13 +1064,13 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
 
-    let mut attacker_element = ElementData {
-        kind: ElementKind::ActorSoldier,
+    let mut attacker_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
         // Soldiers built ad-hoc in tests need an explicit posture —
         // the level deserialiser remaps `Undefined` to a kind-specific
         // default, but `ElementData::default()` does not.
-        posture: Posture::Upright,
-        ..Default::default()
+        initial_element
     };
     attacker_element.set_position(WorldPoint3D {
         x: 100.0,
@@ -1083,10 +1086,10 @@ fn smalltalk_strike_does_not_transfer_initiative_immediately() {
         soldier: Default::default(),
     }));
 
-    let mut defender_element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut defender_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     defender_element.set_position(WorldPoint3D {
         x: 130.0,
@@ -1198,10 +1201,10 @@ fn waiting_sword_smalltalk_is_installed_by_same_frame_manager_after_owner_execut
             0,
         );
         let make_fighter = |x| {
-            let mut element = ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            let mut element = {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             };
             element.set_position(WorldPoint3D {
                 x,
@@ -1374,10 +1377,10 @@ fn waiting_sword_near_gate_uses_three_dimensional_square_norm() {
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
     let make_fighter = |position| {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         };
         element.set_position(position);
         element.set_sector(crate::position_interface::SectorHandle::new(0));
@@ -1453,10 +1456,10 @@ fn waiting_sword_requires_real_combat_profiles_contextually() {
     let mut engine = EngineInner::new();
     let make_fighter = || {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1501,10 +1504,10 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
 
-    let mut pc_element = ElementData {
-        kind: ElementKind::ActorPc,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut pc_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorPc;
+        initial_element
     };
     pc_element.set_position(WorldPoint3D {
         x: 100.0,
@@ -1518,10 +1521,10 @@ fn smalltalk_hint_suppresses_normal_swordfight_evaluation() {
         pc: Default::default(),
     }));
 
-    let mut soldier_element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut soldier_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     soldier_element.set_position(WorldPoint3D {
         x: 130.0,
@@ -1574,9 +1577,10 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
 
     let mut engine = EngineInner::new();
     let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -1584,9 +1588,10 @@ fn smalltalk_hint_missing_required_opponent_fails_contextually() {
         soldier: Default::default(),
     }));
     let stale = engine.add_entity(Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -1621,10 +1626,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
     let mut engine = EngineInner::new();
     let assets = swordfight_test_assets();
 
-    let mut hinted_element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut hinted_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     hinted_element.set_position(WorldPoint3D {
         x: 100.0,
@@ -1639,10 +1644,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         soldier: Default::default(),
     }));
 
-    let mut hinted_opponent_element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut hinted_opponent_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     hinted_opponent_element.set_position(WorldPoint3D {
         x: 160.0,
@@ -1657,10 +1662,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         soldier: Default::default(),
     }));
 
-    let mut free_attacker_element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut free_attacker_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     free_attacker_element.set_position(WorldPoint3D {
         x: 300.0,
@@ -1676,10 +1681,10 @@ fn consumed_smalltalk_hint_suppresses_same_frame_smalltalk_strike_only_for_that_
         soldier: Default::default(),
     }));
 
-    let mut free_defender_element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        posture: Posture::Upright,
-        ..Default::default()
+    let mut free_defender_element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element
     };
     free_defender_element.set_position(WorldPoint3D {
         x: 330.0,
@@ -1783,9 +1788,10 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
     let mut engine = EngineInner::new();
 
     let attacker_id = engine.add_entity(Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -1793,9 +1799,10 @@ fn sword_movement_start_transfers_smalltalk_initiative() {
         soldier: Default::default(),
     }));
     let defender_id = engine.add_entity(Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -1842,9 +1849,10 @@ fn sort_for_minimap_display_then_creation_tiebreak() {
     // sprite fall back to position.y as their display_order (matches
     // sort_for_display).
     let mk = |y: f32| {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         };
         element.set_position(WorldPoint3D { x: 0.0, y, z: 0.0 });
         Entity::Soldier(ActorSoldier {
@@ -1956,9 +1964,10 @@ fn dead_pc_triggers_failure() {
     engine.feedback.cutscene_camera.level_size = MapSize::new(4000.0, 3000.0);
 
     // Add a PC entity
-    let mut pc_elem = crate::element::ElementData {
-        kind: crate::element::ElementKind::ActorPc,
-        ..Default::default()
+    let mut pc_elem = {
+        let mut initial_element = crate::element::ElementData::default();
+        initial_element.kind = crate::element::ElementKind::ActorPc;
+        initial_element
     };
     pc_elem.set_position_map(crate::coordinates::MapPoint::new(100.0, 200.0));
     let entity = Entity::Pc(crate::element::ActorPc {
@@ -1987,11 +1996,12 @@ fn non_playable_pc_does_not_prevent_default_loss() {
     let mut engine = EngineInner::new();
 
     let entity = Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            active: true,
-            posture: crate::element::Posture::Upright,
-            ..Default::default()
+        element: {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -2023,11 +2033,13 @@ fn playable_rescue_pc_prevents_default_loss_after_player_party_defeat() {
         (crate::human_control::MissionRole::RescueTarget, true),
     ] {
         engine.add_entity(Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2057,11 +2069,13 @@ fn all_enemy_ai_hero_battle_does_not_trigger_default_loss() {
 
     for _ in 0..2 {
         engine.add_entity(Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -2220,10 +2234,11 @@ fn dispatch_scroll_hourglasses_no_script_is_noop() {
     let sim = &sim_context;
     let mut engine = EngineInner::new();
     let scroll = Entity::Scroll(crate::element::ElementScroll {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ObjectScroll,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectScroll;
+            initial_element.active = true;
+            initial_element
         },
         ..Default::default()
     });
@@ -2251,10 +2266,11 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
 
     let mut engine = EngineInner::new();
     let scroll = Entity::Scroll(crate::element::ElementScroll {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ObjectScroll,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectScroll;
+            initial_element.active = true;
+            initial_element
         },
         // No script_class — no script instance is present.
         ..Default::default()
@@ -2264,9 +2280,10 @@ fn scroll_is_taken_without_script_returns_false_and_opens() {
     // here since no script is bound; the non-instanciated branch
     // doesn't look at the PC pointer.
     let pc = Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),

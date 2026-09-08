@@ -622,9 +622,10 @@ mod tests {
         world
             .entities
             .push(Some(Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),

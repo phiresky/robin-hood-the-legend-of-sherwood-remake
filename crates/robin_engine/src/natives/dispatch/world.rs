@@ -399,7 +399,7 @@ impl NativeContext<'_, '_> {
                                     && self.is_hostile_to_player(s.soldier.cached_camp)
                                     && s.npc.life_points > 0
                                     && !s.human.unconscious
-                                    && s.element.posture != Posture::Tied
+                                    && s.element.posture() != Posture::Tied
                                     && s.human.carrier.is_none()
                             }
                             _ => false,

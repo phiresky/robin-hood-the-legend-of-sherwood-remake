@@ -2483,7 +2483,7 @@ impl EngineInner {
         let (actor_posture, actor_action_state) = self
             .get_entity(owner)
             .map(|e| {
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let action_state = e.actor_data().map(|a| a.action_state).unwrap_or_default();
                 (posture, action_state)
             })
@@ -2523,7 +2523,7 @@ impl EngineInner {
         if !entity.is_pc() {
             return;
         }
-        if entity.element_data().posture != Posture::OnShoulders {
+        if entity.element_data().posture() != Posture::OnShoulders {
             return;
         }
         let Some(carrier_id) = entity.human_data().and_then(|h| h.carrier) else {
@@ -2577,7 +2577,7 @@ impl EngineInner {
         let Some(rider) = self.get_entity(owner) else {
             return owner;
         };
-        if !rider.is_pc() || rider.element_data().posture != Posture::OnShoulders {
+        if !rider.is_pc() || rider.element_data().posture() != Posture::OnShoulders {
             return owner;
         }
         let carrier = rider
@@ -4005,7 +4005,7 @@ impl EngineInner {
         let Some(entity) = self.get_entity(owner) else {
             return false;
         };
-        let posture = entity.element_data().posture;
+        let posture = entity.element_data().posture();
         if matches!(
             posture,
             Posture::Flying | Posture::OnLadder | Posture::OnWall
@@ -4512,7 +4512,7 @@ impl EngineInner {
         }
 
         let elem = entity.element_data();
-        if elem.posture == crate::element::Posture::Flying
+        if elem.posture() == crate::element::Posture::Flying
             || elem.hidden_in_building
             || elem.is_in_door_transit()
         {
@@ -6050,9 +6050,10 @@ mod campaign_lifecycle_tests {
 
     fn lacklandist_soldier(life_points: i16) -> crate::element::Entity {
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

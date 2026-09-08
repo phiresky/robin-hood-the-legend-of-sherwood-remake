@@ -512,12 +512,13 @@ impl EngineInner {
             // Ale position copying copies the actor placement
             // exactly; unlike cursor authorization, the action point does not
             // search for a nearby walkable position.
-            let mut ale_element = crate::element::ElementData {
-                kind: crate::element::ElementKind::ObjectOther,
-                active: true,
+            let mut ale_element = {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectOther;
+                initial_element.active = true;
                 // Ale-element creation constructs its object without minimap display.
-                blipped: false,
-                ..Default::default()
+                initial_element.blipped = false;
+                initial_element
             };
             ale_element.sprite.apply_placement(
                 position,
@@ -1563,10 +1564,10 @@ mod tests {
 
     fn test_soldier() -> Entity {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1656,10 +1657,11 @@ mod tests {
         let sim_context = crate::sim_rng::test_context();
         let mut engine = EngineInner::new();
         let taker = engine.add_entity(test_soldier());
-        let mut net_element = ElementData {
-            kind: ElementKind::ObjectNet,
-            active: true,
-            ..Default::default()
+        let mut net_element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectNet;
+            initial_element.active = true;
+            initial_element
         };
         net_element.set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
         net_element

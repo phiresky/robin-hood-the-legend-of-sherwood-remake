@@ -317,10 +317,11 @@ mod tests {
 
     fn bonus_arrow(quantity: u16) -> Entity {
         Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: ElementKind::ObjectBonus,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectBonus;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 quantity,
@@ -378,10 +379,11 @@ mod tests {
         let mut entities = Entities::new();
         entities.push(Some(bonus_arrow(3)));
         entities.push(Some(Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Arrow,

@@ -2045,7 +2045,7 @@ impl EngineInner {
                         let movement_action = if *running {
                             crate::order::OrderType::RunningUpright
                         } else if self.get_entity(*actor).is_some_and(|entity| {
-                            entity.element_data().posture == crate::element::Posture::Crouched
+                            entity.element_data().posture() == crate::element::Posture::Crouched
                         }) {
                             crate::order::OrderType::WalkingCrouched
                         } else {
@@ -3276,7 +3276,7 @@ impl EngineInner {
                     } else {
                         let posture = self
                             .get_entity(pc)
-                            .map(|e| e.element_data().posture)
+                            .map(|e| e.element_data().posture())
                             .unwrap_or(crate::element::Posture::Upright);
                         match posture {
                             crate::element::Posture::Crouched => {
@@ -4083,7 +4083,7 @@ impl EngineInner {
             Some(e) => (
                 e.element_data().position_map(),
                 e.element_data().sector(),
-                e.element_data().posture,
+                e.element_data().posture(),
             ),
             None => return,
         };
@@ -4330,7 +4330,7 @@ impl EngineInner {
                 entity.element_data().position_map(),
                 super::ai::ai_view_position_sector(self, entity.element_data())
                     .unwrap_or_else(|| panic!("target interaction actor {actor:?} has no sector")),
-                entity.element_data().posture,
+                entity.element_data().posture(),
                 entity.actor_auth_info(),
                 door_source,
             )
@@ -4594,7 +4594,7 @@ impl EngineInner {
         }
 
         let (pc_pos, pc_posture) = match self.get_entity(actor) {
-            Some(e) => (e.element_data().position_map(), e.element_data().posture),
+            Some(e) => (e.element_data().position_map(), e.element_data().posture()),
             None => return,
         };
         let (npc_pos, attached_scroll, npc_ai_script_locked) = match self.get_entity(target) {
@@ -4732,7 +4732,7 @@ impl EngineInner {
         running: bool,
     ) {
         let (pc_pos, pc_posture) = match self.get_entity(actor) {
-            Some(e) => (e.element_data().position_map(), e.element_data().posture),
+            Some(e) => (e.element_data().position_map(), e.element_data().posture()),
             None => return,
         };
         let tgt_pos = match self.get_entity(target) {
@@ -4898,7 +4898,7 @@ impl EngineInner {
         let action_style = if running {
             OrderType::RunningUpright
         } else {
-            match self.get_entity(pc_id).map(|e| e.element_data().posture) {
+            match self.get_entity(pc_id).map(|e| e.element_data().posture()) {
                 Some(crate::element::Posture::Crouched) => OrderType::WalkingCrouched,
                 _ => OrderType::WalkingUpright,
             }
@@ -5603,7 +5603,7 @@ impl EngineInner {
                     }
                 };
                 (
-                    e.element_data().posture,
+                    e.element_data().posture(),
                     e.element_data().layer(),
                     action_distance,
                 )
@@ -5821,7 +5821,7 @@ impl EngineInner {
             }
             let posture = self
                 .get_entity(pc_id)
-                .map(|e| e.element_data().posture)
+                .map(|e| e.element_data().posture())
                 .unwrap_or(crate::element::Posture::Upright);
 
             match posture {
@@ -6154,7 +6154,7 @@ fn determine_use_command(
     }
 
     let is_dead = entity.is_dead();
-    let posture = entity.element_data().posture;
+    let posture = entity.element_data().posture();
     let is_unconscious = entity.human_data().is_some_and(|h| h.unconscious);
     let is_tied = posture == crate::element::Posture::Tied;
 
@@ -6500,9 +6500,10 @@ mod tests {
         let mut input = InputState::default();
 
         let soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -6518,9 +6519,10 @@ mod tests {
             soldier: SoldierData::default(),
         }));
         let vip_soldier_id = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -6539,9 +6541,10 @@ mod tests {
             },
         }));
         let autonomous_pc_id = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -6715,11 +6718,11 @@ mod tests {
         engine.mission_domain.campaign = campaign;
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -8116,11 +8119,11 @@ mod tests {
         engine.mission_domain.campaign = campaign;
 
         let pc_id = engine.add_entity(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -8145,10 +8148,11 @@ mod tests {
         assoc: Action,
     ) -> EntityId {
         engine.add_entity(Entity::Bonus(ElementBonus {
-            element: ElementData {
-                kind: ElementKind::ObjectBonus,
-                active,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectBonus;
+                initial_element.active = active;
+                initial_element
             },
             object: ObjectData {
                 object_type,
@@ -8160,10 +8164,11 @@ mod tests {
 
     fn spawn_scroll(engine: &mut EngineInner, active: bool) -> EntityId {
         engine.add_entity(Entity::Scroll(ElementScroll {
-            element: ElementData {
-                kind: ElementKind::ObjectScroll,
-                active,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectScroll;
+                initial_element.active = active;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Scroll,
@@ -8180,10 +8185,11 @@ mod tests {
         assoc: Action,
     ) -> EntityId {
         engine.add_entity(Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 object_type,
@@ -8198,10 +8204,11 @@ mod tests {
     }
 
     fn spawn_net(engine: &mut EngineInner, flying: bool) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectNet,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectNet;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D::default());
         engine.add_entity(Entity::Net(ElementNet {
@@ -8267,7 +8274,8 @@ mod tests {
         let sector = crate::position_interface::SectorHandle::new(1);
         {
             let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
-            pc.element_data_mut().posture = Posture::HelpingToClimb;
+            pc.element_data_mut()
+                .publish_order_posture(Posture::HelpingToClimb);
             pc.element_data_mut()
                 .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
             pc.element_data_mut().set_sector(sector);
@@ -8286,11 +8294,11 @@ mod tests {
             .set_sector(sector);
 
         let mut corpse = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Lying,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -8429,7 +8437,8 @@ mod tests {
         let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Ale, 1)]);
         {
             let pc = engine.get_entity_mut(pc_id).expect("test PC exists");
-            pc.element_data_mut().posture = Posture::HelpingToClimb;
+            pc.element_data_mut()
+                .publish_order_posture(Posture::HelpingToClimb);
             pc.element_data_mut()
                 .set_position_map(crate::coordinates::MapPoint::new(20.0, 30.0));
         }
@@ -9402,11 +9411,11 @@ mod tests {
         );
 
         let mut target = ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10075,11 +10084,11 @@ mod tests {
 
     fn spawn_pc_at(engine: &mut EngineInner, x: f32, y: f32) -> EntityId {
         let mut pc = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10092,11 +10101,11 @@ mod tests {
 
     fn spawn_friendly_civilian(engine: &mut EngineInner) -> EntityId {
         let mut civilian = ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10152,11 +10161,11 @@ mod tests {
             .element_data_mut()
             .set_sector(sector);
         let mut target = ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10270,11 +10279,11 @@ mod tests {
             None
         );
         let target_id = engine.add_entity(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10315,11 +10324,11 @@ mod tests {
         }
 
         let mut target = ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10424,11 +10433,11 @@ mod tests {
             .element_data_mut()
             .set_sector(sector);
         let mut target = ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10560,11 +10569,11 @@ mod tests {
         );
 
         let mut npc = ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -10844,11 +10853,11 @@ mod tests {
             crate::coordinates::SpriteAnchor::new(10.0, 0.0),
         );
         let mut victim = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Lying,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData {
@@ -10888,11 +10897,11 @@ mod tests {
 
         let add_unconscious_pc = |engine: &mut EngineInner, camp| {
             engine.add_entity(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    active: true,
-                    posture: Posture::Lying,
-                    ..ElementData::default()
+                element: {
+                    let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: ActorData::default(),
                 human: HumanData {
@@ -10930,11 +10939,11 @@ mod tests {
         std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[..2]
             .copy_from_slice(&[Action::Tie, Action::Search]);
         let target_id = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Tied,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             // Script-created tied actors need not have been knocked out.
@@ -11141,7 +11150,9 @@ mod tests {
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
         {
             let target = engine.get_entity_mut(target_id).unwrap();
-            target.element_data_mut().posture = Posture::Lying;
+            target
+                .element_data_mut()
+                .publish_order_posture(Posture::Lying);
             target.human_data_mut().unwrap().unconscious = true;
         }
         let target_description_index = engine
@@ -11195,7 +11206,9 @@ mod tests {
         let target_id = spawn_pc_at(&mut engine, 90.0, 10.0);
         {
             let target = engine.get_entity_mut(target_id).unwrap();
-            target.element_data_mut().posture = Posture::Lying;
+            target
+                .element_data_mut()
+                .publish_order_posture(Posture::Lying);
             target.human_data_mut().unwrap().unconscious = true;
         }
 
@@ -11234,10 +11247,11 @@ mod tests {
             }
 
             let mut target = ElementTarget {
-                element: ElementData {
-                    kind: ElementKind::Target,
-                    active: true,
-                    ..ElementData::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::Target;
+                    initial_element.active = true;
+                    initial_element
                 },
                 fx: FxData::default(),
                 target: TargetData::default(),
@@ -11319,14 +11333,16 @@ mod tests {
             pc.element_data_mut()
                 .set_position_map(crate::coordinates::MapPoint::new(100.0, 100.0));
             pc.element_data_mut().set_sector(sector);
-            pc.element_data_mut().posture = Posture::Crouched;
+            pc.element_data_mut()
+                .publish_order_posture(Posture::Crouched);
         }
 
         let mut target = ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                active: true,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element.active = true;
+                initial_element
             },
             fx: FxData::default(),
             target: TargetData::default(),
@@ -11980,10 +11996,11 @@ mod tests {
         // collects every sibling coin in one sweep.
         let (mut engine, _assets, _pc_id) = setup_pc_engine(&[]);
         let purse_id = engine.add_entity(Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Purse,
@@ -11992,10 +12009,11 @@ mod tests {
             projectile: ProjectileData::default(),
         }));
         let coin_id = engine.add_entity(Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Coin,
@@ -12018,10 +12036,11 @@ mod tests {
         // skipped and the coin is taken individually.
         let (mut engine, _assets, _pc_id) = setup_pc_engine(&[]);
         let purse_id = engine.add_entity(Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Purse,
@@ -12031,10 +12050,11 @@ mod tests {
             projectile: ProjectileData::default(),
         }));
         let coin_id = engine.add_entity(Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: ObjectData {
                 object_type: ObjectType::Coin,
@@ -12685,10 +12705,11 @@ mod tests {
     fn quick_action_search_rechecks_nested_post_seek_target_state() {
         let (mut engine, assets, pc) = setup_pc_engine(&[(Action::Search, 0)]);
         let mut target = ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData {

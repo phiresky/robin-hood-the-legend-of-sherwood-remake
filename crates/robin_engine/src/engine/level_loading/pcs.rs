@@ -698,12 +698,13 @@ impl EngineInner {
                     .status
                     .clone();
                 let entity = Entity::Pc(crate::element::ActorPc {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::ActorPc,
-                        sprite,
+                    element: {
+                        let mut initial_element =
+                            crate::element::ElementData::from_initial_posture(initial_posture);
+                        initial_element.kind = crate::element::ElementKind::ActorPc;
+                        initial_element.sprite = sprite;
                         // Initial posture from action initialization.
-                        posture: initial_posture,
-                        ..Default::default()
+                        initial_element
                     },
                     actor: crate::element::ActorData {
                         // The per-actor Initialize() dispatch in

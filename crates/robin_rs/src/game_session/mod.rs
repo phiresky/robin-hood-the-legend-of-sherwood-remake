@@ -1775,10 +1775,11 @@ mod required_state_tests {
         )
         .expect("test engine");
         let mut add_member = |point: MapPoint| {
-            let mut element = ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            let mut element = {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             };
             element.set_position_map(point);
             engine.test_add_entity(Entity::Soldier(ActorSoldier {

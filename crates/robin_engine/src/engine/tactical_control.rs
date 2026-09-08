@@ -1557,11 +1557,13 @@ mod tests {
                 0.0,
             ));
         let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1591,10 +1593,11 @@ mod tests {
     #[test]
     fn completed_allied_move_replaces_the_ai_guard_post() {
         let mut engine = EngineInner::new();
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         let position = MapPoint::new(321.0, 654.0);
         let sector = crate::position_interface::SectorHandle::new(7);
@@ -1664,10 +1667,11 @@ mod tests {
 
         let mut engine = EngineInner::new();
         let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1693,10 +1697,11 @@ mod tests {
     fn eligible_uncontrolled_ally_uses_the_original_path_failure_flow() {
         let mut engine = EngineInner::new();
         let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1722,10 +1727,11 @@ mod tests {
     fn tactical_commandability_is_authored_independently_from_allegiance() {
         let make_soldier = |camp, command_interface| {
             Entity::Soldier(crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    active: true,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -1753,10 +1759,11 @@ mod tests {
             crate::human_control::CommandInterface::None,
         ));
         let tactical_villain = engine.add_entity(Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1782,10 +1789,11 @@ mod tests {
     fn authored_tactical_stance_is_effective_before_the_first_order() {
         let mut engine = EngineInner::new();
         let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -1834,11 +1842,13 @@ mod tests {
 
         let mut engine = EngineInner::new();
         let soldier = engine.add_entity(Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

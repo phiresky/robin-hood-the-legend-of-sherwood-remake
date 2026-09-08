@@ -213,7 +213,7 @@ impl EngineInner {
             npc.view_radius,
             entity.element_data().active,
             human.unconscious,
-            entity.element_data().posture == crate::element::Posture::Tied,
+            entity.element_data().posture() == crate::element::Posture::Tied,
             entity.is_dead(),
             self.actors_frozen(),
             actor.continuation.motion_state as u8,
@@ -1032,7 +1032,7 @@ impl EngineInner {
                         Entity::Soldier(other) => Some((
                             other.npc.life_points <= 0,
                             other.human.unconscious,
-                            other.element.posture == crate::element::Posture::Tied,
+                            other.element.posture() == crate::element::Posture::Tied,
                             other.human.carrier.is_some(),
                             other.element.active,
                             other.npc.ai_state(),
@@ -1798,7 +1798,7 @@ impl EngineInner {
                 is_friendly,
                 is_swordfighting: !s.human.opponents.is_empty(),
                 is_able_to_fight,
-                is_tied: s.element.posture == Posture::Tied,
+                is_tied: s.element.posture() == Posture::Tied,
                 is_unconscious: s.human.unconscious,
                 is_dead: s.npc.life_points <= 0,
                 is_carried: s.human.carrier.is_some(),
@@ -1852,7 +1852,7 @@ impl EngineInner {
             let is_able_to_fight = pc.element.active
                 && !is_dead
                 && !is_unconscious
-                && !matches!(pc.element.posture, Posture::Tree | Posture::Spy);
+                && !matches!(pc.element.posture(), Posture::Tree | Posture::Spy);
             if require_able && !is_able_to_fight {
                 return None;
             }
@@ -1907,7 +1907,7 @@ impl EngineInner {
                 is_friendly: self.camps_are_allied(pc.pc.cached_camp, my_camp),
                 is_swordfighting: !pc.human.opponents.is_empty(),
                 is_able_to_fight,
-                is_tied: pc.element.posture == Posture::Tied,
+                is_tied: pc.element.posture() == Posture::Tied,
                 is_unconscious,
                 is_dead,
                 is_carried,
@@ -2151,7 +2151,7 @@ impl EngineInner {
                 },
                 world_position: entity.position_iface().get_position(),
                 direction: element.direction() as u16,
-                posture: element.posture,
+                posture: element.posture(),
                 elevation: entity.position_iface().get_elevation(),
                 is_rider: entity.soldier_data().is_some_and(|data| data.rider),
                 active: element.active,
@@ -2221,7 +2221,7 @@ impl EngineInner {
                 },
                 world_position: member.position_iface().get_position(),
                 direction: element.direction() as u16,
-                posture: element.posture,
+                posture: element.posture(),
                 elevation: member.position_iface().get_elevation(),
                 is_rider: member.soldier_data().is_some_and(|soldier| soldier.rider),
                 active: element.active,

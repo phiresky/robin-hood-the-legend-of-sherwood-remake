@@ -269,14 +269,16 @@ impl EngineInner {
                 &format!("civilian profile {}", raw.profile_number),
             );
             let entity = Entity::Civilian(crate::element::ActorCivilian {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorCivilian,
+                element: {
+                    let mut initial_element = crate::element::ElementData::from_initial_posture(
+                        crate::element::Posture::Upright,
+                    );
+                    initial_element.kind = crate::element::ElementKind::ActorCivilian;
                     // Civilians are also blipped on non-forest levels,
                     // same as soldiers.
-                    blipped: !self.world.weather.is_forest_level,
-                    posture: crate::element::Posture::Upright,
-                    sprite,
-                    ..Default::default()
+                    initial_element.blipped = !self.world.weather.is_forest_level;
+                    initial_element.sprite = sprite;
+                    initial_element
                 },
                 actor: crate::element::ActorData {
                     script_class: raw.script_class.clone().unwrap_or_default(),
@@ -659,11 +661,12 @@ impl EngineInner {
             };
 
             let entity = Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    sprite,
-                    posture: initial_posture,
-                    ..Default::default()
+                element: {
+                    let mut initial_element =
+                        crate::element::ElementData::from_initial_posture(initial_posture);
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element.sprite = sprite;
+                    initial_element
                 },
                 actor: crate::element::ActorData {
                     script_class: raw.script_class.clone().unwrap_or_default(),
@@ -918,21 +921,23 @@ impl EngineInner {
             );
 
             let entity = Entity::Soldier(crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
+                element: {
+                    let mut initial_element = crate::element::ElementData::from_initial_posture(
+                        crate::element::Posture::Upright,
+                    );
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
                     // Non-forest levels start soldiers as blipped shadows that
                     // get revealed by proximity detection (SeesBlip) or the
                     // Listen ability.
-                    blipped: !raw.revealed && !self.world.weather.is_forest_level,
+                    initial_element.blipped = !raw.revealed && !self.world.weather.is_forest_level;
                     // Default posture is Upright.  Without an explicit
                     // initializer posture defaults to `Undefined`, which
                     // stranded freshly-spawned soldiers because the
                     // `Command::Wait` fallback in tick.rs only maps known
                     // postures to idle animations — Undefined returned None
                     // and no bored animation got pushed.
-                    posture: crate::element::Posture::Upright,
-                    sprite,
-                    ..Default::default()
+                    initial_element.sprite = sprite;
+                    initial_element
                 },
                 actor: crate::element::ActorData {
                     // Record the script class name here; per-actor
@@ -1135,10 +1140,11 @@ impl EngineInner {
                 .set_map_position_preserving_3d(action_point);
             sprite.position_iface.set_old_map_position(action_point);
             let entity = Entity::Target(crate::element::ElementTarget {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::Target,
-                    sprite,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::Target;
+                    initial_element.sprite = sprite;
+                    initial_element
                 },
                 fx: crate::element::FxData {
                     // Targets are primary gameplay elements and are always
@@ -1315,12 +1321,13 @@ impl EngineInner {
                 .position_iface
                 .set_old_map_position(current_map_position);
             let entity = Entity::Bonus(crate::element::ElementBonus {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ObjectBonus,
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ObjectBonus;
                     // Bonuses are blipped on non-forest levels.
-                    blipped: !self.world.weather.is_forest_level,
-                    sprite,
-                    ..Default::default()
+                    initial_element.blipped = !self.world.weather.is_forest_level;
+                    initial_element.sprite = sprite;
+                    initial_element
                 },
                 object: crate::element::ObjectData {
                     quantity: stored_quantity,
@@ -1436,18 +1443,19 @@ impl EngineInner {
                 .position_iface
                 .set_old_map_position(current_map_position);
             let entity = Entity::Scroll(crate::element::ElementScroll {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ObjectScroll,
-                    sprite,
-                    active: scroll_active,
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ObjectScroll;
+                    initial_element.sprite = sprite;
+                    initial_element.active = scroll_active;
                     // Stamp `CUSTOM_DOT_INVISIBLE` (= 0) at construction.
                     // Without this the scroll's default
                     // `custom_minimap_dot = 1` leaks into
                     // `minimap::classify_default` and pre-reveal scrolls
                     // would paint a minimap dot before the PC even talks
                     // to a beggar.
-                    custom_minimap_dot: 0,
-                    ..Default::default()
+                    initial_element.custom_minimap_dot = 0;
+                    initial_element
                 },
                 object: crate::element::ObjectData {
                     object_type: crate::element::ObjectType::Scroll,

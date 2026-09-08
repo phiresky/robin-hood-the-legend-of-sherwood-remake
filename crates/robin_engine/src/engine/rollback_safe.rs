@@ -89,7 +89,7 @@ impl SpatialPresentationPose {
             sector: element.sector(),
             obstacle: element.obstacle_index(),
             in_door_transit: element.is_in_door_transit(),
-            posture: element.posture,
+            posture: element.posture(),
             carrier: entity.human_data().and_then(|human| human.carrier),
             carried: entity.pc_data().and_then(|pc| pc.carried),
             display_order_ref: element.sprite.display_order_ref,
@@ -4705,7 +4705,7 @@ impl ParityReplaySetup<'_> {
                         sprite_box.max.x,
                         sprite_box.max.y,
                     );
-                    let is_flying_human = element.posture == crate::element::Posture::Flying;
+                    let is_flying_human = element.posture() == crate::element::Posture::Flying;
                     if is_flying_human || kind.is_projectile() {
                         !self
                             .engine
@@ -4902,10 +4902,11 @@ mod tests {
         };
 
         let (mut engine, assets) = frame_api_fixture();
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element
             .sprite
@@ -4980,9 +4981,10 @@ mod tests {
         };
         let id = inner.add_entity(crate::element::Entity::Soldier(
             crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -5066,10 +5068,11 @@ mod tests {
             .world
             .entities
             .push(Some(Entity::Bonus(ElementBonus {
-                element: ElementData {
-                    kind: ElementKind::ObjectBonus,
-                    active: true,
-                    ..ElementData::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ObjectBonus;
+                    initial_element.active = true;
+                    initial_element
                 },
                 object: ObjectData {
                     associated_action: Action::Bow,
@@ -5416,11 +5419,13 @@ mod tests {
         let pc_id = engine
             .inner
             .add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorPc,
-                    active: true,
-                    posture: crate::element::Posture::Upright,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::from_initial_posture(
+                        crate::element::Posture::Upright,
+                    );
+                    initial_element.kind = crate::element::ElementKind::ActorPc;
+                    initial_element.active = true;
+                    initial_element
                 },
                 actor: crate::element::ActorData::default(),
                 human: crate::element::HumanData::default(),
@@ -5520,9 +5525,10 @@ mod tests {
             current
                 .inner
                 .add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::Fx,
-                        ..Default::default()
+                    element: {
+                        let mut initial_element = crate::element::ElementData::default();
+                        initial_element.kind = crate::element::ElementKind::Fx;
+                        initial_element
                     },
                     fx: Default::default(),
                 }));
@@ -6252,9 +6258,10 @@ mod tests {
     #[test]
     fn parity_runtime_projects_current_sprite_top_left_for_ordinary_entities() {
         let mut inner = EngineInner::new();
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::Fx,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Fx;
+            initial_element
         };
         element.sprite.center = crate::coordinates::SpriteAnchor::new(150.0, 150.0);
         element
@@ -6278,9 +6285,10 @@ mod tests {
     #[test]
     fn parity_runtime_preserves_target_cached_sprite_anchor() {
         let mut inner = EngineInner::new();
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::Target,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Target;
+            initial_element
         };
         element.sprite.center = crate::coordinates::SpriteAnchor::new(30.0, 140.0);
         element
@@ -6347,11 +6355,12 @@ mod tests {
             ..Default::default()
         }]);
         let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: true,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = true;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: Default::default(),
         }));
@@ -6415,11 +6424,12 @@ mod tests {
             ..Default::default()
         }]);
         let id = inner.add_entity(crate::element::Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                active: true,
-                sprite,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element.active = true;
+                initial_element.sprite = sprite;
+                initial_element
             },
             fx: Default::default(),
         }));
@@ -6513,9 +6523,10 @@ mod tests {
 
         for (handle, expected_ordinal) in [(1_u32, 1_u64), (3, 2)] {
             let mut inner = EngineInner::new();
-            let mut element = crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                ..Default::default()
+            let mut element = {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element
             };
             element.set_layer(0);
             element.set_obstacle_index(
@@ -7126,10 +7137,11 @@ mod tests {
         inner.control.rng = SimulationRng::with_original_replay(vec![11, 22, 33, 44]);
         inner.control.arrow_refresh_pending = true;
         let projectile = crate::element::ElementProjectile {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ObjectProjectile,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+                initial_element.active = true;
+                initial_element
             },
             object: crate::element::ObjectData {
                 object_type: crate::element::ObjectType::Arrow,

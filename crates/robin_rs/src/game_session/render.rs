@@ -1228,7 +1228,7 @@ pub(super) fn render_frame(
         let pos = &elem.position_map();
         let mut map_pt = *pos;
         // Offset +(0, -50) when the PC is on shoulders.
-        if elem.posture == Posture::OnShoulders {
+        if elem.posture() == Posture::OnShoulders {
             map_pt.y -= 50.0;
         }
         let Some(screen_pt) = host.frontend.viewport.map_to_screen(map_pt) else {

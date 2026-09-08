@@ -206,11 +206,11 @@ pub(crate) fn build_engine_with_target() -> (EngineInner, EntityId) {
 
     // FX target with a script_class of "TestTarget".
     let target = Entity::Target(ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            active: true,
-            posture: Posture::Undefined,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+            initial_element.kind = ElementKind::Target;
+            initial_element.active = true;
+            initial_element
         },
         fx: FxData::default(),
         target: TargetData {

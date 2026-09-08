@@ -704,10 +704,11 @@ mod tests {
     use crate::profiles::{ProfileManager, SoldierProfile};
 
     fn make_nest_at(engine: &mut EngineInner) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_layer(0);
         let nest = ElementProjectile {
@@ -742,11 +743,11 @@ mod tests {
     }
 
     fn make_soldier(pos: WorldPoint3D) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(pos);
         element.set_position_map(MapPoint::from_world_xyz(pos.x, pos.y, pos.z));

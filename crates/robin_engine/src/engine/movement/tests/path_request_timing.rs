@@ -5,9 +5,10 @@ mod suite {
 
     fn test_pc() -> Entity {
         Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -55,11 +56,11 @@ mod suite {
         engine.world.fast_grid_mut().allocate_layers(3);
         let source = MapPoint::new(707.0, 1560.0);
         let destination = MapPoint::new(737.5406, 1709.7073);
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_layer(1);
         element.set_sector(crate::position_interface::SectorHandle::new(70));

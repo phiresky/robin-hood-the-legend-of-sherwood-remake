@@ -219,7 +219,8 @@ impl EngineInner {
             .filter_map(|(id, entity)| {
                 let id = EntityId::from(id);
                 let actor = entity.actor_data()?;
-                if actor.active_flight.is_some() || entity.element_data().posture != Posture::Flying
+                if actor.active_flight.is_some()
+                    || entity.element_data().posture() != Posture::Flying
                 {
                     return None;
                 }
@@ -2237,7 +2238,7 @@ impl EngineInner {
                         order.order_type == crate::order::OrderType::FallingLadderWall
                     });
                 if !fall_order_live {
-                    if entity.element_data().posture == Posture::Flying {
+                    if entity.element_data().posture() == Posture::Flying {
                         entity.actor_data_mut().unwrap().active_flight = None;
                     }
                     continue;
@@ -2259,7 +2260,7 @@ impl EngineInner {
             let waiting_for_fall_start = flight.frames_remaining != 0
                 && flight.antagonist.is_some()
                 && !flight.ladder_fall
-                && (!falling_order_live || entity.element_data().posture != Posture::Flying);
+                && (!falling_order_live || entity.element_data().posture() != Posture::Flying);
             if waiting_for_fall_start {
                 continue;
             }
@@ -2274,7 +2275,7 @@ impl EngineInner {
             if terminal_only
                 && flight.frames_remaining == 0
                 && flight.antagonist.is_some()
-                && entity.element_data().posture == Posture::Flying
+                && entity.element_data().posture() == Posture::Flying
             {
                 continue;
             }
@@ -2366,7 +2367,8 @@ impl EngineInner {
                 // handler changes posture first; only then does Original
                 // apply the goal obstacle/layer/sector and refresh script
                 // sectors.
-                if flight.antagonist.is_some() && entity.element_data().posture != Posture::Flying {
+                if flight.antagonist.is_some() && entity.element_data().posture() != Posture::Flying
+                {
                     set_flight_position(
                         entity,
                         flight.geometry,
@@ -2777,7 +2779,7 @@ impl EngineInner {
             let elem = candidate.element_data();
 
             // Only upright postures qualify.
-            if elem.posture != Posture::Upright {
+            if elem.posture() != Posture::Upright {
                 continue;
             }
 
@@ -3784,7 +3786,7 @@ impl EngineInner {
                 // with both orders pre-pushed and let `do_next_order`
                 // play them in sequence.
                 let standing_anim = {
-                    let posture = entity.element_data().posture;
+                    let posture = entity.element_data().posture();
                     let action = entity
                         .actor_data()
                         .map(|a| a.action_state)
@@ -3918,7 +3920,7 @@ impl EngineInner {
                         .unconscious;
                 if woke {
                     let standing_anim = select_combat_animations(
-                        entity.element_data().posture,
+                        entity.element_data().posture(),
                         entity
                             .actor_data()
                             .expect("human concussion owner lost ActorData")
@@ -4039,11 +4041,11 @@ mod tests {
     }
 
     fn falling_pushed_soldier(dead: bool) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Flying,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Flying);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         // Flight processing reads the live falling animation's frame count on
         // every combat-flight tick. Production actors are sprite-hydrated;
@@ -4167,11 +4169,11 @@ mod tests {
     }
 
     fn falling_ladder_pc(life_points: i16) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Flying,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Flying);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D {
             x: 10.0,
@@ -4336,7 +4338,7 @@ mod tests {
         engine.tick_push_flights(sim, &LevelAssets::default());
 
         let victim = engine.get_entity(victim_id).unwrap();
-        assert_eq!(victim.element_data().posture, Posture::Flying);
+        assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
             ActionState::WaitingSword
@@ -4913,7 +4915,7 @@ mod tests {
         engine.tick_push_flights(sim, &LevelAssets::default());
 
         let victim = engine.get_entity(victim_id).unwrap();
-        assert_eq!(victim.element_data().posture, Posture::Flying);
+        assert_eq!(victim.element_data().posture(), Posture::Flying);
         assert_eq!(
             victim.actor_data().unwrap().action_state,
             ActionState::WaitingSword

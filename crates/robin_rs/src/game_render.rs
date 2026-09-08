@@ -255,18 +255,20 @@ mod fog_render_tests {
     #[test]
     fn patch_fx_defers_visibility_to_the_pixel_fog_composite() {
         let ordinary = Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
             },
             fx: FxData::default(),
         });
         assert!(!uses_pixel_fog_visibility(&ordinary));
 
         let patch = Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
             },
             fx: FxData {
                 patch_index: robin_engine::patch::PatchIndex::new(0),
@@ -447,7 +449,7 @@ pub(crate) fn render_door_overlays(
         .hero_selection(local_seat)
         .first()
         .and_then(|&id| engine.get_entity(id))
-        .map(|e| e.element_data().posture);
+        .map(|e| e.element_data().posture());
     let action_ok = match engine.selected_action_for_seat(local_seat) {
         Action::NoAction => true,
         Action::HelpToClimb => matches!(
@@ -1452,7 +1454,7 @@ pub(crate) fn render_entities_gpu(
             let dst_rect = Rect::new(dst_x, dst_y, sw as u32, sh as u32);
             let kind = entity.kind();
             let actor_layer = elem.layer();
-            let is_flying_human = elem.posture == Posture::Flying;
+            let is_flying_human = elem.posture() == Posture::Flying;
             let hidden_outline_rgb = if host.frontend.input.draw_hidden {
                 // Ground objects always use Hidden; actors retain their active
                 // targeting/parrying outline just like the original path.

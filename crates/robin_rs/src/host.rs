@@ -3405,16 +3405,17 @@ mod application_context_tests {
             sound_ids: vec![0],
             ..Default::default()
         };
-        let mut element = ElementData {
-            kind: ElementKind::Fx,
-            sprite: Sprite {
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.sprite = Sprite {
                 current_width: 4,
                 current_height: 1,
                 scripts: Arc::new(vec![script]),
                 center: SpriteAnchor::ZERO,
                 ..Default::default()
-            },
-            ..Default::default()
+            };
+            initial_element
         };
         element.set_position_map(MapPoint::new(100.0, 100.0));
         Entity::Fx(ElementFx {

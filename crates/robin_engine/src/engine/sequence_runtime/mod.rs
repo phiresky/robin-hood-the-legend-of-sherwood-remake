@@ -538,7 +538,7 @@ impl BowTransitionContext<'_> {
             .entities
             .get(owner)
             .unwrap_or_else(|| panic!("bow command owner missing: {owner:?}"));
-        let posture = owner_entity.element_data().posture;
+        let posture = owner_entity.element_data().posture();
         let owner_action_state = owner_entity
             .actor_data()
             .map(|actor| actor.action_state)
@@ -906,7 +906,7 @@ impl TargetInteractionContext<'_> {
         // fx-target gate to it terminated all of those before they animated.
         if owner_command == Command::SearchCmd {
             let crouched = self.entities.get(owner).is_some_and(|entity| {
-                entity.element_data().posture == crate::element::Posture::Crouched
+                entity.element_data().posture() == crate::element::Posture::Crouched
             });
             let order_type = if crouched {
                 crate::order::OrderType::SearchingCrouched
@@ -1180,7 +1180,7 @@ impl WaitCommandContext<'_> {
             (
                 entity.is_soldier(),
                 entity.is_pc(),
-                entity.element_data().posture,
+                entity.element_data().posture(),
                 actor.action_state,
                 entity.enemy_ai().is_some_and(|enemy| enemy.attentive),
                 entity.is_dead(),
@@ -1809,7 +1809,7 @@ impl StealthCommandContext<'_> {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Reach;
         };
-        let live_posture = entity.element_data().posture;
+        let live_posture = entity.element_data().posture();
 
         // Command translation appends the stance body order
         // unconditionally.  Admission gating happened earlier: the
@@ -2861,11 +2861,13 @@ mod sequence_phase_context_tests {
 
     fn shield_pc(action_state: crate::element::ActionState) -> Entity {
         Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: crate::element::ActorData {
                 action_state,
@@ -2880,11 +2882,12 @@ mod sequence_phase_context_tests {
     }
 
     fn object_interaction_soldier(direction_goal: i16) -> Entity {
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            active: true,
-            posture: crate::element::Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(863.875, 702.403));
         element.set_direction_goal(direction_goal);
@@ -2899,7 +2902,9 @@ mod sequence_phase_context_tests {
 
     fn unconscious_lying_soldier() -> Entity {
         let mut soldier = object_interaction_soldier(0);
-        soldier.element_data_mut().posture = crate::element::Posture::Lying;
+        soldier
+            .element_data_mut()
+            .publish_order_posture(crate::element::Posture::Lying);
         soldier
             .human_data_mut()
             .expect("test soldier is human")
@@ -2990,10 +2995,11 @@ mod sequence_phase_context_tests {
     }
 
     fn interaction_object(object_type: crate::element::ObjectType) -> Entity {
-        let mut element = crate::element::ElementData {
-            kind: crate::element::ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(846.728, 693.890));
         let object = crate::element::ObjectData {
@@ -3145,11 +3151,11 @@ mod sequence_phase_context_tests {
 
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: crate::element::ActorData {
                 action_state: ActionState::Moving,
@@ -3238,11 +3244,11 @@ mod sequence_phase_context_tests {
 
         let mut engine = EngineInner::new();
         let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::DeadBack,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::DeadBack);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: crate::element::ActorData {
                 action_state: ActionState::Waiting,
@@ -3583,7 +3589,7 @@ mod sequence_phase_context_tests {
         );
         let owner_entity = engine.get_entity(owner).expect("shield owner exists");
         assert_eq!(
-            owner_entity.element_data().posture,
+            owner_entity.element_data().posture(),
             crate::element::Posture::Upright
         );
         assert_eq!(
@@ -3793,7 +3799,7 @@ mod sequence_phase_context_tests {
                     .get_entity(owner)
                     .expect("recovery owner exists")
                     .element_data()
-                    .posture,
+                    .posture(),
                 Posture::Lying,
                 "{command:?} translation must wait for StandingUp MotionState::Start"
             );
