@@ -42,7 +42,9 @@ official projection or save identity.
 ## Authority and remaining scope
 
 Serde for process-local attachments deliberately drops executable/opacity
-implementations. Decoding an audio group likewise does not confer mission
+implementations; the existing projection still hashes opacity behavior and
+custom replay identity still carries the Spellforge package. Decoding an
+audio group likewise does not confer mission
 preparation or ranked authority: `PreparedMissionInputs` still seals the
 actual engine inputs and ranked admission still checks completeness.
 

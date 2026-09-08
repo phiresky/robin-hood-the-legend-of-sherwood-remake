@@ -1263,7 +1263,8 @@ impl LevelAudioAssets {
     }
 }
 
-/// Process-local implementations reattached after snapshot decoding. Never part of save or content identity.
+/// Process-local implementations reattached after snapshot decoding. Projection
+/// includes opacity behavior and package identity, never these implementations.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LevelRuntimeAttachments {
     /// Host-provided per-pixel sprite hit-test callback. `None` before
