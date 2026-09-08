@@ -180,7 +180,9 @@ fn draw_diagnostic(
     let font = resources
         .menu_text_font_any()
         .expect("save recovery requires menu text font");
-    let line_height = i32::from(font.height()).max(1);
+    let line_height = i32::try_from(font.height())
+        .expect("menu font height fits signed coordinates")
+        .max(1);
     let visible = (250 / line_height).max(1) as usize;
     // This wrapper splits overlong individual path components at character
     // boundaries as well as wrapping normal words. Every diagnostic line can
@@ -338,6 +340,65 @@ pub async fn open_for_launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_and_notice_buttons_keep_pointer_state_across_frames() {
+        use crate::gfx_types::GameEvent;
+        let labels = ["Retry".into(), "Cancel".into(), "Quit".into()];
+        for (mut frame, x) in [
+            (recovery_frame(&labels, 100, 40), 80),
+            (notice_frame("OK", 100, 40), 280),
+        ] {
+            let mut input = ModalInputState::new();
+            let transform = MenuTransform::centered(640, 480);
+            let trace = [
+                GameEvent::MouseMove {
+                    x,
+                    y: 370,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                GameEvent::MouseDown(x, 370, 1, 1),
+                GameEvent::MouseUp(x, 370, 1),
+            ];
+            for (index, event) in trace.iter().enumerate() {
+                input.update_from_event(event, transform);
+                let events = frame.process_input(&input.as_widget_input());
+                input.end_frame();
+                assert_eq!(
+                    widget_bridge::find_activated(&events),
+                    if index == 2 { Some(0) } else { None }
+                );
+            }
+            // A later press dragged off the button must not activate on release.
+            for event in [
+                GameEvent::MouseDown(x, 370, 1, 1),
+                GameEvent::MouseMove {
+                    x: 5,
+                    y: 5,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                GameEvent::MouseUp(5, 5, 1),
+            ] {
+                input.update_from_event(&event, transform);
+                let events = frame.process_input(&input.as_widget_input());
+                input.end_frame();
+                assert_eq!(widget_bridge::find_activated(&events), None);
+            }
+        }
+    }
+
+    #[test]
+    fn error_notice_retains_exact_backend_diagnostic_until_acknowledged() {
+        let diagnostic = "save logically deleted; cleanup of Profile_007/Savegame_003.json pending: permission denied";
+        let notice = ErrorNotice::new(diagnostic.into());
+        assert_eq!(notice.message, diagnostic);
+        assert!(
+            notice.frame.is_none(),
+            "runtime widgets are initialized on the first frame"
+        );
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
