@@ -87,6 +87,16 @@ static NEXT_RENDERER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 #[error("renderer surface {0:?} is missing or has been deleted")]
 pub struct MissingSurface(pub SurfaceHandle);
 
+#[derive(Debug, thiserror::Error, serde::Serialize, serde::Deserialize)]
+pub enum SurfaceOwnershipError {
+    #[error(transparent)]
+    Missing(#[from] MissingSurface),
+    #[error("surface {0} cannot have multiple owners")]
+    AlreadyOwned(u32),
+    #[error("surface {0} has no retirement owner")]
+    NotOwned(u32),
+}
+
 /// Session-scoped atlas residency. Entries include outlines and baked shadow
 /// variants; distinct frames count only bank/variant identity. No entry-only
 /// eviction is offered because it would not release atlas layer memory.
@@ -816,11 +826,15 @@ impl Renderer {
     }
 
     pub fn delete_surface(&mut self, id: u32) -> bool {
-        assert!(
-            !self.owned_surfaces.contains(&id),
-            "owned upload must be retired with its ownership token"
-        );
-        self.resources.delete_managed_surface(id)
+        self.try_delete_legacy_surface(id)
+            .expect("owned upload must be retired with its ownership token")
+    }
+
+    pub fn try_delete_legacy_surface(&mut self, id: u32) -> Result<bool, SurfaceOwnershipError> {
+        if self.owned_surfaces.contains(&id) {
+            return Err(SurfaceOwnershipError::AlreadyOwned(id));
+        }
+        Ok(self.resources.delete_managed_surface(id))
     }
 
     /// Compatibility boundary: resolve legacy screen aliases or mint a local upload reference.
@@ -843,35 +857,46 @@ impl Renderer {
     }
 
     pub fn adopt_surface(&mut self, id: u32) -> OwnedSurface {
-        self.validate_surface_adoption(id);
-        let handle = self.surface_handle(id).expect("validated upload");
-        assert!(
-            self.owned_surfaces.insert(id),
-            "surface {id} cannot have multiple owners"
-        );
-        OwnedSurface { handle }
+        self.try_adopt_surface(id)
+            .expect("ownership requires a live unowned upload")
     }
 
-    pub(crate) fn validate_surface_adoption(&self, id: u32) {
-        self.surface_handle(id)
-            .expect("ownership requires a live uploaded surface");
-        assert!(
-            !self.owned_surfaces.contains(&id),
-            "surface {id} cannot have multiple owners"
-        );
+    pub fn try_adopt_surface(&mut self, id: u32) -> Result<OwnedSurface, SurfaceOwnershipError> {
+        self.validate_surface_adoption(id)?;
+        let handle = self.surface_handle(id)?;
+        self.owned_surfaces.insert(id);
+        Ok(OwnedSurface { handle })
+    }
+
+    pub(crate) fn validate_surface_adoption(&self, id: u32) -> Result<(), SurfaceOwnershipError> {
+        self.surface_handle(id)?;
+        if self.owned_surfaces.contains(&id) {
+            return Err(SurfaceOwnershipError::AlreadyOwned(id));
+        }
+        Ok(())
     }
 
     pub fn retire_surface(&mut self, surface: OwnedSurface) {
-        self.surface_dimensions(surface.handle)
-            .expect("retirement requires the originating renderer and a live upload");
-        assert!(
-            self.owned_surfaces.remove(&surface.handle.id),
-            "surface is not owned by this renderer"
-        );
+        self.try_retire_surface(surface)
+            .expect("retirement requires the originating renderer and a live owned upload");
+    }
+
+    /// On rejection the caller retains its token and can retire it with the correct renderer.
+    pub fn try_retire_surface(
+        &mut self,
+        surface: OwnedSurface,
+    ) -> Result<(), (SurfaceOwnershipError, OwnedSurface)> {
+        if let Err(error) = self.surface_dimensions(surface.handle) {
+            return Err((error.into(), surface));
+        }
+        if !self.owned_surfaces.remove(&surface.handle.id) {
+            return Err((SurfaceOwnershipError::NotOwned(surface.handle.id), surface));
+        }
         assert!(
             self.resources.delete_managed_surface(surface.handle.id),
             "owned surface disappeared during retirement"
         );
+        Ok(())
     }
 
     pub fn target_dimensions(&self, target: SurfaceTarget) -> Result<(u16, u16), MissingSurface> {
@@ -3021,43 +3046,25 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     let restored: OwnedSurface =
         serde_json::from_str(&serde_json::to_string(&owned).unwrap()).unwrap();
     assert!(renderer.surface_dimensions(restored.handle()).is_err());
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || renderer.retire_surface(restored)
-        ))
-        .is_err()
-    );
+    assert!(renderer.try_retire_surface(restored).is_err());
+    assert!(renderer.surface_dimensions(owned.handle()).is_ok());
+    let (_, owned) = other_renderer.try_retire_surface(owned).unwrap_err();
     assert!(renderer.surface_dimensions(owned.handle()).is_ok());
     let mut mission = crate::mission_render_resources::MissionRenderResources::default();
     mission.replace_map(&mut other_renderer, other_id);
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || mission.retire(&mut renderer)
-        ))
-        .is_err()
-    );
+    assert!(mission.try_retire(&mut renderer).is_err());
     assert_eq!(mission.map(), Some(other_id));
     assert!(other_renderer.surface_handle(other_id).is_ok());
     assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || mission.replace_map(&mut other_renderer, u32::MAX)
-        ))
-        .is_err()
+        mission
+            .try_replace_map(&mut other_renderer, u32::MAX)
+            .is_err()
     );
     assert_eq!(mission.map(), Some(other_id));
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || renderer.adopt_surface(local_id)
-        ))
-        .is_err()
-    );
-    assert!(
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-            || renderer.delete_surface(local_id)
-        ))
-        .is_err()
-    );
+    assert!(renderer.try_adopt_surface(local_id).is_err());
+    assert!(renderer.try_delete_legacy_surface(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
+    mission.retire(&mut other_renderer);
     renderer.retire_surface(owned);
     assert!(renderer.surface_handle(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());

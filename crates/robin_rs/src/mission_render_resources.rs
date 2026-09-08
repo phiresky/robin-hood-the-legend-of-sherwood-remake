@@ -4,7 +4,7 @@
 //! bank retires its old uploads; absent frames remain absent rather than aliasing
 //! the renderer's screen surface (legacy ID zero).
 
-use crate::renderer::{OwnedSurface, Renderer};
+use crate::renderer::{MissingSurface, OwnedSurface, Renderer, SurfaceOwnershipError};
 use robin_engine::coordinates::ScreenSize;
 use serde::{Deserialize, Serialize};
 
@@ -94,29 +94,42 @@ impl MissionRenderResources {
     }
 
     pub fn replace_map(&mut self, renderer: &mut Renderer, id: u32) {
-        self.validate_renderer(renderer);
-        self.validate_new_ids([id]);
+        self.try_replace_map(renderer, id)
+            .expect("mission map replacement requires a local unowned upload");
+    }
+
+    pub fn try_replace_map(
+        &mut self,
+        renderer: &mut Renderer,
+        id: u32,
+    ) -> Result<(), SurfaceOwnershipError> {
+        self.validate_renderer(renderer)?;
+        renderer.validate_surface_adoption(id)?;
         let frame = SpriteSurface::uploaded(renderer, id);
         if let Some(previous) = self.map.replace(frame) {
             delete_surface(renderer, previous.upload);
         }
+        Ok(())
     }
 
     pub fn replace_corners(&mut self, renderer: &mut Renderer, size: ScreenSize, ids: Vec<u32>) {
-        self.validate_renderer(renderer);
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.validate_new_ids(ids.iter().copied());
         Self::replace_bank(&mut self.corners, renderer, ids.into_iter().map(Some));
         self.corner_size = size;
     }
 
     pub fn replace_dots(&mut self, renderer: &mut Renderer, ids: Vec<Option<u32>>) {
-        self.validate_renderer(renderer);
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.validate_new_ids(ids.iter().flatten().copied());
         Self::replace_bank(&mut self.dots, renderer, ids);
     }
 
     pub fn replace_ground_marks(&mut self, renderer: &mut Renderer, ids: Vec<u32>) {
-        self.validate_renderer(renderer);
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.validate_new_ids(ids.iter().copied());
         Self::replace_bank(&mut self.ground_marks, renderer, ids.into_iter().map(Some));
     }
@@ -146,7 +159,9 @@ impl MissionRenderResources {
     ) {
         let ids: Vec<_> = ids.into_iter().collect();
         for id in ids.iter().flatten() {
-            renderer.validate_surface_adoption(*id);
+            renderer
+                .validate_surface_adoption(*id)
+                .expect("mission bank requires local unowned uploads");
         }
         let frames = ids
             .into_iter()
@@ -159,7 +174,8 @@ impl MissionRenderResources {
     /// Start sprite preparation without retaining stale resources on a missing
     /// optional bank. Does not retire the map, uploaded earlier in level loading.
     pub fn retire_sprites(&mut self, renderer: &mut Renderer) {
-        self.validate_renderer(renderer);
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.retire_sprite_banks(&mut |id| delete_surface(renderer, id));
     }
 
@@ -171,11 +187,17 @@ impl MissionRenderResources {
     }
 
     pub fn retire(&mut self, renderer: &mut Renderer) {
-        self.validate_renderer(renderer);
-        self.retire_with(&mut |id| delete_surface(renderer, id));
+        self.try_retire(renderer)
+            .expect("mission uploads require their originating renderer");
     }
 
-    fn validate_renderer(&self, renderer: &Renderer) {
+    pub fn try_retire(&mut self, renderer: &mut Renderer) -> Result<(), MissingSurface> {
+        self.validate_renderer(renderer)?;
+        self.retire_with(&mut |id| delete_surface(renderer, id));
+        Ok(())
+    }
+
+    fn validate_renderer(&self, renderer: &Renderer) -> Result<(), MissingSurface> {
         for frame in self
             .map
             .iter()
@@ -183,10 +205,9 @@ impl MissionRenderResources {
             .chain(self.dots.frames.iter().flatten())
             .chain(self.ground_marks.frames.iter().flatten())
         {
-            renderer
-                .surface_dimensions(frame.upload.handle())
-                .expect("mission uploads require their originating renderer");
+            renderer.surface_dimensions(frame.upload.handle())?;
         }
+        Ok(())
     }
 
     fn retire_with(&mut self, delete: &mut impl FnMut(OwnedSurface)) {
