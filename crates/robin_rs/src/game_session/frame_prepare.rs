@@ -4,6 +4,8 @@
 //! it has finalized the deterministic command stream. No presentation borrow
 //! escapes the phase or crosses into simulation.
 
+use std::ops::ControlFlow;
+
 use super::event_hud::{
     CollectedFrameInput, EventHudContext, EventHudOutcome, InputModifiers,
     collect_event_and_hud_input,
@@ -612,9 +614,17 @@ fn dispatch_pre_tick_pointer_commands(
 pub(super) struct InteractiveFramePreparation<'mission, 'services, 'app> {
     mission: &'mission mut InteractiveMission,
     services: &'services mut MissionServices<'app>,
-    state: Option<PreparationPhaseState>,
 }
 
+// Each phase consumes the previous phase's output, so skipping or repeating a
+// phase cannot be represented by the preparation API.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct InputPrepared(PreparationPhaseState);
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SavesPrepared(PreparationPhaseState);
+
+#[derive(serde::Serialize, serde::Deserialize)]
 struct PreparationPhaseState {
     frame: MissionFrame,
     mp_clock_pause: bool,
@@ -631,26 +641,26 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         mission: &'mission mut InteractiveMission,
         services: &'services mut MissionServices<'app>,
     ) -> Self {
-        Self {
-            mission,
-            services,
-            state: None,
-        }
+        Self { mission, services }
     }
 
     /// Collect input, drive operation/save flows, and finalize the pre-tick
     /// command stream.
     pub(super) async fn run(mut self) -> Result<FramePreparation, String> {
-        if let Some(control) = self.collect_input_and_menus().await? {
-            return Ok(FramePreparation::Control(control));
-        }
-        if let Some(control) = self.process_operation_and_save().await? {
-            return Ok(FramePreparation::Control(control));
-        }
-        self.finalize_pre_tick()
+        let input = match self.collect_input_and_menus().await? {
+            ControlFlow::Break(control) => return Ok(FramePreparation::Control(control)),
+            ControlFlow::Continue(input) => input,
+        };
+        let saves = match self.process_operation_and_save(input).await? {
+            ControlFlow::Break(control) => return Ok(FramePreparation::Control(control)),
+            ControlFlow::Continue(saves) => saves,
+        };
+        self.finalize_pre_tick(saves)
     }
 
-    async fn collect_input_and_menus(&mut self) -> Result<Option<FrameControl>, String> {
+    async fn collect_input_and_menus(
+        &mut self,
+    ) -> Result<ControlFlow<FrameControl, InputPrepared>, String> {
         let mission = &mut *self.mission;
         let services = &mut *self.services;
         let window = &mut *services.window;
@@ -709,7 +719,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                     "multiplayer: authoritative load committed; rebuilding mission transport"
                 );
                 runtime.trace(FrameContractStage::Exit);
-                return Ok(Some(FrameControl::Exit(MissionExit::new(
+                return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                     GameCode::LevelLoad,
                 ))));
             } else {
@@ -728,7 +738,9 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                             "multiplayer: host campaign transition committed"
                         );
                         runtime.trace(FrameContractStage::Exit);
-                        return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
+                        return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+                            exit_code,
+                        ))));
                     }
                     crate::host::PendingSnapshotTransitionPayload::Save { .. } => {
                         unreachable!("save transition handled above")
@@ -833,11 +845,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         )? {
             HandlerAction::Continue => {
                 runtime.trace(FrameContractStage::EarlyRestart);
-                return Ok(Some(FrameControl::RestartIteration));
+                return Ok(ControlFlow::Break(FrameControl::RestartIteration));
             }
             HandlerAction::Exit(code) => {
                 runtime.trace(FrameContractStage::Exit);
-                return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
+                return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+                    code,
+                ))));
             }
             HandlerAction::Proceed => {}
         }
@@ -902,11 +916,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             EventHudOutcome::Ready(input) => input,
             EventHudOutcome::Control(HandlerAction::Continue) => {
                 runtime.trace(FrameContractStage::EarlyRestart);
-                return Ok(Some(FrameControl::RestartIteration));
+                return Ok(ControlFlow::Break(FrameControl::RestartIteration));
             }
             EventHudOutcome::Control(HandlerAction::Exit(code)) => {
                 runtime.trace(FrameContractStage::Exit);
-                return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
+                return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+                    code,
+                ))));
             }
             EventHudOutcome::Control(HandlerAction::Proceed) => {
                 unreachable!("event/HUD collection must return data when it proceeds")
@@ -985,11 +1001,13 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             {
                 HandlerAction::Continue => {
                     runtime.trace(FrameContractStage::EarlyRestart);
-                    return Ok(Some(FrameControl::RestartIteration));
+                    return Ok(ControlFlow::Break(FrameControl::RestartIteration));
                 }
                 HandlerAction::Exit(code) => {
                     runtime.trace(FrameContractStage::Exit);
-                    return Ok(Some(FrameControl::Exit(MissionExit::new(code))));
+                    return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+                        code,
+                    ))));
                 }
                 HandlerAction::Proceed => {}
             }
@@ -1016,20 +1034,24 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
 
         runtime.trace(FrameContractStage::InputAndMenus);
 
-        self.state = Some(PreparationPhaseState {
-            frame,
-            mp_clock_pause,
-            pause_closed_this_frame,
-            rewind_active,
-            shift_held,
-            step_forward_pressed,
-            step_back_pressed,
-            modal_rendered_this_frame,
-        });
-        Ok(None)
+        Ok(ControlFlow::Continue(InputPrepared(
+            PreparationPhaseState {
+                frame,
+                mp_clock_pause,
+                pause_closed_this_frame,
+                rewind_active,
+                shift_held,
+                step_forward_pressed,
+                step_back_pressed,
+                modal_rendered_this_frame,
+            },
+        )))
     }
 
-    async fn process_operation_and_save(&mut self) -> Result<Option<FrameControl>, String> {
+    async fn process_operation_and_save(
+        &mut self,
+        input: InputPrepared,
+    ) -> Result<ControlFlow<FrameControl, SavesPrepared>, String> {
         let services = &mut *self.services;
         let callbacks = &mut *services.callbacks;
         let profiles = services.profiles;
@@ -1044,7 +1066,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             step_forward_pressed,
             step_back_pressed,
             modal_rendered_this_frame,
-        } = self.state.take().expect("input phase must complete first");
+        } = input.0;
         let InteractiveMission {
             runtime,
             frontend,
@@ -1260,12 +1282,12 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 *campaign_transition = Some(transition);
                 game.operation.set(GameCode::LevelLoad);
                 runtime.trace(FrameContractStage::Exit);
-                return Ok(Some(FrameControl::exit(GameCode::LevelLoad)));
+                return Ok(ControlFlow::Break(FrameControl::exit(GameCode::LevelLoad)));
             }
             if save_load.restart_requested {
                 game.operation.set(GameCode::LevelRestart);
                 runtime.trace(FrameContractStage::Exit);
-                return Ok(Some(FrameControl::Exit(MissionExit::new(
+                return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                     GameCode::LevelRestart,
                 ))));
             }
@@ -1275,7 +1297,9 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 game.post_load_resolution_resync();
             }
             runtime.trace(FrameContractStage::Exit);
-            return Ok(Some(FrameControl::Exit(MissionExit::new(exit_code))));
+            return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+                exit_code,
+            ))));
         }
         suppress_load_requests_during_playback(runtime, callbacks);
         let mut save_load = perform_pending_save_load(
@@ -1304,7 +1328,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         if save_load.restart_requested {
             game.operation.set(GameCode::LevelRestart);
             runtime.trace(FrameContractStage::Exit);
-            return Ok(Some(FrameControl::Exit(MissionExit::new(
+            return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 GameCode::LevelRestart,
             ))));
         }
@@ -1319,7 +1343,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             *campaign_transition = Some(transition);
             game.operation.set(GameCode::LevelLoad);
             runtime.trace(FrameContractStage::Exit);
-            return Ok(Some(FrameControl::Exit(MissionExit::new(
+            return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 GameCode::LevelLoad,
             ))));
         }
@@ -1344,20 +1368,21 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             &save_load,
         );
 
-        self.state = Some(PreparationPhaseState {
-            frame,
-            mp_clock_pause,
-            pause_closed_this_frame,
-            rewind_active,
-            shift_held,
-            step_forward_pressed,
-            step_back_pressed,
-            modal_rendered_this_frame,
-        });
-        Ok(None)
+        Ok(ControlFlow::Continue(SavesPrepared(
+            PreparationPhaseState {
+                frame,
+                mp_clock_pause,
+                pause_closed_this_frame,
+                rewind_active,
+                shift_held,
+                step_forward_pressed,
+                step_back_pressed,
+                modal_rendered_this_frame,
+            },
+        )))
     }
 
-    fn finalize_pre_tick(&mut self) -> Result<FramePreparation, String> {
+    fn finalize_pre_tick(&mut self, saves: SavesPrepared) -> Result<FramePreparation, String> {
         let PreparationPhaseState {
             mut frame,
             mut mp_clock_pause,
@@ -1367,10 +1392,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             step_forward_pressed,
             step_back_pressed,
             modal_rendered_this_frame,
-        } = self
-            .state
-            .take()
-            .expect("operation/save phase must complete first");
+        } = saves.0;
         let InteractiveMission {
             runtime, frontend, ..
         } = &mut *self.mission;
