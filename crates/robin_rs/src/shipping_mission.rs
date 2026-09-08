@@ -40,6 +40,180 @@ fn prioritize_mission_downloads(files: &mut [String]) {
     files.sort_by_key(|path| mission_download_priority(path));
 }
 
+/// Keep the speculative prefix identical to the normal authoritative order.
+#[cfg(any(target_arch = "wasm32", test))]
+fn early_download_prefix(mut files: Vec<String>) -> Vec<String> {
+    prioritize_mission_downloads(&mut files);
+    files.truncate(MISSION_FETCH_CONCURRENCY);
+    files
+}
+
+/// Validate the entire batch before allocating an owner or issuing requests.
+/// A failed second registration cannot remove an earlier owner's handoffs.
+#[cfg(any(target_arch = "wasm32", test))]
+fn early_download_keys(
+    files: Vec<String>,
+    is_pending: impl Fn(&str) -> bool,
+) -> Result<Vec<String>> {
+    let keys = files
+        .iter()
+        .map(|file| canonical_relative_file_key(file))
+        .collect::<Result<Vec<_>>>()?;
+    let mut unique = BTreeSet::new();
+    for key in &keys {
+        if !unique.insert(key) {
+            return Err(anyhow!("duplicate early mission file {key}"));
+        }
+        if is_pending(key) {
+            return Err(anyhow!("early mission file {key} is already pending"));
+        }
+    }
+    Ok(keys)
+}
+
+#[cfg(target_arch = "wasm32")]
+type EarlyDownload = futures::future::Shared<
+    futures::future::LocalBoxFuture<'static, std::result::Result<Arc<Vec<u8>>, String>>,
+>;
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    // JS futures stay on the browser main thread. The owner retains the exact
+    // datadir allocation, preventing pointer reuse while entries are present.
+    static EARLY_DOWNLOADS: std::cell::RefCell<std::collections::BTreeMap<(usize, String), (std::rc::Rc<()>, EarlyDownload)>> =
+        const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn remove_early_owner<T>(
+    pending: &mut std::collections::BTreeMap<(usize, String), (std::rc::Rc<()>, T)>,
+    identity: usize,
+    files: &[String],
+    owner: &std::rc::Rc<()>,
+) {
+    for file in files {
+        let key = (identity, file.clone());
+        if pending
+            .get(&key)
+            .is_some_and(|(current, _)| std::rc::Rc::ptr_eq(current, owner))
+        {
+            pending.remove(&key);
+        }
+    }
+}
+
+/// Replay-owned, nonserializable browser I/O lifetime. Dropping a failed or
+/// abandoned launch aborts its requests and removes every unused handoff.
+#[cfg(target_arch = "wasm32")]
+pub(crate) struct EarlyMissionDownloads {
+    datadir: Arc<ShippingDatadir>,
+    files: Vec<String>,
+    abort: web_sys::AbortController,
+    token: std::rc::Rc<()>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for EarlyMissionDownloads {
+    fn drop(&mut self) {
+        let identity = Arc::as_ptr(&self.datadir) as usize;
+        EARLY_DOWNLOADS.with(|pending| {
+            remove_early_owner(
+                &mut pending.borrow_mut(),
+                identity,
+                &self.files,
+                &self.token,
+            );
+        });
+        self.abort.abort();
+    }
+}
+
+/// Start only the first normal fetch batch. Decode, publication, audio setup,
+/// renderer preparation and subsequent batches remain in ensure_loaded.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn start_early_downloads(
+    datadir: Arc<ShippingDatadir>,
+    mission: &str,
+    campaign: &robin_engine::campaign::Campaign,
+    profiles: &robin_engine::profiles::ProfileManager,
+) -> Result<EarlyMissionDownloads> {
+    use futures::FutureExt as _;
+    let dependencies = required_dependencies(&datadir, mission, campaign, profiles, false)?;
+    let identity = Arc::as_ptr(&datadir) as usize;
+    let files = early_download_keys(early_download_prefix(dependencies.files), |key| {
+        EARLY_DOWNLOADS.with(|pending| pending.borrow().contains_key(&(identity, key.to_owned())))
+    })?;
+    let base = datadir
+        .remote_base_url()
+        .ok_or_else(|| anyhow!("early mission download requires a remote base URL"))?;
+    let abort = web_sys::AbortController::new()
+        .map_err(|error| anyhow!("create early mission abort controller: {error:?}"))?;
+    let owner = EarlyMissionDownloads {
+        datadir: datadir.clone(),
+        files: files.clone(),
+        abort,
+        token: std::rc::Rc::new(()),
+    };
+    for file in files {
+        let key = file.clone();
+        if datadir.preloaded_file(&key).is_some() {
+            continue;
+        }
+        let url = format!("{base}/{file}");
+        let signal = owner.abort.signal();
+        let pending = async move {
+            use wasm_bindgen::JsCast as _;
+            use wasm_bindgen_futures::JsFuture;
+            let request = web_sys::RequestInit::new();
+            request.set_signal(Some(&signal));
+            let window =
+                web_sys::window().ok_or_else(|| "browser window is unavailable".to_string())?;
+            let response = JsFuture::from(window.fetch_with_str_and_init(&url, &request))
+                .await
+                .map_err(|error| format!("early fetch {url}: {error:?}"))?
+                .dyn_into::<web_sys::Response>()
+                .map_err(|_| format!("early fetch {url}: not a Response"))?;
+            if !response.ok() {
+                return Err(format!("early fetch {url}: HTTP {}", response.status()));
+            }
+            let buffer = response
+                .array_buffer()
+                .map_err(|error| format!("early fetch {url}: arrayBuffer: {error:?}"))?;
+            let buffer = JsFuture::from(buffer)
+                .await
+                .map_err(|error| format!("early fetch {url}: body: {error:?}"))?;
+            Ok(Arc::new(js_sys::Uint8Array::new(&buffer).to_vec()))
+        }
+        .boxed_local()
+        .shared();
+        EARLY_DOWNLOADS.with(|entries| {
+            entries
+                .borrow_mut()
+                .insert((identity, key), (owner.token.clone(), pending.clone()))
+        });
+        // Poll now: constructing a future alone does not issue a fetch.
+        let _ = pending.clone().now_or_never();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = pending.await;
+        });
+    }
+    tracing::info!(
+        files = owner.files.len(),
+        "startup timing: early replay fetch batch started"
+    );
+    Ok(owner)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn take_early_download(datadir: &ShippingDatadir, key: &str) -> Option<EarlyDownload> {
+    EARLY_DOWNLOADS.with(|pending| {
+        pending
+            .borrow_mut()
+            .remove(&(datadir as *const ShippingDatadir as usize, key.to_owned()))
+            .map(|(_, download)| download)
+    })
+}
+
 /// One observable step at the asynchronous shipping-data boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MissionLoadPhase {
@@ -1585,6 +1759,10 @@ async fn fetch(datadir: &ShippingDatadir, relative: &str) -> Result<CompressedPa
     if let Some(bytes) = datadir.preloaded_file(&key) {
         return Ok(CompressedPayload::Shared(bytes));
     }
+    if let Some(pending) = take_early_download(datadir, &key) {
+        let bytes = pending.await.map_err(anyhow::Error::msg)?;
+        return Ok(CompressedPayload::Shared(bytes));
+    }
 
     let base = datadir
         .remote_base_url()
@@ -1630,6 +1808,13 @@ async fn fetch_counted(
 
     let key = canonical_relative_file_key(relative)?;
     if let Some(bytes) = datadir.preloaded_file(&key) {
+        let len = bytes.len() as u64;
+        progress.add_known(len);
+        progress.received.fetch_add(len, Ordering::Relaxed);
+        return Ok(CompressedPayload::Shared(bytes));
+    }
+    if let Some(pending) = take_early_download(datadir, &key) {
+        let bytes = pending.await.map_err(anyhow::Error::msg)?;
         let len = bytes.len() as u64;
         progress.add_known(len);
         progress.received.fetch_add(len, Ordering::Relaxed);
@@ -2225,6 +2410,78 @@ mod tests {
         assert_eq!(
             town,
             vec!["missions/town".to_owned(), "rhs/robin-town".to_owned()]
+        );
+    }
+}
+
+#[cfg(test)]
+mod early_download_tests {
+    #[test]
+    fn dropping_consumed_owner_does_not_remove_replacement_or_other_datadir() {
+        let first = std::rc::Rc::new(());
+        let replacement = std::rc::Rc::new(());
+        let files = vec!["rhs/a".to_owned(), "rhs/b".to_owned()];
+        let mut entries = std::collections::BTreeMap::from([
+            ((1, files[0].clone()), (first.clone(), 1)),
+            ((1, files[1].clone()), (first.clone(), 2)),
+            ((2, files[1].clone()), (first.clone(), 3)),
+        ]);
+        entries.remove(&(1, files[0].clone())); // Normal loader consumes A.
+        entries.insert((1, files[0].clone()), (replacement.clone(), 4));
+        super::remove_early_owner(&mut entries, 1, &files, &first);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[&(1, files[0].clone())].1, 4);
+        assert_eq!(entries[&(2, files[1].clone())].1, 3);
+        super::remove_early_owner(&mut entries, 1, &files, &replacement);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn preflight_canonicalizes_owner_keys_and_rejects_aliases() {
+        let keys = super::early_download_keys(vec![r"rhs\bank".into()], |_| false).unwrap();
+        assert_eq!(keys, ["rhs/bank"]);
+        assert!(
+            super::early_download_keys(vec![r"rhs\bank".into(), "rhs/bank".into()], |_| false)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn invalid_batch_never_observes_or_modifies_the_registry() {
+        let reads = std::cell::Cell::new(0);
+        let result =
+            super::early_download_keys(vec!["rhs/valid".into(), "../escape".into()], |_| {
+                reads.set(reads.get() + 1);
+                false
+            });
+        assert!(result.is_err());
+        assert_eq!(reads.get(), 0);
+    }
+
+    #[test]
+    fn conflicting_batch_preserves_prior_owner() {
+        let existing = std::collections::BTreeMap::from([("rhs/old".to_owned(), 7u64)]);
+        let result = super::early_download_keys(vec!["rhs/new".into(), r"rhs\old".into()], |key| {
+            existing.contains_key(key)
+        });
+        assert!(result.is_err());
+        assert_eq!(
+            existing,
+            std::collections::BTreeMap::from([("rhs/old".to_owned(), 7u64)])
+        );
+    }
+
+    #[test]
+    fn prefix_uses_normal_priority_and_never_adds_dependencies() {
+        let files = (0..12)
+            .map(|i| format!("rhs/{i}"))
+            .chain(["audio/a".into(), "terrain/a".into(), "missions/a".into()])
+            .collect::<Vec<_>>();
+        let mut normal = files.clone();
+        super::prioritize_mission_downloads(&mut normal);
+        assert_eq!(
+            super::early_download_prefix(files),
+            normal[..super::MISSION_FETCH_CONCURRENCY]
         );
     }
 }

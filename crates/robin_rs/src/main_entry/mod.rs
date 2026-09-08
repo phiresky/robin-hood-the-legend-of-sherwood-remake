@@ -47,3 +47,6 @@ pub(crate) use callbacks::{
 pub use callbacks::{PendingLevelLoad, PostLoadSync, SaveBannerKind, SaveLoadRequest};
 
 pub use run::{run_rust_game, run_rust_game_headless};
+
+#[cfg(target_arch = "wasm32")]
+pub use run::{run_rust_game_with_browser_preparation, start_browser_replay_preparation};
