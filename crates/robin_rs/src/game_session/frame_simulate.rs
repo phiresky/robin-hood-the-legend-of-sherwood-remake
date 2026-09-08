@@ -1104,20 +1104,26 @@ impl InteractiveFrameSimulation {
                         let slot = callbacks
                             .save_manager
                             .find_by_filename(&filename)
-                            .unwrap_or_else(|| {
-                                panic!("selected save slot '{filename}' disappeared")
-                            });
-                        callbacks.queue_operation(match mode {
-                            SaveLoadMode::Save => SaveLoadRequest::Save {
-                                slot: Some(slot),
-                                mission_id,
-                            },
-                            SaveLoadMode::Load => SaveLoadRequest::Load {
-                                slot: Some(slot),
-                                mission_id,
-                                save: None,
-                            },
-                        });
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("selected save slot '{filename}' disappeared")
+                            })
+                            .and_then(|index| callbacks.save_manager.slot_handle(index));
+                        match slot {
+                            Ok(slot) => callbacks.queue_operation(match mode {
+                                SaveLoadMode::Save => SaveLoadRequest::Save {
+                                    slot: Some(slot),
+                                    mission_id,
+                                },
+                                SaveLoadMode::Load => SaveLoadRequest::Load {
+                                    slot: Some(slot),
+                                    mission_id,
+                                    save: None,
+                                },
+                            }),
+                            Err(error) => {
+                                tracing::error!("Save/load selection rejected: {error:#}")
+                            }
+                        }
                         ui.pause_menu = None;
                         presentation.renderer.clear_frozen_scene();
                         input.reset_after_modal(host);

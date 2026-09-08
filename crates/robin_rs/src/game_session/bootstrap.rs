@@ -269,7 +269,10 @@ impl MissionBootstrap {
                 Some(&self.loaded.assets.profile_manager),
                 None,
             ) {
-                Ok(()) => {
+                Ok(
+                    crate::savegame::SaveWriteStatus::Queued
+                    | crate::savegame::SaveWriteStatus::Completed,
+                ) => {
                     self.restart_save_identity = callbacks.save_manager.restart_session_identity();
                     true
                 }
@@ -1802,7 +1805,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let mut callbacks = crate::main_entry::RustCallbacks::new(application_context);
+        let mut callbacks = crate::main_entry::RustCallbacks::new(application_context).unwrap();
         bootstrap.start_required_spellforge().unwrap();
         bootstrap.lifecycle.advance(
             MissionBootstrapPhase::SpellforgeStarted,
@@ -1840,7 +1843,7 @@ mod tests {
         .unwrap();
         bootstrap.host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 1024.0, 768.0).unwrap();
-        let mut callbacks = crate::main_entry::RustCallbacks::new(context);
+        let mut callbacks = crate::main_entry::RustCallbacks::new(context).unwrap();
         let descriptor = bootstrap.game.mission_assets().unwrap().clone();
         let replay: robin_engine::replay::ReplayData = robin_engine::replay::ReplayFile {
             header: robin_engine::replay::ReplayHeader {

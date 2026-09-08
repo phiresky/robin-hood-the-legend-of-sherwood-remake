@@ -1061,12 +1061,15 @@ mod tests {
 
         let (resolved_slot, resolved) = preflight_or_use_decoded_load(
             &manager,
-            Some(decoded_slot),
+            Some(manager.slot_handle(decoded_slot).unwrap()),
             Some(decoded.into_payload()),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(resolved_slot, slot);
+        assert_eq!(
+            manager.resolve_handle(&resolved_slot.unwrap()).unwrap(),
+            slot
+        );
         assert_eq!(resolved.engine.frame_counter(), 111);
     }
 }

@@ -171,7 +171,7 @@ pub(super) enum UiTaskOutcome {
         mission_id: u32,
     },
     QuickLoadAccepted {
-        slot: usize,
+        slot: crate::savegame::SlotHandle,
         mission_id: u32,
         save: Box<GameSaveFile>,
     },
@@ -338,7 +338,7 @@ impl UiTaskKind {
 
 pub(super) struct QuickLoadTaskState {
     dialog: YesNoModalState,
-    slot: usize,
+    slot: crate::savegame::SlotHandle,
     mission_id: u32,
     save: Option<Box<GameSaveFile>>,
 }
@@ -349,7 +349,7 @@ impl QuickLoadTaskState {
         renderer: &Renderer,
         resources: &IngameMenuResources,
         message: String,
-        slot: usize,
+        slot: crate::savegame::SlotHandle,
         mission_id: u32,
         save: GameSaveFile,
     ) -> Self {
@@ -380,7 +380,7 @@ impl QuickLoadTaskState {
         result.map(|accepted| {
             if accepted {
                 UiTaskOutcome::QuickLoadAccepted {
-                    slot: self.slot,
+                    slot: self.slot.clone(),
                     mission_id: self.mission_id,
                     save: self
                         .save
@@ -1418,10 +1418,13 @@ impl SaveLoadTaskState {
                                 self.mission_id,
                                 profiles,
                             );
-                            save_manager
-                                .get_mut(slot)
-                                .expect("overwrite slot exists")
-                                .text = text;
+                            let name = save_manager
+                                .slot_handle(slot)
+                                .expect("overwrite slot exists");
+                            if let Err(error) = save_manager.rename_slot(&name, text) {
+                                tracing::error!("Cannot rename save slot: {error:#}");
+                                return None;
+                            }
                             return Some(UiTaskOutcome::SaveLoadSelected {
                                 mode: self.mode,
                                 filename,
@@ -1558,12 +1561,14 @@ impl SaveLoadTaskState {
                 } else {
                     self.name.trim().to_string()
                 };
-                let slot = save_manager.create(text, self.mission_id);
-                let filename = save_manager
-                    .get(slot)
-                    .expect("new save slot exists")
-                    .filename
-                    .clone();
+                let handle = match save_manager.create_draft(text, self.mission_id) {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        tracing::error!("Cannot create save draft: {error:#}");
+                        return None;
+                    }
+                };
+                let filename = handle.name().as_str().to_owned();
                 Some(UiTaskOutcome::SaveLoadSelected {
                     mode: self.mode,
                     filename,
@@ -1837,7 +1842,7 @@ fn visible_save_filenames(
     multiplayer_connected: bool,
 ) -> Vec<String> {
     save_manager
-        .saves
+        .saves()
         .iter()
         .filter(|save| match mode {
             SaveLoadMode::Save => !save.is_special(),

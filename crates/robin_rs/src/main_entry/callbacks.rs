@@ -8,7 +8,7 @@ use crate::leaderboard_mission_end::{
 };
 use crate::renderer::Renderer;
 use crate::save_file::special_slots;
-use crate::savegame::{SaveGameManager, SpecialSlot};
+use crate::savegame::{SaveGameManager, SlotHandle, SpecialSlot};
 use crate::sound::{Jingle as SoundJingle, SoundMode as AudioSoundMode};
 use robin_assets::picture::Picture;
 use robin_engine::campaign as engine_campaign;
@@ -67,14 +67,30 @@ pub(crate) struct PendingMultiplayerCampaignExit {
 /// the `GameCode::LevelLoad` exit back into the outer session loop.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct PendingLevelLoad {
-    /// Save-slot index in [`crate::savegame::SaveGameManager`].
-    pub slot: usize,
+    /// Runtime-owned slot, absent only for a committed remote snapshot.
+    pub slot: Option<SlotHandle>,
     /// Mission profile ID the save's header reports.
     pub target_mission_id: u32,
+    #[serde(skip)]
     pub(crate) origin: OperationOrigin,
     /// Already-decoded payload. It is moved into the destination load request
     /// so the bytes preflighted before Engine construction are the bytes applied.
     pub save: crate::save_file::GameSaveFile,
+}
+
+impl PendingLevelLoad {
+    pub(crate) fn validate_slot(&self, manager: &SaveGameManager) -> anyhow::Result<()> {
+        match &self.slot {
+            Some(handle) => {
+                manager.resolve_handle(handle)?;
+            }
+            None => anyhow::ensure!(
+                self.origin == OperationOrigin::CommittedMultiplayer,
+                "local level load is missing its save slot handle"
+            ),
+        }
+        Ok(())
+    }
 }
 
 impl std::fmt::Debug for PendingLevelLoad {
@@ -103,6 +119,7 @@ pub enum SaveBannerKind {
     Loaded,
     Autosaved,
     AutosaveFailed,
+    SaveFailed,
 }
 
 /// Pending save/load intent set by the state machine and consumed
@@ -112,7 +129,7 @@ pub enum SaveLoadRequest {
     /// Persist the current engine state to the caller-provided slot.
     /// `None` slot = write the Continue auto-save.
     Save {
-        slot: Option<usize>,
+        slot: Option<SlotHandle>,
         mission_id: u32,
     },
     /// Load a save and apply it to the engine.
@@ -123,7 +140,7 @@ pub enum SaveLoadRequest {
     /// validates the decoded header against its campaign, and routes a valid
     /// cross-mission payload through the session reload boundary.
     Load {
-        slot: Option<usize>,
+        slot: Option<SlotHandle>,
         mission_id: u32,
         /// Preflighted payload for initial/cross-mission loads. `None` only
         /// before the request reaches its preconstruction boundary.
@@ -156,8 +173,9 @@ pub enum SaveLoadRequest {
 
 /// Provenance travels with a request; an unrelated later load cannot inherit
 /// a previously committed multiplayer barrier's authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum OperationOrigin {
+    #[default]
     Local,
     CommittedMultiplayer,
 }
@@ -165,6 +183,7 @@ pub(crate) enum OperationOrigin {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct OperationRequest {
     action: SaveLoadRequest,
+    #[serde(skip)]
     origin: OperationOrigin,
 }
 
@@ -209,6 +228,11 @@ impl AutosaveNotices {
 
     pub(crate) fn enqueue_failed(&mut self) {
         self.pending = Some(SaveBannerKind::AutosaveFailed);
+    }
+
+    pub(crate) fn enqueue_save_failed(&mut self, details: String) {
+        tracing::error!("Save operation failed: {details}");
+        self.pending = Some(SaveBannerKind::SaveFailed);
     }
 
     pub(crate) fn select_banner(
@@ -298,9 +322,30 @@ impl RustCallbacks {
         })
     }
 
-    pub fn new(application_context: ApplicationContext) -> Self {
-        let save_manager = SaveGameManager::open_for_context(&application_context)
-            .unwrap_or_else(|error| panic!("Cannot open session save store: {error}"));
+    pub fn new(
+        application_context: ApplicationContext,
+    ) -> Result<Self, crate::save_recovery::SaveStoreOpenError> {
+        let save_manager = crate::save_recovery::try_open(&application_context)?;
+        Ok(Self::with_save_manager(application_context, save_manager))
+    }
+
+    pub(crate) async fn new_for_window(
+        application_context: ApplicationContext,
+        window: &mut crate::window::GameWindow,
+    ) -> Result<Option<Self>, String> {
+        match crate::save_recovery::open_for_launch(&application_context, window).await? {
+            crate::save_recovery::OpenedSaveStore::Ready(manager) => {
+                Ok(Some(Self::with_save_manager(application_context, manager)))
+            }
+            crate::save_recovery::OpenedSaveStore::Cancelled
+            | crate::save_recovery::OpenedSaveStore::ExitRequested => Ok(None),
+        }
+    }
+
+    fn with_save_manager(
+        application_context: ApplicationContext,
+        save_manager: SaveGameManager,
+    ) -> Self {
         Self {
             #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             multiplayer_campaign: crate::multiplayer::MultiplayerCampaignSession::default(),
@@ -692,20 +737,43 @@ pub(crate) fn validated_save_reload_target(
 
 /// Consume an already-decoded save with its exact preflighted slot, or do the
 /// one allowed disk read for a not-yet-preflighted request. Once `save` is
-/// present this function never asks the manager to resolve or read a path.
+/// present this function validates runtime ownership without rereading its path.
 pub(crate) fn preflight_or_use_decoded_load(
     save_manager: &crate::savegame::SaveGameManager,
-    slot: Option<usize>,
+    slot: Option<SlotHandle>,
     save: Option<crate::save_file::GameSaveFile>,
-) -> anyhow::Result<Option<(usize, crate::save_file::PreparedGameSave)>> {
+) -> anyhow::Result<Option<(Option<SlotHandle>, crate::save_file::PreparedGameSave)>> {
+    preflight_load_with_origin(save_manager, slot, save, OperationOrigin::Local)
+}
+
+fn preflight_load_with_origin(
+    save_manager: &SaveGameManager,
+    slot: Option<SlotHandle>,
+    save: Option<crate::save_file::GameSaveFile>,
+    origin: OperationOrigin,
+) -> anyhow::Result<Option<(Option<SlotHandle>, crate::save_file::PreparedGameSave)>> {
+    let index = slot
+        .as_ref()
+        .map(|handle| save_manager.resolve_handle(handle))
+        .transpose()?;
     match save {
         Some(save) => {
-            let slot = slot.ok_or_else(|| {
-                anyhow::anyhow!("preflighted load is missing its exact decoded slot")
-            })?;
+            anyhow::ensure!(
+                slot.is_some() || origin == OperationOrigin::CommittedMultiplayer,
+                "preflighted local load is missing its exact decoded slot"
+            );
             Ok(Some((slot, save.into())))
         }
-        None => save_manager.preflight_load(slot),
+        None => {
+            anyhow::ensure!(
+                origin == OperationOrigin::Local,
+                "committed multiplayer load is missing its decoded payload"
+            );
+            save_manager
+                .preflight_load(index)?
+                .map(|(index, save)| Ok((Some(save_manager.slot_handle(index)?), save)))
+                .transpose()
+        }
     }
 }
 
@@ -803,7 +871,7 @@ fn replay_loaded_identity(
 
 fn begin_multiplayer_snapshot_transition(
     host: &mut crate::host::Host,
-    slot: usize,
+    slot: SlotHandle,
     save: crate::save_file::GameSaveFile,
 ) -> Result<bool, String> {
     let Some(net) = host.transport.net.as_ref() else {
@@ -864,6 +932,18 @@ pub(crate) fn perform_pending_save_load(
     let mut event = None;
     match request {
         SaveLoadRequest::Save { slot, mission_id } => {
+            let slot = match slot
+                .as_ref()
+                .map(|handle| callbacks.save_manager.resolve_handle(handle))
+                .transpose()
+            {
+                Ok(slot) => slot,
+                Err(error) => {
+                    tracing::error!("Save rejected stale slot handle: {error:#}");
+                    outcome.banner = Some(SaveBannerKind::SaveFailed);
+                    return outcome;
+                }
+            };
             if host.transport.net.is_some() {
                 let idx = slot.unwrap_or_else(|| {
                     callbacks
@@ -897,7 +977,8 @@ pub(crate) fn perform_pending_save_load(
                         );
                     }
                     Err(error) => {
-                        tracing::error!("Multiplayer diagnostic save failed: {error:#}")
+                        tracing::error!("Multiplayer diagnostic save failed: {error:#}");
+                        outcome.banner = Some(SaveBannerKind::SaveFailed);
                     }
                 }
                 return outcome;
@@ -939,6 +1020,7 @@ pub(crate) fn perform_pending_save_load(
             };
             if let Err(err) = result {
                 tracing::error!("Save failed: {err:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 tracing::info!("Save completed (mission={mission_id})");
                 event = replay_save_written_event(engine, host, game);
@@ -965,6 +1047,9 @@ pub(crate) fn perform_pending_save_load(
                         )
                     {
                         tracing::warn!("Continue-mirror after save failed: {err:#}");
+                        callbacks
+                            .autosave_notices
+                            .enqueue_save_failed(format!("Continue mirror: {err:#}"));
                     }
                     // Show "Game saved." banner unless the slot is one
                     // of the filtered types (Restart / Sherwood).
@@ -986,18 +1071,35 @@ pub(crate) fn perform_pending_save_load(
             // switch missions before re-applying. This replaces the previous
             // warn-and-apply behaviour, which corrupted engine state when
             // the payload's mission didn't match the active level.
-            let resolved = match preflight_or_use_decoded_load(&callbacks.save_manager, slot, save)
-            {
-                Ok(resolved) => resolved,
-                Err(error) => {
-                    tracing::error!("Load preflight failed: {error:#}");
-                    return outcome;
-                }
-            };
+            let resolved =
+                match preflight_load_with_origin(&callbacks.save_manager, slot, save, origin) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        tracing::error!("Load preflight failed: {error:#}");
+                        return outcome;
+                    }
+                };
             match resolved {
-                Some((idx, save)) => {
+                Some((slot, save)) => {
+                    // Remote committed snapshots have no local slot metadata;
+                    // all locally selected handles were validated by preflight.
+                    let idx = match slot
+                        .as_ref()
+                        .map(|handle| callbacks.save_manager.resolve_handle(handle))
+                        .transpose()
+                    {
+                        Ok(index) => index,
+                        Err(error) => {
+                            tracing::error!("Load rejected stale slot handle: {error:#}");
+                            return outcome;
+                        }
+                    };
                     if host.transport.net.is_some() && !applying_multiplayer_transition {
-                        match begin_multiplayer_snapshot_transition(host, idx, save.into_payload())
+                        let Some(slot) = slot else {
+                            tracing::error!("Local multiplayer load is missing its selected slot");
+                            return outcome;
+                        };
+                        match begin_multiplayer_snapshot_transition(host, slot, save.into_payload())
                         {
                             Ok(true) => return outcome,
                             Ok(false) => unreachable!("multiplayer transition guard checked net"),
@@ -1025,19 +1127,19 @@ pub(crate) fn perform_pending_save_load(
                     ) {
                         Ok(target) => target,
                         Err(error) => {
-                            tracing::error!("Load preflight rejected slot {idx}: {error}");
+                            tracing::error!("Load preflight rejected slot {idx:?}: {error}");
                             return outcome;
                         }
                     };
                     if let Some(target_mission_id) = reload_target {
                         tracing::info!(
-                            "Load slot {idx}: cross-mission load (header={}, current={}) — \
+                            "Load slot {idx:?}: cross-mission load (header={}, current={}) — \
                              routing through session LevelLoad",
                             target_mission_id,
                             active_mission_id,
                         );
                         outcome.transition = Some(PendingLevelLoad {
-                            slot: idx,
+                            slot,
                             target_mission_id,
                             origin,
                             save: save.into_payload(),
@@ -1053,21 +1155,24 @@ pub(crate) fn perform_pending_save_load(
                         _ => {
                             // Thread the slot type through so the frame loop
                             // can replay the continue / campaign-map fix-ups.
-                            let is_continue = callbacks
-                                .save_manager
-                                .get(idx)
-                                .map(|s| s.is_continue())
-                                .unwrap_or(false);
-                            let is_restart = callbacks
-                                .save_manager
-                                .get(idx)
-                                .map(|s| s.is_restart())
-                                .unwrap_or(false);
-                            let is_sherwood = callbacks
-                                .save_manager
-                                .get(idx)
-                                .map(|s| s.is_sherwood())
-                                .unwrap_or(false);
+                            let (is_continue, is_restart, is_sherwood) = match idx {
+                                Some(idx) => {
+                                    let Some(metadata) = callbacks.save_manager.get(idx) else {
+                                        tracing::error!(
+                                            "Loaded slot metadata disappeared after preflight"
+                                        );
+                                        return outcome;
+                                    };
+                                    (
+                                        metadata.is_continue(),
+                                        metadata.is_restart(),
+                                        metadata.is_sherwood(),
+                                    )
+                                }
+                                // A remote snapshot is deliberately not any of
+                                // this peer's local special slots.
+                                None => (false, false, false),
+                            };
                             outcome.restore = Some(PostLoadSync { is_continue });
                             // The frame loop clears the translator's
                             // key-edge state so half-pressed keys at save
@@ -1097,7 +1202,7 @@ pub(crate) fn perform_pending_save_load(
                             if !is_restart && !is_sherwood {
                                 outcome.banner = Some(SaveBannerKind::Loaded);
                             }
-                            tracing::info!("Load completed from slot {idx}");
+                            tracing::info!("Load completed from slot {idx:?}");
                             event = replay_identity.map(|identity| SaveLoadEvent::LoadApplied {
                                 identity,
                                 is_continue,
@@ -1122,6 +1227,7 @@ pub(crate) fn perform_pending_save_load(
                 thumb_ref,
             ) {
                 tracing::error!("Restart save failed: {err:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 event = match callbacks.save_manager.restart_session_identity() {
                     Some(identity) => Some(SaveLoadEvent::SaveWritten { identity }),
@@ -1133,8 +1239,17 @@ pub(crate) fn perform_pending_save_load(
             if host.transport.net.is_some() {
                 match callbacks.save_manager.preflight_restart_save() {
                     Ok(Some((idx, save))) => {
+                        let slot = match callbacks.save_manager.slot_handle(idx) {
+                            Ok(slot) => slot,
+                            Err(error) => {
+                                tracing::error!(
+                                    "Multiplayer restart rejected stale slot: {error:#}"
+                                );
+                                return outcome;
+                            }
+                        };
                         if let Err(error) =
-                            begin_multiplayer_snapshot_transition(host, idx, save.into_payload())
+                            begin_multiplayer_snapshot_transition(host, slot, save.into_payload())
                         {
                             tracing::error!("Multiplayer restart rejected: {error}");
                         }
@@ -1201,6 +1316,7 @@ pub(crate) fn perform_pending_save_load(
                 thumb_ref,
             ) {
                 tracing::error!("Continue save failed: {err:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 event = replay_save_written_event(engine, host, game);
             }
@@ -1237,7 +1353,8 @@ pub(crate) fn perform_pending_save_load(
                         );
                     }
                     Err(error) => {
-                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}")
+                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}");
+                        outcome.banner = Some(SaveBannerKind::SaveFailed);
                     }
                 }
                 return outcome;
@@ -1252,6 +1369,7 @@ pub(crate) fn perform_pending_save_load(
             ) {
                 Err(err) => {
                     tracing::error!("Quick save failed: {err:#}");
+                    outcome.banner = Some(SaveBannerKind::SaveFailed);
                 }
                 _ => {
                     tracing::info!("Quick save written (mission={mission_id})");
@@ -1267,6 +1385,9 @@ pub(crate) fn perform_pending_save_load(
                         thumb_ref,
                     ) {
                         tracing::warn!("Continue-mirror after quick-save failed: {err:#}");
+                        callbacks
+                            .autosave_notices
+                            .enqueue_save_failed(format!("Continue mirror: {err:#}"));
                     }
                     outcome.banner = Some(SaveBannerKind::Saved);
                 }
@@ -1293,10 +1414,19 @@ pub(crate) fn perform_pending_save_load(
                             );
                         }
                         Ok(Some((decoded_idx, save))) => {
+                            let slot = match callbacks.save_manager.slot_handle(decoded_idx) {
+                                Ok(slot) => slot,
+                                Err(error) => {
+                                    tracing::error!(
+                                        "Quick load ({slot_name}) rejected stale slot: {error:#}"
+                                    );
+                                    return outcome;
+                                }
+                            };
                             if host.transport.net.is_some() {
                                 match begin_multiplayer_snapshot_transition(
                                     host,
-                                    decoded_idx,
+                                    slot,
                                     save.into_payload(),
                                 ) {
                                     Ok(true) => return outcome,
@@ -1338,7 +1468,7 @@ pub(crate) fn perform_pending_save_load(
                                     "Quick load ({slot_name}): routing mission {target_mission_id} through session LevelLoad"
                                 );
                                 outcome.transition = Some(PendingLevelLoad {
-                                    slot: decoded_idx,
+                                    slot: Some(slot),
                                     target_mission_id,
                                     origin,
                                     save: save.into_payload(),
@@ -1396,6 +1526,7 @@ pub(crate) fn perform_pending_save_load(
             ) {
                 Err(err) => {
                     tracing::error!("Sherwood checkpoint save failed: {err:#}");
+                    outcome.banner = Some(SaveBannerKind::SaveFailed);
                 }
                 _ => {
                     tracing::info!("Sherwood checkpoint saved (mission={mission_id})");
@@ -1439,6 +1570,128 @@ mod operation_outcome_tests {
     }
 
     #[test]
+    fn save_failure_notice_survives_a_simultaneous_success_banner() {
+        let mut notices = AutosaveNotices::default();
+        notices.enqueue_save_failed("payload publication failed: permission denied".into());
+        assert_eq!(
+            notices.select_banner(Some(SaveBannerKind::Saved)),
+            Some(SaveBannerKind::Saved)
+        );
+        assert_eq!(
+            notices.select_banner(None),
+            Some(SaveBannerKind::SaveFailed)
+        );
+        assert_eq!(notices.select_banner(None), None);
+    }
+
+    #[test]
+    fn decoded_load_requires_live_handle_even_when_payload_is_already_owned() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
+        let other = manager.create("other row".into(), 7);
+        let index = manager.create("selected".into(), 7);
+        let handle = manager.slot_handle(index).unwrap();
+        let name = handle.name().as_str().to_owned();
+        let mut assets = engine_api::LevelAssets::default();
+        let engine =
+            engine_api::Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+                .unwrap();
+        let host = crate::host::Host::scratch(640.0, 480.0);
+        let save = crate::save_file::GameSaveFile::capture(&engine, &host, 7, "owned".into());
+
+        let (resolved, prepared) =
+            preflight_or_use_decoded_load(&manager, Some(handle.clone()), Some(save.clone()))
+                .unwrap()
+                .unwrap();
+        assert_eq!(manager.resolve_handle(&resolved.unwrap()).unwrap(), index);
+        assert_eq!(prepared.header.display_text, "owned");
+
+        let foreign = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
+        assert!(
+            preflight_or_use_decoded_load(&foreign, Some(handle.clone()), Some(save.clone()))
+                .is_err()
+        );
+        let request = SaveLoadRequest::Load {
+            slot: Some(handle.clone()),
+            mission_id: 7,
+            save: Some(save.clone()),
+        };
+        let decoded: SaveLoadRequest =
+            serde_json::from_slice(&serde_json::to_vec(&request).unwrap()).unwrap();
+        let SaveLoadRequest::Load {
+            slot,
+            save: decoded_save,
+            ..
+        } = decoded
+        else {
+            unreachable!()
+        };
+        assert!(preflight_or_use_decoded_load(&manager, slot, decoded_save).is_err());
+
+        manager.remove(other).unwrap();
+        let (resolved, _) =
+            preflight_or_use_decoded_load(&manager, Some(handle.clone()), Some(save.clone()))
+                .unwrap()
+                .unwrap();
+        let shifted_index = manager.resolve_handle(&resolved.unwrap()).unwrap();
+        assert_ne!(shifted_index, index);
+        manager.remove(shifted_index).unwrap();
+        assert!(
+            preflight_or_use_decoded_load(&manager, Some(handle.clone()), Some(save.clone()))
+                .is_err()
+        );
+        let recreated = manager.create_with_filename(name, "replacement".into(), 7);
+        assert!(preflight_or_use_decoded_load(&manager, Some(handle), Some(save.clone())).is_err());
+        assert!(
+            preflight_or_use_decoded_load(
+                &manager,
+                Some(manager.slot_handle(recreated).unwrap()),
+                Some(save)
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn remote_decoded_load_requires_process_local_committed_origin() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
+        let mut assets = engine_api::LevelAssets::default();
+        let engine =
+            engine_api::Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
+                .unwrap();
+        let host = crate::host::Host::scratch(640.0, 480.0);
+        let save = crate::save_file::GameSaveFile::capture(&engine, &host, 7, "remote".into());
+        assert!(preflight_or_use_decoded_load(&manager, None, Some(save.clone())).is_err());
+        let (slot, decoded) = preflight_load_with_origin(
+            &manager,
+            None,
+            Some(save.clone()),
+            OperationOrigin::CommittedMultiplayer,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(slot.is_none());
+        assert_eq!(decoded.header.display_text, "remote");
+        assert!(
+            preflight_load_with_origin(&manager, None, None, OperationOrigin::CommittedMultiplayer)
+                .is_err()
+        );
+
+        let transition = PendingLevelLoad {
+            slot: None,
+            target_mission_id: 7,
+            origin: OperationOrigin::CommittedMultiplayer,
+            save,
+        };
+        transition.validate_slot(&manager).unwrap();
+        let restored: PendingLevelLoad =
+            serde_json::from_slice(&serde_json::to_vec(&transition).unwrap()).unwrap();
+        assert_eq!(restored.origin, OperationOrigin::Local);
+        assert!(restored.validate_slot(&manager).is_err());
+    }
+
+    #[test]
     fn failed_restart_is_an_explicit_one_frame_outcome_and_latest_request_wins() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().to_str().unwrap().to_owned();
@@ -1458,7 +1711,7 @@ mod operation_outcome_tests {
         .unwrap();
         let mut host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 640.0, 480.0).unwrap();
-        let mut callbacks = RustCallbacks::new(context);
+        let mut callbacks = RustCallbacks::new(context).unwrap();
         let mut assets = engine_api::LevelAssets::default();
         let mut engine =
             engine_api::Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
@@ -1501,7 +1754,7 @@ mod operation_outcome_tests {
 
         let save = crate::save_file::GameSaveFile::capture(&engine, &host, 7, "handoff".to_owned());
         callbacks.queue_committed_load(SaveLoadRequest::Load {
-            slot: Some(2),
+            slot: None,
             mission_id: 7,
             save: Some(save.clone()),
         });
@@ -1518,7 +1771,7 @@ mod operation_outcome_tests {
         assert!(callbacks.pending_request().is_none());
 
         let transition = PendingLevelLoad {
-            slot: 2,
+            slot: None,
             target_mission_id: 7,
             origin: OperationOrigin::CommittedMultiplayer,
             save,

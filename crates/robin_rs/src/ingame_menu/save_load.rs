@@ -72,6 +72,7 @@ pub struct LoadPickerModalState {
     thumb_cache: Option<ThumbnailCache>,
     input_state: ModalInputState,
     delete_confirmation: Option<YesNoModalState>,
+    error_notice: Option<crate::save_recovery::ErrorNotice>,
     detailed_metadata: bool,
     local_time_zone: Option<TimeZone>,
     clock_error_reported: bool,
@@ -109,6 +110,7 @@ impl LoadPickerModalState {
             thumb_cache: None,
             input_state,
             delete_confirmation: None,
+            error_notice: None,
             detailed_metadata,
             local_time_zone: TimeZone::try_system()
                 .inspect_err(|error| tracing::warn!("Save menu local time is unavailable: {error}"))
@@ -130,6 +132,23 @@ impl LoadPickerModalState {
         sample_loader: Option<&SampleLoader>,
     ) -> Option<SaveLoadOutcome> {
         self.model.refresh(picker_slots(save_manager));
+        if self.error_notice.is_none()
+            && let Some(error) = self.model.operation_error()
+        {
+            self.error_notice = Some(crate::save_recovery::ErrorNotice::new(error.to_string()));
+        }
+        if let Some(notice) = &mut self.error_notice {
+            if notice.tick(event_pump, renderer, resources, cursor.as_ref()) {
+                self.error_notice = None;
+                self.model.dismiss_error();
+                if event_pump.close_requested {
+                    return Some(SaveLoadOutcome::Cancel);
+                }
+            }
+            // This frame belongs exclusively to the notice. The outer mission
+            // driver can still service networking and automation between ticks.
+            return None;
+        }
         if let Some(confirmation) = self.delete_confirmation.as_mut() {
             let outcome = confirmation.tick(event_pump, renderer, resources, cursor.as_ref());
             let Some(confirmed) = outcome else {
@@ -784,7 +803,26 @@ pub async fn show_save_load(
         .inspect_err(|error| tracing::warn!("Save menu local time is unavailable: {error}"))
         .ok();
 
+    let mut error_notice = None;
     let outcome = loop {
+        if error_notice.is_none()
+            && let Some(error) = model.operation_error()
+        {
+            error_notice = Some(crate::save_recovery::ErrorNotice::new(error.to_string()));
+        }
+        if let Some(notice) = &mut error_notice {
+            if notice.tick(event_pump, renderer, resources, cursor.as_ref()) {
+                error_notice = None;
+                model.dismiss_error();
+                if event_pump.close_requested {
+                    break SaveLoadOutcome::Cancel;
+                }
+            }
+            // Keep the save-only IME/widget owner alive, but do not feed modal
+            // acknowledgement input into the picker or name field.
+            crate::window::sleep_ui_frame().await;
+            continue;
+        }
         model.refresh(picker_slots(save_manager));
         let mut visible = model.visible();
         let mut selected = model.selected_row();
@@ -1048,8 +1086,17 @@ pub async fn show_save_load(
                             profiles,
                             &metadata_text,
                         );
-                        let idx = save_manager.create(text, mission_id);
-                        break SaveLoadOutcome::Slot(idx);
+                        match save_manager
+                            .create_draft(text, mission_id)
+                            .and_then(|handle| save_manager.resolve_handle(&handle))
+                        {
+                            Ok(idx) => break SaveLoadOutcome::Slot(idx),
+                            Err(error) => {
+                                tracing::error!("Creating save slot failed: {error:#}");
+                                model.report_error(format!("{error:#}"));
+                                continue;
+                            }
+                        }
                     }
                     (SaveLoadMode::Save, Some(ListRow::Existing(v_idx))) => {
                         let slot = visible[v_idx];
@@ -1074,10 +1121,14 @@ pub async fn show_save_load(
                                 &metadata_text,
                             );
                             if !new_text.is_empty() {
-                                save_manager
-                                    .get_mut(slot)
-                                    .expect("visible slot must exist")
-                                    .text = new_text;
+                                let rename = save_manager
+                                    .slot_handle(slot)
+                                    .and_then(|handle| save_manager.rename_slot(&handle, new_text));
+                                if let Err(error) = rename {
+                                    tracing::error!("Save name update failed: {error:#}");
+                                    model.report_error(format!("{error:#}"));
+                                    continue;
+                                }
                             }
                             break SaveLoadOutcome::Slot(slot);
                         }
@@ -1935,13 +1986,19 @@ fn picker_slots(save_manager: &SaveGameManager) -> Vec<PickerSlot> {
             let save = save_manager
                 .get(i)
                 .expect("index from 0..count() must resolve");
+            let name = save_manager
+                .slot_name(i)
+                .expect("save picker requires validated slot identities");
+            let state = save_manager
+                .slot_state(&name)
+                .expect("save picker row must have lifecycle state");
             PickerSlot {
-                name: save_manager
-                    .slot_name(i)
-                    .expect("save picker requires validated slot identities"),
+                name,
                 manager_index: i,
                 special: save.is_special(),
-                hidden_from_load: save.is_continue() || save.is_restart(),
+                hidden_from_load: save.is_continue()
+                    || save.is_restart()
+                    || state == crate::savegame::SlotState::Draft,
                 autosave: save.is_autosave(),
                 multiplayer_diagnostic: save.multiplayer_diagnostic,
             }
@@ -1984,7 +2041,7 @@ fn finish_picker_delete(model: &mut PickerModel, manager: &mut SaveGameManager, 
     };
     manager.sort_by_time();
     model.finish_delete(picker_slots(manager), error);
-    if let Some(error) = model.deletion_error() {
+    if let Some(error) = model.operation_error() {
         tracing::error!("Delete save failed (cleanup may be pending): {error}");
     }
 }
@@ -1997,11 +2054,10 @@ mod tests {
     fn shared_input_trace_is_independent_of_cooperative_frame_boundaries() {
         let mut manager = SaveGameManager::new("unused-picker-model-store".into());
         for index in 0..5 {
-            manager.saves.push(SaveGame::new(
-                format!("Savegame_{index:03}"),
-                format!("Save {index}"),
-                7,
-            ));
+            manager.insert_test_slot(
+                published_metadata(&format!("Savegame_{index:03}")),
+                crate::savegame::SlotState::Published,
+            );
         }
         let mut cooperative =
             PickerModel::new(SaveLoadMode::Load, false, 2, picker_slots(&manager));
@@ -2044,17 +2100,8 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut manager = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
         for index in 0..2 {
-            let mut save = saved_at("123");
-            save.filename = format!("Savegame_{index:03}");
-            save.campaign_progress = Some(0);
-            save.missions_done = Some(0);
-            save.missions_total = Some(1);
-            save.gang_size = Some(1);
-            save.ransom = Some(0);
-            save.blazons = Some(0);
-            save.amulets = Some(0);
-            save.validate_published_metadata().unwrap();
-            manager.saves.push(save);
+            let save = published_metadata(&format!("Savegame_{index:03}"));
+            manager.insert_test_slot(save, crate::savegame::SlotState::Published);
         }
         manager.save_index().unwrap();
         manager = SaveGameManager::load_index(directory.path().to_str().unwrap()).unwrap();
@@ -2073,7 +2120,7 @@ mod tests {
         finish_picker_delete(&mut model, &mut manager, true);
         assert_eq!(manager.count(), 1);
         assert_eq!(model.selected_row(), None);
-        assert_eq!(model.deletion_error(), None);
+        assert_eq!(model.operation_error(), None);
         manager = SaveGameManager::load_index(directory.path().to_str().unwrap()).unwrap();
         assert_eq!(manager.count(), 1);
         assert_eq!(manager.slot_name(0).unwrap().as_str(), "Savegame_001");
@@ -2088,7 +2135,7 @@ mod tests {
         assert_eq!(manager.count(), 0);
         assert_eq!(model.selected_row(), None);
         assert_eq!(model.scroll_offset(), 0);
-        assert!(model.deletion_error().unwrap().contains("cleanup"));
+        assert!(model.operation_error().unwrap().contains("cleanup"));
         assert!(SaveGameManager::load_index(directory.path().to_str().unwrap()).is_err());
         std::fs::remove_dir(directory.path().join("Savegame_001.json")).unwrap();
         let recovered = SaveGameManager::load_index(directory.path().to_str().unwrap()).unwrap();
@@ -2104,14 +2151,48 @@ mod tests {
         save
     }
 
+    fn published_metadata(filename: &str) -> SaveGame {
+        let mut save = SaveGame::new(filename.into(), "The Silver Arrow".into(), 7);
+        save.timestamp = "123".into();
+        save.mission_name = "The Silver Arrow".into();
+        save.player_profile_id = Some(12);
+        save.player_name = "Alice".into();
+        save.campaign_progress = Some(0);
+        save.missions_done = Some(0);
+        save.missions_total = Some(1);
+        save.gang_size = Some(1);
+        save.ransom = Some(0);
+        save.blazons = Some(0);
+        save.amulets = Some(0);
+        save.validate_published_metadata().unwrap();
+        save
+    }
+
+    #[test]
+    fn failed_save_drafts_can_be_retried_but_are_not_loadable() {
+        let mut manager = SaveGameManager::new("unused-picker-draft-store".into());
+        manager.insert_test_slot(
+            SaveGame::new("Savegame_000".into(), "Unpublished".into(), 7),
+            crate::savegame::SlotState::Draft,
+        );
+        let load = PickerModel::new(SaveLoadMode::Load, false, 2, picker_slots(&manager));
+        assert!(load.visible().is_empty());
+        let mut save = PickerModel::new(SaveLoadMode::Save, false, 2, picker_slots(&manager));
+        assert_eq!(save.visible(), vec![0]);
+        save.report_error("payload publication failed".into());
+        save.refresh(picker_slots(&manager));
+        assert_eq!(save.operation_error(), Some("payload publication failed"));
+        save.dismiss_error();
+        assert_eq!(save.operation_error(), None);
+    }
+
     #[test]
     fn autosaves_are_loadable_but_not_overwritable_or_deletable() {
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
-        manager.saves.push(SaveGame::new(
-            "Autosave_100_0000".into(),
-            "The Silver Arrow".into(),
-            7,
-        ));
+        manager.insert_test_slot(
+            published_metadata("Autosave_100_0000"),
+            crate::savegame::SlotState::Published,
+        );
 
         let mut load_model = PickerModel::new(SaveLoadMode::Load, false, 3, picker_slots(&manager));
         let load_visible = load_model.visible();
@@ -2242,7 +2323,7 @@ mod tests {
     fn every_existing_row_leads_with_required_metadata() {
         let text = EnglishSaveMetadataText;
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
-        manager.saves.push(saved_at("100"));
+        manager.insert_test_slot(saved_at("100"), crate::savegame::SlotState::Draft);
         let lines = row_detail_lines(
             ListRow::Existing(0),
             &manager,
@@ -2260,9 +2341,9 @@ mod tests {
     fn incomplete_original_import_row_does_not_invent_player_or_mission() {
         let text = EnglishSaveMetadataText;
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
-        manager.saves.push(saved_at("100"));
-        manager.saves[0].mission_name.clear();
-        manager.saves[0].player_name.clear();
+        manager.insert_test_slot(saved_at("100"), crate::savegame::SlotState::Draft);
+        manager.get_mut(0).unwrap().mission_name.clear();
+        manager.get_mut(0).unwrap().player_name.clear();
         let lines = row_detail_lines(
             ListRow::Existing(0),
             &manager,
@@ -2282,7 +2363,7 @@ mod tests {
         let mut manager = SaveGameManager::new("/tmp/test_saves".into());
         let mut save = saved_at("3600");
         save.campaign_progress = Some(25);
-        manager.saves.push(save);
+        manager.insert_test_slot(save, crate::savegame::SlotState::Draft);
 
         let lines = row_detail_lines(
             ListRow::Existing(0),

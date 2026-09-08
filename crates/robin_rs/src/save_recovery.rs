@@ -71,6 +71,15 @@ async fn choose_recovery(
 ) -> RecoveryChoice {
     let mut input = ModalInputState::new();
     let mut scroll = 0;
+    let (width, height) = resources.button_dimensions();
+    let labels = [
+        // No Retry token exists in the original game's menu table.
+        // TODO(i18n): add a translated recovery Retry action.
+        "Retry".to_string(),
+        resources.menu_text.get(MT_BTN_CANCEL),
+        resources.menu_text.get(MT_BTN_QUIT_GAME),
+    ];
+    let mut frame = recovery_frame(&labels, width, height);
     loop {
         context.poll_leaderboard_receipts();
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
@@ -84,19 +93,6 @@ async fn choose_recovery(
                 }
             }
         }
-        let (width, height) = resources.button_dimensions();
-        let labels = [
-            // No Retry token exists in the original game's menu table.
-            // TODO(i18n): add a translated recovery Retry action.
-            "Retry".to_string(),
-            resources.menu_text.get(MT_BTN_CANCEL),
-            resources.menu_text.get(MT_BTN_QUIT_GAME),
-        ];
-        let mut frame = widget_bridge::make_button_frame(&[
-            (0, &labels[0], 70, 360, width, height),
-            (1, &labels[1], 260, 360, width, height),
-            (2, &labels[2], 450, 360, width, height),
-        ]);
         let events = frame.process_input(&input.as_widget_input());
         input.end_frame();
         if choice != Some(RecoveryChoice::Exit)
@@ -145,6 +141,18 @@ async fn choose_recovery(
     }
 }
 
+fn recovery_frame(labels: &[String; 3], width: i32, height: i32) -> crate::widget::FrameWnd {
+    widget_bridge::make_button_frame(&[
+        (0, &labels[0], 70, 360, width, height),
+        (1, &labels[1], 260, 360, width, height),
+        (2, &labels[2], 450, 360, width, height),
+    ])
+}
+
+fn notice_frame(label: &str, width: i32, height: i32) -> crate::widget::FrameWnd {
+    widget_bridge::make_button_frame(&[(0, label, (640 - width) / 2, 360, width, height)])
+}
+
 fn scroll_diagnostic(scroll: &mut usize, event: &crate::gfx_types::GameEvent) {
     use crate::gfx_types::{GameEvent, Keycode};
     match event {
@@ -172,7 +180,9 @@ fn draw_diagnostic(
     let font = resources
         .menu_text_font_any()
         .expect("save recovery requires menu text font");
-    let line_height = i32::from(font.height()).max(1);
+    let line_height = i32::try_from(font.height())
+        .expect("menu font height fits signed coordinates")
+        .max(1);
     let visible = (250 / line_height).max(1) as usize;
     // This wrapper splits overlong individual path components at character
     // boundaries as well as wrapping normal words. Every diagnostic line can
@@ -197,6 +207,7 @@ pub(crate) struct ErrorNotice {
     message: String,
     scroll: usize,
     input: ModalInputState,
+    frame: Option<crate::widget::FrameWnd>,
 }
 
 impl ErrorNotice {
@@ -205,6 +216,7 @@ impl ErrorNotice {
             message,
             scroll: 0,
             input: ModalInputState::new(),
+            frame: None,
         }
     }
 
@@ -231,8 +243,9 @@ impl ErrorNotice {
         }
         let (width, height) = resources.button_dimensions();
         let label = resources.menu_text.get(MT_BTN_OK);
-        let mut frame =
-            widget_bridge::make_button_frame(&[(0, &label, (640 - width) / 2, 360, width, height)]);
+        let frame = self
+            .frame
+            .get_or_insert_with(|| notice_frame(&label, width, height));
         let events = frame.process_input(&self.input.as_widget_input());
         self.input.end_frame();
         if widget_bridge::find_activated(&events).is_some() {
@@ -260,7 +273,7 @@ impl ErrorNotice {
             &self.message,
             &mut self.scroll,
         );
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, frame);
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input);
         }
@@ -276,13 +289,34 @@ pub async fn open_with_recovery(
     resources: &IngameMenuResources,
     cursor: Option<&ModalCursor<'_>>,
 ) -> OpenedSaveStore {
+    recover_attempt(
+        context,
+        window,
+        renderer,
+        resources,
+        cursor,
+        retry(|| SaveGameManager::open_for_context(context)),
+    )
+    .await
+}
+
+async fn recover_attempt(
+    context: &ApplicationContext,
+    window: &mut GameWindow,
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    cursor: Option<&ModalCursor<'_>>,
+    mut attempt: Result<SaveGameManager, SaveStoreOpenError>,
+) -> OpenedSaveStore {
     loop {
-        match retry(|| SaveGameManager::open_for_context(context)) {
+        match attempt {
             Ok(store) => return OpenedSaveStore::Ready(store),
             Err(error) => {
                 tracing::error!("{error}");
                 match choose_recovery(context, window, renderer, resources, cursor, &error).await {
-                    RecoveryChoice::Retry => {}
+                    RecoveryChoice::Retry => {
+                        attempt = retry(|| SaveGameManager::open_for_context(context));
+                    }
                     RecoveryChoice::Cancel => return OpenedSaveStore::Cancelled,
                     RecoveryChoice::Exit => return OpenedSaveStore::ExitRequested,
                 }
@@ -313,7 +347,7 @@ pub async fn open_for_launch(
         profile.graphic_config.scale_mode,
     );
     renderer.apply_upscale_config(&profile.graphic_config);
-    let resources = IngameMenuResources::new(
+    let mut resources = IngameMenuResources::new(
         &mut renderer,
         context.shipping()?,
         context.preparation_files()?.clone(),
@@ -321,12 +355,92 @@ pub async fn open_for_launch(
     .ok_or_else(|| {
         format!("{original_error}; save recovery UI: Data/Interface/DEFAULT.RES unavailable")
     })?;
-    Ok(open_with_recovery(context, window, &mut renderer, &resources, None).await)
+    let mut cursor = crate::cursor::CursorRenderer::new();
+    cursor.init(&mut renderer);
+    if !cursor.load_cursor(
+        robin_engine::resource_ids::RHMOUSE_DEFAULT,
+        &mut resources.res,
+        &mut renderer,
+    ) {
+        tracing::warn!("Save recovery: default cursor unavailable, using fallback arrow");
+    }
+    Ok(recover_attempt(
+        context,
+        window,
+        &mut renderer,
+        &resources,
+        Some(&ModalCursor::new(
+            &mut cursor,
+            robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
+            0,
+        )),
+        Err(original_error),
+    )
+    .await)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_and_notice_buttons_keep_pointer_state_across_frames() {
+        use crate::gfx_types::GameEvent;
+        let labels = ["Retry".into(), "Cancel".into(), "Quit".into()];
+        for (mut frame, x) in [
+            (recovery_frame(&labels, 100, 40), 80),
+            (notice_frame("OK", 100, 40), 280),
+        ] {
+            let mut input = ModalInputState::new();
+            let transform = MenuTransform::centered(640, 480);
+            let trace = [
+                GameEvent::MouseMove {
+                    x,
+                    y: 370,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                GameEvent::MouseDown(x, 370, 1, 1),
+                GameEvent::MouseUp(x, 370, 1),
+            ];
+            for (index, event) in trace.iter().enumerate() {
+                input.update_from_event(event, transform);
+                let events = frame.process_input(&input.as_widget_input());
+                input.end_frame();
+                assert_eq!(
+                    widget_bridge::find_activated(&events),
+                    if index == 2 { Some(0) } else { None }
+                );
+            }
+            // A later press dragged off the button must not activate on release.
+            for event in [
+                GameEvent::MouseDown(x, 370, 1, 1),
+                GameEvent::MouseMove {
+                    x: 5,
+                    y: 5,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                GameEvent::MouseUp(5, 5, 1),
+            ] {
+                input.update_from_event(&event, transform);
+                let events = frame.process_input(&input.as_widget_input());
+                input.end_frame();
+                assert_eq!(widget_bridge::find_activated(&events), None);
+            }
+        }
+    }
+
+    #[test]
+    fn error_notice_retains_exact_backend_diagnostic_until_acknowledged() {
+        let diagnostic = "save logically deleted; cleanup of Profile_007/Savegame_003.json pending: permission denied";
+        let notice = ErrorNotice::new(diagnostic.into());
+        assert_eq!(notice.message, diagnostic);
+        assert!(
+            notice.frame.is_none(),
+            "runtime widgets are initialized on the first frame"
+        );
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
