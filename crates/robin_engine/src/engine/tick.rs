@@ -20,43 +20,7 @@ use crate::profiles::MissionType;
 
 /// Strict opt-in gate for the Drop Execute-boundary diagnostic.
 fn drop_owner_boundary_matches(frame: u32, owner: EntityId) -> bool {
-    if std::env::var_os("PARITY_DEBUG_DROP_BOUNDARY").is_none() {
-        return false;
-    }
-    let owner_filter = std::env::var("PARITY_DEBUG_DROP_OWNER").unwrap_or_else(|_| {
-        panic!("PARITY_DEBUG_DROP_BOUNDARY requires PARITY_DEBUG_DROP_OWNER=pc:INDEX")
-    });
-    let (kind, index) = owner_filter
-        .split_once(':')
-        .unwrap_or_else(|| panic!("PARITY_DEBUG_DROP_OWNER must look like pc:INDEX"));
-    assert_eq!(kind, "pc", "PARITY_DEBUG_DROP_OWNER only accepts PC owners");
-    let index = index.parse::<u32>().unwrap_or_else(|error| {
-        panic!("invalid PARITY_DEBUG_DROP_OWNER={owner_filter:?}: {error}")
-    });
-    if !matches!(owner, EntityId::Pc(_)) || owner.index() != index {
-        return false;
-    }
-    let parse_frame = |name: &str| {
-        std::env::var(name).ok().map(|value| {
-            value.parse::<u32>().unwrap_or_else(|error| {
-                panic!("invalid {name}={value:?} for Drop boundary diagnostic: {error}")
-            })
-        })
-    };
-    if let Some(exact) = parse_frame("PARITY_DEBUG_DROP_FRAME") {
-        return frame == exact;
-    }
-    let from = parse_frame("PARITY_DEBUG_DROP_FROM").unwrap_or_else(|| {
-        panic!(
-            "PARITY_DEBUG_DROP_BOUNDARY requires PARITY_DEBUG_DROP_FRAME or PARITY_DEBUG_DROP_FROM"
-        )
-    });
-    let until = parse_frame("PARITY_DEBUG_DROP_UNTIL").unwrap_or(from);
-    assert!(
-        from <= until,
-        "PARITY_DEBUG_DROP_FROM must not exceed PARITY_DEBUG_DROP_UNTIL"
-    );
-    (from..=until).contains(&frame)
+    super::diagnostics::config().drop_boundary_matches(frame, owner)
 }
 
 #[cfg(test)]
@@ -1797,31 +1761,8 @@ fn project_post_completion_motion(
     }
 }
 
-#[derive(Debug)]
-struct MotionLatchDebugConfig {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn motion_latch_debug_config() -> Option<&'static MotionLatchDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<MotionLatchDebugConfig>> = std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_MOTION_LATCH")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when motion-latch debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for motion-latch diagnostic: {error}")
-                })
-            };
-            Some(MotionLatchDebugConfig {
-                frame: parse("PARITY_DEBUG_MOTION_LATCH_FRAME"),
-                creation_order: parse("PARITY_DEBUG_MOTION_LATCH_CREATION_ORDER"),
-            })
-        })
-        .as_ref()
+fn motion_latch_debug_config() -> Option<&'static super::diagnostics::ExactOwnerFrame> {
+    super::diagnostics::config().motion_latch.as_ref()
 }
 
 fn specialized_order_advanced_after_execute(
@@ -4192,7 +4133,7 @@ impl EngineInner {
     }
 
     fn trace_path_barrier(&self, stage: &str) {
-        if std::env::var_os("PARITY_DEBUG_PATH_BARRIER").is_none() {
+        if !super::diagnostics::config().path_barrier {
             return;
         }
         let pending = self
@@ -4219,7 +4160,7 @@ impl EngineInner {
     }
 
     fn trace_path_barrier_completed(&self, stage: &str, completed: &Option<CompletedPathWork>) {
-        if std::env::var_os("PARITY_DEBUG_PATH_BARRIER").is_none() {
+        if !super::diagnostics::config().path_barrier {
             return;
         }
         let brief = completed.as_ref().map(|work| match work {

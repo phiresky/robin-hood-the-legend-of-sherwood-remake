@@ -4879,24 +4879,18 @@ impl EngineInner {
         owner: EntityId,
         focus: Option<(crate::sequence::SequenceId, usize)>,
     ) {
-        if std::env::var_os("PARITY_DEBUG_PATH_OWNER_LIFECYCLE").is_none() {
+        let Some(filter) = super::diagnostics::config().path_owner else {
             return;
-        }
-        let parse_filter = |name: &str| {
-            std::env::var(name).ok().map(|value| {
-                value.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={value:?} for path-owner lifecycle diagnostic: {error}")
-                })
-            })
         };
         let frame = self.control.frame_counter;
-        if parse_filter("PARITY_DEBUG_PATH_OWNER_FRAME").is_some_and(|expected| expected != frame)
+        if filter.frame.is_some_and(|expected| expected != frame)
             || self.get_entity(owner).is_none()
         {
             return;
         }
         let creation_order = self.world.original_creation_order(owner);
-        if parse_filter("PARITY_DEBUG_PATH_OWNER_CREATION_ORDER")
+        if filter
+            .creation_order
             .is_some_and(|expected| expected != creation_order)
         {
             return;

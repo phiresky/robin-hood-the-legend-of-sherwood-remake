@@ -22,6 +22,7 @@ mod combat;
 mod commands;
 mod console_dispatch;
 mod corpse_intersection;
+mod diagnostics;
 mod display_state;
 mod tactical_control;
 pub use display_state::DrawOrder;
@@ -136,32 +137,8 @@ use state::{
     SimulationControl, WorldState,
 };
 
-#[derive(Debug)]
-struct AttentiveOwnerHandoffDebugConfig {
-    frame: u32,
-    creation_order: u32,
-}
-
-fn attentive_owner_handoff_debug_config() -> Option<&'static AttentiveOwnerHandoffDebugConfig> {
-    static CONFIG: std::sync::OnceLock<Option<AttentiveOwnerHandoffDebugConfig>> =
-        std::sync::OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            std::env::var_os("PARITY_DEBUG_ATTENTIVE_OWNER_HANDOFF")?;
-            let parse = |name: &str| {
-                let raw = std::env::var(name).unwrap_or_else(|_| {
-                    panic!("{name} is required when attentive-owner handoff debugging is enabled")
-                });
-                raw.parse::<u32>().unwrap_or_else(|error| {
-                    panic!("invalid {name}={raw:?} for attentive-owner handoff diagnostic: {error}")
-                })
-            };
-            Some(AttentiveOwnerHandoffDebugConfig {
-                frame: parse("PARITY_DEBUG_ATTENTIVE_OWNER_FRAME"),
-                creation_order: parse("PARITY_DEBUG_ATTENTIVE_OWNER_CREATION_ORDER"),
-            })
-        })
-        .as_ref()
+fn attentive_owner_handoff_debug_config() -> Option<&'static diagnostics::ExactOwnerFrame> {
+    diagnostics::config().attentive_owner.as_ref()
 }
 
 // ─── Constants ───────────────────────────────────────────────────────
