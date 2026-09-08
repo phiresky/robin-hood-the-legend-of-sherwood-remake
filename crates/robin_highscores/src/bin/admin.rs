@@ -2817,7 +2817,7 @@ async fn backup_and_publish_status_with_limit_and_publisher<F>(
     publish_status: F,
 ) -> anyhow::Result<PathBuf>
 where
-    F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome>,
+    F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome> + Send + 'static,
 {
     backup_and_publish_status_with_limit_and_publisher_and_hooks(
         config,
@@ -2836,6 +2836,62 @@ where
 }
 
 async fn backup_and_publish_status_with_limit_and_publisher_and_hooks<F, I, S>(
+    config: &ServerConfig,
+    release_manifest_path: &Path,
+    release_identity: &BackupReleaseIdentityV2,
+    backup_root: &Path,
+    status_path: &Path,
+    retain_complete: usize,
+    restore_sources: &BTreeMap<PathBuf, PathBuf>,
+    maximum_status_bytes: usize,
+    publish_status: F,
+    before_install: I,
+    before_status_publication: S,
+) -> anyhow::Result<PathBuf>
+where
+    F: FnOnce(&Path, &[u8]) -> anyhow::Result<StatusPublicationOutcome> + Send + 'static,
+    I: FnOnce() -> anyhow::Result<()> + Send + 'static,
+    S: FnOnce() -> anyhow::Result<()> + Send + 'static,
+{
+    let config = config.clone();
+    let release_manifest_path = release_manifest_path.to_owned();
+    let release_identity = release_identity.clone();
+    let backup_root = backup_root.to_owned();
+    let status_path = status_path.to_owned();
+    let restore_sources = restore_sources.clone();
+    run_owned_backup(async move {
+        backup_and_publish_status_owned(
+            &config,
+            &release_manifest_path,
+            &release_identity,
+            &backup_root,
+            &status_path,
+            retain_complete,
+            &restore_sources,
+            maximum_status_bytes,
+            publish_status,
+            before_install,
+            before_status_publication,
+        )
+        .await
+    })
+    .await
+}
+
+/// Own the whole operation, including admission and final cleanup. Dropping the
+/// caller's waiter must not release operation.lock or either kernel fence while
+/// a backup is still running. This owner is never aborted by its caller.
+async fn run_owned_backup<T, F>(operation: F) -> anyhow::Result<T>
+where
+    T: Send + 'static,
+    F: std::future::Future<Output = anyhow::Result<T>> + Send + 'static,
+{
+    tokio::spawn(operation)
+        .await
+        .map_err(|error| anyhow::anyhow!(error).context("backup owner task failed"))?
+}
+
+async fn backup_and_publish_status_owned<F, I, S>(
     config: &ServerConfig,
     release_manifest_path: &Path,
     release_identity: &BackupReleaseIdentityV2,
@@ -3051,86 +3107,7 @@ where
     }
 
     let database = Database::connect(config).await?;
-    // Publish the durable gate under the ordinary shared database fence, then
-    // release that shared generation before attempting exclusive admission.
-    // New processes may briefly pass the turnstile, but must observe this gate
-    // and leave without starting their real database operation.
-    let mut gate_operation = match database.begin_fenced_operation().await {
-        Ok(operation) => operation,
-        Err(error) => {
-            let original = anyhow::Error::from(error);
-            return match close_pre_exclusive_database_pool(&database, None).await {
-                Ok(_) => Err(original),
-                Err(cleanup) => Err(original.context(format!(
-                    "closing the pre-exclusive database pool also failed: {cleanup:#}"
-                ))),
-            };
-        }
-    };
-    let backup_lock_result = database
-        .acquire_backup_lock("robin-highscores-admin", BACKUP_LOCK_TTL)
-        .await;
-    let gate_finish = database.finish_fenced_operation(&mut gate_operation).await;
-    let backup_lock = match (backup_lock_result, gate_finish) {
-        (Ok(token), Ok(())) => token,
-        (Ok(token), Err(error)) => {
-            let original = anyhow::Error::from(error);
-            return match close_pre_exclusive_database_pool(&database, Some(&token)).await {
-                Ok(Some(true)) => Err(original),
-                Ok(Some(false)) => Err(original.context(
-                    "gate publication succeeded but its exact token disappeared during pre-exclusive cleanup",
-                )),
-                Ok(None) => Err(original.context(
-                    "pre-exclusive cleanup omitted the published backup-gate token",
-                )),
-                Err(cleanup) => Err(original.context(format!(
-                    "releasing the gate and closing the pre-exclusive pool also failed: {cleanup:#}"
-                ))),
-            };
-        }
-        (Err(error), Ok(())) => {
-            let original = anyhow::Error::from(error);
-            return match close_pre_exclusive_database_pool(&database, None).await {
-                Ok(_) => Err(original),
-                Err(cleanup) => Err(original.context(format!(
-                    "closing the pre-exclusive database pool also failed: {cleanup:#}"
-                ))),
-            };
-        }
-        (Err(operation), Err(finish)) => {
-            let original = anyhow::Error::from(operation)
-                .context(format!("database fence drain also failed: {finish}"));
-            return match close_pre_exclusive_database_pool(&database, None).await {
-                Ok(_) => Err(original),
-                Err(cleanup) => Err(original.context(format!(
-                    "closing the pre-exclusive database pool also failed: {cleanup:#}"
-                ))),
-            };
-        }
-    };
-    let exclusive_fence = match acquire_exclusive_backup_database_fence(&database, &backup_lock)
-        .await
-    {
-        Ok(fence) => fence,
-        Err(error) => {
-            return match close_pre_exclusive_database_pool(
-                    &database,
-                    Some(&backup_lock),
-                )
-                .await
-                {
-                    Ok(Some(true)) => Err(error),
-                    Ok(Some(false)) => Err(error
-                        .context("exclusive database fence failed and backup gate disappeared")),
-                    Ok(None) => Err(error.context(
-                        "exclusive database fence failed and cleanup omitted its backup gate",
-                    )),
-                    Err(cleanup) => Err(error.context(format!(
-                        "exclusive database fence failed and pre-exclusive cleanup also failed: {cleanup:#}"
-                    ))),
-                };
-        }
-    };
+    let (backup_lock, exclusive_fence) = acquire_backup_write_authority(&database).await?;
     let result: anyhow::Result<PathBuf> = run_with_backup_lock_heartbeat(
         &database,
         &backup_lock,
@@ -3172,7 +3149,7 @@ where
     );
     let partial = backup_root.join(format!(".{identifier}.partial"));
     let complete = backup_root.join(&identifier);
-    tokio::fs::create_dir(&partial).await?;
+    create_backup_directory(&partial).await?;
     set_private_directory(&partial).await?;
     let backup_result = backup_locked(
         config,
@@ -3187,8 +3164,7 @@ where
     )
     .await;
             if let Err(error) = backup_result {
-                remove_owned_partial_backup(backup_root, &partial)?;
-                return Err(error);
+                return Err(cleanup_failed_partial_backup(&database, backup_root, &partial, error).await);
             }
             let manifest_bytes = read_bounded_regular_nofollow(
                 &partial.join("backup-manifest.json"),
@@ -3210,7 +3186,7 @@ where
             let envelope_path = partial.join("backup-verification-envelope.json");
             write_private_file(&envelope_path, &canonical_json_bytes(&envelope)?).await?;
             #[cfg(unix)]
-            tokio::fs::set_permissions(
+            set_backup_permissions(
                 &envelope_path,
                 std::fs::Permissions::from_mode(0o400),
             )
@@ -3507,6 +3483,92 @@ async fn close_pre_exclusive_database_pool(
             ))),
         _ => anyhow::bail!("pre-exclusive cleanup produced an impossible release state"),
     }
+}
+
+async fn acquire_backup_write_authority(
+    database: &Database,
+) -> anyhow::Result<(String, ExclusiveBackupDatabaseFence)> {
+    // Publish the durable gate under the ordinary shared database fence, then
+    // release that shared generation before attempting exclusive admission.
+    // New processes may briefly pass the turnstile, but must observe this gate
+    // and leave without starting their real database operation.
+    let mut gate_operation = match database.begin_fenced_operation().await {
+        Ok(operation) => operation,
+        Err(error) => {
+            let original = anyhow::Error::from(error);
+            return match close_pre_exclusive_database_pool(&database, None).await {
+                Ok(_) => Err(original),
+                Err(cleanup) => Err(original.context(format!(
+                    "closing the pre-exclusive database pool also failed: {cleanup:#}"
+                ))),
+            };
+        }
+    };
+    let backup_lock_result = database
+        .acquire_backup_lock("robin-highscores-admin", BACKUP_LOCK_TTL)
+        .await;
+    let gate_finish = database.finish_fenced_operation(&mut gate_operation).await;
+    let backup_lock = match (backup_lock_result, gate_finish) {
+        (Ok(token), Ok(())) => token,
+        (Ok(token), Err(error)) => {
+            let original = anyhow::Error::from(error);
+            return match close_pre_exclusive_database_pool(&database, Some(&token)).await {
+                Ok(Some(true)) => Err(original),
+                Ok(Some(false)) => Err(original.context(
+                    "gate publication succeeded but its exact token disappeared during pre-exclusive cleanup",
+                )),
+                Ok(None) => Err(original.context(
+                    "pre-exclusive cleanup omitted the published backup-gate token",
+                )),
+                Err(cleanup) => Err(original.context(format!(
+                    "releasing the gate and closing the pre-exclusive pool also failed: {cleanup:#}"
+                ))),
+            };
+        }
+        (Err(error), Ok(())) => {
+            let original = anyhow::Error::from(error);
+            return match close_pre_exclusive_database_pool(&database, None).await {
+                Ok(_) => Err(original),
+                Err(cleanup) => Err(original.context(format!(
+                    "closing the pre-exclusive database pool also failed: {cleanup:#}"
+                ))),
+            };
+        }
+        (Err(operation), Err(finish)) => {
+            let original = anyhow::Error::from(operation)
+                .context(format!("database fence drain also failed: {finish}"));
+            return match close_pre_exclusive_database_pool(&database, None).await {
+                Ok(_) => Err(original),
+                Err(cleanup) => Err(original.context(format!(
+                    "closing the pre-exclusive database pool also failed: {cleanup:#}"
+                ))),
+            };
+        }
+    };
+    let exclusive_fence = match acquire_exclusive_backup_database_fence(&database, &backup_lock)
+        .await
+    {
+        Ok(fence) => fence,
+        Err(error) => {
+            return match close_pre_exclusive_database_pool(
+                    &database,
+                    Some(&backup_lock),
+                )
+                .await
+                {
+                    Ok(Some(true)) => Err(error),
+                    Ok(Some(false)) => Err(error
+                        .context("exclusive database fence failed and backup gate disappeared")),
+                    Ok(None) => Err(error.context(
+                        "exclusive database fence failed and cleanup omitted its backup gate",
+                    )),
+                    Err(cleanup) => Err(error.context(format!(
+                        "exclusive database fence failed and pre-exclusive cleanup also failed: {cleanup:#}"
+                    ))),
+                };
+        }
+    };
+    Ok((backup_lock, exclusive_fence))
 }
 
 struct ExclusiveBackupDatabaseFence {
@@ -5962,6 +6024,26 @@ async fn add_regular_tree_capacity(
     Ok(())
 }
 
+async fn cleanup_failed_partial_backup(
+    database: &Database,
+    backup_root: &Path,
+    partial: &Path,
+    original: anyhow::Error,
+) -> anyhow::Error {
+    // VACUUM INTO uses the live pool's SQLite worker. An error can reach its
+    // awaiter before the statement and checked-out connection finish cleanup.
+    // Keep the partial in place until that worker has returned to idle.
+    if let Err(error) = database.wait_for_idle().await {
+        return original.context(format!(
+            "partial preserved because source SQL drain failed: {error:#}"
+        ));
+    }
+    match remove_owned_partial_backup(backup_root, partial) {
+        Ok(()) => original,
+        Err(error) => original.context(format!("partial backup cleanup also failed: {error:#}")),
+    }
+}
+
 fn remove_owned_partial_backup(backup_root: &Path, partial: &Path) -> anyhow::Result<()> {
     anyhow::ensure!(
         partial.parent() == Some(backup_root)
@@ -6571,6 +6653,36 @@ async fn backup(
     release_identity: &BackupReleaseIdentityV2,
     restore_sources: &BTreeMap<PathBuf, PathBuf>,
 ) -> anyhow::Result<()> {
+    let config = config.clone();
+    let campaign_root = campaign_root.to_owned();
+    let destination = destination.to_owned();
+    let release_identity = release_identity.clone();
+    let restore_sources = restore_sources.clone();
+    run_owned_backup(async move {
+        backup_test_owned(
+            &config,
+            &campaign_root,
+            max_campaign_bytes,
+            &destination,
+            created_at_unix_ms,
+            &release_identity,
+            &restore_sources,
+        )
+        .await
+    })
+    .await
+}
+
+#[cfg(test)]
+async fn backup_test_owned(
+    config: &ServerConfig,
+    campaign_root: &Path,
+    max_campaign_bytes: u64,
+    destination: &Path,
+    created_at_unix_ms: u64,
+    release_identity: &BackupReleaseIdentityV2,
+    restore_sources: &BTreeMap<PathBuf, PathBuf>,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         destination.is_absolute(),
         "backup destination must be absolute"
@@ -6579,24 +6691,27 @@ async fn backup(
         !tokio::fs::try_exists(destination).await?,
         "backup destination already exists"
     );
-    tokio::fs::create_dir(destination).await?;
-    set_private_directory(destination).await?;
+    let _operation_lock = acquire_backup_operation_lock(
+        destination
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("test backup destination has no parent"))?,
+    )?;
     let database = Database::connect(config).await?;
-    let replay =
-        ReplayStore::create(config.replay_directory.clone(), config.max_replay_bytes).await?;
-    anyhow::ensure!(
-        max_campaign_bytes > 0,
-        "max_campaign_bytes must be positive"
-    );
-    let campaign = CampaignStore::create(campaign_root.to_owned(), max_campaign_bytes).await?;
-    database.health_check().await?;
-    replay.readiness_check().await?;
-    campaign.readiness_check().await?;
-    let lock = database
-        .acquire_backup_lock("robin-highscores-admin", BACKUP_LOCK_TTL)
-        .await?;
+    let (lock, exclusive_fence) = acquire_backup_write_authority(&database).await?;
     let result = run_with_backup_lock_heartbeat(&database, &lock, async {
         wait_for_maintenance_writers(&database, &lock).await?;
+        create_backup_directory(destination).await?;
+        set_private_directory(destination).await?;
+        let replay =
+            ReplayStore::create(config.replay_directory.clone(), config.max_replay_bytes).await?;
+        anyhow::ensure!(
+            max_campaign_bytes > 0,
+            "max_campaign_bytes must be positive"
+        );
+        let campaign = CampaignStore::create(campaign_root.to_owned(), max_campaign_bytes).await?;
+        database.health_check().await?;
+        replay.readiness_check().await?;
+        campaign.readiness_check().await?;
         backup_locked(
             config,
             &database,
@@ -6627,11 +6742,16 @@ async fn backup(
         let envelope_path = destination.join("backup-verification-envelope.json");
         write_private_file(&envelope_path, &canonical_json_bytes(&envelope)?).await?;
         #[cfg(unix)]
-        tokio::fs::set_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).await?;
+        set_backup_permissions(&envelope_path, std::fs::Permissions::from_mode(0o400)).await?;
         sync_directory(destination).await
     })
     .await;
-    let release = database.release_backup_lock(&lock).await;
+    let release = release_backup_gate_and_close_pool_under_exclusive_fence(
+        &database,
+        &lock,
+        &exclusive_fence,
+    )
+    .await;
     match (result, release) {
         (Ok(value), Ok(true)) => Ok(value),
         (Ok(_), Ok(false)) => anyhow::bail!("backup lock was lost before release"),
@@ -6667,14 +6787,14 @@ async fn backup_locked(
     database.online_backup_to(&database_path).await?;
     scrub_transient_backup_state(&database_path, created_at_unix_ms).await?;
     #[cfg(unix)]
-    tokio::fs::set_permissions(&database_path, std::fs::Permissions::from_mode(0o600)).await?;
+    set_backup_permissions(&database_path, std::fs::Permissions::from_mode(0o600)).await?;
     let mut files = vec![record_file(destination, &database_path).await?];
     let mut restore_sources = vec![RestoreSource {
         original_absolute_path: config.database_path.to_string_lossy().into_owned(),
         archive_relative_path: "highscores.sqlite3".to_owned(),
     }];
     let replay_destination = destination.join("replays");
-    tokio::fs::create_dir(&replay_destination).await?;
+    create_backup_directory(&replay_destination).await?;
     set_private_directory(&replay_destination).await?;
     let mut cursor = None;
     loop {
@@ -6699,7 +6819,7 @@ async fn backup_locked(
         }
     }
     let campaign_destination = destination.join("campaigns");
-    tokio::fs::create_dir(&campaign_destination).await?;
+    create_backup_directory(&campaign_destination).await?;
     set_private_directory(&campaign_destination).await?;
     for (index, entry) in campaign.inventory().await?.into_iter().enumerate() {
         if index % 1_000 == 0 {
@@ -6843,6 +6963,19 @@ async fn scrub_transient_backup_state(
     database_path: &Path,
     snapshot_at_unix_ms: u64,
 ) -> anyhow::Result<()> {
+    scrub_transient_backup_state_with_hook(database_path, snapshot_at_unix_ms, || Ok(())).await
+}
+
+async fn scrub_transient_backup_state_with_hook<F>(
+    database_path: &Path,
+    snapshot_at_unix_ms: u64,
+    after_updates: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce() -> anyhow::Result<()>,
+{
+    use futures_util::FutureExt as _;
+
     let snapshot_at_unix_ms = i64::try_from(snapshot_at_unix_ms)?;
     let options = SqliteConnectOptions::new()
         .filename(database_path)
@@ -6850,44 +6983,65 @@ async fn scrub_transient_backup_state(
         .journal_mode(SqliteJournalMode::Delete)
         .foreign_keys(true);
     let mut connection = sqlx::SqliteConnection::connect_with(&options).await?;
-    let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-        .fetch_one(&mut connection)
-        .await?;
-    anyhow::ensure!(
-        journal_mode.eq_ignore_ascii_case("delete"),
-        "backup snapshot did not enter DELETE journal mode before transient-state scrub"
-    );
-    let mut transaction = connection.begin().await?;
-    sqlx::query(
-        "UPDATE submissions \
+    // This destination connection has its own SQLx worker, not the live pool.
+    // Rollback and close must finish before partial cleanup or EX release, even
+    // when a query fails or the body unwinds. The detached backup owner prevents
+    // caller cancellation from dropping this closing future.
+    let scrub = std::panic::AssertUnwindSafe(async {
+        let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+            .fetch_one(&mut connection)
+            .await?;
+        anyhow::ensure!(
+            journal_mode.eq_ignore_ascii_case("delete"),
+            "backup snapshot did not enter DELETE journal mode before transient-state scrub"
+        );
+        let mut transaction = connection.begin().await?;
+        sqlx::query(
+            "UPDATE submissions \
          SET status = 'retry_pending', lease_owner = NULL, lease_expires_at_ms = NULL, \
              next_attempt_at_ms = MIN(next_attempt_at_ms, ?), \
              updated_at_ms = MAX(updated_at_ms, ?) \
          WHERE status = 'verifying'",
-    )
-    .bind(snapshot_at_unix_ms)
-    .bind(snapshot_at_unix_ms)
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query(
-        "UPDATE submission_upload_reservations \
+        )
+        .bind(snapshot_at_unix_ms)
+        .bind(snapshot_at_unix_ms)
+        .execute(&mut *transaction)
+        .await?;
+        sqlx::query(
+            "UPDATE submission_upload_reservations \
          SET state = 'abandoned', lease_token = NULL, lease_expires_at_ms = NULL, \
              abandoned_at_ms = MAX(updated_at_ms, reserved_at_ms, ?), \
              updated_at_ms = MAX(updated_at_ms, reserved_at_ms, ?) \
          WHERE state IN ('reserved', 'uploaded')",
-    )
-    .bind(snapshot_at_unix_ms)
-    .bind(snapshot_at_unix_ms)
-    .execute(&mut *transaction)
-    .await?;
-    sqlx::query("DELETE FROM maintenance_write_leases")
+        )
+        .bind(snapshot_at_unix_ms)
+        .bind(snapshot_at_unix_ms)
         .execute(&mut *transaction)
         .await?;
-    sqlx::query("DELETE FROM maintenance_locks")
-        .execute(&mut *transaction)
-        .await?;
-    transaction.commit().await?;
-    connection.close().await?;
+        sqlx::query("DELETE FROM maintenance_write_leases")
+            .execute(&mut *transaction)
+            .await?;
+        sqlx::query("DELETE FROM maintenance_locks")
+            .execute(&mut *transaction)
+            .await?;
+        after_updates()?;
+        transaction.commit().await?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .catch_unwind()
+    .await
+    .unwrap_or_else(|_| Err(anyhow::anyhow!("backup transient-state scrub panicked")));
+    let close = connection.close().await;
+    match (scrub, close) {
+        (Ok(()), Ok(())) => {}
+        (Ok(()), Err(error)) => return Err(error.into()),
+        (Err(error), Ok(())) => return Err(error),
+        (Err(error), Err(close)) => {
+            return Err(error.context(format!(
+                "closing the backup destination SQLite worker also failed: {close}"
+            )));
+        }
+    }
     for suffix in ["-wal", "-shm"] {
         anyhow::ensure!(
             !tokio::fs::try_exists(PathBuf::from(format!(
@@ -7086,12 +7240,46 @@ async fn run_with_backup_lock_heartbeat<T, F>(
 where
     F: std::future::Future<Output = anyhow::Result<T>>,
 {
+    run_with_backup_lock_heartbeat_using(operation, BACKUP_LOCK_TTL / 3, || {
+        refresh_backup_lock(database, token)
+    })
+    .await
+}
+
+async fn run_with_backup_lock_heartbeat_using<T, F, R, RF>(
+    operation: F,
+    refresh_every: Duration,
+    mut refresh: R,
+) -> anyhow::Result<T>
+where
+    F: std::future::Future<Output = anyhow::Result<T>>,
+    R: FnMut() -> RF,
+    RF: std::future::Future<Output = anyhow::Result<()>>,
+{
+    use futures_util::FutureExt as _;
+
+    let operation = robin_highscores::physical_work::drain(operation);
     tokio::pin!(operation);
     loop {
         tokio::select! {
             result = &mut operation => return result,
-            () = tokio::time::sleep(BACKUP_LOCK_TTL / 3) => {
-                refresh_backup_lock(database, token).await?;
+            () = tokio::time::sleep(refresh_every) => {
+                let refresh_result = std::panic::AssertUnwindSafe(async { refresh().await })
+                    .catch_unwind().await;
+                let original = match refresh_result {
+                    Ok(Ok(())) => continue,
+                    Ok(Err(error)) => error,
+                    Err(_) => anyhow::anyhow!("backup lock refresh panicked"),
+                };
+                // Keep the physical owner and outer EX/operation.lock alive.
+                // Continuation still checks the exact token immediately before
+                // authenticated installation and again before status publication.
+                return Err(match (&mut operation).await {
+                    Ok(_) => original,
+                    Err(error) => original.context(format!(
+                        "backup operation also failed while draining: {error:#}"
+                    )),
+                });
             }
         }
     }
@@ -7903,40 +8091,80 @@ where
     Ok(())
 }
 
-async fn copy_open_file(mut source: tokio::fs::File, destination: &Path) -> anyhow::Result<()> {
+async fn copy_open_file(source: tokio::fs::File, destination: &Path) -> anyhow::Result<()> {
+    let source = source.into_std().await;
+    let destination = destination.to_owned();
+    robin_highscores::physical_work::spawn_blocking(move || {
+        copy_open_file_sync(source, &destination)
+    })
+    .await
+    .context("backup copy task failed")?
+}
+
+fn copy_open_file_sync(mut source: std::fs::File, destination: &Path) -> anyhow::Result<()> {
     if let Some(parent) = destination.parent() {
         let mut missing = Vec::new();
         let mut cursor = parent;
-        while !tokio::fs::try_exists(cursor).await? {
+        while !cursor.try_exists()? {
             missing.push(cursor.to_owned());
             cursor = cursor
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("backup destination has no existing ancestor"))?;
         }
-        tokio::fs::create_dir_all(parent).await?;
+        std::fs::create_dir_all(parent)?;
         for directory in missing.into_iter().rev() {
-            set_private_directory(&directory).await?;
+            #[cfg(unix)]
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+            #[cfg(not(unix))]
+            let _ = directory;
         }
     }
-    let mut options = tokio::fs::OpenOptions::new();
+    let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
     options.mode(0o600);
-    let mut target = options.open(destination).await?;
-    tokio::io::copy(&mut source, &mut target).await?;
-    target.sync_all().await?;
+    let mut target = options.open(destination)?;
+    std::io::copy(&mut source, &mut target)?;
+    target.sync_all()?;
     Ok(())
 }
 
 async fn write_private_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    use tokio::io::AsyncWriteExt as _;
-    let mut options = tokio::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(path).await?;
-    file.write_all(bytes).await?;
-    file.sync_all().await?;
+    let path = path.to_owned();
+    let bytes = bytes.to_vec();
+    robin_highscores::physical_work::spawn_blocking(move || {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(path)?;
+        file.write_all(&bytes)?;
+        file.sync_all()
+    })
+    .await
+    .context("backup write task failed")??;
+    Ok(())
+}
+
+async fn create_backup_directory(path: &Path) -> anyhow::Result<()> {
+    let path = path.to_owned();
+    robin_highscores::physical_work::spawn_blocking(move || std::fs::create_dir(path))
+        .await
+        .context("backup directory creation task failed")??;
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn set_backup_permissions(
+    path: &Path,
+    permissions: std::fs::Permissions,
+) -> anyhow::Result<()> {
+    let path = path.to_owned();
+    robin_highscores::physical_work::spawn_blocking(move || {
+        std::fs::set_permissions(path, permissions)
+    })
+    .await
+    .context("backup permission task failed")??;
     Ok(())
 }
 
@@ -7944,13 +8172,16 @@ async fn set_private_directory(path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
+        set_backup_permissions(path, std::fs::Permissions::from_mode(0o700)).await?;
     }
     Ok(())
 }
 
 async fn sync_directory(path: &Path) -> anyhow::Result<()> {
-    tokio::fs::File::open(path).await?.sync_all().await?;
+    let path = path.to_owned();
+    robin_highscores::physical_work::spawn_blocking(move || std::fs::File::open(path)?.sync_all())
+        .await
+        .context("backup directory sync task failed")??;
     Ok(())
 }
 
@@ -8114,6 +8345,317 @@ fn open_regular_nofollow(path: &Path) -> anyhow::Result<std::fs::File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn assert_backup_completion_ownership(mode: &'static str) {
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_owned();
+        let mut config = ServerConfig::default();
+        config.database_path = root.join("live.sqlite3");
+        let database = Database::migrate(&config).await.unwrap();
+        let runtime = database.runtime_fence().clone();
+        let source = root.join("source");
+        std::fs::write(&source, b"physical backup bytes").unwrap();
+        let partial = root.join(".test.partial/payload");
+        let published = root.join("published.marker");
+        let operation_root = root.clone();
+        let operation_path = partial.clone();
+        let publication_path = published.clone();
+        let operation_database = database.clone();
+        let (registered, wait_registered) = tokio::sync::oneshot::channel();
+        let (release, wait_release) = std::sync::mpsc::channel();
+        let (release_queue, wait_release_queue) = std::sync::mpsc::channel();
+        let refresh_seen = Arc::new(tokio::sync::Notify::new());
+        let notify_refresh = Arc::clone(&refresh_seen);
+        let replacement_ready = Arc::new(tokio::sync::Notify::new());
+        let wait_replacement = Arc::clone(&replacement_ready);
+        let mut caller = tokio::spawn(async move {
+            run_owned_backup(async move {
+                let _operation_lock = acquire_backup_operation_lock(&operation_root)?;
+                let (token, fence) = acquire_backup_write_authority(&operation_database).await?;
+                let operation_token = token.clone();
+                let body_database = operation_database.clone();
+                let refresh_database = operation_database.clone();
+                let refresh_token = token.clone();
+                let result = run_with_backup_lock_heartbeat_using(
+                    async move {
+                        // On the one-blocking-thread runtime this occupies its only
+                        // thread before the registered physical copy is enqueued.
+                        let blocker = if mode == "queued" {
+                            let (started, wait_started) = tokio::sync::oneshot::channel();
+                            let blocker = tokio::task::spawn_blocking(move || {
+                                started.send(()).unwrap();
+                                wait_release_queue
+                                    .recv_timeout(Duration::from_secs(10))
+                                    .unwrap();
+                            });
+                            wait_started.await?;
+                            Some(blocker)
+                        } else {
+                            None
+                        };
+                        let job = robin_highscores::physical_work::spawn_blocking(move || {
+                            wait_release.recv_timeout(Duration::from_secs(10)).unwrap();
+                            copy_open_file_sync(std::fs::File::open(source)?, &operation_path)
+                        });
+                        registered.send(operation_token.clone()).unwrap();
+                        if mode == "operation_error" || mode == "queued" {
+                            drop(job);
+                            drop(blocker);
+                            anyhow::bail!("injected backup operation error");
+                        }
+                        if mode == "operation_panic" {
+                            drop(job);
+                            panic!("injected backup operation panic");
+                        }
+                        job.await??;
+                        if mode == "heartbeat_then_panic" {
+                            panic!("backup operation panicked after heartbeat loss");
+                        }
+                        // This is the same exact-token barrier retained immediately
+                        // before real installation/status publication.
+                        refresh_backup_lock(&body_database, &operation_token).await?;
+                        std::fs::write(publication_path, b"authorized")?;
+                        Ok(())
+                    },
+                    Duration::from_millis(10),
+                    move || {
+                        let notify = Arc::clone(&notify_refresh);
+                        let wait_replacement = Arc::clone(&wait_replacement);
+                        let database = refresh_database.clone();
+                        let token = refresh_token.clone();
+                        async move {
+                            let result = match mode {
+                                "heartbeat_error" | "heartbeat_then_panic" => {
+                                    Err(anyhow::anyhow!("injected backup heartbeat error"))
+                                }
+                                "heartbeat_panic" => {
+                                    notify.notify_one();
+                                    panic!("injected backup heartbeat panic")
+                                }
+                                "replaced_token" => {
+                                    wait_replacement.notified().await;
+                                    refresh_backup_lock(&database, &token).await
+                                }
+                                _ => refresh_backup_lock(&database, &token).await,
+                            };
+                            notify.notify_one();
+                            result
+                        }
+                    },
+                )
+                .await;
+                let released = release_backup_gate_and_close_pool_under_exclusive_fence(
+                    &operation_database,
+                    &token,
+                    &fence,
+                )
+                .await?;
+                if mode != "replaced_token" {
+                    anyhow::ensure!(released, "backup gate disappeared");
+                }
+                result
+            })
+            .await
+        });
+        let token = tokio::time::timeout(Duration::from_secs(5), wait_registered)
+            .await
+            .unwrap()
+            .unwrap();
+        if mode == "replaced_token" {
+            assert!(database.release_backup_lock(&token).await.unwrap());
+            database
+                .acquire_backup_lock("replacement", BACKUP_LOCK_TTL)
+                .await
+                .unwrap();
+            replacement_ready.notify_one();
+        }
+        if mode.starts_with("heartbeat_") || mode == "replaced_token" {
+            tokio::time::timeout(Duration::from_secs(5), refresh_seen.notified())
+                .await
+                .unwrap();
+        }
+        if mode == "caller_cancelled" {
+            caller.abort();
+            assert!((&mut caller).await.unwrap_err().is_cancelled());
+        } else {
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), &mut caller)
+                    .await
+                    .is_err(),
+                "backup owner returned before physical mutation completed"
+            );
+        }
+        assert!(!partial.exists());
+        assert!(runtime.try_lock_exclusive_quiescence().unwrap().is_none());
+        assert!(runtime.try_lock_exclusive_admission().unwrap().is_none());
+        assert!(
+            acquire_backup_operation_lock(&root).is_err(),
+            "another backup could clean the active partial"
+        );
+        assert!(database.backup_lock_active().await.unwrap());
+        release.send(()).unwrap();
+        if mode == "queued" {
+            release_queue.send(()).unwrap();
+        }
+        if mode != "caller_cancelled" {
+            let result = tokio::time::timeout(Duration::from_secs(5), caller)
+                .await
+                .unwrap()
+                .unwrap();
+            if mode == "success" {
+                result.unwrap();
+            } else {
+                let error = format!("{:#}", result.unwrap_err());
+                let expected = match mode {
+                    "heartbeat_error" | "heartbeat_then_panic" => "injected backup heartbeat error",
+                    "heartbeat_panic" => "backup lock refresh panicked",
+                    "operation_error" | "queued" => "injected backup operation error",
+                    "operation_panic" => "panicked after physical-work drain",
+                    "replaced_token" => "backup lock expired or was lost",
+                    _ => unreachable!(),
+                };
+                assert!(error.contains(expected), "{error}");
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if runtime.try_lock_exclusive_quiescence().unwrap().is_some()
+                    && acquire_backup_operation_lock(&root).is_ok()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(partial).unwrap(), b"physical backup bytes");
+        if mode == "replaced_token" {
+            assert!(!published.exists());
+        }
+    }
+
+    #[tokio::test]
+    async fn backup_owner_drains_physical_work() {
+        for mode in [
+            "success",
+            "heartbeat_error",
+            "operation_error",
+            "caller_cancelled",
+            "replaced_token",
+        ] {
+            assert_backup_completion_ownership(mode).await;
+        }
+    }
+
+    #[test]
+    fn backup_owner_drains_queued_physical_work() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap()
+            .block_on(assert_backup_completion_ownership("queued"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit LLVM backend for actual unwind/destructor execution"]
+    async fn backup_owner_unwind_drains_physical_work() {
+        for mode in ["operation_panic", "heartbeat_panic", "heartbeat_then_panic"] {
+            assert_backup_completion_ownership(mode).await;
+        }
+    }
+
+    async fn assert_scrub_connection_closes(panic: bool) {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = ServerConfig::default();
+        config.database_path = directory.path().join("snapshot.sqlite3");
+        let database = Database::migrate(&config).await.unwrap();
+        database.close_fenced().await.unwrap();
+        let error = scrub_transient_backup_state_with_hook(&config.database_path, 1, || {
+            if panic {
+                panic!("injected scrub panic with active transaction")
+            }
+            anyhow::bail!("injected scrub error with active transaction")
+        })
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains(if panic {
+            "scrub panicked"
+        } else {
+            "injected scrub error"
+        }));
+        assert!(
+            !config
+                .database_path
+                .with_extension("sqlite3-journal")
+                .exists()
+        );
+        let options = SqliteConnectOptions::new()
+            .filename(&config.database_path)
+            .busy_timeout(Duration::ZERO);
+        let mut reopened = sqlx::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        sqlx::query("BEGIN EXCLUSIVE")
+            .execute(&mut reopened)
+            .await
+            .unwrap();
+        sqlx::query("ROLLBACK")
+            .execute(&mut reopened)
+            .await
+            .unwrap();
+        reopened.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn backup_owner_closes_destination_sqlite_on_error() {
+        assert_scrub_connection_closes(false).await;
+    }
+
+    #[tokio::test]
+    async fn backup_owner_drains_source_sql_before_partial_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = ServerConfig::default();
+        config.database_path = directory.path().join("source.sqlite3");
+        let database = Database::migrate(&config).await.unwrap();
+        let partial = directory
+            .path()
+            .join(format!(".backup-v4-1-{}.partial", "a".repeat(32)));
+        std::fs::create_dir(&partial).unwrap();
+        set_private_directory(&partial).await.unwrap();
+        let connection = database.pool().acquire().await.unwrap();
+        let cleanup = cleanup_failed_partial_backup(
+            &database,
+            directory.path(),
+            &partial,
+            anyhow::anyhow!("original backup failure"),
+        );
+        tokio::pin!(cleanup);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut cleanup)
+                .await
+                .is_err()
+        );
+        assert!(
+            partial.exists(),
+            "partial removed before source SQL returned to idle"
+        );
+        drop(connection);
+        let error = tokio::time::timeout(Duration::from_secs(5), cleanup)
+            .await
+            .unwrap();
+        assert_eq!(error.to_string(), "original backup failure");
+        assert!(!partial.exists());
+        database.close_fenced().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit LLVM backend for actual unwind/destructor execution"]
+    async fn backup_owner_unwind_closes_destination_sqlite() {
+        assert_scrub_connection_closes(true).await;
+    }
 
     #[cfg(target_os = "linux")]
     struct BackupAuthorityKeyHarness {
