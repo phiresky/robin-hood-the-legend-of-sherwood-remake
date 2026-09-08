@@ -2608,9 +2608,11 @@ fn audio_lookup_keys(path: &Path) -> Vec<String> {
 // Datadir v15 adds `ShippingDatadir::locales`, carrying explicit,
 // canonicalized multi-locale payloads. Mission payloads remain at v8 because
 // locale data is confined to the boot datadir manifest.
-const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA15";
+// Datadir v16 adds ResourceData::picture_opacity for pixel-free engine setup.
+// Mission payloads remain v8: they contain no ResourceManager values.
+const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA16";
 const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN08";
-pub const SHIPPING_DATADIR_VERSION: u32 = 15;
+pub const SHIPPING_DATADIR_VERSION: u32 = 16;
 pub const SHIPPING_MISSION_VERSION: u32 = 8;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
@@ -2838,8 +2840,8 @@ impl ShippingAssets {
 static GLOBAL: OnceLock<Arc<ShippingAssets>> = OnceLock::new();
 
 #[cfg(test)]
-#[path = "shipping_v15_contract.rs"]
-mod v15_contract;
+#[path = "shipping_v16_contract.rs"]
+mod v16_contract;
 
 #[cfg(test)]
 #[path = "shipping_v8_contract.rs"]
@@ -3236,7 +3238,7 @@ mod tests {
         datadir.locales.insert("de-DE".into(), german);
 
         let encoded = encode_native(&datadir);
-        assert_eq!(&encoded[..8], b"RHDDNA15");
+        assert_eq!(&encoded[..8], b"RHDDNA16");
         assert_eq!(&encoded[..8], &SHIPPING_DATADIR_MAGIC);
         let decoded = decode_native(&encoded).expect("decode native shipping datadir");
         assert_eq!(decoded.raw.get("test.bin"), Some(&vec![1, 2, 3]));

@@ -2,7 +2,7 @@
 mod wire_contract {
     use super::*;
     #[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-    struct FrozenResourceWire {
+    struct FrozenResourceV16 {
         /// Picture collections keyed by resource ID.
         pictures: HashMap<ResourceId, Vec<Option<Picture>>>,
         /// Shipping-only compressed picture collections keyed by resource ID.
@@ -14,6 +14,7 @@ mod wire_contract {
         strings: HashMap<ResourceId, Vec<String>>,
         /// Wave/sound-path tables.
         waves: HashMap<ResourceId, Vec<String>>,
+        picture_opacity: HashMap<ResourceId, Vec<Option<PictureOpacityMetadata>>>,
         /// Reference counts per resource.
         references: HashMap<ResourceId, u32>,
         /// On-disk locations for recovery after dismiss.
@@ -26,7 +27,7 @@ mod wire_contract {
     }
 
     #[test]
-    fn resident_and_lifetime_split_preserves_legacy_wire_and_json() {
+    fn v16_resource_metadata_and_runtime_authority_have_distinct_wire_fields() {
         let mut manager = ResourceManager::with_files(Arc::new(SbFileSystem::new(Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         ))));
@@ -44,7 +45,7 @@ mod wire_contract {
             },
         );
         let json = serde_json::to_value(&manager).unwrap();
-        let frozen: FrozenResourceWire = serde_json::from_value(json.clone()).unwrap();
+        let frozen: FrozenResourceV16 = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(bitcode::encode(&manager), bitcode::encode(&frozen));
         let decoded: ResourceManager = bitcode::decode(&bitcode::encode(&frozen)).unwrap();
         assert!(decoded.files.is_none());
@@ -53,7 +54,7 @@ mod wire_contract {
         assert_eq!(decoded.lifetime.references[&9], 3);
         assert_eq!(decoded.lifetime.file_entries[&9].file_offset, 24);
         manager.disable_recovery_for_shipping();
-        let frozen: FrozenResourceWire =
+        let frozen: FrozenResourceV16 =
             serde_json::from_value(serde_json::to_value(&manager).unwrap()).unwrap();
         assert_eq!(bitcode::encode(&manager), bitcode::encode(&frozen));
         assert!(

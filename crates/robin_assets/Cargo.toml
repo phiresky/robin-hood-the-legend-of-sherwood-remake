@@ -132,3 +132,7 @@ wasm-threads = [
 
 [lints]
 workspace = true
+
+[[example]]
+name = "migrate_picture_metadata"
+required-features = ["engine-adapters"]

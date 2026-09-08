@@ -30,7 +30,6 @@ use robin_engine::coordinates::{
 };
 use robin_engine::engine as engine_api;
 use robin_engine::engine::{Engine, LevelAssets};
-use robin_engine::minimap::HitMask;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::MissionLocation;
@@ -1870,28 +1869,19 @@ pub(super) fn load_mission_sprites(
 pub(super) fn extract_minimap_widget_setup(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::MinimapWidgetSetup> {
+    if !cursor_res.has_picture_resource(resource_ids::RHMAP_CORNER) {
+        return None;
+    }
+    let metadata = cursor_res
+        .get_picture_opacity_metadata(resource_ids::RHMAP_CORNER)
+        .unwrap_or_else(|error| panic!("minimap engine picture metadata: {error:#}"));
     let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
-    let mut button_hit_mask = None;
-    // TODO: export the opacity mask alongside shipping picture metadata so
-    // engine setup can leave the corner pixels encoded until renderer setup.
-    if let Ok(pics) = cursor_res.get_pictures(resource_ids::RHMAP_CORNER)
-        && let Some(Some(pic)) = pics.get(1)
-    {
-        let pixels: Vec<u16> = pic
-            .data
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
-            .collect();
-        button_hit_mask = Some(HitMask::from_pixels_u16(
-            pic.width,
-            pic.height,
-            &pixels,
-            TRANSPARENT_COLOR_KEY_16,
-        ));
-    }
+    let button_hit_mask = metadata.get(1).and_then(Clone::clone).map(|metadata| {
+        metadata
+            .into_hit_mask()
+            .expect("validated minimap hit mask")
+    });
     Some(engine_api::MinimapWidgetSetup {
         corner_size,
         button_hit_mask,
@@ -1908,36 +1898,28 @@ pub(super) fn extract_minimap_widget_setup(
 pub(super) fn extract_ground_mark_sprite_data(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::GroundMarkSpriteData> {
-    // TODO: export per-frame opaque bounds with shipping picture metadata;
-    // dimensions alone cannot reproduce the marker's cropped geometry.
-    let pics = cursor_res
-        .get_pictures(resource_ids::RHID_GROUND_FOCUS)
-        .ok()?;
-    let first_pic = pics.iter().find_map(|opt| opt.as_ref())?;
-    let frame_sizes: Vec<(u16, u16)> = pics
-        .iter()
-        .filter_map(|opt| opt.as_ref().map(|p| (p.width, p.height)))
-        .collect();
-    if frame_sizes.is_empty() {
+    if !cursor_res.has_picture_resource(resource_ids::RHID_GROUND_FOCUS) {
         return None;
     }
-    // The destination marker uses the auto-cropped tight bounds of
-    // frame 0; we store the uncropped Picture, so scan for the opaque
-    // bounds and fall back to the raw size when the scan can't run.
-    let (cw, ch) = first_pic
-        .opaque_bounds_16()
-        .map(|(_, _, cw, ch)| (cw, ch))
-        .unwrap_or((frame_sizes[0].0, frame_sizes[0].1));
-    // Per-frame offset = (x_min, y_min) of the opaque region.  Used
-    // by visibility and blit-box calculations so the cull AABB tracks the
-    // opaque region instead of the full uncropped surface.  Defaults
-    // to (0, 0) for any frame whose opaque-bounds scan can't run
-    // (non-16-bit or fully transparent).
-    let per_frame_offsets: Vec<(i16, i16)> = pics
+    let pics = cursor_res
+        .get_picture_opacity_metadata(resource_ids::RHID_GROUND_FOCUS)
+        .unwrap_or_else(|error| panic!("ground marker engine picture metadata: {error:#}"));
+    let first_pic = pics.iter().flatten().next()?;
+    let frame_sizes: Vec<(u16, u16)> = pics
         .iter()
-        .map(|opt| {
-            opt.as_ref()
-                .and_then(|p| p.opaque_bounds_16())
+        .flatten()
+        .map(|pic| (pic.width, pic.height))
+        .collect();
+    // Fully transparent frames keep the historical raw-size / zero-offset rule.
+    let (cw, ch) = first_pic
+        .opaque_bounds
+        .map(|(_, _, width, height)| (width, height))
+        .unwrap_or((first_pic.width, first_pic.height));
+    let per_frame_offsets = pics
+        .iter()
+        .map(|pic| {
+            pic.as_ref()
+                .and_then(|pic| pic.opaque_bounds)
                 .map(|(x, y, _, _)| (x as i16, y as i16))
                 .unwrap_or((0, 0))
         })
