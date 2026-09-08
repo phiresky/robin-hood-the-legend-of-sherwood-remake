@@ -4,6 +4,13 @@ Summary of a benchmark sweep looking at whether we can shrink the shipping datad
 
 ## Latest recorded outcome
 
+[Earlier replay preparation](perf/replay-plan-earlier.md): a bounded batch of
+exact mission files now starts before the normal mission-load boundary. Five
+same-package 16 Mbit/s pairs all improved, with a median paired saving of
+**172 ms** and identical bytes. Loopback was mixed (median paired 39 ms slower).
+This comparison uses explicit captured HTTP gzip responses; its absolute times
+must not be compared directly with the older forced-Brotli benchmark.
+
 Transport qualification from the [follow-up investigation](perf/replay-wasm-transport-next.md):
 the earlier 6,639,157-byte HTTP Brotli capture used a forced Brotli request. Local
 Wrangler with Chrome's normal mixed encoding header returned 7,822,465-byte gzip

@@ -4,6 +4,12 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Earlier browser replay downloads.** Admitted replay URLs prepare their exact
+  mission selection once and start a bounded batch of required files before the
+  normal mission loader, which reuses those requests. Five 16 Mbit/s pairs saved
+  a median 172 ms with unchanged payload bytes; loopback showed no gain.
+  See [measurements and validation](perf/replay-plan-earlier.md).
+
 - **Shared scripted modal replay ownership.** Headless replay now shares scripted
   modal batch ownership with graphical sessions, supporting recorded aborted
   debriefings without discarding later-emitted batches. This does not add headless
