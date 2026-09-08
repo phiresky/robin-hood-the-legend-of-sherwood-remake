@@ -622,7 +622,7 @@ impl Renderer {
 
         Renderer {
             identity: NEXT_RENDERER_ID
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::Relaxed,
                     std::sync::atomic::Ordering::Relaxed,
                     |id| id.checked_add(1),
