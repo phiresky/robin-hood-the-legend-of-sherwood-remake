@@ -5,6 +5,7 @@
 //! authenticated distributor identity, licence attestation, and byte size are
 //! visible before the player can click the approval button.
 
+use crate::cache_maintenance::CacheClearStatus;
 use crate::gfx_types::{GameEvent, Keycode};
 use crate::host::ApplicationContext;
 use crate::localization::PortTextKey;
@@ -654,7 +655,8 @@ pub(crate) struct SpellforgeContentSettingsState {
     frame: FrameWnd,
     grants: Vec<SpellforgeTrustGrant>,
     settings_text_width: i32,
-    cache_clear: Option<futures::channel::oneshot::Receiver<Result<usize, String>>>,
+    /// Last observed application state, not the operation's completion receiver.
+    cache_clear: Result<CacheClearStatus, String>,
 }
 
 impl SpellforgeContentSettingsState {
@@ -678,8 +680,9 @@ impl SpellforgeContentSettingsState {
             frame: FrameWnd::default(),
             grants: Vec::new(),
             settings_text_width: 1,
-            cache_clear: None,
+            cache_clear: Ok(CacheClearStatus::Idle),
         };
+        state.poll_cache_clear(application_context, resources);
         state.reload(application_context, resources);
         state
     }
@@ -753,7 +756,7 @@ impl SpellforgeContentSettingsState {
             ),
             (
                 localized_text(application_context, PortTextKey::SpellforgeClearCache),
-                self.cache_clear.is_none(),
+                matches!(&self.cache_clear, Ok(status) if !status.is_pending()),
             ),
             (
                 localized_text(application_context, PortTextKey::SpellforgeResetTrust),
@@ -893,22 +896,36 @@ impl SpellforgeContentSettingsState {
         application_context: &ApplicationContext,
         resources: &IngameMenuResources,
     ) {
-        let Some(receiver) = self.cache_clear.as_mut() else {
+        self.observe_cache_clear(
+            application_context.cache_clear_status(),
+            application_context,
+            resources,
+        );
+    }
+
+    fn observe_cache_clear(
+        &mut self,
+        observed: Result<CacheClearStatus, String>,
+        application_context: &ApplicationContext,
+        resources: &IngameMenuResources,
+    ) {
+        if self.cache_clear == observed {
             return;
+        }
+        self.cache_clear = observed;
+        let completed = match &self.cache_clear {
+            Ok(CacheClearStatus::Completed { result, .. }) => Some(result.clone()),
+            Err(error) => Some(Err(error.clone())),
+            Ok(CacheClearStatus::Idle | CacheClearStatus::Pending { .. }) => None,
         };
-        let completed = match receiver.try_recv() {
-            Ok(Some(result)) => result,
-            Ok(None) => return,
-            Err(error) => Err(format!("cache-clear task was cancelled: {error}")),
-        };
-        self.cache_clear = None;
         self.status = match completed {
-            Ok(count) => localized_format(
+            None => String::new(),
+            Some(Ok(count)) => localized_format(
                 application_context,
                 PortTextKey::SpellforgeRemovedCachedMods,
                 &[("count", &count.to_string())],
             ),
-            Err(error) => localized_format(
+            Some(Err(error)) => localized_format(
                 application_context,
                 PortTextKey::SpellforgeCacheClearFailed,
                 &[("error", &error)],
@@ -922,34 +939,11 @@ impl SpellforgeContentSettingsState {
         application_context: &ApplicationContext,
         resources: &IngameMenuResources,
     ) {
-        if self.cache_clear.is_some() {
-            return;
-        }
-        let (sender, receiver) = futures::channel::oneshot::channel();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let background_context = application_context.clone();
-            if let Err(error) = std::thread::Builder::new()
-                .name("spellforge-cache-clear".to_owned())
-                .spawn(move || {
-                    let _ = sender.send(background_context.clear_distributed_mod_cache());
-                })
-            {
-                self.status = localized_format(
-                    application_context,
-                    PortTextKey::SpellforgeCacheClearFailed,
-                    &[("error", &error.to_string())],
-                );
-                self.reload(application_context, resources);
-                return;
-            }
-        }
-        #[cfg(target_arch = "wasm32")]
-        wasm_bindgen_futures::spawn_local(async move {
-            let _ = sender.send(crate::distributed_mod_cache::clear().await);
-        });
-        self.cache_clear = Some(receiver);
-        self.reload(application_context, resources);
+        self.observe_cache_clear(
+            application_context.begin_distributed_mod_cache_clear(),
+            application_context,
+            resources,
+        );
     }
 
     fn render(
