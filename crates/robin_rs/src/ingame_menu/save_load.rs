@@ -28,7 +28,7 @@ use crate::renderer::Renderer;
 use crate::savegame::{SaveGame, SaveGameManager, SlotName};
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
-use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
+use crate::widget::{TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
 use jiff::{Timestamp, tz::TimeZone};
 
 use super::layout::{
@@ -39,7 +39,10 @@ use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
     MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
 };
-use super::save_picker::{ListRow, PickerModel, PickerSlot, retire_thumbnail};
+use super::save_picker::{
+    ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, ListRow, PickerAction, PickerController, PickerModel,
+    PickerSlot, PickerTarget, retire_thumbnail,
+};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 use super::yesno::{YesNoModalState, show_yesno};
 
@@ -70,7 +73,7 @@ pub struct LoadPickerModalState {
     visible_rows: usize,
     thumb_widget: WidgetPicture,
     thumb_cache: Option<ThumbnailCache>,
-    input_state: ModalInputState,
+    controller: PickerController,
     delete_confirmation: Option<YesNoModalState>,
     error_notice: Option<crate::save_recovery::ErrorNotice>,
     detailed_metadata: bool,
@@ -108,7 +111,7 @@ impl LoadPickerModalState {
             visible_rows: (LOAD_LIST_RECT.h / row_height).max(1) as usize,
             thumb_widget: WidgetPicture::new(u32::MAX),
             thumb_cache: None,
-            input_state,
+            controller: PickerController::new(input_state),
             delete_confirmation: None,
             error_notice: None,
             detailed_metadata,
@@ -169,7 +172,6 @@ impl LoadPickerModalState {
         }
 
         let visible = self.model.visible();
-        let mut selected = self.model.selected_row();
 
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
@@ -213,83 +215,22 @@ impl LoadPickerModalState {
                 bottom_buttons[2].y,
             ),
         ];
-        let action_enabled = matches!(selected, Some(ListRow::Existing(_)));
-        let delete_enabled = self.model.can_delete();
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
-        for (id, label, x, y) in &btn_positions {
-            let enabled = match *id {
-                ID_LOAD_SAVE => action_enabled,
-                ID_DELETE => delete_enabled,
-                _ => true,
-            };
-            frame.add_widget_absolute(widget_bridge::make_button_enabled(
-                *id, label, enabled, *x, *y, btn_w, btn_h,
-            ));
-        }
-
-        let mut activated = None;
+        self.controller
+            .begin_frame(&self.model, &btn_positions, btn_w, btn_h);
         for event in event_pump.poll_events() {
-            self.input_state.update_from_event(&event, transform);
-            apply_picker_navigation(&mut self.model, &event);
-            match event {
-                GameEvent::Quit
-                | GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => activated = Some(ID_CANCEL),
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => {
-                    selected = self.model.selected_row();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => {
-                    selected = self.model.selected_row();
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return | Keycode::KpEnter,
-                    ..
-                } if action_enabled => activated = Some(ID_LOAD_SAVE),
-                GameEvent::MouseUp(x, y, 1) => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    if LOAD_LIST_RECT.contains_virt(vx, vy) {
-                        let row_offset = ((vy - LOAD_LIST_RECT.y - 4) / row_height).max(0) as usize;
-                        self.model
-                            .select(self.model.row_at(self.model.scroll_offset() + row_offset));
-                        selected = self.model.selected_row();
-                        if self
-                            .input_state
-                            .buttons
-                            .contains(MouseButtons::LEFT_DOUBLE_CLICK)
-                            && selected.is_some()
-                        {
-                            activated = Some(ID_LOAD_SAVE);
-                        }
-                    } else if let Some(id) = hit_button(
-                        vx,
-                        vy,
-                        &btn_positions,
-                        btn_w,
-                        btn_h,
-                        action_enabled,
-                        delete_enabled,
-                    ) {
-                        activated = Some(id);
-                    }
-                }
-                _ => {}
-            }
+            self.controller.handle_event(
+                &mut self.model,
+                &event,
+                transform,
+                LOAD_LIST_RECT,
+                row_height,
+            );
         }
-
-        let widget_input = self.input_state.as_widget_input();
+        let selected = self.model.selected_row();
+        let widget_events = self.controller.process_widgets(&self.model);
+        let widget_input = self.controller.input.as_widget_input();
         let mouse_virt = widget_input.mouse_position;
-        let widget_events = frame.process_input(&widget_input);
-        self.input_state.end_frame();
+        self.controller.input.end_frame();
         if let (Some(sound), Some(loader)) = (sound, sample_loader) {
             widget_bridge::play_widget_noise(
                 &widget_events,
@@ -299,26 +240,28 @@ impl LoadPickerModalState {
                 loader,
             );
         }
-        if let Some(id) = widget_bridge::find_activated(&widget_events) {
-            activated = Some(id);
-        }
-
-        match activated {
-            Some(ID_CANCEL) => return Some(SaveLoadOutcome::Cancel),
-            Some(ID_LOAD_SAVE) => {
-                if let Some(ListRow::Existing(visible_index)) = selected {
-                    return Some(SaveLoadOutcome::Slot(visible[visible_index]));
+        match self.controller.take_action() {
+            Some(PickerAction::Cancel) => return Some(SaveLoadOutcome::Cancel),
+            Some(PickerAction::Accept(PickerTarget::Existing(name))) => {
+                match save_manager.find_by_filename(name.as_str()) {
+                    Some(slot) => return Some(SaveLoadOutcome::Slot(slot)),
+                    None => self
+                        .model
+                        .report_error("the selected save is no longer available".into()),
                 }
             }
-            Some(ID_DELETE) => {
-                if self.model.request_delete().is_some() {
+            Some(PickerAction::ConfirmDelete(name)) => {
+                if begin_picker_delete(&mut self.model, name) {
                     let message = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
                     self.delete_confirmation = Some(YesNoModalState::new(
                         event_pump, renderer, resources, message,
                     ));
                 }
             }
-            _ => {}
+            Some(PickerAction::Accept(PickerTarget::New)) => {
+                unreachable!("Load picker cannot create a save")
+            }
+            None => {}
         }
 
         sync_thumbnail_cache(
@@ -439,9 +382,9 @@ impl LoadPickerModalState {
             &metadata_text,
             self.detailed_metadata,
         );
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, self.controller.frame());
         if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &self.input_state);
+            cursor.draw(renderer, transform, &self.controller.input);
         }
         renderer.present();
         None
@@ -663,10 +606,6 @@ impl SaveMetadataText for EnglishSaveMetadataText {
 /// max-length cap.
 const MAX_NAME_LEN: usize = 45;
 
-const ID_LOAD_SAVE: u32 = 0;
-const ID_DELETE: u32 = 1;
-const ID_CANCEL: u32 = 2;
-
 /// Display the save/load picker. `mission_id` is recorded onto any new
 /// slot created in Save mode so headers stay consistent.
 ///
@@ -787,6 +726,7 @@ pub async fn show_save_load(
 
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
+    let mut controller = PickerController::new(input_state);
 
     // Stub keyboard fed into the input-field widget so its special-key
     // branches (Backspace / Delete / Left / Right / Home / End / Tab /
@@ -828,88 +768,20 @@ pub async fn show_save_load(
         let mut selected = model.selected_row();
         // Build (or rebuild) the widget frame. Save mode accepts an
         // empty name and fills a default label on confirmation.
-        let action_enabled = matches!(
-            (mode, selected),
-            (SaveLoadMode::Save, Some(_)) | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
-        );
-        let delete_enabled = model.can_delete();
-        let mut frame = FrameWnd::default();
-        frame.enabled = true;
-        frame.input_enabled = true;
-        for (id, label, x, y) in &btn_positions {
-            let enabled = match *id {
-                ID_LOAD_SAVE => action_enabled,
-                ID_DELETE => delete_enabled,
-                _ => true,
-            };
-            frame.add_widget_absolute(widget_bridge::make_button_enabled(
-                *id, label, enabled, *x, *y, btn_w, btn_h,
-            ));
-        }
+        controller.begin_frame(&model, &btn_positions, btn_w, btn_h);
 
         // In Save mode the input is always editable. Load mode never shows it.
         let input_editable = mode == SaveLoadMode::Save;
 
         // ── Event loop ──────────────────────────────────────────
-        let mut activated: Option<u32> = None;
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
-            input_state.update_from_event(&event, transform);
-            apply_picker_navigation(&mut model, &event);
+            if controller.handle_event(&mut model, &event, transform, list_rect, row_height) {
+                selected = model.selected_row();
+                sync_input_for_selection(&mut input_widget, selected, mode, &visible, save_manager);
+                caret_started_at_ms = crate::window::process_uptime_ms();
+            }
             match event {
-                GameEvent::Quit => {
-                    activated = Some(ID_CANCEL);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Escape,
-                    ..
-                } => {
-                    activated = Some(ID_CANCEL);
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Up,
-                    ..
-                } => {
-                    let new_sel = model.selected_row();
-                    if new_sel != selected {
-                        selected = new_sel;
-                        sync_input_for_selection(
-                            &mut input_widget,
-                            selected,
-                            mode,
-                            &visible,
-                            save_manager,
-                        );
-                        caret_started_at_ms = crate::window::process_uptime_ms();
-                    }
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Down,
-                    ..
-                } => {
-                    let new_sel = model.selected_row();
-                    if new_sel != selected {
-                        selected = new_sel;
-                        sync_input_for_selection(
-                            &mut input_widget,
-                            selected,
-                            mode,
-                            &visible,
-                            save_manager,
-                        );
-                        caret_started_at_ms = crate::window::process_uptime_ms();
-                    }
-                }
-                GameEvent::KeyDown {
-                    keycode: Keycode::Return,
-                    ..
-                }
-                | GameEvent::KeyDown {
-                    keycode: Keycode::KpEnter,
-                    ..
-                } if action_enabled => {
-                    activated = Some(ID_LOAD_SAVE);
-                }
                 GameEvent::KeyDown {
                     keycode: Keycode::Backspace,
                     ..
@@ -959,62 +831,13 @@ pub async fn show_save_load(
                     // blink so the insertion stays visible.
                     caret_started_at_ms = crate::window::process_uptime_ms();
                 }
-                // Row selection + double-click activation fire on the
-                // release edge. Double-click detection uses the window layer's
-                // counter, tracked for us on MouseDown/MouseUp by
-                // `ModalInputState::update_from_event` above.
-                GameEvent::MouseUp(x, y, 1) => {
-                    let (vx, vy) = transform.from_screen(x, y);
-                    if list_rect.contains_virt(vx, vy) {
-                        let row_offset = ((vy - list_rect.y - 4) / row_height).max(0) as usize;
-                        let new_selection = model.row_at(model.scroll_offset() + row_offset);
-                        model.select(new_selection);
-                        if new_selection != selected {
-                            selected = new_selection;
-                            sync_input_for_selection(
-                                &mut input_widget,
-                                selected,
-                                mode,
-                                &visible,
-                                save_manager,
-                            );
-                            caret_started_at_ms = crate::window::process_uptime_ms();
-                        }
-                        if input_state
-                            .buttons
-                            .contains(MouseButtons::LEFT_DOUBLE_CLICK)
-                            && selected.is_some()
-                        {
-                            // Match the action-enable rules used by the
-                            // explicit button / Enter-key path.
-                            let action_enabled_now = matches!(
-                                (mode, selected),
-                                (SaveLoadMode::Save, Some(_))
-                                    | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
-                            );
-                            if action_enabled_now {
-                                activated = Some(ID_LOAD_SAVE);
-                            }
-                        }
-                    } else if let Some(id) = hit_button(
-                        vx,
-                        vy,
-                        &btn_positions,
-                        btn_w,
-                        btn_h,
-                        action_enabled,
-                        delete_enabled,
-                    ) {
-                        activated = Some(id);
-                    }
-                }
                 _ => {}
             }
         }
 
-        let widget_input = input_state.as_widget_input();
+        let widget_events = controller.process_widgets(&model);
+        let widget_input = controller.input.as_widget_input();
         let mouse_virt = widget_input.mouse_position;
-        let widget_events = frame.process_input(&widget_input);
         let mut field_events: Vec<crate::ui::UiEvent> = Vec::new();
         if input_editable {
             // Feed the text-input buffer straight to the input widget
@@ -1024,23 +847,9 @@ pub async fn show_save_load(
             // for the button frame doesn't accidentally drive state
             // transitions on the field (which we force to stay
             // `SelectedEditable` regardless).
-            let field_input = WidgetInput {
-                mouse_position: widget_input.mouse_position,
-                mouse_z: widget_input.mouse_z,
-                mouse_button: MouseButtons::empty(),
-                keyboard: &empty_keyboard,
-                text_input: widget_input.text_input,
-                capture: None,
-            };
-            field_events = input_widget.process_input(&field_input);
-            // If the state machine fell out of edit mode for any reason
-            // (shouldn't happen here but be defensive), put it back so
-            // subsequent frames still accept text input.
-            if input_widget.base.state != UiState::SelectedEditable {
-                input_widget.enter_edit_mode();
-            }
+            field_events = feed_save_name(&mut input_widget, &widget_input, &empty_keyboard);
         }
-        input_state.end_frame();
+        controller.input.end_frame();
 
         // Play menu sounds for any noisy events emitted this frame.
         // Buttons use `WIDGET_NOISY_BUTTON`; the input field uses
@@ -1068,15 +877,11 @@ pub async fn show_save_load(
             WidgetInputField::play_noise(&field_events, snd, backend, loader);
         }
 
-        if let Some(id) = widget_bridge::find_activated(&widget_events) {
-            activated = Some(id);
-        }
-
-        if let Some(id) = activated {
-            match id {
-                ID_CANCEL => break SaveLoadOutcome::Cancel,
-                ID_LOAD_SAVE => match (mode, selected) {
-                    (SaveLoadMode::Save, Some(ListRow::New)) => {
+        if let Some(action) = controller.take_action() {
+            match action {
+                PickerAction::Cancel => break SaveLoadOutcome::Cancel,
+                PickerAction::Accept(target) => match (mode, target) {
+                    (SaveLoadMode::Save, PickerTarget::New) => {
                         let text = accepted_save_text(
                             &input_widget.edit_text,
                             selected,
@@ -1098,8 +903,11 @@ pub async fn show_save_load(
                             }
                         }
                     }
-                    (SaveLoadMode::Save, Some(ListRow::Existing(v_idx))) => {
-                        let slot = visible[v_idx];
+                    (SaveLoadMode::Save, PickerTarget::Existing(name)) => {
+                        let Some(slot) = save_manager.find_by_filename(name.as_str()) else {
+                            model.report_error("the selected save is no longer available".into());
+                            continue;
+                        };
                         let msg = resources.menu_text.get(MT_MSG_REALLY_OVERWRITE_SAVEGAME);
                         if show_yesno(
                             event_pump,
@@ -1133,13 +941,19 @@ pub async fn show_save_load(
                             break SaveLoadOutcome::Slot(slot);
                         }
                     }
-                    (SaveLoadMode::Load, Some(ListRow::Existing(v_idx))) => {
-                        break SaveLoadOutcome::Slot(visible[v_idx]);
+                    (SaveLoadMode::Load, PickerTarget::Existing(name)) => {
+                        match save_manager.find_by_filename(name.as_str()) {
+                            Some(slot) => break SaveLoadOutcome::Slot(slot),
+                            None => model
+                                .report_error("the selected save is no longer available".into()),
+                        }
                     }
-                    _ => {}
+                    (SaveLoadMode::Load, PickerTarget::New) => {
+                        unreachable!("Load picker cannot create a save")
+                    }
                 },
-                ID_DELETE => {
-                    if model.request_delete().is_some() {
+                PickerAction::ConfirmDelete(name) => {
+                    if begin_picker_delete(&mut model, name) {
                         let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
                         let confirmed = show_yesno(
                             event_pump,
@@ -1164,7 +978,6 @@ pub async fn show_save_load(
                         }
                     }
                 }
-                _ => {}
             }
         }
 
@@ -1312,10 +1125,10 @@ pub async fn show_save_load(
         );
 
         // Buttons.
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, controller.frame());
 
         if let Some(c) = &cursor {
-            c.draw(renderer, transform, &input_state);
+            c.draw(renderer, transform, &controller.input);
         }
 
         renderer.present();
@@ -1887,31 +1700,6 @@ fn mission_display_name(mission_id: u32, profiles: Option<&ProfileManager>) -> O
         .filter(|name| !name.trim().is_empty())
 }
 
-fn hit_button(
-    vx: i32,
-    vy: i32,
-    btn_positions: &[(u32, &str, i32, i32); 3],
-    btn_w: i32,
-    btn_h: i32,
-    action_enabled: bool,
-    delete_enabled: bool,
-) -> Option<u32> {
-    for (id, _, x, y) in btn_positions {
-        if vx < *x || vx >= *x + btn_w || vy < *y || vy >= *y + btn_h {
-            continue;
-        }
-        let enabled = match *id {
-            ID_LOAD_SAVE => action_enabled,
-            ID_DELETE => delete_enabled,
-            _ => true,
-        };
-        if enabled {
-            return Some(*id);
-        }
-    }
-    None
-}
-
 /// Truncate `text` to the longest prefix that fits in `max_w` pixels
 /// when rendered with `font`. Oversize text gets an ASCII ellipsis so
 /// clipped metadata is visibly abbreviated instead of looking like a
@@ -2006,24 +1794,33 @@ fn picker_slots(save_manager: &SaveGameManager) -> Vec<PickerSlot> {
         .collect()
 }
 
-/// Shared input interpretation; the adapters retain their own event scheduling,
-/// modal suppression and save-only text/IME handling.
-fn apply_picker_navigation(model: &mut PickerModel, event: &GameEvent) {
-    match event {
-        GameEvent::KeyDown {
-            keycode: Keycode::Up,
-            ..
-        } => {
-            model.navigate(false);
+fn feed_save_name(
+    field: &mut WidgetInputField,
+    input: &WidgetInput<'_>,
+    empty_keyboard: &UiKeyboard,
+) -> Vec<crate::ui::UiEvent> {
+    let field_input = WidgetInput {
+        mouse_position: input.mouse_position,
+        mouse_z: input.mouse_z,
+        mouse_button: MouseButtons::empty(),
+        keyboard: empty_keyboard,
+        text_input: input.text_input,
+        capture: None,
+    };
+    let events = field.process_input(&field_input);
+    if field.base.state != UiState::SelectedEditable {
+        field.enter_edit_mode();
+    }
+    events
+}
+
+fn begin_picker_delete(model: &mut PickerModel, name: SlotName) -> bool {
+    match model.request_delete_named(name) {
+        Ok(()) => true,
+        Err(error) => {
+            model.report_error(error);
+            false
         }
-        GameEvent::KeyDown {
-            keycode: Keycode::Down,
-            ..
-        } => {
-            model.navigate(true);
-        }
-        GameEvent::MouseWheel(dy) if *dy != 0 => model.scroll(*dy < 0),
-        _ => {}
     }
 }
 
@@ -2051,6 +1848,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn controller_leaves_committed_ime_text_and_caret_editing_to_save_adapter() {
+        let mut model = PickerModel::new(SaveLoadMode::Save, false, 2, vec![]);
+        let mut controller = PickerController::new(ModalInputState::new());
+        let buttons = [
+            (ID_LOAD_SAVE, "Save", 460, 300),
+            (ID_DELETE, "Delete", 460, 350),
+            (ID_CANCEL, "Cancel", 460, 400),
+        ];
+        let transform = MenuTransform::centered(640, 480);
+        let mut field = WidgetInputField::new(1000);
+        field.set_max_length(MAX_NAME_LEN);
+        field.enter_edit_mode();
+        let keyboard = UiKeyboard::default();
+        for text in ["é雪", "Ω"] {
+            controller.begin_frame(&model, &buttons, 150, 40);
+            if text == "Ω" {
+                let left = GameEvent::KeyDown {
+                    keycode: Keycode::Left,
+                    physical_key: None,
+                };
+                assert!(!controller.handle_event(
+                    &mut model,
+                    &left,
+                    transform,
+                    SAVE_LIST_RECT,
+                    COMPACT_ROW_HEIGHT
+                ));
+                field.move_caret_left(); // Save-only adapter remains its owner.
+            }
+            assert!(!controller.handle_event(
+                &mut model,
+                &GameEvent::TextInput { text: text.into() },
+                transform,
+                SAVE_LIST_RECT,
+                COMPACT_ROW_HEIGHT
+            ));
+            controller.process_widgets(&model);
+            feed_save_name(&mut field, &controller.input.as_widget_input(), &keyboard);
+            controller.input.end_frame();
+            assert_eq!(controller.take_action(), None);
+        }
+        assert_eq!(field.edit_text, "éΩ雪");
+        assert_eq!(field.caret_offset, 2);
+        assert_eq!(field.base.state, UiState::SelectedEditable);
+        assert_eq!(model.selected_row(), Some(ListRow::New));
+    }
+
+    #[test]
     fn shared_input_trace_is_independent_of_cooperative_frame_boundaries() {
         let mut manager = SaveGameManager::new("unused-picker-model-store".into());
         for index in 0..5 {
@@ -2062,6 +1907,14 @@ mod tests {
         let mut cooperative =
             PickerModel::new(SaveLoadMode::Load, false, 2, picker_slots(&manager));
         let mut standalone = cooperative.clone();
+        let mut cooperative_input = PickerController::new(ModalInputState::new());
+        let mut standalone_input = PickerController::new(ModalInputState::new());
+        let buttons = [
+            (ID_LOAD_SAVE, "Load", 460, 300),
+            (ID_DELETE, "Delete", 460, 350),
+            (ID_CANCEL, "Cancel", 460, 400),
+        ];
+        let transform = MenuTransform::centered(640, 480);
         let down = GameEvent::KeyDown {
             keycode: Keycode::Down,
             physical_key: None,
@@ -2084,11 +1937,29 @@ mod tests {
         // turn its stable selection into an old presentation offset.
         for event in &events {
             cooperative.refresh(picker_slots(&manager));
-            apply_picker_navigation(&mut cooperative, event);
+            cooperative_input.begin_frame(&cooperative, &buttons, 150, 40);
+            cooperative_input.handle_event(
+                &mut cooperative,
+                event,
+                transform,
+                LOAD_LIST_RECT,
+                COMPACT_ROW_HEIGHT,
+            );
+            cooperative_input.process_widgets(&cooperative);
+            cooperative_input.input.end_frame();
         }
+        standalone_input.begin_frame(&standalone, &buttons, 150, 40);
         for event in &events {
-            apply_picker_navigation(&mut standalone, event);
+            standalone_input.handle_event(
+                &mut standalone,
+                event,
+                transform,
+                LOAD_LIST_RECT,
+                COMPACT_ROW_HEIGHT,
+            );
         }
+        standalone_input.process_widgets(&standalone);
+        standalone_input.input.end_frame();
         assert_eq!(cooperative, standalone);
         assert_eq!(cooperative.selected_row(), Some(ListRow::Existing(2)));
         assert_eq!(cooperative.scroll_offset(), 1);
