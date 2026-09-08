@@ -1776,6 +1776,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires LLVM unwind support; run with profile.test.package.robin_engine.codegen-backend=llvm"]
     fn poisoned_deferred_queue_is_not_silently_skipped() {
         use super::*;
         let (channels, incoming, _outgoing, _, _) = NetChannels::new();
