@@ -28,9 +28,11 @@ including those requested by workers, share **one** 2,000,000 B/s queue at 16 Mb
 16 KiB chunks are round-robin paced against cumulative deadlines; clients cannot
 each obtain a separate bandwidth allowance. Fresh profiles preserve normal caching
 within a navigation (for example, workers importing already-fetched glue).
+Use `--mbit unlimited` for an unshaped loopback control through the same loader;
+this bypasses pacing entirely instead of approximating it with very short timers.
 
 `--mission auto` is the default and omits the mission query, exercising normal demo
-startup with its configured four-character team. Explicit `--mission Dem_Lei_MP`
+startup with its configured demo team. Explicit `--mission Dem_Lei_MP`
 uses the engine's forced-mission campaign path; it is **not equivalent** and the
 historical fixture immediately loses with that team's missing required characters.
 The existing direct harness also accepts `--mission auto`, retaining its old default.

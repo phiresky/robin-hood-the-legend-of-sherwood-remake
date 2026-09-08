@@ -27,8 +27,8 @@ const { values } = parseArgs({ options: {
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
 const pkg = resolve(values.pkg), datadir = resolve(values.datadir), site = resolve(values.site), core = resolve(values.core);
 const output = resolve(values.output);
-const rate = Number(values.mbit) * 1_000_000 / 8;
-const throttle = new SharedBandwidth(rate);
+const rate = values.mbit === 'unlimited' ? null : Number(values.mbit) * 1_000_000 / 8;
+const throttle = rate === null ? null : new SharedBandwidth(rate);
 const records = [], logs = [], errors = [];
 const cache = new Map();
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -98,7 +98,9 @@ const server = createServer(async (req, res) => {
         record.payloadBytes = body.length;
         res.setHeader('Content-Type', type); res.setHeader('Content-Length', body.length);
         if (encoding) res.setHeader('Content-Encoding', encoding);
-        await throttle.send(res, body, (bytes, at) => { record.bytes += bytes; record.chunks.push({ bytes, at }); });
+        const onChunk = (bytes, at) => { record.bytes += bytes; record.chunks.push({ bytes, at }); };
+        if (throttle) await throttle.send(res, body, onChunk);
+        else { res.end(body); onChunk(body.length, performance.now()); }
         record.finishedAt = performance.now();
     } catch (error) {
         record.error = String(error); res.writeHead(404); res.end(String(error));
@@ -166,7 +168,7 @@ try {
     const result = {
         inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
         pkg, datadir, site, mission: values.mission, query: [...query], browser: await send('Browser.getVersion'),
-        network: { mbit: Number(values.mbit), scope: 'single shared server queue for all response payloads including worker fetches', chunkBytes: 16384, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: 'fresh browser profile; normal intra-navigation HTTP caching', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },
+        network: { mbit: rate === null ? 'unlimited' : Number(values.mbit), scope: throttle ? 'single shared server queue for all response payloads including worker fetches' : 'unshaped loopback responses', chunkBytes: throttle ? 16384 : null, latencyMs: 0, compression: 'gzip -9 -n CLI for raw explicit wasm.gz sibling; Node gzip level9 HTTP encoding for text', cache: 'fresh browser profile; normal intra-navigation HTTP caching', caveat: 'HTTP/1.1 loopback, no TCP overhead or packet loss; cumulative deadlines avoid per-chunk timer-rounding loss'  },
         endpoints: { bootstrapMs: bootstrapEpoch - page.timeOrigin, firstMissionPresentReturnedMs: presentEpoch ? presentEpoch - page.timeOrigin : null, afterTwoRafMs: page.screenshotRequestAt, screenshotRequestMs: screenshotStart - navigationServerAt, screenshotCompleteMs: screenshotEnd - navigationServerAt, screenshotSettleMs: 500, screenshotServerDurationMs: screenshotEnd - screenshotStart, caveat: 'Screenshot after bootstrap, two animation callbacks and 500ms settle is an inspectable image, not a physical display presentation timestamp. present returned is submission-side only.' },
         page, errors, logs: logs.map(({ epochMs, line }) => ({ pageMs: epochMs - page.timeOrigin, line })),
         requests: records.map(record => ({ ...record, requestedAt: record.requestedAt - navigationServerAt, finishedAt: record.finishedAt === undefined ? null : record.finishedAt - navigationServerAt, category: category(record.path), chunks: record.chunks.map(chunk => ({ ...chunk, at: chunk.at - navigationServerAt })) })),
