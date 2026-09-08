@@ -175,7 +175,7 @@ impl PickerModel {
         })
     }
 
-    fn total_rows(&self) -> usize {
+    pub fn total_rows(&self) -> usize {
         self.slots.len() + usize::from(self.mode == SaveLoadMode::Save)
     }
     pub fn scroll_offset(&self) -> usize {
