@@ -1269,6 +1269,42 @@ impl TimelineRuntime {
         self.trace(FrameContractStage::TimelineBegin);
     }
 
+    /// A second ingress drain may reconstruct the open frame after late input
+    /// invalidates both pending snapshot tiers. Re-open only that capture,
+    /// preserving this host iteration's commands, facts, clock and ordinal.
+    pub(super) fn reopen_after_pre_tick_network_rollback(
+        &mut self,
+        frame: &mut MissionFrame,
+        engine: &Engine,
+        assets: &LevelAssets,
+    ) {
+        assert_eq!(
+            self.phase,
+            MissionPhase::Input,
+            "network rollback must precede simulation"
+        );
+        assert_eq!(
+            frame.timeline_before,
+            Some(self.current_frame()),
+            "late-input rollback must reconstruct the already-open frame"
+        );
+        assert!(
+            frame.timeline_after.is_none(),
+            "cannot reopen an already committed frame"
+        );
+        self.rewind_buffer
+            .begin_frame(self.frame_number(), engine, assets);
+        // Recording samples the final pre-command state, not the speculative
+        // state captured before the late input arrived. Do not call open_frame:
+        // it would bind twice and consume external facts a second time.
+        frame.recorder_hash = self.replay_recorder.as_ref().and_then(|_| {
+            self.replay_ordinal
+                .number()
+                .is_multiple_of(25)
+                .then(|| robin_engine::replay::state_hash(engine))
+        });
+    }
+
     pub(super) fn queue_sound_boundary(&mut self, boundary: robin_engine::engine::SoundBoundary) {
         assert!(
             self.pending_external_facts.sound_boundary.is_none(),
