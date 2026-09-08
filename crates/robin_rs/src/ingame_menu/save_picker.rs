@@ -6,6 +6,11 @@ use serde::{Deserialize, Serialize};
 use super::save_load::SaveLoadMode;
 use crate::savegame::SlotName;
 
+mod controller;
+pub(super) use controller::{
+    ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, PickerAction, PickerController, PickerTarget,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum ListRow {
     New,
@@ -203,6 +208,7 @@ impl PickerModel {
             .autosave
     }
 
+    #[cfg(test)]
     pub fn request_delete(&mut self) -> Option<SlotName> {
         if !self.can_delete() {
             return None;
@@ -211,9 +217,23 @@ impl PickerModel {
             .selected_slot()
             .expect("deletable selection must identify a slot")
             .clone();
-        self.delete_confirmation = Some(name.clone());
-        self.operation_error = None;
+        self.request_delete_named(name.clone())
+            .expect("deletable selected identity is valid");
         Some(name)
+    }
+
+    pub fn request_delete_named(&mut self, name: SlotName) -> Result<(), String> {
+        let slot = self
+            .slots
+            .iter()
+            .find(|slot| slot.name == name)
+            .ok_or_else(|| "the selected save is no longer available".to_string())?;
+        if slot.autosave {
+            return Err("autosaves cannot be manually deleted".into());
+        }
+        self.delete_confirmation = Some(name);
+        self.operation_error = None;
+        Ok(())
     }
 
     /// Resolve the exact confirmed identity, even if the backing list moved.
