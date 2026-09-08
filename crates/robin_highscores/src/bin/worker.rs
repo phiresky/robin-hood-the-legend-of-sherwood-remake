@@ -134,14 +134,25 @@ where
     }
 }
 
-async fn run_owned_fenced_operation<T, F>(database: Database, operation: F) -> anyhow::Result<T>
+fn run_owned_fenced_operation<T, F>(
+    database: Database,
+    operation: F,
+) -> impl Future<Output = anyhow::Result<T>> + Send
 where
     T: Send + 'static,
     F: Future<Output = anyhow::Result<T>> + Send + 'static,
 {
-    tokio::spawn(async move { database.run_fenced_operation(operation).await })
-        .await
-        .map_err(|error| anyhow::anyhow!(error).context("owned database operation task failed"))?
+    // Keep the large replay-processing future out of each enclosing fence,
+    // task-local scope, and worker-loop future. Otherwise their construction
+    // can exhaust a Tokio worker thread's stack before the first job is leased.
+    let operation = Box::pin(operation);
+    async move {
+        tokio::spawn(async move { database.run_fenced_operation(operation).await })
+            .await
+            .map_err(|error| {
+                anyhow::anyhow!(error).context("owned database operation task failed")
+            })?
+    }
 }
 
 #[cfg(unix)]
@@ -693,7 +704,7 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                         };
                         let submission_id = job.submission_id.clone();
                         let attempts = job.attempts;
-                        let outcome = process_job(
+                        let outcome = Box::pin(process_job(
                             &operation_worker,
                             &operation_server,
                             &operation_database,
@@ -703,7 +714,7 @@ async fn process_jobs(runtime: WorkerRuntime) -> anyhow::Result<()> {
                             &operation_job_catalog,
                             verifier_digest,
                             job,
-                        )
+                        ))
                         .await;
                         if let Err(error) = outcome {
                             let typed_failure =
@@ -1353,6 +1364,27 @@ fn bounded_private_detail(detail: &str) -> String {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn owned_fence_keeps_large_operations_out_of_the_callers_future() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = ServerConfig::default();
+        config.database_path = directory.path().join("highscores.sqlite3");
+        let database = Database::migrate(&config).await.unwrap();
+        let payload = [7_u8; 256 * 1024];
+        let operation = async move {
+            tokio::task::yield_now().await;
+            Ok(std::hint::black_box(payload)[0])
+        };
+        assert!(std::mem::size_of_val(&operation) >= 256 * 1024);
+        let owned = run_owned_fenced_operation(database.clone(), operation);
+        assert!(
+            std::mem::size_of_val(&owned) <= 1024,
+            "owned fence must not embed the replay operation in its caller"
+        );
+        assert_eq!(owned.await.unwrap(), 7);
+        database.close_fenced().await.unwrap();
+    }
 
     async fn assert_physical_work_is_fenced(mode: &'static str) {
         let directory = tempfile::tempdir().unwrap();
