@@ -782,7 +782,7 @@ impl VqDecodeScheduler {
         let grids = grids.with_context(|| format!("decode VQ sprite chunk for {}", chunk.rhs))?;
         if let Some([ready_ms, enqueued_ms, worker_start_ms, worker_end_ms]) = timing {
             let received_ms = js_sys::Date::now();
-            tracing::debug!(chunk = %chunk.rhs, ready_ms, enqueued_ms, worker_start_ms,
+            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(), ready_ms, enqueued_ms, worker_start_ms,
                 worker_end_ms, received_ms, decode_ms = worker_end_ms - worker_start_ms,
                 "VQ sprite chunk decoded on worker");
         }
@@ -1300,7 +1300,7 @@ impl ShippingSpriteBank {
         }
         #[cfg(target_arch = "wasm32")]
         if let Some(apply_start_ms) = apply_start {
-            tracing::debug!(chunk = %_chunk.rhs, apply_start_ms, apply_end_ms = js_sys::Date::now(),
+            tracing::debug!(chunk = %_chunk.rhs, first_sprite = ?_chunk.sprite_ids.first(), apply_start_ms, apply_end_ms = js_sys::Date::now(),
                 "vq sprite chunk applied");
         }
         Ok(())
@@ -1496,7 +1496,7 @@ impl ShippingSpriteBank {
         }
         #[cfg(target_arch = "wasm32")]
         if let Some(apply_start_ms) = apply_start {
-            tracing::debug!(chunk = %chunk.rhs, apply_start_ms, apply_end_ms = js_sys::Date::now(),
+            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(), apply_start_ms, apply_end_ms = js_sys::Date::now(),
                 "rle_jxl sprite chunk applied");
         }
         Ok(())
@@ -1640,7 +1640,7 @@ impl RleJxlDecodeScheduler {
             packed.with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
         if let Some([ready_ms, enqueued_ms, worker_start_ms, worker_end_ms]) = timing {
             let received_ms = js_sys::Date::now();
-            tracing::debug!(chunk = %chunk.rhs, ready_ms, enqueued_ms, worker_start_ms,
+            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(), ready_ms, enqueued_ms, worker_start_ms,
                 worker_end_ms, received_ms, decode_ms = worker_end_ms - worker_start_ms,
                 "RLE-JXL sprite chunk decoded on worker");
         }

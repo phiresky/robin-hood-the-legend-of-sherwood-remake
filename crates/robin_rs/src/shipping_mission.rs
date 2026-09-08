@@ -914,6 +914,18 @@ where
                 }
                 if let Some(bank) = merged.payload.sprite_bank.as_mut() {
                     let mut incoming = std::mem::take(&mut bank.vq_chunks);
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        let discovered_ms = js_sys::Date::now();
+                        for chunk in &incoming {
+                            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(),
+                                bytes = chunk.blob.len(), discovered_ms, "VQ sprite chunk discovered");
+                        }
+                        for chunk in &bank.rle_jxl_chunks {
+                            tracing::debug!(chunk = %chunk.rhs, first_sprite = ?chunk.sprite_ids.first(),
+                                bytes = chunk.jxl_blobs.iter().map(Vec::len).sum::<usize>(),
+                                discovered_ms, "RLE-JXL sprite chunk discovered");
+                        }
+                    }
                     if let Some(deferral) = deferral.as_mut() {
                         if !deferral.level_filtered
                             && let Some(level) = merged.payload.levels.get(mission)
