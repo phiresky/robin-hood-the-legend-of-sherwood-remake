@@ -111,7 +111,10 @@ fn unavailable_distributed_mod_cache() -> Mutex<Result<DistributedModCache, Stri
 /// `.await`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationContext {
+    // Launch overrides belong to this context; profiles and services are shared.
     options: engine_api::GlobalOptions,
+    // Profile-derived state. sim_config() overlays this context's launch options
+    // so changing one clone cannot silently change a sibling's launch authority.
     sim_config: Arc<Mutex<engine_api::SimConfig>>,
     services: Option<Arc<ApplicationServices>>,
 }
@@ -156,6 +159,13 @@ impl ReadyApplicationContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HostContextSnapshot {
     shipping: Option<Arc<ShippingDatadir>>,
+    preferences: FrontendPreferences,
+}
+
+/// A presentation-only projection of profile preferences. Applying it never
+/// writes the running engine's sealed replay/multiplayer simulation config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FrontendPreferences {
     key_config: KeyConfig,
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
@@ -166,6 +176,53 @@ struct HostContextSnapshot {
     quick_action_cursor_pulse: bool,
     diplomacy_visuals: bool,
     gameplay_config: robin_engine::gameplay_config::GameplayConfig,
+}
+
+/// Effects left to the live frame adapter, in its existing command/window order.
+/// Disabled preferences are enforced even when already disabled at menu entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrontendPreferenceEffects {
+    pub(crate) cancel_planned_action: bool,
+    pub(crate) native_refresh_presentation: bool,
+    pub(crate) release_tactical_control: bool,
+}
+
+impl FrontendPreferences {
+    pub(crate) fn new(
+        key_config: KeyConfig,
+        custom_key_config: KeyConfig,
+        gameplay: robin_engine::gameplay_config::GameplayConfig,
+        graphics: &robin_engine::graphic_config::GraphicConfig,
+    ) -> Self {
+        Self {
+            key_config,
+            custom_key_config,
+            control_tactical_units: gameplay.control_tactical_units,
+            plan_quick_actions: gameplay.plan_quick_actions,
+            touch_camera_gestures: gameplay.touch_camera_gestures,
+            native_refresh_presentation: graphics.native_refresh_presentation,
+            quick_action_cursor_pulse: graphics.quick_action_cursor_pulse,
+            diplomacy_visuals: graphics.diplomacy_visuals,
+            gameplay_config: gameplay,
+        }
+    }
+
+    pub(crate) fn apply(self, frontend: &mut HostFrontend) -> FrontendPreferenceEffects {
+        frontend.key_config = self.key_config;
+        frontend.custom_key_config = self.custom_key_config;
+        frontend.control_tactical_units = self.control_tactical_units;
+        frontend.planning.update_preference(self.plan_quick_actions);
+        frontend.touch_camera_gestures = self.touch_camera_gestures;
+        frontend.gameplay_config = self.gameplay_config;
+        frontend.native_refresh_presentation = self.native_refresh_presentation;
+        frontend.quick_action_cursor_pulse = self.quick_action_cursor_pulse;
+        frontend.diplomacy_visuals = self.diplomacy_visuals;
+        FrontendPreferenceEffects {
+            cancel_planned_action: !frontend.planning.enabled(),
+            native_refresh_presentation: self.native_refresh_presentation,
+            release_tactical_control: !self.control_tactical_units,
+        }
+    }
 }
 
 impl ApplicationContext {
@@ -394,19 +451,9 @@ impl ApplicationContext {
         })
     }
 
+    /// Replace this clone's launch overrides without changing its siblings.
+    /// Shared profile updates remain visible through every clone's sim_config().
     pub fn with_options(mut self, options: engine_api::GlobalOptions) -> Self {
-        let mut sim_config = self.sim_config();
-        let launcher = engine_api::SimConfig::from_options(&options, sim_config.difficulty);
-        sim_config.script_enabled = launcher.script_enabled;
-        sim_config.highlander = launcher.highlander;
-        sim_config.highlander2 = launcher.highlander2;
-        sim_config.golden_eye = launcher.golden_eye;
-        sim_config.ignore_default_loose = launcher.ignore_default_loose;
-        sim_config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
-        *self
-            .sim_config
-            .lock()
-            .expect("ApplicationContext sim-config lock poisoned") = sim_config;
         self.options = options;
         self
     }
@@ -437,10 +484,18 @@ impl ApplicationContext {
     }
 
     pub fn sim_config(&self) -> engine_api::SimConfig {
-        *self
+        let mut config = *self
             .sim_config
             .lock()
-            .expect("ApplicationContext sim-config lock poisoned")
+            .expect("ApplicationContext sim-config lock poisoned");
+        let launcher = engine_api::SimConfig::from_options(&self.options, config.difficulty);
+        config.script_enabled = launcher.script_enabled;
+        config.highlander = launcher.highlander;
+        config.highlander2 = launcher.highlander2;
+        config.golden_eye = launcher.golden_eye;
+        config.ignore_default_loose = launcher.ignore_default_loose;
+        config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
+        config
     }
 
     pub fn shipping(&self) -> Result<Option<&ShippingDatadir>, String> {
@@ -595,7 +650,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty, amount_of_speaking, gameplay_config) = {
+        let result = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -605,14 +660,15 @@ impl ApplicationContext {
             let active = profiles.get_active().ok_or_else(|| {
                 "ApplicationContext profile mutation must leave an active profile".to_string()
             })?;
-            (
-                result,
+            // Publish before releasing the profile lock: concurrent updates
+            // through sibling contexts must not publish snapshots out of order.
+            self.refresh_profile_derived_state(
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
                 active.gameplay_config,
-            )
+            )?;
+            result
         };
-        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(result)
     }
 
@@ -626,7 +682,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (profile_id, difficulty, amount_of_speaking, gameplay_config) = {
+        let profile_id = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -713,10 +769,10 @@ impl ApplicationContext {
                     "failed to complete durable first-launch profile transition: {error}; rollback profile={profile_rollback:?}, keys={key_rollback:?}"
                 ));
             }
-            (profile_id, difficulty, amount_of_speaking, gameplay_config)
+            self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
+            profile_id
         };
 
-        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(profile_id)
     }
 
@@ -921,15 +977,12 @@ impl ApplicationContext {
         let active_profile = self.active_profile_snapshot()?;
         Ok(HostContextSnapshot {
             shipping: services.shipping.clone(),
-            key_config,
-            custom_key_config,
-            control_tactical_units: active_profile.gameplay_config.control_tactical_units,
-            plan_quick_actions: active_profile.gameplay_config.plan_quick_actions,
-            touch_camera_gestures: active_profile.gameplay_config.touch_camera_gestures,
-            native_refresh_presentation: active_profile.graphic_config.native_refresh_presentation,
-            quick_action_cursor_pulse: active_profile.graphic_config.quick_action_cursor_pulse,
-            diplomacy_visuals: active_profile.graphic_config.diplomacy_visuals,
-            gameplay_config: active_profile.gameplay_config,
+            preferences: FrontendPreferences::new(
+                key_config,
+                custom_key_config,
+                active_profile.gameplay_config,
+                &active_profile.graphic_config,
+            ),
         })
     }
 
@@ -992,16 +1045,20 @@ impl ApplicationContext {
         amount_of_speaking: u16,
         gameplay_config: robin_engine::gameplay_config::GameplayConfig,
     ) -> Result<(), String> {
-        let sim_config = profile_sim_config(
-            &self.options,
+        let mut state = self
+            .sim_config
+            .lock()
+            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
+        let mut sim_config = profile_sim_config(
+            &engine_api::GlobalOptions::default(),
             difficulty,
             amount_of_speaking,
             gameplay_config,
         );
-        *self
-            .sim_config
-            .lock()
-            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? = sim_config;
+        // This is an explicit simulation-construction setting, not a profile
+        // preference. Profile updates must not reset official/parity authority.
+        sim_config.synchronous_pathfinding = state.synchronous_pathfinding;
+        *state = sim_config;
 
         Ok(())
     }
@@ -2165,23 +2222,18 @@ impl Host {
         screen_height: f32,
     ) -> Result<Self, String> {
         let snapshot = application_context.host_snapshot()?;
+        let mut frontend = HostFrontend {
+            viewport: ViewportState::new(screen_width, screen_height),
+            input: InputState::focused(),
+            shipping: snapshot.shipping,
+            ..Default::default()
+        };
+        // Startup has no pending world commands or attached presentation window.
+        // The live options adapter performs the returned transition effects.
+        snapshot.preferences.apply(&mut frontend);
         Ok(Self {
             application_context: application_context.into(),
-            frontend: HostFrontend {
-                viewport: ViewportState::new(screen_width, screen_height),
-                input: InputState::focused(),
-                shipping: snapshot.shipping,
-                key_config: snapshot.key_config,
-                custom_key_config: snapshot.custom_key_config,
-                control_tactical_units: snapshot.control_tactical_units,
-                planning: crate::frontend_input::FrontendPlanning::new(snapshot.plan_quick_actions),
-                touch_camera_gestures: snapshot.touch_camera_gestures,
-                native_refresh_presentation: snapshot.native_refresh_presentation,
-                quick_action_cursor_pulse: snapshot.quick_action_cursor_pulse,
-                diplomacy_visuals: snapshot.diplomacy_visuals,
-                gameplay_config: snapshot.gameplay_config,
-                ..Default::default()
-            },
+            frontend,
             ..Default::default()
         })
     }
@@ -3207,6 +3259,179 @@ mod application_context_tests {
     }
 
     #[test]
+    fn cloned_launch_options_stay_local_while_profile_updates_are_shared() {
+        let original = context(
+            0,
+            DifficultyLevel::Easy,
+            KeyCode::F2,
+            "clone-options.marker",
+        );
+        let changed = original.clone().with_options(engine_api::GlobalOptions {
+            script_enabled: false,
+            highlander: true,
+            highlander2: true,
+            golden_eye: true,
+            ignore_default_loose: true,
+            bypass_fog_sprites_crash: true,
+            ..Default::default()
+        });
+        let original_options = original.options().clone();
+        let changed_options = changed.options().clone();
+        let sealed = changed.sim_config();
+
+        for (updater, difficulty, speech) in [
+            (&original, DifficultyLevel::Hard, 9),
+            (&changed, DifficultyLevel::Medium, 2),
+        ] {
+            updater
+                .with_player_profiles_mut(|profiles| {
+                    let active = profiles.get_active_mut().unwrap();
+                    active.difficulty = difficulty;
+                    active.sound_config.amount_of_speaking = speech;
+                    active.gameplay_config.enable_unbinding = false;
+                })
+                .unwrap();
+            for (context, options) in [(&original, &original_options), (&changed, &changed_options)]
+            {
+                let gameplay = context.active_profile_snapshot().unwrap().gameplay_config;
+                assert_eq!(
+                    context.sim_config(),
+                    profile_sim_config(options, difficulty, speech, gameplay),
+                );
+                assert_eq!(
+                    serde_json::to_value(context.options()).unwrap(),
+                    serde_json::to_value(options).unwrap(),
+                );
+            }
+        }
+        assert_eq!(sealed.difficulty, DifficultyLevel::Easy);
+        assert!(
+            sealed.highlander,
+            "already sealed simulation values are independent copies"
+        );
+        // The diagnostic wire snapshot must retain the same effective contract.
+        let decoded: ApplicationContext =
+            serde_json::from_value(serde_json::to_value(&changed).unwrap()).unwrap();
+        assert_eq!(decoded.sim_config(), changed.sim_config());
+    }
+
+    #[test]
+    fn startup_and_options_use_the_same_frontend_projection() {
+        let context = context(0, DifficultyLevel::Hard, KeyCode::F4, "projection.marker");
+        context
+            .with_player_profiles_mut(|profiles| {
+                let profile = profiles.get_active_mut().unwrap();
+                profile.gameplay_config.control_tactical_units = false;
+                profile.gameplay_config.plan_quick_actions = false;
+                profile.gameplay_config.touch_camera_gestures = false;
+                profile.graphic_config.native_refresh_presentation = true;
+                profile.graphic_config.quick_action_cursor_pulse = false;
+                profile.graphic_config.diplomacy_visuals = true;
+                profile.sound_config.amount_of_speaking = 7;
+            })
+            .unwrap();
+        let startup = Host::new(context.clone().try_into().unwrap(), 800.0, 600.0).unwrap();
+        let profile = context.active_profile_snapshot().unwrap();
+        let (keys, custom_keys) = context.active_key_configs().unwrap();
+        let mut live = Host::scratch(800.0, 600.0);
+        live.frontend.planning.toggle_touch();
+        let sealed = engine_api::SimConfig {
+            difficulty: DifficultyLevel::Easy,
+            amount_of_speaking: 1,
+            ..Default::default()
+        };
+        live.transport.mission_sim_config = Some(sealed);
+        let effects = FrontendPreferences::new(
+            keys,
+            custom_keys,
+            profile.gameplay_config,
+            &profile.graphic_config,
+        )
+        .apply(&mut live.frontend);
+        assert_eq!(
+            effects,
+            FrontendPreferenceEffects {
+                cancel_planned_action: true,
+                native_refresh_presentation: true,
+                release_tactical_control: true,
+            }
+        );
+        assert!(!live.frontend.planning.touch_latched());
+        assert_eq!(live.transport.mission_sim_config, Some(sealed));
+        assert_eq!(context.sim_config().amount_of_speaking, 7);
+        for frontend in [&startup.frontend, &live.frontend] {
+            assert_eq!(
+                serde_json::to_value(FrontendPreferences::new(
+                    frontend.key_config.clone(),
+                    frontend.custom_key_config.clone(),
+                    frontend.gameplay_config,
+                    &profile.graphic_config,
+                ))
+                .unwrap(),
+                serde_json::to_value(context.host_snapshot().unwrap().preferences).unwrap(),
+            );
+            assert!(!frontend.control_tactical_units);
+            assert!(!frontend.planning.enabled());
+            assert!(!frontend.touch_camera_gestures);
+            assert!(frontend.native_refresh_presentation);
+            assert!(!frontend.quick_action_cursor_pulse);
+            assert!(frontend.diplomacy_visuals);
+        }
+    }
+
+    #[test]
+    fn profile_updates_preserve_explicit_pathfinding_construction_policy() {
+        let context = context(
+            0,
+            DifficultyLevel::Medium,
+            KeyCode::F2,
+            "pathfinding.marker",
+        );
+        context.sim_config.lock().unwrap().synchronous_pathfinding = true;
+        let sibling = context.clone().with_options(engine_api::GlobalOptions {
+            highlander: true,
+            ..Default::default()
+        });
+        sibling
+            .with_player_profiles_mut(|profiles| {
+                profiles
+                    .get_active_mut()
+                    .unwrap()
+                    .sound_config
+                    .amount_of_speaking = 9;
+            })
+            .unwrap();
+        for snapshot in [context.sim_config(), sibling.sim_config()] {
+            assert!(snapshot.synchronous_pathfinding);
+            assert_eq!(snapshot.amount_of_speaking, 9);
+            assert_eq!(snapshot.difficulty, DifficultyLevel::Medium);
+        }
+        assert!(!context.sim_config().highlander);
+        assert!(sibling.sim_config().highlander);
+    }
+
+    #[test]
+    fn frontend_projection_preserves_session_planning_policy() {
+        let mut frontend = HostFrontend::default();
+        frontend.planning.force_off_for_session();
+        let gameplay = robin_engine::gameplay_config::GameplayConfig {
+            plan_quick_actions: true,
+            control_tactical_units: true,
+            ..Default::default()
+        };
+        let effects = FrontendPreferences::new(
+            KeyConfig::default(),
+            KeyConfig::default(),
+            gameplay,
+            &Default::default(),
+        )
+        .apply(&mut frontend);
+        assert!(effects.cancel_planned_action);
+        assert!(!effects.release_tactical_control);
+        assert!(!frontend.planning.enabled());
+    }
+
+    #[test]
     fn context_snapshots_release_locks_before_await() {
         let context = context(0, DifficultyLevel::Medium, KeyCode::F4, "lock.marker");
 
@@ -3219,6 +3444,7 @@ mod application_context_tests {
             assert!(services.key_configs.try_lock().is_ok());
             assert_eq!(
                 snapshot
+                    .preferences
                     .key_config
                     .get_binding("ZoomIn")
                     .unwrap()
