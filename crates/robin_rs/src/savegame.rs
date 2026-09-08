@@ -343,11 +343,19 @@ pub enum SaveWriteStatus {
 }
 
 /// Evidence returned only after payload, index and receipt retirement succeed.
-/// Deserialization does not restore the handle's process-local authority.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Serialization is diagnostic only; deserialization cannot grant commit proof.
+#[derive(Debug, Clone, Serialize)]
 pub struct CommittedSave {
     slot: SlotHandle,
     digest: [u8; 32],
+}
+
+impl<'de> Deserialize<'de> for CommittedSave {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> std::result::Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "save commit evidence is process-local",
+        ))
+    }
 }
 
 impl CommittedSave {
@@ -2042,6 +2050,13 @@ mod tests {
             }
             .unwrap();
             assert_eq!(committed.slot(), &handle);
+            let encoded = serde_json::to_string(&committed).unwrap();
+            assert!(
+                serde_json::from_str::<CommittedSave>(&encoded)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("save commit evidence is process-local")
+            );
             assert_eq!(
                 *committed.digest(),
                 <[u8; 32]>::from(Sha256::digest(

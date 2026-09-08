@@ -8,8 +8,9 @@ rotation retains its existing two-payload receipt and ordering protocol.
 
 `write_save_from_engine` and `write_multiplayer_diagnostic_from_engine` return
 `CommittedSave` only after the complete transaction succeeds. Its stable handle
-and payload digest are evidence of that publication, not a new authority that
-serde can restore. Executor callers no longer publish the index independently;
+and payload digest are process-local evidence of that publication. Serialization
+is diagnostic only; deserialization always rejects, including a genuine receipt
+round trip. Executor callers no longer publish the index independently;
 special-save wrappers retain their existing unit-result API.
 
 Payloads, indexes, and receipt JSON shapes are unchanged. The existing owned
