@@ -1691,8 +1691,14 @@ pub enum SnapshotSave {
 }
 
 /// Only the transport's committed take can create this process-local token.
-#[derive(serde::Serialize)]
-pub(crate) struct CommittedSnapshotTransition(#[serde(skip)] PendingSnapshotTransition);
+pub(crate) struct CommittedSnapshotTransition(PendingSnapshotTransition);
+
+impl serde::Serialize for CommittedSnapshotTransition {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // Diagnostic serialization deliberately carries no payload or authority.
+        serializer.serialize_unit_struct("CommittedSnapshotTransition")
+    }
+}
 
 impl<'de> serde::Deserialize<'de> for CommittedSnapshotTransition {
     fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
