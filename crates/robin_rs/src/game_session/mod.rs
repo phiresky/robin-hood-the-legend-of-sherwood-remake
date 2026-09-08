@@ -864,12 +864,22 @@ pub(crate) async fn run_session(
     profiles: &mut engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
     args: &crate::main_entry::CliArgs,
-    initial_load: Option<SaveLoadRequest>,
+    initial_load: Option<(crate::savegame::SlotName, u32)>,
 ) -> SessionOutcome {
     let mut session_args = args.clone();
     let mut callbacks = RustCallbacks::new(application_context.clone());
-    if let Some(request) = initial_load {
-        callbacks.queue_operation(request);
+    if let Some((name, mission_id)) = initial_load {
+        let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
+            return SessionOutcome {
+                campaign,
+                result: Err(format!("selected save {} no longer exists", name.as_str())),
+            };
+        };
+        callbacks.queue_operation(SaveLoadRequest::Load {
+            slot: Some(slot),
+            mission_id,
+            save: None,
+        });
     }
     if args.replay_data.is_some() || args.replay.is_some() {
         return SessionOutcome {

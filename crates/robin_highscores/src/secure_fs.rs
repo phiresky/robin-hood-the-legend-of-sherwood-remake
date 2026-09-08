@@ -187,7 +187,7 @@ pub(crate) fn sync_private_dir(directory: &Dir) -> std::io::Result<()> {
 /// Exercise write/fsync/unlink through the pinned capability. Cleanup runs
 /// even when syncing the probe fails; domain stores keep their own identities.
 pub(crate) async fn probe_writable_root(root: std::sync::Arc<Dir>) -> std::io::Result<()> {
-    tokio::task::spawn_blocking(move || {
+    crate::physical_work::spawn_blocking(move || {
         let name = format!(".ready-{}.tmp", uuid::Uuid::now_v7());
         let file = create_private_file(&root, Path::new(&name))?;
         let synced = file.sync_all();
@@ -208,7 +208,7 @@ pub(crate) async fn link_immutable_object(
     temporary: String,
     destination: String,
 ) -> std::io::Result<bool> {
-    tokio::task::spawn_blocking(move || {
+    crate::physical_work::spawn_blocking(move || {
         match directory.hard_link(&temporary, &directory, &destination) {
             Ok(()) => Ok(true),
             Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
@@ -223,7 +223,7 @@ pub(crate) async fn remove_temporary_and_sync(
     directory: std::sync::Arc<Dir>,
     name: String,
 ) -> std::io::Result<()> {
-    tokio::task::spawn_blocking(move || {
+    crate::physical_work::spawn_blocking(move || {
         directory.remove_file(&name)?;
         sync_private_dir(&directory)
     })

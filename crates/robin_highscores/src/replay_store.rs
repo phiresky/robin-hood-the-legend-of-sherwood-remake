@@ -76,7 +76,10 @@ impl ReplayStore {
                 }
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                tokio::fs::create_dir(&root).await?;
+                let create_root = root.clone();
+                crate::physical_work::spawn_blocking(move || std::fs::create_dir(create_root))
+                    .await
+                    .map_err(std::io::Error::other)??;
             }
             Err(error) => return Err(StoreError::Io(error)),
         }
@@ -88,10 +91,11 @@ impl ReplayStore {
         }
         set_private_directory_permissions(&root).await?;
         let pinned_path = root.clone();
-        let root_dir =
-            tokio::task::spawn_blocking(move || crate::secure_fs::pin_private_root(&pinned_path))
-                .await
-                .map_err(|error| std::io::Error::other(error))??;
+        let root_dir = crate::physical_work::spawn_blocking(move || {
+            crate::secure_fs::pin_private_root(&pinned_path)
+        })
+        .await
+        .map_err(|error| std::io::Error::other(error))??;
         Ok(Self {
             root,
             root_dir: Arc::new(root_dir),
@@ -124,7 +128,7 @@ impl ReplayStore {
         let second_name = encoded[2..4].to_owned();
         let root = Arc::clone(&self.root_dir);
         Ok(Arc::new(
-            tokio::task::spawn_blocking(move || {
+            crate::physical_work::spawn_blocking(move || {
                 let first = crate::secure_fs::ensure_private_dir(&root, Path::new(&first_name))?;
                 crate::secure_fs::ensure_private_dir(&first, Path::new(&second_name))
             })
@@ -139,7 +143,7 @@ impl ReplayStore {
         let second_name = encoded[2..4].to_owned();
         let root = Arc::clone(&self.root_dir);
         Ok(Arc::new(
-            tokio::task::spawn_blocking(move || {
+            crate::physical_work::spawn_blocking(move || {
                 let first = crate::secure_fs::open_private_dir(&root, Path::new(&first_name))?;
                 crate::secure_fs::open_private_dir(&first, Path::new(&second_name))
             })
@@ -177,7 +181,7 @@ impl ReplayStore {
         let final_name = Self::object_name(&expected_digest);
         let create_shard = Arc::clone(&shard);
         let create_name = temp_name.clone();
-        let temp = tokio::task::spawn_blocking(move || {
+        let temp = crate::physical_work::spawn_blocking(move || {
             crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))
         })
         .await
@@ -248,7 +252,8 @@ impl ReplayStore {
         if result.is_err() {
             let cleanup_shard = Arc::clone(&shard);
             let _ =
-                tokio::task::spawn_blocking(move || cleanup_shard.remove_file(&temp_name)).await;
+                crate::physical_work::spawn_blocking(move || cleanup_shard.remove_file(&temp_name))
+                    .await;
         }
         result
     }
@@ -272,7 +277,7 @@ impl ReplayStore {
     ) -> Result<tokio::fs::File, StoreError> {
         let opened_directory = Arc::clone(&directory);
         let opened_name = name.clone();
-        let file = tokio::task::spawn_blocking(move || {
+        let file = crate::physical_work::spawn_blocking(move || {
             crate::secure_fs::open_regular_file(&opened_directory, Path::new(&opened_name))
         })
         .await
@@ -331,7 +336,7 @@ impl ReplayStore {
         let purge = {
             let root = Arc::clone(&self.root_dir);
             Arc::new(
-                tokio::task::spawn_blocking(move || {
+                crate::physical_work::spawn_blocking(move || {
                     crate::secure_fs::ensure_private_dir(&root, Path::new(".purge"))
                 })
                 .await
@@ -373,7 +378,7 @@ impl ReplayStore {
         let rename_shard = Arc::clone(&shard);
         let rename_purge = Arc::clone(&purge);
         let rename_destination = quarantine_name.clone();
-        tokio::task::spawn_blocking(move || {
+        crate::physical_work::spawn_blocking(move || {
             rename_shard.rename(&source_name, &rename_purge, &rename_destination)?;
             crate::secure_fs::sync_private_dir(&rename_shard)?;
             crate::secure_fs::sync_private_dir(&rename_purge)
@@ -396,7 +401,7 @@ impl ReplayStore {
             .ok_or_else(|| std::io::Error::other("replay purge name is not UTF-8"))?
             .to_owned();
         let root = Arc::clone(&self.root_dir);
-        tokio::task::spawn_blocking(move || {
+        crate::physical_work::spawn_blocking(move || {
             let purge = match crate::secure_fs::open_private_dir(&root, Path::new(".purge")) {
                 Ok(purge) => purge,
                 Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -436,7 +441,7 @@ impl ReplayStore {
             return Ok(Vec::new());
         }
         let root = Arc::clone(&self.root_dir);
-        let entries = tokio::task::spawn_blocking(move || {
+        let entries = crate::physical_work::spawn_blocking(move || {
             let mut entries = std::collections::BTreeMap::new();
             for first_entry in root.entries()? {
                 let first_entry = first_entry?;
@@ -573,14 +578,13 @@ async fn set_private_directory_permissions(path: &Path) -> Result<(), StoreError
         }
     }
     #[cfg(all(unix, not(target_os = "linux")))]
-    if tokio::fs::metadata(path).await?.permissions().mode() & 0o7777
+    if std::fs::metadata(path)?.permissions().mode() & 0o7777
         != crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE
     {
-        tokio::fs::set_permissions(
+        std::fs::set_permissions(
             path,
             std::fs::Permissions::from_mode(crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE),
-        )
-        .await?;
+        )?;
     }
     Ok(())
 }

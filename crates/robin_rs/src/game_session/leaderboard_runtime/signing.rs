@@ -1112,9 +1112,17 @@ mod tests {
     }
 
     fn authorization_fixture() -> (SubmissionAuthorizationRequest, ed25519_dalek::SigningKey) {
+        let key = ed25519_dalek::SigningKey::from_bytes(&[0x44; 32]);
+        (authorization_for_key(&key), key)
+    }
+
+    // One host key authors the admission and the final signature. Offer context
+    // comes from that admission, including the authority-signed grant expiry;
+    // tests mutate a returned lawful request only for their intended failure.
+    fn authorization_for_key(key: &ed25519_dalek::SigningKey) -> SubmissionAuthorizationRequest {
         let campaign = bitcode::encode(&Campaign::default());
         let (mut admission, replay) =
-            super::super::tests::signed_single_player_admission(&campaign);
+            super::super::tests::signed_single_player_admission_for_key(&campaign, key);
         admission
             .materialize_terminal_from_replay("Dem_Lei_MP", campaign.clone().into(), &replay)
             .unwrap();
@@ -1135,8 +1143,8 @@ mod tests {
                 .expect("single-player fixture carries a signed fresh-run grant")
                 .claim
                 .expires_at_unix_ms,
-            max_concurrent_players: 1,
-            participant_instance_count: 1,
+            max_concurrent_players: input.offer_request.max_concurrent_players,
+            participant_instance_count: input.offer_request.participant_instance_count,
             participant_claims: input.offer_request.participant_claims.clone(),
             session_genesis: input.offer_request.session_genesis.clone(),
             mission_id: ranked.mission_id.clone(),
@@ -1180,8 +1188,19 @@ mod tests {
             campaign_controller_public_key: None,
         };
         request.validate_exact_context().unwrap();
-        request.envelope(None).validate().unwrap();
-        (request, ed25519_dalek::SigningKey::from_bytes(&[0x44; 32]))
+        let envelope = request.envelope(None);
+        envelope.validate().unwrap();
+        crate::leaderboard_mission_end::validate_authorized_submission(
+            &request,
+            &SignedSubmissionV1 {
+                schema_version: SCHEMA_VERSION_V1,
+                submission: envelope,
+                algorithm: SignatureAlgorithmV1::Ed25519,
+                participant_signatures: vec![signature(&request, key)],
+            },
+        )
+        .expect("fixture must satisfy the real final authorization validator");
+        request
     }
 
     fn signature(
@@ -1221,13 +1240,62 @@ mod tests {
         key: &ed25519_dalek::SigningKey,
     ) -> crate::multiplayer::RankedAuthorizationEvent {
         let signature = signature(request, key);
+        let participant = request
+            .offer_request
+            .participant_claims
+            .iter()
+            .find(|claim| claim.public_key == signature.public_key)
+            .expect("response fixture key must belong to the admitted roster");
         crate::multiplayer::RankedAuthorizationEvent::CoSignResponse {
-            from: PlayerId::HOST,
+            from: PlayerId(u8::try_from(participant.seat).unwrap()),
             response: robin_engine::multiplayer::LeaderboardCoSignResponse {
                 instance: request.envelope(None).co_sign_request().unwrap().instance,
                 signer_public_key: *signature.public_key.as_bytes(),
                 signature: *signature.signature.as_bytes(),
             },
+        }
+    }
+
+    fn awaiting_response(
+        request: SubmissionAuthorizationRequest,
+    ) -> (MultiplayerHostAuthorizationTask, Rc<RefCell<HostIo>>) {
+        request.validate_exact_context().unwrap();
+        assert_eq!(request.offer_request.participant_claims.len(), 1);
+        let envelope = request.envelope(None);
+        let instance = envelope.co_sign_request().unwrap().instance;
+        let claim = &request.offer_request.participant_claims[0];
+        let pending = BTreeMap::from([(
+            claim.public_key,
+            (PlayerId(u8::try_from(claim.seat).unwrap()), instance),
+        )]);
+        host_task(
+            request,
+            MultiplayerHostAuthorizationPhase::AwaitingSubmission {
+                envelope,
+                signatures: BTreeMap::new(),
+                pending,
+            },
+        )
+    }
+
+    #[test]
+    fn authorization_builder_binds_host_identity_and_signed_expiry() {
+        for seed in [0x44, 0x55] {
+            let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+            let request = authorization_for_key(&key);
+            assert_eq!(
+                request.expected_participants(),
+                vec![PublicKey32::from_bytes(key.verifying_key().to_bytes())]
+            );
+            let mut wrong_expiry = request.clone();
+            wrong_expiry.offer.expires_at_unix_ms += 1;
+            assert!(
+                wrong_expiry
+                    .validate_exact_context()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("run_preflight_grant_expiry")
+            );
         }
     }
 
@@ -1264,19 +1332,9 @@ mod tests {
     fn host_final_response_and_queued_duplicate_retire_success_in_same_poll() {
         for duplicate in [false, true] {
             let (request, key) = authorization_fixture();
-            let local = signature(&request, &key);
-            let envelope = request.envelope(None);
-            let instance = envelope.co_sign_request().unwrap().instance;
             let event = response_event(&request, &key);
             let duplicate_event = response_event(&request, &key);
-            let (mut task, io) = host_task(
-                request,
-                MultiplayerHostAuthorizationPhase::AwaitingSubmission {
-                    envelope,
-                    signatures: BTreeMap::new(),
-                    pending: BTreeMap::from([(local.public_key, (PlayerId::HOST, instance))]),
-                },
-            );
+            let (mut task, io) = awaiting_response(request);
             io.borrow_mut().events.push_back(event);
             if duplicate {
                 io.borrow_mut().events.push_back(duplicate_event);
@@ -1303,37 +1361,39 @@ mod tests {
     }
 
     #[test]
-    fn host_wrong_instance_is_terminal_and_preserves_later_inbox_events() {
-        let (request, key) = authorization_fixture();
-        let local = signature(&request, &key);
-        let envelope = request.envelope(None);
-        let instance = envelope.co_sign_request().unwrap().instance;
-        let mut wrong = response_event(&request, &key);
-        let crate::multiplayer::RankedAuthorizationEvent::CoSignResponse { response, .. } =
-            &mut wrong
-        else {
-            unreachable!()
-        };
-        response.instance.submission_offer_sha256 = Digest32::from_bytes([99; 32]);
-        let valid = response_event(&request, &key);
-        let (mut task, io) = host_task(
-            request,
-            MultiplayerHostAuthorizationPhase::AwaitingSubmission {
-                envelope,
-                signatures: BTreeMap::new(),
-                pending: BTreeMap::from([(local.public_key, (PlayerId::HOST, instance))]),
-            },
-        );
-        io.borrow_mut().events.extend([wrong, valid]);
-        assert!(
-            task.try_take()
-                .unwrap()
-                .unwrap_err()
-                .contains("authenticated seat or request")
-        );
-        assert!(task.try_take().is_none());
-        assert_eq!(io.borrow().events.len(), 1);
-        assert_eq!(io.borrow().polls, 1);
+    fn host_wrong_response_binding_is_terminal_and_preserves_later_inbox_events() {
+        for substitution in 0..4 {
+            let (request, key) = authorization_fixture();
+            let mut wrong = response_event(&request, &key);
+            let crate::multiplayer::RankedAuthorizationEvent::CoSignResponse { from, response } =
+                &mut wrong
+            else {
+                unreachable!()
+            };
+            match substitution {
+                0 => *from = PlayerId(1),
+                1 => response.signer_public_key = [99; 32],
+                2 => response.instance.replay_session_id = Digest32::from_bytes([99; 32]),
+                3 => response.instance.submission_offer_sha256 = Digest32::from_bytes([99; 32]),
+                _ => unreachable!(),
+            }
+            let valid = response_event(&request, &key);
+            let (mut task, io) = awaiting_response(request);
+            io.borrow_mut().events.extend([wrong, valid]);
+            assert!(
+                task.try_take()
+                    .unwrap()
+                    .unwrap_err()
+                    .contains(if substitution == 1 {
+                        "unexpected"
+                    } else {
+                        "authenticated seat or request"
+                    })
+            );
+            assert!(task.try_take().is_none());
+            assert_eq!(io.borrow().events.len(), 1);
+            assert_eq!(io.borrow().polls, 1);
+        }
     }
 
     #[test]
@@ -1464,31 +1524,21 @@ mod tests {
 
     #[test]
     fn response_correlation_rejects_substitution_without_consuming_request() {
-        use robin_engine::player_command::PlayerId;
-        use robin_run_protocol::{
-            LeaderboardCoSignInstanceV1, LeaderboardCoSignPurposeV1, PublicKey32,
+        let (request, key) = authorization_fixture();
+        let crate::multiplayer::RankedAuthorizationEvent::CoSignResponse { from, response } =
+            response_event(&request, &key)
+        else {
+            unreachable!()
         };
-        let key = PublicKey32::from_bytes([7; 32]);
-        let instance = LeaderboardCoSignInstanceV1 {
-            purpose: LeaderboardCoSignPurposeV1::Submission,
-            replay_session_id: Digest32::from_bytes([1; 32]),
-            submission_offer_sha256: Digest32::from_bytes([2; 32]),
-        };
-        let pending = BTreeMap::from([(key, (PlayerId(1), instance))]);
-        let response = robin_engine::multiplayer::LeaderboardCoSignResponse {
-            instance,
-            signer_public_key: [7; 32],
-            signature: [8; 64],
-        };
+        let pending = BTreeMap::from([(
+            PublicKey32::from_bytes(response.signer_public_key),
+            (from, response.instance),
+        )]);
         for substitution in 0..4 {
             let mut pending = pending.clone();
             let mut signatures = BTreeMap::new();
             let mut changed = response.clone();
-            let seat = if substitution == 0 {
-                PlayerId(2)
-            } else {
-                PlayerId(1)
-            };
+            let seat = if substitution == 0 { PlayerId(2) } else { from };
             match substitution {
                 1 => changed.signer_public_key = [9; 32],
                 2 => changed.instance.replay_session_id = Digest32::from_bytes([9; 32]),
@@ -1503,14 +1553,10 @@ mod tests {
         }
         let mut pending = pending;
         let mut signatures = BTreeMap::new();
-        accept_submission_response(&mut pending, &mut signatures, PlayerId(1), response.clone())
-            .unwrap();
+        accept_submission_response(&mut pending, &mut signatures, from, response.clone()).unwrap();
         assert!(pending.is_empty());
         assert_eq!(signatures.len(), 1);
-        assert!(
-            accept_submission_response(&mut pending, &mut signatures, PlayerId(1), response)
-                .is_err()
-        );
+        assert!(accept_submission_response(&mut pending, &mut signatures, from, response).is_err());
         assert_eq!(signatures.len(), 1);
     }
 }

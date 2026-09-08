@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 use std::fs;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -85,18 +84,21 @@ impl KeyConfigStore {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load(directory: &str) -> std::io::Result<Self> {
         let path = Self::store_path(directory);
-        if path.exists() {
-            let data = fs::read_to_string(&path)?;
-            let mut store: KeyConfigStore = serde_json::from_str(&data)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            for config in store.configs.values_mut() {
-                config.ensure_current_bindings();
+        match fs::read_to_string(&path) {
+            Ok(data) => {
+                let mut store: KeyConfigStore = serde_json::from_str(&data)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                for config in store.configs.values_mut() {
+                    config.ensure_current_bindings();
+                }
+                store.validate_archive()?;
+                store.save_directory = directory.to_owned();
+                Ok(store)
             }
-            store.validate_archive()?;
-            store.save_directory = directory.to_owned();
-            Ok(store)
-        } else {
-            Ok(Self::new(directory.to_owned()))
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Self::new(directory.to_owned()))
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -112,13 +114,14 @@ impl KeyConfigStore {
         decode_browser_key_config_archive(&serialized, directory)
     }
 
-    /// Persist to `<save_directory>/keyconfigs.json`.
+    /// Atomically persist to `<save_directory>/keyconfigs.json`.
+    /// On error retain this desired snapshot for retry. Native errors expose
+    /// [`crate::desktop_persistence::PublicationFailure`] to distinguish a
+    /// published archive whose directory synchronization failed.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn save(&self) -> std::io::Result<()> {
-        fs::create_dir_all(&self.save_directory)?;
         let path = Self::store_path(&self.save_directory);
-        let data = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        fs::write(path, data)
+        crate::desktop_persistence::write_json(&path, self)
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -258,24 +261,50 @@ fn decode_browser_key_config_archive(
     Ok(store)
 }
 
-// ─── Global singleton ───────────────────────────────────────────────
-
-static GLOBAL_STORE: Mutex<Option<KeyConfigStore>> = Mutex::new(None);
-
-impl KeyConfigStore {
-    /// Acquire the global key-config store.  Initialized in
-    /// `main_entry::init_global_key_config_store`.
-    pub fn global() -> std::sync::MutexGuard<'static, Option<KeyConfigStore>> {
-        GLOBAL_STORE.lock().unwrap()
-    }
-}
-
 // ─── Tests ──────────────────────────────────────────────────────────
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn restart_ignores_incomplete_staging_and_preserves_selected_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let directory = dir.path().to_str().unwrap();
+        let mut store = KeyConfigStore::new(directory.into());
+        store
+            .entry_or_default(7)
+            .active
+            .set_binding("ZoomIn", Some(KeyCode::Backspace), None);
+        store.save().unwrap();
+        fs::write(
+            dir.path().join(".robin-user-store-staging-abandoned"),
+            b"{partial",
+        )
+        .unwrap();
+        let loaded = KeyConfigStore::load(directory).unwrap();
+        assert_eq!(loaded.save_directory, directory);
+        assert_eq!(
+            loaded
+                .get(7)
+                .unwrap()
+                .active
+                .get_binding("ZoomIn")
+                .unwrap()
+                .primary_key,
+            Some(KeyCode::Backspace)
+        );
+        loaded.save().unwrap();
+        assert_eq!(KeyConfigStore::load(directory).unwrap().configs.len(), 1);
+    }
+
+    #[test]
+    fn unreadable_archive_is_not_a_missing_store() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("keyconfigs.json")).unwrap();
+        assert!(KeyConfigStore::load(dir.path().to_str().unwrap()).is_err());
+    }
 
     #[test]
     fn fresh_seeds_both_slots_with_default_preset() {
