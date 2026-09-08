@@ -710,6 +710,12 @@ impl GridSector {
             None => return false,
         };
 
+        // Interior grid cells are common during level registration. Test
+        // containment before the more expensive edge/rectangle predicates.
+        if self.contains_point(MapPoint::new(rect.min().x, rect.min().y)) {
+            return true;
+        }
+
         // Any polygon point inside the box?
         for p in &self.points {
             if bbox.contains_point(*p) {
@@ -728,8 +734,7 @@ impl GridSector {
             j = i;
         }
 
-        // Box fully contained in polygon — test top-left corner.
-        self.contains_point(MapPoint::new(rect.min().x, rect.min().y))
+        false
     }
 }
 
@@ -4864,6 +4869,78 @@ mod tests {
             jump_line_indices: Vec::new(),
             gate_indices: Vec::new(),
             underlying_sector: None,
+        }
+    }
+
+    #[test]
+    fn sector_cell_intersections_match_edge_first_reference() {
+        use geo::Intersects;
+
+        // Include concavity, repeated vertices, degenerate polygons and
+        // both windings. Compare every nearby cell with the old predicate.
+        let polygons = [
+            vec![],
+            vec![(64.0, 64.0)],
+            vec![(0.0, 0.0), (192.0, 192.0)],
+            vec![(0.0, 0.0), (256.0, 0.0), (256.0, 256.0), (0.0, 256.0)],
+            vec![
+                (0.0, 0.0),
+                (256.0, 0.0),
+                (256.0, 64.0),
+                (64.0, 64.0),
+                (64.0, 256.0),
+                (0.0, 256.0),
+            ],
+            vec![(0.0, 0.0), (128.0, 192.0), (256.0, 0.0), (0.0, 0.0)],
+        ];
+        for points in polygons {
+            for reverse in [false, true] {
+                let mut sector = square_sector(
+                    MapPoint::new(0.0, 0.0),
+                    MapPoint::new(256.0, 256.0),
+                    crate::sector::SectorType::MOTION,
+                    0,
+                    0,
+                );
+                sector.points = points.iter().map(|&(x, y)| MapPoint::new(x, y)).collect();
+                if reverse {
+                    sector.points.reverse();
+                }
+                sector.bounding_box = MapBBox::new();
+                for &point in &sector.points {
+                    sector.bounding_box.expand_point(point);
+                }
+                for y in -1..=5 {
+                    for x in -1..=5 {
+                        for offset in [0.0, -0.001, 0.001] {
+                            let min =
+                                MapPoint::new(x as f32 * 64.0 + offset, y as f32 * 64.0 + offset);
+                            let bbox = MapBBox::from_corners(
+                                min,
+                                MapPoint::new(min.x + 64.0, min.y + 64.0),
+                            );
+                            let rect = bbox.0.unwrap();
+                            let n = sector.points.len();
+                            let expected = sector.points.iter().any(|&p| bbox.contains_point(p))
+                                || (n > 1
+                                    && (0..n).any(|i| {
+                                        rect.intersects(&geo::Line::new(
+                                            sector.points[(i + n - 1) % n].to_geo(),
+                                            sector.points[i].to_geo(),
+                                        ))
+                                    }))
+                                || (n > 1 && sector.contains_point(min));
+                            assert_eq!(
+                                sector.intersects_bbox(&bbox),
+                                expected,
+                                "points={:?}, cell={bbox:?}",
+                                sector.points
+                            );
+                        }
+                    }
+                }
+                assert!(!sector.intersects_bbox(&MapBBox::new()));
+            }
         }
     }
 

@@ -2992,3 +2992,48 @@ TODO: investigate motion-grid initialization, JXL context-map validation and
 terrain decode/upload using optimized browser measurements. These remain
 visible costs; the rejected experiments show why named-profile improvements
 must be checked against total startup before retaining them.
+
+### Interior-cell shortcut for motion-grid construction (2026-09-08)
+
+The remaining profile highlighted `initialize_motion_from_level_data`.
+Sector registration tests a polygon against each candidate 64-pixel grid
+cell. Previously it tested polygon vertices and every edge against the cell
+rectangle before testing whether the cell's top-left corner was inside the
+polygon. Large interior regions paid for the robust edge predicates even
+though the final containment check would accept them.
+
+`GridSector::intersects_bbox` now checks corner containment first. This
+reorders the existing boolean alternatives; polygon formulas, boundary
+semantics, sector insertion order and serialized grid data are unchanged.
+The existing edge tests still handle cells crossing the polygon boundary.
+
+Validation: all 4,441 active `robin_engine` library tests pass; three
+original-data tests and one manual measurement remain ignored. A new differential test compares the old
+predicate over nearby cells for both polygon windings, concavity, repeated
+vertices, degenerate polygons and small offsets around exact boundaries.
+The native game builds, and the existing 104-frame Leicester recording
+replays to EOF with exit status 0 and no reported hash mismatch.
+
+The threaded WASM release build also passes. Ten alternating Chrome 152
+pairs compare the retained baseline (`05cf64faf`; `d2d47182c` only adds
+documentation) with this change, using the same fixed Leicester corpus and
+wasm-bindgen/wasm-opt/strip pipeline. Five pairs run baseline first and five
+run candidate first. Each load starts a fresh browser profile; no task
+builds, profiling or replay runs overlap these measurements.
+
+| Interval | Baseline median | Updated median | Observed reduction |
+| --- | ---: | ---: | ---: |
+| Navigation → recording replay | 4.900 s | 4.8645 s | 0.7% |
+| Engine construction | 259.5 ms | 250.5 ms | 3.5% |
+
+Eight of ten startup pairs favor the change. The median paired reduction
+is 54.5 ms, while the difference between the two overall medians is
+35.5 ms. Baseline startup spans 4.821–5.035 s and updated startup spans
+4.762–4.948 s: this is a small observed gain on a noisy shared host, not a
+claim of a large or universal startup reduction. The endpoint remains
+replay recording, not first presented gameplay frame, and this local test
+does not measure production-network download latency. Logs, optimized
+packages and the benchmark runner are in `/tmp/robin-grid-perf/`.
+
+TODO: continue profiling the optimized package's JXL validation and terrain
+decode/upload costs; the grid shortcut leaves most startup time intact.
