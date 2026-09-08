@@ -940,6 +940,7 @@ pub(crate) fn perform_pending_save_load(
                 Ok(slot) => slot,
                 Err(error) => {
                     tracing::error!("Save rejected stale slot handle: {error:#}");
+                    outcome.banner = Some(SaveBannerKind::SaveFailed);
                     return outcome;
                 }
             };

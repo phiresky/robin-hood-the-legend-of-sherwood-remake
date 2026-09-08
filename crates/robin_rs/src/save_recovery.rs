@@ -289,13 +289,34 @@ pub async fn open_with_recovery(
     resources: &IngameMenuResources,
     cursor: Option<&ModalCursor<'_>>,
 ) -> OpenedSaveStore {
+    recover_attempt(
+        context,
+        window,
+        renderer,
+        resources,
+        cursor,
+        retry(|| SaveGameManager::open_for_context(context)),
+    )
+    .await
+}
+
+async fn recover_attempt(
+    context: &ApplicationContext,
+    window: &mut GameWindow,
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    cursor: Option<&ModalCursor<'_>>,
+    mut attempt: Result<SaveGameManager, SaveStoreOpenError>,
+) -> OpenedSaveStore {
     loop {
-        match retry(|| SaveGameManager::open_for_context(context)) {
+        match attempt {
             Ok(store) => return OpenedSaveStore::Ready(store),
             Err(error) => {
                 tracing::error!("{error}");
                 match choose_recovery(context, window, renderer, resources, cursor, &error).await {
-                    RecoveryChoice::Retry => {}
+                    RecoveryChoice::Retry => {
+                        attempt = retry(|| SaveGameManager::open_for_context(context));
+                    }
                     RecoveryChoice::Cancel => return OpenedSaveStore::Cancelled,
                     RecoveryChoice::Exit => return OpenedSaveStore::ExitRequested,
                 }
@@ -343,7 +364,7 @@ pub async fn open_for_launch(
     ) {
         tracing::warn!("Save recovery: default cursor unavailable, using fallback arrow");
     }
-    Ok(open_with_recovery(
+    Ok(recover_attempt(
         context,
         window,
         &mut renderer,
@@ -353,6 +374,7 @@ pub async fn open_for_launch(
             robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
             0,
         )),
+        Err(original_error),
     )
     .await)
 }
