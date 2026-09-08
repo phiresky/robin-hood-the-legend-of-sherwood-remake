@@ -1035,7 +1035,7 @@ pub fn apply_minimap(
     let saved_position = engine_coordinates::ScreenPoint::new(profile.minimap_x, profile.minimap_y);
 
     tracing::info!(
-        "Minimap loaded: {}x{} pixels, surface ID {}, saved position ({:.0}, {:.0})",
+        "Minimap loaded: {}x{} pixels, surface {:?}, saved position ({:.0}, {:.0})",
         decoded.width,
         decoded.height,
         surface,
