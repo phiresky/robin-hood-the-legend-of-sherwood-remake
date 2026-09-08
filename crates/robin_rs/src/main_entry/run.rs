@@ -747,6 +747,21 @@ pub async fn run_rust_game_headless(
         );
     };
 
+    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+    if projection_export {
+        crate::game_session::export_official_mission_headless(
+            campaign,
+            &profiles,
+            idx,
+            location,
+            mission_args,
+            rng_seed,
+            sim_config,
+        )
+        .await?;
+        return Ok(0);
+    }
+
     let mut callbacks = RustCallbacks::new(application_context);
     let outcome = run_mission_headless(
         &mut callbacks,

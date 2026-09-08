@@ -1198,6 +1198,54 @@ pub(super) enum HeadlessBuildOutcome {
 
 pub(super) struct HeadlessMissionBuilder;
 
+/// Export prepared mission inputs without constructing callbacks that open
+/// player saves. Official projection contexts deliberately disable persistence.
+#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+pub(crate) async fn export_official_mission_headless(
+    campaign: Campaign,
+    profiles: &ProfileManager,
+    mission_idx: usize,
+    location: MissionLocation,
+    args: &crate::main_entry::CliArgs,
+    rng_seed: u64,
+    sim_config: engine_api::SimConfig,
+) -> Result<(), String> {
+    if !args.headless || args.simulation_content_export.is_none() {
+        return Err("official projection requires a headless export request".to_owned());
+    }
+    crate::lua_session::validate_launch_mode(args, false).map_err(|error| error.to_string())?;
+    let mission_id = campaign.missions[mission_idx]
+        .profile(profiles)
+        .mission_filename
+        .clone();
+    super::ensure_shipping_mission(args, &mission_id, &campaign, profiles, false, |_| {}).await?;
+    let campaign = super::establish_mission_restart_boundary(campaign, rng_seed, sim_config);
+    let loading = HeadlessLoadStage::begin(
+        #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+        &crate::multiplayer::MultiplayerCampaignSession::default(),
+        location,
+        args,
+        &mission_id,
+        rng_seed,
+        sim_config,
+        None,
+    )
+    .await?;
+    let bootstrap = loading
+        .load_level(
+            campaign,
+            profiles,
+            mission_idx,
+            location,
+            args,
+            rng_seed,
+            sim_config,
+        )
+        .map_err(|error| error.message)?;
+    drop(bootstrap);
+    Ok(())
+}
+
 impl HeadlessMissionBuilder {
     pub(super) async fn build(
         callbacks: &mut RustCallbacks,
