@@ -655,6 +655,10 @@ impl GridSector {
     /// parity toggle so ray-cast half-open endpoint conventions cannot reject
     /// an exact boundary click.
     pub fn contains_point(&self, pt: MapPoint) -> bool {
+        self.contains_point_with_edges(pt, 0..self.points.len())
+    }
+
+    fn contains_point_with_edges(&self, pt: MapPoint, edges: impl Iterator<Item = usize>) -> bool {
         if self.points.len() < 3 {
             return false;
         }
@@ -663,10 +667,9 @@ impl GridSector {
         }
         let mut inside = false;
         let n = self.points.len();
-        let mut j = n - 1;
-        for i in 0..n {
+        for i in edges {
             let vi = self.points[i];
-            let vj = self.points[j];
+            let vj = self.points[if i == 0 { n - 1 } else { i - 1 }];
             let edge_x = vj.x - vi.x;
             let edge_y = vj.y - vi.y;
             let rel_x = pt.x - vi.x;
@@ -685,7 +688,6 @@ impl GridSector {
                     inside = !inside;
                 }
             }
-            j = i;
         }
         inside
     }
@@ -697,6 +699,14 @@ impl GridSector {
     /// box's top-left corner lies inside the polygon (box fully
     /// contained).
     pub fn intersects_bbox(&self, bbox: &MapBBox) -> bool {
+        self.intersects_bbox_with_edges(bbox, 0..self.points.len())
+    }
+
+    fn intersects_bbox_with_edges(
+        &self,
+        bbox: &MapBBox,
+        edges: impl Iterator<Item = usize> + Clone,
+    ) -> bool {
         let n = self.points.len();
         if n == 0 {
             return false;
@@ -712,26 +722,26 @@ impl GridSector {
 
         // Interior grid cells are common during level registration. Test
         // containment before the more expensive edge/rectangle predicates.
-        if self.contains_point(MapPoint::new(rect.min().x, rect.min().y)) {
+        if self.contains_point_with_edges(MapPoint::new(rect.min().x, rect.min().y), edges.clone())
+        {
             return true;
         }
 
         // Any polygon point inside the box?
-        for p in &self.points {
-            if bbox.contains_point(*p) {
+        for i in edges.clone() {
+            if bbox.contains_point(self.points[i]) {
                 return true;
             }
         }
 
         // Any polygon edge (including closing) intersects the box?
         use geo::Intersects;
-        let mut j = n - 1;
-        for i in 0..n {
+        for i in edges {
+            let j = if i == 0 { n - 1 } else { i - 1 };
             let seg = geo::Line::new(self.points[j].to_geo(), self.points[i].to_geo());
             if rect.intersects(&seg) {
                 return true;
             }
-            j = i;
         }
 
         false
@@ -1630,7 +1640,35 @@ impl FastFindGrid {
             let (x_min, y_min, x_max, y_max) =
                 rect_to_cell_range(&rect, level.grid_width, level.grid_height);
 
+            // A row's closed Y interval excludes edges that cannot affect
+            // either the corner ray cast or rectangle intersection. Keep the
+            // original edge order and arithmetic, including boundary tests.
+            // Non-finite input retains the original predicate behavior.
+            let filter_rows = x_min < x_max
+                && sector.points.len() >= 3
+                && sector
+                    .points
+                    .iter()
+                    .all(|p| p.x.is_finite() && p.y.is_finite());
+            let mut row_edges = Vec::new();
             for cy in y_min..=y_max {
+                if filter_rows {
+                    row_edges.clear();
+                    let row_min = f32::from(cy) * GRID_CELL_SIZE_F;
+                    let row_max = row_min + GRID_CELL_SIZE_F;
+                    for i in 0..sector.points.len() {
+                        let j = if i == 0 {
+                            sector.points.len() - 1
+                        } else {
+                            i - 1
+                        };
+                        let a = sector.points[i].y;
+                        let b = sector.points[j].y;
+                        if a.min(b) <= row_max && a.max(b) >= row_min {
+                            row_edges.push(i);
+                        }
+                    }
+                }
                 for cx in x_min..=x_max {
                     let block_idx = block_index_from_cell_raw(
                         cx,
@@ -1649,7 +1687,12 @@ impl FastFindGrid {
                     let cell_max =
                         MapPoint::new(cell_min.x + GRID_CELL_SIZE_F, cell_min.y + GRID_CELL_SIZE_F);
                     let block_box = MapBBox::from_corners(cell_min, cell_max);
-                    if sector.intersects_bbox(&block_box) {
+                    let intersects = if filter_rows {
+                        sector.intersects_bbox_with_edges(&block_box, row_edges.iter().copied())
+                    } else {
+                        sector.intersects_bbox(&block_box)
+                    };
+                    if intersects {
                         level.blocks[block_idx].sector_indices.push(idx);
                     }
                 }
@@ -4940,6 +4983,81 @@ mod tests {
                     }
                 }
                 assert!(!sector.intersects_bbox(&MapBBox::new()));
+            }
+        }
+    }
+
+    #[test]
+    fn row_filtered_registration_matches_every_original_cell_in_order() {
+        let mut grid = make_empty_grid(2);
+        let mut seed = 0x76543210_u32;
+        let mut expected = vec![Vec::new(); grid.level.blocks.len()];
+        // Unsorted random vertices deliberately include non-simple polygons.
+        // Quantized coordinates exercise exact cell edges and repeated points;
+        // nearby representable values exercise both sides of those boundaries.
+        for case in 0..240 {
+            let mut sector = square_sector(
+                MapPoint::new(0.0, 0.0),
+                MapPoint::new(512.0, 512.0),
+                crate::sector::SectorType::MOTION,
+                0,
+                case,
+            );
+            sector.points.clear();
+            for _ in 0..case % 31 {
+                let mut coord = || {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    let value = ((seed >> 16) % 12) as f32 * 64.0 - 128.0;
+                    value
+                        + match case % 3 {
+                            0 => 0.0,
+                            1 => 0.001,
+                            _ => -0.001,
+                        }
+                };
+                sector.points.push(MapPoint::new(coord(), coord()));
+            }
+            if case % 17 == 0 {
+                for point in &mut sector.points {
+                    point.y = 64.0; // Collinear edges on a closed row boundary.
+                }
+            }
+            if case % 19 == 0 {
+                sector.points = vec![MapPoint::new(64.0, 64.0); 4];
+            }
+            if case % 2 == 0 {
+                sector.points.reverse();
+            }
+            sector.bounding_box = MapBBox::new();
+            for &point in &sector.points {
+                sector.bounding_box.expand_point(point);
+            }
+            let layer = (case % 2) as u16;
+            let index = grid.level.sectors.len() as u32;
+            if let Some(rect) = sector.bounding_box.0 {
+                let (x0, y0, x1, y1) =
+                    rect_to_cell_range(&rect, grid.level.grid_width, grid.level.grid_height);
+                for cy in y0..=y1 {
+                    for cx in x0..=x1 {
+                        let min = MapPoint::new(f32::from(cx) * 64.0, f32::from(cy) * 64.0);
+                        let bbox =
+                            MapBBox::from_corners(min, MapPoint::new(min.x + 64.0, min.y + 64.0));
+                        if sector.intersects_bbox(&bbox) {
+                            let block = block_index_from_cell_raw(
+                                cx,
+                                cy,
+                                layer,
+                                grid.level.grid_width,
+                                grid.level.grid_height,
+                            );
+                            expected[block].push(index);
+                        }
+                    }
+                }
+            }
+            grid.add_sector(sector, layer);
+            for (block, expected_indices) in grid.level.blocks.iter().zip(&expected) {
+                assert_eq!(&block.sector_indices, expected_indices, "case {case}");
             }
         }
     }
