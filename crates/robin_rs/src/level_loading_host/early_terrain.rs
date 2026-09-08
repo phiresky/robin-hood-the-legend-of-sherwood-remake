@@ -289,7 +289,16 @@ mod tests {
     }
 
     #[test]
-    fn completed_or_unwound_worker_releases_scheduler_reservation() {
+    fn completed_worker_releases_scheduler_reservation() {
+        let finished = Arc::new(AtomicBool::new(false));
+        let completion = FinishOnDrop(finished.clone());
+        drop(completion);
+        assert!(finished.load(Ordering::Acquire));
+    }
+
+    #[test]
+    #[cfg(panic = "unwind")]
+    fn unwound_worker_releases_scheduler_reservation() {
         let finished = Arc::new(AtomicBool::new(false));
         let completion = FinishOnDrop(finished.clone());
         let result = std::panic::catch_unwind(move || {
