@@ -35,8 +35,11 @@ event traces, terminal/reordered/late admission failures, authenticated endpoint
 and invitation checks, exact reconnect offers and all six metadata fields.
 
 `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_rs --lib --features multiplayer multiplayer::client_protocol`
-is running on the isolated worktree's initially cold target directory. Results
-and integrated native/browser acceptance are to be recorded after completion.
+passed on source `78838bc74`: seven passed, zero failed. The initially cold build
+took 23m09s; tests completed in under 0.01s. Existing unrelated dead-code and
+deprecated atomic-method warnings were not changed. Integrated native release
+and browser acceptance are recorded separately after the combined source is
+available.
 
 ## Deliberately staged follow-ups
 
