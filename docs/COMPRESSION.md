@@ -35,8 +35,8 @@ the browser boot bundle falls from **7,968,036 B to 3,702,350 B** by removing
 verified source-audio duplicates. Replay admission overlaps runtime loading;
 playback skips unrelated menu audio and live Restart capture. Five matched pairs
 improve replay first-present from **20.010 s to 17.137 s at 16 Mbit/s**, and
-**4.059 s to 3.930 s** on unlimited loopback. Sprite pixel deferral stays opt-in:
-it shows the first pose sooner but substantially delays playback progress.
+**4.059 s to 3.930 s** on unlimited loopback. The separate-opacity/sprite-deferral experiment has been removed: it added
+9,966,216 bytes overall and substantially delayed playback progress.
 
 ## Initial findings (superseded by later implementation sections)
 
@@ -3850,14 +3850,16 @@ Baseline admission provenance and functional validation are in
 `replay-baseline-pkg/`. Its one-shot Node validation time is not a browser startup
 measurement.
 
-### Opt-in sprite pixel deferral: rejected as the default
+### Sprite pixel deferral experiment: removed
 
-The threaded-browser experiment `?sprite-residency=first-frame` retains complete
-simulation opacity masks in the initial payload and defers selected pixel data.
-Rendering waits for actual current-frame residency; it must not draw missing
-sprites or substitute transparent pixels. The ordinary path remains the default.
-Initial shadow reclassification while pixels are pending currently fails
-explicitly. TODO: resolve that limitation before considering wider enablement.
+The former threaded-browser experiment `?sprite-residency=first-frame` retained
+complete simulation opacity masks in the initial payload and deferred selected
+pixel data. It has been removed at the user's request because of the additional
+download and slower playback. Its partitioner, mask format and presentation
+waits have also been removed. The following measurements describe the historical
+build `c7244b5ddca8`; the query flag is no longer supported. The ordinary corpus
+never included these extra masks, so removal does not save another 10 MB on
+the default path.
 
 Across the 27 eligible parts, initial compressed bytes fall from **16,635,002 to
 12,419,123**, a **25.34%** reduction. Deferred tails add **14,182,095 B**, so the
@@ -3868,8 +3870,8 @@ comparison below confirms a faster first pose but substantially slower playback.
 
 Local corpus evidence is
 `/tmp/robin-startup-more/mission/first1-opacity/partition.jsonl` and its `Data/`
-payloads. Experimental publication validates conflicts and preserves failures;
-session ownership and asynchronous readiness remain required for deferred work.
+payloads. The historical implementation validated publication conflicts and
+preserved failures across session changes.
 
 ### Final validation and build provenance
 
@@ -3994,9 +3996,8 @@ passes all 306 records to EOF, but this transfers latency into playback stalls.
 **Keep the normal corpus and eager pixel path as the default.**
 
 The partitioned boot retains tail references and is 3,702,731 B (381 B larger
-than the ordinary trimmed boot). The opt-in experiment remains available for
-research; reduce mask/total payload and improve demand-aware tail scheduling
-before reconsidering it. Full input hashes, six samples, wait logs and delayed
+than the ordinary trimmed boot). The experiment is now removed; its original
+implementation remains in git history. Full input hashes, six samples, wait logs and delayed
 RPC measurements are retained under
 `/tmp/robin-startup-more/experimental-final-progress/`; the matched corpus is
 `/tmp/robin-startup-more/corpus-first-frame/Data`.

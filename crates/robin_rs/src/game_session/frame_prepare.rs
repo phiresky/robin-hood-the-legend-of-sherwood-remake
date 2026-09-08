@@ -1159,9 +1159,6 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                         ),
                 },
             );
-            super::sprite_readiness::wait_for_render_sprites(&manager.engine)
-                .await
-                .map_err(|error| format!("save thumbnail sprite preflight failed: {error}"))?;
             let thumbnail = super::render::begin_save_thumbnail(
                 &manager.engine,
                 &display_snapshot,
