@@ -1470,13 +1470,11 @@ impl InteractiveFrameSimulation {
             || ui
                 .lost_sherwood_gate
                 .blocks_mission(game.is_sherwood, &manager.engine);
-        let mission_ui_block_reason = if terminal_exit_pending {
-            Some("terminal mission transition")
-        } else if campaign_ui_blocked {
-            Some("campaign UI")
-        } else {
-            None
-        };
+        let mission_ui_block_reason = manual_step_ui_block_reason(
+            terminal_exit_pending,
+            ui.terminal_debriefing.is_some(),
+            campaign_ui_blocked,
+        );
         let active_ui_task = &mut ui.active_ui_task;
         let pause_menu = &mut ui.pause_menu;
         let mut dismissed_ui_task = false;
@@ -1594,9 +1592,46 @@ impl InteractiveFrameSimulation {
     }
 }
 
+// The campaign-update handoff blocks all stepping, but a constructed terminal
+// modal must reach drain_steps' typed dismissal handler. That handler queues
+// its result and refuses to run simulation until the outer frame applies it.
+fn manual_step_ui_block_reason(
+    terminal_exit_pending: bool,
+    terminal_modal_active: bool,
+    campaign_ui_blocked: bool,
+) -> Option<&'static str> {
+    if terminal_modal_active {
+        None
+    } else if terminal_exit_pending {
+        Some("terminal mission transition")
+    } else if campaign_ui_blocked {
+        Some("campaign UI")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ScriptedModalMode, UiTaskKind, UiTaskModalAdmission, ui_task_modal_admission};
+
+    #[test]
+    fn terminal_http_dismissals_become_reachable_after_campaign_handoff() {
+        use super::manual_step_ui_block_reason;
+
+        // terminal_flow_active remains true across both phases. It cannot by
+        // itself decide whether typed Restart/Load outcomes may be submitted.
+        assert_eq!(
+            manual_step_ui_block_reason(true, false, false),
+            Some("terminal mission transition")
+        );
+        assert_eq!(manual_step_ui_block_reason(true, true, false), None);
+        assert_eq!(manual_step_ui_block_reason(false, false, false), None);
+        assert_eq!(
+            manual_step_ui_block_reason(false, false, true),
+            Some("campaign UI")
+        );
+    }
 
     #[test]
     fn terminal_child_runs_without_discarding_deferred_scripted_modals() {
