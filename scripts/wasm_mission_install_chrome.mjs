@@ -14,6 +14,10 @@
 //   node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> \
 //       [--mission H01_Lin_VL] [--pkg wasm-www/pkg] [--serial] [--chrome BIN]
 //
+// --verify-restart FILE drives real terminal UI clicks, checks two checkpoint
+// restores by default, and exports the compact replay string to FILE.
+// --restart-cycles N changes that count. This mode uses a fixed CDP viewport;
+// ordinary startup measurements keep their original Chrome viewport.
 // --timings FILE saves browser-clock log timestamps and Resource Timing entries.
 // Worker-local resource entries are not included in the main-window buffer.
 // --serial withholds the COOP/COEP headers, so crossOriginIsolated is false
@@ -36,6 +40,8 @@ let cpuProfile = null;
 let timingsFile = null;
 let failedRequest = null;
 let wasmLog = 'info';
+let restartReplay = null;
+let restartCycles = 2;
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--mission') mission = args[++i];
@@ -48,14 +54,21 @@ for (let i = 0; i < args.length; i++) {
     else if (arg === '--timings') timingsFile = args[++i];
     else if (arg === '--fail-request') failedRequest = args[++i];
     else if (arg === '--wasm-log') wasmLog = args[++i];
+    else if (arg === '--verify-restart') restartReplay = args[++i];
+    else if (arg === '--restart-cycles') restartCycles = Number(args[++i]);
     else positional.push(arg);
 }
 const [root] = positional;
 if (!root) {
     console.error(
         'usage: node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> ' +
-        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH] [--wasm-log FILTER]',
+        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH] [--wasm-log LEVEL] [--verify-restart REPLAY_FILE] [--restart-cycles N]',
     );
+    process.exit(2);
+}
+
+if (!Number.isSafeInteger(restartCycles) || restartCycles < 1) {
+    console.error('--restart-cycles must be a positive integer');
     process.exit(2);
 }
 
@@ -88,6 +101,10 @@ const scriptStartedAt = performance.now();
 const relay = [];
 const collectTimings = ${JSON.stringify(Boolean(timingsFile))};
 const audioDecodes = [];
+let restartRestored = false;
+let restartFailed = false;
+let terminalFailures = 0;
+let restartCheckStarted = false;
 if (collectTimings) {
     performance.setResourceTimingBufferSize(10000);
     const originalDecode = BaseAudioContext.prototype.decodeAudioData;
@@ -108,6 +125,15 @@ if (collectTimings) {
 }
 let relayTimer = null;
 const post = (line) => {
+    if (${JSON.stringify(Boolean(restartReplay))}) {
+        if (line.includes('Restart snapshot restored')) restartRestored = true;
+        if (line.includes('Restart snapshot could not be restored')) restartFailed = true;
+        if (line.includes('Engine tick returned: LevelFailed')) terminalFailures++;
+        if (!restartCheckStarted && line.includes('mission bootstrap: total elapsed_ms')) {
+            restartCheckStarted = true;
+            setTimeout(() => globalThis.runRestartCheck().catch(error => console.error('restart verification failed: ' + error)), 0);
+        }
+    }
     relay.push({ line, pageMs: performance.now() });
     if (collectTimings && (line.includes('Recording replay') || line.includes('background mission audio warmup complete'))) {
         void fetch('/timings', {
@@ -157,6 +183,84 @@ try {
     }
     console.log('startup: core preloads complete; boot fetch begin');
     const datadir = new Uint8Array(await (await fetch('/data/Data/datadir.bin')).arrayBuffer());
+    globalThis.runRestartCheck = async () => {
+        const delay = (ms = 50) => new Promise(resolve => setTimeout(resolve, ms));
+        const rpc = (method, params = null) => {
+            let timer;
+            const timeout = new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error('RPC timeout: ' + method)), 15000);
+            });
+            return Promise.race([glue.rh_rpc({ method, params }), timeout])
+                .finally(() => clearTimeout(timer));
+        };
+        const cdp = async (method, params) => {
+            const response = await fetch('/restart-input', {
+                method: 'POST', body: JSON.stringify({ method, params }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(JSON.stringify(result));
+        };
+        const waitFor = async (predicate, label) => {
+            const deadline = performance.now() + 15000;
+            while (!predicate()) {
+                if (restartFailed) throw new Error('Restart fell back to mission reconstruction');
+                if (performance.now() >= deadline) throw new Error('Timed out waiting for ' + label);
+                await delay();
+            }
+        };
+        const evidence = [];
+        for (let cycle = 0; cycle < ${JSON.stringify(restartCycles)}; cycle++) {
+            restartRestored = false;
+            const initial = await rpc('state');
+            // A no-op seek dismisses startup popups without advancing simulation.
+            // Manual forward ticks bypass the cooperative terminal UI, so force
+            // defeat on a normal outer frame instead.
+            await rpc('go-to-frame', { frame: initial.frame, auto_dismiss: true });
+            await rpc('console', { command: 'LOOSE' });
+            const previousFailures = terminalFailures;
+            await rpc('set-paused', { paused: false });
+            await waitFor(() => terminalFailures > previousFailures, 'natural terminal frame');
+            await delay(2500); // Mission-state opening transition must finish first.
+            await cdp('Input.dispatchKeyEvent', {
+                type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
+            });
+            await delay(100);
+            await cdp('Input.dispatchKeyEvent', {
+                type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
+            });
+            await delay(1500); // Allow the final debrief page to take ownership.
+            const before = await rpc('set-paused', { paused: true });
+            // Restart's seal is at (122,392) in the centered 640x480 menu;
+            // its center is (142,412). Use CSS pixels for CDP input.
+            const rect = document.querySelector('canvas').getBoundingClientRect();
+            const x = rect.left + rect.width / 2 - 178;
+            const y = rect.top + rect.height / 2 + 172;
+            await cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+            await cdp('Input.dispatchMouseEvent', {
+                type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+            });
+            await delay(100);
+            await cdp('Input.dispatchMouseEvent', {
+                type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+            });
+            await waitFor(() => restartRestored, 'UI Restart checkpoint restore');
+            const restored = await rpc('state');
+            if (restartFailed || restored.frame !== 0 || before.frame <= restored.frame) {
+                throw new Error('Restart did not restore initial timeline: ' + JSON.stringify({ before, restored }));
+            }
+            // Leave the last restore paused for export; the next cycle explicitly
+            // resumes and defeats the restored attempt to exercise its lifecycle.
+            await rpc('set-paused', { paused: true });
+            evidence.push({ before: before.frame, restored: restored.frame });
+        }
+        const replay = await rpc('get-replay');
+        if (typeof replay.content !== 'string' || !replay.content.startsWith('rhrec-')) {
+            throw new Error('Unexpected replay export shape');
+        }
+        const saved = await fetch('/restart-replay', { method: 'POST', body: replay.content });
+        if (!saved.ok) throw new Error('Could not export Restart replay');
+        console.log('harness: restart verified ' + JSON.stringify({ cycles: evidence }));
+    };
     console.log('harness: boot t0');
     glue.wasm_boot(datadir, '/data/Data');
 } catch (e) {
@@ -174,6 +278,7 @@ let done = false;
 let activatedAt = null;
 let inGameAt = null;
 let bootstrapAt = null;
+let restartVerified = false;
 // Lazy character-chunk streaming: activation can precede the deferred
 // sprite-decode tail. When the install announces a deferred tail, keep the
 // page alive until the tail's completion line so its duration is measured.
@@ -183,13 +288,15 @@ const maybeFinish = () => {
     if (done || activatedAt === null) return;
     // Mission install is the default finish line; --wait-ingame keeps the
     // run alive through session bootstrap so its PhaseTimer spans land too.
-    if (waitIngame && inGameAt === null) return;
+    if ((waitIngame || restartReplay) && inGameAt === null) return;
+    if (restartReplay && !restartVerified) return;
     if (tailExpected && !tailDone) return;
     if (waitAudio && audioExpected && !audioDone) return;
     done = true;
     // Give trailing logs a moment, then finish.
     setTimeout(() => finish(0), 1500);
 };
+let devtoolsSend = null;
 const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     if (isolated) {
@@ -197,6 +304,34 @@ const server = createServer((req, res) => {
         res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     }
     res.setHeader('Cache-Control', 'no-store');
+    if (restartReplay && req.method === 'POST' && url.pathname === '/restart-input') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', async () => {
+            try {
+                const { method, params } = JSON.parse(body);
+                if (!['Input.dispatchKeyEvent', 'Input.dispatchMouseEvent'].includes(method)) {
+                    throw new Error('Unsupported Restart input method');
+                }
+                if (devtoolsSend === null) throw new Error('Chrome input session is not ready');
+                await devtoolsSend(method, params);
+                res.end('{}');
+            } catch (error) {
+                res.statusCode = 500;
+                res.end(JSON.stringify({ error: String(error) }));
+            }
+        });
+        return;
+    }
+    if (restartReplay && req.method === 'POST' && url.pathname === '/restart-replay') {
+        const chunks = [];
+        req.on('data', chunk => chunks.push(chunk));
+        req.on('end', () => {
+            writeFileSync(restartReplay, Buffer.concat(chunks));
+            res.end('ok');
+        });
+        return;
+    }
     if (req.method === 'POST' && url.pathname === '/timings') {
         let body = '';
         req.on('data', (chunk) => { body += chunk; });
@@ -222,6 +357,11 @@ const server = createServer((req, res) => {
                     void finish(1);
                     return;
                 }
+                if (restartReplay && (line.includes('restart verification failed:') || line.includes('panicked at') || line.startsWith('pageerror:'))) {
+                    void finish(1);
+                    return;
+                }
+                if (line.includes('harness: restart verified')) restartVerified = true;
                 if (line.includes('boot t0')) bootAt = pageMs;
                 const secs = () => ((pageMs - bootAt) / 1000).toFixed(3);
                 if (line.includes('activated shipping mission') && bootAt !== null
@@ -270,7 +410,7 @@ const server = createServer((req, res) => {
     res.end(readFileSync(filePath));
 });
 
-// Attach before navigation so the CPU profile includes the full bootstrap.
+// Attach before navigation for startup profiling or trusted Restart UI input.
 async function startCpuProfile(profileDir, pageUrl) {
     const deadline = Date.now() + 15000;
     let target;
@@ -309,11 +449,24 @@ async function startCpuProfile(profileDir, pageUrl) {
         pending.set(id, { resolve, reject });
         socket.send(JSON.stringify({ id, method, params }));
     });
-    await send('Profiler.enable');
-    await send('Profiler.setSamplingInterval', { interval: 1000 });
-    await send('Profiler.start');
+    devtoolsSend = send;
+    if (cpuProfile) {
+        await send('Profiler.enable');
+        await send('Profiler.setSamplingInterval', { interval: 1000 });
+        await send('Profiler.start');
+    }
+    if (restartReplay) {
+        // The default headless viewport clips the Restart seal below its edge.
+        await send('Emulation.setDeviceMetricsOverride', {
+            width: 1024, height: 768, deviceScaleFactor: 1, mobile: false,
+        });
+    }
     await send('Page.navigate', { url: pageUrl });
     return async () => {
+        if (!cpuProfile) {
+            socket.close();
+            return;
+        }
         const { profile: result } = await send('Profiler.stop');
         writeFileSync(cpuProfile, JSON.stringify(result));
         socket.close();
@@ -341,6 +494,7 @@ async function finish(code) {
     if (timingsFile) {
         writeFileSync(timingsFile, JSON.stringify({
             mission, pkgDir: resolve(pkgDir), bootAt, activatedAt, inGameAt, bootstrapAt,
+            ...(restartReplay ? { restartVerified, restartCycles } : {}),
             logs: timingLogs.sort((a, b) => a.pageMs - b.pageMs),
             resourceTimings, resourceSnapshots,
         }, null, 2));
@@ -359,6 +513,7 @@ server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
     profile = mkdtempSync(join(tmpdir(), 'robin-e2e-chrome-'));
     const query = new URLSearchParams({ mission, 'wasm-log': wasmLog });
+    if (restartReplay) query.set('start-paused', 'true');
     const pageUrl = `http://127.0.0.1:${port}/?${query}`;
     chrome = spawn(chromeBin, [
         '--headless=new',
@@ -366,9 +521,9 @@ server.listen(0, '127.0.0.1', () => {
         '--no-first-run',
         '--enable-unsafe-swiftshader',
         '--autoplay-policy=no-user-gesture-required',
-        ...(cpuProfile ? ['--remote-debugging-port=0', 'about:blank'] : [pageUrl]),
+        ...((cpuProfile || restartReplay) ? ['--remote-debugging-port=0', 'about:blank'] : [pageUrl]),
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
-    if (cpuProfile) {
+    if (cpuProfile || restartReplay) {
         profileReady = startCpuProfile(profile, pageUrl);
         profileReady.catch(() => finish(1));
     }
