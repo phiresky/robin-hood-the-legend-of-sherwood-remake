@@ -73,15 +73,17 @@ impl PipelineStore {
             true,
             true,
         );
-        let blit_pipeline = build_quad_pipelines(
+        // The swapchain blit uses only the opaque variant and no stencil.
+        let blit_pipeline = build_single_quad_pipeline(
             &gpu.device,
             &quad_module,
             &quad_layout,
+            "quad/blit",
+            "fs_main",
+            None,
             gpu.surface_format,
             false,
-            false,
-        )[blend_index(BlendMode::None)]
-        .clone();
+        );
         let colorize_pipeline = build_single_quad_pipeline(
             &gpu.device,
             &quad_module,
@@ -90,6 +92,7 @@ impl PipelineStore {
             "fs_colorize",
             None,
             output_format,
+            true,
         );
         let bg_alpha_pipeline = build_single_quad_pipeline(
             &gpu.device,
@@ -99,6 +102,7 @@ impl PipelineStore {
             "fs_bg_alpha_polygon",
             None,
             output_format,
+            true,
         );
         let view_cone_pipeline = build_single_quad_pipeline(
             &gpu.device,
@@ -108,6 +112,7 @@ impl PipelineStore {
             "fs_view_cone_gradient",
             BlendMode::Blend.to_wgpu(),
             output_format,
+            true,
         );
         let mask_stencil_pipeline =
             build_mask_stencil_pipeline(&gpu.device, bgl_screen, bgl_tex, output_format);
@@ -354,6 +359,7 @@ fn build_single_quad_pipeline(
     fragment_entry: &str,
     blend: Option<wgpu::BlendState>,
     output_format: wgpu::TextureFormat,
+    stencil_attachment: bool,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some(label),
@@ -375,10 +381,9 @@ fn build_single_quad_pipeline(
             compilation_options: Default::default(),
         }),
         primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: Some(sprite_stencil_state(
-            wgpu::CompareFunction::Always,
-            wgpu::StencilOperation::Keep,
-        )),
+        depth_stencil: stencil_attachment.then(|| {
+            sprite_stencil_state(wgpu::CompareFunction::Always, wgpu::StencilOperation::Keep)
+        }),
         multisample: wgpu::MultisampleState::default(),
         multiview_mask: None,
         cache: None,

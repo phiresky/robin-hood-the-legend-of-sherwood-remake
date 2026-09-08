@@ -14,6 +14,7 @@ function mediaType(path) {
     if (path.endsWith('.js') || path.endsWith('.mjs')) return 'text/javascript';
     if (path.endsWith('.wasm')) return 'application/wasm';
     if (path.endsWith('.json')) return 'application/json';
+    if (path.endsWith('.br')) return 'application/octet-stream';
     if (path.endsWith('.gz')) return 'application/gzip';
     if (path.endsWith('.zst')) return 'application/zstd';
     if (path.endsWith('.opus')) return 'audio/ogg; codecs=opus';

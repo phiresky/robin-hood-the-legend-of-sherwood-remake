@@ -15,11 +15,10 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail, ensure};
 use robin_run_protocol::{
-    ArtifactRefV1, BuildManifestV2, CanonicalDocument as _, ContentManifestV1,
-    OfficialBuiltInOverlaySourceManifestV2, OfficialContentEditionV1,
-    OfficialProjectionAuthorityManifestV2, OfficialProjectionExportReportV2,
-    OfficialProjectionSourceFormatV1, OfficialSimulationProjectionReceiptV2,
-    OfficialSourceTreeManifestV2, RulesConfigIdentityV1,
+    ArtifactRefV1, BuildManifestV2, ContentManifestV1, OfficialBuiltInOverlaySourceManifestV2,
+    OfficialContentEditionV1, OfficialProjectionAuthorityManifestV2,
+    OfficialProjectionExportReportV2, OfficialProjectionSourceFormatV1,
+    OfficialSimulationProjectionReceiptV2, OfficialSourceTreeManifestV2, RulesConfigIdentityV1,
     SIMULATION_CONTENT_COMPONENT_MEDIA_TYPE_V1, SimulationContentComponentDocumentV1,
     SimulationContentComponentKindV1, Validate as _, canonical_json_bytes,
     official_content_subjects_v1, simulation_content_component_relative_path_v1,
@@ -381,13 +380,14 @@ fn validate_catalog(
             let relative = simulation_content_component_relative_path_v1(&manifest.subject, *kind)?;
             let path = root.join(&relative);
             let bytes = read_regular_file_bounded(&path, MAX_DOCUMENT_BYTES)?;
-            let document: SimulationContentComponentDocumentV1 = strict_json_from_slice(&bytes)
-                .with_context(|| format!("parse projection component {relative}"))?;
+            let document: SimulationContentComponentDocumentV1 =
+                SimulationContentComponentDocumentV1::from_bitcode(&bytes)
+                    .with_context(|| format!("parse projection component {relative}"))?;
             document.validate()?;
             ensure!(
                 document.kind == *kind
                     && document.component_schema_version == component.component_schema_version
-                    && document.canonical_bytes()? == bytes,
+                    && document.bitcode_bytes()? == bytes,
                 "projection component document does not match its typed manifest"
             );
             ensure!(

@@ -418,20 +418,24 @@ fn render_screenshot_rgba(
     captured
 }
 
+pub(crate) type PendingThumbnail =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Option<Thumbnail>>>>;
+
 /// Render a dedicated throwaway frame for a save-slot thumbnail and
 /// return it downsampled to the configured thumbnail dimensions.
 ///
 /// This mirrors the HTTP screenshot path: render intentionally, read
 /// back immediately, then clear the renderer queue so the live frame
 /// later in the loop starts clean.
-pub(super) fn capture_save_thumbnail(
+pub(super) fn begin_save_thumbnail(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
-) -> Option<Thumbnail> {
+) -> PendingThumbnail {
+    let mut timer = super::setup::PhaseTimer::new("save thumbnail");
     update_zoom_presentation(engine, display, host, ctx);
 
     let saved_corner = ctx.corner_tooltip.clone();
@@ -451,17 +455,9 @@ pub(super) fn capture_save_thumbnail(
         RenderCadence::DisplayRefresh,
     );
 
-    let thumb = match ctx.renderer.try_capture_frame_rgba() {
-        Ok((w, h, rgba)) => Thumbnail::from_rgba_downscaled(w, h, &rgba, THUMB_WIDTH, THUMB_HEIGHT)
-            .map_err(|err| {
-                tracing::warn!("Save thumbnail capture failed: {err:#}");
-            })
-            .ok(),
-        Err(error) => {
-            tracing::warn!(%error, "Save thumbnail capture failed");
-            None
-        }
-    };
+    timer.step("compose");
+    let capture = ctx.renderer.begin_capture_frame_rgba();
+    timer.step("submit");
 
     *ctx.corner_tooltip = saved_corner;
     *ctx.requirements_tooltip = saved_requirements;
@@ -471,7 +467,23 @@ pub(super) fn capture_save_thumbnail(
     *ctx.pc_action_tooltip = saved_pc_action;
     ctx.renderer.reset_render_target();
 
-    thumb
+    Box::pin(async move {
+        let captured = capture.await;
+        timer.step("readback completion");
+        let thumb = match captured {
+            Ok((w, h, rgba)) => {
+                Thumbnail::from_rgba_downscaled(w, h, &rgba, THUMB_WIDTH, THUMB_HEIGHT)
+                    .map_err(|err| tracing::warn!("Save thumbnail capture failed: {err:#}"))
+                    .ok()
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Save thumbnail capture failed");
+                None
+            }
+        };
+        timer.step("downscale");
+        thumb
+    })
 }
 
 /// Capture the composited frame and write it to disk as a PNG.
@@ -1059,8 +1071,8 @@ pub struct RenderContext<'a> {
 }
 
 impl RenderContext<'_> {
-    pub(super) fn present(&mut self) {
-        self.renderer.present();
+    pub(super) fn present(&mut self) -> bool {
+        self.renderer.try_present()
     }
 }
 
@@ -1091,6 +1103,7 @@ pub(super) fn render_frame(
     ctx: &mut RenderContext<'_>,
     cadence: RenderCadence,
 ) {
+    super::sprite_readiness::assert_render_sprites_ready(engine);
     // Rendering only reads the zoom presentation prepared at the update
     // boundary. A missing or stale snapshot is an ordering error, never a
     // reason to invent default button state.

@@ -34,7 +34,7 @@ export function parseContentManifest(value: unknown): ContentManifest {
         const path = `content_manifest.components[${index}]`;
         const component = strictObject(item, path, ['kind', 'component_schema_version', 'artifact']);
         const artifact = parseArtifactRef(component.artifact, `${path}.artifact`);
-        if (artifact.mediaType !== 'application/vnd.robinhood.simulation-content-component-v1+json') {
+        if (artifact.mediaType !== 'application/vnd.robinhood.simulation-content-component-v2+bitcode') {
             throw new Error(`${path}.artifact has the wrong simulation-component media type`);
         }
         return {

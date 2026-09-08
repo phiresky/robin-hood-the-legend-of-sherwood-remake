@@ -1,3 +1,5 @@
+import { verifyReplayAdmissionWasm } from './verify-replay-admission-wasm.mjs';
+import { brotliDecompressSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir } from 'node:fs/promises';
 import { extname, relative, resolve, sep } from 'node:path';
@@ -17,7 +19,7 @@ export const DATADIR_BINDING_PATH = 'wasm/datadir-deployment.json';
 const DIGEST = /^[0-9a-f]{64}$/u;
 const SHORT_COMMIT = /^[0-9a-f]{12}$/u;
 const FULL_COMMIT = /^[0-9a-f]{40}$/u;
-const ALLOWED_EXTENSIONS = new Set(['.gz', '.js', '.json', '.png', '.ttf', '.wasm']);
+const ALLOWED_EXTENSIONS = new Set(['.br', '.gz', '.js', '.json', '.png', '.ttf', '.wasm']);
 const RETAINED_DIRECTORY_PREFIX = '/proc/self/fd/';
 const RETAINED_DIRECTORY_PATH = /^\/proc\/self\/fd\/([^/]+)(.*)$/u;
 const CANONICAL_FILE_DESCRIPTOR = /^(?:0|[1-9][0-9]*)$/u;
@@ -165,23 +167,35 @@ async function validateManifest(root, manifestPath, files, demoAuthority, additi
         exact(manifest.ticketSchema, expectedContract.ticketSchema, `${manifestPath} current ticketSchema`);
     }
 
-    exactKeys(manifest.files, ['js', 'jsGzip', 'wasm', 'wasmGzip'], `${manifestPath} files`);
+    const hasBrotli = Object.hasOwn(manifest.files, 'wasmBrotli');
+    const hasAdmission = Object.hasOwn(manifest.files, 'replayAdmissionWasm');
+    const admissionFields = hasAdmission ? ['replayAdmissionJs', 'replayAdmissionWasm'] : [];
+    exactKeys(manifest.files, ['js', 'jsGzip', 'wasm', 'wasmGzip', ...(hasBrotli ? ['wasmBrotli'] : []), ...admissionFields], `${manifestPath} files`);
     const expectedFiles = {
         js: 'robin.js', jsGzip: 'robin.js.gz', wasm: 'robin_bg.wasm', wasmGzip: 'robin_bg.wasm.gz',
+        ...(hasBrotli ? { wasmBrotli: 'robin_bg.wasm.br' } : {}),
+        ...(hasAdmission ? { replayAdmissionJs: 'replay_admission.js', replayAdmissionWasm: 'replay_admission_bg.wasm' } : {}),
     };
     for (const [field, name] of Object.entries(expectedFiles)) {
         exact(manifest.files[field], name, `${manifestPath} ${field} path`);
         if (!files.has(`wasm/${manifest.short}/${name}`)) throw new Error(`${manifestPath} references missing ${name}`);
     }
-    exactKeys(manifest.sha256, ['wasm', 'wasmGzip'], `${manifestPath} sha256`);
-    for (const field of ['wasm', 'wasmGzip']) {
+    const digestFields = ['wasm', 'wasmGzip', ...(hasBrotli ? ['wasmBrotli'] : []), ...admissionFields];
+    exactKeys(manifest.sha256, digestFields, `${manifestPath} sha256`);
+    for (const field of digestFields) {
         if (!DIGEST.test(manifest.sha256[field])) throw new Error(`${manifestPath} has an invalid ${field} digest`);
         const actual = digest(await readFile(resolve(root, `wasm/${manifest.short}/${manifest.files[field]}`)));
         exact(actual, manifest.sha256[field], `${manifestPath} ${field} digest`);
     }
+    if (hasBrotli) {
+        const decoded = brotliDecompressSync(await readFile(resolve(root, `wasm/${manifest.short}/robin_bg.wasm.br`)), { maxOutputLength: CLOUDFLARE_ASSET_BYTES_LIMIT });
+        exact(digest(decoded), manifest.sha256.wasm, `${manifestPath} Brotli decoded wasm digest`);
+    }
+    if (hasAdmission) verifyReplayAdmissionWasm(await readFile(resolve(root, `wasm/${manifest.short}/replay_admission_bg.wasm`)));
     await verifyRuntimeJavascriptModules(
         resolve(root, 'wasm', manifest.short),
         manifest.javascriptModules,
+        { replayAdmission: hasAdmission },
     );
 
     exactKeys(manifest.multiplayerContent, ['demo', 'full', 'schema'], `${manifestPath} multiplayerContent`);
@@ -305,6 +319,7 @@ export async function verifyRuntimeCorpus(directory, {
         throw new Error('wasm/latest.json must exactly equal one versioned manifest');
     }
     if (expectedContract !== undefined) {
+        if (!Object.hasOwn(selected.manifest.files, 'replayAdmissionWasm')) throw new Error('latest current runtime is missing replay admission');
         exact(selected.manifest.netProtocol, expectedContract.netProtocol, 'latest current netProtocol');
         exact(selected.manifest.ticketSchema, expectedContract.ticketSchema, 'latest current ticketSchema');
         exact(

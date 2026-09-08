@@ -6,6 +6,26 @@
 
 use std::collections::HashSet;
 
+/// Diagnostic selection of the last startup boundary that reserves bandwidth
+/// for visual assets. Playback requests never participate in this policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum StartupWarmupBoundary {
+    Eager,
+    DataTransferred,
+    FirstFrame,
+}
+
+impl StartupWarmupBoundary {
+    pub(crate) fn from_query(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            None | Some("first-frame") => Ok(Self::FirstFrame),
+            Some("deferred") => Ok(Self::DataTransferred),
+            Some("eager") => Ok(Self::Eager),
+            Some(value) => Err(format!("unknown audio-downloads policy {value:?}")),
+        }
+    }
+}
+
 const TRANSIENT_EFFECT_LIFETIME_MS: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,6 +270,20 @@ pub(crate) fn should_cache_decoded(decoded_bytes: u64, budget_bytes: u64) -> boo
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn startup_warmup_boundary_defaults_to_frame_and_preserves_comparison_modes() {
+        use super::StartupWarmupBoundary;
+        for (query, expected) in [
+            (None, StartupWarmupBoundary::FirstFrame),
+            (Some("first-frame"), StartupWarmupBoundary::FirstFrame),
+            (Some("deferred"), StartupWarmupBoundary::DataTransferred),
+            (Some("eager"), StartupWarmupBoundary::Eager),
+        ] {
+            assert_eq!(StartupWarmupBoundary::from_query(query).unwrap(), expected);
+        }
+        assert!(StartupWarmupBoundary::from_query(Some("typo")).is_err());
+    }
+
     use super::*;
 
     #[test]

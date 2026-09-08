@@ -881,6 +881,8 @@ impl FrameClock {
 /// workers, and live network diagnostics are process resources, not game
 /// state. Persisting them would create a fake/default runtime on restore.
 pub(super) struct TimelineRuntime {
+    /// Actual save/replay restoration awaiting process-owned lifecycle sync.
+    state_restored: bool,
     /// Single authority for history, network, and replay frame identity.
     current_frame: TimelineFrame,
     /// Dense host-record position, separate from the lockstep cursor.
@@ -895,6 +897,8 @@ pub(super) struct TimelineRuntime {
     pending_external_facts: robin_engine::engine::ExternalFacts,
 
     pub(super) replay_recorder: Option<ReplayRecorder>,
+    sealed_replay_header: Option<robin_engine::replay::ReplayHeader>,
+    bootstrap_save: Option<(ReplaySaveIdentity, robin_engine::replay::ReplaySaveMarker)>,
     pub(super) replay_player: Option<ReplayPlayer>,
     pub(super) rollback_checker: Option<RollbackChecker>,
     pub(super) rewind_buffer: RewindBuffer,
@@ -950,6 +954,7 @@ impl TimelineRuntime {
         local_is_host: bool,
     ) -> Self {
         Self {
+            state_restored: false,
             current_frame: TimelineFrame::ZERO,
             replay_ordinal: ReplayFrameOrdinal::ZERO,
             pending_inputs: BTreeMap::new(),
@@ -959,6 +964,8 @@ impl TimelineRuntime {
             execution_trace: FrameExecutionTrace::default(),
             pending_external_facts: robin_engine::engine::ExternalFacts::default(),
             replay_recorder: replay.recorder,
+            sealed_replay_header: None,
+            bootstrap_save: None,
             replay_player: replay.player,
             rollback_checker: replay.rollback_checker,
             rewind_buffer: replay.rewind_buffer,
@@ -1347,7 +1354,16 @@ impl TimelineRuntime {
                 "replay player cursor diverged from timeline-owned host ordinal"
             );
             let is_terminal_frame = frame + 1 >= player.total_frames();
-            if !is_terminal_frame && let Some(expected) = player.hash_for_frame(frame) {
+            // A pristine Restart records its first hash after restoration,
+            // unlike ordinary pre-load frame hashes. Check it at the boundary.
+            let pristine_restart = frame == 0
+                && player
+                    .load_back_for_frame(0)
+                    .is_some_and(|load| load.to_frame == 0);
+            if !is_terminal_frame
+                && !pristine_restart
+                && let Some(expected) = player.hash_for_frame(frame)
+            {
                 let actual = robin_engine::replay::state_hash(engine);
                 if actual != expected {
                     tracing::error!(
@@ -1450,9 +1466,9 @@ impl TimelineRuntime {
         engine: &Engine,
         assets: &LevelAssets,
     ) {
-        let replay_ordinal = self.replay_ordinal;
         match event {
             crate::main_entry::SaveLoadEvent::SaveWritten { identity } => {
+                let replay_ordinal = self.replay_ordinal;
                 let Some(recorder) = self.replay_recorder.as_mut() else {
                     return;
                 };
@@ -1491,6 +1507,26 @@ impl TimelineRuntime {
                 identity,
                 is_continue,
             } => {
+                self.state_restored = true;
+                let reopened = self.reopen_recording_after_terminal_restore(identity);
+                if reopened {
+                    // The load replaced every effect admitted before it. Keep
+                    // this host frame's scheduling flags, but give the new
+                    // attempt a clean recording transaction.
+                    frame.external_actions.clear();
+                    frame.external_actions_applied = 0;
+                    frame.post_commands.commands.clear();
+                    frame.post_external_actions.clear();
+                    frame.post_external_actions_applied = 0;
+                    frame.external_facts = Default::default();
+                    frame.modal_dismissals.clear();
+                    frame.replay_modal_dismissals = Default::default();
+                    frame.replay_timeline_transition = None;
+                    frame.replay_record_consumed = false;
+                    frame.recorder_state = RecorderFrameState::Inactive;
+                    frame.recorder_hash = Some(robin_engine::replay::state_hash(engine));
+                }
+                let replay_ordinal = self.replay_ordinal;
                 if let Some(recorder) = self.replay_recorder.as_mut() {
                     recorder.record_input_taint(
                         robin_engine::replay_rankability::InputTaintKind::StateLoad,
@@ -1544,6 +1580,53 @@ impl TimelineRuntime {
         }
     }
 
+    pub(super) fn note_state_restored(&mut self) {
+        self.state_restored = true;
+    }
+
+    pub(super) fn take_state_restored(&mut self) -> bool {
+        std::mem::take(&mut self.state_restored)
+    }
+
+    fn reopen_recording_after_terminal_restore(&mut self, identity: ReplaySaveIdentity) -> bool {
+        let Some(header) = self.sealed_replay_header.as_ref() else {
+            return false;
+        };
+        let Some((_, marker)) = self.bootstrap_save.filter(|(saved, _)| *saved == identity) else {
+            // TODO(replay): arbitrary post-terminal saves need an embedded
+            // initial snapshot. The original campaign header cannot reconstruct
+            // them. Never export the previous terminal attempt as this run.
+            let reason = "replay unavailable after post-terminal load of a non-bootstrap save";
+            crate::http_server::invalidate_replay_buffer(reason);
+            tracing::warn!("{reason}");
+            return false;
+        };
+        match super::replay_init::restart_recording(header.clone()) {
+            Ok(mut recorder) => {
+                // Playback constructs the original pristine state, pins it, and
+                // restores it before the first real input. This reproduces
+                // persisted-state projection and normal post-load fixups without
+                // inserting an invented simulation frame.
+                recorder.write_save_marker(0, marker);
+                self.replay_recorder = Some(recorder);
+                self.sealed_replay_header = None;
+                self.replay_ordinal = ReplayFrameOrdinal::ZERO;
+                self.recorded_save_frames_by_identity.clear();
+                self.recorded_save_frames_by_identity
+                    .insert(identity, (ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO));
+                tracing::info!("Recording restarted mission from its bootstrap save boundary");
+                true
+            }
+            Err(error) => {
+                let reason =
+                    format!("replay unavailable: could not start restarted recording: {error}");
+                crate::http_server::invalidate_replay_buffer(reason.clone());
+                tracing::error!("{reason}");
+                false
+            }
+        }
+    }
+
     /// Register the bootstrap Restart auto-save as a frame-0 save marker.
     ///
     /// That save is captured during mission setup, immediately before
@@ -1551,7 +1634,20 @@ impl TimelineRuntime {
     /// boundary state the replay header reconstructs.  Registering it here
     /// lets a later script-triggered restart record as a load-back to
     /// frame 0 instead of a timeline discontinuity.
-    pub(super) fn register_bootstrap_save(&mut self, engine: &Engine, host: &Host, game: &Game) {
+    pub(super) fn register_bootstrap_save(
+        &mut self,
+        engine: &Engine,
+        host: &Host,
+        game: &Game,
+        restart_save_started: bool,
+        session_identity: Option<crate::save_file::ReplaySaveIdentity>,
+    ) {
+        if !restart_save_started {
+            return;
+        }
+        // TODO: Background writes can still fail after admission. Publishing a
+        // marker only on completion requires retaining this exact frame-0 state
+        // and handling completion before a subsequent load-back is recorded.
         let Some(recorder) = self.replay_recorder.as_mut() else {
             return;
         };
@@ -1561,8 +1657,10 @@ impl TimelineRuntime {
             "bootstrap save must be registered before the first recorded frame"
         );
         let hash = robin_engine::replay::state_hash(engine);
-        let identity = GameRuntimeSnapshot::identity_of_live(engine, host, game)
-            .unwrap_or_else(|error| panic!("bootstrap save identity failed: {error:#}"));
+        let identity = session_identity.unwrap_or_else(|| {
+            GameRuntimeSnapshot::identity_of_live(engine, host, game)
+                .unwrap_or_else(|error| panic!("bootstrap save identity failed: {error:#}"))
+        });
         recorder.write_save_marker(
             0,
             robin_engine::replay::ReplaySaveMarker {
@@ -1570,6 +1668,13 @@ impl TimelineRuntime {
                 timeline_frame: 0,
             },
         );
+        self.bootstrap_save = Some((
+            identity,
+            robin_engine::replay::ReplaySaveMarker {
+                state_hash: hash,
+                timeline_frame: 0,
+            },
+        ));
         self.recorded_save_frames_by_identity
             .insert(identity, (ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO));
     }
@@ -1612,6 +1717,7 @@ impl TimelineRuntime {
             assets,
         )?;
         if let Some(target) = adopted_timeline {
+            self.state_restored = true;
             // The boundary helper resets rewind itself because debugger-step
             // callers use it directly. TimelineRuntime additionally rebases
             // every reconstruction consumer on the adopted pre-tick state.
@@ -1817,7 +1923,8 @@ impl TimelineRuntime {
             RecorderFrameState::Finished,
             "terminal replay must be sealed after recorder finalization"
         );
-        if self.replay_recorder.take().is_some() {
+        if let Some(recorder) = self.replay_recorder.take() {
+            self.sealed_replay_header = Some(recorder.into_recording_header());
             tracing::debug!(
                 replay_ordinal = self.replay_ordinal.number(),
                 "sealed canonical replay at terminal mission record"
@@ -1904,6 +2011,17 @@ pub(super) fn apply_replay_timeline_events_at_boundary(
         ));
         game.apply_post_load_sync(load_back.is_continue);
         game.post_load_resolution_resync();
+        if frame == 0
+            && load_back.to_frame == 0
+            && let Some(expected) = player.hash_for_frame(0)
+        {
+            let actual = robin_engine::replay::state_hash(&manager.engine);
+            if actual != expected {
+                return Err(format!(
+                    "Replay desync after bootstrap restore: expected {expected:016x}, got {actual:016x}"
+                ));
+            }
+        }
         *rewind_buffer = RewindBuffer::new();
         tracing::info!(
             frame,
@@ -2140,6 +2258,369 @@ mod tests {
         frame.recorder_state = RecorderFrameState::Finished;
 
         assert!(!timeline.seal_terminal_recording(&frame));
+    }
+
+    #[test]
+    fn bootstrap_marker_requires_an_admitted_restart_save() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut assets = LevelAssets::new();
+        let engine = Engine::new_for_test(
+            1024.0,
+            768.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .unwrap();
+        let host = Host::scratch(1024.0, 768.0);
+        let game = Game::default();
+        for restart_save_started in [false, true] {
+            let path = directory
+                .path()
+                .join(format!("{restart_save_started}.rhrec.jsonl"));
+            let recorder = ReplayRecorder::new(
+                path.to_str().unwrap(),
+                "bootstrap".into(),
+                test_mission_assets("bootstrap"),
+                0,
+                robin_engine::engine::SimConfig::default(),
+                engine.campaign(),
+            )
+            .unwrap();
+            let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
+            timeline.replay_recorder = Some(recorder);
+            timeline.register_bootstrap_save(&engine, &host, &game, restart_save_started, None);
+            if restart_save_started {
+                let identity =
+                    GameRuntimeSnapshot::identity_of_live(&engine, &host, &game).unwrap();
+                assert_eq!(
+                    timeline.recorded_save_frames_by_identity.get(&identity),
+                    Some(&(ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO)),
+                );
+            } else {
+                assert!(timeline.recorded_save_frames_by_identity.is_empty());
+            }
+            // Metadata is valid only beside an authoritative recorded frame.
+            assert!(timeline.replay_recorder.as_mut().unwrap().write_frame(
+                0,
+                0,
+                1,
+                robin_engine::engine::SimulationFrameInput::new(Vec::new()).with_hourglass(true),
+                Vec::new(),
+                None,
+            ));
+            drop(timeline);
+            let replay =
+                robin_engine::replay::ReplayData::from_file(path.to_str().unwrap()).unwrap();
+            assert_eq!(
+                replay.save_marker_for_frame(0),
+                restart_save_started.then(|| robin_engine::replay::ReplaySaveMarker {
+                    state_hash: robin_engine::replay::state_hash(&engine),
+                    timeline_frame: 0,
+                }),
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_restart_exports_new_attempt_and_replays_its_restore_boundary() {
+        let _serial = crate::http_server::replay_spool_test_lock();
+        let mut assets = LevelAssets::new();
+        let campaign = robin_engine::campaign::Campaign::default();
+        let mut engine =
+            Engine::new_for_test(1024.0, 768.0, campaign.clone(), &mut assets).unwrap();
+        let mut host = Host::scratch(1024.0, 768.0);
+        let mut game = Game::default();
+        engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput::new(vec![
+                    PlayerCommand::SetFastForward.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .unwrap();
+        let pristine = engine.clone();
+        let checkpoint = crate::save_file::PreparedGameSave::capture_session_restart(
+            &engine,
+            &host,
+            &game,
+            crate::save_file::SaveHeader::new(
+                1,
+                test_mission_assets("restart"),
+                "Restart".into(),
+                crate::save_file::SaveProvenance::new("Restart".into(), 0, "Player".into())
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let identity = checkpoint.replay_identity().unwrap();
+        let recorder = ReplayRecorder::with_writer(
+            Box::new(crate::http_server::reset_replay_buffer()),
+            "restart".into(),
+            test_mission_assets("restart"),
+            17,
+            Default::default(),
+            &campaign,
+        )
+        .unwrap();
+        let mut timeline = timeline_for_trace_test(FrameContract::Graphical);
+        timeline.replay_recorder = Some(recorder);
+        timeline.register_bootstrap_save(&engine, &host, &game, true, Some(identity));
+
+        // Complete the first attempt. Its immutable export must remain intact
+        // while the active spool switches to each subsequent restored attempt.
+        let mut terminal = MissionFrame::new(0);
+        terminal.bind_timeline(timeline.current_frame());
+        terminal
+            .post_commands
+            .push(PlayerCommand::ApplyQuitMissionUpdates {
+                exit_code: GameCode::LevelFailed,
+                difficulty: Default::default(),
+                completed_at_unix_seconds: Some(1),
+                campaign_run_nonce: Some(2),
+            });
+        timeline.begin_recording(&mut terminal, true);
+        terminal.commit_timeline_after(timeline.advance_frame());
+        timeline.finish_recording(&mut terminal);
+        timeline.seal_terminal_recording(&terminal);
+        let previous = crate::http_server::active_replay_snapshot().unwrap();
+        let original = previous.parse_sync().unwrap();
+
+        for attempt in 0..2 {
+            engine.test_set_frame_counter(123);
+            checkpoint
+                .clone()
+                .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+                .unwrap();
+            let restored_hash = robin_engine::replay::state_hash(&engine);
+            assert_ne!(restored_hash, robin_engine::replay::state_hash(&pristine));
+            let mut frame = MissionFrame::new(0);
+            frame.bind_timeline(timeline.current_frame());
+            timeline.note_save_load_event(
+                crate::main_entry::SaveLoadEvent::LoadApplied {
+                    identity,
+                    is_continue: false,
+                },
+                &mut frame,
+                &engine,
+                &assets,
+            );
+            assert!(timeline.replay_recorder.is_some());
+            assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
+            assert_eq!(frame.recorder_hash, Some(restored_hash));
+            frame
+                .post_commands
+                .push(PlayerCommand::ApplyQuitMissionUpdates {
+                    exit_code: GameCode::LevelFailed,
+                    difficulty: Default::default(),
+                    completed_at_unix_seconds: Some(10 + attempt),
+                    campaign_run_nonce: Some(2),
+                });
+            timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+            timeline.begin_recording(&mut frame, true);
+            frame.commit_timeline_after(timeline.advance_frame());
+            timeline.finish_recording(&mut frame);
+            timeline.seal_terminal_recording(&frame);
+            let restarted = crate::http_server::active_replay_snapshot()
+                .unwrap()
+                .parse_sync()
+                .unwrap();
+            let compact = robin_replay_format::encode_compact(
+                &restarted,
+                robin_replay_format::ENGINE_VERSION_HASH,
+            )
+            .unwrap();
+            let (_, restarted) = robin_replay_format::decode_compact(&compact).unwrap();
+            assert_eq!(restarted.frame_count(), 1);
+            assert_eq!(restarted.header().campaign, original.header().campaign);
+            assert_eq!(restarted.header().rng_seed, 17);
+            assert_eq!(restarted.load_back_for_frame(0).unwrap().to_frame, 0);
+            assert!(
+                restarted
+                    .rankability()
+                    .unwrap()
+                    .taints()
+                    .iter()
+                    .any(|taint| taint.kind
+                        == robin_engine::replay_rankability::InputTaintKind::StateLoad)
+            );
+            assert_eq!(
+                serde_json::to_value(
+                    &previous
+                        .parse_sync()
+                        .unwrap()
+                        .frame(0)
+                        .unwrap()
+                        .input
+                        .post_commands
+                )
+                .unwrap(),
+                serde_json::to_value(&original.frame(0).unwrap().input.post_commands).unwrap(),
+            );
+
+            for contract in [FrameContract::Graphical, FrameContract::Headless] {
+                let mut playback = timeline_for_trace_test(contract);
+                playback.replay_player = Some(ReplayPlayer::new(restarted.clone()));
+                let mut manager =
+                    robin_engine::engine_manager::EngineManager::new(pristine.clone());
+                let mut playback_host = Host::scratch(1024.0, 768.0);
+                let mut playback_game = Game::default();
+                // Match both drivers: open the frame first, then pin and restore
+                // before admitting input. The recorded hash is post-restore.
+                playback.begin_frame(0, &manager.engine, &assets);
+                playback
+                    .apply_playback_timeline_events(
+                        &mut playback_host,
+                        &mut playback_game,
+                        &mut manager,
+                        &assets,
+                    )
+                    .unwrap();
+                assert_eq!(
+                    robin_engine::replay::state_hash(&manager.engine),
+                    restored_hash
+                );
+            }
+            let mut corrupted = restarted.clone();
+            corrupted
+                .replace_state_hashes(BTreeMap::from([(0, restored_hash ^ 1)]))
+                .unwrap();
+            let mut playback = timeline_for_trace_test(FrameContract::Headless);
+            playback.replay_player = Some(ReplayPlayer::new(corrupted));
+            let mut manager = robin_engine::engine_manager::EngineManager::new(pristine.clone());
+            assert!(
+                playback
+                    .apply_playback_timeline_events(
+                        &mut Host::scratch(1024.0, 768.0),
+                        &mut Game::default(),
+                        &mut manager,
+                        &assets,
+                    )
+                    .unwrap_err()
+                    .contains("desync after bootstrap restore")
+            );
+            let mut playback = timeline_for_trace_test(FrameContract::Headless);
+            playback.replay_player = Some(ReplayPlayer::new(restarted));
+            manager.engine.test_set_frame_counter(999);
+            assert!(
+                playback
+                    .apply_playback_timeline_events(
+                        &mut Host::scratch(1024.0, 768.0),
+                        &mut Game::default(),
+                        &mut manager,
+                        &assets,
+                    )
+                    .unwrap_err()
+                    .contains("save-marker desync")
+            );
+        }
+        // A different post-terminal save cannot be reconstructed from the
+        // original header; fail the active export instead of advertising stale data.
+        let foreign = crate::save_file::PreparedGameSave::capture_session_restart(
+            &engine,
+            &host,
+            &game,
+            checkpoint.header.clone(),
+        )
+        .unwrap();
+        let mut frame = MissionFrame::new(0);
+        frame.bind_timeline(timeline.current_frame());
+        timeline.note_save_load_event(
+            crate::main_entry::SaveLoadEvent::LoadApplied {
+                identity: foreign.replay_identity().unwrap(),
+                is_continue: false,
+            },
+            &mut frame,
+            &engine,
+            &assets,
+        );
+        assert!(timeline.replay_recorder.is_none());
+        assert!(
+            crate::http_server::replay_buffer_snapshot()
+                .unwrap_err()
+                .contains("non-bootstrap save")
+        );
+        assert_eq!(previous.parse_sync().unwrap().frame_count(), 1);
+    }
+
+    #[test]
+    fn session_restart_records_load_back_to_its_bootstrap_marker() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session-restart.rhrec.jsonl");
+        let mut assets = LevelAssets::new();
+        let mut engine =
+            Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets).unwrap();
+        let mut host = Host::scratch(1024.0, 768.0);
+        let mut game = Game::default();
+        let header = crate::save_file::SaveHeader::new(
+            1,
+            test_mission_assets("restart"),
+            "Restart".into(),
+            crate::save_file::SaveProvenance::new("Restart".into(), 0, "Player".into()).unwrap(),
+        )
+        .unwrap();
+        let checkpoint = crate::save_file::PreparedGameSave::capture_session_restart(
+            &engine, &host, &game, header,
+        )
+        .unwrap();
+        let identity = checkpoint.replay_identity().unwrap();
+        let marker_hash = robin_engine::replay::state_hash(&engine);
+        let recorder = ReplayRecorder::new(
+            path.to_str().unwrap(),
+            "restart".into(),
+            test_mission_assets("restart"),
+            0,
+            Default::default(),
+            engine.campaign(),
+        )
+        .unwrap();
+        let mut timeline = timeline_for_trace_test(FrameContract::Headless);
+        timeline.replay_recorder = Some(recorder);
+        timeline.register_bootstrap_save(&engine, &host, &game, true, Some(identity));
+        for _ in 0..3 {
+            timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+            let mut frame = MissionFrame::new(0);
+            frame.bind_timeline(timeline.current_frame());
+            timeline.begin_recording(&mut frame, true);
+            frame.commit_timeline_after(timeline.advance_frame());
+            timeline.finish_recording(&mut frame);
+        }
+        engine.test_set_frame_counter(123);
+        checkpoint
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        let mut frame = MissionFrame::new(0);
+        frame.bind_timeline(timeline.current_frame());
+        timeline.note_save_load_event(
+            crate::main_entry::SaveLoadEvent::LoadApplied {
+                identity,
+                is_continue: false,
+            },
+            &mut frame,
+            &engine,
+            &assets,
+        );
+        assert!(timeline.take_state_restored());
+        assert!(!timeline.take_state_restored());
+        assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
+        timeline.begin_execution_trace(FrameContractStage::TimelineBegin);
+        timeline.begin_recording(&mut frame, true);
+        frame.commit_timeline_after(timeline.advance_frame());
+        timeline.finish_recording(&mut frame);
+        drop(timeline);
+        let replay = robin_engine::replay::ReplayData::from_file(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            replay.save_marker_for_frame(0).unwrap().state_hash,
+            marker_hash
+        );
+        assert_eq!(
+            replay.load_back_for_frame(3),
+            Some(robin_engine::replay::ReplayLoadBack {
+                to_frame: 0,
+                is_continue: false
+            })
+        );
     }
 
     #[test]

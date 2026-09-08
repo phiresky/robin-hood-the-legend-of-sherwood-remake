@@ -266,11 +266,12 @@ fn validate_content_mount_inner(
             source,
         })?;
         let document =
-            crate::strict_json::from_slice::<SimulationContentComponentDocumentV1>(&bytes)
-                .map_err(|error| ManifestError::InvalidComponent {
+            SimulationContentComponentDocumentV1::from_bitcode(&bytes).map_err(|error| {
+                ManifestError::InvalidComponent {
                     path: relative.clone(),
                     message: error.to_string(),
-                })?;
+                }
+            })?;
         document
             .validate()
             .map_err(|error| ManifestError::InvalidComponent {
@@ -287,7 +288,7 @@ fn validate_content_mount_inner(
         }
         let canonical =
             document
-                .canonical_bytes()
+                .bitcode_bytes()
                 .map_err(|error| ManifestError::InvalidComponent {
                     path: relative.clone(),
                     message: error.to_string(),
@@ -295,7 +296,7 @@ fn validate_content_mount_inner(
         if canonical != bytes {
             return Err(ManifestError::InvalidComponent {
                 path: relative,
-                message: "component bytes are not canonical JSON".into(),
+                message: "component bytes are not canonical bitcode".into(),
             });
         }
         documents.insert(entry.kind, document);
@@ -490,7 +491,7 @@ mod tests {
     }
 
     fn component(kind: SimulationContentComponentKindV1) -> SimulationContentComponentV1 {
-        let bytes = document(kind).canonical_bytes().unwrap();
+        let bytes = document(kind).bitcode_bytes().unwrap();
         SimulationContentComponentV1 {
             kind,
             component_schema_version: 1,
@@ -521,7 +522,7 @@ mod tests {
             edition: OfficialContentEditionV1::Demo,
             subject: subject(),
             closure: ContentClosureKindV1::StaticPreparedMissionContentProjection,
-            projection_schema_version: 1,
+            projection_schema_version: 2,
             resource_locale_root: robin_run_protocol::ResourceLocaleRootV1::new("1033").unwrap(),
             speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
             components: kinds.into_iter().map(component).collect(),
@@ -534,7 +535,7 @@ mod tests {
         for component in &manifest.components {
             std::fs::write(
                 root.join(simulation_component_filename_v1(component.kind)),
-                document(component.kind).canonical_bytes().unwrap(),
+                document(component.kind).bitcode_bytes().unwrap(),
             )
             .unwrap();
         }
@@ -604,7 +605,7 @@ mod tests {
         write_tree(dir.path(), &approved);
         let path = subject_root(dir.path(), &subject())
             .unwrap()
-            .join("profiles.json");
+            .join("profiles.bitcode");
 
         std::fs::write(&path, b"changed").unwrap();
         assert!(matches!(
@@ -614,12 +615,12 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         assert!(matches!(
             validate_test_tree(dir.path(), &approved),
-            Err(ManifestError::MissingFile(path)) if path == "profiles.json"
+            Err(ManifestError::MissingFile(path)) if path == "profiles.bitcode"
         ));
         std::fs::write(
             &path,
             document(SimulationContentComponentKindV1::Profiles)
-                .canonical_bytes()
+                .bitcode_bytes()
                 .unwrap(),
         )
         .unwrap();
@@ -647,12 +648,12 @@ mod tests {
         write_tree(dir.path(), &approved);
         let path = subject_root(dir.path(), &subject())
             .unwrap()
-            .join("profiles.json");
+            .join("profiles.bitcode");
         std::fs::remove_file(&path).unwrap();
         std::io::Write::write_all(
             &mut outside,
             &document(SimulationContentComponentKindV1::Profiles)
-                .canonical_bytes()
+                .bitcode_bytes()
                 .unwrap(),
         )
         .unwrap();
@@ -715,7 +716,7 @@ mod tests {
 
         let path = subject_root(dir.path(), &subject())
             .unwrap()
-            .join("profiles.json");
+            .join("profiles.bitcode");
         let canonical = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, format!(" {canonical}")).unwrap();
         let mut noncanonical_manifest = approved.clone();

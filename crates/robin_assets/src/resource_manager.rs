@@ -72,12 +72,128 @@ impl EncodedPicture {
         }
     }
 
+    /// Inspect the image header without allocating or decoding frame pixels.
+    pub fn dimensions(&self) -> Result<(u16, u16)> {
+        match self.codec {
+            EncodedPictureCodec::JxlRgb565 | EncodedPictureCodec::JxlRgba565Keyed => {
+                Picture::jxl_dimensions(&self.bytes)
+            }
+        }
+    }
+
     pub fn decode(&self) -> Result<Picture> {
         match self.codec {
             EncodedPictureCodec::JxlRgb565 => Picture::load_jxl_rgb565(&self.bytes),
             EncodedPictureCodec::JxlRgba565Keyed => Picture::load_jxl_rgba565_keyed(&self.bytes),
         }
     }
+}
+
+/// Pixel-derived geometry retained for engine setup before JXL frame decode.
+/// Shadows count as opaque, matching the engine's transparent-key hit test.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+pub struct PictureOpacityMetadata {
+    pub width: u16,
+    pub height: u16,
+    pub opaque_bounds: Option<(u16, u16, u16, u16)>,
+    /// Present only for frames whose pixels drive engine hit testing.
+    pub hit_mask: Option<Vec<bool>>,
+}
+
+impl PictureOpacityMetadata {
+    fn from_picture(picture: &Picture, with_mask: bool) -> Result<Self> {
+        if !matches!(
+            picture.pixel_format,
+            crate::picture::PixelFormat::Rgb16 | crate::picture::PixelFormat::Rgb15
+        ) {
+            bail!("engine picture metadata requires a 16-bit keyed picture");
+        }
+        let pixels = usize::from(picture.width) * usize::from(picture.height);
+        if picture.data.len() != pixels * 2 {
+            bail!(
+                "engine picture metadata: {} bytes for {}x{} picture",
+                picture.data.len(),
+                picture.width,
+                picture.height
+            );
+        }
+        Ok(Self {
+            width: picture.width,
+            height: picture.height,
+            opaque_bounds: picture.opaque_bounds_16(),
+            hit_mask: with_mask.then(|| {
+                picture
+                    .data
+                    .chunks_exact(2)
+                    .map(|px| {
+                        u16::from_le_bytes([px[0], px[1]])
+                            != crate::frame_holder::TRANSPARENT_COLOR_16
+                    })
+                    .collect()
+            }),
+        })
+    }
+
+    fn validate(&self, dimensions: (u16, u16), with_mask: bool) -> Result<()> {
+        if (self.width, self.height) != dimensions {
+            bail!("engine picture metadata dimensions disagree with image header");
+        }
+        if let Some((x, y, width, height)) = self.opaque_bounds {
+            if width == 0
+                || height == 0
+                || u32::from(x) + u32::from(width) > u32::from(self.width)
+                || u32::from(y) + u32::from(height) > u32::from(self.height)
+            {
+                bail!("engine picture metadata opaque bounds exceed picture dimensions");
+            }
+        }
+        match &self.hit_mask {
+            Some(mask) if mask.len() != usize::from(self.width) * usize::from(self.height) => {
+                bail!("engine picture metadata hit mask length disagrees with dimensions");
+            }
+            None if with_mask => bail!("engine picture metadata is missing its required hit mask"),
+            _ => {}
+        }
+        if let Some(mask) = &self.hit_mask {
+            let mut bounds: Option<(u16, u16, u16, u16)> = None;
+            for (index, opaque) in mask.iter().enumerate().filter(|(_, opaque)| **opaque) {
+                debug_assert!(*opaque);
+                let x = (index % usize::from(self.width)) as u16;
+                let y = (index / usize::from(self.width)) as u16;
+                bounds = Some(match bounds {
+                    Some((left, top, right, bottom)) => {
+                        (left.min(x), top.min(y), right.max(x), bottom.max(y))
+                    }
+                    None => (x, y, x, y),
+                });
+            }
+            let bounds = bounds
+                .map(|(left, top, right, bottom)| (left, top, right - left + 1, bottom - top + 1));
+            if bounds != self.opaque_bounds {
+                bail!("engine picture metadata hit mask disagrees with opaque bounds");
+            }
+        }
+        Ok(())
+    }
+
+    pub fn into_hit_mask(self) -> Result<robin_engine::minimap::HitMask> {
+        let mask = self
+            .hit_mask
+            .ok_or_else(|| anyhow!("picture metadata has no hit mask"))?;
+        robin_engine::minimap::HitMask::from_opacity(self.width, self.height, mask)
+            .map_err(|error| anyhow!(error))
+    }
+}
+
+fn needs_engine_picture_metadata(id: ResourceId) -> bool {
+    matches!(
+        id,
+        robin_engine::resource_ids::RHID_GROUND_FOCUS | robin_engine::resource_ids::RHMAP_CORNER
+    )
+}
+
+fn needs_engine_picture_mask(id: ResourceId, sub_id: usize) -> bool {
+    id == robin_engine::resource_ids::RHMAP_CORNER && sub_id == 1
 }
 
 // ---------------------------------------------------------------------------
@@ -272,7 +388,7 @@ fn read_wave_table(reader: &mut Reader<'_>, context: &str) -> Result<Vec<String>
 /// Does **not** create draw-manager surfaces; it stores decoded [`Picture`]
 /// data directly.  Delayed-load resources are loaded eagerly (simplification
 /// for modern HW).
-/// Resource values in historical wire order. Runtime recovery policy is
+/// Resource values in v16 shipping wire order. Runtime recovery policy is
 /// owned separately; adding runtime bookkeeping must not add payload fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ResourceData {
@@ -287,6 +403,8 @@ pub struct ResourceData {
     strings: HashMap<ResourceId, Vec<String>>,
     /// Wave/sound-path tables.
     waves: HashMap<ResourceId, Vec<String>>,
+    /// v16: selected engine geometry, exported before encoding interface pixels.
+    picture_opacity: HashMap<ResourceId, Vec<Option<PictureOpacityMetadata>>>,
 }
 
 /// Legacy origin/reference metadata retained for exact serialized compatibility.
@@ -832,30 +950,160 @@ impl ResourceManager {
             .ok_or_else(|| anyhow!("resource {id}: not found"))
     }
 
-    /// Number of sub-pictures in a collection.
+    /// Recover a dismissed collection, leaving resident JXL payloads encoded.
+    fn ensure_picture_metadata_loaded(&mut self, id: ResourceId) -> Result<()> {
+        if !self.data.pictures.contains_key(&id) && !self.data.encoded_pictures.contains_key(&id) {
+            self.recover_resource(id)?;
+        }
+        Ok(())
+    }
+
+    /// Number of slots in a collection, including missing and zero-size frames.
+    /// Does not decode resident JXL pictures.
     pub fn get_picture_count(&mut self, id: ResourceId) -> Result<usize> {
-        self.ensure_pictures_loaded(id)?;
+        self.ensure_picture_metadata_loaded(id)?;
         self.data
             .pictures
             .get(&id)
-            .map(|v| v.len())
+            .map(Vec::len)
+            .or_else(|| self.data.encoded_pictures.get(&id).map(Vec::len))
             .ok_or_else(|| anyhow!("resource {id}: not found"))
     }
 
-    /// Maximum (width, height) across all sub-pictures of a resource.
-    pub fn get_dimension(&mut self, id: ResourceId) -> Result<(u16, u16)> {
-        self.ensure_pictures_loaded(id)?;
-        let pics = self
-            .data
-            .pictures
+    /// Per-slot dimensions, preserving holes, without decoding JXL frame pixels.
+    /// Malformed image headers remain errors rather than becoming empty frames.
+    pub fn get_picture_dimensions(&mut self, id: ResourceId) -> Result<Vec<Option<(u16, u16)>>> {
+        self.ensure_picture_metadata_loaded(id)?;
+        if let Some(pictures) = self.data.pictures.get(&id) {
+            return Ok(pictures
+                .iter()
+                .map(|slot| slot.as_ref().map(|pic| (pic.width, pic.height)))
+                .collect());
+        }
+        self.data
+            .encoded_pictures
             .get(&id)
-            .ok_or_else(|| anyhow!("resource {id}: not found"))?;
+            .ok_or_else(|| anyhow!("resource {id}: not found"))?
+            .iter()
+            .enumerate()
+            .map(|(sub_id, slot)| {
+                slot.as_ref()
+                    .map(EncodedPicture::dimensions)
+                    .transpose()
+                    .with_context(|| format!("resource {id}/{sub_id}: picture dimensions"))
+            })
+            .collect()
+    }
 
+    /// Count present frames with nonzero width and height, without decoding pixels.
+    pub fn get_nonempty_picture_count(&mut self, id: ResourceId) -> Result<usize> {
+        Ok(self
+            .get_picture_dimensions(id)?
+            .into_iter()
+            .flatten()
+            .filter(|&(width, height)| width > 0 && height > 0)
+            .count())
+    }
+
+    /// Read pixel-derived engine geometry without decoding shipping JXL frames.
+    /// Resident decoded pictures take precedence, including after replacement.
+    pub fn get_picture_opacity_metadata(
+        &mut self,
+        id: ResourceId,
+    ) -> Result<Vec<Option<PictureOpacityMetadata>>> {
+        self.ensure_picture_metadata_loaded(id)?;
+        if let Some(pictures) = self.data.pictures.get(&id) {
+            return pictures
+                .iter()
+                .enumerate()
+                .map(|(index, picture)| {
+                    picture
+                        .as_ref()
+                        .map(|picture| {
+                            PictureOpacityMetadata::from_picture(
+                                picture,
+                                needs_engine_picture_mask(id, index),
+                            )
+                        })
+                        .transpose()
+                })
+                .collect();
+        }
+        let dimensions = self.get_picture_dimensions(id)?;
+        let metadata =
+            self.data.picture_opacity.get(&id).ok_or_else(|| {
+                anyhow!("resource {id}: missing exported engine picture metadata")
+            })?;
+        if metadata.len() != dimensions.len() {
+            bail!("resource {id}: engine picture metadata slot count mismatch");
+        }
+        for (index, (metadata, dimensions)) in metadata.iter().zip(dimensions).enumerate() {
+            match (metadata, dimensions) {
+                (Some(metadata), Some(dimensions)) => metadata
+                    .validate(dimensions, needs_engine_picture_mask(id, index))
+                    .with_context(|| format!("resource {id}/{index}"))?,
+                (None, None) => {}
+                _ => bail!("resource {id}/{index}: engine picture metadata slot presence mismatch"),
+            }
+        }
+        Ok(metadata.clone())
+    }
+
+    /// Export only the resources whose opaque pixels affect engine setup.
+    /// The offline v15 migration tool decodes only these selected images,
+    /// retaining their encoded payloads without re-encoding.
+    pub fn prepare_engine_picture_metadata(&mut self) -> Result<()> {
+        for id in self
+            .picture_resource_ids()
+            .into_iter()
+            .filter(|&id| needs_engine_picture_metadata(id))
+        {
+            let metadata = if let Some(pictures) = self.data.pictures.get(&id) {
+                pictures
+                    .iter()
+                    .enumerate()
+                    .map(|(index, picture)| {
+                        picture
+                            .as_ref()
+                            .map(|picture| {
+                                PictureOpacityMetadata::from_picture(
+                                    picture,
+                                    needs_engine_picture_mask(id, index),
+                                )
+                            })
+                            .transpose()
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            } else {
+                self.data.encoded_pictures[&id]
+                    .iter()
+                    .enumerate()
+                    .map(|(index, picture)| {
+                        picture
+                            .as_ref()
+                            .map(|picture| {
+                                PictureOpacityMetadata::from_picture(
+                                    &picture.decode()?,
+                                    needs_engine_picture_mask(id, index),
+                                )
+                            })
+                            .transpose()
+                    })
+                    .collect::<Result<Vec<_>>>()?
+            };
+            self.data.picture_opacity.insert(id, metadata);
+        }
+        Ok(())
+    }
+
+    /// Maximum (width, height) across all sub-pictures of a resource.
+    /// Reads JXL image headers without decoding frame pixels.
+    pub fn get_dimension(&mut self, id: ResourceId) -> Result<(u16, u16)> {
         let mut max_w: u16 = 0;
         let mut max_h: u16 = 0;
-        for pic in pics.iter().flatten() {
-            max_w = max_w.max(pic.width);
-            max_h = max_h.max(pic.height);
+        for (width, height) in self.get_picture_dimensions(id)?.into_iter().flatten() {
+            max_w = max_w.max(width);
+            max_h = max_h.max(height);
         }
         if max_w == 0 && max_h == 0 {
             bail!("resource {id}: no valid sub-pictures");
@@ -1011,6 +1259,7 @@ impl ResourceManager {
         F: FnMut(&Picture) -> Result<EncodedPicture>,
     {
         self.invalidate_picture_cache();
+        self.prepare_engine_picture_metadata()?;
         let ids: Vec<ResourceId> = self.data.pictures.keys().copied().collect();
         let mut encoded_count = 0usize;
         for id in ids {
@@ -1204,6 +1453,16 @@ impl ResourceManager {
         self.data
             .pictures
             .extend(src.data.pictures.iter().map(|(k, v)| (*k, v.clone())));
+        // Replacing a collection must also replace (or invalidate) its geometry.
+        for id in src.picture_resource_ids() {
+            self.data.picture_opacity.remove(&id);
+        }
+        self.data.picture_opacity.extend(
+            src.data
+                .picture_opacity
+                .iter()
+                .map(|(id, metadata)| (*id, metadata.clone())),
+        );
         self.data.encoded_pictures.extend(
             src.data
                 .encoded_pictures
@@ -1312,6 +1571,133 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picture_metadata_preserves_holes_zero_sizes_and_decoded_precedence() {
+        let mut manager = ResourceManager::new();
+        manager.disable_recovery_for_shipping();
+        manager.data.pictures.insert(
+            42,
+            vec![
+                None,
+                Some(Picture::default()),
+                Some(Picture {
+                    width: 2,
+                    height: 3,
+                    ..Picture::default()
+                }),
+                Some(Picture {
+                    width: 0,
+                    height: 7,
+                    ..Picture::default()
+                }),
+                Some(Picture {
+                    width: 9,
+                    height: 0,
+                    ..Picture::default()
+                }),
+            ],
+        );
+        // A warmed decoded collection takes precedence over its encoded source.
+        manager.data.encoded_pictures.insert(42, vec![]);
+        assert_eq!(manager.get_picture_count(42).unwrap(), 5);
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert_eq!(manager.get_dimension(42).unwrap(), (9, 7));
+        assert_eq!(
+            manager.get_picture_dimensions(42).unwrap(),
+            [None, Some((0, 0)), Some((2, 3)), Some((0, 7)), Some((9, 0))]
+        );
+        manager
+            .data
+            .pictures
+            .insert(43, vec![None, Some(Picture::default())]);
+        assert_eq!(manager.get_nonempty_picture_count(43).unwrap(), 0);
+        assert!(manager.get_dimension(43).is_err());
+        assert!(manager.get_picture_count(99).is_err());
+        assert!(manager.get_nonempty_picture_count(99).is_err());
+    }
+
+    #[test]
+    fn encoded_picture_counts_read_headers_without_decoding_pixels() {
+        // A 2x3 solid red RGB image generated by cjxl 0.11.2 (-d 0 -e 1).
+        let bytes = vec![
+            255, 10, 16, 0, 2, 128, 72, 8, 2, 1, 0, 156, 2, 75, 24, 155, 156, 113, 132, 3, 56, 128,
+            3, 56, 32, 74, 192, 57, 5, 1, 0, 32, 68, 128, 8, 16, 1, 34, 64, 228, 255, 145, 123,
+            250, 30, 90, 103, 87, 85, 85, 85, 37, 73, 146, 16, 80, 119, 119, 119, 119, 119, 255,
+            255, 255, 191, 85, 111, 102, 102, 102, 6, 254, 223, 191, 231, 191, 135, 198, 156, 115,
+            174, 181, 207, 189, 73, 146, 36, 4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189,
+            175, 187, 187, 187, 27, 254, 223, 191, 231, 191, 135, 198, 156, 115, 174, 181, 207,
+            189, 73, 146, 36, 4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189, 175, 187, 187,
+            187, 27, 254, 223, 191, 231, 191, 135, 198, 156, 115, 174, 181, 207, 189, 73, 146, 36,
+            4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189, 175, 187, 187, 187, 251, 2, 33, 0,
+            120, 248, 123, 244, 99, 0, 0,
+        ];
+        let encoded = EncodedPicture {
+            codec: EncodedPictureCodec::JxlRgb565,
+            bytes,
+        };
+        let decoded = encoded.decode().unwrap();
+        assert_eq!(
+            encoded.dimensions().unwrap(),
+            (decoded.width, decoded.height)
+        );
+        let mut manager = ResourceManager::new();
+        manager.disable_recovery_for_shipping();
+        manager
+            .data
+            .encoded_pictures
+            .insert(42, vec![None, Some(encoded)]);
+        assert_eq!(manager.get_picture_count(42).unwrap(), 2);
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert_eq!(manager.get_dimension(42).unwrap(), (2, 3));
+        assert_eq!(
+            manager.get_picture_dimensions(42).unwrap(),
+            [None, Some((2, 3))]
+        );
+        assert!(manager.pictures_raw(42).is_none());
+
+        // Header inspection must not start pixel decode or require frame data.
+        let picture = manager.data.encoded_pictures.get_mut(&42).unwrap()[1]
+            .as_mut()
+            .unwrap();
+        let header_len = (1..picture.bytes.len())
+            .find(|&len| Picture::jxl_dimensions(&picture.bytes[..len]).is_ok())
+            .unwrap();
+        picture.bytes.truncate(header_len);
+        assert!(picture.decode().is_err());
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert!(manager.pictures_raw(42).is_none());
+    }
+
+    #[test]
+    fn picture_metadata_recovers_dismissed_legacy_collections() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset("buttons.res", resource_file(b"BTTN", 42, &[0; 8]))
+            .unwrap();
+        let files = Arc::new(SbFileSystem::new(assets).snapshot());
+        let mut manager = ResourceManager::with_files(files);
+        manager.attach_resource_file("buttons.res").unwrap();
+        manager.dismiss_resource(42);
+        assert!(manager.pictures_raw(42).is_none());
+        assert_eq!(manager.get_picture_count(42).unwrap(), 4);
+        manager.dismiss_resource(42);
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 0);
+        assert_eq!(manager.get_picture_dimensions(42).unwrap(), [None; 4]);
+    }
+
+    #[test]
+    fn malformed_picture_headers_are_errors_but_slot_counts_need_no_header() {
+        let mut manager = ResourceManager::new();
+        manager
+            .data
+            .encoded_pictures
+            .insert(42, vec![Some(EncodedPicture::jxl_rgba565_keyed(vec![]))]);
+        assert_eq!(manager.get_picture_count(42).unwrap(), 1);
+        assert!(manager.get_nonempty_picture_count(42).is_err());
+        assert!(manager.get_dimension(42).is_err());
+        assert!(manager.pictures_raw(42).is_none());
+    }
 
     #[test]
     fn shipping_picture_ids_include_encoded_and_decoded_without_archive_metadata() {
@@ -1492,6 +1878,10 @@ mod tests {
         assert!(mgr.release_reference(1).is_err());
     }
 }
+
+#[cfg(test)]
+#[path = "resource_opacity_tests.rs"]
+mod opacity_tests;
 
 #[cfg(test)]
 mod cache_lookup_tests {

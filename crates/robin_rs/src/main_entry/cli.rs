@@ -1059,10 +1059,13 @@ mod tests {
             .write_to(&manager.save_path(slot))
             .unwrap();
 
-        let (resolved_slot, resolved) =
-            preflight_or_use_decoded_load(&manager, Some(decoded_slot), Some(decoded))
-                .unwrap()
-                .unwrap();
+        let (resolved_slot, resolved) = preflight_or_use_decoded_load(
+            &manager,
+            Some(decoded_slot),
+            Some(decoded.into_payload()),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(resolved_slot, slot);
         assert_eq!(resolved.engine.frame_counter(), 111);
     }

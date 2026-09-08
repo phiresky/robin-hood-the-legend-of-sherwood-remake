@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { gzipSync } from 'node:zlib';
-import { fetchJson, fetchPrecompressedWasm, fetchWithProgress } from './boot-transport.ts';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
+import { fetchJson, fetchPrecompressedWasm, fetchRuntimeWasm, fetchWithProgress } from './boot-transport.ts';
 import { withAbort } from './cancellation.ts';
 
 test('abort releases an uncooperative provider and prevents already-aborted operations', async () => {
@@ -26,7 +26,7 @@ test('download preserves bytes, progress, cache policy and cancellation signal',
         });
     assert.equal(response.headers.get('Content-Type'), 'application/wasm');
     assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [1, 2]);
-    assert.deepEqual(progress, [[2, 2]]);
+    assert.deepEqual(progress, [[2, 2], [2, 2]]);
 });
 
 test('precompressed wasm handles raw gzip, browser-decoded gzip and missing sidecars', async () => {
@@ -58,4 +58,93 @@ test('abort cancels a stalled response body and JSON provider', async () => {
     const json = fetchJson('manifest', jsonController.signal, async () => new Promise<Response>(() => {}));
     jsonController.abort();
     await assert.rejects(json, { name: 'AbortError' });
+});
+
+test('Chrome uses HTTP Brotli without a Brotli stream decoder or sidecar request', async t => {
+    const Original = globalThis.DecompressionStream;
+    t.mock.method(globalThis, 'DecompressionStream', function(format: string) {
+        if (format === 'brotli') throw new TypeError('unsupported');
+        return new Original(format as CompressionFormat);
+    });
+    const bytes = new Uint8Array([0, 97, 115, 109]);
+    const progress: number[][] = [];
+    const urls: string[] = [];
+    const response = await fetchRuntimeWasm('asset.wasm', true, 'force-cache', (loaded, total) => progress.push([loaded, total]), new AbortController().signal,
+        async url => { urls.push(String(url)); return new Response(bytes, { headers: { 'Content-Encoding': 'br', 'Content-Length': '2' } }); });
+    assert.equal(response.headers.get('Content-Type'), 'application/wasm');
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+    assert.deepEqual(progress, [[4, 0], [4, 4]]);
+    assert.deepEqual(urls, ['asset.wasm']);
+});
+
+test('Brotli raw streaming, missing sidecar and HTTP errors retain distinct outcomes', async () => {
+    const signal = new AbortController().signal;
+    const bytes = new Uint8Array([0, 97, 115, 109]);
+    const response = await fetchPrecompressedWasm('asset.br', 'force-cache', () => {}, signal,
+        async () => new Response(brotliCompressSync(bytes)), 'brotli');
+    assert.ok(response);
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+    assert.equal(await fetchPrecompressedWasm('missing.br', 'default', () => {}, signal,
+        async () => new Response(null, { status: 404 }), 'brotli'), undefined);
+    await assert.rejects(fetchPrecompressedWasm('bad.br', 'default', () => {}, signal,
+        async () => new Response(null, { status: 500 }), 'brotli'), /HTTP 500/u);
+});
+
+test('identity hosts use gzip when present and retain a raw-only response without refetching', async t => {
+    const Original = globalThis.DecompressionStream;
+    t.mock.method(globalThis, 'DecompressionStream', function(format: string) {
+        if (format === 'brotli') throw new TypeError('unsupported');
+        return new Original(format as CompressionFormat);
+    });
+    for (const hasGzip of [false, true]) {
+        const urls: string[] = [];
+        let cancelled = false;
+        const bytes = new Uint8Array([0, 97, 115, 109]);
+        const response = await fetchRuntimeWasm('asset.wasm', true, 'force-cache', () => {}, new AbortController().signal, async url => {
+            urls.push(String(url));
+            if (url === 'asset.wasm.gz') return hasGzip ? new Response(gzipSync(bytes)) : new Response(null, { status: 404 });
+            assert.equal(url, 'asset.wasm');
+            return new Response(new ReadableStream({
+                start(controller) { controller.enqueue(bytes); },
+                pull(controller) { controller.close(); },
+                cancel() { cancelled = true; },
+            }));
+        });
+        assert.equal(cancelled, hasGzip);
+        assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+        assert.deepEqual(urls, ['asset.wasm', 'asset.wasm.gz']);
+    }
+});
+
+test('Brotli-capable clients prefer the offline sidecar without fetching raw WASM', async () => {
+    const bytes = new Uint8Array([0, 97, 115, 109]);
+    const response = await fetchRuntimeWasm('asset.wasm', true, 'force-cache', () => {}, new AbortController().signal, async url => {
+        assert.equal(url, 'asset.wasm.br');
+        return new Response(brotliCompressSync(bytes));
+    });
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+});
+
+test('a gzip-only host remains usable and cancellation stops a stalled fallback', async t => {
+    const Original = globalThis.DecompressionStream;
+    t.mock.method(globalThis, 'DecompressionStream', function(format: string) {
+        if (format === 'brotli') throw new TypeError('unsupported');
+        return new Original(format as CompressionFormat);
+    });
+    const bytes = new Uint8Array([0, 97, 115, 109]);
+    const response = await fetchRuntimeWasm('asset.wasm', true, 'default', () => {}, new AbortController().signal, async url =>
+        url === 'asset.wasm.gz' ? new Response(gzipSync(bytes)) : new Response(null, { status: 404 }));
+    assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+    const controller = new AbortController();
+    let fallbackStarted!: () => void;
+    const entered = new Promise<void>(resolve => { fallbackStarted = resolve; });
+    let cancelled = false;
+    const pending = fetchRuntimeWasm('asset.wasm', true, 'default', () => {}, controller.signal, async url => {
+        if (url === 'asset.wasm.gz') { fallbackStarted(); return new Promise<Response>(() => {}); }
+        return new Response(new ReadableStream({ cancel() { cancelled = true; } }));
+    });
+    await entered;
+    controller.abort();
+    await assert.rejects(pending, { name: 'AbortError' });
+    assert.ok(cancelled);
 });

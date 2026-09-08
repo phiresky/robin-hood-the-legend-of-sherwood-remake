@@ -181,6 +181,8 @@ enum MetadataLoad {
 /// engine first reports a terminal result.
 pub(super) struct MissionLeaderboardRuntime {
     preparation: Option<MissionEndPreparation>,
+    mission_id: String,
+    multiplayer: bool,
 }
 
 impl MissionLeaderboardRuntime {
@@ -220,6 +222,8 @@ impl MissionLeaderboardRuntime {
             ),
         };
         Self {
+            mission_id: mission_id.clone(),
+            multiplayer,
             preparation: Some(MissionEndPreparation {
                 mission_id,
                 multiplayer,
@@ -231,6 +235,25 @@ impl MissionLeaderboardRuntime {
                 outcome: None,
             }),
         }
+    }
+
+    /// Restoring state after terminal presentation starts a new local attempt.
+    /// Its previous signed admission and frozen replay belong to the completed
+    /// attempt and must never be reused. Ordinary mid-mission loads leave the
+    /// still-unconsumed preparation alone.
+    pub(super) fn after_state_restore(&mut self, campaign: &Campaign) {
+        if self.preparation.is_some() {
+            return;
+        }
+        *self = Self::new(
+            campaign,
+            self.mission_id.clone(),
+            self.multiplayer,
+            RankedMissionAdmission::browse_only(
+                "state restored after the completed attempt; a new ranked admission is required",
+            ),
+            None,
+        );
     }
 
     /// Freeze the terminal outcome and transfer the prestarted metadata task
@@ -749,6 +772,51 @@ mod tests {
         RunContentIdentityV1, Signature64, SimulationSeed64, SpeechTimingAuthorityV1,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn terminal_restore_terminal_owns_a_fresh_unranked_preparation() {
+        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut engine = robin_engine::engine::Engine::new_for_test(
+            800.0,
+            600.0,
+            Campaign::default(),
+            &mut assets,
+        )
+        .unwrap();
+        let mut host = crate::host::Host::scratch(800.0, 600.0);
+        let mut game = crate::game::Game::default();
+        let checkpoint =
+            crate::save_file::GameRuntimeSnapshot::capture(&engine, &host, &game).unwrap();
+        let mut runtime = MissionLeaderboardRuntime::new(
+            engine.campaign(),
+            "RestartTest".into(),
+            false,
+            RankedMissionAdmission::browse_only("initial fixture admission"),
+            None,
+        );
+        runtime.after_state_restore(engine.campaign());
+        let first = runtime.capture_terminal(MissionEndOutcome::Lost).unwrap();
+        assert!(
+            matches!(&first.admission, RankedMissionAdmission::BrowseOnly { reason } if reason == "initial fixture admission")
+        );
+        assert!(runtime.capture_terminal(MissionEndOutcome::Lost).is_err());
+        engine.test_set_frame_counter(123);
+        checkpoint
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        runtime.after_state_restore(engine.campaign());
+        let second = runtime.capture_terminal(MissionEndOutcome::Lost).unwrap();
+        assert_eq!(first.mission_id, second.mission_id);
+        assert_eq!(
+            second.starting_campaign_bytes.as_ref(),
+            bitcode::encode(engine.campaign())
+        );
+        assert!(
+            matches!(second.admission, RankedMissionAdmission::BrowseOnly { ref reason } if reason.contains("new ranked admission"))
+        );
+        assert!(second.ranked_multiplayer_port.is_none());
+        assert!(runtime.capture_terminal(MissionEndOutcome::Lost).is_err());
+    }
 
     fn digest(byte: u8) -> Digest32 {
         Digest32::from_bytes([byte; 32])

@@ -109,3 +109,15 @@ test('rejects an identity vault and every orphan JavaScript module', async t => 
         /non-canonical relative import/u,
     );
 });
+
+test('replay validator is an explicitly authorized standalone second entry', async t => {
+    const root = await fixture();
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await writeFile(resolve(root, 'replay_admission.js'), 'export function validate_compact_replay() {}');
+    await assert.rejects(authorRuntimeJavascriptModules(root), /orphan/);
+    const claims = await authorRuntimeJavascriptModules(root, { replayAdmission: true });
+    assert.ok(claims.some(claim => claim.path === 'replay_admission.js'));
+    await verifyRuntimeJavascriptModules(root, claims, { replayAdmission: true });
+    await writeFile(resolve(root, 'replay_admission.js'), `import './${modulePath}';`);
+    await assert.rejects(authorRuntimeJavascriptModules(root, { replayAdmission: true }), /standalone/);
+});

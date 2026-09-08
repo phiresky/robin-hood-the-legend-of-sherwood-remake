@@ -29,7 +29,7 @@ use crate::level_data::LoadedLevel;
 
 pub const SIMULATION_CONTENT_DOCUMENT_SCHEMA_V1: u32 = 1;
 pub const SIMULATION_CONTENT_COMPONENT_SCHEMA_V1: u32 = 1;
-pub const PREPARED_MISSION_RUN_PROJECTION_SCHEMA_V1: u32 = 1;
+pub const PREPARED_MISSION_RUN_PROJECTION_SCHEMA_V1: u32 = 2;
 const _: () = assert!(crate::replay::REPLAY_SCHEMA_VERSION == 30);
 
 /// Decode the exact canonical official projection SimConfig and prove that no
@@ -168,12 +168,10 @@ pub fn profile_manager_from_component_document_v1(
             .expect("profile_manager key shape checked above"),
     )?;
     let profiles: crate::profiles::ProfileManager = encoded.deserialize_into()?;
-    // Canonical JSON intentionally erases Rust integer width/signedness; the
-    // untagged CanonicalValue representation can therefore differ in memory
-    // after a wire round trip while its exact canonical bytes are identical.
-    if canonical_json_bytes(&profiles_component_document_v1(&profiles)?)?
-        != canonical_json_bytes(document)?
-    {
+    // Native projection bytes normalize nonnegative integers to unsigned.
+    // Compare canonical bytes because the source Rust signedness may differ
+    // after decoding while the exact semantic identity stays unchanged.
+    if profiles_component_document_v1(&profiles)?.bitcode_bytes()? != document.bitcode_bytes()? {
         return Err(ProjectionError::InvalidProfilesComponent(
             "typed ProfileManager does not re-project to the exact admitted component".to_owned(),
         ));
@@ -195,7 +193,7 @@ impl ProjectedSimulationContentComponentV1 {
     fn from_document(
         document: SimulationContentComponentDocumentV1,
     ) -> Result<Self, ProjectionError> {
-        let canonical_bytes = document.canonical_bytes()?;
+        let canonical_bytes = document.bitcode_bytes()?;
         let sha256 = Digest32::digest_bytes(&canonical_bytes);
         Ok(Self {
             document,
@@ -562,7 +560,37 @@ impl PreparedMissionRunProjectionV1 {
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, ProjectionError> {
-        Ok(canonical_json_bytes(self)?)
+        use robin_run_protocol::bitcode_value::BitcodeValue;
+        // TODO: project typed inputs directly into ordered native fields to
+        // eliminate the remaining serde_value tree during ranked preparation.
+        let static_components = self
+            .static_components
+            .iter()
+            .map(|component| {
+                (
+                    component.kind,
+                    component.component_schema_version,
+                    component.sha256,
+                )
+            })
+            .collect::<Vec<_>>();
+        Ok(bitcode::encode(&(
+            *b"RHRP0002",
+            self.schema_version,
+            static_components,
+            BitcodeValue::from_value(&self.starting_campaign)?,
+            self.starting_campaign_sha256,
+            self.starting_campaign_byte_length,
+            self.simulation_seed.get(),
+            BitcodeValue::from_value(&self.sim_config)?,
+            self.original_rng_replay
+                .as_ref()
+                .map(BitcodeValue::from_value)
+                .transpose()?,
+            self.original_rng_replay_sha256,
+            BitcodeValue::from_value(&self.resolved_runtime_assets)?,
+            self.sprite_opacity_sha256,
+        )))
     }
 
     pub fn sha256(&self) -> Result<Digest32, ProjectionError> {
@@ -705,7 +733,7 @@ impl PreparedMissionInputs {
             .zip(&manifest.components)
         {
             mounted.validate()?;
-            let mounted_bytes = mounted.canonical_bytes()?;
+            let mounted_bytes = mounted.bitcode_bytes()?;
             let mounted_digest = Digest32::digest_bytes(&mounted_bytes);
             if local.document.kind != expected_kind
                 || mounted.kind != expected_kind
@@ -857,6 +885,8 @@ impl RankedPreparedMissionInputs {
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectionError {
+    #[error(transparent)]
+    Bitcode(#[from] robin_run_protocol::bitcode_value::ProjectionBitcodeError),
     #[error("serialize deterministic input projection: {0}")]
     SerdeValue(#[from] serde_value::SerializerError),
     #[error(transparent)]
@@ -1104,7 +1134,8 @@ fn canonicalize_map(
     for (key, value) in values {
         let key = canonicalize_serde_value(key)?;
         let value = canonicalize_serde_value(value)?;
-        let sort_key = canonical_json_bytes(&key)?;
+        let sort_key =
+            bitcode::encode(&robin_run_protocol::bitcode_value::BitcodeValue::from_value(&key)?);
         entries.push((sort_key, key, value));
     }
     entries.sort_by(|left, right| left.0.cmp(&right.0));
@@ -1166,15 +1197,17 @@ mod tests {
         let decoded = profile_manager_from_component_document_v1(&document).unwrap();
         assert_eq!(profiles_component_document_v1(&decoded).unwrap(), document);
 
-        // JSON erases Rust integer signedness/width. The production boundary
-        // must reverse the canonical wire document, not only its freshly
-        // projected in-memory representation.
-        let wire = canonical_json_bytes(&document).unwrap();
+        // Exercise the actual native wire boundary, including normalized
+        // integer signedness, rather than only the in-memory projection.
+        let wire = document.bitcode_bytes().unwrap();
         let from_wire: SimulationContentComponentDocumentV1 =
-            serde_json::from_slice(&wire).unwrap();
+            SimulationContentComponentDocumentV1::from_bitcode(&wire).unwrap();
         let decoded = profile_manager_from_component_document_v1(&from_wire).unwrap();
         assert_eq!(
-            canonical_json_bytes(&profiles_component_document_v1(&decoded).unwrap()).unwrap(),
+            profiles_component_document_v1(&decoded)
+                .unwrap()
+                .bitcode_bytes()
+                .unwrap(),
             wire
         );
     }

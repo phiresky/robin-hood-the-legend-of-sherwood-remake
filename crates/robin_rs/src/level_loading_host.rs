@@ -26,6 +26,9 @@ use robin_engine::sprite::BBox;
 use robin_engine::sprite_variant::SpriteVariant;
 use std::sync::Arc;
 
+mod early_terrain;
+pub use early_terrain::EarlyTerrainDecode;
+
 fn decode_hackable_terrain_png(bytes: &[u8], path: &str) -> Result<Picture, String> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder
@@ -354,6 +357,16 @@ fn pre_decode_background_map_impl(
     };
     progress(ProgressUpdate::Tick(1.0));
 
+    finish_background_picture(picture, map_name, ambiance_dir, level_directory, files).map(Some)
+}
+
+fn finish_background_picture(
+    picture: Picture,
+    map_name: &str,
+    ambiance_dir: &str,
+    level_directory: &str,
+    files: &sbfile::SbFileSystem,
+) -> Result<PreDecodedBackground, String> {
     let bg_pixels: Vec<u16> = bytemuck::cast_slice::<u8, u16>(&picture.data).to_vec();
 
     let depth_candidates = [
@@ -385,12 +398,12 @@ fn pre_decode_background_map_impl(
         break;
     }
 
-    Ok(Some(PreDecodedBackground {
+    Ok(PreDecodedBackground {
         width: picture.width,
         height: picture.height,
         pixels: bg_pixels,
         occlusion_depth,
-    }))
+    })
 }
 
 /// Probe the background map's pixel dimensions without decoding pixels,
@@ -488,6 +501,14 @@ pub struct DecodedTerrainBitmaps {
 ///   same pre-engine point the old code decoded, preserving the
 ///   single-threaded behavior (loading bar included).
 pub enum PendingTerrainDecode {
+    /// Pixel decode began during shipping assembly. Remaining file reads use
+    /// the installed preparation snapshot, never the provisional payload.
+    Early {
+        job: EarlyTerrainDecode,
+        level_directory: String,
+        shipping: Arc<assets_shipping_datadir::ShippingDatadir>,
+        files: Arc<sbfile::SbFileSystem>,
+    },
     /// Result already in hand (inline fallback decode, or a finished join).
     Ready(DecodedTerrainBitmaps),
     /// Single-threaded wasm fallback: nothing started yet. The decode runs
@@ -552,6 +573,13 @@ fn decode_terrain_bitmaps(
 }
 
 impl PendingTerrainDecode {
+    pub fn known_dimensions(&self) -> Option<(u16, u16)> {
+        match self {
+            Self::Early { job, .. } => Some(job.dimensions()),
+            _ => None,
+        }
+    }
+
     /// Start the decode: a dedicated thread on native, a rayon worker job on
     /// wasm when the `wasm-threads` pool is up, and the [`Self::Inline`]
     /// marker otherwise (single-threaded wasm decodes later, at the caller's
@@ -698,6 +726,7 @@ impl PendingTerrainDecode {
     pub fn join_blocking(self) -> DecodedTerrainBitmaps {
         match self.decode_inline_if_pending(&mut |_| {}) {
             Self::Ready(decoded) => decoded,
+            Self::Early { .. } => panic!("early terrain requires asynchronous join"),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Thread(handle) => handle.join().expect("terrain decode thread panicked"),
             #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
@@ -717,6 +746,12 @@ impl PendingTerrainDecode {
     pub async fn join(self) -> DecodedTerrainBitmaps {
         match self.decode_inline_if_pending(&mut |_| {}) {
             Self::Ready(decoded) => decoded,
+            Self::Early {
+                job,
+                level_directory,
+                shipping,
+                files,
+            } => job.finish(level_directory, shipping, files).await,
             #[cfg(not(target_arch = "wasm32"))]
             Self::Thread(handle) => handle.join().expect("terrain decode thread panicked"),
             #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
@@ -741,6 +776,7 @@ impl PendingTerrainDecode {
     ) -> DecodedTerrainBitmaps {
         match self.decode_inline_if_pending(sync_progress) {
             Self::Ready(decoded) => decoded,
+            Self::Early { .. } => panic!("validated early terrain dimensions must bypass reprobe"),
             #[cfg(not(target_arch = "wasm32"))]
             Self::Thread(handle) => handle.join().expect("terrain decode thread panicked"),
             #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
@@ -780,8 +816,10 @@ pub fn apply_background_map(
     engine: &Engine,
     host: &mut Host,
     renderer: &mut Renderer,
-    decoded: PreDecodedBackground,
+    decoded: impl std::borrow::Borrow<PreDecodedBackground>,
 ) {
+    let decoded = decoded.borrow();
+    let mut timer = crate::game_session::PhaseTimer::new("background upload");
     if !renderer.upload_background_texture(
         decoded.width as u32,
         decoded.height as u32,
@@ -799,22 +837,22 @@ pub fn apply_background_map(
         decoded.height
     );
 
-    // Upload each mask's static binary alpha once. Masked draws rasterize it
-    // into stencil so occluded sprite fragments never overwrite the scene.
+    timer.step("terrain texture");
+
+    // Batch static binary masks into shared R8 pages before stencil drawing.
     renderer.clear_mask_alpha_cache();
-    let mask_count = engine.fast_grid().level.masks.len();
-    for (idx, mask) in engine.fast_grid().level.masks.iter().enumerate() {
-        assert!(
-            renderer.upload_mask_alpha(idx as u32, &mask.bitmap, mask.width, mask.height),
-            "invalid sprite mask {idx}: {}x{} bitmap has {} bytes",
-            mask.width,
-            mask.height,
-            mask.bitmap.len()
-        );
-    }
-    if mask_count > 0 {
-        tracing::debug!("Uploaded {} mask alpha textures", mask_count);
-    }
+    renderer
+        .upload_mask_alphas(
+            engine
+                .fast_grid()
+                .level
+                .masks
+                .iter()
+                .enumerate()
+                .map(|(idx, mask)| (idx as u32, mask.bitmap.as_slice(), mask.width, mask.height)),
+        )
+        .expect("valid mission sprite masks");
+    timer.step("mask textures");
     if let Some(depth) = decoded.occlusion_depth.as_deref() {
         assert!(
             renderer.upload_occlusion_depth(depth, decoded.width, decoded.height),
@@ -825,6 +863,7 @@ pub fn apply_background_map(
         );
     }
 
+    timer.step("occlusion depth");
     host.frontend.clear_background_decals();
 }
 
@@ -962,8 +1001,10 @@ pub fn pre_decode_minimap_with_files(
 pub fn apply_minimap(
     host: &mut Host,
     renderer: &mut Renderer,
-    decoded: PreDecodedMinimap,
+    decoded: impl std::borrow::Borrow<PreDecodedMinimap>,
 ) -> MinimapBitmapSetup {
+    let decoded = decoded.borrow();
+    let mut timer = crate::game_session::PhaseTimer::new("minimap upload");
     let surface = renderer
         .create_surface_from_rgb565(decoded.width, decoded.height, &decoded.pixels)
         .expect("apply_minimap: decoded minimap dimensions must match RGB565 payload");
@@ -971,6 +1012,7 @@ pub fn apply_minimap(
         .mission_surfaces
         .replace_map(renderer, surface);
 
+    timer.step("texture");
     let map_w = decoded.width as f32;
     let map_h = decoded.height as f32;
 
@@ -980,6 +1022,8 @@ pub fn apply_minimap(
         &decoded.pixels,
         renderer.transparent_color(),
     );
+
+    timer.step("hit mask");
 
     // The sentinel `(65536, 65536)` is the per-profile "never written"
     // default (`PlayerProfile::new` initializes both fields to that

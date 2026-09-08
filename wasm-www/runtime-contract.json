@@ -5,5 +5,5 @@
   "ticketSchema": 3,
   "joinCodePrefix": "rhmp3-",
   "contentSchema": 2,
-  "shippingDatadirSchema": 15
+  "shippingDatadirSchema": 16
 }
