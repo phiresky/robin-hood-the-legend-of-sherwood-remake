@@ -202,7 +202,8 @@ impl ReplayFrameOrdinal {
     bitcode::Decode,
 )]
 pub struct ReplayLoadBack {
-    /// Earlier save-marker frame whose captured state must be restored.
+    /// Earlier save-marker frame whose captured state must be restored. A
+    /// pristine Restart may pin and restore marker 0 at ordinal 0 itself.
     pub to_frame: u32,
     /// Whether the source slot was the Continue auto-save.
     pub is_continue: bool,
@@ -298,7 +299,8 @@ struct FrameRecord {
     sv: Option<ReplaySaveMarker>,
     /// Load-back record: at this frame's pre-command boundary the engine
     /// state was replaced with the state captured by the save marker at the
-    /// referenced (strictly earlier) frame.  Keeps the replay linear across
+    /// referenced earlier frame (or frame 0 itself for a pristine Restart).
+    /// Keeps the replay linear across
     /// in-mission loads instead of embedding save payloads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lb: Option<ReplayLoadBack>,
@@ -537,7 +539,13 @@ impl ReplayData {
             }
         }
         for (&frame, load_back) in &self.load_backs {
-            if load_back.to_frame >= frame {
+            let pristine_restart = frame == 0
+                && load_back.to_frame == 0
+                && self
+                    .save_markers
+                    .get(&0)
+                    .is_some_and(|marker| marker.timeline_frame == 0);
+            if load_back.to_frame >= frame && !pristine_restart {
                 return Err(format!(
                     "load-back target {} is not before frame {frame}",
                     load_back.to_frame
@@ -673,7 +681,12 @@ impl ReplayData {
                 save_markers.insert(rec.f, sv);
             }
             if let Some(lb) = rec.lb {
-                if lb.to_frame >= rec.f {
+                let pristine_restart = rec.f == 0
+                    && lb.to_frame == 0
+                    && save_markers
+                        .get(&0)
+                        .is_some_and(|marker| marker.timeline_frame == 0);
+                if lb.to_frame >= rec.f && !pristine_restart {
                     return Err(format!(
                         "bad line {}: load-back target {} is not before frame {}",
                         i + 2,
@@ -1749,6 +1762,68 @@ mod tests {
             unreachable!();
         };
         assert_eq!(decoded_route, expected_route);
+    }
+
+    #[test]
+    fn pristine_restart_boundary_round_trips_without_an_extra_frame() {
+        let path = unique_replay_path("pristine_restart");
+        let mut recorder = ReplayRecorder::new(
+            &path,
+            "restart".into(),
+            test_mission_assets("restart"),
+            17,
+            Default::default(),
+            &crate::campaign::Campaign::default(),
+        )
+        .unwrap();
+        recorder.write_save_marker(
+            0,
+            ReplaySaveMarker {
+                state_hash: 123,
+                timeline_frame: 0,
+            },
+        );
+        recorder.write_load_back(0, 0, false);
+        record_tick(&mut recorder, 0, SimulationFrameInput::default());
+        drop(recorder);
+        let data = ReplayData::from_file(&path).unwrap();
+        data.validate_layout().unwrap();
+        assert_eq!(data.frame_count(), 1);
+        assert_eq!(data.load_back_for_frame(0).unwrap().to_frame, 0);
+
+        let jsonl = std::fs::read_to_string(&path).unwrap();
+        // The JSONL parser and the shared compact-layout validator must both
+        // reject every other self/future load and a nonzero bootstrap timeline.
+        for (ordinal, target, marker_timeline) in [(1, 1, 0), (0, 1, 0), (0, 0, 1)] {
+            let mut invalid = data.clone();
+            invalid.load_backs.clear();
+            invalid.load_backs.insert(
+                ordinal,
+                ReplayLoadBack {
+                    to_frame: target,
+                    is_continue: false,
+                },
+            );
+            invalid.save_markers.get_mut(&0).unwrap().timeline_frame = marker_timeline;
+            assert!(invalid.validate_layout().is_err());
+            let edited = jsonl
+                .lines()
+                .map(|line| {
+                    let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+                    if value.get("lb").is_some() {
+                        value["f"] = ordinal.into();
+                        value["lb"]["to_frame"] = target.into();
+                    }
+                    if value.get("sv").is_some() {
+                        value["sv"]["timeline_frame"] = marker_timeline.into();
+                    }
+                    serde_json::to_string(&value).unwrap()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(ReplayData::from_reader(std::io::Cursor::new(edited)).is_err());
+        }
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

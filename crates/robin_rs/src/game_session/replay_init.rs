@@ -128,6 +128,37 @@ fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
     path.with_file_name(filename)
 }
 
+/// Start a separate artifact after restoring the exact bootstrap checkpoint.
+/// Never overwrite the terminal attempt, including an explicit --record path.
+pub(super) fn restart_recording(
+    header: robin_engine::replay::ReplayHeader,
+) -> std::io::Result<ReplayRecorder> {
+    let mirror = crate::http_server::reset_replay_buffer();
+    #[cfg(all(not(target_arch = "wasm32"), not(test)))]
+    let primary: Box<dyn std::io::Write + Send> = {
+        let default_path = std::path::PathBuf::from(default_replay_path());
+        let directory = default_path
+            .parent()
+            .expect("default replay path has a directory");
+        std::fs::create_dir_all(directory)?;
+        let (file, path) = tempfile::Builder::new()
+            .prefix("restart-")
+            .suffix(crate::main_entry::RHREC_EXT)
+            .tempfile_in(directory)?
+            .keep()
+            .map_err(|error| error.error)?;
+        tracing::info!("Recording restarted replay → {}", path.display());
+        let log_path = replay_debug_log_path(path.to_str().expect("replay directory is UTF-8"));
+        if let Err(error) = crate::set_replay_log_file(&log_path) {
+            tracing::warn!("Failed to create restarted replay debug log: {error}");
+        }
+        Box::new(file)
+    };
+    #[cfg(any(target_arch = "wasm32", test))]
+    let primary: Box<dyn std::io::Write + Send> = Box::new(std::io::sink());
+    ReplayRecorder::from_recording_header(Box::new(TeeWriter { primary, mirror }), header)
+}
+
 /// Bundle of determinism-related mission state built by
 /// [`init_replay_and_rollback`] — replay recorder, replay player,
 /// rollback checker, and the hold-to-rewind snapshot buffer.
@@ -388,10 +419,7 @@ mod tests {
     use std::sync::{Arc, Mutex, OnceLock};
 
     fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("replay spool test lock poisoned")
+        crate::http_server::replay_spool_test_lock()
     }
 
     struct ControlledPrimary {
