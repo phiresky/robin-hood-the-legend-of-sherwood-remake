@@ -45,7 +45,7 @@ fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
 }
 
 /// Logical Sherwood button id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SherwoodButton {
     /// Re-raise the campaign map.
     DisplayCampaignMap,
@@ -704,7 +704,7 @@ pub fn sherwood_button_tooltip_mt_id(
 #[allow(clippy::too_many_arguments)]
 pub fn draw_tooltip(
     renderer: &mut Renderer,
-    tracker: &SherwoodTooltipTracker,
+    ready_button: Option<SherwoodButton>,
     tooltip_text: impl Fn(SherwoodButton) -> Option<String>,
     font: &Font,
     shadow: Option<&Font>,
@@ -712,7 +712,7 @@ pub fn draw_tooltip(
     mouse_y: i32,
     cursor_size: (i32, i32),
 ) {
-    if let Some(btn) = tracker.ready_button()
+    if let Some(btn) = ready_button
         && let Some(text) = tooltip_text(btn)
         && !text.is_empty()
     {

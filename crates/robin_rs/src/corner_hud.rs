@@ -43,7 +43,7 @@ fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
 }
 
 /// Logical id for the three corner HUD buttons.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum CornerButton {
     /// Record / cycle QA memory slot.
     Clock,
