@@ -685,7 +685,7 @@ impl Renderer {
 
     /// Retain compiled pipelines while releasing loading-screen frame state.
     pub(crate) fn finish_loading_screen(&mut self) {
-        self.frame.finish_loading_screen();
+        self.frame.finish_loading_screen(&self.gpu);
         self.pipelines.gpu_upscale.finish_loading_screen();
         self.clear_font_atlas_cache();
     }
@@ -3380,6 +3380,13 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
     );
     assert_eq!(renderer.draw_queue_checkpoint(), 0);
     assert!(renderer.frame.frozen_scene.is_none());
+    // Lost-Sherwood can open its debriefing before the first world render.
+    renderer.freeze_scene_for_modal();
+    assert_eq!(
+        renderer.try_capture_presented_frame_rgba().unwrap().2,
+        vec![0; 3 * 2 * 4],
+        "handoff must not expose loading pixels before the first composition"
+    );
     assert_eq!(
         renderer.try_capture_frame_rgba().unwrap().2,
         [0, 0, 0, 255].repeat(6)
