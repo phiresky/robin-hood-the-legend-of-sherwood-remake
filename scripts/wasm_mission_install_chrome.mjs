@@ -253,6 +253,14 @@ try {
             await rpc('set-paused', { paused: true });
             evidence.push({ before: before.frame, restored: restored.frame });
         }
+        // Finish the final restored attempt so its new recorder contains an
+        // admitted frame, rather than exporting a header with pending metadata.
+        const finalFailures = terminalFailures;
+        await rpc('go-to-frame', { frame: 0, auto_dismiss: true });
+        await rpc('console', { command: 'LOOSE' });
+        await rpc('set-paused', { paused: false });
+        await waitFor(() => terminalFailures > finalFailures, 'final restored attempt completion');
+        await rpc('set-paused', { paused: true });
         const replay = await rpc('get-replay');
         if (typeof replay.content !== 'string' || !replay.content.startsWith('rhrec-')) {
             throw new Error('Unexpected replay export shape');

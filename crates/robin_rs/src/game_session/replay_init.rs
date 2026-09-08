@@ -416,7 +416,7 @@ mod tests {
     use super::*;
     use std::io::Write as _;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
+    use std::sync::{Arc, Mutex};
 
     fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
         crate::http_server::replay_spool_test_lock()

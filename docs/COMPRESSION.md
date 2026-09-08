@@ -3203,3 +3203,231 @@ or audio-yield experiments as established wins.
 
 Audit validation: both new browser runs reached bootstrap completion and saved
 NavigationTiming; `node --check` passed for the harness. No Rust code changed.
+
+
+### Implementing the parallel startup audit (2026-09-08)
+
+The performance branch was rebased onto rewritten main
+`cc36f8d75f5ffcfa18696e96fbb766878df5c26e`, preserving its session-owned
+browser audio lifecycle. The earlier measurements above predate that rewrite;
+they are not the baseline for the new comparison.
+
+Implemented candidates cover each audited phase:
+
+- Production boot overlaps default data download with runtime loading and WASM
+  fetch with JavaScript import. Worker initialization also starts before window
+  setup, and identical surface resizes no longer reconfigure the surface.
+- Optional DEBUG worker timestamps distinguish readiness, queueing, execution,
+  receipt and application; normal INFO runs omit those clock reads. An 8 ms
+  budget between cooperative yields was tested in the first candidate bundle
+  and subsequently removed pending isolated evidence of benefit.
+- WASM sprite decoding compiles out disabled exclusion bookkeeping and reserves
+  auxiliary context maps only for modes actually referenced by a chunk.
+- Picture counts and dimensions use metadata without decoding JXL pixels. Grid
+  registration filters polygon edges once per row, preserving cell boundaries
+  and registration order.
+- Frontend setup builds only the used opaque blit pipeline, borrows cached map
+  buffers and starts terrain work before mission-resource environment setup.
+
+Browser Restart now captures an immutable, session-owned persisted-state
+checkpoint instead of trying to create a filesystem save. The checkpoint is
+published only after capture and validation succeed, and is cleared at mission
+entry or when its owning save manager is replaced. It has a process-local
+identity tied to the immutable payload, avoiding full JSON serialization for
+replay save identity. Transporting or serializing a checkpoint strips that
+identity. The required frame-0 simulation hash remains. Durable browser saves
+continue to use their existing localStorage backend; native saves retain disk
+and payload-identity behavior.
+
+Restart tests exercise capture with an unavailable filesystem, comparison with
+an actual disk round-trip, restore of engine/host/game persisted state, identity
+lifecycle, failed capture, and replay load-back to frame 0. The integrated native
+client suite passes 1,556 tests (five ignored); native and threaded WASM release
+builds pass. Metadata, codec and grid changes also passed their affected package
+suites, including frozen decoded-output checks and differential cell registration.
+
+TODO: opacity metadata export, independent sprite restart groups, broader
+terrain/VQ overlap and dependency-aware scheduling remain research opportunities.
+Do not infer their benefits from the implemented bundle. The direct WASM harness
+bypasses production TypeScript boot and cannot measure its fetch-overlap change.
+
+
+Five fresh-profile, alternating baseline/candidate browser pairs compare the
+rebased pre-candidate WASM (`cd89a12e7`) with the integrated optimized WASM
+(`3b0cebc62`). Both use the same local Leicester shipping corpus and optimization
+pipeline. No builds or other task browser runs overlap this comparison.
+
+| Endpoint, navigation-relative | Baseline median | Candidate median |
+| --- | ---: | ---: |
+| Mission activation | 2.794 s | 2.575 s |
+| Recording begins | 3.901 s | 3.711 s |
+| Bootstrap complete | 4.070 s | 3.718 s |
+
+Four of five bootstrap pairs improve. The median paired reduction is 292 ms;
+the difference between overall medians is 352 ms (8.6%). One pair regresses by
+131 ms, so these are noisy local results, not a guaranteed per-run saving.
+Recording-to-bootstrap drops from a median 168.3 ms to 7.3 ms with the real
+session Restart checkpoint in place. This comparison tests the whole bundle,
+not an isolated Restart change.
+
+The candidate run at the median bootstrap time has this disjoint breakdown:
+
+| Phase | Wall time |
+| --- | ---: |
+| Navigation to `wasm_boot` | 424 ms |
+| Boot and initialization to streaming | 204 ms |
+| Part fetch/decompression/merge, overlapping sprites | 488 ms |
+| Remaining VQ wait and application | 1455 ms |
+| RLE/activation plus level and engine setup | 364 ms |
+| Frontend assembly and intervening work | 760 ms |
+| Remaining checkpoint/runtime setup | 23 ms |
+| **Bootstrap complete** | **3718 ms** |
+
+Across runs, level-load timer medians are 424 → 396 ms and terrain-join medians
+340 → 318 ms. Frontend assembly does not improve in this sample (677 → 686 ms),
+nor does all-parts-merged time (394 → 488 ms), while the VQ-tail median falls
+1665 → 1533 ms. Those phases overlap and shift when dispatch timing changes.
+The bundle result therefore does not establish the 8 ms yield budget, pipeline
+change or any individual decoder change as a separate speedup. The yield-budget
+experiment was subsequently reverted; its independent benefit is unproven.
+
+The new mask-texture timer measures a median 100 ms, compared with 123 ms for
+all map upload work. Mask preparation/upload is the dominant measured part of
+that phase. A worker trace is collected separately at DEBUG to avoid including
+its logging cost in the paired comparison.
+
+The fixture uses SwiftShader and initially configures a 1x1 surface; it is not
+a production hardware-GPU measurement. Bootstrap completion also does not
+measure the first physically presented gameplay frame. Raw packages, ten run
+logs/JSON files and `comparison.json` are in `/tmp/robin-perf-rebased/`.
+
+Native replay validation reaches the matching frame-0 hash but the selected
+fixture fails its mission on the first tick, after which the true-headless
+adapter panics on unsupported terminal campaign/profile promotion. The same
+failure is reproduced with the pre-grid binary. This does not validate replay
+through EOF, and must not be reported as doing so.
+
+
+The separate DEBUG trace (not an idle-host timing sample) records 66 part jobs,
+28 VQ jobs and five RLE/JXL jobs. Part worker execution is at most 8 ms per job,
+while part queue waits reach 304 ms. Soldier A01 waits 967 ms before a 778 ms
+VQ execution interval; WillScarlet waits 950 ms before 806 ms execution.
+RobinTown takes 1100 ms after a 165 ms queue wait. These are worker wall-clock
+intervals, not sampled codec CPU. They justify investigating shared-pool
+scheduling and long chunks before optimizing part decompression allocations.
+RLE result receipt is intentionally delayed until its drain phase, so its
+receipt lag must not be mistaken for worker execution. Queue/wall values from
+this diagnostic trace must not replace the idle paired results above.
+
+The optimized candidate also reaches bootstrap with the worker pool disabled
+(`--serial`). A separate `--wait-audio` run completes all 489 background mission
+warmup items. No Restart filesystem-creation error appears in candidate runs.
+
+
+Real CDP input (a 1024x768 viewport, Enter on Mission Lost, then the Restart
+seal) verifies that the browser checkpoint restores timeline 1 → 0 without
+mission reconstruction. A repeated-cycle regression exposed an additional
+process-lifetime bug: terminal leaderboard preparation had been consumed by
+the first attempt. Successful restore now re-arms that lifecycle before the
+next simulation tick. It creates a fresh browse-only attempt; it does not
+reuse the completed attempt's ranked admission. Ordinary mid-mission loads do
+not replace unconsumed preparation, and duplicate terminal capture without a
+restore remains an error.
+
+The harness now supports `--verify-restart FILE` and `--restart-cycles N`
+(default two). It uses actual CDP input, rejects reconstruction fallback and
+panics, verifies each rewind to frame 0, and exports the final completed
+restored attempt. It also caught a blocked typed-terminal RPC path, now fixed
+by distinguishing campaign handoff from an active terminal modal.
+
+
+Post-terminal Restart now opens a separate replay recording using the exact
+original pre-engine header and bootstrap marker. Its first boundary pins and
+restores marker 0 before real input; the first recorded engine hash is checked
+after that restore. The sole same-ordinal load-back allowed is this initial
+0 → 0 boundary with a timeline-0 marker. Other self/future targets remain
+invalid. This reproduces persisted-state projection and post-load fixups
+without an invented simulation frame or an embedded state payload. Restarted
+runs retain explicit state-load taint and do not regain ranked authority.
+
+Native restarted attempts get separate files, including when the first attempt
+used an explicit record path. Browser export switches to a fresh in-memory
+recording; frozen prior terminal exports remain intact. Arbitrary non-bootstrap
+post-terminal loads still require an initial-snapshot replay design: active
+export fails explicitly in that case instead of returning the previous attempt.
+
+Integrated validation after these lifecycle changes: 4,452 engine tests,
+1,559 client tests, 24 replay-format tests, 36 replay-verifier tests and 23 ranked
+verification tests pass (6,094 active tests total, 13 ignored). The new tests
+cover two actual checkpoint restores into fresh recordings, immutable prior
+exports, compact round-trip, both runtime contracts and corrupt marker/hash
+rejection.
+
+
+#### Final candidate validation and measurements
+
+The final optimized package includes repeated-terminal and replay continuation
+fixes and restores per-part yields (source `ec822eed7`; a subsequent diagnostic
+formatting change does not alter startup behavior). Real browser input passes
+two Restart cycles, each timeline 1 → 0, then another mission end and export of
+the new attempt. The same sequence passes through native UI, including dismissal
+of the mission-end leaderboard, with graceful exit 0. The final browser package
+also passes serial startup and all 489 background audio warmup items.
+
+A new five-pair, alternating-order comparison against the same rebased baseline
+runs after all builds and other task test processes finish:
+
+| Endpoint, navigation-relative | Baseline median | Final median |
+| --- | ---: | ---: |
+| Mission activation | 2.624 s | 2.453 s |
+| Recording begins | 3.733 s | 3.544 s |
+| Bootstrap complete | 3.902 s | 3.551 s |
+
+All five bootstrap pairs improve. Median paired saving: **271 ms**. Difference
+between overall medians: **350 ms (9.0%)**. Recording-to-bootstrap medians are
+166.0 → 6.7 ms. Absolute numbers from this batch should not be compared directly
+with the earlier candidate batch: host conditions differ. Final all-parts-merged
+medians are 404 → 401 ms, VQ-tail 1551 → 1424 ms, level-load 404 → 394 ms, and
+frontend assembly 669 → 674 ms. Frontend improvements remain unproven as a bundle
+in this fixture; terrain overlap and mask uploads remain useful next targets.
+
+Final run at the median bootstrap endpoint (rounded independently):
+
+| Phase | Wall time |
+| --- | ---: |
+| Navigation to `wasm_boot` | 378 ms |
+| Boot/initialization to streaming | 206 ms |
+| Part fetch/decompression/merge, overlapping sprites | 401 ms |
+| Remaining VQ wait/application | 1464 ms |
+| RLE/activation and level/engine setup | 407 ms |
+| Frontend assembly and intervening work | 675 ms |
+| Remaining checkpoint/runtime setup | 21 ms |
+| **Bootstrap complete** | **3551 ms** |
+
+The frontend interval includes a 323 ms terrain join, 92 ms renderer construction
+and 121 ms map upload (100 ms masks). These are nested, not additional costs.
+The leading next experiments are bounded dependency-aware worker dispatch,
+terrain decoding when its part arrives, independent groups for oversized sprite
+chunks, and batched mask textures. Worker-trace execution values remain wall
+intervals, not pure codec CPU measurements.
+
+Final raw timelines: `/tmp/robin-perf-rebased/final-comparison-*.json` and
+`final-comparison.json`. Browser Restart evidence: `restart-final.log/.json` and
+`restart-final.rhrec`; native UI evidence is in
+`/tmp/robin-perf-frontend-validation/native-restart-ui2/`. Native playback of its
+new recording passes the initial checkpoint pin/restore and post-restore hash
+check, then reaches the existing unsupported headless terminal flow; full EOF
+replay remains unvalidated in that adapter.
+
+
+Cross-format playback remains a separate limitation: with matching source
+version, the exported browser replay expects bootstrap hash
+`d8159306d9d46e0b`, while the legacy native datadir produces
+`c031457ca27c5d90`. The browser's earlier first-attempt recording (before the
+replay-continuation change) already contains the same `d815...` marker, so this
+is not introduced by rotating the Restart recorder. Native initialization of
+the identical converted corpus currently fails because it passes an absolute
+resolved path to `ShippingDatadir::load_from_vfs`, which requires a relative
+mount path. Neither cross-format replay equivalence nor full headless EOF is
+claimed by this work. Logs: `restart-final-matched-playback.log` and
+`restart-final-shipping-playback.log` in the final artifact directory.
