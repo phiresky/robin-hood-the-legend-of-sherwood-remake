@@ -1540,6 +1540,15 @@ impl ShippingSpriteBank {
     }
 }
 
+/// Largest independent atlas groups first, so one long RLE decode starts
+/// alongside VQ instead of remaining behind many tiny animation groups.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn order_rle_chunks_by_size(pending: &mut [SpriteRleJxlChunk]) {
+    pending.sort_by_cached_key(|chunk| {
+        std::cmp::Reverse(chunk.jxl_blobs.iter().map(Vec::len).sum::<usize>())
+    });
+}
+
 /// Dispatcher state for worker-pool RLE-JXL chunk decode (wasm-threads
 /// builds), mirroring [`VqDecodeScheduler`]. RLE-JXL chunks have no
 /// cross-chunk dependencies — a chunk is ready as soon as its own sprite
@@ -1566,7 +1575,7 @@ impl RleJxlDecodeScheduler {
         bank: &ShippingSpriteBank,
         pending: &mut Vec<SpriteRleJxlChunk>,
     ) -> Result<()> {
-        self.dispatch_ready_with_limit(bank, pending, None)
+        self.dispatch_ready_with_limit(bank, pending, None, false)
     }
 
     /// Bounded jobs decode atlases serially on their assigned worker, so
@@ -1577,7 +1586,18 @@ impl RleJxlDecodeScheduler {
         pending: &mut Vec<SpriteRleJxlChunk>,
         max_in_flight: usize,
     ) -> Result<()> {
-        self.dispatch_ready_with_limit(bank, pending, Some(max_in_flight))
+        self.dispatch_ready_with_limit(bank, pending, Some(max_in_flight), false)
+    }
+
+    /// Bounded admission with longest-first RLE ordering, used by the
+    /// balanced mission policy independently of the VQ-first baseline.
+    pub fn dispatch_ready_prioritized(
+        &mut self,
+        bank: &ShippingSpriteBank,
+        pending: &mut Vec<SpriteRleJxlChunk>,
+        max_in_flight: usize,
+    ) -> Result<()> {
+        self.dispatch_ready_with_limit(bank, pending, Some(max_in_flight), true)
     }
 
     fn dispatch_ready_with_limit(
@@ -1585,8 +1605,15 @@ impl RleJxlDecodeScheduler {
         bank: &ShippingSpriteBank,
         pending: &mut Vec<SpriteRleJxlChunk>,
         limit: Option<usize>,
+        prioritize: bool,
     ) -> Result<()> {
         let max_in_flight = limit.unwrap_or(usize::MAX);
+        if self.in_flight.len() >= max_in_flight {
+            return Ok(());
+        }
+        if prioritize {
+            order_rle_chunks_by_size(pending);
+        }
         let mut index = 0;
         while index < pending.len() && self.in_flight.len() < max_in_flight {
             if !bank.rle_jxl_chunk_ready_lenient(&pending[index]) {
@@ -1594,7 +1621,11 @@ impl RleJxlDecodeScheduler {
                 continue;
             }
             let ready = tracing::enabled!(tracing::Level::DEBUG).then(js_sys::Date::now);
-            let chunk = pending.swap_remove(index);
+            let chunk = if prioritize {
+                pending.remove(index)
+            } else {
+                pending.swap_remove(index)
+            };
             let dims = bank
                 .prepare_rle_jxl_chunk_dims(&chunk)
                 .with_context(|| format!("decode RLE-JXL sprite chunk for {}", chunk.rhs))?;
@@ -3462,7 +3493,30 @@ mod tests {
         }
     }
 
-    /// Chunk mission for the family base: sprite 0 coded standalone.
+    #[test]
+    fn rle_priority_uses_total_bytes_and_preserves_ties() {
+        let make = |id, sizes: &[usize]| SpriteRleJxlChunk {
+            rhs: "same.rhs".into(),
+            sprite_ids: vec![id],
+            placements: Vec::new(),
+            jxl_blobs: sizes.iter().map(|&size| vec![0; size]).collect(),
+        };
+        let mut chunks = vec![
+            make(1, &[2]),
+            make(2, &[3, 4]),
+            make(3, &[7]),
+            make(4, &[5]),
+        ];
+        order_rle_chunks_by_size(&mut chunks);
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|chunk| chunk.sprite_ids[0])
+                .collect::<Vec<_>>(),
+            [2, 3, 4, 1]
+        );
+    }
+
     fn priority_chunk(id: u32, bases: &[u32], bytes: usize) -> SpriteVqChunk {
         SpriteVqChunk {
             rhs: "same.rhs".into(),
@@ -3508,6 +3562,7 @@ mod tests {
         assert_eq!(costs[3], 5);
     }
 
+    /// Chunk mission for the family base: sprite 0 coded standalone.
     fn base_chunk_mission() -> ShippingMission {
         use crate::sprite_codec::{SpriteGrid, encode_grids};
         let blob = encode_grids(

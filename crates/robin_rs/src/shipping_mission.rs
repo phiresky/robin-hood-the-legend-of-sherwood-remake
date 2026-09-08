@@ -682,6 +682,7 @@ fn dispatch_streaming_chunks(
     rle_scheduler: &mut robin_assets::shipping_datadir::RleJxlDecodeScheduler,
     rhs_files: &std::collections::BTreeMap<String, robin_assets::shipping_datadir::RhsData>,
     bounded: bool,
+    balanced: bool,
     fetching: bool,
     reserved_workers: usize,
 ) -> Result<()> {
@@ -694,6 +695,16 @@ fn dispatch_streaming_chunks(
         fetching,
         reserved_workers,
     );
+    // Keep one independent RLE job progressing even while VQ has a backlog.
+    // The existing counts include completed-but-unapplied jobs, so this
+    // reservation cannot overfill the shared admission budget.
+    if balanced {
+        rle_scheduler.dispatch_ready_prioritized(
+            bank,
+            pending_rle,
+            budget.saturating_sub(scheduler.in_flight_count()).min(1),
+        )?;
+    }
     scheduler.dispatch_ready_bounded(
         bank,
         pending,
@@ -701,11 +712,12 @@ fn dispatch_streaming_chunks(
         !fetching,
         budget.saturating_sub(rle_scheduler.in_flight_count()),
     )?;
-    rle_scheduler.dispatch_ready_bounded(
-        bank,
-        pending_rle,
-        budget.saturating_sub(scheduler.in_flight_count()),
-    )
+    let rle_limit = budget.saturating_sub(scheduler.in_flight_count());
+    if balanced {
+        rle_scheduler.dispatch_ready_prioritized(bank, pending_rle, rle_limit)
+    } else {
+        rle_scheduler.dispatch_ready_bounded(bank, pending_rle, rle_limit)
+    }
 }
 
 /// Streaming mission load for the browser worker-pool build.
@@ -763,13 +775,15 @@ where
             .map_err(|error| anyhow!("read startup query: {error:?}"))?,
     )
     .map_err(|error| anyhow!("parse startup query: {error:?}"))?;
-    let bounded = match query.get("streaming-scheduler").as_deref() {
-        None | Some("bounded") => true,
-        Some("unbounded") => false,
+    let (bounded, balanced) = match query.get("streaming-scheduler").as_deref() {
+        None | Some("balanced") => (true, true),
+        Some("bounded") => (true, false),
+        Some("unbounded") => (false, false),
         Some(value) => return Err(anyhow!("unknown streaming-scheduler policy {value:?}")),
     };
     tracing::info!(
         bounded,
+        balanced,
         workers = wasm_threads::pool_threads(),
         "mission worker scheduling policy"
     );
@@ -955,6 +969,7 @@ where
                             &mut rle_scheduler,
                             rhs_files,
                             bounded,
+                            balanced,
                             true,
                             usize::from(
                                 early_terrain.as_ref().is_some_and(|job| !job.is_finished()),
@@ -999,6 +1014,7 @@ where
                     &mut rle_scheduler,
                     rhs_files,
                     bounded,
+                    balanced,
                     true,
                     usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                 )?;
@@ -1022,6 +1038,7 @@ where
                     &mut rle_scheduler,
                     &merged.payload.rhs_files,
                     bounded,
+                    balanced,
                     true,
                     usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                 )?;
@@ -1043,6 +1060,7 @@ where
                         &mut rle_scheduler,
                         &merged.payload.rhs_files,
                         bounded,
+                        balanced,
                         true,
                         usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                     )?;
@@ -1082,6 +1100,7 @@ where
                     &mut rle_scheduler,
                     rhs_files,
                     true,
+                    balanced,
                     false,
                     usize::from(early_terrain.as_ref().is_some_and(|job| !job.is_finished())),
                 )?;
