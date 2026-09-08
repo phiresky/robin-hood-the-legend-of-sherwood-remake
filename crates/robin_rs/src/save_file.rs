@@ -767,10 +767,6 @@ impl From<GameSaveFile> for PreparedGameSave {
 }
 
 impl PreparedGameSave {
-    pub(crate) fn into_payload(self) -> GameSaveFile {
-        self.payload
-    }
-
     pub(crate) fn session_identity(&self) -> Option<ReplaySaveIdentity> {
         self.session_identity
     }
@@ -953,14 +949,6 @@ impl GameSaveFile {
         let json = serde_json::to_string_pretty(self).context("serializing save file")?;
         atomic_write(path, json.as_bytes())
             .with_context(|| format!("writing save file {}", path.display()))
-    }
-
-    /// Publish a newly allocated manual slot, never an implicit overwrite.
-    pub(crate) fn write_new_to(&self, path: &Path) -> Result<()> {
-        self.validate_current_schema()?;
-        let json = serde_json::to_vec_pretty(self).context("serializing new save file")?;
-        atomic_write_new(path, &json)
-            .with_context(|| format!("publishing new save without replacing {}", path.display()))
     }
 
     /// Read a save file from disk.
