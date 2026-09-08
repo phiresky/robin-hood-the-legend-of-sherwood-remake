@@ -903,6 +903,24 @@ impl EngineInner {
                             break 'action;
                         }
 
+                        // RHElementActor::Instruct terminates NULL before transition
+                        // generation or priority arbitration. MakeUpright deliberately
+                        // cancels queued CROUCH_DOWN elements by rewriting them to NULL;
+                        // they still need their normal termination/readiness cascade.
+                        if command == Some(Command::Null) {
+                            self.world
+                                .entities
+                                .get_mut(owner)
+                                .and_then(crate::element::Entity::actor_data_mut)
+                                .expect("NULL actor instruction requires its actor owner")
+                                .execution_frozen = false;
+                            self.orders
+                                .sequence_manager
+                                .element_terminated(seq_id, elem_idx);
+                            self.dispatch_condolations(sim, assets);
+                            break 'action;
+                        }
+
                         // Every actor instruction snapshots the actor's
                         // current posture and action state before the
                         // non-interruptable guard, transition generation, and
