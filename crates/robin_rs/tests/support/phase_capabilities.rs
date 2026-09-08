@@ -14,10 +14,24 @@ fn readonly_reference_to(ty: &syn::Type, expected: &str) -> bool {
 #[derive(Default)]
 struct BroadAuthority {
     found: bool,
+    forbid_host: bool,
 }
 
 impl<'ast> Visit<'ast> for BroadAuthority {
     fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+        if self.forbid_host {
+            self.found |= path.path.segments.iter().any(|segment| {
+                [
+                    "Host",
+                    "HostTransport",
+                    "HostScripting",
+                    "HostEffectBatches",
+                    "HostAudio",
+                ]
+                .iter()
+                .any(|name| segment.ident == name)
+            });
+        }
         self.found |= path.path.segments.iter().any(|segment| {
             [
                 "Engine",
@@ -49,7 +63,10 @@ fn violations(view: &syn::ItemStruct, presentation: bool) -> Vec<String> {
                 problems.push("engine must be &Engine".into());
             }
         } else {
-            let mut broad = BroadAuthority::default();
+            let mut broad = BroadAuthority {
+                forbid_host: presentation,
+                ..Default::default()
+            };
             broad.visit_type(&field.ty);
             if broad.found {
                 problems.push(format!("{name} exposes a broad simulation owner"));
@@ -74,7 +91,7 @@ fn violations(view: &syn::ItemStruct, presentation: bool) -> Vec<String> {
 #[test]
 fn phase_guard_distinguishes_shared_queries_from_mutation_escapes() {
     let good = syn::parse_str::<syn::ItemStruct>(
-        "struct View<'a> { engine: &'a Engine, host: &'a mut Host, dev: &'a DevState }",
+        "struct View<'a> { engine: &'a Engine, host: HostPresentation<'a>, dev: &'a DevState }",
     )
     .unwrap();
     assert!(violations(&good, true).is_empty());
@@ -87,6 +104,70 @@ fn phase_guard_distinguishes_shared_queries_from_mutation_escapes() {
         "struct View<'a> { engine: &'a Engine, owner: Option<&'a mut EngineManager>, frame: &'a mut MissionFrame }",
     ).unwrap();
     assert_eq!(violations(&wrapped, false).len(), 2);
+    let host_escape = syn::parse_str::<syn::ItemStruct>(
+        "struct View<'a> { engine: &'a Engine, host: Option<&'a mut Host>, dev: &'a DevState }",
+    )
+    .unwrap();
+    assert_eq!(violations(&host_escape, true).len(), 1);
+}
+
+#[test]
+fn production_render_and_audio_capabilities_exclude_broad_authority() {
+    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    for (syntax, name, expected) in [
+        (
+            &runtime,
+            "MissionAudioPhase",
+            vec!["audio", "viewport", "engine", "assets"],
+        ),
+        (
+            &host,
+            "HostPresentation",
+            vec!["frontend", "sound", "options", "local_seat", "application"],
+        ),
+    ] {
+        let view = syntax
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(view) if view.ident == name => Some(view),
+                _ => None,
+            })
+            .expect("production capability exists");
+        let fields: Vec<_> = view
+            .fields
+            .iter()
+            .map(|field| field.ident.as_ref().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            fields, expected,
+            "{name} authority changed; review its consumers"
+        );
+        for field in &view.fields {
+            let field_name = field.ident.as_ref().unwrap().to_string();
+            let expected_type = match field_name.as_str() {
+                "engine" => Some("Engine"),
+                "viewport" => Some("ViewportState"),
+                "sound" => Some("SoundManager"),
+                "options" => Some("GlobalOptions"),
+                "application" => Some("ApplicationContext"),
+                _ => None,
+            };
+            if let Some(expected_type) = expected_type {
+                assert!(
+                    readonly_reference_to(&field.ty, expected_type),
+                    "{name}.{field_name} must remain read-only"
+                );
+            }
+            if field_name == "application" {
+                assert!(
+                    matches!(field.vis, syn::Visibility::Inherited),
+                    "application access must remain private behind the graphics query"
+                );
+            }
+        }
+    }
 }
 
 pub(super) fn assert_production_views_are_readonly() {

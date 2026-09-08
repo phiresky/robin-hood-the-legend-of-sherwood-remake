@@ -3,7 +3,6 @@
 //! into `render_frame`) and the rewind-icon HUD glyph.
 
 use super::selected_pc_profile_indices;
-use super::tick::drain_pending_console_output;
 use crate::corner_hud::{self, CornerButtonEnable, CornerHoverState, CornerTooltipTracker};
 use crate::game::Game;
 use crate::game_render::{
@@ -15,8 +14,8 @@ use crate::game_render::{
     render_noise_display, render_ransom_amulet_overlay, render_selection_outlines_gpu,
     render_shadow_polygon_sphere_debug, render_trajectory_preview, render_view_cone_overlay,
 };
-use crate::host::Host;
 use crate::host::PrintScreenRequest;
+use crate::host::{Host, HostPresentation};
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
 use crate::presentation::{PresentationFrameId, ZoomPresentationUpdate};
@@ -151,7 +150,7 @@ fn selected_allied_patrol_routes(
 }
 
 fn render_selected_allied_patrol_routes(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     assets: &engine_api::LevelAssets,
     seat: robin_engine::player_command::PlayerId,
@@ -275,7 +274,7 @@ fn allied_portrait_tooltip(
 fn update_zoom_presentation(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &Host,
+    host: &HostPresentation<'_>,
     ctx: &mut RenderContext<'_>,
 ) {
     let frame_id = PresentationFrameId::new(engine.frame_counter());
@@ -304,7 +303,7 @@ pub(super) fn drain_screenshots(
     sim_frame: u32,
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -320,7 +319,7 @@ pub(super) fn drain_screenshot_requests(
     pending: Vec<crate::http_server::PendingScreenshot>,
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -372,7 +371,7 @@ pub(super) fn drain_presented_ui_screenshots(sim_frame: u32, renderer: &Renderer
 fn render_screenshot_rgba(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     request: &crate::http_server::ScreenshotRequest,
@@ -428,7 +427,7 @@ fn render_screenshot_rgba(
 pub(super) fn capture_save_thumbnail(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -577,7 +576,7 @@ fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result
 pub(super) fn drain_wide_print_screen(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -602,7 +601,7 @@ pub(super) fn drain_wide_print_screen(
 pub(super) fn capture_screenshot_to_path(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -617,7 +616,7 @@ pub(super) fn capture_screenshot_to_path(
 fn capture_wide_map_rgba(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -720,7 +719,7 @@ fn median_filter_rgba_3x3(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
 }
 
 fn render_display_info_overlay(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     renderer: &mut crate::renderer::Renderer,
     fonts: &crate::hud_text::HudFonts,
     elapsed_secs: u32,
@@ -762,7 +761,7 @@ fn render_display_info_overlay(
         });
     };
 
-    let opts = host.application_context().options();
+    let opts = host.options;
     let version = format!(
         "v{}.{}.{:03} ({})",
         opts.major_version, opts.minor_version, opts.build_number, opts.release_name
@@ -789,17 +788,17 @@ fn render_display_info_overlay(
     text(renderer, "Music mode", left, top - 12);
     renderer.draw_rect_outline_screen(left, top, left + 129, top + 33, 0xffff);
 
-    let quiet = host.audio.sound.quiet_mode_weight().min(256);
-    let alert = host.audio.sound.alert_mode_weight().min(256);
-    let fight = host.audio.sound.fight_mode_weight().min(256);
+    let quiet = host.sound.quiet_mode_weight().min(256);
+    let alert = host.sound.alert_mode_weight().min(256);
+    let fight = host.sound.fight_mode_weight().min(256);
     fill_display_bar(renderer, left + 1, top + 3, quiet, 0x97cc);
     fill_display_bar(renderer, left + 1, top + 13, alert, 0xfe40);
     fill_display_bar(renderer, left + 1, top + 23, fight, 0xfa80);
 
-    let mode_color = if host.audio.sound.is_new_music_starting() {
+    let mode_color = if host.sound.is_new_music_starting() {
         0x03ef
     } else {
-        match host.audio.sound.music_mode() {
+        match host.sound.music_mode() {
             MusicMode::Quiet => 0x07ef,
             MusicMode::Alert => 0xfbe0,
             MusicMode::Fight => 0xf80f,
@@ -807,7 +806,7 @@ fn render_display_info_overlay(
     };
     text(
         renderer,
-        &format!("{}%", host.audio.sound.stream_relative_position()),
+        &format!("{}%", host.sound.stream_relative_position()),
         left + 96,
         top - 12,
     );
@@ -816,20 +815,20 @@ fn render_display_info_overlay(
     host.frontend.display_info_max_pending_sounds = host
         .frontend
         .display_info_max_pending_sounds
-        .max(host.audio.sound.num_pending_sounds());
+        .max(host.sound.num_pending_sounds());
     fill_rect(renderer, left - 24, top + 48, 180, 12, 0x2408);
     text(
         renderer,
         &format!(
             "PS: {:4} MAX: {:4}",
-            host.audio.sound.num_pending_sounds(),
+            host.sound.num_pending_sounds(),
             host.frontend.display_info_max_pending_sounds
         ),
         left - 24,
         top + 48,
     );
 
-    let stats = host.audio.sound.sound_cache().get_cache_stats();
+    let stats = host.sound.sound_cache().get_cache_stats();
     fill_rect(renderer, left - 24, top + 88, 190, 42, 0x7bd4);
     for (idx, label) in ["FX", "SR", "SP", "GL"].iter().enumerate() {
         let stat = &stats[idx];
@@ -1086,7 +1085,7 @@ impl RenderContext<'_> {
 pub(super) fn render_frame(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -1138,7 +1137,7 @@ pub(super) fn render_frame(
     let rewind_active = ctx.rewind_active;
     let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
     let draw_hud = ctx.draw_hud;
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.local_seat;
     // Queue the GPU background texture for the current camera view.
     // Engine-mutating pre-render bookkeeping (background blits, display sorting)
     // is hoisted to the main loop so `render_frame` itself observes an
@@ -1449,7 +1448,7 @@ pub(super) fn render_frame(
 
     crate::combat_gesture_overlay::render(
         &mut host.frontend,
-        host.transport.local_seat,
+        host.local_seat,
         engine,
         renderer,
         hud_fonts,
@@ -1955,7 +1954,7 @@ pub(super) fn render_frame(
     // so those lines surface in the scrollback even though they
     // originate outside the dispatcher.
     if cadence.advances_transients() {
-        drain_pending_console_output(console_overlay, host);
+        console_overlay.drain_pending_output(&mut host.frontend.pending_console_output);
         console_overlay.tick_animation();
     }
     if console_overlay.is_visible() {

@@ -742,7 +742,7 @@ impl InteractiveFrameSimulation {
                     scene_screenshots,
                     &manager.engine,
                     &display_snapshot,
-                    host,
+                    &mut host.presentation(),
                     assets.as_ref(),
                     dev,
                     &mut render_context,
