@@ -33,10 +33,10 @@ const ID_NEXT_PAGE: u32 = 303;
 const ID_CONTENT: u32 = 304;
 const STANDALONE_OPTIONS_PER_PAGE: usize = 12;
 const OPTION_COLUMN_LEFT_X: i32 = 30;
-const OPTION_COLUMN_RIGHT_X: i32 = 320;
+const OPTION_COLUMN_RIGHT_X: i32 = 330;
 const OPTION_ROW_START_Y: i32 = 100;
 const OPTION_ROW_GAP: i32 = 2;
-const OPTION_COLUMN_WIDTH_LIMIT: i32 = 290;
+const OPTION_COLUMN_WIDTH_LIMIT: i32 = 280;
 const OPTION_ROW_HEIGHT_LIMIT: i32 = 34;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 #[cfg(test)]
@@ -471,8 +471,8 @@ fn build_standalone_frame(
 
     let visible = standalone_visible_option_range(page);
     let visible_count = visible.len();
-    let (field_w, field_h) = resources.input_field_dimensions();
-    let field_w = field_w.min(OPTION_COLUMN_WIDTH_LIMIT);
+    let (_, field_h) = resources.input_field_dimensions();
+    let field_w = OPTION_COLUMN_WIDTH_LIMIT;
     let field_h = field_h.min(OPTION_ROW_HEIGHT_LIMIT);
     let mut frame = FrameWnd::default();
     frame.enabled = true;

@@ -693,22 +693,39 @@ pub fn draw_widget_button(
     };
 
     let sprite_drawn = if let Some(surf) = sprite {
-        let src = BBox::from_coords(0.0, 0.0, w as f32, h as f32);
-        let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
+        let (source_w, source_h) = renderer.surface_dimensions(surf).expect("live menu button");
+        let (source_x, target_x) = button_horizontal_slices(i32::from(source_w), w);
         // `blit_with_shadow` multiply-darkens shadow-key pixels (key
         // 0x1F, intensity 50) in the source bitmap so the drop-shadow
         // ring around each button blends instead of rendering opaque
         // blue.
-        renderer
-            .draw_surface_with_shadow(
-                surf,
-                Some(&src),
-                Some(&dst),
-                0,  // shadow_color (unused on this path)
-                50, // shadow_level — shadow-renderer default
-                BLIT_SOURCE_TRANSPARENT,
-            )
-            .expect("live menu button");
+        for part in 0..3 {
+            if target_x[part] == target_x[part + 1] {
+                continue;
+            }
+            let src = BBox::from_coords(
+                source_x[part] as f32,
+                0.0,
+                source_x[part + 1] as f32,
+                h.min(i32::from(source_h)) as f32,
+            );
+            let dst = BBox::from_coords(
+                (sx + target_x[part]) as f32,
+                sy as f32,
+                (sx + target_x[part + 1]) as f32,
+                (sy + h) as f32,
+            );
+            renderer
+                .draw_surface_with_shadow(
+                    surf,
+                    Some(&src),
+                    Some(&dst),
+                    0,  // shadow_color (unused on this path)
+                    50, // shadow_level — shadow-renderer default
+                    BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("live menu button");
+        }
         true
     } else {
         let hovered = force_hover || base.state == UiState::Focused;
@@ -1087,6 +1104,19 @@ pub fn play_widget_noise(
     )
 }
 
+/// Extend wide settings buttons through their center, preserving the corner
+/// posts. Native-size and narrower controls keep their existing source crop.
+fn button_horizontal_slices(source_width: i32, width: i32) -> ([i32; 4], [i32; 4]) {
+    if width <= source_width {
+        return ([0, width, width, width], [0, width, width, width]);
+    }
+    let edge = 8.min(source_width / 2);
+    (
+        [0, edge, source_width - edge, source_width],
+        [0, edge, width - edge, width],
+    )
+}
+
 /// Per-widget noise-tracking state.  One slot per noisy widget keyed
 /// by `(widget_id, noisy_id)`, persisted across frames so
 /// [`play_widget_noise_tracked`] can implement state-gated behaviour:
@@ -1222,6 +1252,19 @@ pub fn play_frame_widget_noise(
 #[cfg(test)]
 mod noisy_tracker_tests {
     use super::*;
+
+    #[test]
+    fn wide_settings_buttons_preserve_edges_and_fill_the_requested_width() {
+        let (source, target) = button_horizontal_slices(164, 280);
+        assert_eq!(source, [0, 8, 156, 164]);
+        assert_eq!(target, [0, 8, 272, 280]);
+        for width in [128, 164] {
+            assert_eq!(
+                button_horizontal_slices(164, width),
+                ([0, width, width, width], [0, width, width, width])
+            );
+        }
+    }
 
     #[test]
     fn silent_mouse_leave_rearms_hover_sound() {
