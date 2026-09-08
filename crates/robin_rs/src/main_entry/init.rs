@@ -582,6 +582,18 @@ pub fn rust_init_official_projection(
     )
     .map_err(authority_error)?;
 
+    // Seal both filesystem views while the shared VFS is still empty.
+    // Installing shipping data below mounts its authenticated raw/locale
+    // bundles; doing that first makes the fresh-authority check reject them.
+    let files = std::sync::Arc::new(SbFileSystem::new(robin_util::asset_fs::global().clone()));
+    files
+        .configure_official_projection_mounts(
+            data_dir,
+            resource_locale_root.as_str(),
+            core_overlay_root,
+        )
+        .map_err(authority_error)?;
+
     let shipping_path = robin_engine::sbfile::resolve_data_path("Data/datadir.bin");
     let shipping = match source_format {
         OfficialProjectionSourceFormatV1::LooseNativeV1 => {
@@ -632,19 +644,6 @@ pub fn rust_init_official_projection(
     options.golden_eye = sim_config.golden_eye;
     options.ignore_default_loose = sim_config.ignore_default_loose;
     options.bypass_fog_sprites_crash = sim_config.bypass_fog_sprites_crash;
-    let files = std::sync::Arc::new(SbFileSystem::new(
-        shipping
-            .as_ref()
-            .map(|shipping| shipping.asset_vfs().clone())
-            .unwrap_or_else(|| std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new())),
-    ));
-    files
-        .configure_official_projection_mounts(
-            data_dir,
-            resource_locale_root.as_str(),
-            core_overlay_root,
-        )
-        .map_err(authority_error)?;
     let profiles = std::sync::Arc::new(load_profiles_with_files(
         shipping.as_deref(),
         &options,
