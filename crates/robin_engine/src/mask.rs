@@ -321,6 +321,21 @@ fn polyline_above_point(poly: &[MapPoint], point: MapPoint) -> bool {
     y_on_seg > point.y
 }
 
+/// MSB-first eight-pixel expansion, shared by raw and cyclic RLE records.
+#[inline]
+fn expand_mask_byte(byte: u8) -> [u8; 8] {
+    [
+        byte >> 7,
+        (byte >> 6) & 1,
+        (byte >> 5) & 1,
+        (byte >> 4) & 1,
+        (byte >> 3) & 1,
+        (byte >> 2) & 1,
+        (byte >> 1) & 1,
+        byte & 1,
+    ]
+}
+
 /// Decode a mask's RLE-packed bitmap into a flat row-major `u8` buffer.
 ///
 /// Output layout: one byte per pixel, `bitmap[y * width + x]` is `1` where
@@ -371,16 +386,17 @@ pub fn decode_mask_bitmap(packed: &[u8], width: u16, height: u16) -> Vec<u8> {
                 }
                 let pattern = packed[pos];
                 pos += 1;
-                // Tile the 8-bit pattern across `pattern_pixels` pixels,
-                // rotating an MSB-first bit mask starting at 0x80.
-                for i in 0..pattern_pixels {
-                    let px = x + i;
-                    if px >= w {
-                        break;
-                    }
-                    let bit = 0x80u8 >> (i & 7);
-                    if pattern & bit != 0 {
-                        out[row_start + px] = 1;
+                let end = (x + pattern_pixels).min(w);
+                let run = &mut out[row_start + x..row_start + end];
+                match pattern {
+                    // The output starts cleared and runs never overlap.
+                    0 => {}
+                    255 => run.fill(1),
+                    _ => {
+                        let pixels = expand_mask_byte(pattern);
+                        for block in run.chunks_mut(8) {
+                            block.copy_from_slice(&pixels[..block.len()]);
+                        }
                     }
                 }
                 x += pattern_pixels;
@@ -392,15 +408,11 @@ pub fn decode_mask_bitmap(packed: &[u8], width: u16, height: u16) -> Vec<u8> {
                     }
                     let byte = packed[pos];
                     pos += 1;
-                    for i in 0..8 {
-                        let px = x + bi * 8 + i;
-                        if px >= w {
-                            break;
-                        }
-                        let bit = 0x80u8 >> i;
-                        if byte & bit != 0 {
-                            out[row_start + px] = 1;
-                        }
+                    let px = x + bi * 8;
+                    if px < w && byte != 0 {
+                        let count = (w - px).min(8);
+                        out[row_start + px..row_start + px + count]
+                            .copy_from_slice(&expand_mask_byte(byte)[..count]);
                     }
                 }
                 x += pattern_pixels;
@@ -416,6 +428,118 @@ pub fn decode_mask_bitmap(packed: &[u8], width: u16, height: u16) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn span_decoder_matches_pixel_reference_for_patterns_clipping_and_truncation() {
+        for pattern in 0..=255u8 {
+            for width in 0..=65 {
+                for packed in [
+                    vec![2, 0x89, pattern],
+                    vec![4, 3, pattern, pattern ^ 0x55, pattern ^ 0xff],
+                ] {
+                    for end in 0..=packed.len() {
+                        assert_eq!(
+                            decode_mask_bitmap(&packed[..end], width, 2),
+                            decode_mask_bitmap_reference(&packed[..end], width, 2)
+                        );
+                    }
+                }
+            }
+        }
+        // Mixed records, zero controls, short/overlong rows and missing data.
+        let mut state = 12345u32;
+        for length in 0..128 {
+            let mut packed = Vec::new();
+            for _ in 0..length {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                packed.push(state as u8);
+            }
+            for width in [1, 7, 8, 9, 31, 64, 127] {
+                assert_eq!(
+                    decode_mask_bitmap(&packed, width, 4),
+                    decode_mask_bitmap_reference(&packed, width, 4)
+                );
+            }
+        }
+    }
+
+    fn decode_mask_bitmap_reference(packed: &[u8], width: u16, height: u16) -> Vec<u8> {
+        let w = width as usize;
+        let h = height as usize;
+        let mut out = vec![0u8; w * h];
+
+        let mut off = 0usize;
+        for y in 0..h {
+            if off >= packed.len() {
+                break;
+            }
+            let line_len = packed[off] as usize;
+            off += 1;
+            let line_end = off.saturating_add(line_len).min(packed.len());
+
+            let row_start = y * w;
+            let mut x = 0usize;
+            let mut pos = off;
+
+            while x < w && pos < line_end {
+                let control = packed[pos];
+                pos += 1;
+                let compressed = (control & 0x80) != 0;
+                let pattern_bytes = (control & 0x7F) as usize;
+                let pattern_pixels = pattern_bytes << 3;
+                if pattern_pixels == 0 {
+                    continue;
+                }
+
+                if compressed {
+                    if pos >= line_end {
+                        break;
+                    }
+                    let pattern = packed[pos];
+                    pos += 1;
+                    // Tile the 8-bit pattern across `pattern_pixels` pixels,
+                    // rotating an MSB-first bit mask starting at 0x80.
+                    for i in 0..pattern_pixels {
+                        let px = x + i;
+                        if px >= w {
+                            break;
+                        }
+                        let bit = 0x80u8 >> (i & 7);
+                        if pattern & bit != 0 {
+                            out[row_start + px] = 1;
+                        }
+                    }
+                    x += pattern_pixels;
+                } else {
+                    // Raw 8-pixel blocks: one data byte per 8 pixels.
+                    for bi in 0..pattern_bytes {
+                        if pos >= line_end {
+                            break;
+                        }
+                        let byte = packed[pos];
+                        pos += 1;
+                        for i in 0..8 {
+                            let px = x + bi * 8 + i;
+                            if px >= w {
+                                break;
+                            }
+                            let bit = 0x80u8 >> i;
+                            if byte & bit != 0 {
+                                out[row_start + px] = 1;
+                            }
+                        }
+                    }
+                    x += pattern_pixels;
+                }
+            }
+
+            off = line_end;
+        }
+
+        out
+    }
 
     #[test]
     fn decode_empty() {

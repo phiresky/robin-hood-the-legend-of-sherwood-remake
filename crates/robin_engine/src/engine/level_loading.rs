@@ -3568,6 +3568,7 @@ impl EngineInner {
             )))
         })?;
 
+        let startup_started = web_time::Instant::now();
         self.begin_mission_level_stage();
         self.load_environment_stage(assets, &mut loaded, config.script_enabled);
         progress(1.0);
@@ -3575,7 +3576,17 @@ impl EngineInner {
         self.load_sound_sources_stage(assets, &loaded)?;
         progress(1.0);
 
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: environment and sound"
+        );
+        let startup_started = web_time::Instant::now();
         self.load_motion_stage(assets, staging, &mut loaded, bg_pixel_dims)?;
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: motion"
+        );
+        let startup_started = web_time::Instant::now();
         self.spawn_proto_entities_stage(assets, &loaded);
         self.spawn_mission_patch_entities_stage(assets, &loaded);
         // Mission entity position integers are sparse sector slots,
@@ -3589,6 +3600,12 @@ impl EngineInner {
             self.reserve_null_ai_handle_slot_if_empty();
         }
         progress(1.0);
+
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: proto entities and topology"
+        );
+        let startup_started = web_time::Instant::now();
 
         // The original engine creates object masters before loading mission
         // entities. Its SpriteScriptor cache is keyed by filename/profile,
@@ -3637,6 +3654,12 @@ impl EngineInner {
             force_visible_scroll_ids,
         )?;
 
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: mission entities and scripts"
+        );
+        let startup_started = web_time::Instant::now();
+
         canonicalize_building_position_sectors(
             assets,
             &mut loaded,
@@ -3675,6 +3698,10 @@ impl EngineInner {
         self.cache_door_ai_metadata();
         self.sort_pc_ids_by_priority(assets);
         self.select_highest_priority_pc(assets, 0);
+        tracing::debug!(
+            elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
+            "engine level: final identities and attachments"
+        );
 
         Ok(())
     }
