@@ -37,7 +37,6 @@ const OPTION_COLUMN_RIGHT_X: i32 = 330;
 const OPTION_ROW_START_Y: i32 = 100;
 const OPTION_ROW_GAP: i32 = 6;
 const OPTION_COLUMN_WIDTH_LIMIT: i32 = 280;
-const OPTION_ROW_HEIGHT_LIMIT: i32 = 34;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
 #[cfg(test)]
 pub(crate) const AUTOSAVE_OPTION_INDEX: usize = 17;
@@ -471,9 +470,8 @@ fn build_standalone_frame(
 
     let visible = standalone_visible_option_range(page);
     let visible_count = visible.len();
-    let (_, field_h) = resources.input_field_dimensions();
     let field_w = OPTION_COLUMN_WIDTH_LIMIT;
-    let field_h = field_h.min(OPTION_ROW_HEIGHT_LIMIT);
+    let field_h = btn_h;
     let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
@@ -1073,12 +1071,8 @@ mod tests {
         for page in 0..standalone_page_count() {
             let count = standalone_visible_option_range(page).len();
             for visible_index in 0..count {
-                let (x, y, width, height) = standalone_option_rect(
-                    visible_index,
-                    count,
-                    OPTION_COLUMN_WIDTH_LIMIT,
-                    OPTION_ROW_HEIGHT_LIMIT,
-                );
+                let (x, y, width, height) =
+                    standalone_option_rect(visible_index, count, OPTION_COLUMN_WIDTH_LIMIT, 34);
                 assert!(x >= 0 && x + width <= 640);
                 assert!(y >= OPTION_ROW_START_Y);
                 assert!(y + height < 388, "row overlaps page navigation");

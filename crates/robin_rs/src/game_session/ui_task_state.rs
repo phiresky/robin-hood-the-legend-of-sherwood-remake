@@ -597,8 +597,7 @@ impl OptionsTaskState {
                     GameEvent::MouseWheel(delta)
                         if self.controller.page == OptionsPage::Shortcuts =>
                     {
-                        let max =
-                            REAL_KEY_COUNT as usize - MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
+                        let max = REAL_KEY_COUNT as usize - shortcut_visible_rows(resources);
                         if *delta > 0 {
                             self.shortcut_scroll = self.shortcut_scroll.saturating_sub(1);
                         } else if *delta < 0 {
@@ -1013,7 +1012,7 @@ impl OptionsTaskState {
                 rows
             }
             OptionsPage::Shortcuts => {
-                let visible = MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
+                let visible = shortcut_visible_rows(resources);
                 let mut rows = (0..visible)
                     .map(|offset| {
                         let index = self.shortcut_scroll + offset;
@@ -1101,11 +1100,7 @@ impl OptionsTaskState {
         self.selected = self.selected.min(self.rows.len().saturating_sub(1));
         let (button_w, button_h) = resources.button_dimensions();
         let setting_button_w = 280;
-        let row_h = if self.controller.page == OptionsPage::Shortcuts && self.rows.len() > 12 {
-            27
-        } else {
-            button_h.min(34)
-        };
+        let row_h = button_h;
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
@@ -1887,6 +1882,18 @@ fn mission_name(mission_id: u32, profiles: Option<&ProfileManager>) -> Option<St
         .find(|mission| mission.id == mission_id)
         .map(|mission| mission.mission_name.clone())
         .filter(|name| !name.trim().is_empty())
+}
+
+fn shortcut_visible_rows(resources: &IngameMenuResources) -> usize {
+    // Reserve five native-height rows for presets and OK/Cancel.
+    let row_count = (480 - BUTTON_Y) / (resources.button_dimensions().1 + BUTTON_GAP);
+    assert!(
+        row_count > 5,
+        "native menu buttons leave no space for shortcut bindings"
+    );
+    ((row_count - 5) as usize)
+        .min(MAX_PAGE_BUTTONS)
+        .min(REAL_KEY_COUNT as usize)
 }
 
 fn options_footer_rows(resources: &IngameMenuResources) -> [OptionRow; 2] {

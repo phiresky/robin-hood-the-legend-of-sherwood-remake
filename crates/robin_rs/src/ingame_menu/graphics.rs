@@ -37,7 +37,6 @@ const ID_SCALE_BASE: u32 = 400;
 const ID_EFFECT_BASE: u32 = 500;
 const ID_PAGE_BASE: u32 = 600;
 const COLUMN_W: i32 = 280;
-const ROW_H: i32 = 34;
 const PARAMETER_ROW_H: i32 = 40;
 const OPTION_START_Y: i32 = 112;
 const OPTION_SPACING: i32 = 6;
@@ -79,6 +78,7 @@ pub async fn show_graphics(
     let ok_label = resources.menu_text.get(MT_BTN_OK);
     let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
     let scale_modes = scale_modes();
+    let row_h = resources.button_dimensions().1;
     let scale_x = 330;
     let scale_btn_w = COLUMN_W;
     let effect_y = OPTION_START_Y;
@@ -101,7 +101,7 @@ pub async fn show_graphics(
             30 + i as i32 * 196,
             55,
             188,
-            ROW_H,
+            row_h,
         );
     }
     for (i, label) in [
@@ -116,18 +116,18 @@ pub async fn show_graphics(
             ID_RES_BASE + i as u32,
             label,
             30,
-            OPTION_START_Y + i as i32 * (ROW_H + OPTION_SPACING),
+            OPTION_START_Y + i as i32 * (row_h + OPTION_SPACING),
             COLUMN_W,
-            ROW_H,
+            row_h,
         );
     }
     add(
         ID_ADAPTIVE_WIDESCREEN,
         "Adaptive Widescreen",
         30,
-        232,
+        OPTION_START_Y + 3 * (row_h + OPTION_SPACING),
         COLUMN_W,
-        ROW_H,
+        row_h,
     );
     let option_labels = [
         resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
@@ -143,18 +143,18 @@ pub async fn show_graphics(
     ];
     assert_eq!(option_labels.len(), OPTION_COUNT as usize);
     for (i, label) in option_labels.iter().enumerate() {
-        let (x, y) = option_position(i);
-        add(ID_OPT_BASE + i as u32, label, x, y, COLUMN_W, ROW_H);
+        let (x, y) = option_position(i, row_h);
+        add(ID_OPT_BASE + i as u32, label, x, y, COLUMN_W, row_h);
     }
     for (i, mode) in scale_modes.iter().enumerate() {
-        let (x, y) = scaling_position(i, scale_modes.len());
+        let (x, y) = scaling_position(i, scale_modes.len(), row_h);
         add(
             ID_SCALE_BASE + i as u32,
             mode.label(),
             x,
             y,
             COLUMN_W,
-            ROW_H,
+            row_h,
         );
     }
     for (i, effect) in TextureEffect::ALL.iter().enumerate() {
@@ -162,13 +162,13 @@ pub async fn show_graphics(
             ID_EFFECT_BASE + i as u32,
             effect.label(),
             30,
-            effect_y + i as i32 * (ROW_H + OPTION_SPACING),
+            effect_y + i as i32 * (row_h + OPTION_SPACING),
             COLUMN_W,
-            ROW_H,
+            row_h,
         );
     }
-    add(ID_OK, &ok_label, 330, 438, 134, ROW_H);
-    add(ID_CANCEL, &cancel_label, 476, 438, 134, ROW_H);
+    add(ID_OK, &ok_label, 330, 472 - row_h, 134, row_h);
+    add(ID_CANCEL, &cancel_label, 476, 472 - row_h, 134, row_h);
 
     let title = resources.menu_text.get(MT_TTL_GRAPHICS);
     let res_label = resources.menu_text.get(MT_STR_RES);
@@ -373,7 +373,14 @@ pub async fn show_graphics(
             if page == 0 {
                 render_text_virt_font(renderer, font, transform, &res_label, 30, 90);
                 render_text_virt_font(renderer, font, transform, &fx_label, 330, 90);
-                render_text_virt_font(renderer, font, transform, &fx_label, 30, 274);
+                render_text_virt_font(
+                    renderer,
+                    font,
+                    transform,
+                    &fx_label,
+                    30,
+                    option_position(7, row_h).1 - 22,
+                );
             } else if page == 1 {
                 render_text_virt_font(renderer, font, transform, "Scaling", 30, 90);
             }
@@ -556,16 +563,16 @@ fn widget_page(id: u32) -> Option<u32> {
     }
 }
 
-fn scaling_position(index: usize, count: usize) -> (i32, i32) {
+fn scaling_position(index: usize, count: usize, row_h: i32) -> (i32, i32) {
     let rows = count.div_ceil(2).max(1);
     assert!(rows <= 8, "scaling choices need another page");
     (
         if index < rows { 30 } else { 330 },
-        OPTION_START_Y + (index % rows) as i32 * (ROW_H + OPTION_SPACING),
+        OPTION_START_Y + (index % rows) as i32 * (row_h + OPTION_SPACING),
     )
 }
 
-fn option_position(index: usize) -> (i32, i32) {
+fn option_position(index: usize, row_h: i32) -> (i32, i32) {
     assert!(
         index < OPTION_COUNT as usize,
         "invalid graphics option index"
@@ -573,10 +580,16 @@ fn option_position(index: usize) -> (i32, i32) {
     if index < 7 {
         (
             330,
-            OPTION_START_Y + index as i32 * (ROW_H + OPTION_SPACING),
+            OPTION_START_Y + index as i32 * (row_h + OPTION_SPACING),
         )
     } else {
-        (30, 296 + (index - 7) as i32 * (ROW_H + OPTION_SPACING))
+        (
+            30,
+            OPTION_START_Y
+                + 4 * (row_h + OPTION_SPACING)
+                + 24
+                + (index - 7) as i32 * (row_h + OPTION_SPACING),
+        )
     }
 }
 
@@ -848,14 +861,15 @@ mod tests {
 
     #[test]
     fn graphics_pages_keep_all_choices_above_the_footer() {
+        let row_h = 34;
         let modes = scale_modes();
         for (index, _) in modes.iter().enumerate() {
-            let (x, y) = scaling_position(index, modes.len());
+            let (x, y) = scaling_position(index, modes.len(), row_h);
             assert!(x >= 30 && x + COLUMN_W <= 610);
-            assert!(y >= OPTION_START_Y && y + ROW_H <= 426);
+            assert!(y >= OPTION_START_Y && y + row_h <= 426);
             for previous in 0..index {
-                let (other_x, other_y) = scaling_position(previous, modes.len());
-                assert!(x != other_x || y - other_y >= ROW_H + OPTION_SPACING);
+                let (other_x, other_y) = scaling_position(previous, modes.len(), row_h);
+                assert!(x != other_x || y - other_y >= row_h + OPTION_SPACING);
             }
             assert_eq!(widget_page(ID_SCALE_BASE + index as u32), Some(1));
         }
@@ -898,10 +912,11 @@ mod tests {
 
     #[test]
     fn all_graphics_option_rows_fit_and_keep_stable_mappings_at_640x480() {
+        let row_h = 34;
         for index in 0..OPTION_COUNT as usize {
-            let (x, y) = option_position(index);
+            let (x, y) = option_position(index, row_h);
             assert!(x >= 30 && x + COLUMN_W <= 610);
-            assert!(y + ROW_H <= 426);
+            assert!(y + row_h <= 426);
             if x == 30 {
                 assert!(y >= 296, "toggles must sit below the resolution controls");
             }
