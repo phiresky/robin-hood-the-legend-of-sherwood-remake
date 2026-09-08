@@ -12,8 +12,9 @@ use super::runtime::{
 };
 use super::setup::{
     HeadlessEngineResources, LOADING_AUDIO_PROGRESS, LoadedInteractiveResources, LoadedMissionCore,
-    MissionLoadError, MissionProcessResources, load_level_and_sprite_bank,
-    pre_decode_maps_and_resources, setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
+    MissionInterfaceSetup, MissionLaunchSetup, MissionLoadError, MissionProcessResources,
+    TerrainJoinPoint, pre_decode_maps_and_resources, prepare_mission,
+    setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
 };
 use super::{
     MissionOutcome, install_cold_save_lua_session, install_pending_lua_session,
@@ -748,24 +749,33 @@ impl InteractiveLoadStage {
         self.process.start_interface_decode();
         let screen_width = window.width as f32;
         let screen_height = window.height as f32;
-        let loaded = load_level_and_sprite_bank(
-            Some(window),
-            &mut self.loading.renderer,
+        let mut feedback = (Some(window), &mut self.loading.renderer);
+        let prepared = prepare_mission(
+            &mut feedback,
             &mut self.host,
             &mut self.game,
             campaign,
             profiles,
             &mut self.process.text,
             args,
-            screen_width,
-            screen_height,
-            ground_mark,
-            titbit_rows,
-            minimap_widget,
-            rng_seed,
-            sim_config,
-            ranked_plan,
-            true,
+            MissionInterfaceSetup {
+                ground_mark,
+                titbit_rows,
+                minimap_widget,
+                screen_dimensions: (screen_width, screen_height),
+            },
+            MissionLaunchSetup {
+                rng_seed,
+                sim_config,
+                ranked_plan,
+            },
+        )?;
+        let constructed = prepared.construct_engine(args, &mut feedback)?;
+        let loaded = constructed.attach_presentation(
+            &mut self.host,
+            args,
+            &mut feedback,
+            TerrainJoinPoint::BeforePresentationUpload,
         )?;
         Ok(LoadedInteractiveStage {
             bootstrap: MissionBootstrap::new(
@@ -1039,28 +1049,37 @@ impl HeadlessLoadStage {
     ) -> Result<MissionBootstrap, MissionLoadError> {
         let (ground_mark, titbit_rows, minimap_widget) =
             self.resources.engine_setup_resources(&mut self.host);
-        let loaded = load_level_and_sprite_bank(
-            None,
-            &mut None,
+        let mut loading_screen = None;
+        let mut feedback = (None, &mut loading_screen);
+        let prepared = prepare_mission(
+            &mut feedback,
             &mut self.host,
             &mut self.game,
             campaign,
             profiles,
             &mut self.resources.text,
             args,
-            1024.0,
-            768.0,
-            ground_mark,
-            titbit_rows,
-            minimap_widget,
-            rng_seed,
-            sim_config,
-            super::leaderboard_runtime::RankedPreFramePlan::browse_only(
-                "headless and replay-runner missions are not eligible for leaderboard submission",
-            ),
-            // True-headless has no frontend-assembly join point; collect the
-            // decoded terrain synchronously right after engine construction.
-            false,
+            MissionInterfaceSetup {
+                ground_mark,
+                titbit_rows,
+                minimap_widget,
+                screen_dimensions: (1024.0, 768.0),
+            },
+            MissionLaunchSetup {
+                rng_seed,
+                sim_config,
+                ranked_plan: super::leaderboard_runtime::RankedPreFramePlan::browse_only(
+                    "headless and replay-runner missions are not eligible for leaderboard submission",
+                ),
+            },
+        )?;
+        let constructed = prepared.construct_engine(args, &mut feedback)?;
+        // True-headless has no frontend-assembly join point.
+        let loaded = constructed.attach_presentation(
+            &mut self.host,
+            args,
+            &mut feedback,
+            TerrainJoinPoint::BeforeHeadlessRuntime,
         )?;
         Ok(MissionBootstrap::new(
             MissionSpec::headless(mission_idx, location),

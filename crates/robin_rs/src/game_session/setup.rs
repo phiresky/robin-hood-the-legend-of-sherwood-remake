@@ -2192,26 +2192,134 @@ fn construct_with_initial_rng_seed<T>(
     construct(rng_seed).map(|value| (value, rng_seed))
 }
 
+/// Loading feedback borrows presentation devices; it never owns mission state.
+pub(super) type MissionLoadFeedback<'a> = (
+    Option<&'a mut crate::window::GameWindow>,
+    &'a mut Option<crate::loading_screen::LoadingScreenRenderer>,
+);
+
+/// CPU interface metadata needed before simulation construction. Dimensions
+/// belong to minimap placement, not to the engine's terrain grid.
+pub(super) struct MissionInterfaceSetup {
+    pub(super) ground_mark: Option<engine_api::GroundMarkSpriteData>,
+    pub(super) titbit_rows: Vec<u16>,
+    pub(super) minimap_widget: Option<engine_api::MinimapWidgetSetup>,
+    pub(super) screen_dimensions: (f32, f32),
+}
+
+/// Admission and deterministic options travel together until construction.
+/// In particular, ranked authority cannot be reconstructed from diagnostics.
+pub(super) struct MissionLaunchSetup {
+    pub(super) rng_seed: u64,
+    pub(super) sim_config: engine_api::SimConfig,
+    pub(super) ranked_plan: super::leaderboard_runtime::RankedPreFramePlan,
+}
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) enum TerrainJoinPoint {
+    BeforeHeadlessRuntime,
+    BeforePresentationUpload,
+}
+
+/// Prepared CPU inputs, including the exact campaign allocation to recover if
+/// ingestion fails. Only preparation can create this capability; construction
+/// consumes it, so callers cannot run startup callbacks twice.
+pub(super) struct PreparedMission {
+    campaign: Campaign,
+    assets: engine_api::LevelAssets,
+    loaded: robin_engine::level_data::LoadedLevel,
+    mission_name: Option<String>,
+    level_directory: String,
+    ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
+    titbit_row_frame_counts: Vec<u16>,
+    launch: MissionLaunchSetup,
+    presentation: PreparedMissionPresentation,
+}
+
+/// Host-only products carried across engine construction without joining the
+/// terrain worker prematurely. This is not a save format or a second engine.
+struct PreparedMissionPresentation {
+    dev: engine_api::DevState,
+    background: Option<engine_api::level_loading::PreDecodedBackground>,
+    minimap: Option<engine_api::level_loading::PreDecodedMinimap>,
+    pending_terrain: Option<crate::level_loading_host::PendingTerrainDecode>,
+    bg_pixel_dims: (f32, f32),
+    ambience_backgrounds: Vec<(
+        engine_api::Ambiance,
+        engine_api::level_loading::PreDecodedBackground,
+    )>,
+    ambience_minimaps: Vec<(
+        engine_api::Ambiance,
+        engine_api::level_loading::PreDecodedMinimap,
+    )>,
+    legacy_capture_scb: Option<assets_scb::ScbFile>,
+    dynamic_visuals: bool,
+    initial_shadow_key: u16,
+    timer: PhaseTimer,
+}
+
+/// A live engine that has consumed ranked admission but has not yet attached
+/// the host's viewport/legacy display state. Only attachment publishes a
+/// LoadedMissionCore to frontend bootstrap.
+pub(super) struct ConstructedMission {
+    engine: Engine,
+    replay_campaign: Campaign,
+    assets: engine_api::LevelAssets,
+    rng_seed: u64,
+    sim_config: engine_api::SimConfig,
+    ranked_admission: super::leaderboard_runtime::PreparedRankedAdmission,
+    presentation: PreparedMissionPresentation,
+}
+
+// These linear runtime capabilities own authority, jobs, or non-persisted
+// resource metadata. Serde provides an honest diagnostic label, never a route
+// to fabricate a stage or silently default its skipped runtime fields.
+macro_rules! diagnostic_stage_serde {
+    ($($stage:ty),+ $(,)?) => {$(
+        impl serde::Serialize for $stage {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(stringify!($stage))
+            }
+        }
+        impl<'de> serde::Deserialize<'de> for $stage {
+            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+                Err(serde::de::Error::custom(concat!(stringify!($stage), " is a runtime-only mission capability")))
+            }
+        }
+    )+};
+}
+diagnostic_stage_serde!(
+    MissionInterfaceSetup,
+    MissionLaunchSetup,
+    PreparedMission,
+    PreparedMissionPresentation,
+    ConstructedMission
+);
+
 #[allow(clippy::too_many_arguments)]
-pub(super) fn load_level_and_sprite_bank(
-    mut event_pump: Option<&mut crate::window::GameWindow>,
-    loading_screen: &mut Option<crate::loading_screen::LoadingScreenRenderer>,
+pub(super) fn prepare_mission(
+    feedback: &mut MissionLoadFeedback<'_>,
     host: &mut Host,
     game: &mut Game,
     campaign: Campaign,
     profiles: &engine_profiles::ProfileManager,
     text_res: &mut ResourceManager,
     args: &crate::main_entry::CliArgs,
-    _screen_width: f32,
-    _screen_height: f32,
-    ground_mark_sprite: Option<engine_api::GroundMarkSpriteData>,
-    titbit_row_frame_counts: Vec<u16>,
-    minimap_widget: Option<engine_api::MinimapWidgetSetup>,
-    authoritative_rng_seed: u64,
-    authoritative_sim_config: engine_api::SimConfig,
-    ranked_plan: super::leaderboard_runtime::RankedPreFramePlan,
-    defer_terrain_join: bool,
-) -> Result<LoadedMissionCore, MissionLoadError> {
+    interface: MissionInterfaceSetup,
+    launch: MissionLaunchSetup,
+) -> Result<PreparedMission, MissionLoadError> {
+    let (event_pump, loading_screen) = feedback;
+    let MissionInterfaceSetup {
+        ground_mark: ground_mark_sprite,
+        titbit_rows: titbit_row_frame_counts,
+        minimap_widget,
+        screen_dimensions: (_screen_width, _screen_height),
+    } = interface;
+    let MissionLaunchSetup {
+        rng_seed: authoritative_rng_seed,
+        sim_config: authoritative_sim_config,
+        ranked_plan,
+    } = launch;
     let files = match host.preparation_files() {
         Ok(files) => std::sync::Arc::new(files.snapshot()),
         Err(message) => return Err(MissionLoadError::new(campaign, message)),
@@ -2698,57 +2806,110 @@ pub(super) fn load_level_and_sprite_bank(
         .apply_arno_law(initial_shadow_key);
     assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
 
-    // This is the only point at which setup transfers campaign ownership.
-    // Every fallible file/decode step above borrows the session campaign, and
-    // the preserving constructor returns the exact allocation on ingestion
-    // failure.
-    let replay_campaign = campaign.clone();
-    let (mut engine, ranked_admission) = {
-        let mut progress = |delta: f32| {
-            tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
-        };
-        match Engine::prepare_preserving_campaign(engine_api::EngineArgs {
+    Ok(PreparedMission {
+        campaign,
+        assets,
+        loaded,
+        mission_name,
+        level_directory,
+        ground_mark_sprite,
+        titbit_row_frame_counts,
+        launch: MissionLaunchSetup {
+            rng_seed,
+            sim_config,
+            ranked_plan,
+        },
+        presentation: PreparedMissionPresentation {
+            dev,
+            background: pre_decoded_bg,
+            minimap: pre_decoded_mm,
+            pending_terrain: bg_pending,
+            bg_pixel_dims,
+            ambience_backgrounds: pre_decoded_ambience_backgrounds,
+            ambience_minimaps: pre_decoded_ambience_minimaps,
+            legacy_capture_scb,
+            dynamic_visuals,
+            initial_shadow_key,
+            timer,
+        },
+    })
+}
+
+impl PreparedMission {
+    pub(super) fn construct_engine(
+        self,
+        args: &crate::main_entry::CliArgs,
+        feedback: &mut MissionLoadFeedback<'_>,
+    ) -> Result<ConstructedMission, MissionLoadError> {
+        let Self {
             campaign,
-            level: engine_api::LevelLoadArgs {
-                assets: &mut assets,
-                level_directory: &level_directory,
-                progress: &mut progress,
-                loaded,
-                bg_pixel_dims,
-            },
+            mut assets,
+            loaded,
+            mission_name,
+            level_directory,
             ground_mark_sprite,
             titbit_row_frame_counts,
+            launch,
+            mut presentation,
+        } = self;
+        let MissionLaunchSetup {
             rng_seed,
-            original_rng_replay: None,
             sim_config,
-        }) {
-            Ok(prepared) => {
-                #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-                if let Some(request) = args.simulation_content_export.as_ref() {
-                    let exact_mission = match mission_name.as_deref() {
-                        Some(mission) => mission,
-                        None => {
-                            let campaign = Engine::from_prepared(prepared).into_campaign();
-                            return Err(MissionLoadError::new(
-                                campaign,
-                                "simulation-content export has no prepared mission identity"
-                                    .to_owned(),
-                            ));
-                        }
-                    };
-                    let components = prepared
-                        .static_projection()
-                        .components()
-                        .iter()
-                        .map(|component| {
-                            crate::official_projection_export::CanonicalProjectionComponent {
-                                document: component.document.clone(),
-                                canonical_bytes: component.canonical_bytes.clone(),
-                                sha256: component.sha256,
+            ranked_plan,
+        } = launch;
+        let (event_pump, loading_screen) = feedback;
+        let bg_pixel_dims = presentation.bg_pixel_dims;
+        // This is the only point at which setup transfers campaign ownership.
+        // Every fallible file/decode step above borrows the session campaign, and
+        // the preserving constructor returns the exact allocation on ingestion
+        // failure.
+        let replay_campaign = campaign.clone();
+        let (engine, ranked_admission) = {
+            let mut progress = |delta: f32| {
+                tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
+            };
+            match Engine::prepare_preserving_campaign(engine_api::EngineArgs {
+                campaign,
+                level: engine_api::LevelLoadArgs {
+                    assets: &mut assets,
+                    level_directory: &level_directory,
+                    progress: &mut progress,
+                    loaded,
+                    bg_pixel_dims,
+                },
+                ground_mark_sprite,
+                titbit_row_frame_counts,
+                rng_seed,
+                original_rng_replay: None,
+                sim_config,
+            }) {
+                Ok(prepared) => {
+                    #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+                    if let Some(request) = args.simulation_content_export.as_ref() {
+                        let exact_mission = match mission_name.as_deref() {
+                            Some(mission) => mission,
+                            None => {
+                                let campaign = Engine::from_prepared(prepared).into_campaign();
+                                return Err(MissionLoadError::new(
+                                    campaign,
+                                    "simulation-content export has no prepared mission identity"
+                                        .to_owned(),
+                                ));
                             }
-                        })
-                        .collect::<Vec<_>>();
-                    if let Err(error) =
+                        };
+                        let components = prepared
+                            .static_projection()
+                            .components()
+                            .iter()
+                            .map(|component| {
+                                crate::official_projection_export::CanonicalProjectionComponent {
+                                    document: component.document.clone(),
+                                    canonical_bytes: component.canonical_bytes.clone(),
+                                    sha256: component.sha256,
+                                }
+                            })
+                            .collect::<Vec<_>>();
+                        if let Err(error) =
                         crate::official_projection_export::write_simulation_content_projection(
                             request,
                             exact_mission,
@@ -2762,141 +2923,186 @@ pub(super) fn load_level_and_sprite_bank(
                             format!("simulation-content export failed: {error:#}"),
                         ));
                     }
+                    }
+                    ranked_plan.consume_prepared(prepared)
                 }
-                ranked_plan.consume_prepared(prepared)
+                Err((error, campaign)) => {
+                    return Err(MissionLoadError::new(
+                        campaign,
+                        format!("Level init failed: {error}"),
+                    ));
+                }
             }
-            Err((error, campaign)) => {
-                return Err(MissionLoadError::new(
-                    campaign,
-                    format!("Level init failed: {error}"),
-                ));
+        };
+        presentation.timer.step("engine construction");
+        Ok(ConstructedMission {
+            engine,
+            replay_campaign,
+            assets,
+            rng_seed,
+            sim_config,
+            ranked_admission,
+            presentation,
+        })
+    }
+}
+
+impl ConstructedMission {
+    pub(super) fn attach_presentation(
+        self,
+        host: &mut Host,
+        args: &crate::main_entry::CliArgs,
+        feedback: &mut MissionLoadFeedback<'_>,
+        terrain_join: TerrainJoinPoint,
+    ) -> Result<LoadedMissionCore, MissionLoadError> {
+        let Self {
+            mut engine,
+            replay_campaign,
+            assets,
+            rng_seed,
+            sim_config,
+            ranked_admission,
+            presentation,
+        } = self;
+        let PreparedMissionPresentation {
+            mut dev,
+            background: mut pre_decoded_bg,
+            minimap: mut pre_decoded_mm,
+            pending_terrain: bg_pending,
+            bg_pixel_dims,
+            ambience_backgrounds: pre_decoded_ambience_backgrounds,
+            ambience_minimaps: pre_decoded_ambience_minimaps,
+            legacy_capture_scb,
+            dynamic_visuals,
+            initial_shadow_key,
+            mut timer,
+        } = presentation;
+        let (event_pump, loading_screen) = feedback;
+
+        // Engine construction ran on probed header dimensions. Callers that
+        // cannot defer (true-headless bootstrap) collect the decoded pixels now
+        // — a decode failure still fails the mission load (via the replay
+        // campaign clone — `campaign` moved into the engine), and diverging
+        // dimensions would corrupt the already-built grid, so that is a hard
+        // error rather than a fallback. Interactive callers instead carry the
+        // pending decode into frontend assembly and join right before the GPU
+        // upload, so the decode also overlaps audio setup, descriptors, HUD
+        // fonts, and renderer bring-up.
+        let mut pending_terrain_out = None;
+        if let Some(pending) = bg_pending {
+            if matches!(terrain_join, TerrainJoinPoint::BeforePresentationUpload) {
+                pending_terrain_out = Some(pending);
+            } else {
+                let decoded = pending.join_blocking();
+                let background = match decoded.background {
+                    Ok(background) => background,
+                    Err(message) => return Err(MissionLoadError::new(replay_campaign, message)),
+                };
+                if let Some(bg) = background.as_ref() {
+                    assert_eq!(
+                        (bg.width as f32, bg.height as f32),
+                        bg_pixel_dims,
+                        "background map header dimensions diverge from decoded bitmap"
+                    );
+                }
+                pre_decoded_bg = background;
+                pre_decoded_mm = decoded.minimap;
+                timer.step("background map join");
             }
         }
-    };
-    timer.step("engine construction");
 
-    // Engine construction ran on probed header dimensions. Callers that
-    // cannot defer (true-headless bootstrap) collect the decoded pixels now
-    // — a decode failure still fails the mission load (via the replay
-    // campaign clone — `campaign` moved into the engine), and diverging
-    // dimensions would corrupt the already-built grid, so that is a hard
-    // error rather than a fallback. Interactive callers instead carry the
-    // pending decode into frontend assembly and join right before the GPU
-    // upload, so the decode also overlaps audio setup, descriptors, HUD
-    // fonts, and renderer bring-up.
-    let mut pending_terrain_out = None;
-    if let Some(pending) = bg_pending {
-        if defer_terrain_join {
-            pending_terrain_out = Some(pending);
+        if let Some(save_bytes) = args.mission_start_legacy_save.as_ref() {
+            let mission_scb = legacy_capture_scb
+                .as_ref()
+                .expect("legacy frame-zero capture lost its mission script");
+            let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
+                save_bytes.clone(),
+                "frame-zero parity capture",
+                &engine,
+                &assets,
+                mission_scb,
+                &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
+            )
+            .map_err(|error| {
+                MissionLoadError::new(
+                    replay_campaign.clone(),
+                    format!("decode frame-zero Original save: {error}"),
+                )
+            })?;
+            let loaded_host =
+                robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
+                    &mut engine,
+                    &assets,
+                    &save,
+                )
+                .map_err(|error| {
+                    MissionLoadError::new(
+                        replay_campaign.clone(),
+                        format!("adopt frame-zero Original save: {error}"),
+                    )
+                })?;
+            loaded_host.apply_display_to(&mut host.frontend.engine_display);
+            host.frontend.selected_view_element = loaded_host.selected_view_element();
+            tracing::info!("adopted Original v48 save for frame-zero viewport capture");
+        }
+        if rng_seed != 0 {
+            tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
+        }
+        host.frontend
+            .viewport
+            .set_level_size(bg_pixel_dims.0, bg_pixel_dims.1);
+
+        // Multiplayer snapshots are cached after the host seat is bootstrapped
+        // and then refreshed at the same sampling point as state hashes. That
+        // gives early handshakes a frame-0 snapshot while late joiners still
+        // adopt a hash-aligned state.
+
+        // GoldenEye is now applied inside `Engine::new` via
+        // `EngineArgs::goldeneye` — no post-construction dispatch.
+        dev.debug.all_view_cones = args.view_cones;
+        tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
+
+        if let Some(ls) = loading_screen.as_mut() {
+            ls.set_status(
+                "Generating sprite variants...",
+                LOADING_SPRITE_VARIANTS_PROGRESS,
+            );
+        }
+
+        // Variant dictionaries and opacity were generated with the effective
+        // initial ambiance before publication. Engine preparation must resolve the
+        // same key: rebinding here would copy the entire published sprite bank just
+        // to apply the color it already has. Runtime ambiance changes still use the
+        // synchronized COW rebind path.
+        let engine_shadow_key = if dynamic_visuals {
+            engine.weather().night_color
         } else {
-            let decoded = pending.join_blocking();
-            let background = match decoded.background {
-                Ok(background) => background,
-                Err(message) => return Err(MissionLoadError::new(replay_campaign, message)),
-            };
-            if let Some(bg) = background.as_ref() {
-                assert_eq!(
-                    (bg.width as f32, bg.height as f32),
-                    bg_pixel_dims,
-                    "background map header dimensions diverge from decoded bitmap"
-                );
-            }
-            pre_decoded_bg = background;
-            pre_decoded_mm = decoded.minimap;
-            timer.step("background map join");
-        }
-    }
-
-    if let Some(save_bytes) = args.mission_start_legacy_save.as_ref() {
-        let mission_scb = legacy_capture_scb
-            .as_ref()
-            .expect("legacy frame-zero capture lost its mission script");
-        let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
-            save_bytes.clone(),
-            "frame-zero parity capture",
-            &engine,
-            &assets,
-            mission_scb,
-            &robin_engine::legacy_save::body::LegacySaveBodyLimits::default(),
-        )
-        .map_err(|error| {
-            MissionLoadError::new(
-                replay_campaign.clone(),
-                format!("decode frame-zero Original save: {error}"),
-            )
-        })?;
-        let loaded_host = robin_engine::legacy_save::adopt_engine::adopt_known_linux_v48_replay(
-            &mut engine,
-            &assets,
-            &save,
-        )
-        .map_err(|error| {
-            MissionLoadError::new(
-                replay_campaign.clone(),
-                format!("adopt frame-zero Original save: {error}"),
-            )
-        })?;
-        loaded_host.apply_display_to(&mut host.frontend.engine_display);
-        host.frontend.selected_view_element = loaded_host.selected_view_element();
-        tracing::info!("adopted Original v48 save for frame-zero viewport capture");
-    }
-    if rng_seed != 0 {
-        tracing::info!(seed = rng_seed, "engine RNG seeded at construction");
-    }
-    host.frontend
-        .viewport
-        .set_level_size(bg_pixel_dims.0, bg_pixel_dims.1);
-
-    // Multiplayer snapshots are cached after the host seat is bootstrapped
-    // and then refreshed at the same sampling point as state hashes. That
-    // gives early handshakes a frame-0 snapshot while late joiners still
-    // adopt a hash-aligned state.
-
-    // GoldenEye is now applied inside `Engine::new` via
-    // `EngineArgs::goldeneye` — no post-construction dispatch.
-    dev.debug.all_view_cones = args.view_cones;
-    tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
-
-    if let Some(ls) = loading_screen.as_mut() {
-        ls.set_status(
-            "Generating sprite variants...",
-            LOADING_SPRITE_VARIANTS_PROGRESS,
+            engine.initial_mission_night_color()
+        };
+        assert_eq!(
+            engine_shadow_key, initial_shadow_key,
+            "engine initial shadow key diverged from the published sprite generation"
         );
+        tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
+        timer.step("sprite variants + Arno's Law");
+        timer.total();
+
+        Ok(LoadedMissionCore {
+            engine,
+            replay_campaign,
+            assets,
+            dev,
+            pre_decoded_background: pre_decoded_bg,
+            pre_decoded_minimap: pre_decoded_mm,
+            pending_terrain: pending_terrain_out,
+            bg_pixel_dims,
+            pre_decoded_ambience_backgrounds,
+            pre_decoded_ambience_minimaps,
+            engine_rng_seed: rng_seed,
+            engine_sim_config: sim_config,
+            ranked_admission,
+        })
     }
-
-    // Variant dictionaries and opacity were generated with the effective
-    // initial ambiance before publication. Engine preparation must resolve the
-    // same key: rebinding here would copy the entire published sprite bank just
-    // to apply the color it already has. Runtime ambiance changes still use the
-    // synchronized COW rebind path.
-    let engine_shadow_key = if dynamic_visuals {
-        engine.weather().night_color
-    } else {
-        engine.initial_mission_night_color()
-    };
-    assert_eq!(
-        engine_shadow_key, initial_shadow_key,
-        "engine initial shadow key diverged from the published sprite generation"
-    );
-    tick_progress(loading_screen, event_pump, 1.0);
-    timer.step("sprite variants + Arno's Law");
-    timer.total();
-
-    Ok(LoadedMissionCore {
-        engine,
-        replay_campaign,
-        assets,
-        dev,
-        pre_decoded_background: pre_decoded_bg,
-        pre_decoded_minimap: pre_decoded_mm,
-        pending_terrain: pending_terrain_out,
-        bg_pixel_dims,
-        pre_decoded_ambience_backgrounds,
-        pre_decoded_ambience_minimaps,
-        engine_rng_seed: rng_seed,
-        engine_sim_config: sim_config,
-        ranked_admission,
-    })
 }
 
 /// Install the local deterministic seat and publish the host's authoritative
@@ -3107,6 +3313,164 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    fn prepared_stage_fixture() -> PreparedMission {
+        let mut assets = LevelAssets::new();
+        let fixture = Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
+            .expect("fixture campaign");
+        let loaded = robin_engine::level_data::LoadedLevel::empty_for_test();
+        let ambiance = engine_api::Ambiance::from_raw(loaded.mission.header.ambiance);
+        let (r, g, b) = ambiance.night_color_rgb();
+        PreparedMission {
+            campaign: fixture.campaign().clone(),
+            assets,
+            loaded,
+            mission_name: Some("stage fixture".into()),
+            level_directory: String::new(),
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            launch: MissionLaunchSetup {
+                rng_seed: 0x1234,
+                sim_config: engine_api::SimConfig {
+                    script_enabled: false,
+                    golden_eye: true,
+                    ..Default::default()
+                },
+                ranked_plan: super::super::leaderboard_runtime::RankedPreFramePlan::browse_only(
+                    "stage fixture",
+                ),
+            },
+            presentation: PreparedMissionPresentation {
+                dev: Default::default(),
+                background: None,
+                minimap: None,
+                pending_terrain: Some(crate::level_loading_host::PendingTerrainDecode::Ready(
+                    crate::level_loading_host::DecodedTerrainBitmaps {
+                        background: Ok(None),
+                        minimap: None,
+                    },
+                )),
+                bg_pixel_dims: (0.0, 0.0),
+                ambience_backgrounds: Vec::new(),
+                ambience_minimaps: Vec::new(),
+                legacy_capture_scb: None,
+                dynamic_visuals: true,
+                initial_shadow_key: robin_util::color::rgb565(r, g, b),
+                timer: PhaseTimer::new("stage fixture"),
+            },
+        }
+    }
+
+    #[test]
+    fn production_stages_preserve_launch_and_choose_the_terrain_join_point() {
+        for join in [
+            TerrainJoinPoint::BeforeHeadlessRuntime,
+            TerrainJoinPoint::BeforePresentationUpload,
+        ] {
+            let prepared = prepared_stage_fixture();
+            let campaign_before = serde_json::to_value(&prepared.campaign).unwrap();
+            let args = crate::main_entry::CliArgs {
+                view_cones: true,
+                ..Default::default()
+            };
+            let mut loading_screen = None;
+            let mut feedback = (None, &mut loading_screen);
+            let constructed = prepared
+                .construct_engine(&args, &mut feedback)
+                .unwrap_or_else(|error| panic!("construct stage: {}", error.message));
+            assert_eq!(constructed.rng_seed, 0x1234);
+            assert!(constructed.engine.sim_config().golden_eye);
+            assert_eq!(
+                serde_json::to_value(&constructed.replay_campaign).unwrap(),
+                campaign_before
+            );
+            assert!(
+                constructed.presentation.pending_terrain.is_some(),
+                "construction must not join presentation work"
+            );
+            assert!(matches!(
+                constructed.ranked_admission,
+                super::super::leaderboard_runtime::PreparedRankedAdmission::BrowseOnly { .. }
+            ));
+            let mut host = Host::scratch(1024.0, 768.0);
+            let loaded = constructed
+                .attach_presentation(&mut host, &args, &mut feedback, join)
+                .unwrap_or_else(|error| panic!("attach stage: {}", error.message));
+            assert_eq!(
+                loaded.pending_terrain.is_some(),
+                matches!(join, TerrainJoinPoint::BeforePresentationUpload)
+            );
+            assert_eq!(loaded.engine_rng_seed, 0x1234);
+            assert!(loaded.dev.debug.all_view_cones);
+        }
+    }
+
+    #[test]
+    fn construction_stage_recovers_campaign_on_ingestion_failure() {
+        let mut prepared = prepared_stage_fixture();
+        prepared.launch.sim_config.script_enabled = true;
+        let campaign_before = serde_json::to_value(&prepared.campaign).unwrap();
+        let allocation_before = prepared.campaign.missions.as_ptr();
+        let mut loading_screen = None;
+        let error = match prepared
+            .construct_engine(&Default::default(), &mut (None, &mut loading_screen))
+        {
+            Ok(_) => panic!("missing required mission script must reject construction"),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("Level init failed"),
+            "{}",
+            error.message
+        );
+        assert_eq!(
+            serde_json::to_value(&error.campaign).unwrap(),
+            campaign_before
+        );
+        assert_eq!(error.campaign.missions.as_ptr(), allocation_before);
+    }
+
+    #[test]
+    fn headless_attachment_reports_decode_failure_without_fabricating_terrain() {
+        let mut prepared = prepared_stage_fixture();
+        prepared.presentation.pending_terrain =
+            Some(crate::level_loading_host::PendingTerrainDecode::Ready(
+                crate::level_loading_host::DecodedTerrainBitmaps {
+                    background: Err("terrain fixture failed".into()),
+                    minimap: None,
+                },
+            ));
+        let campaign_before = serde_json::to_value(&prepared.campaign).unwrap();
+        let mut loading_screen = None;
+        let mut feedback = (None, &mut loading_screen);
+        let args = Default::default();
+        let constructed = prepared
+            .construct_engine(&args, &mut feedback)
+            .unwrap_or_else(|error| panic!("construct stage: {}", error.message));
+        let error = match constructed.attach_presentation(
+            &mut Host::scratch(1024.0, 768.0),
+            &args,
+            &mut feedback,
+            TerrainJoinPoint::BeforeHeadlessRuntime,
+        ) {
+            Ok(_) => panic!("terrain failure must reject attachment"),
+            Err(error) => error,
+        };
+        assert_eq!(error.message, "terrain fixture failed");
+        assert_eq!(
+            serde_json::to_value(&error.campaign).unwrap(),
+            campaign_before
+        );
+    }
+
+    #[test]
+    fn stage_diagnostics_cannot_reconstruct_runtime_capabilities() {
+        let diagnostic = serde_json::to_string(&prepared_stage_fixture()).unwrap();
+        assert_eq!(diagnostic, "\"PreparedMission\"");
+        assert!(serde_json::from_str::<PreparedMission>(&diagnostic).is_err());
+        assert!(serde_json::from_str::<ConstructedMission>("{}").is_err());
+        assert!(serde_json::from_str::<MissionLaunchSetup>("{}").is_err());
+    }
 
     #[test]
     fn concurrent_preparation_keeps_descriptor_aliases_and_text_in_their_reader() {
