@@ -144,3 +144,11 @@ workspace = true
 [[example]]
 name = "migrate_picture_metadata"
 required-features = ["engine-adapters"]
+
+[[example]]
+name = "partition_sprite_startup"
+required-features = ["engine-adapters"]
+
+[[example]]
+name = "mission_sprite_audit"
+required-features = ["engine-adapters"]
