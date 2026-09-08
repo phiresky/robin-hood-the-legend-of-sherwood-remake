@@ -17,6 +17,7 @@ orbit. Set the frame before rendering: camera markers override a camera assigned
 while another marker's frame is active. Numpad 0 enters the camera. Camera Data >
 Background Images contains the bare map and composite overlays, disabled
 initially. Enable either at 50% to check registration.
+Frame 10 is a close oblique view of the foreground tree's leaf and branch geometry.
 
 **Sherwood Animation Reference** uses an independent 1–64 timeline at 25 fps.
 Six tree canopies retain all sixteen authored frames and changing offsets,
@@ -37,15 +38,74 @@ with `render_inspection.py` through MCP. The wire renders hide the clearing mesh
 so its dense grid does not obscure the structures.
 
 Canopy depth follows supporting trunk footprints instead of the sprite's
-top-left/elevation billboard plane. The current geometry uses 470 separate,
-irregular rounded clumps distributed through crown depth. This replaces the
-warped mask shells and their long connecting walls. Broad crowns interpolate
-between supporting trunks; the foreground Arbre05 root remains inferred.
-The original animated image is projected onto these volumes, with explicit
-canvas clipping to prevent neighboring atlas frames bleeding into the borders.
-New images are named `inspection-depth/rounded-foliage-*.png`; the corresponding
-topology report is `rounded-foliage-validation.json`. The prior native scene is
-preserved as `sherwood-before-rounded-foliage.blend`.
+top-left/elevation billboard plane. The latest pass separates the six overlays
+into 18 crown sectors belonging to 17 supporting trees. Each sector has major
+branches, forks, shoots and terminal twigs, 2 small internal foliage masses,
+and many pointed leaf meshes: 15,930 sprays containing 143,370 leaves overall.
+The foreground Arbre05 root remains inferred. The previous rounded-clump scene
+is preserved as `sherwood-before-branch-canopies.blend`.
+
+Branches attach to supporting trunks, with excess stump tips trimmed at forks.
+Leaf sprays clear the central stems and use local opaque texture samples on
+rear faces. Both front and rear retain animated source-canvas alpha to keep
+original holes and borders. Two silhouette-fitting rounds add sparse samples
+at measured gaps. At the end of the initial branch/leaf pass, first-frame alpha
+coverage was 99.66–99.88% across the six
+overlays, with zero extra opaque pixels; this measures silhouette registration,
+not recovered 3D accuracy. Hidden branch structure and crown thickness remain
+inferred from the single picture.
+
+The subsequent depth correction removes two causes of the side-view slab shape:
+depth no longer depends on the thinner screen-space silhouette dimension, and
+leaves no longer share a reference-camera-biased orientation. Crowns are centered
+on world-vertical tree axes; horizontal spread sets their depth. Camera-ray
+placement retains the measured spray positions in the original view. Horizontal
+principal-axis ratios improve from 0.37–0.93 to 0.79–0.96. These ratios measure
+plan-view fullness, not fidelity. `fuller-crowns/` records before/after depth
+metrics and the successful topology checks. The native pre-correction scene is
+`sherwood-before-fuller-crowns.blend`.
+
+`branch-canopies/` contains original-camera, east/west, overhead, foreground,
+branch-only and wireframe renders, plus topology and silhouette reports.
+The checked branch/leaf geometry and trimmed trunks have no non-manifold edges
+or zero-area faces.
+
+## Animated turntable
+
+`turntable/sherwood-turntable.mp4` is a 12-second, 1440 × 1080, 25 fps full
+rotation. Textured, solid and wireframe passes use matching camera and animation
+frames, with three 20-frame swipe transitions. A final swipe returns to textured.
+The separate **Sherwood Turntable** scene has camera keys on frames 1–301.
+All six original tree atlases and all fourteen ambient overlays animate at their
+authored delays. Gentle inferred branch sway is added to presentation copies
+so foliage also moves in solid and wireframe views. Ambient sprite cards are
+shown only in the textured pass; their rectangles are omitted from geometry
+inspection passes. Camera bookmarks and original reconstruction objects remain
+in their existing scenes.
+
+Run `extract_turntable_fx.py` with normal Python, then `turntable.py` through
+MCP once to create the scene. Load that module with `__name__='turntable'` for
+subsequent calls to `render_frame(frame, mode)`, using `modes_for_frame(frame)`
+for frames 1–300. Run `compose_turntable.py` with normal Python afterward; it
+requires Pillow, NumPy and ffmpeg, composites the swipes, checks every frame's
+alpha bounds, and saves an MP4, poster, contact sheet and validation JSON.
+
+The newer `turntable-fast/sherwood-before-after.mp4` is a tighter 3:2 preview
+at 960 × 640 and 15 fps, with edge cropping explicitly allowed. Its fixed center
+split shows the untouched imported baseline on the left and the depth-corrected
+refinement on the right. It samples the same 25 Hz authored animation timeline.
+Both sides share the exact camera action; paired mode swipes run simultaneously
+within the two halves. The baseline has its original 124 mesh objects and no
+foliage added by the refinement passes.
+
+For this version, run `turntable.py` through MCP with `FAST_PREVIEW=True` in
+the execution scope. Then create the matched baseline scene with both
+`FAST_PREVIEW=True` and `ORIGINAL_BASELINE=True`. Load the module with the same
+flags and `__name__='turntable'` to render each side using `render_frames()` and
+`modes_for_frame(frame)`. Fast rendering uses 8 EEVEE samples, Workbench FXAA,
+and short native animation batches to avoid reinitializing the render engine
+for every still. Existing pass files can be reused only when their scene and
+settings are unchanged. Finish with `compose_turntable.py --fast --split`.
 
 ## Geometry passes
 
@@ -54,7 +114,7 @@ preserved as `sherwood-before-rounded-foliage.blend`.
 | 03–06 | Long suspension bridge, ladder oak, three radial platforms, furniture supports |
 | 08 | 22 tapered/fluted trunks, root buttresses and traced branches |
 | 09 | Central oak fork; plank-built hut, peaked roof, porch rails and ladders |
-| 10 | Six crowns containing 470 closed foliage clumps with animated alpha atlases |
+| 10 | 18 branch-bearing crown sectors, 143,370 leaves and animated alpha atlases |
 | 11 | Separate authored ambient overlay references |
 | 12 | 61 boards across two bridges/two landings, beams and rope rails |
 | 13 | 26 faceted boulders, river-fence posts/rails and fallen branches |
@@ -93,6 +153,11 @@ Run these scripts **inside Blender through MCP**, in order:
 5. `refine_walkways.py`, `refine_riverbank.py`, `refine_buildings.py`
 6. `refine_terrain.py`, `refine_props.py`, `refine_ladders.py`
 7. `refine_sampling.py`, then `validate_refinement.py`
+8. Preserve a native backup, remove only generated collection 10 and its objects,
+   then run `refine_branch_canopies.py`. The checked-in `foliage_fit_samples.json`
+   supplies measured residual samples. Keep collection 11's ambient references.
+9. `render_canopy_masks.py`, then normal Python
+   `fit_canopy_silhouettes.py --measure-only`; `inspect_branch_canopies.py` through MCP.
 
 Supply the absolute script path as `__file__`:
 
@@ -130,8 +195,8 @@ RGB error drops from the untouched baseline's 10.67 to approximately 8.93 on a
 TODOs for further art work:
 
 - Individually trace irregular board ends, roof breakage, lashings and joints.
-- Give foliage individual leaf clusters and hidden branch networks; current
-  clumps retain the source alpha but still infer concealed branch structure.
+- Further shape concealed crown depth and branch taper with additional art
+  direction; single-view silhouette agreement cannot verify rear geometry.
 - Finish small bushes, baskets, utensils, chimney masonry and untouched
   background obstacle shapes.
 - Further fit the ladder oak and camp outlines against pixel residuals.
