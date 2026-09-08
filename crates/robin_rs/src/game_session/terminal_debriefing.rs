@@ -11,6 +11,63 @@ use crate::game::Game;
 use crate::ingame_menu::modal_net::ModalDismissalGate;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
+/// The wire index describes a dialog answer, never filesystem authority. Only
+/// a locally accepted selection can bind it to this store's live generation.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct TerminalLoadSelection {
+    wire_slot: u32,
+    handle: crate::savegame::SlotHandle,
+}
+
+impl TerminalLoadSelection {
+    fn capture(manager: &crate::savegame::SaveGameManager, slot: u32) -> Result<Self, String> {
+        Ok(Self {
+            wire_slot: slot,
+            handle: manager
+                .slot_handle(slot as usize)
+                .map_err(|error| format!("terminal load selection rejected: {error:#}"))?,
+        })
+    }
+
+    fn resolve(
+        self,
+        manager: &crate::savegame::SaveGameManager,
+        wire_slot: usize,
+    ) -> Result<crate::savegame::SlotHandle, String> {
+        if self.wire_slot as usize != wire_slot {
+            return Err(
+                "terminal load decision does not match the retained local selection".into(),
+            );
+        }
+        manager
+            .resolve_handle(&self.handle)
+            .map_err(|error| format!("terminal load selection expired: {error:#}"))?;
+        Ok(self.handle)
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+enum TerminalLoadTarget {
+    Local(crate::savegame::SlotHandle),
+    AuthoritativeSnapshot,
+}
+
+fn terminal_load_target(
+    manager: &crate::savegame::SaveGameManager,
+    selection: Option<TerminalLoadSelection>,
+    wire_slot: usize,
+    playing_back: bool,
+    is_client: bool,
+) -> Result<TerminalLoadTarget, String> {
+    if playing_back || is_client {
+        return Ok(TerminalLoadTarget::AuthoritativeSnapshot);
+    }
+    selection
+        .ok_or_else(|| "terminal load decision has no local selection authority".to_owned())?
+        .resolve(manager, wire_slot)
+        .map(TerminalLoadTarget::Local)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum TerminalDebriefingAction {
     Continue,
@@ -163,6 +220,7 @@ pub(super) struct TerminalDebriefingState {
     page: TerminalDebriefingPage,
     phase: TerminalDebriefingPhase,
     leaderboard_preparation: Option<super::leaderboard_runtime::MissionEndPreparation>,
+    local_load: Option<TerminalLoadSelection>,
     http_result: Option<(
         engine_player_command::ModalKind,
         engine_player_command::DialogResult,
@@ -305,6 +363,7 @@ impl TerminalDebriefingState {
             page,
             phase,
             leaderboard_preparation: Some(leaderboard_preparation),
+            local_load: None,
             http_result: None,
         }
     }
@@ -317,6 +376,7 @@ impl TerminalDebriefingState {
         &mut self,
         kind: engine_player_command::ModalKind,
         result: engine_player_command::DialogResult,
+        save_manager: Option<&crate::savegame::SaveGameManager>,
     ) -> Result<(), String> {
         let current = self.current_kind().ok_or_else(|| {
             "terminal narrative is complete; leaderboard presentation is not an authoritative modal"
@@ -337,6 +397,12 @@ impl TerminalDebriefingState {
                 "terminal modal already retains a local decision pending publication or authority"
                     .to_owned(),
             );
+        }
+        if let engine_player_command::DialogResult::Load { slot } = result {
+            let manager = save_manager.ok_or_else(|| {
+                "terminal load dismissal requires the local save catalog".to_owned()
+            })?;
+            self.local_load = Some(TerminalLoadSelection::capture(manager, slot)?);
         }
         self.http_result = Some((kind, result));
         Ok(())
@@ -412,7 +478,12 @@ impl TerminalDebriefingState {
         let outcome = final_debriefing_outcome_from_replay(result);
         if matches!(&outcome, SettledDebriefingOutcome::EmergencyEnd) {
             context.game.operation.set(self.exit_code);
-            return if apply_terminal_debriefing_action(context, &outcome, self.page.mission_id) {
+            return if apply_terminal_debriefing_action(
+                context,
+                &outcome,
+                self.page.mission_id,
+                self.local_load.take(),
+            ) {
                 TerminalDebriefingProgress::EmergencyExit
             } else {
                 TerminalDebriefingProgress::Complete
@@ -658,8 +729,20 @@ impl TerminalDebriefingState {
                         TerminalDebriefingProgress::Pending
                     }
                     SaveLoadOutcome::Slot(slot) => {
-                        let result =
-                            engine_player_command::DialogResult::Load { slot: slot as u32 };
+                        let slot =
+                            u32::try_from(slot).expect("save catalog exceeds wire slot range");
+                        self.local_load = match TerminalLoadSelection::capture(
+                            &context.callbacks.save_manager,
+                            slot,
+                        ) {
+                            Ok(selection) => Some(selection),
+                            Err(error) => {
+                                tracing::error!(%error, "debriefing selection was removed before acceptance");
+                                self.phase = self.begin_debriefing(resources);
+                                return TerminalDebriefingProgress::Pending;
+                            }
+                        };
+                        let result = engine_player_command::DialogResult::Load { slot };
                         if let Some(result) = Self::publish_or_accept_local(
                             context,
                             self.page.kind.clone(),
@@ -732,7 +815,12 @@ impl TerminalDebriefingState {
                     unreachable!()
                 };
                 context.game.operation.set(self.exit_code);
-                if apply_terminal_debriefing_action(context, &outcome, self.page.mission_id) {
+                if apply_terminal_debriefing_action(
+                    context,
+                    &outcome,
+                    self.page.mission_id,
+                    self.local_load.take(),
+                ) {
                     TerminalDebriefingProgress::EmergencyExit
                 } else {
                     TerminalDebriefingProgress::Complete
@@ -746,6 +834,7 @@ fn apply_terminal_debriefing_action(
     context: &mut TerminalDebriefingContext<'_>,
     outcome: &SettledDebriefingOutcome,
     mission_id: u32,
+    local_load: Option<TerminalLoadSelection>,
 ) -> bool {
     match terminal_debriefing_action(outcome, mission_id) {
         TerminalDebriefingAction::Continue => false,
@@ -757,8 +846,28 @@ fn apply_terminal_debriefing_action(
             false
         }
         TerminalDebriefingAction::Load { slot, mission_id } => {
-            let slot = match context.callbacks.save_manager.slot_handle(slot) {
-                Ok(slot) => slot,
+            // Losing a transport must not turn a former client into local file
+            // authority while its host-authored decision is settling.
+            let is_client =
+                context.host.transport.local_seat != engine_player_command::PlayerId::HOST;
+            let slot = match terminal_load_target(
+                &context.callbacks.save_manager,
+                local_load,
+                slot,
+                context.playing_back,
+                is_client,
+            ) {
+                Ok(TerminalLoadTarget::Local(slot)) => slot,
+                Ok(TerminalLoadTarget::AuthoritativeSnapshot) => {
+                    // The host's prepared snapshot (or recorded restore) carries
+                    // the payload. A peer's index may name an unrelated local save.
+                    tracing::info!(
+                        slot,
+                        "terminal load awaits authoritative snapshot; ignoring local catalog index"
+                    );
+                    context.game.operation.set(GameCode::LevelInProgress);
+                    return false;
+                }
                 Err(error) => {
                     tracing::error!("Debriefing load rejected stale slot: {error:#}");
                     return false;
@@ -813,26 +922,11 @@ fn settle_terminal_debriefing(
     // The deterministic terminal command has now appended the raw attempt.
     // Promote that exact post-command campaign, never the pre-terminal clone.
     let campaign = context.manager.engine.campaign().clone();
-    context
-        .host
-        .application_context()
-        .with_player_profiles_mut(|profiles| {
-            let profile = profiles.get_active_mut().unwrap_or_else(|| {
-                panic!("campaign-history promotion has no active player profile")
-            });
-            profile
-                .promote_campaign_history(&campaign, &context.assets.profile_manager)
-                .unwrap_or_else(|error| panic!("campaign-history promotion failed: {error}"));
-            if let Err(error) = context.host.application_context().persist_player_profiles(profiles) {
-                #[cfg(not(target_arch = "wasm32"))]
-                panic!("failed to persist campaign history: {error}");
-                #[cfg(target_arch = "wasm32")]
-                tracing::warn!(
-                    "Failed to persist campaign history in browser storage; keeping it in memory for this session: {error}"
-                );
-            }
-        })
-        .unwrap_or_else(|error| panic!("campaign profile synchronization failed: {error}"));
+    crate::main_entry::RustCallbacks::promote_terminal_profile(
+        context.host.application_context(),
+        &campaign,
+        &context.assets.profile_manager,
+    );
 
     let Some(popup_title) = popup_title else {
         return TerminalDebriefingProgress::Complete;
@@ -929,12 +1023,10 @@ pub(super) fn drive_tick_exit_modals(
 mod tests {
     use super::*;
 
-    #[test]
-    fn terminal_http_cannot_replace_a_retained_failed_decision() {
-        use robin_engine::multiplayer::{MultiplayerSessionId, NetChannels};
-        use robin_engine::player_command::{DebriefingTextId, DialogResult, ModalKind};
+    fn terminal_state() -> TerminalDebriefingState {
+        use robin_engine::player_command::{DebriefingTextId, ModalKind};
         let text_id = DebriefingTextId::from_outcome(true, 0);
-        let mut state = TerminalDebriefingState {
+        TerminalDebriefingState {
             decisions: super::super::session_policy::TerminalDecisionOrder::new(true, text_id),
             popup_dismissal: ModalDismissalGate::default(),
             final_dismissal: ModalDismissalGate::default(),
@@ -955,15 +1047,153 @@ mod tests {
             },
             phase: TerminalDebriefingPhase::AwaitingMissionAuthority,
             leaderboard_preparation: None,
+            local_load: None,
             http_result: None,
+        }
+    }
+
+    fn selected_catalog(root: &std::path::Path) -> crate::savegame::SaveGameManager {
+        use crate::savegame::{SaveGame, SaveGameManager, SlotState};
+        let mut manager = SaveGameManager::new(root.to_string_lossy().into_owned());
+        let mut selected = SaveGame::new("Selected".into(), "Selected".into(), 1);
+        selected.timestamp = "20".into();
+        manager.insert_test_slot(selected, SlotState::Draft);
+        manager
+    }
+
+    fn reorder_catalog(manager: &mut crate::savegame::SaveGameManager) {
+        use crate::savegame::{SaveGame, SlotState};
+        let mut autosave = SaveGame::new("Autosave_1_0000".into(), "Earlier".into(), 1);
+        autosave.timestamp = "10".into();
+        manager.insert_test_slot(autosave, SlotState::Draft);
+        manager.sort_by_time();
+        assert_eq!(manager.slot_name(0).unwrap().as_str(), "Autosave_1_0000");
+    }
+
+    #[test]
+    fn terminal_http_rejects_unbound_selection_without_retaining_a_decision() {
+        use robin_engine::player_command::DialogResult;
+        let root = tempfile::tempdir().unwrap();
+        let manager = selected_catalog(root.path());
+        let mut state = terminal_state();
+        state
+            .decisions
+            .accept(&state.popup_kind, DialogResult::Completed)
+            .unwrap();
+        for (slot, catalog) in [(0, None), (99, Some(&manager))] {
+            assert!(
+                state
+                    .queue_http_result(
+                        state.page.kind.clone(),
+                        DialogResult::Load { slot },
+                        catalog
+                    )
+                    .is_err()
+            );
+            assert!(state.http_result.is_none());
+            assert!(state.local_load.is_none());
+            assert!(!state.final_dismissal.is_pending());
+        }
+    }
+
+    #[test]
+    fn terminal_http_selection_is_pinned_before_authority_and_leaderboard_waits() {
+        use robin_engine::player_command::DialogResult;
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = selected_catalog(root.path());
+        let mut state = terminal_state();
+        state
+            .decisions
+            .accept(&state.popup_kind, DialogResult::Completed)
+            .unwrap();
+        state
+            .queue_http_result(
+                state.page.kind.clone(),
+                DialogResult::Load { slot: 0 },
+                Some(&manager),
+            )
+            .unwrap();
+        reorder_catalog(&mut manager);
+        // Both waits preserve the same local capability, independent of the
+        // numeric result echoed by authority and retained for the replay.
+        state.phase = TerminalDebriefingPhase::AwaitingFinalAuthority;
+        let (_, decision) = state.http_result.take().unwrap();
+        state.phase = TerminalDebriefingPhase::AwaitingLeaderboard {
+            outcome: final_debriefing_outcome_from_replay(decision),
         };
+        let target =
+            terminal_load_target(&manager, state.local_load.take(), 0, false, false).unwrap();
+        let TerminalLoadTarget::Local(handle) = target else {
+            panic!("local selection lost")
+        };
+        assert_eq!(handle.name().as_str(), "Selected");
+        assert_eq!(manager.resolve_handle(&handle).unwrap(), 1);
+    }
+
+    #[test]
+    fn terminal_picker_selection_survives_reordering_but_rejects_retirement() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = selected_catalog(root.path());
+        let selected = TerminalLoadSelection::capture(&manager, 0).unwrap();
+        reorder_catalog(&mut manager);
+        manager.remove(1).unwrap();
+        assert!(selected.resolve(&manager, 0).is_err());
+
+        // Reusing the exact basename must not revive the selected generation.
+        manager.insert_test_slot(
+            crate::savegame::SaveGame::new("Selected".into(), "Replacement".into(), 1),
+            crate::savegame::SlotState::Draft,
+        );
+        let selected = TerminalLoadSelection::capture(&manager, 1).unwrap();
+        manager.remove(1).unwrap();
+        manager.insert_test_slot(
+            crate::savegame::SaveGame::new("Selected".into(), "Replacement again".into(), 1),
+            crate::savegame::SlotState::Draft,
+        );
+        assert!(selected.resolve(&manager, 1).is_err());
+    }
+
+    #[test]
+    fn terminal_remote_and_replay_indices_never_authorize_local_files() {
+        let root = tempfile::tempdir().unwrap();
+        let manager = selected_catalog(root.path());
+        let other = selected_catalog(root.path());
+        assert!(
+            TerminalLoadSelection::capture(&manager, 0)
+                .unwrap()
+                .resolve(&other, 0)
+                .is_err()
+        );
+        assert!(
+            TerminalLoadSelection::capture(&manager, 0)
+                .unwrap()
+                .resolve(&manager, 1)
+                .is_err()
+        );
+        assert!(terminal_load_target(&manager, None, 0, false, false).is_err());
+        for (playback, client) in [(true, false), (false, true)] {
+            // Even a client that proposed this number locally must await the
+            // host payload rather than selecting its own same-numbered save.
+            let local = TerminalLoadSelection::capture(&manager, 0).unwrap();
+            assert!(matches!(
+                terminal_load_target(&other, Some(local), 0, playback, client).unwrap(),
+                TerminalLoadTarget::AuthoritativeSnapshot
+            ));
+        }
+    }
+
+    #[test]
+    fn terminal_http_cannot_replace_a_retained_failed_decision() {
+        use robin_engine::multiplayer::{MultiplayerSessionId, NetChannels};
+        use robin_engine::player_command::DialogResult;
+        let mut state = terminal_state();
         let popup = state.popup_kind.clone();
         state
-            .queue_http_result(popup.clone(), DialogResult::Aborted)
+            .queue_http_result(popup.clone(), DialogResult::Aborted, None)
             .unwrap();
         assert!(
             state
-                .queue_http_result(popup.clone(), DialogResult::Completed)
+                .queue_http_result(popup.clone(), DialogResult::Completed, None)
                 .is_err()
         );
         assert_eq!(
@@ -996,7 +1226,7 @@ mod tests {
             assert_eq!(gate.poll(Some(&modal)), None);
             assert!(
                 state
-                    .queue_http_result(kind.clone(), DialogResult::Completed)
+                    .queue_http_result(kind.clone(), DialogResult::Completed, None)
                     .is_err()
             );
             assert!(state.http_result.is_none());

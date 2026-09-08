@@ -38,6 +38,52 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn session_publication_is_complete_for_both_speech_authorities() {
+        let HandshakeAction::Welcome(mut welcome) =
+            ClientHandshake::new("endpoint-key".into(), None)
+                .receive(Some(welcome()))
+                .unwrap()
+        else {
+            panic!("expected Welcome")
+        };
+        for locale in [None, Some("eng".to_owned())] {
+            let mut published: Option<ClientSessionMetadata> = None;
+            assert!(
+                published.is_none(),
+                "pending is not base-installation timing"
+            );
+            welcome.speech_timing_locale = locale.clone();
+            let content = offer();
+            published =
+                Some(ClientSessionMetadata::from_welcome(&welcome, Some(content.clone())).unwrap());
+            let session = published.unwrap();
+            assert_eq!(session.seat, welcome.seat);
+            assert_eq!(session.session_id, welcome.session_id);
+            assert_eq!(session.mission_id, welcome.mission_id);
+            assert_eq!(session.mission_seed, welcome.mission_seed);
+            assert_eq!(session.sim_config, welcome.sim_config);
+            assert_eq!(session.speech_timing_locale, locale);
+            assert_eq!(session.admitted_content.as_ref(), Some(&content));
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn session_publication_rejects_content_for_another_mission() {
+        let HandshakeAction::Welcome(welcome) = ClientHandshake::new("endpoint-key".into(), None)
+            .receive(Some(welcome()))
+            .unwrap()
+        else {
+            panic!("expected Welcome")
+        };
+        let mut content = offer();
+        content.mission_basename = "OtherMission".into();
+        assert!(ClientSessionMetadata::from_welcome(&welcome, Some(content)).is_err());
+        assert!(ClientSessionMetadata::from_welcome(&welcome, None).is_ok());
+    }
+
     fn welcome() -> NetMsg {
         NetMsg::Welcome {
             your_seat: PlayerId(1),
@@ -307,6 +353,46 @@ pub(super) struct WelcomeData {
     pub(super) sim_config: SimConfig,
     pub(super) speech_timing_locale: Option<String>,
     pub(super) session_id: MultiplayerSessionId,
+}
+
+/// One coherent publication of the validated Welcome and admitted content.
+/// An absent snapshot means admission is pending; an absent speech locale in
+/// a present snapshot authoritatively selects base-installation timing.
+/// Reconnects must validate against this identity, not partially replace it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientSessionMetadata {
+    pub seat: PlayerId,
+    pub mission_id: String,
+    pub mission_seed: u64,
+    pub sim_config: SimConfig,
+    pub speech_timing_locale: Option<String>,
+    pub session_id: MultiplayerSessionId,
+    pub admitted_content: Option<DistributedModOffer>,
+}
+
+impl ClientSessionMetadata {
+    pub(super) fn from_welcome(
+        welcome: &WelcomeData,
+        admitted_content: Option<DistributedModOffer>,
+    ) -> Result<Self, String> {
+        if let Some(content) = admitted_content.as_ref()
+            && content.mission_basename != welcome.mission_id
+        {
+            return Err(format!(
+                "Welcome mission `{}` differs from admitted content mission `{}`",
+                welcome.mission_id, content.mission_basename
+            ));
+        }
+        Ok(Self {
+            seat: welcome.seat,
+            mission_id: welcome.mission_id.clone(),
+            mission_seed: welcome.mission_seed,
+            sim_config: welcome.sim_config,
+            speech_timing_locale: welcome.speech_timing_locale.clone(),
+            session_id: welcome.session_id,
+            admitted_content,
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

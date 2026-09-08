@@ -227,6 +227,7 @@ pub(super) fn drain_steps(
     manual_pause: &mut bool,
     active_modal: &mut Option<ActiveModal>,
     mut terminal_debriefing: Option<&mut super::terminal_debriefing::TerminalDebriefingState>,
+    terminal_save_manager: Option<&crate::savegame::SaveGameManager>,
     mission_ui_block_reason: Option<&str>,
     mut session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
     mut resolve_local_ui: impl FnMut(&crate::http_server::StepModalPolicy) -> Result<(), String>,
@@ -301,7 +302,9 @@ pub(super) fn drain_steps(
             };
             if let Err(error) = validate_http_modal_result(&modal_kind, result)
                 .and_then(|()| authorize_http_modal_dismissals(host, &[terminal_dismissal]))
-                .and_then(|()| terminal.queue_http_result(modal_kind.clone(), result))
+                .and_then(|()| {
+                    terminal.queue_http_result(modal_kind.clone(), result, terminal_save_manager)
+                })
             {
                 step.respond_err(error);
                 continue;
@@ -556,7 +559,7 @@ fn begin_synchronized_step_resync(
     net.reconnect_all_for_snapshot(format!(
         "host synchronized automation adopted timeline frame {frame}"
     ))?;
-    net.send_ready_to_sim(frame);
+    net.send_ready_to_sim(frame)?;
     host.transport.reconnecting = true;
     Ok(())
 }

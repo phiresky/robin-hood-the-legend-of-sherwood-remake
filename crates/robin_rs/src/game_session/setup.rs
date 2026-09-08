@@ -3187,9 +3187,15 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
         "bootstrap ConnectSeat applied to local engine",
     );
     if let Some(net) = host.transport.net.as_ref() {
-        net.publish_initial_snapshot(0, engine);
-        net.send_ready_to_sim(0);
-        tracing::info!("multiplayer: cached and published frame-0 host snapshot");
+        match net
+            .publish_initial_snapshot(0, engine)
+            .and_then(|()| net.send_ready_to_sim(0))
+        {
+            Ok(()) => tracing::info!("multiplayer: cached and published frame-0 host snapshot"),
+            Err(error) => {
+                tracing::error!(%error, "multiplayer initial snapshot publication failed")
+            }
+        }
     }
 }
 

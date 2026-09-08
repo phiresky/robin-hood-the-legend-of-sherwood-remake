@@ -19,7 +19,7 @@ use server_protocol::{
     ReadyBarrier, SnapshotTransitions,
 };
 
-use super::client_protocol::{WelcomeData, validate_reconnect_state};
+use super::client_protocol::{ClientSessionMetadata, WelcomeData, validate_reconnect_state};
 #[cfg(test)]
 use super::encode_msg;
 use super::identity::{
@@ -3457,23 +3457,11 @@ fn validate_peer_command_authority(
 
 /// Handle to an active client connection.
 pub struct ClientHandle {
-    /// Seat assigned by the server.  `None` until the handshake
-    /// completes.  Game loop reads this to set `host.local_seat`.
-    pub assigned_seat: Arc<Mutex<Option<PlayerId>>>,
-    session_id: Arc<Mutex<Option<MultiplayerSessionId>>>,
-    /// Mission RNG seed announced by the server in `Welcome`.  The
-    /// client adopts this seed for its engine init so the local sim
-    /// rolls match the host's.
-    pub mission_seed: Arc<Mutex<Option<u64>>>,
-    pub mission_sim_config: Arc<Mutex<Option<robin_engine::engine::SimConfig>>>,
-    pub mission_id: Arc<Mutex<Option<String>>>,
-    /// Outer `None` means Welcome is still pending; `Some(None)` is the
-    /// host's authoritative choice of base `Data/Sounds` timing.
-    pub speech_timing_locale: Arc<Mutex<Option<Option<String>>>>,
+    session_metadata: Arc<Mutex<Option<ClientSessionMetadata>>>,
     /// Present when the host requires content admission before Welcome. The
     /// game/menu must explicitly trust, download, validate, mount, and answer
     /// this exact offer; the transport never silently approves it.
-    pub content_offer: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
+    content_offer: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
     ranked_lifecycle: SharedRankedSessionLifecycle,
     ranked_setup_tx:
         UnboundedSender<Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>>,
@@ -3485,8 +3473,12 @@ pub struct ClientHandle {
 }
 
 impl ClientHandle {
+    pub fn session_metadata(&self) -> Option<ClientSessionMetadata> {
+        self.session_metadata.lock().clone()
+    }
+
     pub fn session_id(&self) -> Option<MultiplayerSessionId> {
-        *self.session_id.lock()
+        self.session_metadata().map(|session| session.session_id)
     }
 
     pub(crate) fn ranked_lifecycle(&self) -> SharedRankedSessionLifecycle {
@@ -3524,29 +3516,31 @@ impl ClientHandle {
     }
 
     pub fn assigned_seat(&self) -> Option<PlayerId> {
-        *self.assigned_seat.lock()
+        self.session_metadata().map(|session| session.seat)
     }
 
     pub fn mission_seed(&self) -> Option<u64> {
-        *self.mission_seed.lock()
+        self.session_metadata().map(|session| session.mission_seed)
     }
 
     pub fn mission_sim_config(&self) -> Option<robin_engine::engine::SimConfig> {
-        *self.mission_sim_config.lock()
+        self.session_metadata().map(|session| session.sim_config)
     }
 
     pub fn mission_id(&self) -> Option<String> {
-        self.mission_id.lock().clone()
+        self.session_metadata().map(|session| session.mission_id)
     }
 
     pub fn speech_timing_locale(&self) -> Option<String> {
-        self.speech_timing_locale.lock().clone().flatten()
+        self.session_metadata()
+            .and_then(|session| session.speech_timing_locale)
     }
 
     /// The outer option distinguishes a pending handshake from an explicit
     /// `None`, which authoritatively selects base `Data/Sounds` timing.
     pub fn speech_timing_authority(&self) -> Option<Option<String>> {
-        self.speech_timing_locale.lock().clone()
+        self.session_metadata()
+            .map(|session| session.speech_timing_locale)
     }
 
     pub fn content_offer(&self) -> Option<robin_engine::multiplayer::DistributedModOffer> {
@@ -3677,23 +3671,13 @@ fn connect_client_inner(
         .as_ref()
         .map(|key| PublicKey32::from_bytes(*key.public().as_bytes()));
     let addr_display = addr.as_ref().to_string();
-    let assigned_seat = Arc::new(Mutex::new(None));
+    let session_metadata = Arc::new(Mutex::new(None));
     let ranked_lifecycle = Arc::new(std::sync::Mutex::new(
         RankedSessionLifecycle::awaiting_prepared_inputs(),
     ));
     let ranked_lifecycle_for_thread = Arc::clone(&ranked_lifecycle);
     let (ranked_setup_tx, mut ranked_setup_rx) = unbounded_channel();
-    let assigned_clone = Arc::clone(&assigned_seat);
-    let session_id = Arc::new(Mutex::new(None));
-    let session_id_for_thread = Arc::clone(&session_id);
-    let mission_seed = Arc::new(Mutex::new(None));
-    let mission_seed_for_thread = Arc::clone(&mission_seed);
-    let mission_sim_config = Arc::new(Mutex::new(None));
-    let mission_sim_config_for_thread = Arc::clone(&mission_sim_config);
-    let mission_id = Arc::new(Mutex::new(None));
-    let mission_id_for_thread = Arc::clone(&mission_id);
-    let speech_timing_locale = Arc::new(Mutex::new(None));
-    let speech_timing_locale_for_thread = Arc::clone(&speech_timing_locale);
+    let session_metadata_for_thread = Arc::clone(&session_metadata);
     let content_offer = Arc::new(Mutex::new(None));
     let content_offer_for_thread = Arc::clone(&content_offer);
     let cancellation = Arc::new(AtomicBool::new(false));
@@ -3726,14 +3710,9 @@ fn connect_client_inner(
                     nickname,
                     incoming_tx,
                     &mut outgoing_async_rx,
-                    assigned_clone,
+                    session_metadata_for_thread,
                     ranked_lifecycle_for_thread,
                     &mut ranked_setup_rx,
-                    session_id_for_thread,
-                    mission_id_for_thread,
-                    mission_seed_for_thread,
-                    mission_sim_config_for_thread,
-                    speech_timing_locale_for_thread,
                     content_offer_for_thread,
                     handshake_tx,
                     cancellation_for_io,
@@ -3776,12 +3755,7 @@ fn connect_client_inner(
     }
 
     Ok(ClientHandle {
-        assigned_seat,
-        session_id,
-        mission_seed,
-        mission_sim_config,
-        mission_id,
-        speech_timing_locale,
+        session_metadata,
         ranked_lifecycle,
         ranked_setup_tx,
         ranked_setup_sent: AtomicBool::new(false),
@@ -4137,10 +4111,6 @@ async fn resolve_reconnect_prelude(
     }
 }
 
-fn publish_speech_timing_authority(shared: &Mutex<Option<Option<String>>>, locale: Option<String>) {
-    *shared.lock() = Some(locale);
-}
-
 /// Drive one connection until it ends, then auto-reconnect with
 /// exponential backoff.  Returns when the game loop drops the
 /// outgoing queue (`host.net` dropped) or shutdown is requested.
@@ -4151,16 +4121,11 @@ async fn run_client_io_async(
     nickname: String,
     incoming_tx: Sender<NetEvent>,
     outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
-    assigned: Arc<Mutex<Option<PlayerId>>>,
+    session_metadata: Arc<Mutex<Option<ClientSessionMetadata>>>,
     ranked_lifecycle: SharedRankedSessionLifecycle,
     ranked_setup_rx: &mut UnboundedReceiver<
         Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
     >,
-    session_id_shared: Arc<Mutex<Option<MultiplayerSessionId>>>,
-    mission_id_shared: Arc<Mutex<Option<String>>>,
-    mission_seed_shared: Arc<Mutex<Option<u64>>>,
-    mission_config_shared: Arc<Mutex<Option<robin_engine::engine::SimConfig>>>,
-    speech_timing_locale_shared: Arc<Mutex<Option<Option<String>>>>,
     content_offer_shared: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<Result<InitialHandshake, String>>,
     cancellation: Arc<AtomicBool>,
@@ -4180,14 +4145,9 @@ async fn run_client_io_async(
         nickname,
         incoming_tx,
         outgoing_async_rx,
-        assigned,
+        session_metadata,
         ranked_lifecycle,
         ranked_setup_rx,
-        session_id_shared,
-        mission_id_shared,
-        mission_seed_shared,
-        mission_config_shared,
-        speech_timing_locale_shared,
         content_offer_shared,
         initial_handshake_tx,
         cancellation,
@@ -4205,16 +4165,11 @@ async fn run_client_io_inner(
     nickname: String,
     incoming_tx: Sender<NetEvent>,
     outgoing_async_rx: &mut UnboundedReceiver<NetOutbound>,
-    assigned: Arc<Mutex<Option<PlayerId>>>,
+    session_metadata: Arc<Mutex<Option<ClientSessionMetadata>>>,
     ranked_lifecycle: SharedRankedSessionLifecycle,
     ranked_setup_rx: &mut UnboundedReceiver<
         Option<crate::leaderboard_ranked_session::OfficialRankedSessionSetupV1>,
     >,
-    session_id_shared: Arc<Mutex<Option<MultiplayerSessionId>>>,
-    mission_id_shared: Arc<Mutex<Option<String>>>,
-    mission_seed_shared: Arc<Mutex<Option<u64>>>,
-    mission_config_shared: Arc<Mutex<Option<robin_engine::engine::SimConfig>>>,
-    speech_timing_locale_shared: Arc<Mutex<Option<Option<String>>>>,
     content_offer_shared: Arc<Mutex<Option<robin_engine::multiplayer::DistributedModOffer>>>,
     initial_handshake_tx: std::sync::mpsc::SyncSender<Result<InitialHandshake, String>>,
     cancellation: Arc<AtomicBool>,
@@ -4295,6 +4250,15 @@ async fn run_client_io_inner(
             }
         }
     };
+    let admitted_session =
+        match ClientSessionMetadata::from_welcome(&welcome, admitted_offer.clone()) {
+            Ok(session) => session,
+            Err(error) => {
+                let _ = initial_handshake_tx.send(Err(error.clone()));
+                let _ = incoming_tx.send(NetEvent::Fatal(error));
+                return;
+            }
+        };
     let WelcomeData {
         seat: your_seat,
         mission_id,
@@ -4304,15 +4268,7 @@ async fn run_client_io_inner(
         session_id,
     } = welcome;
 
-    *assigned.lock() = Some(your_seat);
-    *session_id_shared.lock() = Some(session_id);
-    *mission_id_shared.lock() = Some(mission_id.clone());
-    *mission_seed_shared.lock() = Some(mission_seed);
-    *mission_config_shared.lock() = Some(sim_config);
-    // Publish this readiness sentinel last. Observing the outer `Some`
-    // therefore means every authoritative Welcome field above is available,
-    // including when the host explicitly selected no locale override.
-    publish_speech_timing_authority(&speech_timing_locale_shared, speech_timing_locale.clone());
+    *session_metadata.lock() = Some(admitted_session);
     *content_offer_shared.lock() = admitted_offer.clone();
     if admitted_offer.is_none() {
         let _ = initial_handshake_tx.send(Ok(InitialHandshake::Welcomed {
@@ -4445,7 +4401,7 @@ async fn run_client_io_inner(
                         return;
                     }
                     tracing::info!(?new_seat, seed = new_seed, "client reconnected");
-                    *assigned.lock() = Some(new_seat);
+                    // Reconnect validation proved the published identity is unchanged.
                     let _ = incoming_tx.send(NetEvent::Reconnected);
                     let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(new_seat));
                     let _ = incoming_tx.send(NetEvent::MissionConfig {
@@ -5499,8 +5455,8 @@ mod tests {
         HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind, ServerPeers,
         SharedClientLeaderboardCoSignState, checked_epoch_ms, client_gameplay_wire_msg,
         connect_client_with_keys, discard_session_outbound, handle_client_wire_msg,
-        publish_speech_timing_authority, retain_transition_peer_for_reconnect,
-        start_server_with_key, take_committed_snapshot_transition, validate_peer_command_authority,
+        retain_transition_peer_for_reconnect, start_server_with_key,
+        take_committed_snapshot_transition, validate_peer_command_authority,
         validate_reconnect_state, validate_server_gameplay_outbound,
         validate_server_gameplay_wire_msg,
     };
@@ -6359,19 +6315,6 @@ mod tests {
         });
         assert!(chunk_bytes.len() <= MAX_CONTENT_FRAME_BYTES);
         assert!(chunk_bytes.len() > MAX_SERVER_CONTROL_FRAME_BYTES);
-    }
-
-    #[test]
-    fn speech_timing_readiness_distinguishes_pending_some_and_none() {
-        let with_locale = parking_lot::Mutex::new(None);
-        assert_eq!(*with_locale.lock(), None);
-        publish_speech_timing_authority(&with_locale, Some("en-US".into()));
-        assert_eq!(*with_locale.lock(), Some(Some("en-US".into())));
-
-        let base_timing = parking_lot::Mutex::new(None);
-        assert_eq!(*base_timing.lock(), None);
-        publish_speech_timing_authority(&base_timing, None);
-        assert_eq!(*base_timing.lock(), Some(None));
     }
 
     #[test]

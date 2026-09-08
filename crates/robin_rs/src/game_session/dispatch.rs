@@ -28,7 +28,11 @@ pub(crate) fn dispatch_local_commands(
 ) {
     if let Some(net) = transport.net.as_ref() {
         for cmd in cmds {
-            net.send_input(cmd.clone());
+            if let Err(error) = net.send_input(cmd.clone()) {
+                // The channel also latches failure for the next transport drain.
+                tracing::error!(%error, "multiplayer command dispatch failed");
+                break;
+            }
         }
     } else {
         frame_cmds
@@ -56,7 +60,9 @@ pub(crate) fn dispatch_local_command(
     cmd: &PlayerCommand,
 ) {
     if let Some(net) = transport.net.as_ref() {
-        net.send_input(cmd.clone());
+        if let Err(error) = net.send_input(cmd.clone()) {
+            tracing::error!(%error, "multiplayer command dispatch failed");
+        }
     } else {
         frame_cmds.push(cmd.clone());
     }
