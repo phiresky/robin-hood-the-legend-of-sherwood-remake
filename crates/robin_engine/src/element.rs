@@ -493,22 +493,11 @@ impl ElementData {
         self.sprite.position_iface.set_material(m);
     }
 
-    /// Distance from the actor's map position to the boundary of the
-    /// material sector it is standing in, under the 1-norm with Y
-    /// pre-stretched by `INVERSE_ASPECT_RATIO`.  Returns 0 if the
-    /// actor is not inside any material sector.  Caller: debug
-    /// material-sector overlay (unported).
-    ///
-    /// The containing sector is located at query time rather than
-    /// cached on the actor — the only caller is a debug HUD that runs
-    /// once per frame, so caching would be a micro-optimisation.  This
-    /// method has no active users yet; it exists so reviving the
-    /// overlay is a one-line change.
     /// Change the posture, respecting the corpse-transition guard: a
     /// `Dead` / `DeadBack` corpse can only transition to `Carried`
     /// (pickup); any other posture write on a dead sprite is silently
-    /// dropped. This is the single runtime mutation point for
-    /// `posture`; direct field writes should go through here.
+    /// dropped. This is the public transition API; internal order publication
+    /// and save adoption have explicitly separate semantics.
     ///
     /// The "fire intersection update on every lying↔non-lying
     /// transition" hook is implemented as a deferred per-tick drain
@@ -523,6 +512,12 @@ impl ElementData {
     }
 
     /// Gameplay posture, read without exposing mutation authority.
+    ///
+    /// ```compile_fail
+    /// use robin_engine::element::{ElementData, Posture};
+    /// let mut element = ElementData::default();
+    /// element.posture = Posture::Upright;
+    /// ```
     pub fn posture(&self) -> Posture {
         self.posture
     }
