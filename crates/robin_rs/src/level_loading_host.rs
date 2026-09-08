@@ -1006,7 +1006,7 @@ pub fn apply_minimap(
     let decoded = decoded.borrow();
     let mut timer = crate::game_session::PhaseTimer::new("minimap upload");
     let surface = renderer
-        .create_surface_from_rgb565(decoded.width, decoded.height, &decoded.pixels)
+        .upload_rgb565(decoded.width, decoded.height, &decoded.pixels)
         .expect("apply_minimap: decoded minimap dimensions must match RGB565 payload");
     host.frontend
         .mission_surfaces

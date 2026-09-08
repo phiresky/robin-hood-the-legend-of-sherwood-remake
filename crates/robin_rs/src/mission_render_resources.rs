@@ -22,8 +22,7 @@ impl SpriteSurface {
         (self.upload.handle(), self.width, self.height)
     }
 
-    fn uploaded(renderer: &mut Renderer, id: u32) -> Self {
-        let upload = renderer.adopt_surface(id);
+    fn uploaded(renderer: &Renderer, upload: OwnedSurface) -> Self {
         let (width, height) = renderer
             .surface_dimensions(upload.handle())
             .expect("mission upload must reference a live renderer surface");
@@ -93,26 +92,32 @@ impl MissionRenderResources {
         &self.ground_marks.frames
     }
 
-    pub fn replace_map(&mut self, renderer: &mut Renderer, id: u32) {
-        self.try_replace_map(renderer, id)
-            .expect("mission map replacement requires a local unowned upload");
+    pub fn replace_map(&mut self, renderer: &mut Renderer, upload: OwnedSurface) {
+        self.try_replace_map(renderer, upload)
+            .expect("mission map replacement requires a local owned upload");
     }
 
     pub fn try_replace_map(
         &mut self,
         renderer: &mut Renderer,
-        id: u32,
-    ) -> Result<(), SurfaceOwnershipError> {
-        self.validate_renderer(renderer)?;
-        renderer.validate_surface_adoption(id)?;
-        let frame = SpriteSurface::uploaded(renderer, id);
+        upload: OwnedSurface,
+    ) -> Result<(), (SurfaceOwnershipError, OwnedSurface)> {
+        if let Err(error) = self.validate_replacement(renderer, [&upload]) {
+            return Err((error, upload));
+        }
+        let frame = SpriteSurface::uploaded(renderer, upload);
         if let Some(previous) = self.map.replace(frame) {
             delete_surface(renderer, previous.upload);
         }
         Ok(())
     }
 
-    pub fn replace_corners(&mut self, renderer: &mut Renderer, size: ScreenSize, ids: Vec<u32>) {
+    pub fn replace_corners(
+        &mut self,
+        renderer: &mut Renderer,
+        size: ScreenSize,
+        ids: Vec<OwnedSurface>,
+    ) {
         self.try_replace_corners(renderer, size, ids)
             .expect("mission corners require unique local unowned uploads");
     }
@@ -121,15 +126,17 @@ impl MissionRenderResources {
         &mut self,
         renderer: &mut Renderer,
         size: ScreenSize,
-        ids: Vec<u32>,
-    ) -> Result<(), SurfaceOwnershipError> {
-        self.validate_replacement(renderer, ids.iter().copied())?;
+        ids: Vec<OwnedSurface>,
+    ) -> Result<(), (SurfaceOwnershipError, Vec<OwnedSurface>)> {
+        if let Err(error) = self.validate_replacement(renderer, &ids) {
+            return Err((error, ids));
+        }
         Self::replace_bank(&mut self.corners, renderer, ids.into_iter().map(Some));
         self.corner_size = size;
         Ok(())
     }
 
-    pub fn replace_dots(&mut self, renderer: &mut Renderer, ids: Vec<Option<u32>>) {
+    pub fn replace_dots(&mut self, renderer: &mut Renderer, ids: Vec<Option<OwnedSurface>>) {
         self.try_replace_dots(renderer, ids)
             .expect("mission dots require unique local unowned uploads");
     }
@@ -137,14 +144,16 @@ impl MissionRenderResources {
     pub fn try_replace_dots(
         &mut self,
         renderer: &mut Renderer,
-        ids: Vec<Option<u32>>,
-    ) -> Result<(), SurfaceOwnershipError> {
-        self.validate_replacement(renderer, ids.iter().flatten().copied())?;
+        ids: Vec<Option<OwnedSurface>>,
+    ) -> Result<(), (SurfaceOwnershipError, Vec<Option<OwnedSurface>>)> {
+        if let Err(error) = self.validate_replacement(renderer, ids.iter().flatten()) {
+            return Err((error, ids));
+        }
         Self::replace_bank(&mut self.dots, renderer, ids);
         Ok(())
     }
 
-    pub fn replace_ground_marks(&mut self, renderer: &mut Renderer, ids: Vec<u32>) {
+    pub fn replace_ground_marks(&mut self, renderer: &mut Renderer, ids: Vec<OwnedSurface>) {
         self.try_replace_ground_marks(renderer, ids)
             .expect("mission ground marks require unique local unowned uploads");
     }
@@ -152,24 +161,28 @@ impl MissionRenderResources {
     pub fn try_replace_ground_marks(
         &mut self,
         renderer: &mut Renderer,
-        ids: Vec<u32>,
-    ) -> Result<(), SurfaceOwnershipError> {
-        self.validate_replacement(renderer, ids.iter().copied())?;
+        ids: Vec<OwnedSurface>,
+    ) -> Result<(), (SurfaceOwnershipError, Vec<OwnedSurface>)> {
+        if let Err(error) = self.validate_replacement(renderer, &ids) {
+            return Err((error, ids));
+        }
         Self::replace_bank(&mut self.ground_marks, renderer, ids.into_iter().map(Some));
         Ok(())
     }
 
-    fn validate_replacement(
+    fn validate_replacement<'a>(
         &self,
         renderer: &Renderer,
-        ids: impl IntoIterator<Item = u32>,
+        ids: impl IntoIterator<Item = &'a OwnedSurface>,
     ) -> Result<(), SurfaceOwnershipError> {
         self.validate_renderer(renderer)?;
         let mut seen = std::collections::HashSet::new();
-        for id in ids {
-            renderer.validate_surface_adoption(id)?;
-            if !seen.insert(id) {
-                return Err(SurfaceOwnershipError::AlreadyOwned(id));
+        for upload in ids {
+            renderer.validate_surface_retirement(upload)?;
+            if !seen.insert(upload.handle()) {
+                return Err(SurfaceOwnershipError::AlreadyOwned(
+                    upload.handle().legacy_id(),
+                ));
             }
         }
         Ok(())
@@ -178,13 +191,13 @@ impl MissionRenderResources {
     fn replace_bank(
         bank: &mut SpriteBank,
         renderer: &mut Renderer,
-        ids: impl IntoIterator<Item = Option<u32>>,
+        ids: impl IntoIterator<Item = Option<OwnedSurface>>,
     ) {
         let ids: Vec<_> = ids.into_iter().collect();
         for id in ids.iter().flatten() {
             renderer
-                .validate_surface_adoption(*id)
-                .expect("mission bank requires local unowned uploads");
+                .validate_surface_retirement(id)
+                .expect("mission bank requires local owned uploads");
         }
         let frames = ids
             .into_iter()
@@ -244,20 +257,17 @@ impl MissionRenderResources {
 #[cfg(test)]
 pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
     let mut host = crate::host::Host::scratch(3.0, 2.0);
-    let upload = |renderer: &mut Renderer| {
-        renderer
-            .create_surface_from_rgb565(1, 1, &[0xffff])
-            .unwrap()
-    };
+    let upload = |renderer: &mut Renderer| renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
     let mut previous = None;
     for _ in 0..3 {
-        let id = upload(renderer);
+        let owned = upload(renderer);
+        let id = owned.handle();
         if let Some(old) = previous {
-            assert!(renderer.blit_to_screen(old, None, None, 0));
+            renderer.draw_surface(old, None, None, 0).unwrap();
         }
-        host.frontend.mission_surfaces.replace_map(renderer, id);
+        host.frontend.mission_surfaces.replace_map(renderer, owned);
         if let Some(old) = previous {
-            assert!(renderer.surface_handle(old).is_err());
+            assert!(renderer.surface_dimensions(old).is_err());
             assert_eq!(
                 &renderer.try_capture_frame_rgba().unwrap().2[..4],
                 &[248, 252, 248, 255],
@@ -266,11 +276,8 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         }
         previous = Some(id);
         host.post_load_reset();
-        assert_eq!(
-            host.frontend.mission_surfaces.map(),
-            Some(renderer.surface_handle(id).unwrap())
-        );
-        assert!(renderer.surface_handle(id).is_ok());
+        assert_eq!(host.frontend.mission_surfaces.map(), Some(id));
+        assert!(renderer.surface_dimensions(id).is_ok());
     }
     let dot = upload(renderer);
     let corner_size = ScreenSize::new(12.0, 15.0);
@@ -283,14 +290,10 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         "known layout dimensions survive unavailable corner pictures"
     );
     assert!(host.frontend.mission_surfaces.corner(0).is_none());
-    assert!(
-        renderer
-            .create_surface_from_rgb565(2, 2, &[0xffff])
-            .is_none()
-    );
+    assert!(renderer.upload_rgb565(2, 2, &[0xffff]).is_none());
     assert_eq!(
         host.frontend.mission_surfaces.map(),
-        previous.map(|id| renderer.surface_handle(id).unwrap()),
+        previous,
         "a failed upload must leave the installed map intact"
     );
     host.frontend
@@ -329,13 +332,17 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         &renderer.try_capture_frame_rgba().unwrap().2[..4],
         &[248, 252, 248, 255]
     );
+    // Decoding cannot duplicate an owner. Rejection returns the entire candidate
+    // bank without retiring its valid prefix or modifying the installed bank.
     let candidate = upload(renderer);
-    assert!(
-        host.frontend
-            .mission_surfaces
-            .try_replace_dots(renderer, vec![Some(candidate), Some(candidate)])
-            .is_err()
-    );
+    let candidate_handle = candidate.handle();
+    let decoded: OwnedSurface =
+        serde_json::from_value(serde_json::to_value(&candidate).unwrap()).unwrap();
+    let (_, rejected) = host
+        .frontend
+        .mission_surfaces
+        .try_replace_dots(renderer, vec![Some(candidate), Some(decoded)])
+        .unwrap_err();
     assert_eq!(
         host.frontend.mission_surfaces.dots()[1]
             .as_ref()
@@ -344,50 +351,51 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
             .0,
         borrowed_dot
     );
-    // Validation is transactional: a rejected bank has not claimed its prefix.
-    let unclaimed = renderer.try_adopt_surface(candidate).unwrap();
-    renderer.retire_surface(unclaimed);
+    assert!(renderer.surface_dimensions(candidate_handle).is_ok());
+    let mut rejected = rejected.into_iter().flatten();
+    renderer.retire_surface(rejected.next().unwrap());
     assert!(
-        host.frontend
-            .mission_surfaces
-            .try_replace_dots(renderer, vec![Some(dot)])
+        renderer
+            .try_retire_surface(rejected.next().unwrap())
             .is_err()
     );
     host.frontend
         .mission_surfaces
         .replace_dots(renderer, vec![]);
-    assert!(renderer.surface_handle(dot).is_err());
     assert!(renderer.draw_surface(borrowed_dot, None, None, 0).is_err());
     for reserved in [0, 1] {
         assert!(
             host.frontend
                 .mission_surfaces
-                .try_replace_dots(renderer, vec![Some(reserved)])
+                .try_replace_dots(renderer, vec![Some(OwnedSurface::synthetic(reserved))])
                 .is_err()
         );
     }
     let candidate = upload(renderer);
-    assert!(
-        host.frontend
-            .mission_surfaces
-            .try_replace_corners(
-                renderer,
-                ScreenSize::new(99.0, 99.0),
-                vec![candidate, candidate]
-            )
-            .is_err()
-    );
+    let (_, candidates) = host
+        .frontend
+        .mission_surfaces
+        .try_replace_corners(
+            renderer,
+            ScreenSize::new(99.0, 99.0),
+            vec![candidate, OwnedSurface::synthetic(u32::MAX)],
+        )
+        .unwrap_err();
     assert_eq!(host.frontend.mission_surfaces.corner_size(), corner_size);
+    let (_, candidates) = host
+        .frontend
+        .mission_surfaces
+        .try_replace_ground_marks(renderer, candidates)
+        .unwrap_err();
+    let mut candidates = candidates.into_iter();
+    renderer.retire_surface(candidates.next().unwrap());
     assert!(
-        host.frontend
-            .mission_surfaces
-            .try_replace_ground_marks(renderer, vec![candidate, u32::MAX])
+        renderer
+            .try_retire_surface(candidates.next().unwrap())
             .is_err()
     );
-    let unclaimed = renderer.try_adopt_surface(candidate).unwrap();
-    renderer.retire_surface(unclaimed);
     host.frontend.mission_surfaces.retire(renderer);
-    assert!(renderer.surface_handle(previous.unwrap()).is_err());
+    assert!(renderer.surface_dimensions(previous.unwrap()).is_err());
     host.frontend.mission_surfaces.retire(renderer);
 }
 

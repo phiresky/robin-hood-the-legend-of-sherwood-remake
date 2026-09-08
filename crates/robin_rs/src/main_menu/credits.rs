@@ -62,8 +62,10 @@ pub(crate) async fn show_credits(
             return;
         }
     };
-    let credit_width = renderer.surface_width(credits_surface) as i32;
-    let credit_height = renderer.surface_height(credits_surface) as i32;
+    let (credit_width, credit_height) = renderer
+        .surface_dimensions(credits_surface.handle())
+        .expect("live credits upload");
+    let (credit_width, credit_height) = (i32::from(credit_width), i32::from(credit_height));
 
     let bg_surface = match res.get_picture(resource_ids::RHID_BK_CREDITS, 0) {
         Ok(pic) => Some(picture_to_surface(renderer, pic)),
@@ -72,11 +74,11 @@ pub(crate) async fn show_credits(
             None
         }
     };
-    let bg_dims = bg_surface.map(|sid| {
-        (
-            renderer.surface_width(sid) as i32,
-            renderer.surface_height(sid) as i32,
-        )
+    let bg_dims = bg_surface.as_ref().map(|surface| {
+        let (w, h) = renderer
+            .surface_dimensions(surface.handle())
+            .expect("live credits background");
+        (i32::from(w), i32::from(h))
     });
 
     let initial_screen_h = renderer.screen_height() as i32;
@@ -88,7 +90,7 @@ pub(crate) async fn show_credits(
     let mut last_scroll_sample = web_time::Instant::now();
     let mut scroll_accumulated_us = 0_u64;
 
-    loop {
+    'credits: loop {
         let events = event_pump.poll_events();
         renderer.sync_window_size(event_pump);
         for event in events {
@@ -102,7 +104,7 @@ pub(crate) async fn show_credits(
                     ..
                 }
                 | GameEvent::MouseDown(_, _, 1, _) => {
-                    return;
+                    break 'credits;
                 }
                 _ => {}
             }
@@ -116,13 +118,15 @@ pub(crate) async fn show_credits(
         // Background: fill with black, then blit the centered texture.
         renderer.begin_gpu_frame_clear();
         renderer.begin_ui_only_frame();
-        if let Some(bg) = bg_surface {
+        if let Some(bg) = &bg_surface {
             let (bw, bh) = bg_dims.unwrap();
             let bx = (screen_w - bw) / 2;
             let by = (screen_h - bh) / 2;
             let src = BBox::from_coords(0.0, 0.0, bw as f32, bh as f32);
             let dst = BBox::from_coords(bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32);
-            renderer.blit_to_screen(bg, Some(&src), Some(&dst), 0);
+            renderer
+                .draw_surface(bg.handle(), Some(&src), Some(&dst), 0)
+                .expect("live credits background");
         }
 
         // Credits roll — three phases of the scroll: entering from
@@ -142,15 +146,16 @@ pub(crate) async fn show_credits(
                     (margin_x + credit_width) as f32,
                     dst_bottom as f32,
                 );
-                renderer.blit_with_shadow(
-                    credits_surface,
-                    Some(&src),
-                    0,
-                    Some(&dst),
-                    0x1f,
-                    50,
-                    BLIT_SOURCE_TRANSPARENT,
-                );
+                renderer
+                    .draw_surface_with_shadow(
+                        credits_surface.handle(),
+                        Some(&src),
+                        Some(&dst),
+                        0x1f,
+                        50,
+                        BLIT_SOURCE_TRANSPARENT,
+                    )
+                    .expect("live credits upload");
             }
         } else if offset + screen_h < credit_height {
             // Fully scrolling.
@@ -166,15 +171,16 @@ pub(crate) async fn show_credits(
                 (margin_x + credit_width) as f32,
                 screen_h as f32,
             );
-            renderer.blit_with_shadow(
-                credits_surface,
-                Some(&src),
-                0,
-                Some(&dst),
-                0x1f,
-                50,
-                BLIT_SOURCE_TRANSPARENT,
-            );
+            renderer
+                .draw_surface_with_shadow(
+                    credits_surface.handle(),
+                    Some(&src),
+                    Some(&dst),
+                    0x1f,
+                    50,
+                    BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("live credits upload");
         } else {
             // Tail — the bottom of the roll is within the screen.
             let remaining = credit_height - offset;
@@ -191,15 +197,16 @@ pub(crate) async fn show_credits(
                     (margin_x + credit_width) as f32,
                     remaining as f32,
                 );
-                renderer.blit_with_shadow(
-                    credits_surface,
-                    Some(&src),
-                    0,
-                    Some(&dst),
-                    0x1f,
-                    50,
-                    BLIT_SOURCE_TRANSPARENT,
-                );
+                renderer
+                    .draw_surface_with_shadow(
+                        credits_surface.handle(),
+                        Some(&src),
+                        Some(&dst),
+                        0x1f,
+                        50,
+                        BLIT_SOURCE_TRANSPARENT,
+                    )
+                    .expect("live credits upload");
             }
         }
 
@@ -224,5 +231,9 @@ pub(crate) async fn show_credits(
         // Presentation follows the configured display cadence; scroll motion
         // above remains at the original 50 pixels/second wall-clock rate.
         crate::window::sleep_ui_frame().await;
+    }
+    renderer.retire_surface(credits_surface);
+    if let Some(background) = bg_surface {
+        renderer.retire_surface(background);
     }
 }

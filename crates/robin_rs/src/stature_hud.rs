@@ -255,15 +255,90 @@ impl StatureHudLayout {
     }
 }
 
-type SpriteFrame = (u32, u16, u16);
+type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
 
-#[derive(Debug, Default)]
+#[cfg(test)]
+pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
+    let mut sprites = StatureSprites::default();
+    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
+    let handle = upload.handle();
+    sprites.up[BTN_STATE_NORMAL] = Some((upload, 1, 1));
+    assert_eq!(
+        sprites.frame(StatureButton::Up, BTN_STATE_HOVER).unwrap().0,
+        handle
+    );
+    renderer.draw_surface(handle, None, None, 0).unwrap();
+    sprites.retire(renderer);
+    sprites.retire(renderer);
+    assert!(sprites.frame(StatureButton::Up, BTN_STATE_NORMAL).is_none());
+    assert!(renderer.surface_dimensions(handle).is_err());
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255]
+    );
+}
+
+#[test]
+fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
+    let mut sprites = StatureSprites::default();
+    sprites.up[BTN_STATE_NORMAL] = Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
+    sprites.up[BTN_STATE_PRESSED] = Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
+    assert_eq!(
+        sprites.frame(StatureButton::Up, BTN_STATE_HOVER).unwrap().1,
+        7
+    );
+    assert_eq!(
+        sprites
+            .frame(StatureButton::Up, BTN_STATE_PRESSED)
+            .unwrap()
+            .1,
+        8
+    );
+    let restored: StatureSprites =
+        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
+    assert!(
+        restored
+            .frame(StatureButton::Up, BTN_STATE_NORMAL)
+            .is_none()
+    );
+    sprites.up[BTN_STATE_NORMAL] = None;
+    assert!(sprites.frame(StatureButton::Up, BTN_STATE_HOVER).is_none());
+    assert_eq!(
+        sprites
+            .frame(StatureButton::Up, BTN_STATE_PRESSED)
+            .unwrap()
+            .1,
+        8
+    );
+}
+
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct StatureSprites {
-    pub up: [Option<SpriteFrame>; 4],
-    pub down: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    up: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    down: [Option<SpriteFrame>; 4],
 }
 
 impl StatureSprites {
+    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
+        let banks = [&mut self.up, &mut self.down];
+        for bank in &banks {
+            for (upload, _, _) in bank.iter().flatten() {
+                renderer
+                    .validate_surface_retirement(upload)
+                    .expect("HUD bank belongs to its renderer");
+            }
+        }
+        for bank in banks {
+            for frame in bank {
+                if let Some((upload, _, _)) = frame.take() {
+                    renderer.retire_surface(upload);
+                }
+            }
+        }
+    }
+
     /// Walk the four button-state sub-ids for each arrow resource.
     /// Same loader pattern as `CornerButtonSprites::load`.
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
@@ -304,9 +379,16 @@ impl StatureSprites {
         }
     }
 
-    fn frame(&self, btn: StatureButton, state: usize) -> Option<SpriteFrame> {
+    fn frame(
+        &self,
+        btn: StatureButton,
+        state: usize,
+    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
         let f = self.frames(btn);
-        f[state].or(f[BTN_STATE_NORMAL])
+        f[state]
+            .as_ref()
+            .or(f[BTN_STATE_NORMAL].as_ref())
+            .map(|(upload, w, h)| (upload.handle(), *w, *h))
     }
 
     pub fn up_size(&self) -> Option<(u16, u16)> {
@@ -319,10 +401,11 @@ impl StatureSprites {
 
     fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
         frames[BTN_STATE_NORMAL]
-            .or(frames[BTN_STATE_HOVER])
-            .or(frames[BTN_STATE_PRESSED])
-            .or(frames[BTN_STATE_DISABLED])
-            .map(|(_, w, h)| (w, h))
+            .as_ref()
+            .or(frames[BTN_STATE_HOVER].as_ref())
+            .or(frames[BTN_STATE_PRESSED].as_ref())
+            .or(frames[BTN_STATE_DISABLED].as_ref())
+            .map(|(_, w, h)| (*w, *h))
     }
 }
 
@@ -361,7 +444,9 @@ pub fn draw_with_sprites(
         let dst = screen_rect_to_sprite_bbox(*rect);
         // The original game's stature arrows are bitmap toggle buttons,
         // so they use the regular transparent bitmap path.
-        renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        renderer
+            .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
+            .expect("live HUD upload");
     }
 }
 

@@ -214,21 +214,111 @@ impl CornerHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-type SpriteFrame = (u32, u16, u16);
+type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
+
+#[cfg(test)]
+pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
+    let mut sprites = CornerButtonSprites::default();
+    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
+    let handle = upload.handle();
+    sprites.clock[BTN_STATE_NORMAL] = Some((upload, 1, 1));
+    assert_eq!(
+        sprites
+            .frame(CornerButton::Clock, BTN_STATE_HOVER)
+            .unwrap()
+            .0,
+        handle
+    );
+    renderer.draw_surface(handle, None, None, 0).unwrap();
+    sprites.retire(renderer);
+    sprites.retire(renderer);
+    assert!(
+        sprites
+            .frame(CornerButton::Clock, BTN_STATE_NORMAL)
+            .is_none()
+    );
+    assert!(renderer.surface_dimensions(handle).is_err());
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255]
+    );
+}
+
+#[test]
+fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
+    let mut sprites = CornerButtonSprites::default();
+    sprites.clock[BTN_STATE_NORMAL] = Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
+    sprites.clock[BTN_STATE_PRESSED] = Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
+    assert_eq!(
+        sprites
+            .frame(CornerButton::Clock, BTN_STATE_HOVER)
+            .unwrap()
+            .1,
+        7
+    );
+    assert_eq!(
+        sprites
+            .frame(CornerButton::Clock, BTN_STATE_PRESSED)
+            .unwrap()
+            .1,
+        8
+    );
+    let restored: CornerButtonSprites =
+        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
+    assert!(
+        restored
+            .frame(CornerButton::Clock, BTN_STATE_NORMAL)
+            .is_none()
+    );
+    sprites.clock[BTN_STATE_NORMAL] = None;
+    assert!(
+        sprites
+            .frame(CornerButton::Clock, BTN_STATE_HOVER)
+            .is_none()
+    );
+    assert_eq!(
+        sprites
+            .frame(CornerButton::Clock, BTN_STATE_PRESSED)
+            .unwrap()
+            .1,
+        8
+    );
+}
 
 /// Cached sprite surface ids for the three corner HUD buttons.
 ///
 /// Each button owns up to four sub-ids — disabled, normal, focused, and
 /// pressed.  Missing sub-ids fall back to the normal frame; if that's
 /// also missing the button is simply not drawn (matches `zoom_hud`).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct CornerButtonSprites {
-    pub clock: [Option<SpriteFrame>; 4],
-    pub sight: [Option<SpriteFrame>; 4],
-    pub quickstart: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    clock: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    sight: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    quickstart: [Option<SpriteFrame>; 4],
 }
 
 impl CornerButtonSprites {
+    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
+        let banks = [&mut self.clock, &mut self.sight, &mut self.quickstart];
+        for bank in &banks {
+            for (upload, _, _) in bank.iter().flatten() {
+                renderer
+                    .validate_surface_retirement(upload)
+                    .expect("HUD bank belongs to its renderer");
+            }
+        }
+        for bank in banks {
+            for frame in bank {
+                if let Some((upload, _, _)) = frame.take() {
+                    renderer.retire_surface(upload);
+                }
+            }
+        }
+    }
+
     /// Load button sprites from the attached DEFAULT.RES.  Walks
     /// sub-ids 0..=3 per resource; missing sub-ids stay `None`.
     pub fn load(res: &mut ResourceManager, renderer: &mut Renderer) -> Self {
@@ -245,7 +335,7 @@ impl CornerButtonSprites {
                     let h = pic.height;
                     let surface = crate::ui_panel::pic_to_surface(renderer, pic);
                     tracing::info!(
-                        "corner_hud: {label} sub{sub} → resource {id}, surface {surface} ({w}x{h})"
+                        "corner_hud: {label} sub{sub} → resource {id}, surface {surface:?} ({w}x{h})"
                     );
                     Some((surface, w, h))
                 }
@@ -287,9 +377,16 @@ impl CornerButtonSprites {
     /// The sprite actually rendered for a given interaction state,
     /// with a fallback to the normal frame if the requested state is
     /// missing — matches `zoom_hud.rs`.
-    fn frame(&self, btn: CornerButton, state: usize) -> Option<SpriteFrame> {
+    fn frame(
+        &self,
+        btn: CornerButton,
+        state: usize,
+    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
         let frames = self.frames(btn);
-        frames[state].or(frames[BTN_STATE_NORMAL])
+        frames[state]
+            .as_ref()
+            .or(frames[BTN_STATE_NORMAL].as_ref())
+            .map(|(upload, w, h)| (upload.handle(), *w, *h))
     }
 
     pub fn clock_size(&self) -> Option<(u16, u16)> {
@@ -306,10 +403,11 @@ impl CornerButtonSprites {
 
     fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
         frames[BTN_STATE_NORMAL]
-            .or(frames[BTN_STATE_HOVER])
-            .or(frames[BTN_STATE_PRESSED])
-            .or(frames[BTN_STATE_DISABLED])
-            .map(|(_, w, h)| (w, h))
+            .as_ref()
+            .or(frames[BTN_STATE_HOVER].as_ref())
+            .or(frames[BTN_STATE_PRESSED].as_ref())
+            .or(frames[BTN_STATE_DISABLED].as_ref())
+            .map(|(_, w, h)| (*w, *h))
     }
 }
 
@@ -358,7 +456,7 @@ pub fn draw_with_sprites(
         if let Some((sid, _sw, _sh)) = sprites.frame(btn, state) {
             let dst = screen_rect_to_sprite_bbox(*rect);
             tracing::trace!(
-                "corner_hud blit: {:?} state {state} dim={} surface {sid} at ({},{}) {}x{}",
+                "corner_hud blit: {:?} state {state} dim={} surface {sid:?} at ({},{}) {}x{}",
                 btn,
                 enable.is_dim(btn),
                 rect.x(),
@@ -370,20 +468,25 @@ pub fn draw_with_sprites(
                 // ~40% alpha — matches the "inactive but still visible"
                 // read the user expects for the blowing-horn / QA-start
                 // castle when their click conditions aren't satisfied.
-                renderer.blit_to_screen_alpha(sid, None, Some(&dst), 40, BLIT_SOURCE_TRANSPARENT);
+                renderer
+                    .draw_surface_alpha(sid, None, Some(&dst), 40, BLIT_SOURCE_TRANSPARENT)
+                    .expect("live HUD upload");
             } else if btn == CornerButton::QuickStart {
-                renderer.blit_with_shadow(
-                    sid,
-                    None,
-                    0, // screen
-                    Some(&dst),
-                    0,  // shadow_color unused
-                    50, // Default shadow intensity.
-                    BLIT_SOURCE_TRANSPARENT,
-                );
+                renderer
+                    .draw_surface_with_shadow(
+                        sid,
+                        None,
+                        Some(&dst),
+                        0,  // shadow_color unused
+                        50, // Default shadow intensity.
+                        BLIT_SOURCE_TRANSPARENT,
+                    )
+                    .expect("live HUD upload");
             } else {
                 // The original game renders Clock and Sight as bitmap widgets.
-                renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+                renderer
+                    .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
+                    .expect("live HUD upload");
             }
         }
     }

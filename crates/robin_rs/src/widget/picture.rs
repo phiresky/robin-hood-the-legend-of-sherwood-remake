@@ -26,7 +26,7 @@ pub struct WidgetPicture {
     /// callers must re-set them after reload, which is why this field is
     /// skipped.
     #[serde(skip)]
-    alternate_picture: Option<u32>,
+    alternate_picture: Option<crate::renderer::SurfaceHandle>,
 }
 
 impl Default for WidgetPicture {
@@ -67,7 +67,7 @@ impl WidgetPicture {
 
     /// Set the runtime surface to blit in place of the resource-mapped
     /// picture.
-    pub fn set_alternate_picture(&mut self, surface_id: u32) {
+    pub fn set_alternate_picture(&mut self, surface_id: crate::renderer::SurfaceHandle) {
         self.alternate_picture = Some(surface_id);
     }
 
@@ -78,7 +78,7 @@ impl WidgetPicture {
     }
 
     /// Current alternate surface handle, if any.
-    pub fn alternate_picture(&self) -> Option<u32> {
+    pub fn alternate_picture(&self) -> Option<crate::renderer::SurfaceHandle> {
         self.alternate_picture
     }
 

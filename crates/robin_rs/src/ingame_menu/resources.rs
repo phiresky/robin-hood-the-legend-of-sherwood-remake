@@ -1769,7 +1769,10 @@ impl IngameMenuResources {
 
 /// Decode and validate menu pictures during startup, but upload only surfaces
 /// actually drawn. Startup modals therefore retain their normal first frame.
-fn deferred_picture_surface(renderer: &mut Renderer, pic: &robin_assets::picture::Picture) -> u32 {
+fn deferred_picture_surface(
+    renderer: &mut Renderer,
+    pic: &robin_assets::picture::Picture,
+) -> OwnedSurface {
     assert_eq!(
         pic.data.len(),
         pic.width as usize * pic.height as usize * 2,
@@ -1783,7 +1786,7 @@ fn deferred_picture_surface(renderer: &mut Renderer, pic: &robin_assets::picture
         .map(|c| u16::from_le_bytes(*c))
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    renderer.create_deferred_surface_from_rgb565(pic.width, pic.height, pixels)
+    renderer.upload_deferred_rgb565(pic.width, pic.height, pixels)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1886,11 +1889,12 @@ fn adopt_picture(
     picture: &robin_assets::picture::Picture,
     button_shadow: bool,
 ) -> SurfaceHandle {
-    let id = deferred_picture_surface(renderer, picture);
+    let owner = deferred_picture_surface(renderer, picture);
     if button_shadow {
-        renderer.set_shadow_alpha(id, crate::renderer::MENU_BUTTON_SHADOW_ALPHA);
+        renderer
+            .set_surface_shadow_alpha(owner.handle(), crate::renderer::MENU_BUTTON_SHADOW_ALPHA)
+            .expect("fresh menu upload");
     }
-    let owner = renderer.try_adopt_surface(id).expect("fresh menu upload");
     let handle = owner.handle();
     owners.push(owner);
     handle

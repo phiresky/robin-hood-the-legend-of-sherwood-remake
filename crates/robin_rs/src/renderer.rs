@@ -764,11 +764,28 @@ impl Renderer {
         rgb8_to_rgb565(r, g, b)
     }
 
-    /// Create a managed RGB565 surface from decoded asset pixels.
-    /// This is the compatibility entry point for older widget/minimap
-    /// surfaces that still need a renderer surface ID; callers should not
-    /// mutate these surfaces after creation.
-    pub fn create_surface_from_rgb565(
+    /// Upload decoded pixels and return their unique retirement authority.
+    pub fn upload_rgb565(
+        &mut self,
+        width: u16,
+        height: u16,
+        pixels: &[u16],
+    ) -> Option<OwnedSurface> {
+        let id = self.create_surface_from_rgb565(width, height, pixels)?;
+        Some(self.adopt_surface(id))
+    }
+
+    pub(crate) fn upload_deferred_rgb565(
+        &mut self,
+        width: u16,
+        height: u16,
+        pixels: Box<[u16]>,
+    ) -> OwnedSurface {
+        let id = self.create_deferred_surface_from_rgb565(width, height, pixels);
+        self.adopt_surface(id)
+    }
+
+    fn create_surface_from_rgb565(
         &mut self,
         width: u16,
         height: u16,
@@ -821,7 +838,7 @@ impl Renderer {
     /// Validate and register a surface immediately, retaining its RGB565 pixels
     /// until its first draw. Hit testing and dimensions are available before
     /// GPU residency, so unopened menus need no texture conversion or upload.
-    pub(crate) fn create_deferred_surface_from_rgb565(
+    fn create_deferred_surface_from_rgb565(
         &mut self,
         width: u16,
         height: u16,
@@ -942,12 +959,17 @@ impl Renderer {
         }
     }
 
-    pub fn delete_surface(&mut self, id: u32) -> bool {
+    #[cfg(test)]
+    fn delete_surface(&mut self, id: u32) -> bool {
         self.try_delete_legacy_surface(id)
             .expect("owned upload must be retired with its ownership token")
     }
 
-    pub fn try_delete_legacy_surface(&mut self, id: u32) -> Result<bool, SurfaceOwnershipError> {
+    #[cfg(test)]
+    pub(crate) fn try_delete_legacy_surface(
+        &mut self,
+        id: u32,
+    ) -> Result<bool, SurfaceOwnershipError> {
         if self.owned_surfaces.contains(&id) {
             return Err(SurfaceOwnershipError::AlreadyOwned(id));
         }
@@ -955,7 +977,8 @@ impl Renderer {
     }
 
     /// Compatibility boundary: resolve legacy screen aliases or mint a local upload reference.
-    pub fn legacy_surface_target(&self, id: u32) -> Result<SurfaceTarget, MissingSurface> {
+    #[cfg(test)]
+    fn legacy_surface_target(&self, id: u32) -> Result<SurfaceTarget, MissingSurface> {
         if id <= 1 {
             Ok(SurfaceTarget::Screen)
         } else {
@@ -964,7 +987,7 @@ impl Renderer {
     }
 
     /// Validate an existing compatibility upload ID. Screen IDs are rejected.
-    pub fn surface_handle(&self, id: u32) -> Result<SurfaceHandle, MissingSurface> {
+    fn surface_handle(&self, id: u32) -> Result<SurfaceHandle, MissingSurface> {
         let handle = SurfaceHandle {
             id,
             renderer: self.identity,
@@ -973,19 +996,22 @@ impl Renderer {
         Ok(handle)
     }
 
-    pub fn adopt_surface(&mut self, id: u32) -> OwnedSurface {
+    fn adopt_surface(&mut self, id: u32) -> OwnedSurface {
         self.try_adopt_surface(id)
             .expect("ownership requires a live unowned upload")
     }
 
-    pub fn try_adopt_surface(&mut self, id: u32) -> Result<OwnedSurface, SurfaceOwnershipError> {
+    pub(crate) fn try_adopt_surface(
+        &mut self,
+        id: u32,
+    ) -> Result<OwnedSurface, SurfaceOwnershipError> {
         self.validate_surface_adoption(id)?;
         let handle = self.surface_handle(id)?;
         self.owned_surfaces.insert(id);
         Ok(OwnedSurface { handle })
     }
 
-    pub(crate) fn validate_surface_adoption(&self, id: u32) -> Result<(), SurfaceOwnershipError> {
+    fn validate_surface_adoption(&self, id: u32) -> Result<(), SurfaceOwnershipError> {
         self.surface_handle(id)?;
         if self.owned_surfaces.contains(&id) {
             return Err(SurfaceOwnershipError::AlreadyOwned(id));
@@ -1039,20 +1065,6 @@ impl Renderer {
         }
     }
 
-    pub fn surface_width(&self, id: u32) -> u16 {
-        self.legacy_surface_target(id)
-            .and_then(|target| self.target_dimensions(target))
-            .unwrap_or_else(|error| panic!("{error}"))
-            .0
-    }
-
-    pub fn surface_height(&self, id: u32) -> u16 {
-        self.legacy_surface_target(id)
-            .and_then(|target| self.target_dimensions(target))
-            .unwrap_or_else(|error| panic!("{error}"))
-            .1
-    }
-
     pub fn surface_dimensions(&self, handle: SurfaceHandle) -> Result<(u16, u16), MissingSurface> {
         if handle.renderer != self.identity || handle.id <= 1 {
             return Err(MissingSurface(handle));
@@ -1083,7 +1095,17 @@ impl Renderer {
     /// upload time. Set to `MENU_BUTTON_SHADOW_ALPHA` (50%) for
     /// menu-button packs, leave at the default `DEFAULT_SHADOW_ALPHA`
     /// (40%) for everything else.
-    pub fn set_shadow_alpha(&mut self, id: u32, shadow_alpha: u8) {
+    pub fn set_surface_shadow_alpha(
+        &mut self,
+        handle: SurfaceHandle,
+        shadow_alpha: u8,
+    ) -> Result<(), MissingSurface> {
+        self.surface_dimensions(handle)?;
+        self.set_shadow_alpha(handle.id, shadow_alpha);
+        Ok(())
+    }
+
+    fn set_shadow_alpha(&mut self, id: u32, shadow_alpha: u8) {
         self.resources.set_shadow_alpha(id, shadow_alpha);
     }
 
@@ -1417,7 +1439,7 @@ impl Renderer {
     /// `(100 - shadow_level) / 100`. Routes the MMX-style alpha-keying
     /// shadow blit through the GPU overlay queue.
     #[allow(clippy::too_many_arguments)]
-    pub fn blit_with_shadow(
+    fn blit_with_shadow(
         &mut self,
         src_id: u32,
         src_rect: Option<&BBox>,
@@ -1556,7 +1578,7 @@ impl Renderer {
     /// Submit a managed surface as a GPU overlay quad. Lazy-uploads
     /// the surface to a wgpu texture (cached, invalidated on surface
     /// mutation) and queues a textured-quad draw at `dst_rect`.
-    pub fn blit_to_screen(
+    fn blit_to_screen(
         &mut self,
         src_id: u32,
         src_rect: Option<&BBox>,
@@ -1598,7 +1620,7 @@ impl Renderer {
 
     /// `blit_to_screen` with a per-frame alpha applied to the whole
     /// quad (used by the fade-in / fade-out transitions).
-    pub fn blit_to_screen_alpha(
+    pub(crate) fn blit_to_screen_alpha(
         &mut self,
         src_id: u32,
         src_rect: Option<&BBox>,
@@ -3274,7 +3296,8 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     let (_, owned) = other_renderer.try_retire_surface(owned).unwrap_err();
     assert!(renderer.surface_dimensions(owned.handle()).is_ok());
     let mut mission = crate::mission_render_resources::MissionRenderResources::default();
-    mission.replace_map(&mut other_renderer, other_id);
+    let other_owned = other_renderer.adopt_surface(other_id);
+    mission.replace_map(&mut other_renderer, other_owned);
     assert!(mission.try_retire(&mut renderer).is_err());
     assert_eq!(
         mission.map(),
@@ -3288,9 +3311,13 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
             .is_err()
     );
     assert!(other_renderer.surface_handle(other_id).is_ok());
+    let (_, owned) = mission
+        .try_replace_map(&mut other_renderer, owned)
+        .unwrap_err();
+    assert!(renderer.surface_dimensions(owned.handle()).is_ok());
     assert!(
         mission
-            .try_replace_map(&mut other_renderer, u32::MAX)
+            .try_replace_map(&mut other_renderer, OwnedSurface::synthetic(u32::MAX))
             .is_err()
     );
     assert_eq!(
@@ -3382,6 +3409,10 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
         .unwrap();
     assert_ne!(id, replacement, "deleted surface IDs must not be reused");
     crate::mission_render_resources::verify_gpu_lifecycle(&mut renderer);
+    crate::corner_hud::verify_gpu_ownership(&mut renderer);
+    crate::zoom_hud::verify_gpu_ownership(&mut renderer);
+    crate::stature_hud::verify_gpu_ownership(&mut renderer);
+    crate::sherwood_hud::verify_gpu_ownership(&mut renderer);
     let mut portrait_renderer = Renderer::with_optional_surface(
         renderer.gpu.clone(),
         None,

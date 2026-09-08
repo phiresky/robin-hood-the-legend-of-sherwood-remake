@@ -308,7 +308,78 @@ impl SherwoodHudLayout {
     }
 }
 
-type SpriteFrame = (u32, u16, u16);
+type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
+
+#[cfg(test)]
+pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
+    let mut sprites = SherwoodButtonSprites::default();
+    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
+    let handle = upload.handle();
+    sprites.go_to_exit[BTN_STATE_NORMAL] = Some((upload, 1, 1));
+    assert_eq!(
+        sprites
+            .frame(SherwoodButton::GoToExit, BTN_STATE_HOVER, 0)
+            .unwrap()
+            .0,
+        handle
+    );
+    renderer.draw_surface(handle, None, None, 0).unwrap();
+    sprites.retire(renderer);
+    sprites.retire(renderer);
+    assert!(
+        sprites
+            .frame(SherwoodButton::GoToExit, BTN_STATE_NORMAL, 0)
+            .is_none()
+    );
+    assert!(renderer.surface_dimensions(handle).is_err());
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255]
+    );
+}
+
+#[test]
+fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
+    let mut sprites = SherwoodButtonSprites::default();
+    sprites.go_to_exit[BTN_STATE_NORMAL] =
+        Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
+    sprites.go_to_exit[BTN_STATE_PRESSED] =
+        Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
+    assert_eq!(
+        sprites
+            .frame(SherwoodButton::GoToExit, BTN_STATE_HOVER, 0)
+            .unwrap()
+            .1,
+        7
+    );
+    assert_eq!(
+        sprites
+            .frame(SherwoodButton::GoToExit, BTN_STATE_PRESSED, 0)
+            .unwrap()
+            .1,
+        8
+    );
+    let restored: SherwoodButtonSprites =
+        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
+    assert!(
+        restored
+            .frame(SherwoodButton::GoToExit, BTN_STATE_NORMAL, 0)
+            .is_none()
+    );
+    sprites.go_to_exit[BTN_STATE_NORMAL] = None;
+    assert!(
+        sprites
+            .frame(SherwoodButton::GoToExit, BTN_STATE_HOVER, 0)
+            .is_none()
+    );
+    assert_eq!(
+        sprites
+            .frame(SherwoodButton::GoToExit, BTN_STATE_PRESSED, 0)
+            .unwrap()
+            .1,
+        8
+    );
+}
 
 /// Cached sprite surface ids for the four Sherwood HUD buttons.
 ///
@@ -316,16 +387,45 @@ type SpriteFrame = (u32, u16, u16);
 /// (241), `RHID_FLOATING_OK` (281 — Start), `RHID_FLOATING_CANCEL`
 /// (282 — Quit).  Each resource is a multi-sub-id BTTN strip:
 /// disabled, normal, focused, selected.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct SherwoodButtonSprites {
-    pub display_campaign_map: [Option<SpriteFrame>; 4],
-    pub go_to_exit: [Option<SpriteFrame>; 4],
-    pub start_mission: [Option<SpriteFrame>; 4],
-    pub quit_mission: [Option<SpriteFrame>; 4],
-    pub sherwood_trading: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    display_campaign_map: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    go_to_exit: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    start_mission: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    quit_mission: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    sherwood_trading: [Option<SpriteFrame>; 4],
 }
 
 impl SherwoodButtonSprites {
+    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
+        let banks = [
+            &mut self.display_campaign_map,
+            &mut self.go_to_exit,
+            &mut self.start_mission,
+            &mut self.quit_mission,
+            &mut self.sherwood_trading,
+        ];
+        for bank in &banks {
+            for (upload, _, _) in bank.iter().flatten() {
+                renderer
+                    .validate_surface_retirement(upload)
+                    .expect("HUD bank belongs to its renderer");
+            }
+        }
+        for bank in banks {
+            for frame in bank {
+                if let Some((upload, _, _)) = frame.take() {
+                    renderer.retire_surface(upload);
+                }
+            }
+        }
+    }
+
     /// Load button sprites from the attached DEFAULT.RES.  Missing
     /// resources fall back to `None`; `draw_with_sprites` then skips
     /// the button entirely (no fallback rect — see `draw_with_sprites`).
@@ -343,7 +443,7 @@ impl SherwoodButtonSprites {
                     let h = pic.height;
                     let surface = crate::ui_panel::pic_to_surface(renderer, pic);
                     tracing::info!(
-                        "sherwood_hud: {label} sub{sub} -> resource {id}, surface {surface} ({w}x{h})"
+                        "sherwood_hud: {label} sub{sub} -> resource {id}, surface {surface:?} ({w}x{h})"
                     );
                     Some((surface, w, h))
                 }
@@ -398,7 +498,12 @@ impl SherwoodButtonSprites {
         }
     }
 
-    fn frame(&self, btn: SherwoodButton, state: usize, frame_counter: u32) -> Option<SpriteFrame> {
+    fn frame(
+        &self,
+        btn: SherwoodButton,
+        state: usize,
+        frame_counter: u32,
+    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
         let frames = self.frames(btn);
         let state = if btn == SherwoodButton::DisplayCampaignMap && state == BTN_STATE_NORMAL {
             // The original game starts blinking with a 25-tick interval:
@@ -411,16 +516,20 @@ impl SherwoodButtonSprites {
         } else {
             state
         };
-        frames[state].or(frames[BTN_STATE_NORMAL])
+        frames[state]
+            .as_ref()
+            .or(frames[BTN_STATE_NORMAL].as_ref())
+            .map(|(upload, w, h)| (upload.handle(), *w, *h))
     }
 
     fn size(&self, btn: SherwoodButton) -> Option<(u16, u16)> {
         let frames = self.frames(btn);
         frames[BTN_STATE_NORMAL]
-            .or(frames[BTN_STATE_HOVER])
-            .or(frames[BTN_STATE_PRESSED])
-            .or(frames[BTN_STATE_DISABLED])
-            .map(|(_, w, h)| (w, h))
+            .as_ref()
+            .or(frames[BTN_STATE_HOVER].as_ref())
+            .or(frames[BTN_STATE_PRESSED].as_ref())
+            .or(frames[BTN_STATE_DISABLED].as_ref())
+            .map(|(_, w, h)| (*w, *h))
     }
 }
 
@@ -485,17 +594,20 @@ pub fn draw_with_sprites(
                     | SherwoodButton::QuitMission
                     | SherwoodButton::SherwoodTrading
             ) {
-                renderer.blit_with_shadow(
-                    sid,
-                    None,
-                    0, // screen
-                    Some(&dst),
-                    0,  // shadow_color (unused in the MMX-parity path)
-                    50, // Default shadow intensity.
-                    BLIT_SOURCE_TRANSPARENT,
-                );
+                renderer
+                    .draw_surface_with_shadow(
+                        sid,
+                        None,
+                        Some(&dst),
+                        0,  // shadow_color (unused in the MMX-parity path)
+                        50, // Default shadow intensity.
+                        BLIT_SOURCE_TRANSPARENT,
+                    )
+                    .expect("live HUD upload");
             } else {
-                renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+                renderer
+                    .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
+                    .expect("live HUD upload");
             }
         }
         // No placeholder-rect fallback — a missing sprite simply means

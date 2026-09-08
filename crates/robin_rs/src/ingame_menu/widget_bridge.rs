@@ -795,51 +795,7 @@ pub fn draw_picture_alternate_surface(
     }
 }
 
-/// Render an arbitrary surface through a temporary `WidgetPicture`.
-///
-/// This is for legacy paths that already own a GPU surface handle rather
-/// than a `.RES` resource id. It keeps the blit in the widget bridge
-/// instead of each feature locally constructing source/destination boxes.
-#[allow(clippy::too_many_arguments)]
-pub fn draw_picture_surface_rect(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    surface_id: u32,
-    dst_x: i32,
-    dst_y: i32,
-    dst_w: i32,
-    dst_h: i32,
-    src_x: i32,
-    src_y: i32,
-    src_w: i32,
-    src_h: i32,
-    transparent: bool,
-) {
-    let mut widget = WidgetPicture::new(WidgetId::MAX);
-    widget.base.create(
-        "",
-        ScreenBBox::from_coords(
-            dst_x as f32,
-            dst_y as f32,
-            (dst_x + dst_w) as f32,
-            (dst_y + dst_h) as f32,
-        ),
-        0,
-    );
-    widget.set_alternate_picture(surface_id);
-    let temp = Widget::Picture(widget);
-    draw_widget_surface_id(
-        renderer,
-        transform,
-        &temp,
-        surface_id,
-        Some((src_x, src_y, src_w, src_h)),
-        transparent,
-    );
-}
-
-/// Typed counterpart for resource-owned menu sprites; legacy runtime bitmaps
-/// keep using the explicitly integer-based compatibility function above.
+/// Draw a borrowed uploaded surface, distinct from asset resource IDs.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_menu_surface_rect(
     renderer: &mut Renderer,
@@ -941,7 +897,7 @@ fn draw_widget_surface_id(
     renderer: &mut Renderer,
     transform: MenuTransform,
     widget: &Widget,
-    surface_id: u32,
+    surface_id: crate::renderer::SurfaceHandle,
     source_rect: Option<(i32, i32, i32, i32)>,
     transparent: bool,
 ) {
@@ -962,7 +918,9 @@ fn draw_widget_surface_id(
     } else {
         0
     };
-    renderer.blit_to_screen(surface_id, Some(&src), Some(&dst), flags);
+    renderer
+        .draw_surface(surface_id, Some(&src), Some(&dst), flags)
+        .expect("live widget upload");
 }
 
 /// Render a widget as a radio-button (input field sprite + label).

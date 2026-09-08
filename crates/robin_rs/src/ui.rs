@@ -834,8 +834,8 @@ impl RendererAlphaConstant {
         &mut self,
         renderer: &mut Renderer,
         sub_res: u8,
-        current_surface: u32,
-        ancient_surface: Option<u32>,
+        current_surface: Option<crate::renderer::SurfaceHandle>,
+        ancient_surface: Option<crate::renderer::SurfaceHandle>,
     ) -> bool {
         // Save this one for future use.
         self.base.sub_resource = sub_res;
@@ -857,6 +857,19 @@ impl RendererAlphaConstant {
             BBox::from_coords(mn.x, mn.y, mx.x, mx.y)
         });
 
+        let Some(current_surface) = current_surface else {
+            if self.mixing_in_progress {
+                tracing::warn!(
+                    "RendererAlphaConstant::render: missing current surface during mixing"
+                );
+                return false;
+            }
+            return true;
+        };
+        if let Err(error) = renderer.surface_dimensions(current_surface) {
+            tracing::warn!(%error, "RendererAlphaConstant::render: invalid current upload");
+            return false;
+        }
         if self.mixing_in_progress {
             let Some(old_surface) = ancient_surface else {
                 tracing::warn!(
@@ -865,23 +878,31 @@ impl RendererAlphaConstant {
                 return false;
             };
 
+            if let Err(error) = renderer.surface_dimensions(old_surface) {
+                tracing::warn!(%error, "RendererAlphaConstant::render: invalid ancient upload");
+                return false;
+            }
             let current_opacity = (alpha_used as u32)
                 .saturating_mul(100u32.saturating_sub(self.mixing_alpha as u32))
                 / 100;
-            renderer.blit_to_screen_alpha(
-                old_surface,
-                None,
-                dst_rect.as_ref(),
-                100u16.saturating_sub(alpha_used),
-                BLIT_SOURCE_TRANSPARENT,
-            );
-            renderer.blit_to_screen_alpha(
-                current_surface,
-                None,
-                dst_rect.as_ref(),
-                100u16.saturating_sub(current_opacity as u16),
-                BLIT_SOURCE_TRANSPARENT,
-            );
+            renderer
+                .draw_surface_alpha(
+                    old_surface,
+                    None,
+                    dst_rect.as_ref(),
+                    100u16.saturating_sub(alpha_used),
+                    BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("validated alpha widget upload");
+            renderer
+                .draw_surface_alpha(
+                    current_surface,
+                    None,
+                    dst_rect.as_ref(),
+                    100u16.saturating_sub(current_opacity as u16),
+                    BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("validated alpha widget upload");
 
             // Stop mixing once the new surface is fully blended in.
             if self.mixing_alpha == 0 {
@@ -890,29 +911,29 @@ impl RendererAlphaConstant {
             return true;
         }
 
-        if current_surface == 0 {
-            return true;
-        }
-
         let pair_idx = (self.base.pair_counter % 2) as usize;
 
         if alpha_used < 100 {
-            renderer.blit_to_screen_alpha(
-                current_surface,
-                None,
-                dst_rect.as_ref(),
-                100u16.saturating_sub(alpha_used),
-                BLIT_SOURCE_TRANSPARENT,
-            );
+            renderer
+                .draw_surface_alpha(
+                    current_surface,
+                    None,
+                    dst_rect.as_ref(),
+                    100u16.saturating_sub(alpha_used),
+                    BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("validated alpha widget upload");
             self.base.last_rendered[pair_idx] = u32::MAX;
         } else {
-            renderer.blit_to_screen(
-                current_surface,
-                None,
-                dst_rect.as_ref(),
-                BLIT_SOURCE_TRANSPARENT,
-            );
-            self.base.last_rendered[pair_idx] = current_surface;
+            renderer
+                .draw_surface(
+                    current_surface,
+                    None,
+                    dst_rect.as_ref(),
+                    BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("validated alpha widget upload");
+            self.base.last_rendered[pair_idx] = self.base.will_be_rendered(sub_res);
         }
         true
     }

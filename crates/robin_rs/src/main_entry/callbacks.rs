@@ -1216,7 +1216,10 @@ mod operation_outcome_tests {
 }
 
 /// Upload a 16-bit RGB565 Picture into a new renderer surface.
-pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
+pub(crate) fn picture_to_surface(
+    renderer: &mut Renderer,
+    pic: &Picture,
+) -> crate::renderer::OwnedSurface {
     let pixels: Vec<u16> = pic
         .data
         .as_chunks::<2>()
@@ -1225,7 +1228,7 @@ pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     renderer
-        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
+        .upload_rgb565(pic.width, pic.height, &pixels)
         .expect("picture_to_surface: decoded picture dimensions must match RGB565 payload")
 }
 

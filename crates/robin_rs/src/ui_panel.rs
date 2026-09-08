@@ -1186,16 +1186,15 @@ fn owned_picture_surface(
         pic.data.len() % 2 == 0,
         "portrait RGB565 payload has an incomplete pixel"
     );
-    let id = renderer
-        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
+    let owned = renderer
+        .upload_rgb565(pic.width, pic.height, &pixels)
         .ok_or_else(|| anyhow::anyhow!("portrait dimensions must match RGB565 payload"))?;
-    let owned = renderer.try_adopt_surface(id)?;
     let handle = owned.handle();
     owners.push(owned);
     Ok(handle)
 }
 
-pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
+pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> OwnedSurface {
     let pixels: Vec<u16> = pic
         .data
         .as_chunks::<2>()
@@ -1204,7 +1203,7 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
         .map(|c| u16::from_le_bytes([c[0], c[1]]))
         .collect();
     renderer
-        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
+        .upload_rgb565(pic.width, pic.height, &pixels)
         .expect("pic_to_surface: decoded picture dimensions must match RGB565 payload")
 }
 
