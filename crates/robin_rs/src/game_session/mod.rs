@@ -830,7 +830,10 @@ pub(crate) async fn run_mission_headless(
             sim_config =
                 simulation_config_for_level_restart(*replay_config, outcome_sim_config, true);
         } else {
-            if !campaign.restore_snapshot() || !campaign.pre_mission_was_preselected {
+            let restored_checkpoint =
+                campaign.restore_snapshot() && campaign.pre_mission_was_preselected;
+            carry_direct_restart_multiplayer_continuation(&mut args, restored_checkpoint);
+            if !restored_checkpoint {
                 return MissionOutcome::new(
                     campaign,
                     rng_seed,
@@ -1562,6 +1565,17 @@ pub(crate) async fn run_mission(
     }
 }
 
+/// Match campaign-loop handoff policy only after a direct, non-replay host
+/// restart has restored its checkpoint. Failed admission never changes policy.
+fn carry_direct_restart_multiplayer_continuation(
+    args: &mut crate::main_entry::CliArgs,
+    restored_checkpoint: bool,
+) {
+    if restored_checkpoint && args.server && args.replay.is_none() && args.replay_data.is_none() {
+        args.mp_continue_session = true;
+    }
+}
+
 /// Consume an admitted RPC replay once at a completed mission boundary. The
 /// caller owns its launch args so releasing the old asset lease really unmounts
 /// that overlay before canonical replay resolution installs a replacement.
@@ -1693,6 +1707,30 @@ fn pending_decoded_saved_world(callbacks: &RustCallbacks) -> bool {
 
 #[cfg(test)]
 mod required_state_tests {
+    #[test]
+    fn direct_restart_continuation_matches_campaign_only_for_restored_live_hosts() {
+        for server in [false, true] {
+            for restored in [false, true] {
+                for replay in [false, true] {
+                    for headless in [false, true] {
+                        let mut args = crate::main_entry::CliArgs::default();
+                        args.server = server;
+                        args.headless = headless;
+                        args.replay = replay.then(|| "recorded.rhrec".into());
+                        super::carry_direct_restart_multiplayer_continuation(&mut args, restored);
+                        assert_eq!(args.mp_continue_session, server && restored && !replay);
+                    }
+                }
+            }
+        }
+        // Ineligible transitions do not revoke already-established policy.
+        let mut args = crate::main_entry::CliArgs::default();
+        args.server = true;
+        args.mp_continue_session = true;
+        super::carry_direct_restart_multiplayer_continuation(&mut args, false);
+        assert!(args.mp_continue_session);
+    }
+
     use super::{
         MissionOutcome, allied_portrait_center, choose_pending_replay,
         establish_mission_restart_boundary, prepare_pending_direct_replay, prepare_replay_launch,

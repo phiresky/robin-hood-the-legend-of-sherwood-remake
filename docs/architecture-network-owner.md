@@ -4,6 +4,13 @@ The native client transport key and host mission-continuation slot are no
 longer process globals. `MultiplayerCampaignSession`, owned by the existing
 cross-mission `RustCallbacks` coordinator, is passed explicitly through both
 interactive and headless bootstrap into multiplayer setup.
+The direct-launch restart loop also marks a restored non-replay host mission as
+a continuation, matching the outer campaign loop instead of clearing its saved
+seat ownership on reconstruction.
+This corrects a pre-existing direct-versus-campaign restart inconsistency;
+the ownership refactor exposed it rather than introducing it. A policy matrix
+covers host/client, restored/failed checkpoint, replay/live, and headless/windowed
+arguments without changing failed or replay admission.
 
 Each owner generates a distinct ephemeral native client key. Its replacement
 mission clients reuse that key; durable ranked attestation still loads the
