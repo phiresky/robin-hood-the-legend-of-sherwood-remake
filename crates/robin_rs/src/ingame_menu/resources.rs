@@ -18,9 +18,10 @@ use std::collections::HashMap;
 
 use crate::main_entry::picture_to_surface;
 use crate::native_font::{self, Font};
-use crate::renderer::Renderer;
+use crate::renderer::{OwnedSurface, Renderer, SurfaceHandle, SurfaceOwnershipError};
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::resource_ids;
+use serde::{Deserialize, Serialize};
 
 // ═══════════════════════════════════════════════════════════════════
 // Menu text string table
@@ -858,11 +859,30 @@ impl engine_sherwood_stat::MenuTextLookup for MenuText {
 // ═══════════════════════════════════════════════════════════════════
 
 /// A loaded picture surface along with its source-image dimensions.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct MenuSurface {
-    pub id: u32,
+    pub id: SurfaceHandle,
     pub width: i32,
     pub height: i32,
+}
+
+/// Sparse state slots and their resource-wide dimensions belong together.
+#[derive(Default, Debug, Serialize, Deserialize)]
+struct SpriteBank {
+    #[serde(skip)]
+    frames: Vec<Option<SurfaceHandle>>,
+    width: i32,
+    height: i32,
+}
+
+impl SpriteBank {
+    fn frame(&self, state: usize) -> Option<SurfaceHandle> {
+        self.frames
+            .get(state)
+            .copied()
+            .flatten()
+            .or_else(|| self.frames.first().copied().flatten())
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -947,48 +967,32 @@ pub struct IngameMenuResources {
     pub(crate) res: ResourceManager,
 
     // ── Window / widget sprites ─────────────────────────────────────
-    pub button_surfaces: Vec<Option<u32>>,
-    pub button_w: i32,
-    pub button_h: i32,
+    button: SpriteBank,
     /// `RHID_OK` (= 145) — the small round "V" seal button used by
     /// popup scroll, mission description, dialogue Skip, etc.  Has no
     /// label and a dedicated sprite pack, distinct from
     /// `RHID_MENU_BUTTON` (= 190) which is the wide rectangular menu
     /// button.
-    pub ok_button_surfaces: Vec<Option<u32>>,
-    pub ok_button_w: i32,
-    pub ok_button_h: i32,
+    ok_button: SpriteBank,
     /// `RHID_CANCEL` (= 146) — the small round "X" seal button paired
     /// with `RHID_OK` in the buy-blazons / mission-description Cancel /
     /// Quit widgets.
-    pub cancel_button_surfaces: Vec<Option<u32>>,
-    pub cancel_button_w: i32,
-    pub cancel_button_h: i32,
+    cancel_button: SpriteBank,
     /// `RHID_RESTART` — the small round "restart" seal used by the
     /// debriefing window next to the OK seal.
-    pub restart_button_surfaces: Vec<Option<u32>>,
-    pub restart_button_w: i32,
-    pub restart_button_h: i32,
+    restart_button: SpriteBank,
     /// `RHID_LOAD` — the small round "load" seal used by the
     /// debriefing window next to the OK seal.
-    pub load_button_surfaces: Vec<Option<u32>>,
-    pub load_button_w: i32,
-    pub load_button_h: i32,
+    load_button: SpriteBank,
     pub parchment_huge: Option<MenuSurface>,
     pub menu_bg_small: Option<MenuSurface>,
     pub menu_bg: [Option<MenuSurface>; 4],
     /// Radio / toggle button background (`RHID_MENU_INPUT_FIELD`).
-    pub input_field: Vec<Option<u32>>,
-    pub input_field_w: i32,
-    pub input_field_h: i32,
+    input_field: SpriteBank,
     /// Radio/toggle button sprite pack (`RHID_RADIO`).
-    pub radio_surfaces: Vec<Option<u32>>,
-    pub radio_w: i32,
-    pub radio_h: i32,
+    radio: SpriteBank,
     /// Slider sprite frames (`RHID_SLIDER`).
-    pub slider_frames: Vec<Option<u32>>,
-    pub slider_w: i32,
-    pub slider_h: i32,
+    slider: SpriteBank,
     /// Listbox frame (`RHID_MENU_LIST_BOX`).
     pub list_box: Option<MenuSurface>,
     /// Listbox scrollbar 3-slice sprites from `RHID_MENU_LIST_BOX`
@@ -1019,6 +1023,7 @@ pub struct IngameMenuResources {
 
     // ── Lazily loaded portraits (RHID_DLG_*) ───────────────────────
     portrait_cache: HashMap<i32, MenuSurface>,
+    owners: Vec<OwnedSurface>,
 }
 
 pub(crate) struct PreparedMenuLocalization {
@@ -1027,6 +1032,64 @@ pub(crate) struct PreparedMenuLocalization {
 }
 
 impl IngameMenuResources {
+    /// Reject a foreign renderer before uploads or destructive cache changes.
+    pub fn validate_renderer(&self, renderer: &Renderer) -> Result<(), SurfaceOwnershipError> {
+        for owner in &self.owners {
+            renderer.validate_surface_retirement(owner)?;
+        }
+        Ok(())
+    }
+
+    pub fn retire(&mut self, renderer: &mut Renderer) -> Result<(), SurfaceOwnershipError> {
+        self.validate_renderer(renderer)?;
+        for owner in self.owners.drain(..) {
+            renderer
+                .try_retire_surface(owner)
+                .expect("preflighted menu owner");
+        }
+        self.button = SpriteBank::default();
+        self.ok_button = SpriteBank::default();
+        self.cancel_button = SpriteBank::default();
+        self.restart_button = SpriteBank::default();
+        self.load_button = SpriteBank::default();
+        self.radio = SpriteBank::default();
+        self.input_field = SpriteBank::default();
+        self.slider = SpriteBank::default();
+        self.parchment_huge = None;
+        self.menu_bg_small = None;
+        self.menu_bg = [None; 4];
+        self.list_box = None;
+        self.list_scrollbar = [None; 6];
+        self.separator = None;
+        self.check_mark = None;
+        self.blazon_tiny = [None; 3];
+        self.blazon_huge = [None; 3];
+        self.portrait_cache.clear();
+        Ok(())
+    }
+
+    /// A missing replacement leaves the existing cache and all its uploads intact.
+    pub fn reload(
+        &mut self,
+        renderer: &mut Renderer,
+        shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
+        files: std::sync::Arc<robin_engine::sbfile::SbFileSystem>,
+    ) -> anyhow::Result<()> {
+        self.validate_renderer(renderer)?;
+        let replacement = Self::new(renderer, shipping, files)
+            .ok_or_else(|| anyhow::anyhow!("replacement DEFAULT.RES unavailable"))?;
+        self.retire(renderer)?;
+        *self = replacement;
+        Ok(())
+    }
+
+    pub fn slider_surface(&self) -> Option<MenuSurface> {
+        self.slider.frame(0).map(|id| MenuSurface {
+            id,
+            width: self.slider.width,
+            height: self.slider.height,
+        })
+    }
     /// Attempt to load all shared menu resources.  Returns `None` if
     /// `Data/Interface/DEFAULT.RES` cannot be opened at all.
     pub fn new(
@@ -1051,6 +1114,7 @@ impl IngameMenuResources {
         mut res: ResourceManager,
         files: std::sync::Arc<robin_engine::sbfile::SbFileSystem>,
     ) -> Option<Self> {
+        let mut owners = Vec::new();
         let mut timer = crate::game_session::PhaseTimer::new("ingame menu load");
         if res.is_empty() {
             tracing::warn!("Ingame menu resources: provided DEFAULT.RES manager is empty");
@@ -1068,76 +1132,177 @@ impl IngameMenuResources {
         let menu_text = MenuText::load(&mut text_res);
         timer.step("menu text");
 
-        let (button_w, button_h, button_surfaces) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_MENU_BUTTON);
+        let (button_w, button_h, button_surfaces) = load_sprite_pack(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_MENU_BUTTON,
+        );
         let (ok_button_w, ok_button_h, ok_button_surfaces) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_OK);
+            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_OK);
         let (cancel_button_w, cancel_button_h, cancel_button_surfaces) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_CANCEL);
+            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_CANCEL);
         let (radio_w, radio_h, radio_surfaces) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_RADIO);
+            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_RADIO);
         let (restart_button_w, restart_button_h, restart_button_surfaces) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_RESTART);
+            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_RESTART);
         let (load_button_w, load_button_h, load_button_surfaces) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_LOAD);
-
-        // Menu-button packs render with a 50% shadow intensity
-        // (`MENU_BUTTON_SHADOW_ALPHA`).  Override the per-surface
-        // shadow alpha so the GPU `BlendMode::Blend` matches that
-        // intensity at draw time.  Other sprites stay at the default
-        // 40% from `FrameHolder::global_shadow()`.
-        for pack in [
-            &button_surfaces,
-            &ok_button_surfaces,
-            &cancel_button_surfaces,
-            &restart_button_surfaces,
-            &load_button_surfaces,
-            &radio_surfaces,
-        ] {
-            for id in pack.iter().flatten() {
-                renderer.set_shadow_alpha(*id, crate::renderer::MENU_BUTTON_SHADOW_ALPHA);
-            }
-        }
+            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_LOAD);
 
         timer.step("button sprite packs");
-        let parchment_huge = load_surface(&mut res, renderer, resource_ids::RHID_PARCHMENT_HUGE);
-        let menu_bg_small =
-            load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_SMALL);
+        let parchment_huge = load_surface(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_PARCHMENT_HUGE,
+        );
+        let menu_bg_small = load_surface(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_MENU_BACKGROUND_SMALL,
+        );
         let menu_bg = [
-            load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_0),
-            load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_1),
-            load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_2),
-            load_surface(&mut res, renderer, resource_ids::RHID_MENU_BACKGROUND_3),
+            load_surface(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_BACKGROUND_0,
+            ),
+            load_surface(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_BACKGROUND_1,
+            ),
+            load_surface(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_BACKGROUND_2,
+            ),
+            load_surface(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_BACKGROUND_3,
+            ),
         ];
 
-        let (input_field_w, input_field_h, input_field) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_MENU_INPUT_FIELD);
+        let (input_field_w, input_field_h, input_field) = load_sprite_pack(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_MENU_INPUT_FIELD,
+        );
         let (slider_w, slider_h, slider_frames) =
-            load_sprite_pack(&mut res, renderer, resource_ids::RHID_SLIDER);
-        let list_box = load_surface(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX);
+            load_sprite_pack(&mut res, renderer, &mut owners, resource_ids::RHID_SLIDER);
+        let list_box = load_surface(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_MENU_LIST_BOX,
+        );
         let list_scrollbar = [
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX, 0),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX, 1),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX, 2),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX, 3),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX, 4),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_MENU_LIST_BOX, 5),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_LIST_BOX,
+                0,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_LIST_BOX,
+                1,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_LIST_BOX,
+                2,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_LIST_BOX,
+                3,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_LIST_BOX,
+                4,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_MENU_LIST_BOX,
+                5,
+            ),
         ];
-        let separator = load_surface(&mut res, renderer, resource_ids::RHID_SEPARATOR);
-        let check_mark = load_surface(&mut res, renderer, 142 /* RHID_YES_NO */);
+        let separator = load_surface(
+            &mut res,
+            renderer,
+            &mut owners,
+            resource_ids::RHID_SEPARATOR,
+        );
+        let check_mark = load_surface(&mut res, renderer, &mut owners, 142 /* RHID_YES_NO */);
 
         // Blazon-set sprite packs.  Both resource IDs carry 3 sub-
         // pictures in the order: 0=empty, 1=normal (won),
         // 2=castle (to collect).
         let blazon_tiny = [
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_TINY, 0),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_TINY, 1),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_TINY, 2),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_BLAZON_TINY,
+                0,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_BLAZON_TINY,
+                1,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_BLAZON_TINY,
+                2,
+            ),
         ];
         let blazon_huge = [
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_HUGE, 0),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_HUGE, 1),
-            load_surface_sub(&mut res, renderer, resource_ids::RHID_BLAZON_HUGE, 2),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_BLAZON_HUGE,
+                0,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_BLAZON_HUGE,
+                1,
+            ),
+            load_surface_sub(
+                &mut res,
+                renderer,
+                &mut owners,
+                resource_ids::RHID_BLAZON_HUGE,
+                2,
+            ),
         ];
 
         timer.step("backgrounds + widgets + blazons");
@@ -1158,33 +1323,49 @@ impl IngameMenuResources {
 
         Some(Self {
             res,
-            button_surfaces,
-            button_w,
-            button_h,
-            ok_button_surfaces,
-            ok_button_w,
-            ok_button_h,
-            cancel_button_surfaces,
-            cancel_button_w,
-            cancel_button_h,
-            restart_button_surfaces,
-            restart_button_w,
-            restart_button_h,
-            load_button_surfaces,
-            load_button_w,
-            load_button_h,
+            button: SpriteBank {
+                frames: button_surfaces,
+                width: button_w,
+                height: button_h,
+            },
+            ok_button: SpriteBank {
+                frames: ok_button_surfaces,
+                width: ok_button_w,
+                height: ok_button_h,
+            },
+            cancel_button: SpriteBank {
+                frames: cancel_button_surfaces,
+                width: cancel_button_w,
+                height: cancel_button_h,
+            },
+            restart_button: SpriteBank {
+                frames: restart_button_surfaces,
+                width: restart_button_w,
+                height: restart_button_h,
+            },
+            load_button: SpriteBank {
+                frames: load_button_surfaces,
+                width: load_button_w,
+                height: load_button_h,
+            },
             parchment_huge,
             menu_bg_small,
             menu_bg,
-            input_field,
-            input_field_w,
-            input_field_h,
-            radio_surfaces,
-            radio_w,
-            radio_h,
-            slider_frames,
-            slider_w,
-            slider_h,
+            input_field: SpriteBank {
+                frames: input_field,
+                width: input_field_w,
+                height: input_field_h,
+            },
+            radio: SpriteBank {
+                frames: radio_surfaces,
+                width: radio_w,
+                height: radio_h,
+            },
+            slider: SpriteBank {
+                frames: slider_frames,
+                width: slider_w,
+                height: slider_h,
+            },
             list_box,
             list_scrollbar,
             separator,
@@ -1194,6 +1375,7 @@ impl IngameMenuResources {
             fonts,
             menu_text,
             portrait_cache: HashMap::new(),
+            owners,
         })
     }
 
@@ -1243,34 +1425,33 @@ impl IngameMenuResources {
     }
 
     pub fn button_dimensions(&self) -> (i32, i32) {
-        (self.button_w.max(128), self.button_h.max(25))
+        (self.button.width.max(128), self.button.height.max(25))
     }
 
     pub fn input_field_dimensions(&self) -> (i32, i32) {
-        (self.input_field_w.max(80), self.input_field_h.max(20))
+        (
+            self.input_field.width.max(80),
+            self.input_field.height.max(20),
+        )
     }
 
     pub fn radio_dimensions(&self) -> (i32, i32) {
-        if self.radio_w > 0 && self.radio_h > 0 {
-            (self.radio_w, self.radio_h)
+        if self.radio.width > 0 && self.radio.height > 0 {
+            (self.radio.width, self.radio.height)
         } else {
             self.button_dimensions()
         }
     }
 
-    pub fn button_surface(&self, state: usize) -> Option<u32> {
-        self.button_surfaces
-            .get(state)
-            .copied()
-            .flatten()
-            .or_else(|| self.button_surfaces.first().copied().flatten())
+    pub fn button_surface(&self, state: usize) -> Option<SurfaceHandle> {
+        self.button.frame(state)
     }
 
     /// Dimensions of the `RHID_OK` seal button.  Falls back to the
     /// rectangular menu-button size if the pack didn't load.
     pub fn ok_button_dimensions(&self) -> (i32, i32) {
-        if self.ok_button_w > 0 && self.ok_button_h > 0 {
-            (self.ok_button_w, self.ok_button_h)
+        if self.ok_button.width > 0 && self.ok_button.height > 0 {
+            (self.ok_button.width, self.ok_button.height)
         } else {
             self.button_dimensions()
         }
@@ -1278,12 +1459,9 @@ impl IngameMenuResources {
 
     /// Sprite for a given state of the `RHID_OK` seal button.  Falls back
     /// to the rectangular menu-button sprite if this pack didn't load.
-    pub fn ok_button_surface(&self, state: usize) -> Option<u32> {
-        self.ok_button_surfaces
-            .get(state)
-            .copied()
-            .flatten()
-            .or_else(|| self.ok_button_surfaces.first().copied().flatten())
+    pub fn ok_button_surface(&self, state: usize) -> Option<SurfaceHandle> {
+        self.ok_button
+            .frame(state)
             .or_else(|| self.button_surface(state))
     }
 
@@ -1291,8 +1469,8 @@ impl IngameMenuResources {
     /// `RHID_OK` then the rectangular menu-button size if the pack
     /// didn't load.
     pub fn cancel_button_dimensions(&self) -> (i32, i32) {
-        if self.cancel_button_w > 0 && self.cancel_button_h > 0 {
-            (self.cancel_button_w, self.cancel_button_h)
+        if self.cancel_button.width > 0 && self.cancel_button.height > 0 {
+            (self.cancel_button.width, self.cancel_button.height)
         } else {
             self.ok_button_dimensions()
         }
@@ -1300,18 +1478,15 @@ impl IngameMenuResources {
 
     /// Sprite for a given state of the `RHID_CANCEL` seal button.  Falls
     /// back through `RHID_OK` then the rectangular menu-button sprite.
-    pub fn cancel_button_surface(&self, state: usize) -> Option<u32> {
-        self.cancel_button_surfaces
-            .get(state)
-            .copied()
-            .flatten()
-            .or_else(|| self.cancel_button_surfaces.first().copied().flatten())
+    pub fn cancel_button_surface(&self, state: usize) -> Option<SurfaceHandle> {
+        self.cancel_button
+            .frame(state)
             .or_else(|| self.ok_button_surface(state))
     }
 
     pub fn restart_button_dimensions(&self) -> (i32, i32) {
-        if self.restart_button_w > 0 && self.restart_button_h > 0 {
-            (self.restart_button_w, self.restart_button_h)
+        if self.restart_button.width > 0 && self.restart_button.height > 0 {
+            (self.restart_button.width, self.restart_button.height)
         } else {
             self.ok_button_dimensions()
         }
@@ -1319,18 +1494,15 @@ impl IngameMenuResources {
 
     /// Sprite for a given state of the `RHID_RESTART` seal button.
     /// Falls back through `RHID_OK` then the rectangular menu button.
-    pub fn restart_button_surface(&self, state: usize) -> Option<u32> {
-        self.restart_button_surfaces
-            .get(state)
-            .copied()
-            .flatten()
-            .or_else(|| self.restart_button_surfaces.first().copied().flatten())
+    pub fn restart_button_surface(&self, state: usize) -> Option<SurfaceHandle> {
+        self.restart_button
+            .frame(state)
             .or_else(|| self.ok_button_surface(state))
     }
 
     pub fn load_button_dimensions(&self) -> (i32, i32) {
-        if self.load_button_w > 0 && self.load_button_h > 0 {
-            (self.load_button_w, self.load_button_h)
+        if self.load_button.width > 0 && self.load_button.height > 0 {
+            (self.load_button.width, self.load_button.height)
         } else {
             self.ok_button_dimensions()
         }
@@ -1338,38 +1510,29 @@ impl IngameMenuResources {
 
     /// Sprite for a given state of the `RHID_LOAD` seal button.  Falls
     /// back through `RHID_OK` then the rectangular menu button.
-    pub fn load_button_surface(&self, state: usize) -> Option<u32> {
-        self.load_button_surfaces
-            .get(state)
-            .copied()
-            .flatten()
-            .or_else(|| self.load_button_surfaces.first().copied().flatten())
+    pub fn load_button_surface(&self, state: usize) -> Option<SurfaceHandle> {
+        self.load_button
+            .frame(state)
             .or_else(|| self.ok_button_surface(state))
     }
 
-    pub fn input_field_surface(&self, selected: bool) -> Option<u32> {
+    pub fn input_field_surface(&self, selected: bool) -> Option<SurfaceHandle> {
         let idx = if selected { 1 } else { 0 };
-        self.input_field
-            .get(idx)
-            .copied()
-            .flatten()
-            .or_else(|| self.input_field.first().copied().flatten())
+        self.input_field.frame(idx)
     }
 
-    pub fn input_field_selected_surface(&self) -> Option<u32> {
+    pub fn input_field_selected_surface(&self) -> Option<SurfaceHandle> {
         self.input_field
+            .frames
             .get(3)
             .copied()
             .flatten()
             .or_else(|| self.input_field_surface(true))
     }
 
-    pub fn radio_surface(&self, state: usize) -> Option<u32> {
-        self.radio_surfaces
-            .get(state)
-            .copied()
-            .flatten()
-            .or_else(|| self.radio_surfaces.first().copied().flatten())
+    pub fn radio_surface(&self, state: usize) -> Option<SurfaceHandle> {
+        self.radio
+            .frame(state)
             .or_else(|| self.button_surface(state))
     }
 
@@ -1516,33 +1679,41 @@ impl IngameMenuResources {
     pub(super) fn stub() -> Self {
         Self {
             res: ResourceManager::new(),
-            button_surfaces: Vec::new(),
-            button_w: 128,
-            button_h: 25,
-            ok_button_surfaces: Vec::new(),
-            ok_button_w: 0,
-            ok_button_h: 0,
-            cancel_button_surfaces: Vec::new(),
-            cancel_button_w: 0,
-            cancel_button_h: 0,
-            restart_button_surfaces: Vec::new(),
-            restart_button_w: 0,
-            restart_button_h: 0,
-            load_button_surfaces: Vec::new(),
-            load_button_w: 0,
-            load_button_h: 0,
+            button: SpriteBank {
+                width: 128,
+                height: 25,
+                ..SpriteBank::default()
+            },
+            ok_button: SpriteBank {
+                width: 0,
+                height: 0,
+                ..SpriteBank::default()
+            },
+            cancel_button: SpriteBank {
+                width: 0,
+                height: 0,
+                ..SpriteBank::default()
+            },
+            restart_button: SpriteBank {
+                width: 0,
+                height: 0,
+                ..SpriteBank::default()
+            },
+            load_button: SpriteBank {
+                width: 0,
+                height: 0,
+                ..SpriteBank::default()
+            },
             parchment_huge: None,
             menu_bg_small: None,
             menu_bg: [None, None, None, None],
-            input_field: Vec::new(),
-            input_field_w: 0,
-            input_field_h: 0,
-            radio_surfaces: Vec::new(),
-            radio_w: 0,
-            radio_h: 0,
-            slider_frames: Vec::new(),
-            slider_w: 0,
-            slider_h: 0,
+            input_field: SpriteBank::default(),
+            radio: SpriteBank {
+                width: 0,
+                height: 0,
+                ..SpriteBank::default()
+            },
+            slider: SpriteBank::default(),
             list_box: None,
             list_scrollbar: [None, None, None, None, None, None],
             separator: None,
@@ -1555,15 +1726,18 @@ impl IngameMenuResources {
                 fallbacks: default_fallbacks(),
             },
             portrait_cache: HashMap::new(),
+            owners: Vec::new(),
         }
     }
 
     /// Load a dialogue portrait sprite, caching it on first access.
     pub fn portrait(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
+        self.validate_renderer(renderer)
+            .expect("menu cache renderer mismatch");
         if let Some(s) = self.portrait_cache.get(&id) {
             return Some(*s);
         }
-        let surf = load_surface(&mut self.res, renderer, id)?;
+        let surf = load_surface(&mut self.res, renderer, &mut self.owners, id)?;
         self.portrait_cache.insert(id, surf);
         Some(surf)
     }
@@ -1580,6 +1754,8 @@ impl IngameMenuResources {
         external: &mut ResourceManager,
         id: i32,
     ) -> Option<MenuSurface> {
+        self.validate_renderer(renderer)
+            .expect("menu cache renderer mismatch");
         // A picture id of 0 means "no picture widget", so a popup-text
         // entry whose picture id is intentionally 0 renders picture-
         // less; the early-out also keeps `portrait_cache` from being
@@ -1590,11 +1766,11 @@ impl IngameMenuResources {
         if let Some(s) = self.portrait_cache.get(&id) {
             return Some(*s);
         }
-        if let Some(surf) = load_surface(&mut self.res, renderer, id) {
+        if let Some(surf) = load_surface(&mut self.res, renderer, &mut self.owners, id) {
             self.portrait_cache.insert(id, surf);
             return Some(surf);
         }
-        let surf = load_surface(external, renderer, id)?;
+        let surf = load_surface(external, renderer, &mut self.owners, id)?;
         self.portrait_cache.insert(id, surf);
         Some(surf)
     }
@@ -1603,10 +1779,12 @@ impl IngameMenuResources {
     /// renderer surface. Used by small modal screens that need resource
     /// sprites not preloaded by the shared menu cache.
     pub fn default_picture(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
+        self.validate_renderer(renderer)
+            .expect("menu cache renderer mismatch");
         if let Some(s) = self.portrait_cache.get(&id) {
             return Some(*s);
         }
-        let surf = load_surface(&mut self.res, renderer, id)?;
+        let surf = load_surface(&mut self.res, renderer, &mut self.owners, id)?;
         self.portrait_cache.insert(id, surf);
         Some(surf)
     }
@@ -1619,11 +1797,13 @@ impl IngameMenuResources {
         id: i32,
         sub_id: usize,
     ) -> Option<MenuSurface> {
+        self.validate_renderer(renderer)
+            .expect("menu cache renderer mismatch");
         let key = id.saturating_mul(1000).saturating_add(sub_id as i32);
         if let Some(s) = self.portrait_cache.get(&key) {
             return Some(*s);
         }
-        let surf = load_surface_sub(&mut self.res, renderer, id, sub_id)?;
+        let surf = load_surface_sub(&mut self.res, renderer, &mut self.owners, id, sub_id)?;
         self.portrait_cache.insert(key, surf);
         Some(surf)
     }
@@ -1633,9 +1813,26 @@ impl IngameMenuResources {
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 
+fn adopt_picture(
+    renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
+    picture: &robin_assets::picture::Picture,
+    button_shadow: bool,
+) -> SurfaceHandle {
+    let id = picture_to_surface(renderer, picture);
+    if button_shadow {
+        renderer.set_shadow_alpha(id, crate::renderer::MENU_BUTTON_SHADOW_ALPHA);
+    }
+    let owner = renderer.try_adopt_surface(id).expect("fresh menu upload");
+    let handle = owner.handle();
+    owners.push(owner);
+    handle
+}
+
 fn load_surface(
     res: &mut ResourceManager,
     renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
     id: i32,
 ) -> Option<MenuSurface> {
     // Use sub-picture 0's own dimensions — `get_dimension` returns the
@@ -1646,7 +1843,7 @@ fn load_surface(
     let pic = res.get_picture(id, 0).ok()?;
     let width = pic.width as i32;
     let height = pic.height as i32;
-    let surface_id = picture_to_surface(renderer, pic);
+    let surface_id = adopt_picture(renderer, owners, pic, false);
     Some(MenuSurface {
         id: surface_id,
         width,
@@ -1660,13 +1857,14 @@ fn load_surface(
 fn load_surface_sub(
     res: &mut ResourceManager,
     renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
     id: i32,
     sub_id: usize,
 ) -> Option<MenuSurface> {
     let pic = res.get_picture(id, sub_id).ok()?;
     let width = pic.width as i32;
     let height = pic.height as i32;
-    let surface_id = picture_to_surface(renderer, pic);
+    let surface_id = adopt_picture(renderer, owners, pic, false);
     Some(MenuSurface {
         id: surface_id,
         width,
@@ -1678,13 +1876,31 @@ fn load_surface_sub(
 fn load_sprite_pack(
     res: &mut ResourceManager,
     renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
     id: i32,
-) -> (i32, i32, Vec<Option<u32>>) {
+) -> (i32, i32, Vec<Option<SurfaceHandle>>) {
     let dims = res.get_dimension(id).ok();
-    let surfaces: Vec<Option<u32>> = match res.get_pictures(id) {
+    let surfaces: Vec<Option<SurfaceHandle>> = match res.get_pictures(id) {
         Ok(pics) => pics
             .iter()
-            .map(|opt| opt.as_ref().map(|p| picture_to_surface(renderer, p)))
+            .map(|opt| {
+                opt.as_ref().map(|p| {
+                    adopt_picture(
+                        renderer,
+                        owners,
+                        p,
+                        matches!(
+                            id,
+                            resource_ids::RHID_MENU_BUTTON
+                                | resource_ids::RHID_OK
+                                | resource_ids::RHID_CANCEL
+                                | resource_ids::RHID_RESTART
+                                | resource_ids::RHID_LOAD
+                                | resource_ids::RHID_RADIO
+                        ),
+                    )
+                })
+            })
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -1693,9 +1909,130 @@ fn load_sprite_pack(
 }
 
 #[cfg(test)]
+pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Renderer) {
+    use robin_assets::picture::{Picture, PixelFormat, SixteenPacking};
+    use std::sync::Arc;
+    let picture = Picture {
+        width: 1,
+        height: 1,
+        pitch: 2,
+        pixel_format: PixelFormat::Rgb16,
+        data: vec![255, 255],
+        palette: None,
+    };
+    let mut bytes = b"SRES".to_vec();
+    bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(b"BTTN");
+    bytes.extend_from_slice(&(resource_ids::RHID_MENU_BUTTON as u32).to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0b1001u32.to_le_bytes());
+    bytes.extend(
+        picture
+            .write_sixteen_to_bytes(SixteenPacking::None)
+            .unwrap(),
+    );
+    bytes.extend(
+        picture
+            .write_sixteen_to_bytes(SixteenPacking::None)
+            .unwrap(),
+    );
+    let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+    assets
+        .install_preloaded_asset("Data/Interface/DEFAULT.RES", bytes)
+        .unwrap();
+    let files = Arc::new(robin_engine::sbfile::SbFileSystem::new(assets));
+    let mut cache = IngameMenuResources::new(renderer, None, files.clone()).unwrap();
+    let first = cache.button_surface(0).unwrap();
+    let mut peer = IngameMenuResources::new(other, None, files.clone()).unwrap();
+    let foreign = peer.button_surface(0).unwrap();
+    assert_eq!(
+        first.legacy_id(),
+        foreign.legacy_id(),
+        "gate supplies fresh renderers"
+    );
+    assert_ne!(first, foreign);
+    assert_eq!(cache.button_surface(1), Some(first));
+    assert_ne!(cache.button_surface(3), Some(first));
+    assert_eq!(cache.ok_button_surface(3), cache.button_surface(3));
+    assert_eq!(cache.button.width, 1);
+    assert_eq!(cache.button.height, 1);
+    assert!(renderer.try_adopt_surface(first.legacy_id()).is_err());
+    assert!(
+        renderer
+            .try_delete_legacy_surface(first.legacy_id())
+            .is_err()
+    );
+    assert!(other.draw_surface(first, None, None, 0).is_err());
+    assert!(cache.retire(other).is_err());
+    assert!(cache.reload(other, None, files.clone()).is_err());
+    assert_eq!(cache.button_surface(0), Some(first));
+    assert!(other.surface_dimensions(foreign).is_ok());
+    peer.retire(other).unwrap();
+    let missing = Arc::new(robin_engine::sbfile::SbFileSystem::new(Arc::new(
+        robin_util::asset_fs::AssetVfs::new(),
+    )));
+    assert!(cache.reload(renderer, None, missing).is_err());
+    assert_eq!(cache.button_surface(0), Some(first));
+    renderer.draw_surface(first, None, None, 0).unwrap();
+    for _ in 0..3 {
+        let previous = cache.button_surface(0).unwrap();
+        cache.reload(renderer, None, files.clone()).unwrap();
+        assert!(renderer.surface_dimensions(previous).is_err());
+    }
+    let lazy = cache
+        .default_picture(renderer, resource_ids::RHID_MENU_BUTTON)
+        .unwrap();
+    let count = cache.owners.len();
+    assert_eq!(
+        cache
+            .default_picture(renderer, resource_ids::RHID_MENU_BUTTON)
+            .unwrap()
+            .id,
+        lazy.id
+    );
+    assert_eq!(cache.owners.len(), count);
+    let last = cache.button_surface(0).unwrap();
+    cache.retire(renderer).unwrap();
+    assert!(renderer.surface_dimensions(last).is_err());
+    assert!(renderer.surface_dimensions(lazy.id).is_err());
+    assert!(cache.button_surface(0).is_none());
+    cache.retire(renderer).unwrap();
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255],
+        "queued menu surface survives reload and retirement"
+    );
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::font::TrueTypeFont;
+
+    #[test]
+    fn sparse_sprite_bank_preserves_state_positions_and_first_slot_fallback() {
+        let first = OwnedSurface::synthetic(1).handle();
+        let third = OwnedSurface::synthetic(3).handle();
+        let mut bank = SpriteBank {
+            frames: vec![Some(first), None, Some(third)],
+            width: 17,
+            height: 29,
+        };
+        assert_eq!(bank.frame(1), Some(first));
+        assert_eq!(bank.frame(2), Some(third));
+        assert_eq!(bank.frame(9), Some(first));
+        bank.frames[0] = None;
+        assert_eq!(bank.frame(1), None, "do not compact sparse authored states");
+        assert_eq!(bank.frame(2), Some(third));
+        let restored: SpriteBank =
+            serde_json::from_value(serde_json::to_value(bank).unwrap()).unwrap();
+        assert!(
+            restored.frames.is_empty(),
+            "serialized dimensions grant no GPU authority"
+        );
+        assert_eq!((restored.width, restored.height), (17, 29));
+    }
 
     #[test]
     fn menu_text_fallback_is_english() {

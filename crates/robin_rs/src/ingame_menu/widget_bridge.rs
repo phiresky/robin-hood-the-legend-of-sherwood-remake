@@ -614,9 +614,9 @@ pub fn attach_alpha_masks(
             _ => None,
         };
         let Some(surf) = surface_id else { continue };
-        let Some(mask) = renderer.build_alpha_mask(surf) else {
-            continue;
-        };
+        let mask = renderer
+            .surface_alpha_mask(surf)
+            .expect("live menu button mask");
         if let Some(rb) = widget.base_mut().renderer.base_mut() {
             rb.set_alpha_mask(Some(mask));
         }
@@ -699,15 +699,17 @@ pub fn draw_widget_button(
         // 0x1F, intensity 50) in the source bitmap so the drop-shadow
         // ring around each button blends instead of rendering opaque
         // blue.
-        renderer.blit_with_shadow(
-            surf,
-            Some(&src),
-            0, // screen
-            Some(&dst),
-            0,  // shadow_color (unused on this path)
-            50, // shadow_level — shadow-renderer default
-            BLIT_SOURCE_TRANSPARENT,
-        )
+        renderer
+            .draw_surface_with_shadow(
+                surf,
+                Some(&src),
+                Some(&dst),
+                0,  // shadow_color (unused on this path)
+                50, // shadow_level — shadow-renderer default
+                BLIT_SOURCE_TRANSPARENT,
+            )
+            .expect("live menu button");
+        true
     } else {
         let hovered = force_hover || base.state == UiState::Focused;
         super::layout::draw_fallback_rect(renderer, sx, sy, w, h, hovered);
@@ -836,6 +838,50 @@ pub fn draw_picture_surface_rect(
     );
 }
 
+/// Typed counterpart for resource-owned menu sprites; legacy runtime bitmaps
+/// keep using the explicitly integer-based compatibility function above.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_menu_surface_rect(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    surface: crate::renderer::SurfaceHandle,
+    dst_x: i32,
+    dst_y: i32,
+    dst_w: i32,
+    dst_h: i32,
+    src_x: i32,
+    src_y: i32,
+    src_w: i32,
+    src_h: i32,
+    transparent: bool,
+) {
+    let (sx, sy) = transform.to_screen(dst_x, dst_y);
+    let src = BBox::from_coords(
+        src_x as f32,
+        src_y as f32,
+        (src_x + src_w) as f32,
+        (src_y + src_h) as f32,
+    );
+    let dst = BBox::from_coords(
+        sx as f32,
+        sy as f32,
+        (sx + dst_w) as f32,
+        (sy + dst_h) as f32,
+    );
+    renderer
+        .draw_surface(
+            surface,
+            Some(&src),
+            Some(&dst),
+            if transparent {
+                crate::renderer::BLIT_SOURCE_TRANSPARENT
+            } else {
+                0
+            },
+        )
+        .expect("live menu surface");
+}
+
 /// Render all label widgets in a frame with one native or TrueType font.
 pub fn draw_frame_labels(
     renderer: &mut Renderer,
@@ -865,19 +911,28 @@ pub fn draw_frame_labels(
     }
 }
 
-fn draw_widget_surface(
+pub fn draw_widget_surface(
     renderer: &mut Renderer,
     transform: MenuTransform,
     widget: &Widget,
     surface: MenuSurface,
     transparent: bool,
 ) {
-    draw_widget_surface_id(
+    let Some((vx, vy, w, h)) = widget_virt_rect(widget) else {
+        return;
+    };
+    draw_menu_surface_rect(
         renderer,
         transform,
-        widget,
         surface.id,
-        Some((0, 0, surface.width, surface.height)),
+        vx,
+        vy,
+        w,
+        h,
+        0,
+        0,
+        surface.width,
+        surface.height,
         transparent,
     );
 }
@@ -934,7 +989,9 @@ pub fn draw_widget_radio(
     if let Some(surf) = resources.input_field_surface(selected) {
         let src = BBox::from_coords(0.0, 0.0, w as f32, h as f32);
         let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
-        renderer.blit_to_screen(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
+        renderer
+            .draw_surface(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+            .expect("live menu radio surface");
     } else {
         let bg = if selected {
             Renderer::create_color_16(100, 80, 40)

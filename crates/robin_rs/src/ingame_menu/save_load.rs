@@ -1412,7 +1412,7 @@ fn draw_input_field(
     // to a simple outlined rect so layouts without DEFAULT.RES still
     // render something usable.
     if let Some(surf) = resources.input_field_surface(true) {
-        widget_bridge::draw_picture_surface_rect(
+        widget_bridge::draw_menu_surface_rect(
             renderer,
             transform,
             surf,

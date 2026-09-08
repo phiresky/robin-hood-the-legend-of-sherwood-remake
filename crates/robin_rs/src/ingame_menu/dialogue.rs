@@ -1202,25 +1202,29 @@ fn draw_portrait_frame_alpha(
     let dst = BBox::from_coords(sx as f32, sy as f32, (sx + vw) as f32, (sy + vh) as f32);
 
     if alpha_percent >= 100 {
-        renderer.blit_to_screen(
-            portrait.id,
-            Some(&src),
-            Some(&dst),
-            crate::renderer::BLIT_SOURCE_TRANSPARENT,
-        );
+        renderer
+            .draw_surface(
+                portrait.id,
+                Some(&src),
+                Some(&dst),
+                crate::renderer::BLIT_SOURCE_TRANSPARENT,
+            )
+            .expect("live dialogue portrait");
     } else {
         // Our `alpha_percent` is opacity (100 = opaque, 0 = transparent),
         // but `Renderer::blit_to_screen_alpha` uses the inverse
         // convention (0 = opaque, 100 = transparent). Invert the
         // percentage so a fade with `alpha_percent = 25` renders the
         // new portrait at 25 % opacity.
-        renderer.blit_to_screen_alpha(
-            portrait.id,
-            Some(&src),
-            Some(&dst),
-            100 - alpha_percent,
-            crate::renderer::BLIT_SOURCE_TRANSPARENT,
-        );
+        renderer
+            .draw_surface_alpha(
+                portrait.id,
+                Some(&src),
+                Some(&dst),
+                100 - alpha_percent,
+                crate::renderer::BLIT_SOURCE_TRANSPARENT,
+            )
+            .expect("live dialogue portrait");
     }
 }
 

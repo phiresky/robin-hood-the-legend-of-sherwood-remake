@@ -101,7 +101,7 @@ pub fn render(
         let vy = virt_origin_y + slot.y;
         match sprites[slot.kind.sprite_sub()] {
             Some(surface) => {
-                super::widget_bridge::draw_picture_surface_rect(
+                super::widget_bridge::draw_menu_surface_rect(
                     renderer,
                     transform,
                     surface.id,
