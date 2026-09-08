@@ -15,6 +15,12 @@ Do not assume the first runner on PATH matches the crate. The wrapper checks
 runner version and browser/driver major versions before compiling; incompatible
 patch versions still fail browser startup rather than passing untested.
 
+Browser builds require a clean tracked/untracked checkout. Both gates record
+HEAD and separate staged/unstaged diff hashes and reject source movement during
+acceptance. Native prebuilt runs may start with stable tracked changes (recorded
+explicitly); their binary build source remains the caller's separate assertion.
+Do not edit scripts or sources while a gate runs.
+
 ```sh
 CHROME=/absolute/path/to/chrome \
 CHROMEDRIVER=/absolute/path/to/chromedriver \
