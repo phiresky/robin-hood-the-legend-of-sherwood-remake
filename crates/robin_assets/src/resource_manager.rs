@@ -71,6 +71,15 @@ impl EncodedPicture {
         }
     }
 
+    /// Inspect the image header without allocating or decoding frame pixels.
+    pub fn dimensions(&self) -> Result<(u16, u16)> {
+        match self.codec {
+            EncodedPictureCodec::JxlRgb565 | EncodedPictureCodec::JxlRgba565Keyed => {
+                Picture::jxl_dimensions(&self.bytes)
+            }
+        }
+    }
+
     pub fn decode(&self) -> Result<Picture> {
         match self.codec {
             EncodedPictureCodec::JxlRgb565 => Picture::load_jxl_rgb565(&self.bytes),
@@ -749,30 +758,69 @@ impl ResourceManager {
             .ok_or_else(|| anyhow!("resource {id}: not found"))
     }
 
-    /// Number of sub-pictures in a collection.
+    /// Recover a dismissed collection, leaving resident JXL payloads encoded.
+    fn ensure_picture_metadata_loaded(&mut self, id: ResourceId) -> Result<()> {
+        if !self.data.pictures.contains_key(&id) && !self.data.encoded_pictures.contains_key(&id) {
+            self.recover_resource(id)?;
+        }
+        Ok(())
+    }
+
+    /// Number of slots in a collection, including missing and zero-size frames.
+    /// Does not decode resident JXL pictures.
     pub fn get_picture_count(&mut self, id: ResourceId) -> Result<usize> {
-        self.ensure_pictures_loaded(id)?;
+        self.ensure_picture_metadata_loaded(id)?;
         self.data
             .pictures
             .get(&id)
-            .map(|v| v.len())
+            .map(Vec::len)
+            .or_else(|| self.data.encoded_pictures.get(&id).map(Vec::len))
             .ok_or_else(|| anyhow!("resource {id}: not found"))
     }
 
-    /// Maximum (width, height) across all sub-pictures of a resource.
-    pub fn get_dimension(&mut self, id: ResourceId) -> Result<(u16, u16)> {
-        self.ensure_pictures_loaded(id)?;
-        let pics = self
-            .data
-            .pictures
+    /// Per-slot dimensions, preserving holes, without decoding JXL frame pixels.
+    /// Malformed image headers remain errors rather than becoming empty frames.
+    pub fn get_picture_dimensions(&mut self, id: ResourceId) -> Result<Vec<Option<(u16, u16)>>> {
+        self.ensure_picture_metadata_loaded(id)?;
+        if let Some(pictures) = self.data.pictures.get(&id) {
+            return Ok(pictures
+                .iter()
+                .map(|slot| slot.as_ref().map(|pic| (pic.width, pic.height)))
+                .collect());
+        }
+        self.data
+            .encoded_pictures
             .get(&id)
-            .ok_or_else(|| anyhow!("resource {id}: not found"))?;
+            .ok_or_else(|| anyhow!("resource {id}: not found"))?
+            .iter()
+            .enumerate()
+            .map(|(sub_id, slot)| {
+                slot.as_ref()
+                    .map(EncodedPicture::dimensions)
+                    .transpose()
+                    .with_context(|| format!("resource {id}/{sub_id}: picture dimensions"))
+            })
+            .collect()
+    }
 
+    /// Count present frames with nonzero width and height, without decoding pixels.
+    pub fn get_nonempty_picture_count(&mut self, id: ResourceId) -> Result<usize> {
+        Ok(self
+            .get_picture_dimensions(id)?
+            .into_iter()
+            .flatten()
+            .filter(|&(width, height)| width > 0 && height > 0)
+            .count())
+    }
+
+    /// Maximum (width, height) across all sub-pictures of a resource.
+    /// Reads JXL image headers without decoding frame pixels.
+    pub fn get_dimension(&mut self, id: ResourceId) -> Result<(u16, u16)> {
         let mut max_w: u16 = 0;
         let mut max_h: u16 = 0;
-        for pic in pics.iter().flatten() {
-            max_w = max_w.max(pic.width);
-            max_h = max_h.max(pic.height);
+        for (width, height) in self.get_picture_dimensions(id)?.into_iter().flatten() {
+            max_w = max_w.max(width);
+            max_h = max_h.max(height);
         }
         if max_w == 0 && max_h == 0 {
             bail!("resource {id}: no valid sub-pictures");
@@ -1227,6 +1275,133 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn picture_metadata_preserves_holes_zero_sizes_and_decoded_precedence() {
+        let mut manager = ResourceManager::new();
+        manager.disable_recovery_for_shipping();
+        manager.data.pictures.insert(
+            42,
+            vec![
+                None,
+                Some(Picture::default()),
+                Some(Picture {
+                    width: 2,
+                    height: 3,
+                    ..Picture::default()
+                }),
+                Some(Picture {
+                    width: 0,
+                    height: 7,
+                    ..Picture::default()
+                }),
+                Some(Picture {
+                    width: 9,
+                    height: 0,
+                    ..Picture::default()
+                }),
+            ],
+        );
+        // A warmed decoded collection takes precedence over its encoded source.
+        manager.data.encoded_pictures.insert(42, vec![]);
+        assert_eq!(manager.get_picture_count(42).unwrap(), 5);
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert_eq!(manager.get_dimension(42).unwrap(), (9, 7));
+        assert_eq!(
+            manager.get_picture_dimensions(42).unwrap(),
+            [None, Some((0, 0)), Some((2, 3)), Some((0, 7)), Some((9, 0))]
+        );
+        manager
+            .data
+            .pictures
+            .insert(43, vec![None, Some(Picture::default())]);
+        assert_eq!(manager.get_nonempty_picture_count(43).unwrap(), 0);
+        assert!(manager.get_dimension(43).is_err());
+        assert!(manager.get_picture_count(99).is_err());
+        assert!(manager.get_nonempty_picture_count(99).is_err());
+    }
+
+    #[test]
+    fn encoded_picture_counts_read_headers_without_decoding_pixels() {
+        // A 2x3 solid red RGB image generated by cjxl 0.11.2 (-d 0 -e 1).
+        let bytes = vec![
+            255, 10, 16, 0, 2, 128, 72, 8, 2, 1, 0, 156, 2, 75, 24, 155, 156, 113, 132, 3, 56, 128,
+            3, 56, 32, 74, 192, 57, 5, 1, 0, 32, 68, 128, 8, 16, 1, 34, 64, 228, 255, 145, 123,
+            250, 30, 90, 103, 87, 85, 85, 85, 37, 73, 146, 16, 80, 119, 119, 119, 119, 119, 255,
+            255, 255, 191, 85, 111, 102, 102, 102, 6, 254, 223, 191, 231, 191, 135, 198, 156, 115,
+            174, 181, 207, 189, 73, 146, 36, 4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189,
+            175, 187, 187, 187, 27, 254, 223, 191, 231, 191, 135, 198, 156, 115, 174, 181, 207,
+            189, 73, 146, 36, 4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189, 175, 187, 187,
+            187, 27, 254, 223, 191, 231, 191, 135, 198, 156, 115, 174, 181, 207, 189, 73, 146, 36,
+            4, 84, 85, 85, 85, 85, 85, 255, 255, 255, 207, 189, 175, 187, 187, 187, 251, 2, 33, 0,
+            120, 248, 123, 244, 99, 0, 0,
+        ];
+        let encoded = EncodedPicture {
+            codec: EncodedPictureCodec::JxlRgb565,
+            bytes,
+        };
+        let decoded = encoded.decode().unwrap();
+        assert_eq!(
+            encoded.dimensions().unwrap(),
+            (decoded.width, decoded.height)
+        );
+        let mut manager = ResourceManager::new();
+        manager.disable_recovery_for_shipping();
+        manager
+            .data
+            .encoded_pictures
+            .insert(42, vec![None, Some(encoded)]);
+        assert_eq!(manager.get_picture_count(42).unwrap(), 2);
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert_eq!(manager.get_dimension(42).unwrap(), (2, 3));
+        assert_eq!(
+            manager.get_picture_dimensions(42).unwrap(),
+            [None, Some((2, 3))]
+        );
+        assert!(manager.pictures_raw(42).is_none());
+
+        // Header inspection must not start pixel decode or require frame data.
+        let picture = manager.data.encoded_pictures.get_mut(&42).unwrap()[1]
+            .as_mut()
+            .unwrap();
+        let header_len = (1..picture.bytes.len())
+            .find(|&len| Picture::jxl_dimensions(&picture.bytes[..len]).is_ok())
+            .unwrap();
+        picture.bytes.truncate(header_len);
+        assert!(picture.decode().is_err());
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 1);
+        assert!(manager.pictures_raw(42).is_none());
+    }
+
+    #[test]
+    fn picture_metadata_recovers_dismissed_legacy_collections() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset("buttons.res", resource_file(b"BTTN", 42, &[0; 8]))
+            .unwrap();
+        let files = Arc::new(SbFileSystem::new(assets).snapshot());
+        let mut manager = ResourceManager::with_files(files);
+        manager.attach_resource_file("buttons.res").unwrap();
+        manager.dismiss_resource(42);
+        assert!(manager.pictures_raw(42).is_none());
+        assert_eq!(manager.get_picture_count(42).unwrap(), 4);
+        manager.dismiss_resource(42);
+        assert_eq!(manager.get_nonempty_picture_count(42).unwrap(), 0);
+        assert_eq!(manager.get_picture_dimensions(42).unwrap(), [None; 4]);
+    }
+
+    #[test]
+    fn malformed_picture_headers_are_errors_but_slot_counts_need_no_header() {
+        let mut manager = ResourceManager::new();
+        manager
+            .data
+            .encoded_pictures
+            .insert(42, vec![Some(EncodedPicture::jxl_rgba565_keyed(vec![]))]);
+        assert_eq!(manager.get_picture_count(42).unwrap(), 1);
+        assert!(manager.get_nonempty_picture_count(42).is_err());
+        assert!(manager.get_dimension(42).is_err());
+        assert!(manager.pictures_raw(42).is_none());
+    }
 
     #[test]
     fn shipping_picture_ids_include_encoded_and_decoded_without_archive_metadata() {

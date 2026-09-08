@@ -1873,6 +1873,8 @@ pub(super) fn extract_minimap_widget_setup(
     let (btn_w, btn_h) = cursor_res.get_dimension(resource_ids::RHMAP_CORNER).ok()?;
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
     let mut button_hit_mask = None;
+    // TODO: export the opacity mask alongside shipping picture metadata so
+    // engine setup can leave the corner pixels encoded until renderer setup.
     if let Ok(pics) = cursor_res.get_pictures(resource_ids::RHMAP_CORNER)
         && let Some(Some(pic)) = pics.get(1)
     {
@@ -1906,6 +1908,8 @@ pub(super) fn extract_minimap_widget_setup(
 pub(super) fn extract_ground_mark_sprite_data(
     cursor_res: &mut ResourceManager,
 ) -> Option<engine_api::GroundMarkSpriteData> {
+    // TODO: export per-frame opaque bounds with shipping picture metadata;
+    // dimensions alone cannot reproduce the marker's cropped geometry.
     let pics = cursor_res
         .get_pictures(resource_ids::RHID_GROUND_FOCUS)
         .ok()?;
@@ -1956,13 +1960,12 @@ pub(super) fn extract_titbit_row_frame_counts(cursor_res: &mut ResourceManager) 
     let mut counts = vec![0u16; num_rows];
     for &(row, res_id) in titbit_sprite_row_resources() {
         let n = cursor_res
-            .get_pictures(res_id)
-            .map(|pics| {
-                pics.iter()
-                    .filter(|o| o.as_ref().is_some_and(|p| p.width > 0 && p.height > 0))
-                    .count() as u16
-            })
-            .unwrap_or(0);
+            .get_nonempty_picture_count(res_id)
+            .map(|count| count as u16)
+            .unwrap_or_else(|error| {
+                tracing::warn!("titbit resource {res_id}: frame count unavailable: {error:#}");
+                0
+            });
         let idx = row as usize;
         if idx < counts.len() {
             counts[idx] = n;
