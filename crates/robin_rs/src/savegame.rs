@@ -2308,8 +2308,9 @@ mod tests {
         assert!(
             SaveGameManager::load_index(current.path().to_str().unwrap())
                 .unwrap()
-                .saves
-                .is_empty()
+                .saves()
+                .next()
+                .is_none()
         );
     }
 
@@ -2447,8 +2448,9 @@ mod tests {
         assert!(
             SaveGameManager::load_index(root.path().to_str().unwrap())
                 .unwrap()
-                .saves
-                .is_empty()
+                .saves()
+                .next()
+                .is_none()
         );
         assert!(!manager.delete_recovery_path().exists());
     }
