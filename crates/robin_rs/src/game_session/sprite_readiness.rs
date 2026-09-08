@@ -16,11 +16,31 @@ pub(super) async fn wait_for_render_sprites(engine: &Engine) -> Result<(), Strin
         return Ok(());
     };
     let ids = crate::game_render::required_render_sprite_ids(engine);
-    while !completed(late_sprites::readiness(epoch, &ids))? {
-        crate::window::yield_to_runtime().await;
-        crate::window::sleep_ms(10).await;
+    let mut pending_since = None;
+    let result = loop {
+        match completed(late_sprites::readiness(epoch, &ids)) {
+            Ok(true) => break Ok(()),
+            Err(error) => break Err(error),
+            Ok(false) => {
+                pending_since.get_or_insert_with(|| {
+                    tracing::debug!(epoch, required_ids = ?ids, "Sprite render preflight pending");
+                    web_time::Instant::now()
+                });
+                crate::window::yield_to_runtime().await;
+                crate::window::sleep_ms(10).await;
+            }
+        }
+    };
+    if let Some(started) = pending_since {
+        tracing::info!(
+            epoch,
+            required_ids_count = ids.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            ready = result.is_ok(),
+            "Sprite render preflight wait finished"
+        );
     }
-    Ok(())
+    result
 }
 
 /// Reclassification changes opacity/shadow interpretation, so all worker
@@ -29,11 +49,27 @@ pub(super) async fn wait_for_all_sprites() -> Result<(), String> {
     let Some(epoch) = late_sprites::experimental_epoch() else {
         return Ok(());
     };
-    while !completed(late_sprites::all_readiness(epoch))? {
-        crate::window::yield_to_runtime().await;
-        crate::window::sleep_ms(10).await;
+    let mut pending_since = None;
+    let result = loop {
+        match completed(late_sprites::all_readiness(epoch)) {
+            Ok(true) => break Ok(()),
+            Err(error) => break Err(error),
+            Ok(false) => {
+                pending_since.get_or_insert_with(web_time::Instant::now);
+                crate::window::yield_to_runtime().await;
+                crate::window::sleep_ms(10).await;
+            }
+        }
+    };
+    if let Some(started) = pending_since {
+        tracing::info!(
+            epoch,
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            ready = result.is_ok(),
+            "All sprite publication wait finished"
+        );
     }
-    Ok(())
+    result
 }
 
 pub(super) fn assert_render_sprites_ready(engine: &Engine) {
