@@ -176,6 +176,8 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
 
 #[cfg(feature = "multiplayer")]
 mod ranked_client;
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+use ranked_client::decode_ranked_participant_roster;
 #[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 use ranked_client::{ClientLeaderboardCoSignState, ClientRankedJoinState};
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]

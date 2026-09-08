@@ -69,7 +69,7 @@ fn challenge_matches_expected_session(
     Ok(())
 }
 
-fn decode_ranked_participant_roster(
+pub(super) fn decode_ranked_participant_roster(
     document: &RankedParticipantRosterDocument,
     genesis: &ReplaySessionGenesisV1,
 ) -> Result<Vec<ParticipantClaimV1>, String> {
