@@ -35,6 +35,7 @@ let waitAudio = false;
 let cpuProfile = null;
 let timingsFile = null;
 let failedRequest = null;
+let wasmLog = 'info';
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--mission') mission = args[++i];
@@ -46,13 +47,14 @@ for (let i = 0; i < args.length; i++) {
     else if (arg === '--cpu-profile') cpuProfile = args[++i];
     else if (arg === '--timings') timingsFile = args[++i];
     else if (arg === '--fail-request') failedRequest = args[++i];
+    else if (arg === '--wasm-log') wasmLog = args[++i];
     else positional.push(arg);
 }
 const [root] = positional;
 if (!root) {
     console.error(
         'usage: node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> ' +
-        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH]',
+        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH] [--wasm-log FILTER]',
     );
     process.exit(2);
 }
@@ -356,7 +358,7 @@ async function finish(code) {
 server.listen(0, '127.0.0.1', () => {
     const { port } = server.address();
     profile = mkdtempSync(join(tmpdir(), 'robin-e2e-chrome-'));
-    const query = new URLSearchParams({ mission, 'wasm-log': 'info' });
+    const query = new URLSearchParams({ mission, 'wasm-log': wasmLog });
     const pageUrl = `http://127.0.0.1:${port}/?${query}`;
     chrome = spawn(chromeBin, [
         '--headless=new',
