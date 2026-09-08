@@ -31,6 +31,19 @@ class LifecycleGateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "required executable"):
             gate.executable(str(self.root / "missing"))
 
+    def test_shipping_data_directory_casing_and_missing_data(self):
+        for spelling in ("Data", "DATA", "data"):
+            root = self.root / ("distribution-" + spelling)
+            root.mkdir()
+            (root / spelling).mkdir()
+            gate.require_game_data(root)
+        empty = self.root / "empty-distribution"
+        empty.mkdir()
+        with self.assertRaisesRegex(RuntimeError, "must contain"):
+            gate.require_game_data(empty)
+        with self.assertRaisesRegex(RuntimeError, "must contain"):
+            gate.require_game_data(self.binary)
+
     def test_source_identity_keeps_index_and_worktree_changes_separate(self):
         with patch.object(gate.subprocess, "check_output", side_effect=[
                 b"staged diff", b"opposite worktree diff", b"commit\n", b"tree\n", b"new.rs\0"]):

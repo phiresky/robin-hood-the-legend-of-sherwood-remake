@@ -162,11 +162,18 @@ def browser(evidence, summary):
                          "real_browser_tests": True}
 
 
+def require_game_data(data):
+    # Shipping distributions use Data/, DATA/ or data/. Match the engine's
+    # case-insensitive asset lookup without modifying the user's installation.
+    if not data.is_dir() or not any(
+            entry.name.casefold() == "data" and entry.is_dir() for entry in data.iterdir()):
+        raise RuntimeError("ROBINHOOD_DATA_DIR must contain Data/ (case-insensitive)")
+
+
 def native(evidence, summary):
     binary = Path(os.environ["ROBIN_LIFECYCLE_BINARY"]).resolve(strict=True)
     data = Path(os.environ["ROBINHOOD_DATA_DIR"]).resolve(strict=True)
-    if not (data / "Data").is_dir():
-        raise RuntimeError("ROBINHOOD_DATA_DIR must contain Data/")
+    require_game_data(data)
     for tool in ("unshare", "ip", "Xvfb", "xdotool"):
         executable(tool)
     expected = os.environ["ROBIN_LIFECYCLE_BINARY_SHA256"]
