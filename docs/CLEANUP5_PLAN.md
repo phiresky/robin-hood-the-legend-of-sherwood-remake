@@ -25,6 +25,8 @@ and unrelated in-flight user changes remain outside this pass.
    backup and authenticated cleanup; preserve private authority.
 6. `cleanup5-integration`: reviews, combined client builds, second audit,
    integration fixes and final acceptance/report.
+7. `cleanup5-browser`: isolated browser compilation and real Chrome gate on
+   frozen source checkpoints; baseline warming is not final acceptance.
 
 Use isolated same-named worktrees, no stash, no Clippy or target redirection.
 No dependency installation or remote publication. Keep on-disk/wire formats and
