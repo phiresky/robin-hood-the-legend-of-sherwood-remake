@@ -78,7 +78,7 @@ impl PersistedOrderRuntime {
             pending_concussion_side_effects: _,
         } = value;
         Self {
-            next_order_id: value.next_order_id.clone(),
+            next_order_id: value.next_order_id,
             messenger: value.messenger.clone(),
             pending_move_requests: value.pending_move_requests.clone(),
             pending_path_requests: value.pending_path_requests.clone(),

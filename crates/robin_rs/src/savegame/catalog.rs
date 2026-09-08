@@ -252,6 +252,20 @@ impl SlotCatalog {
     }
 }
 
+impl std::ops::Index<usize> for SlotCatalog {
+    type Output = SaveGame;
+    fn index(&self, index: usize) -> &SaveGame {
+        &self.entries[index].metadata
+    }
+}
+
+#[cfg(test)]
+impl std::ops::IndexMut<usize> for SlotCatalog {
+    fn index_mut(&mut self, index: usize) -> &mut SaveGame {
+        &mut self.entries[index].metadata
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,19 +375,5 @@ mod tests {
                 .is_err()
         );
         assert!(catalog.iter().eq(before.iter()));
-    }
-}
-
-impl std::ops::Index<usize> for SlotCatalog {
-    type Output = SaveGame;
-    fn index(&self, index: usize) -> &SaveGame {
-        &self.entries[index].metadata
-    }
-}
-
-#[cfg(test)]
-impl std::ops::IndexMut<usize> for SlotCatalog {
-    fn index_mut(&mut self, index: usize) -> &mut SaveGame {
-        &mut self.entries[index].metadata
     }
 }

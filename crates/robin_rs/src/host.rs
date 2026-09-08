@@ -980,17 +980,6 @@ impl ApplicationContext {
         let _ = watcher.poll(now_unix_ms);
     }
 
-    pub(crate) fn take_leaderboard_receipt_notice(
-        &self,
-    ) -> Result<Option<crate::leaderboard_receipt_watcher::ReceiptWatcherNotice>, String> {
-        Ok(self
-            .required_services()?
-            .leaderboard_receipts
-            .lock()
-            .map_err(|_| "ApplicationContext leaderboard-receipt lock poisoned".to_owned())?
-            .take_notice())
-    }
-
     fn required_services(&self) -> Result<&ApplicationServices, String> {
         self.services.as_deref().ok_or_else(|| {
             "ApplicationContext services requested before rust initialization".to_string()
@@ -3146,9 +3135,11 @@ mod application_context_tests {
             item_gameplay: robin_engine::gameplay_config::ItemGameplayConfig::classic(),
             ..engine_api::SimConfig::default()
         };
-        let mut options = engine_api::GlobalOptions::default();
-        options.script_enabled = false;
-        options.highlander = true;
+        let options = engine_api::GlobalOptions {
+            script_enabled: false,
+            highlander: true,
+            ..Default::default()
+        };
         let context =
             ApplicationContext::complete_official_projection(options, sim_config, None).unwrap();
 

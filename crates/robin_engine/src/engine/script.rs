@@ -71,7 +71,7 @@ fn think_stimulus_debug_filter() -> Option<ThinkStimulusDebugFilter> {
     })
 }
 
-fn spellforge_event_name<'a>(key: ScriptVmKey, fn_name: &'a str) -> &'a str {
+fn spellforge_event_name(key: ScriptVmKey, fn_name: &str) -> &str {
     match (key, fn_name) {
         (ScriptVmKey::Global, "Hourglass") | (ScriptVmKey::Scroll(_), "Hourglass") => "Timer",
         (ScriptVmKey::Scroll(_), "IsTaken") => "Taken",

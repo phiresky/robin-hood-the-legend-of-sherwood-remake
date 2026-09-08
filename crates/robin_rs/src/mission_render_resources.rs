@@ -407,8 +407,10 @@ mod tests {
 
     #[test]
     fn sparse_frames_keep_indices_and_retirement_is_idempotent() {
-        let mut owner = MissionRenderResources::default();
-        owner.map = Some(frame(2));
+        let mut owner = MissionRenderResources {
+            map: Some(frame(2)),
+            ..Default::default()
+        };
         owner.dots.frames = vec![Some(frame(3)), None, Some(frame(4))];
         assert!(owner.dots()[1].is_none());
         assert_eq!(
@@ -424,8 +426,10 @@ mod tests {
 
     #[test]
     fn sprite_preparation_retires_partial_banks_but_keeps_map() {
-        let mut owner = MissionRenderResources::default();
-        owner.map = Some(frame(2));
+        let mut owner = MissionRenderResources {
+            map: Some(frame(2)),
+            ..Default::default()
+        };
         owner.corners.frames = vec![Some(frame(3))];
         owner.corner_size = ScreenSize::new(3.0, 4.0);
         let mut deleted = Vec::new();
@@ -438,8 +442,10 @@ mod tests {
 
     #[test]
     fn diagnostics_cannot_resurrect_gpu_ownership() {
-        let mut owner = MissionRenderResources::default();
-        owner.map = Some(frame(2));
+        let owner = MissionRenderResources {
+            map: Some(frame(2)),
+            ..Default::default()
+        };
         let restored: MissionRenderResources =
             serde_json::from_str(&serde_json::to_string(&owner).unwrap()).unwrap();
         assert!(restored.map().is_none());

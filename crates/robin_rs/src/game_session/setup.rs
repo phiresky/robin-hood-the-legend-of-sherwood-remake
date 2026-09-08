@@ -592,8 +592,8 @@ fn preload_hackable_character_dirs(
     files: &engine_sbfile::SbFileSystem,
 ) {
     let mission_filenames =
-        current_hackable_character_filenames(campaign, &assets.profile_manager, &files);
-    for root in overlay_roots(&files) {
+        current_hackable_character_filenames(campaign, &assets.profile_manager, files);
+    for root in overlay_roots(files) {
         let chars = root.join("Data/Characters");
         let mission_scoped = chars.join("mission-scoped.json").is_file();
         let Ok(entries) = std::fs::read_dir(&chars) else {

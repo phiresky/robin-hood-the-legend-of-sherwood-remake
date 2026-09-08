@@ -1684,15 +1684,15 @@ fn validate_history(
         let mut previous = None;
         for attempt in history.attempts() {
             let sequence = attempt.sequence();
-            if let Some(previous_sequence) = previous {
-                if sequence <= previous_sequence {
-                    return Err(ReplayCampaignValidationError::HistorySequenceOrder {
-                        layer,
-                        mission_index,
-                        previous: previous_sequence,
-                        sequence,
-                    });
-                }
+            if let Some(previous_sequence) = previous
+                && sequence <= previous_sequence
+            {
+                return Err(ReplayCampaignValidationError::HistorySequenceOrder {
+                    layer,
+                    mission_index,
+                    previous: previous_sequence,
+                    sequence,
+                });
             }
             if !sequences.insert(sequence) {
                 return Err(ReplayCampaignValidationError::DuplicateHistorySequence {
@@ -2034,15 +2034,19 @@ mod tests {
     fn rejects_campaign_and_mission_id_limits_before_decode() {
         let (profiles, campaign) = fixture();
         let bytes = bitcode::encode(&campaign);
-        let mut limits = ReplayAdmissionLimits::default();
-        limits.max_campaign_bytes = bytes.len() - 1;
+        let limits = ReplayAdmissionLimits {
+            max_campaign_bytes: bytes.len() - 1,
+            ..Default::default()
+        };
         assert!(matches!(
             decode_and_validate_replay_campaign(&bytes, "MissionA", &profiles, &limits),
             Err(ReplayCampaignValidationError::CampaignBytesLimit { .. })
         ));
 
-        let mut limits = ReplayAdmissionLimits::default();
-        limits.max_mission_id_bytes = 0;
+        let limits = ReplayAdmissionLimits {
+            max_mission_id_bytes: 0,
+            ..Default::default()
+        };
         assert!(matches!(
             decode_and_validate_replay_campaign(b"not bitcode", "MissionA", &profiles, &limits),
             Err(ReplayCampaignValidationError::HeaderMissionIdBytesLimit { .. })
@@ -2232,8 +2236,10 @@ mod tests {
         );
 
         let (_, campaign) = fixture();
-        let mut limits = ReplayAdmissionLimits::default();
-        limits.max_campaign_characters = 0;
+        let limits = ReplayAdmissionLimits {
+            max_campaign_characters: 0,
+            ..Default::default()
+        };
         assert!(matches!(
             decode_and_validate_replay_campaign(
                 &bitcode::encode(&campaign),
@@ -2374,8 +2380,10 @@ mod tests {
         ));
 
         let (_, campaign) = fixture();
-        let mut limits = ReplayAdmissionLimits::default();
-        limits.max_campaign_snapshot_depth = 0;
+        let limits = ReplayAdmissionLimits {
+            max_campaign_snapshot_depth: 0,
+            ..Default::default()
+        };
         assert!(matches!(
             decode_and_validate_replay_campaign(
                 &bitcode::encode(&campaign),
@@ -2391,8 +2399,10 @@ mod tests {
     fn rejects_oversized_campaign_owned_strings() {
         let (profiles, mut campaign) = fixture();
         campaign.characters[0].status.name = "six!!!".into();
-        let mut limits = ReplayAdmissionLimits::default();
-        limits.max_campaign_string_bytes = 5;
+        let limits = ReplayAdmissionLimits {
+            max_campaign_string_bytes: 5,
+            ..Default::default()
+        };
         assert!(matches!(
             decode_and_validate_replay_campaign(
                 &bitcode::encode(&campaign),

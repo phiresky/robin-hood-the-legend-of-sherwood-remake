@@ -130,8 +130,13 @@ mod frozen_actor_entry_condolation_tests {
     #[test]
     fn selected_terminal_card_precedes_frozen_actors_derived_tail() {
         let mut engine = EngineInner::new();
-        let mut npc = NpcData::default();
-        npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
+        let npc = NpcData {
+            ai: crate::element::AiActorData {
+                ai_brain: crate::element::AiBrain::Enemy(Box::default()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
             element: {
                 let mut initial_element = ElementData::default();

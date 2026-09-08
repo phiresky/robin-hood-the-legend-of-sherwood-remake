@@ -399,8 +399,10 @@ mod tests {
 
     #[test]
     fn concurrent_plan_fails_closed_on_arithmetic_overflow() {
-        let mut config = ServerConfig::default();
-        config.max_replay_bytes = u64::MAX;
+        let config = ServerConfig {
+            max_replay_bytes: u64::MAX,
+            ..Default::default()
+        };
         assert!(matches!(
             capacity_demand_bytes(&config, config.max_replay_bytes, config.max_campaign_bytes),
             Err(StorageAdmissionError::Overflow)
@@ -409,11 +411,13 @@ mod tests {
 
     #[test]
     fn exact_current_lengths_and_other_concurrent_slots_share_one_capacity_budget() {
-        let mut config = ServerConfig::default();
-        config.max_replay_bytes = 11;
-        config.max_campaign_bytes = 13;
-        config.max_metadata_bytes = 17;
-        config.max_concurrent_uploads = 4;
+        let config = ServerConfig {
+            max_replay_bytes: 11,
+            max_campaign_bytes: 13,
+            max_metadata_bytes: 17,
+            max_concurrent_uploads: 4,
+            ..Default::default()
+        };
 
         assert_eq!(
             capacity_demand_bytes(&config, 5, 7).unwrap(),

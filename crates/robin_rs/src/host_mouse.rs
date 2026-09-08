@@ -1946,7 +1946,7 @@ mod tests {
         add_selected_pc(&mut engine, &assets);
 
         let cursor = cursor_for_hit(
-            &mut engine,
+            &engine,
             &mut host,
             &assets,
             MapPoint::new(300.0, 300.0),
@@ -1962,7 +1962,7 @@ mod tests {
         add_selected_pc(&mut engine, &assets);
 
         let cursor = cursor_for_heal(
-            &mut engine,
+            &engine,
             &mut host,
             &assets,
             MapPoint::new(300.0, 300.0),
@@ -1979,7 +1979,7 @@ mod tests {
         add_selected_pc(&mut engine, &assets);
 
         let cursor = cursor_for_ale(
-            &mut engine,
+            &engine,
             &mut host,
             &assets,
             MapPoint::new(300.0, 300.0),
@@ -2011,7 +2011,7 @@ mod tests {
                 )
                 .expect("action selection admission");
             let cursor = cursor_for_shield(
-                &mut engine,
+                &engine,
                 &mut host,
                 &assets,
                 MapPoint::new(300.0, 300.0),
@@ -2035,7 +2035,7 @@ mod tests {
         add_selected_pc(&mut engine, &assets);
 
         let cursor = cursor_for_strangle(
-            &mut engine,
+            &engine,
             &mut host,
             &assets,
             MapPoint::new(300.0, 300.0),

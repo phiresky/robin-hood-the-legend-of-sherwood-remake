@@ -33,3 +33,8 @@ wait-timeout = "0.2"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# Match workspace signature policy while retaining the unsafe-code prohibition above.
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

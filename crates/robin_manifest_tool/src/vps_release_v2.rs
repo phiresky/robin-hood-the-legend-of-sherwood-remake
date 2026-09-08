@@ -1403,13 +1403,13 @@ pub fn promote_inherited_vps_release_v2(
             installed_name,
             RenameFlags::NOREPLACE,
         );
-        if let Err(error) = rename {
-            if candidate.canonical_path()? != candidate.installed_path {
-                return Err(error.into());
-            }
+        if let Err(error) = rename
+            && candidate.canonical_path()? != candidate.installed_path
+        {
+            return Err(error.into());
         }
         candidate.ensure_canonical()?;
-        rustix::fs::fsync(&release_parent)?;
+        rustix::fs::fsync(release_parent)?;
         activation_lock.ensure_canonical()?;
         candidate.ensure_canonical()?;
         Ok(expected)
@@ -2770,7 +2770,7 @@ where
     ));
 
     let candidate_fd = &inherited_candidate.fd;
-    let candidate = rustix::fs::fstat(&candidate_fd)?;
+    let candidate = rustix::fs::fstat(candidate_fd)?;
     ensure!(
         candidate.st_uid == rustix::process::geteuid().as_raw()
             && candidate.st_dev == parent.st_dev

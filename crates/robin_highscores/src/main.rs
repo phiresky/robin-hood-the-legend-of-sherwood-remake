@@ -204,6 +204,7 @@ async fn run() -> anyhow::Result<()> {
     serve_api(runtime).await
 }
 
+#[cfg(test)]
 async fn run_api_lifecycle<N, T, Startup, Serve, ServeFuture>(
     notifier: &N,
     startup: Startup,

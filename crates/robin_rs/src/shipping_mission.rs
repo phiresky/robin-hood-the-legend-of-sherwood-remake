@@ -9,6 +9,7 @@ use robin_assets::shipping_datadir::{ShippingDatadir, ShippingMission, decode_mi
 
 enum CompressedPayload {
     Owned(Vec<u8>),
+    #[cfg(target_arch = "wasm32")]
     Shared(Arc<Vec<u8>>),
 }
 
@@ -18,6 +19,7 @@ impl std::ops::Deref for CompressedPayload {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Owned(bytes) => bytes,
+            #[cfg(target_arch = "wasm32")]
             Self::Shared(bytes) => bytes,
         }
     }

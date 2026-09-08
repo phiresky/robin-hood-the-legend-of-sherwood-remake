@@ -3289,13 +3289,13 @@ impl PersistedSequenceManager {
             actor_live: value.actor_live.clone(),
             actor_in_progress: value.actor_in_progress.clone(),
             actor_instructing: value.actor_instructing.clone(),
-            actor_translating: value.actor_translating.clone(),
+            actor_translating: value.actor_translating,
             elements_to_go: value.elements_to_go.clone(),
             pending_synchronous_actions: value.pending_synchronous_actions.clone(),
             pending_condolations: value.pending_condolations.clone(),
-            next_sequence_id: value.next_sequence_id.clone(),
-            next_element_id: value.next_element_id.clone(),
-            halt_pending: value.halt_pending.clone(),
+            next_sequence_id: value.next_sequence_id,
+            next_element_id: value.next_element_id,
+            halt_pending: value.halt_pending,
         }
     }
 

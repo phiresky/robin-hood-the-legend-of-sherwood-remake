@@ -1321,13 +1321,12 @@ impl SaveGameManager {
         // Thumbnail (used by both formats)
         let src_thumb = self.thumb_path(src);
         let dst_thumb = self.thumb_path(dst);
-        if src_thumb.exists() {
-            if let Err(error) = std::fs::read(&src_thumb)
+        if src_thumb.exists()
+            && let Err(error) = std::fs::read(&src_thumb)
                 .map_err(anyhow::Error::from)
                 .and_then(|bytes| save_file::atomic_write(&dst_thumb, &bytes))
-            {
-                tracing::warn!("Could not rotate save thumbnail: {error:#}");
-            }
+        {
+            tracing::warn!("Could not rotate save thumbnail: {error:#}");
         }
 
         Ok(())

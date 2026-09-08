@@ -6371,11 +6371,7 @@ impl EngineInner {
             live_sectors.len(),
             "live Sherwood production snapshot changed the sector count"
         );
-        for (sector, live) in campaign
-            .production_sectors
-            .iter_mut()
-            .zip(live_sectors.into_iter())
-        {
+        for (sector, live) in campaign.production_sectors.iter_mut().zip(live_sectors) {
             assert_eq!(
                 sector.prod_type, live.prod_type,
                 "live Sherwood production snapshot changed sector ordering"

@@ -222,6 +222,9 @@ pub(crate) async fn show_main_menu(
     open_options_initially: bool,
     initial_direct_invite: Option<&str>,
 ) -> Result<MainMenuChoice, String> {
+    #[cfg(not(feature = "multiplayer"))]
+    let _ = initial_direct_invite;
+
     let shipping = application_context.shipping()?;
     let initial_profile = application_context
         .active_profile_snapshot()

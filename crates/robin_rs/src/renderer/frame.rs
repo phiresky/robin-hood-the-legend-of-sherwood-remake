@@ -860,7 +860,7 @@ impl FrameState {
             }
             if let Some(buffer) = &self.vertex_buffer {
                 gpu.queue
-                    .write_buffer(buffer, 0, bytemuck::cast_slice(&verts));
+                    .write_buffer(buffer, 0, bytemuck::cast_slice(verts));
             }
         }
         let uniform = ScreenUniform {
@@ -1052,117 +1052,6 @@ impl FrameState {
         // logical target, avoiding a black backdrop until gameplay resumes
         // and redraws at the new dimensions. The gameplay path explicitly
         // clears the snapshot on its next frame.
-    }
-}
-
-#[cfg(test)]
-mod presentation_tests {
-    use super::*;
-
-    fn quad(operation: DrawOperation) -> QueuedDraw {
-        QueuedDraw {
-            dst: Rect::new(2, 3, 4, 5),
-            corners: None,
-            uv: [0.0, 0.0, 1.0, 1.0],
-            tint: [1.0; 4],
-            operation,
-        }
-    }
-
-    #[test]
-    fn capture_and_world_preserve_snapshot_boundary() {
-        let draws = [
-            quad(DrawOperation::StencilClear),
-            quad(DrawOperation::FramebufferAlpha),
-            quad(DrawOperation::FramebufferAlpha),
-        ];
-        assert_eq!(
-            composition_plan(&draws),
-            [
-                Some(CompositionPass::Draw {
-                    start: 0,
-                    end: 1,
-                    clear: true
-                }),
-                Some(CompositionPass::SnapshotFramebuffer),
-                Some(CompositionPass::Draw {
-                    start: 1,
-                    end: 3,
-                    clear: false
-                }),
-            ]
-        );
-        // An alpha effect in UI must not cause a world snapshot.
-        assert_eq!(
-            composition_plan(&draws[..1]),
-            [
-                Some(CompositionPass::Draw {
-                    start: 0,
-                    end: 1,
-                    clear: true
-                }),
-                None,
-                None,
-            ]
-        );
-        assert_eq!(
-            composition_plan(&[]),
-            [
-                Some(CompositionPass::Draw {
-                    start: 0,
-                    end: 0,
-                    clear: true
-                }),
-                None,
-                None,
-            ]
-        );
-    }
-
-    #[test]
-    fn geometry_reuses_allocation_and_preserves_triangle_order() {
-        let draws = [quad(DrawOperation::StencilClear)];
-        let mut vertices = Vec::new();
-        expand_queue_geometry(&draws, &mut vertices);
-        let allocation = vertices.as_ptr();
-        let expected = [
-            [2.0, 3.0],
-            [6.0, 3.0],
-            [2.0, 8.0],
-            [2.0, 8.0],
-            [6.0, 3.0],
-            [6.0, 8.0],
-        ];
-        assert_eq!(vertices.iter().map(|v| v.pos).collect::<Vec<_>>(), expected);
-        for _ in 0..1000 {
-            expand_queue_geometry(&draws, &mut vertices);
-        }
-        assert_eq!(
-            allocation,
-            vertices.as_ptr(),
-            "steady-size frames must retain their staging allocation"
-        );
-        assert_eq!(vertices.len(), 6);
-        let mut triangle = draws[0].clone();
-        triangle.corners = Some([(0.0, 0.0), (2.0, 0.0), (1.0, 2.0), (1.0, 2.0)]);
-        expand_queue_geometry(&[triangle], &mut vertices);
-        assert_eq!(vertices[2].pos, vertices[5].pos);
-    }
-
-    #[test]
-    fn ui_only_frames_bypass_gameplay_scaling_and_effects() {
-        assert_eq!(
-            presentation_profile(true, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
-            (TextureScaleMode::PixelArt, TextureEffect::None)
-        );
-    }
-
-    #[test]
-    fn gameplay_frames_keep_the_configured_profile() {
-        assert_eq!(
-            presentation_profile(false, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
-            (TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale)
-        );
     }
 }
 
@@ -1544,5 +1433,116 @@ impl FrameState {
             };
         }
         flush_run!();
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    fn quad(operation: DrawOperation) -> QueuedDraw {
+        QueuedDraw {
+            dst: Rect::new(2, 3, 4, 5),
+            corners: None,
+            uv: [0.0, 0.0, 1.0, 1.0],
+            tint: [1.0; 4],
+            operation,
+        }
+    }
+
+    #[test]
+    fn capture_and_world_preserve_snapshot_boundary() {
+        let draws = [
+            quad(DrawOperation::StencilClear),
+            quad(DrawOperation::FramebufferAlpha),
+            quad(DrawOperation::FramebufferAlpha),
+        ];
+        assert_eq!(
+            composition_plan(&draws),
+            [
+                Some(CompositionPass::Draw {
+                    start: 0,
+                    end: 1,
+                    clear: true
+                }),
+                Some(CompositionPass::SnapshotFramebuffer),
+                Some(CompositionPass::Draw {
+                    start: 1,
+                    end: 3,
+                    clear: false
+                }),
+            ]
+        );
+        // An alpha effect in UI must not cause a world snapshot.
+        assert_eq!(
+            composition_plan(&draws[..1]),
+            [
+                Some(CompositionPass::Draw {
+                    start: 0,
+                    end: 1,
+                    clear: true
+                }),
+                None,
+                None,
+            ]
+        );
+        assert_eq!(
+            composition_plan(&[]),
+            [
+                Some(CompositionPass::Draw {
+                    start: 0,
+                    end: 0,
+                    clear: true
+                }),
+                None,
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn geometry_reuses_allocation_and_preserves_triangle_order() {
+        let draws = [quad(DrawOperation::StencilClear)];
+        let mut vertices = Vec::new();
+        expand_queue_geometry(&draws, &mut vertices);
+        let allocation = vertices.as_ptr();
+        let expected = [
+            [2.0, 3.0],
+            [6.0, 3.0],
+            [2.0, 8.0],
+            [2.0, 8.0],
+            [6.0, 3.0],
+            [6.0, 8.0],
+        ];
+        assert_eq!(vertices.iter().map(|v| v.pos).collect::<Vec<_>>(), expected);
+        for _ in 0..1000 {
+            expand_queue_geometry(&draws, &mut vertices);
+        }
+        assert_eq!(
+            allocation,
+            vertices.as_ptr(),
+            "steady-size frames must retain their staging allocation"
+        );
+        assert_eq!(vertices.len(), 6);
+        let mut triangle = draws[0].clone();
+        triangle.corners = Some([(0.0, 0.0), (2.0, 0.0), (1.0, 2.0), (1.0, 2.0)]);
+        expand_queue_geometry(&[triangle], &mut vertices);
+        assert_eq!(vertices[2].pos, vertices[5].pos);
+    }
+
+    #[test]
+    fn ui_only_frames_bypass_gameplay_scaling_and_effects() {
+        assert_eq!(
+            presentation_profile(true, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::PixelArt, TextureEffect::None)
+        );
+    }
+
+    #[test]
+    fn gameplay_frames_keep_the_configured_profile() {
+        assert_eq!(
+            presentation_profile(false, TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale,),
+            (TextureScaleMode::Anime4kC, TextureEffect::CrtRoyale)
+        );
     }
 }

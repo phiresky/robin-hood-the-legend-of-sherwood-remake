@@ -15,28 +15,35 @@ use robin_engine::multiplayer::LeaderboardCoSignResponse;
 #[cfg(any(test, feature = "multiplayer"))]
 pub(crate) use robin_engine::multiplayer::MultiplayerSessionId;
 use robin_engine::multiplayer::NetChannels as EngineNetChannels;
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(feature = "multiplayer")]
+pub(crate) use robin_engine::multiplayer::RankedJoinUnavailableReason;
+#[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 use robin_engine::multiplayer::new_frame_cursor;
 pub(crate) use robin_engine::multiplayer::{
-    FrameCursor, InitialSnapshot, NetEvent, NetOutbound, RankedBrowseOnlyReason,
-    RankedCoSignContextDocument, RankedContinuationPreflightClaimDocument,
-    RankedContinuationPreflightSignatureDocument, RankedContinuationReceiptSelectionDocument,
-    RankedContinuationReceiptSelectionRequestDocument, RankedJoinAccepted,
-    RankedJoinAttestationDocument, RankedJoinChallenge, RankedJoinClaimDocument,
-    RankedJoinResponse, RankedJoinUnavailableReason, RankedOfficialSessionSetupDocument,
-    RankedParticipantRosterDocument, RankedSessionConfigDocument, RankedSessionGenesisDocument,
-    RankedSubmissionAcceptedDocument, STATE_HASH_INTERVAL,
+    FrameCursor, InitialSnapshot, NetEvent, NetOutbound, RankedCoSignContextDocument,
+    RankedContinuationPreflightClaimDocument, RankedContinuationPreflightSignatureDocument,
+    RankedContinuationReceiptSelectionDocument, RankedContinuationReceiptSelectionRequestDocument,
+    RankedOfficialSessionSetupDocument, RankedSubmissionAcceptedDocument, STATE_HASH_INTERVAL,
 };
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(feature = "multiplayer")]
 pub(crate) use robin_engine::multiplayer::{
     INPUT_DELAY_FRAMES, NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg,
 };
+#[cfg(feature = "multiplayer")]
+pub(crate) use robin_engine::multiplayer::{
+    RankedBrowseOnlyReason, RankedJoinAccepted, RankedJoinAttestationDocument, RankedJoinChallenge,
+    RankedJoinClaimDocument, RankedJoinResponse, RankedParticipantRosterDocument,
+    RankedSessionConfigDocument, RankedSessionGenesisDocument,
+};
 use robin_engine::player_command::PlayerId;
 use robin_run_protocol::{
-    CampaignContinuationPreflightRequestClaimV1, CanonicalDocument, LeaderboardCoSignInstanceV1,
-    LeaderboardCoSignRequestV1, NamedSeatJoinAttestationV1, NamedSeatJoinClaimV1,
-    ParticipantClaimV1, ParticipantSignatureV1, PublicKey32, RankedSessionConfigV1,
-    ReplaySessionGenesisV1, SubmissionAcceptedV1, Validate,
+    CampaignContinuationPreflightRequestClaimV1, LeaderboardCoSignRequestV1, ParticipantClaimV1,
+    ParticipantSignatureV1, PublicKey32, SubmissionAcceptedV1, Validate,
+};
+#[cfg(feature = "multiplayer")]
+use robin_run_protocol::{
+    CanonicalDocument, LeaderboardCoSignInstanceV1, NamedSeatJoinAttestationV1,
+    NamedSeatJoinClaimV1, RankedSessionConfigV1, ReplaySessionGenesisV1,
 };
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
@@ -171,8 +178,10 @@ pub(crate) const fn net_frame_class(message: &NetMsg) -> NetFrameClass {
 /// both purpose-specific requests for every allowed participant at every
 /// mission end with ample headroom, while keeping a malicious or defective
 /// host from growing client replay-protection state without limit.
+#[cfg(feature = "multiplayer")]
 pub(crate) const MAX_LEADERBOARD_COSIGN_REQUESTS_PER_SESSION: usize = 1024;
 
+#[cfg(feature = "multiplayer")]
 fn decode_ranked_document<T>(bytes: &[u8], description: &str) -> Result<T, String>
 where
     T: serde::de::DeserializeOwned + serde::Serialize + Validate,
@@ -181,6 +190,7 @@ where
         .map_err(|error| format!("invalid {description}: {error}"))
 }
 
+#[cfg(feature = "multiplayer")]
 fn validate_ranked_join_challenge(
     challenge: &RankedJoinChallenge,
 ) -> Result<(ReplaySessionGenesisV1, NamedSeatJoinClaimV1), String> {
@@ -209,6 +219,7 @@ fn validate_ranked_join_challenge(
     Ok((genesis, claim))
 }
 
+#[cfg(feature = "multiplayer")]
 fn challenge_matches_expected_session(
     challenge: &RankedJoinChallenge,
     expected: &RankedSessionConfigDocument,
@@ -224,6 +235,7 @@ fn challenge_matches_expected_session(
     Ok(())
 }
 
+#[cfg(feature = "multiplayer")]
 fn decode_ranked_participant_roster(
     document: &RankedParticipantRosterDocument,
     genesis: &ReplaySessionGenesisV1,
@@ -240,6 +252,7 @@ fn decode_ranked_participant_roster(
     Ok(roster)
 }
 
+#[cfg(feature = "multiplayer")]
 fn roster_contains_exact_join(
     roster: &[ParticipantClaimV1],
     attestation: &NamedSeatJoinAttestationV1,
@@ -253,6 +266,7 @@ fn roster_contains_exact_join(
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "multiplayer")]
 enum ClientRankedJoinPhase {
     Empty,
     Staged(RankedJoinChallenge),
@@ -267,6 +281,7 @@ enum ClientRankedJoinPhase {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(feature = "multiplayer")]
 struct ClientRankedJoinInner {
     expected_session: Option<RankedSessionConfigDocument>,
     admitted_genesis: Option<RankedSessionGenesisDocument>,
@@ -282,10 +297,12 @@ struct ClientRankedJoinInner {
 /// arrive in either order. The challenge is exposed once only after those two
 /// independently sourced values match. A signed response still does not admit
 /// the client: the exact host acknowledgement must also be received.
+#[cfg(feature = "multiplayer")]
 pub(crate) struct ClientRankedJoinState {
     inner: std::sync::Mutex<ClientRankedJoinInner>,
 }
 
+#[cfg(feature = "multiplayer")]
 impl Default for ClientRankedJoinState {
     fn default() -> Self {
         Self {
@@ -301,8 +318,10 @@ impl Default for ClientRankedJoinState {
     }
 }
 
+#[cfg(feature = "multiplayer")]
 pub(crate) type SharedClientRankedJoinState = std::sync::Arc<ClientRankedJoinState>;
 
+#[cfg(feature = "multiplayer")]
 impl ClientRankedJoinState {
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, ClientRankedJoinInner>, String> {
         self.inner
@@ -609,6 +628,7 @@ impl ClientRankedJoinState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(feature = "multiplayer")]
 enum ClientLeaderboardCoSignEntry {
     /// Arrived on the authenticated host stream before local reconstruction.
     Staged(LeaderboardCoSignRequestV1),
@@ -620,6 +640,7 @@ enum ClientLeaderboardCoSignEntry {
     Responded(LeaderboardCoSignInstanceV1),
 }
 
+#[cfg(feature = "multiplayer")]
 impl ClientLeaderboardCoSignEntry {
     fn instance(self) -> LeaderboardCoSignInstanceV1 {
         match self {
@@ -632,6 +653,7 @@ impl ClientLeaderboardCoSignEntry {
 }
 
 #[derive(Default)]
+#[cfg(feature = "multiplayer")]
 struct ClientLeaderboardCoSignInner {
     entries: Vec<ClientLeaderboardCoSignEntry>,
 }
@@ -645,12 +667,15 @@ struct ClientLeaderboardCoSignInner {
 /// client-side wrong-session, wrong-offer, wrong-purpose, and wrong-digest
 /// boundary; merely receiving a request from the current host is insufficient.
 #[derive(Default)]
+#[cfg(feature = "multiplayer")]
 pub(crate) struct ClientLeaderboardCoSignState {
     inner: std::sync::Mutex<ClientLeaderboardCoSignInner>,
 }
 
+#[cfg(feature = "multiplayer")]
 pub(crate) type SharedClientLeaderboardCoSignState = std::sync::Arc<ClientLeaderboardCoSignState>;
 
+#[cfg(feature = "multiplayer")]
 impl ClientLeaderboardCoSignState {
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, ClientLeaderboardCoSignInner>, String> {
         self.inner
@@ -800,6 +825,7 @@ impl ClientLeaderboardCoSignState {
 
 /// Validate a co-signature over the protocol crate's sole fixed, purpose-bound
 /// Ed25519 payload. This helper intentionally cannot accept arbitrary bytes.
+#[cfg(feature = "multiplayer")]
 pub(crate) fn verify_leaderboard_cosign_response(
     request: &LeaderboardCoSignRequestV1,
     response: &LeaderboardCoSignResponse,

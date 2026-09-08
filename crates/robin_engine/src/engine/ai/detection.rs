@@ -602,6 +602,7 @@ fn optical_target_is_passing_door(
 
 /// Original's forest-wide rear-view exception is camp-based. Mounted
 /// Royalists take the same 180-degree detection path as every other Royalist.
+#[cfg(test)]
 fn forest_180_degree_view_enabled(is_forest_level: bool, viewer_camp: Camp) -> bool {
     is_forest_level && viewer_camp == Camp::Royalists
 }
@@ -823,6 +824,7 @@ fn refresh_detection_scans_target(
         && (target_position.y - viewer_position.y).abs() <= radius_y
 }
 
+#[cfg(test)]
 fn non_enemy_visibility_blocked_before_cadence(
     eye_status: crate::element::EyeStatus,
     viewer_camp: Camp,
@@ -843,6 +845,7 @@ fn missed_friend_or_beggar_target_blocked(dead: bool, unconscious: bool) -> bool
     dead || unconscious
 }
 
+#[cfg(test)]
 fn apply_enemy_beggar_disguise(
     viewer_camp: Camp,
     target_is_pc: bool,
@@ -4740,7 +4743,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4780,7 +4782,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4836,7 +4837,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4889,7 +4889,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -4996,7 +4995,6 @@ impl EngineInner {
             ViewContext {
                 ground_position: viewer.ground_position,
                 viewer_inside_building,
-                camp: viewer.camp,
                 hostile_to_player: viewer_hostile_to_player,
                 eye,
                 eye_world,
@@ -5754,7 +5752,6 @@ struct ViewContext<'a> {
     /// Original-game inside-building test: building sector or active door transit.
     /// Used only by detection refresh's outer scan-entry alternative.
     viewer_inside_building: bool,
-    camp: Camp,
     hostile_to_player: bool,
     eye: MapPoint,
     eye_world: crate::coordinates::WorldPoint3D,
@@ -5805,7 +5802,7 @@ mod tests {
             npc: crate::element::NpcData::default(),
             soldier: crate::element::SoldierData::default(),
         });
-        let resolved_map = crate::coordinates::MapPoint::new(1898.5637, 790.8220);
+        let resolved_map = crate::coordinates::MapPoint::new(1898.5637, 790.822);
         entity.position_iface_mut().set_map_position(resolved_map);
         let position = entity.position_iface_mut();
         let mut state = position.v48_serialized_state();

@@ -10,3 +10,6 @@ crate-type = ["cdylib"]
 [dependencies]
 robin_replay_format.workspace = true
 wasm-bindgen = "0.2"
+
+[lints]
+workspace = true

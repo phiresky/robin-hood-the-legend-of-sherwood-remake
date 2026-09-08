@@ -975,7 +975,7 @@ fn obstacle_mesh_triangles(
         // an opening), allowing a visible surface behind a wall to clear the
         // wall's pixels. Use the same exact cap decomposition as sight rays.
         let triangulation = footprint.earcut_triangles_raw();
-        for triangle in triangulation.triangle_indices.chunks_exact(3) {
+        for triangle in triangulation.triangle_indices.as_chunks::<3>().0 {
             world_triangles.push((0, [top(triangle[0]), top(triangle[1]), top(triangle[2])]));
         }
     }
@@ -1373,7 +1373,7 @@ impl PreparedFogOccluder {
             let triangulation = footprint.earcut_triangles_raw();
             let mut faces =
                 Vec::with_capacity(triangulation.triangle_indices.len() * 2 / 3 + points.len() * 2);
-            for triangle in triangulation.triangle_indices.chunks_exact(3) {
+            for triangle in triangulation.triangle_indices.as_chunks::<3>().0 {
                 faces.push(vec![top(triangle[0]), top(triangle[1]), top(triangle[2])]);
                 faces.push(vec![
                     bottom(triangle[2]),

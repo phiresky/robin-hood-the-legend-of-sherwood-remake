@@ -2422,7 +2422,7 @@ mod tests {
             "original fixture did not exercise a complete sprite bank"
         );
         let sprites = holder.sprites();
-        let estimated = sprites.len() * std::mem::size_of::<PackedSprite>()
+        let estimated = std::mem::size_of_val(sprites)
             + holder
                 .dictionaries
                 .iter()

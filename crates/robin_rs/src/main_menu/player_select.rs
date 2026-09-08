@@ -1493,7 +1493,7 @@ async fn show_difficulty_prompt(
                         confirmed = true;
                     } else if point_in_rect(vx, vy, cancel_x, button_y, cancel_w, cancel_h) {
                         cancelled = true;
-                    } else if vy >= PRESET_Y && vy < PRESET_Y + PRESET_H {
+                    } else if (PRESET_Y..PRESET_Y + PRESET_H).contains(&vy) {
                         for index in 0..preset_labels.len() {
                             let x = PRESET_X + index as i32 * (PRESET_W + PRESET_GAP);
                             if point_in_rect(vx, vy, x, PRESET_Y, PRESET_W, PRESET_H) {
@@ -1502,8 +1502,7 @@ async fn show_difficulty_prompt(
                             }
                         }
                     } else if matches!(difficulty, DifficultyLevel::Custom(_))
-                        && vx >= RULE_X
-                        && vx < RULE_X + RULE_W
+                        && (RULE_X..RULE_X + RULE_W).contains(&vx)
                         && vy >= RULE_Y
                     {
                         let row = ((vy - RULE_Y) / RULE_H) as usize;

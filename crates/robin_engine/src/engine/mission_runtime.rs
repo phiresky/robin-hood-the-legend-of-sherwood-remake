@@ -343,14 +343,18 @@ mod tests {
         }];
         let mut engine = EngineInner::new();
         engine.initialize_mission_runtime_features(&loaded);
-        let mut day = SoundSource::default();
-        day.active = true;
-        day.ambiences = Ambiance::Day.to_bitmask();
-        let mut night = SoundSource::default();
-        night.active = true;
-        night.ambiences = Ambiance::Night.to_bitmask();
-        night.ambience_enabled = false;
-        night.source_kind = crate::sound_source::SoundSourceKind::Single;
+        let day = SoundSource {
+            active: true,
+            ambiences: Ambiance::Day.to_bitmask(),
+            ..Default::default()
+        };
+        let night = SoundSource {
+            active: true,
+            ambiences: Ambiance::Night.to_bitmask(),
+            ambience_enabled: false,
+            source_kind: crate::sound_source::SoundSourceKind::Single,
+            ..Default::default()
+        };
         engine.feedback.sound_sim.sources.sources_push_some(day);
         engine.feedback.sound_sim.sources.sources_push_some(night);
         let assets = LevelAssets::default();

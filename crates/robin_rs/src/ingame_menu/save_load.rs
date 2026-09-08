@@ -154,9 +154,7 @@ impl LoadPickerModalState {
         }
         if let Some(confirmation) = self.delete_confirmation.as_mut() {
             let outcome = confirmation.tick(event_pump, renderer, resources, cursor.as_ref());
-            let Some(confirmed) = outcome else {
-                return None;
-            };
+            let confirmed = outcome?;
             self.delete_confirmation = None;
             finish_picker_delete(&mut self.model, save_manager, confirmed);
             sync_thumbnail_cache(

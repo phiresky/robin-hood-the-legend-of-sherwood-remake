@@ -95,7 +95,7 @@ impl ReplayStore {
             crate::secure_fs::pin_private_root(&pinned_path)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         Ok(Self {
             root,
             root_dir: Arc::new(root_dir),
@@ -133,7 +133,7 @@ impl ReplayStore {
                 crate::secure_fs::ensure_private_dir(&first, Path::new(&second_name))
             })
             .await
-            .map_err(|error| std::io::Error::other(error))??,
+            .map_err(std::io::Error::other)??,
         ))
     }
 
@@ -148,7 +148,7 @@ impl ReplayStore {
                 crate::secure_fs::open_private_dir(&first, Path::new(&second_name))
             })
             .await
-            .map_err(|error| std::io::Error::other(error))??,
+            .map_err(std::io::Error::other)??,
         ))
     }
 
@@ -185,7 +185,7 @@ impl ReplayStore {
             crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         let mut temp = tokio::fs::File::from_std(temp);
         let mut hasher = Sha256::new();
         let mut received = 0_u64;
@@ -281,7 +281,7 @@ impl ReplayStore {
             crate::secure_fs::open_regular_file(&opened_directory, Path::new(&opened_name))
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         let mut file = tokio::fs::File::from_std(file);
         let opened = file.metadata().await?;
         if !opened.is_file() || opened.len() != expected_bytes {
@@ -340,7 +340,7 @@ impl ReplayStore {
                     crate::secure_fs::ensure_private_dir(&root, Path::new(".purge"))
                 })
                 .await
-                .map_err(|error| std::io::Error::other(error))??,
+                .map_err(std::io::Error::other)??,
             )
         };
         let quarantine_name = format!("{}-{}.rhrec", claim_token, hex::encode(digest));
@@ -384,7 +384,7 @@ impl ReplayStore {
             crate::secure_fs::sync_private_dir(&rename_purge)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         Ok(self.root.join(".purge").join(quarantine_name))
     }
 
@@ -416,7 +416,7 @@ impl ReplayStore {
             crate::secure_fs::sync_private_dir(&purge)
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         Ok(())
     }
 
@@ -540,7 +540,7 @@ impl ReplayStore {
             Ok::<_, std::io::Error>(entries.into_values().collect::<Vec<_>>())
         })
         .await
-        .map_err(|error| std::io::Error::other(error))??;
+        .map_err(std::io::Error::other)??;
         for entry in &entries {
             drop(self.open_verified(&entry.sha256, entry.bytes).await?);
         }

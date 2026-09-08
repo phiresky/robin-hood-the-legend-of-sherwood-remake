@@ -1404,6 +1404,7 @@ fn validate_multiplayer_launch_args(args: &crate::main_entry::CliArgs) -> Result
     Ok(())
 }
 
+#[cfg(any(test, feature = "multiplayer"))]
 fn validate_preflighted_content(
     expected_bytes: Option<&[u8]>,
     offered: Option<&robin_engine::multiplayer::DistributedModOffer>,
@@ -1778,7 +1779,7 @@ mod tests {
             })
             .expect("queue reconnect snapshot");
         let mut rewind = RewindBuffer::new();
-        let mut hashes = std::collections::BTreeMap::from([(36, 0xBAD5_EED)]);
+        let mut hashes = std::collections::BTreeMap::from([(36, 0x0BAD_5EED)]);
         let mut pending = std::collections::BTreeMap::from([(
             super::TimelineFrame::from_wire(36),
             vec![PlayerInput::new(PlayerId(2), PlayerCommand::CrouchDown)],

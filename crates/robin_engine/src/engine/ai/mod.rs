@@ -1396,6 +1396,7 @@ pub(super) fn build_potential_detectables(engine: &EngineInner) -> Vec<Potential
 /// - Royalist civilian: detects PCs.
 /// - Lacklandist civilian (hostile civ): detects PCs.
 /// - Custom soldier: detects PCs and soldiers of every other allegiance.
+#[cfg(test)]
 pub(super) fn build_detectable_enemies_for(
     self_camp: Camp,
     self_is_civilian: bool,

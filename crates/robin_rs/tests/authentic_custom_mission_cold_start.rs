@@ -169,12 +169,12 @@ fn resolve_package_pin<'a>(
             "{id} mission archive SHA differs from authoritative case"
         ));
     }
-    if let Some(shared) = &case.shared_library_archive {
-        if manifest.shared_archive.sha256 != authority_archive_hash(authority, shared)? {
-            return Err(format!(
-                "{id} shared library SHA differs from authoritative case"
-            ));
-        }
+    if let Some(shared) = &case.shared_library_archive
+        && manifest.shared_archive.sha256 != authority_archive_hash(authority, shared)?
+    {
+        return Err(format!(
+            "{id} shared library SHA differs from authoritative case"
+        ));
     }
     // Cases without a shared archive carry their own libraries. Production
     // admission ignores the caller's shared fallback for those exact ZIPs.
@@ -883,7 +883,7 @@ fn package_for_row(
     .unwrap_or_else(|error| panic!("{} embedded package failed: {error}", row.name));
     assert_eq!(
         hex_hash(&package.sha256),
-        expected_package_hash(&manifest, row),
+        expected_package_hash(manifest, row),
         "{} canonical package identity",
         row.name
     );

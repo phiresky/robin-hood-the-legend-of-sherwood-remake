@@ -429,9 +429,7 @@ impl ApplicationReceiptWatcher {
         Ok(())
     }
 
-    pub(crate) fn take_notice(&mut self) -> Option<ReceiptWatcherNotice> {
-        self.notices.pop_front()
-    }
+    // TODO: Connect application receipt notices to the frontend notification UI.
 
     fn ensure_loaded(&mut self) -> Result<(), ReceiptWatcherError> {
         if self.watcher.is_some() {

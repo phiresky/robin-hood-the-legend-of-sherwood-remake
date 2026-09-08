@@ -153,8 +153,10 @@ mod tests {
             Ok(super::super::GameCode::LevelSucceeded),
             Err("mission setup failed".into()),
         ] {
-            let mut campaign = Campaign::default();
-            campaign.current_mission_idx = Some(7);
+            let campaign = Campaign {
+                current_mission_idx: Some(7),
+                ..Default::default()
+            };
             let expected = format!(
                 "mission save retirement failed: autosave failed; mission result: {original:?}"
             );

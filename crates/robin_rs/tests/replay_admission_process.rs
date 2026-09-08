@@ -83,10 +83,13 @@ fn cold_native_worker_accepts_only_the_exact_current_compact_artifact() {
 
 #[test]
 fn contained_worker_rejects_nested_campaign_allocation_amplification_and_survives() {
-    let mut campaign = robin_engine::campaign::Campaign::default();
-    campaign.peasant_names = vec!["x".repeat(
-        robin_rs::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_typed_string_bytes + 1,
-    )];
+    let campaign = robin_engine::campaign::Campaign {
+        peasant_names: vec!["x".repeat(
+            robin_rs::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS.max_typed_string_bytes
+                + 1,
+        )],
+        ..Default::default()
+    };
     let compact = robin_rs::replay_format::encode_compact(
         &current_replay_with_campaign(campaign),
         robin_rs::replay_format::ENGINE_VERSION_HASH,

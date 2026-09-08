@@ -3810,8 +3810,10 @@ mod tests {
 
     #[test]
     fn classic_apple_rule_keeps_a_swordfighter_engaged() {
-        let mut config = crate::engine::SimConfig::default();
-        config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+        let config = crate::engine::SimConfig {
+            item_gameplay: crate::gameplay_config::ItemGameplayConfig::classic(),
+            ..Default::default()
+        };
         let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
         let mut ai = EnemyAi::new(1);
         ai.set_state(AiState::Attacking, Substate::AttackingSwordfight);
@@ -3836,8 +3838,10 @@ mod tests {
 
     #[test]
     fn rebalanced_apple_interrupts_then_owns_the_fighter_state() {
-        let mut config = crate::engine::SimConfig::default();
-        config.item_gameplay = crate::gameplay_config::ItemGameplayConfig::classic();
+        let mut config = crate::engine::SimConfig {
+            item_gameplay: crate::gameplay_config::ItemGameplayConfig::classic(),
+            ..Default::default()
+        };
         config.item_gameplay.apple_combat_interrupt = true;
         let sim = crate::sim_rng::SimulationContext::with_seed_and_config(7, config);
         let mut ai = EnemyAi::new(1);

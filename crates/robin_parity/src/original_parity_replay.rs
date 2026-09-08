@@ -309,6 +309,7 @@ impl TraceSimConfig {
             gesture_quality_damage: false,
             // Shared-vision fog is also a post-port gameplay rule.
             fog_of_war: false,
+            reversible_background_patches: false,
             script_enabled: self.script_enabled,
             highlander: self.highlander,
             highlander2: self.highlander2,
@@ -4162,7 +4163,7 @@ fn replay_campaign_run_id(trace_path: &Path, session_index: u32) -> u64 {
         .strip_suffix(TRACE_NATIVE_SUFFIX)
         .unwrap_or(&file_name);
     let session_suffix = format!("-session-{session_index:04}");
-    let logical_stem = file_name.strip_suffix(".jsonl.zst").unwrap_or(&file_name);
+    let logical_stem = file_name.strip_suffix(".jsonl.zst").unwrap_or(file_name);
     let recording_family = logical_stem
         .strip_suffix(&session_suffix)
         .unwrap_or(logical_stem);
@@ -6625,6 +6626,22 @@ fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity
     }
 }
 
+/// Wraps a Rust entity id so its `Debug` rendering also carries the original-game
+/// trace index it was mapped from, e.g. `Pc(PcId(174))[orig:171]`.
+///
+/// The divergence report is read alongside `--dump-entity` (Original indices)
+/// and the Original's own `[DBG]` logs; the id spaces frequently differ.
+struct EntityLabel {
+    id: robin_engine::entity_id::EntityId,
+    original_index: u32,
+}
+
+impl std::fmt::Debug for EntityLabel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}[orig:{}]", self.id, self.original_index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7902,7 +7919,7 @@ mod tests {
         assert_eq!(TRACE_NATIVE_LEGACY_VERSION, 67);
         assert_eq!(TRACE_NATIVE_VERSION, 68);
         assert_eq!(TRACE_NATIVE_ZSTD_LEVEL, 19);
-        assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING);
+        const { assert!(!TRACE_NATIVE_LONG_DISTANCE_MATCHING) };
         assert_eq!(TRACE_NATIVE_BLOCK_RECORDS, 32);
         assert_eq!(TRACE_NATIVE_WINDOW_LOG, 26);
         assert_eq!(
@@ -10838,7 +10855,14 @@ mod tests {
             valid: false,
             waypoints: vec![request.goal],
         };
-        assert!(compare_path_events(&[expected.clone()], &[actual.clone()], &map).is_empty());
+        assert!(
+            compare_path_events(
+                std::slice::from_ref(&expected),
+                std::slice::from_ref(&actual),
+                &map
+            )
+            .is_empty()
+        );
 
         let mismatched = robin_engine::pathfinder::ParityPathEvent::Completed {
             request,
@@ -11351,7 +11375,7 @@ mod tests {
         });
         let actual = serde_json::json!({
             "position": {
-                "world": {"bits": 1, "value": 1.4012984643248171e-45}
+                "world": {"bits": 1, "value": 1.401_298_464_324_817e-45}
             },
             "rust_only_diagnostic": true
         });
@@ -12569,10 +12593,10 @@ mod tests {
         };
         let target = TracePoint {
             x: TraceFloat {
-                bits: 2607.467_041_f32.to_bits(),
+                bits: 2_607.467_f32.to_bits(),
             },
             y: TraceFloat {
-                bits: 881.610_474_f32.to_bits(),
+                bits: 881.610_5_f32.to_bits(),
             },
         };
         let command = TraceCommand::DropAleAt {
@@ -12632,10 +12656,10 @@ mod tests {
         };
         let target = TracePoint {
             x: TraceFloat {
-                bits: 2607.467_041_f32.to_bits(),
+                bits: 2_607.467_f32.to_bits(),
             },
             y: TraceFloat {
-                bits: 881.610_474_f32.to_bits(),
+                bits: 881.610_5_f32.to_bits(),
             },
         };
 
@@ -12660,10 +12684,10 @@ mod tests {
         };
         let target = TracePoint {
             x: TraceFloat {
-                bits: 2607.467_041_f32.to_bits(),
+                bits: 2_607.467_f32.to_bits(),
             },
             y: TraceFloat {
-                bits: 881.610_474_f32.to_bits(),
+                bits: 881.610_5_f32.to_bits(),
             },
         };
         let mut event = drop_ale_route_fixture(actor, target);
@@ -12703,10 +12727,10 @@ mod tests {
         };
         let target = TracePoint {
             x: TraceFloat {
-                bits: 2607.467_041_f32.to_bits(),
+                bits: 2_607.467_f32.to_bits(),
             },
             y: TraceFloat {
-                bits: 881.610_474_f32.to_bits(),
+                bits: 881.610_5_f32.to_bits(),
             },
         };
         let command = TraceCommand::DropAleAt {
@@ -12946,21 +12970,5 @@ mod tests {
             frames.into_iter().collect::<Vec<_>>(),
             (17..50).collect::<Vec<_>>()
         );
-    }
-}
-
-/// Wraps a Rust entity id so its `Debug` rendering also carries the original-game
-/// trace index it was mapped from, e.g. `Pc(PcId(174))[orig:171]`.
-///
-/// The divergence report is read alongside `--dump-entity` (Original indices)
-/// and the Original's own `[DBG]` logs; the id spaces frequently differ.
-struct EntityLabel {
-    id: robin_engine::entity_id::EntityId,
-    original_index: u32,
-}
-
-impl std::fmt::Debug for EntityLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}[orig:{}]", self.id, self.original_index)
     }
 }

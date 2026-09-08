@@ -279,10 +279,7 @@ fn clipped_dot_blit(
         _ => return None,
     };
 
-    let map_pos = match mm.real_to_map(world_pos, level_size) {
-        Some(p) => p,
-        None => return None,
-    };
+    let map_pos = mm.real_to_map(world_pos, level_size)?;
 
     // Centre the sprite on the converted position.
     let top_left = engine_coordinates::ScreenPoint::new(

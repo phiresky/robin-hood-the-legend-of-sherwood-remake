@@ -42,6 +42,7 @@ fn load_or_create_seed_at(path: &Path) -> Result<[u8; 32], String> {
     let lock_path = parent.join(format!("{IDENTITY_KEY_FILE}.lock"));
     let lock = std::fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&lock_path)
@@ -52,6 +53,8 @@ fn load_or_create_seed_at(path: &Path) -> Result<[u8; 32], String> {
     match read_seed(path) {
         Ok(seed) => Ok(seed),
         Err(ReadSeedError::NotFound) => {
+            // Identity creation is outside simulation and requires fresh cryptographic entropy.
+            #[allow(clippy::disallowed_methods)]
             let seed = rand::random::<[u8; 32]>();
             write_new_seed(path, &seed)?;
             tracing::info!(path = %path.display(), "generated new durable game identity key");

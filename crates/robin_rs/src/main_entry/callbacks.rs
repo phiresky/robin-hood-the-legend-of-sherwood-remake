@@ -897,6 +897,293 @@ pub(crate) fn perform_pending_save_load(
 
 // ─── Resource helpers ───────────────────────────────────────────────
 
+/// Upload a 16-bit RGB565 Picture into a new renderer surface.
+pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
+    let pixels: Vec<u16> = pic
+        .data
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    renderer
+        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
+        .expect("picture_to_surface: decoded picture dimensions must match RGB565 payload")
+}
+
+// ─── Top-level entry ────────────────────────────────────────────────
+
+/// Detect demo mode at runtime by checking for demo mission files.
+/// Returns `(mission_name, proto_name, pc_string, location)` if a demo is detected.
+pub(crate) fn detect_demo_mode_with_context(
+    application_context: &ApplicationContext,
+) -> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
+    let files = application_context
+        .preparation_files()
+        .expect("demo detection requires explicit resource authority");
+    let resolve = |path: &str| {
+        files
+            .try_exists(path)
+            .unwrap_or_else(|status| panic!("demo asset lookup failed for {path}: {status}"))
+    };
+    let shipping_has_level = |mission: &str| {
+        application_context
+            .shipping()
+            .expect("demo detection requires an initialized ApplicationContext")
+            .is_some_and(|dd| dd.has_mission(mission))
+    };
+    if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
+        // Leicester demo — R=Robin, J=Jean, M=Marianne, T=Tuck, F=Ferris.
+        Some((
+            "Dem_Lei_MP",
+            "Leicester",
+            "RJMTF",
+            MissionLocation::Leicester,
+        ))
+    } else if resolve("Data/Levels/Demo_Lin.rhm") || shipping_has_level("Demo_Lin") {
+        // Lincoln demo — R=Robin, S=Stutely, A/B/C=Peasants
+        Some(("Demo_Lin", "Lincoln", "RSABC", MissionLocation::Lincoln))
+    } else {
+        None
+    }
+}
+
+/// Resolve the loading screen `.pak` file path.
+///
+/// First probes `Data/Levels/<ambience:%02u>/<proto_level_filename>.pak`,
+/// falling back to `Data/Interface/Loading.pak` when the per-ambience file
+/// is missing. Returns `None` when neither exists.
+///
+/// `proto_level_filename` comes from the mission's profile. The caller
+/// threads it from `campaign_ref.missions[mission_idx].profile(..)`.
+///
+/// `ambience` is the raw ambience bitmask (1=Day, 2=Fog, 4=Night) read
+/// from the `.rhm` header. The loading screen is shown *before* opening
+/// the mission file, so the precise ambience isn't known yet — pass
+/// `None` and we probe each candidate (`01`, `02`, `04`) in turn. Only
+/// one ambience pak ever ships per mission, so the probe degenerates to
+/// the same answer as an exact lookup.
+pub(crate) fn resolve_loading_pak(
+    application_context: &ApplicationContext,
+    proto_level_filename: Option<&str>,
+    ambience: Option<u32>,
+) -> Option<String> {
+    let shipping = application_context
+        .shipping()
+        .expect("loading pak resolution requires an initialized ApplicationContext");
+    let data_asset_exists = |path: &str| {
+        if application_context
+            .preparation_files()
+            .expect("loading pak resolution requires explicit resource authority")
+            .try_exists(path)
+            .unwrap_or_else(|status| panic!("loading asset lookup failed for {path}: {status}"))
+        {
+            return true;
+        }
+        let normalized = path.replace('\\', "/").to_ascii_lowercase();
+        let key = normalized.strip_prefix("data/").unwrap_or(&normalized);
+        shipping.is_some_and(|dd| dd.localized_pak(key).is_some())
+    };
+
+    if let Some(proto) = proto_level_filename {
+        // Day=1, Fog=2, Night=4. Probe all three when the caller doesn't
+        // have the exact ambience yet; only one mission-specific pak
+        // exists per mission, so the result matches an exact lookup
+        // either way.
+        let single = ambience.map(|a| [a]);
+        let candidates: &[u32] = match single.as_ref() {
+            Some(arr) => arr,
+            None => &[1, 2, 4],
+        };
+        for &amb in candidates {
+            let candidate = format!("Data/Levels/{:02}/{}.pak", amb, proto);
+            if data_asset_exists(&candidate) {
+                tracing::info!("Loading screen .pak: using mission-specific {candidate}");
+                return Some(candidate);
+            }
+        }
+    }
+    let default_path = "Data/Interface/Loading.pak";
+    if data_asset_exists(default_path) {
+        Some(default_path.to_string())
+    } else {
+        tracing::info!("Loading screen .pak not found at {}", default_path);
+        None
+    }
+}
+
+pub(super) fn force_mission_launch(
+    campaign: &mut Campaign,
+    profiles: &mut std::sync::Arc<ProfileManager>,
+    application_context: &ApplicationContext,
+    args: &CliArgs,
+) -> Result<Option<(usize, MissionLocation)>, String> {
+    let Some(mission_name) = args.mission.as_deref() else {
+        return Ok(None);
+    };
+    let proto_name = args
+        .proto
+        .clone()
+        .or_else(|| {
+            profiles
+                .missions
+                .iter()
+                .find(|profile| profile.mission_filename.eq_ignore_ascii_case(mission_name))
+                .map(|profile| profile.proto_level_filename.clone())
+        })
+        .unwrap_or_else(|| mission_name.to_owned());
+
+    tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
+
+    let profiles_mut = std::sync::Arc::make_mut(profiles);
+    if args.preserve_forced_mission_campaign {
+        let idx = campaign
+            .current_mission_idx
+            .ok_or_else(|| "preserved capture campaign has no current mission".to_owned())?;
+        let profile = campaign.missions[idx].profile(profiles_mut);
+        if !profile.mission_filename.eq_ignore_ascii_case(mission_name)
+            || !profile
+                .proto_level_filename
+                .eq_ignore_ascii_case(&proto_name)
+        {
+            return Err(format!(
+                "preserved capture campaign mission {}/{} disagrees with requested {mission_name}/{proto_name}",
+                profile.mission_filename, profile.proto_level_filename
+            ));
+        }
+        return Ok(Some((idx, profile.location)));
+    }
+    campaign.reset(profiles_mut, application_context.sim_config().difficulty);
+    if robin_engine::level_data::hackable_level_exists(mission_name) {
+        // Hackable JSON levels are not part of the legacy campaign and
+        // therefore have no preceding mission from which to inherit a gang.
+        campaign.create_gang_from_pcs(
+            "R",
+            profiles_mut,
+            application_context.sim_config().difficulty,
+        );
+    }
+    if args.mission_start_map_output.is_some() {
+        // Use the walkthrough's practical campaign teams where it gives one.
+        // For optional missions, derive the recruited heroes from prerequisite
+        // history and fill the remaining slots with useful Merry Men. This
+        // avoids injecting heroes who cannot exist yet while still producing
+        // representative maps beyond the Robin-only opening mission.
+        // TODO(export-team): accept a campaign save/team preset when callers
+        // need an exact player-selected lineup.
+        let export_pcs = detect_demo_mode_with_context(application_context)
+            .filter(|(demo_mission, _, _, _)| demo_mission.eq_ignore_ascii_case(mission_name))
+            .map(|(_, _, pcs, _)| Ok(pcs.to_owned()))
+            .unwrap_or_else(|| recommended_export_team(profiles_mut, mission_name))?;
+        campaign.create_gang_from_pcs(
+            &export_pcs,
+            profiles_mut,
+            application_context.sim_config().difficulty,
+        );
+    }
+    let idx = campaign
+        .force_next_mission_by_name(profiles_mut, mission_name, &proto_name, true)
+        .ok_or_else(|| {
+            format!("--mission: failed to force mission `{mission_name}` with proto `{proto_name}`")
+        })?;
+    campaign.current_mission_idx = Some(idx);
+    let location = campaign.missions[idx].profile(profiles_mut).location;
+
+    Ok(Some((idx, location)))
+}
+
+/// Pick a plausible team for a context-free mission-map export.
+///
+/// Codes follow `Campaign::create_gang_from_pcs`. The fixed entries are the
+/// recommendations in Steven W. Carter's retail walkthrough. Optional
+/// ambush/tactical missions have no per-map recommendations, so their roster
+/// is inferred from completed prerequisite missions instead.
+pub(super) fn recommended_export_team(
+    profiles: &robin_engine::profiles::ProfileManager,
+    mission_filename: &str,
+) -> Result<String, String> {
+    let fixed = match mission_filename.to_ascii_lowercase().as_str() {
+        // The original final-outro launcher selects every VIP in the gang.
+        // The mission prerequisite graph only describes reachability, not all
+        // rescued heroes, so deriving this roster would omit required PCs.
+        "sherwoodoutro" => Some("RJTSWM"),
+        "h01_lin_vl" | "s01_not_vl" => Some("R"),
+        "s02_lei_mp" | "h02_not_ec" | "h03_der_mk" | "s03_fob_mp" | "h04_lei_vl" => Some("RSBC"),
+        "h05_lin_ec" => Some("RSWBC"),
+        "s04_der_ec" => Some("RJSB"),
+        "h07_not_mk" => Some("R"),
+        "str02_der_mp" => Some("RJWTB"),
+        "s05_yrk_ec" => Some("RJTB"),
+        "h09_not_vl" => Some("MJTB"),
+        "h10_yor_vl" | "str03_yor_mk" => Some("RJTMB"),
+        "h12_not_mp" => Some("RJTMW"),
+        _ => None,
+    };
+    if let Some(team) = fixed {
+        return Ok(team.to_owned());
+    }
+
+    let target = profiles
+        .missions
+        .iter()
+        .find(|profile| {
+            profile
+                .mission_filename
+                .eq_ignore_ascii_case(mission_filename)
+        })
+        .ok_or_else(|| {
+            format!("mission-map team: no mission profile found for {mission_filename:?}")
+        })?;
+
+    let mut completed = std::collections::HashSet::new();
+    let mut pending = target.missions_required_to_be_done.clone();
+    while let Some(id) = pending.pop() {
+        if !completed.insert(id) {
+            continue;
+        }
+        let profile = profiles
+            .missions
+            .iter()
+            .find(|profile| profile.id == id)
+            .ok_or_else(|| {
+                format!(
+                    "mission-map team: prerequisite mission profile id {id} referenced by {:?} was not found",
+                    target.mission_filename
+                )
+            })?;
+        pending.extend(profile.missions_required_to_be_done.iter().copied());
+    }
+
+    let recruited = |rescue_filename: &str| {
+        profiles.missions.iter().any(|profile| {
+            profile
+                .mission_filename
+                .eq_ignore_ascii_case(rescue_filename)
+                && completed.contains(&profile.id)
+        })
+    };
+
+    // Prefer the guide's generally strongest/useful lineup. MerryManB is the
+    // healer and MerryManC the strong body-carrier used in early missions.
+    let mut team = String::from("R");
+    for (rescue, code) in [
+        ("S03_FoB_MP", 'J'),
+        ("S04_Der_EC", 'T'),
+        ("S05_Yrk_EC", 'M'),
+        ("S02_Lei_MP", 'W'),
+        ("S01_Not_VL", 'S'),
+    ] {
+        if recruited(rescue) && team.len() < 4 {
+            team.push(code);
+        }
+    }
+    team.push('B');
+    if team.len() < 5 {
+        team.push('C');
+    }
+    Ok(team)
+}
+
 #[cfg(test)]
 mod operation_outcome_tests {
     use super::*;
@@ -1213,291 +1500,4 @@ mod operation_outcome_tests {
         assert!(!next.restart_requested);
         assert!(next.restore.is_none());
     }
-}
-
-/// Upload a 16-bit RGB565 Picture into a new renderer surface.
-pub(crate) fn picture_to_surface(renderer: &mut Renderer, pic: &Picture) -> u32 {
-    let pixels: Vec<u16> = pic
-        .data
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
-    renderer
-        .create_surface_from_rgb565(pic.width, pic.height, &pixels)
-        .expect("picture_to_surface: decoded picture dimensions must match RGB565 payload")
-}
-
-// ─── Top-level entry ────────────────────────────────────────────────
-
-/// Detect demo mode at runtime by checking for demo mission files.
-/// Returns `(mission_name, proto_name, pc_string, location)` if a demo is detected.
-pub(crate) fn detect_demo_mode_with_context(
-    application_context: &ApplicationContext,
-) -> Option<(&'static str, &'static str, &'static str, MissionLocation)> {
-    let files = application_context
-        .preparation_files()
-        .expect("demo detection requires explicit resource authority");
-    let resolve = |path: &str| {
-        files
-            .try_exists(path)
-            .unwrap_or_else(|status| panic!("demo asset lookup failed for {path}: {status}"))
-    };
-    let shipping_has_level = |mission: &str| {
-        application_context
-            .shipping()
-            .expect("demo detection requires an initialized ApplicationContext")
-            .is_some_and(|dd| dd.has_mission(mission))
-    };
-    if resolve("Data/Levels/Dem_Lei_MP.rhm") || shipping_has_level("Dem_Lei_MP") {
-        // Leicester demo — R=Robin, J=Jean, M=Marianne, T=Tuck, F=Ferris.
-        Some((
-            "Dem_Lei_MP",
-            "Leicester",
-            "RJMTF",
-            MissionLocation::Leicester,
-        ))
-    } else if resolve("Data/Levels/Demo_Lin.rhm") || shipping_has_level("Demo_Lin") {
-        // Lincoln demo — R=Robin, S=Stutely, A/B/C=Peasants
-        Some(("Demo_Lin", "Lincoln", "RSABC", MissionLocation::Lincoln))
-    } else {
-        None
-    }
-}
-
-/// Resolve the loading screen `.pak` file path.
-///
-/// First probes `Data/Levels/<ambience:%02u>/<proto_level_filename>.pak`,
-/// falling back to `Data/Interface/Loading.pak` when the per-ambience file
-/// is missing. Returns `None` when neither exists.
-///
-/// `proto_level_filename` comes from the mission's profile. The caller
-/// threads it from `campaign_ref.missions[mission_idx].profile(..)`.
-///
-/// `ambience` is the raw ambience bitmask (1=Day, 2=Fog, 4=Night) read
-/// from the `.rhm` header. The loading screen is shown *before* opening
-/// the mission file, so the precise ambience isn't known yet — pass
-/// `None` and we probe each candidate (`01`, `02`, `04`) in turn. Only
-/// one ambience pak ever ships per mission, so the probe degenerates to
-/// the same answer as an exact lookup.
-pub(crate) fn resolve_loading_pak(
-    application_context: &ApplicationContext,
-    proto_level_filename: Option<&str>,
-    ambience: Option<u32>,
-) -> Option<String> {
-    let shipping = application_context
-        .shipping()
-        .expect("loading pak resolution requires an initialized ApplicationContext");
-    let data_asset_exists = |path: &str| {
-        if application_context
-            .preparation_files()
-            .expect("loading pak resolution requires explicit resource authority")
-            .try_exists(path)
-            .unwrap_or_else(|status| panic!("loading asset lookup failed for {path}: {status}"))
-        {
-            return true;
-        }
-        let normalized = path.replace('\\', "/").to_ascii_lowercase();
-        let key = normalized.strip_prefix("data/").unwrap_or(&normalized);
-        shipping.is_some_and(|dd| dd.localized_pak(key).is_some())
-    };
-
-    if let Some(proto) = proto_level_filename {
-        // Day=1, Fog=2, Night=4. Probe all three when the caller doesn't
-        // have the exact ambience yet; only one mission-specific pak
-        // exists per mission, so the result matches an exact lookup
-        // either way.
-        let single = ambience.map(|a| [a]);
-        let candidates: &[u32] = match single.as_ref() {
-            Some(arr) => arr,
-            None => &[1, 2, 4],
-        };
-        for &amb in candidates {
-            let candidate = format!("Data/Levels/{:02}/{}.pak", amb, proto);
-            if data_asset_exists(&candidate) {
-                tracing::info!("Loading screen .pak: using mission-specific {candidate}");
-                return Some(candidate);
-            }
-        }
-    }
-    let default_path = "Data/Interface/Loading.pak";
-    if data_asset_exists(default_path) {
-        Some(default_path.to_string())
-    } else {
-        tracing::info!("Loading screen .pak not found at {}", default_path);
-        None
-    }
-}
-
-pub(super) fn force_mission_launch(
-    campaign: &mut Campaign,
-    profiles: &mut std::sync::Arc<ProfileManager>,
-    application_context: &ApplicationContext,
-    args: &CliArgs,
-) -> Result<Option<(usize, MissionLocation)>, String> {
-    let Some(mission_name) = args.mission.as_deref() else {
-        return Ok(None);
-    };
-    let proto_name = args
-        .proto
-        .clone()
-        .or_else(|| {
-            profiles
-                .missions
-                .iter()
-                .find(|profile| profile.mission_filename.eq_ignore_ascii_case(mission_name))
-                .map(|profile| profile.proto_level_filename.clone())
-        })
-        .unwrap_or_else(|| mission_name.to_owned());
-
-    tracing::info!("--mission: launching `{mission_name}` with proto-level `{proto_name}`");
-
-    let profiles_mut = std::sync::Arc::make_mut(profiles);
-    if args.preserve_forced_mission_campaign {
-        let idx = campaign
-            .current_mission_idx
-            .ok_or_else(|| "preserved capture campaign has no current mission".to_owned())?;
-        let profile = campaign.missions[idx].profile(profiles_mut);
-        if !profile.mission_filename.eq_ignore_ascii_case(mission_name)
-            || !profile
-                .proto_level_filename
-                .eq_ignore_ascii_case(&proto_name)
-        {
-            return Err(format!(
-                "preserved capture campaign mission {}/{} disagrees with requested {mission_name}/{proto_name}",
-                profile.mission_filename, profile.proto_level_filename
-            ));
-        }
-        return Ok(Some((idx, profile.location)));
-    }
-    campaign.reset(profiles_mut, application_context.sim_config().difficulty);
-    if robin_engine::level_data::hackable_level_exists(mission_name) {
-        // Hackable JSON levels are not part of the legacy campaign and
-        // therefore have no preceding mission from which to inherit a gang.
-        campaign.create_gang_from_pcs(
-            "R",
-            profiles_mut,
-            application_context.sim_config().difficulty,
-        );
-    }
-    if args.mission_start_map_output.is_some() {
-        // Use the walkthrough's practical campaign teams where it gives one.
-        // For optional missions, derive the recruited heroes from prerequisite
-        // history and fill the remaining slots with useful Merry Men. This
-        // avoids injecting heroes who cannot exist yet while still producing
-        // representative maps beyond the Robin-only opening mission.
-        // TODO(export-team): accept a campaign save/team preset when callers
-        // need an exact player-selected lineup.
-        let export_pcs = detect_demo_mode_with_context(application_context)
-            .filter(|(demo_mission, _, _, _)| demo_mission.eq_ignore_ascii_case(mission_name))
-            .map(|(_, _, pcs, _)| Ok(pcs.to_owned()))
-            .unwrap_or_else(|| recommended_export_team(profiles_mut, mission_name))?;
-        campaign.create_gang_from_pcs(
-            &export_pcs,
-            profiles_mut,
-            application_context.sim_config().difficulty,
-        );
-    }
-    let idx = campaign
-        .force_next_mission_by_name(profiles_mut, mission_name, &proto_name, true)
-        .ok_or_else(|| {
-            format!("--mission: failed to force mission `{mission_name}` with proto `{proto_name}`")
-        })?;
-    campaign.current_mission_idx = Some(idx);
-    let location = campaign.missions[idx].profile(profiles_mut).location;
-
-    Ok(Some((idx, location)))
-}
-
-/// Pick a plausible team for a context-free mission-map export.
-///
-/// Codes follow `Campaign::create_gang_from_pcs`. The fixed entries are the
-/// recommendations in Steven W. Carter's retail walkthrough. Optional
-/// ambush/tactical missions have no per-map recommendations, so their roster
-/// is inferred from completed prerequisite missions instead.
-pub(super) fn recommended_export_team(
-    profiles: &robin_engine::profiles::ProfileManager,
-    mission_filename: &str,
-) -> Result<String, String> {
-    let fixed = match mission_filename.to_ascii_lowercase().as_str() {
-        // The original final-outro launcher selects every VIP in the gang.
-        // The mission prerequisite graph only describes reachability, not all
-        // rescued heroes, so deriving this roster would omit required PCs.
-        "sherwoodoutro" => Some("RJTSWM"),
-        "h01_lin_vl" | "s01_not_vl" => Some("R"),
-        "s02_lei_mp" | "h02_not_ec" | "h03_der_mk" | "s03_fob_mp" | "h04_lei_vl" => Some("RSBC"),
-        "h05_lin_ec" => Some("RSWBC"),
-        "s04_der_ec" => Some("RJSB"),
-        "h07_not_mk" => Some("R"),
-        "str02_der_mp" => Some("RJWTB"),
-        "s05_yrk_ec" => Some("RJTB"),
-        "h09_not_vl" => Some("MJTB"),
-        "h10_yor_vl" | "str03_yor_mk" => Some("RJTMB"),
-        "h12_not_mp" => Some("RJTMW"),
-        _ => None,
-    };
-    if let Some(team) = fixed {
-        return Ok(team.to_owned());
-    }
-
-    let target = profiles
-        .missions
-        .iter()
-        .find(|profile| {
-            profile
-                .mission_filename
-                .eq_ignore_ascii_case(mission_filename)
-        })
-        .ok_or_else(|| {
-            format!("mission-map team: no mission profile found for {mission_filename:?}")
-        })?;
-
-    let mut completed = std::collections::HashSet::new();
-    let mut pending = target.missions_required_to_be_done.clone();
-    while let Some(id) = pending.pop() {
-        if !completed.insert(id) {
-            continue;
-        }
-        let profile = profiles
-            .missions
-            .iter()
-            .find(|profile| profile.id == id)
-            .ok_or_else(|| {
-                format!(
-                    "mission-map team: prerequisite mission profile id {id} referenced by {:?} was not found",
-                    target.mission_filename
-                )
-            })?;
-        pending.extend(profile.missions_required_to_be_done.iter().copied());
-    }
-
-    let recruited = |rescue_filename: &str| {
-        profiles.missions.iter().any(|profile| {
-            profile
-                .mission_filename
-                .eq_ignore_ascii_case(rescue_filename)
-                && completed.contains(&profile.id)
-        })
-    };
-
-    // Prefer the guide's generally strongest/useful lineup. MerryManB is the
-    // healer and MerryManC the strong body-carrier used in early missions.
-    let mut team = String::from("R");
-    for (rescue, code) in [
-        ("S03_FoB_MP", 'J'),
-        ("S04_Der_EC", 'T'),
-        ("S05_Yrk_EC", 'M'),
-        ("S02_Lei_MP", 'W'),
-        ("S01_Not_VL", 'S'),
-    ] {
-        if recruited(rescue) && team.len() < 4 {
-            team.push(code);
-        }
-    }
-    team.push('B');
-    if team.len() < 5 {
-        team.push('C');
-    }
-    Ok(team)
 }

@@ -227,7 +227,7 @@ impl jxl::api::JxlParallelRunner for RayonJxlRunner {
         fun: &jxl::api::JxlParallelRunnerFun<'_>,
     ) -> std::result::Result<(), jxl::error::Error> {
         use rayon::prelude::*;
-        (0..num).into_par_iter().try_for_each(|index| fun(index))
+        (0..num).into_par_iter().try_for_each(fun)
     }
 }
 
@@ -617,7 +617,12 @@ impl Picture {
         let pixel_count = w * h;
         let mut data = vec![0u8; pixel_count * 2];
         let collapse_row = |dst_row: &mut [u8], src_row: &[u8]| {
-            for (dst, src) in dst_row.chunks_exact_mut(2).zip(src_row.chunks_exact(3)) {
+            for (dst, src) in dst_row
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(src_row.as_chunks::<3>().0.iter())
+            {
                 let r = src[0] as u16;
                 let g = src[1] as u16;
                 let b = src[2] as u16;

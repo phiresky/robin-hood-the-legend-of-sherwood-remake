@@ -428,7 +428,7 @@ fn validate_matrix_document_v1(matrix: &CampaignTemplateMatrixV1) -> Result<()> 
         );
         validate_relative_matrix_path_v1(&entry.path)?;
     }
-    for pair in matrix.entries.chunks_exact(2) {
+    for pair in matrix.entries.as_chunks::<2>().0 {
         ensure!(
             pair[0].rules_config_sha256 == pair[1].rules_config_sha256
                 && pair[0].requirement.edition == OfficialContentEditionV1::Demo

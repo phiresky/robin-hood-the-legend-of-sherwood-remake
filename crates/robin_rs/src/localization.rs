@@ -28,18 +28,14 @@ static ACTIVE_PROCESS_LOCALE: RwLock<Option<String>> = RwLock::new(None);
 /// Stable, application-global language choice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum LanguageSelection {
     /// Follow the operating-system/browser language when it is installed.
+    #[default]
     Auto,
     /// A canonical BCP-47 tag (`de-DE`, `pt-BR`, ...), or `und` for the
     /// international/neutral LCID 2047 data set.
     Locale(String),
-}
-
-impl Default for LanguageSelection {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Non-simulation language preferences.  `show_in_options` is intentionally

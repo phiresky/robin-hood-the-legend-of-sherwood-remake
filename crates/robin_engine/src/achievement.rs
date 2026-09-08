@@ -1085,15 +1085,11 @@ impl MissionAchievementState {
     bitcode::Decode,
 )]
 #[serde(try_from = "u8", into = "u8")]
+#[derive(Default)]
 pub enum AchievementRunKind {
+    #[default]
     Campaign = 0,
     CustomMission = 1,
-}
-
-impl Default for AchievementRunKind {
-    fn default() -> Self {
-        Self::Campaign
-    }
 }
 
 impl From<AchievementRunKind> for u8 {

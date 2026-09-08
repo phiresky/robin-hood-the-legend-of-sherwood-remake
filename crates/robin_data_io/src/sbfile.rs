@@ -117,7 +117,7 @@ impl SbFileSystem {
 
 fn next_reader_identity() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+    NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .expect("file authority identity exhausted")
 }
 
@@ -733,12 +733,11 @@ impl SbFileSystem {
         }
 
         // Direct path
-        if !official_strict {
-            if let Some(resolved) = resolve_case_insensitive(&self.physical_path(p))
-                && resolved.is_file()
-            {
-                return Some(resolved);
-            }
+        if !official_strict
+            && let Some(resolved) = resolve_case_insensitive(&self.physical_path(p))
+            && resolved.is_file()
+        {
+            return Some(resolved);
         }
 
         // Alternate paths
@@ -938,13 +937,13 @@ impl SbFileSystem {
             {
                 return Ok(SbFile::from_bytes(bytes, normalised.clone()));
             }
-            if !official_strict {
-                if let Some(bytes) = try_read(
+            if !official_strict
+                && let Some(bytes) = try_read(
                     self,
                     &Path::new(&locale_root).join(&normalised).to_string_lossy(),
-                )? {
-                    return Ok(SbFile::from_bytes(bytes, normalised.clone()));
-                }
+                )?
+            {
+                return Ok(SbFile::from_bytes(bytes, normalised.clone()));
             }
         }
 

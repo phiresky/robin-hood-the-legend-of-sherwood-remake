@@ -164,7 +164,7 @@ pub(super) fn transform_rhs(
         let mut costs: Vec<(f64, &String)> = Vec::new();
         let mut proxy_failed = false;
         for candidate in members {
-            let mut cost = match family_base_standalone_proxy(&holder, &member_orders[candidate]) {
+            let mut cost = match family_base_standalone_proxy(holder, &member_orders[candidate]) {
                 Some(bits) => bits,
                 None => {
                     proxy_failed = true;
@@ -176,7 +176,7 @@ pub(super) fn transform_rhs(
                     continue;
                 }
                 match family_base_pair_proxy(
-                    &holder,
+                    holder,
                     &member_orders[candidate],
                     &member_orders[member],
                 ) {
@@ -237,7 +237,7 @@ pub(super) fn transform_rhs(
                     continue;
                 }
                 match family_base_pair_proxy(
-                    &holder,
+                    holder,
                     &member_orders[candidate],
                     &member_orders[member],
                 ) {
@@ -525,8 +525,8 @@ pub(super) fn transform_rhs(
             .par_iter()
             .map(|(rel, prep)| {
                 let (payload, rle_stats) = build_rhs_chunk_payload(
-                    &holder,
-                    dict_remaps.as_deref(),
+                    holder,
+                    dict_remaps,
                     rel,
                     prep,
                     opts.rle_sprite_format,

@@ -483,7 +483,7 @@ impl OptionsTaskState {
         renderer: &mut Renderer,
         resources: &IngameMenuResources,
         cursor: Option<&ModalCursor<'_>>,
-        mut sound_manager: Option<&mut SoundManager>,
+        sound_manager: Option<&mut SoundManager>,
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
@@ -617,12 +617,7 @@ impl OptionsTaskState {
             let widget_input = self.input.as_widget_input();
             let widget_events = self.frame.process_input(&widget_input);
             self.input.end_frame();
-            play_button_noise(
-                &widget_events,
-                sound_manager.as_deref_mut(),
-                audio_backend,
-                sample_loader,
-            );
+            play_button_noise(&widget_events, sound_manager, audio_backend, sample_loader);
             if let Some(id) = widget_bridge::find_activated(&widget_events)
                 && let Some(outcome) = self.activate(
                     id as usize,
@@ -652,9 +647,7 @@ impl OptionsTaskState {
         resources: &IngameMenuResources,
     ) -> Option<UiTaskOutcome> {
         self.selected = index.min(self.rows.len().saturating_sub(1));
-        let Some(row) = self.rows.get(self.selected).cloned() else {
-            return None;
-        };
+        let row = self.rows.get(self.selected).cloned()?;
         if !row.enabled {
             return None;
         }
@@ -2020,7 +2013,7 @@ mod tests {
             let column_index = visible_index % 6;
             let x = if visible_index < 6 { 30 } else { 320 };
             let y = OPTIONS_SETTING_ROW_START_Y + column_index as i32 * (row_height + BUTTON_GAP);
-            assert!(x >= 0 && x < 640);
+            assert!((0..640).contains(&x));
             assert!(y >= OPTIONS_SETTING_ROW_START_Y && y + row_height < 350);
         }
         let manage = (320, SPELLFORGE_CONTENT_BUTTON_Y, 290, row_height);

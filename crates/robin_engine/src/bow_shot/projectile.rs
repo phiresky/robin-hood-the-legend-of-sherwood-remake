@@ -1284,6 +1284,7 @@ pub fn tick_arrow(
 
 /// Production variant of [`tick_arrow`] whose actor collision scans follow
 /// The original game's combined actor order.
+#[cfg(test)]
 pub(crate) fn tick_arrow_in_actor_order(
     sim: &crate::sim_rng::SimulationContext,
     entities: &mut Entities,

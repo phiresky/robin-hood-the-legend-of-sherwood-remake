@@ -6278,15 +6278,13 @@ impl EnemyAi {
             }
 
             // Turned: if detecting target, make battle decisions; else overview.
-            Substate::FleeingRetireFromCombatTurn => {
-                if stimulus_type == StimulusType::EventDone {
-                    if self.base.primary_target.is_some_and(|primary_target| {
-                        self.is_detecting_180_degrees(primary_target, ctx)
-                    }) {
-                        self.battle_decisions(sim, global, ctx, tick, grid);
-                    } else {
-                        self.get_battle_overview(0, ctx, tick);
-                    }
+            Substate::FleeingRetireFromCombatTurn if stimulus_type == StimulusType::EventDone => {
+                if self.base.primary_target.is_some_and(|primary_target| {
+                    self.is_detecting_180_degrees(primary_target, ctx)
+                }) {
+                    self.battle_decisions(sim, global, ctx, tick, grid);
+                } else {
+                    self.get_battle_overview(0, ctx, tick);
                 }
             }
 

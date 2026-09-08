@@ -4380,6 +4380,7 @@ fn non_sprite_movement_motion(action: OrderType) -> Option<MotionState> {
 /// characters want the same slot, the one farthest from the click gets it
 /// (the "worst placed" heuristic). The loop repeats until all characters
 /// are assigned.
+#[cfg(test)]
 pub(crate) fn circular_dispatch_destinations(
     pc_positions: &[MapPoint],
     click_point: MapPoint,
@@ -4399,6 +4400,7 @@ pub(crate) fn circular_dispatch_destinations(
 }
 
 /// Generate Original's actor-indexed circular candidates before authorization.
+#[cfg(test)]
 pub(in crate::engine) fn circular_dispatch_candidate_points(
     n: usize,
     click_point: MapPoint,

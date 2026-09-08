@@ -7,12 +7,14 @@ use super::*;
 
 /// Build a minimal soldier entity for posture / command tests.
 pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
-    let mut soldier_data = crate::element::SoldierData::default();
     // A directly constructed test soldier stands in for a loaded enemy
     // soldier. Production loading always supplies an allegiance; leaving the
     // sentinel `Camp::Error` here makes unrelated full-engine fixtures
     // invalid as soon as they exercise diplomacy-aware combat scans.
-    soldier_data.cached_camp = crate::element::Camp::Lacklandists;
+    let soldier_data = crate::element::SoldierData {
+        cached_camp: crate::element::Camp::Lacklandists,
+        ..Default::default()
+    };
     let mut entity = Entity::Soldier(crate::element::ActorSoldier {
         element: {
             let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
@@ -32,9 +34,11 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
 
 /// Build a minimal civilian entity for NPC-translate tests.
 pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
-    let mut civilian_data = crate::element::CivilianData::default();
     // Loaded civilian profiles likewise always provide a real allegiance.
-    civilian_data.cached_camp = crate::element::Camp::Royalists;
+    let civilian_data = crate::element::CivilianData {
+        cached_camp: crate::element::Camp::Royalists,
+        ..Default::default()
+    };
     let mut entity = Entity::Civilian(crate::element::ActorCivilian {
         element: {
             let mut initial_element = crate::element::ElementData::from_initial_posture(posture);

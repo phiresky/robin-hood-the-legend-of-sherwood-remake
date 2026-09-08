@@ -721,7 +721,7 @@ fn render_campaign_progress(
             CampaignPresentationMode::SherwoodMuseum => format!(
                 "Sherwood Hall of Deeds - Gallery {}/{}",
                 selected / 16 + 1,
-                (graph.nodes.len() + 15) / 16
+                graph.nodes.len().div_ceil(16)
             ),
             CampaignPresentationMode::ClassicMap => unreachable!(),
         };

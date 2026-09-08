@@ -187,7 +187,6 @@ impl HostAuthorizationPort {
                 }
                 Ok(io
                     .published_request
-                    .clone()
                     .expect("publication fixture needs a request"))
             }
         }
