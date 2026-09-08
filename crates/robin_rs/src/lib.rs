@@ -287,6 +287,8 @@ pub mod replay_format;
 pub mod rewind;
 pub mod rollback_checker;
 pub mod save_file;
+pub mod save_operation;
+pub mod save_recovery;
 pub mod savegame;
 pub mod settings;
 pub mod shadow_polygon;

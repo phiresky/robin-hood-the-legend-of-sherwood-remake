@@ -124,7 +124,11 @@ pub async fn run_rust_game(
                 pending.paused,
             )
             .await?;
-        let mut callbacks = RustCallbacks::new(application_context.clone());
+        let Some(mut callbacks) =
+            RustCallbacks::new_for_window(application_context.clone(), window).await?
+        else {
+            return Ok(0);
+        };
         let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
@@ -155,7 +159,11 @@ pub async fn run_rust_game(
                 false,
             )
             .await?;
-        let mut callbacks = RustCallbacks::new(application_context.clone());
+        let Some(mut callbacks) =
+            RustCallbacks::new_for_window(application_context.clone(), window).await?
+        else {
+            return Ok(0);
+        };
         let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
@@ -183,7 +191,11 @@ pub async fn run_rust_game(
     if let Some((idx, location)) =
         force_mission_launch(&mut campaign, &mut profiles, &application_context, args)?
     {
-        let mut callbacks = RustCallbacks::new(application_context.clone());
+        let Some(mut callbacks) =
+            RustCallbacks::new_for_window(application_context.clone(), window).await?
+        else {
+            return Ok(0);
+        };
         let mission_args = args.clone();
         let sim_config = crate::game_session::initial_sim_config(args);
         // Transfer the sole prepared overlay lease into the direct loop. A
@@ -222,7 +234,11 @@ pub async fn run_rust_game(
         campaign.add_all_to_mission_team();
         // Demo mission is index 1 (index 0 = Sherwood)
         campaign.current_mission_idx = Some(1);
-        let mut callbacks = RustCallbacks::new(application_context.clone());
+        let Some(mut callbacks) =
+            RustCallbacks::new_for_window(application_context.clone(), window).await?
+        else {
+            return Ok(0);
+        };
         let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
@@ -249,7 +265,11 @@ pub async fn run_rust_game(
         campaign.reset(&profiles, application_context.sim_config().difficulty);
         campaign.force_next_mission(0);
         campaign.current_mission_idx = Some(0);
-        let mut callbacks = RustCallbacks::new(application_context.clone());
+        let Some(mut callbacks) =
+            RustCallbacks::new_for_window(application_context.clone(), window).await?
+        else {
+            return Ok(0);
+        };
         let outcome = Box::pin(run_mission(
             window,
             &mut callbacks,
@@ -327,7 +347,14 @@ pub async fn run_rust_game(
                             format!("demo mission `{mission_name}` is present in data but missing from campaign")
                         })?;
                     campaign.current_mission_idx = Some(idx);
-                    let mut callbacks = RustCallbacks::new(application_context.clone());
+                    let Some(mut callbacks) =
+                        RustCallbacks::new_for_window(application_context.clone(), window).await?
+                    else {
+                        if window.close_requested {
+                            return Ok(0);
+                        }
+                        continue;
+                    };
                     let outcome = Box::pin(run_mission(
                         window,
                         &mut callbacks,
@@ -357,7 +384,9 @@ pub async fn run_rust_game(
                 ))
                 .await;
                 campaign = outcome.campaign;
-                let SessionResult::QuitToMenu = outcome.result?;
+                if outcome.result? == SessionResult::ExitRequested {
+                    return Ok(0);
+                }
                 tracing::info!("Returned to main menu");
             }
             MainMenuChoice::Load { slot, mission_id } => {
@@ -379,7 +408,9 @@ pub async fn run_rust_game(
                 ))
                 .await;
                 campaign = outcome.campaign;
-                let SessionResult::QuitToMenu = outcome.result?;
+                if outcome.result? == SessionResult::ExitRequested {
+                    return Ok(0);
+                }
                 tracing::info!("Returned to main menu from Load");
             }
             #[cfg(feature = "multiplayer")]
@@ -510,7 +541,9 @@ pub async fn run_rust_game(
                 ))
                 .await;
                 campaign = outcome.campaign;
-                let SessionResult::QuitToMenu = outcome.result?;
+                if outcome.result? == SessionResult::ExitRequested {
+                    return Ok(0);
+                }
                 tracing::info!("Returned to main menu from Multiplayer");
             }
             MainMenuChoice::CustomMission(
@@ -531,7 +564,14 @@ pub async fn run_rust_game(
                     .ok_or_else(|| format!("failed to create hackable mission `{mission}`"))?;
                 campaign.current_mission_idx = Some(idx);
                 let location = campaign.missions[idx].profile(profiles_mut).location;
-                let mut callbacks = RustCallbacks::new(application_context.clone());
+                let Some(mut callbacks) =
+                    RustCallbacks::new_for_window(application_context.clone(), window).await?
+                else {
+                    if window.close_requested {
+                        return Ok(0);
+                    }
+                    continue;
+                };
                 let mut sim_config = crate::game_session::initial_sim_config(args);
                 // Hackable descriptors carry no SCB StartUp class, so the
                 // script VM must stay off.
@@ -624,7 +664,9 @@ pub async fn run_rust_game(
                 ))
                 .await;
                 campaign = outcome.campaign;
-                let SessionResult::QuitToMenu = outcome.result?;
+                if outcome.result? == SessionResult::ExitRequested {
+                    return Ok(0);
+                }
                 tracing::info!("Returned to main menu from CustomMission");
             }
             MainMenuChoice::Exit => {
@@ -762,7 +804,8 @@ pub async fn run_rust_game_headless(
         return Ok(0);
     }
 
-    let mut callbacks = RustCallbacks::new(application_context);
+    let mut callbacks =
+        RustCallbacks::new(application_context).map_err(|error| error.to_string())?;
     let outcome = run_mission_headless(
         &mut callbacks,
         campaign,

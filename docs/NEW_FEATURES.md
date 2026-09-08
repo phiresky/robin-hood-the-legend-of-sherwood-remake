@@ -10,6 +10,12 @@ A list of which additional features we have added, which ones we might still wan
   a median 172 ms with unchanged payload bytes; loopback showed no gain.
   See [measurements and validation](perf/replay-plan-earlier.md).
 
+- **Recoverable save-store admission.** Damaged or inaccessible save indexes
+  offer Retry and safe cancellation/exit without creating an empty replacement
+  store. Save-picker errors are shown in yielding, scrollable acknowledgements;
+  failed save operations also produce an in-game failure notice. Unpublished
+  save drafts remain retryable but are not offered as loadable saves.
+
 - **Shared scripted modal replay ownership.** Headless replay now shares scripted
   modal batch ownership with graphical sessions, supporting recorded aborted
   debriefings without discarding later-emitted batches. This does not add headless
