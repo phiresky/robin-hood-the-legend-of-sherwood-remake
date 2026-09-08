@@ -293,6 +293,7 @@ fn load_static_sound(files: &SbFileSystem, path: &Path) -> Result<StaticSoundDat
     let bytes = files
         .read_all(&path.to_string_lossy())
         .map_err(|status| format!("audio reader failed for {}: {status}", path.display()))?;
+    let bytes = repair_legacy_vorbis_comment(bytes)?;
     StaticSoundData::from_cursor(Cursor::new(bytes)).map_err(|error| error.to_string())
 }
 
@@ -304,7 +305,65 @@ fn load_streaming_sound(
     let bytes = files
         .read_all(&path.to_string_lossy())
         .map_err(|status| format!("audio reader failed for {}: {status}", path.display()))?;
+    let bytes = repair_legacy_vorbis_comment(bytes)?;
     StreamingSoundData::from_cursor(Cursor::new(bytes)).map_err(|error| error.to_string())
+}
+
+// The original Sonic Foundry encoder wrote this bare encoder name as its sole
+// user comment. libvorbis (original-code/mixer/music_ogg.c) accepted it, whereas
+// Symphonia reports the missing KEY=VALUE separator on every music restart.
+// Match the complete known packet, including vendor and framing byte: unknown
+// malformed metadata must still reach the decoder's normal diagnostics.
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+const LEGACY_VORBIS_COMMENT: &[u8] = b"\x03vorbis\x20\0\0\0Xiphophorus libVorbis I 20010813\x01\0\0\0\x1e\0\0\0Sonic Foundry OggVorbis Beta 3\x01";
+
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+fn repair_legacy_vorbis_comment(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    if !bytes.starts_with(b"OggS")
+        || !bytes
+            .windows(LEGACY_VORBIS_COMMENT.len())
+            .any(|window| window == LEGACY_VORBIS_COMMENT)
+    {
+        return Ok(bytes);
+    }
+    let mut reader = ogg::PacketReader::new(Cursor::new(&bytes));
+    let mut writer = ogg::PacketWriter::new(Vec::with_capacity(bytes.len() + 8));
+    let mut repaired = false;
+    while let Some(mut packet) = reader
+        .read_packet()
+        .map_err(|error| format!("reading legacy Vorbis metadata: {error}"))?
+    {
+        let end = if packet.last_in_stream() {
+            ogg::PacketWriteEndInfo::EndStream
+        } else if packet.last_in_page() {
+            ogg::PacketWriteEndInfo::EndPage
+        } else {
+            ogg::PacketWriteEndInfo::NormalPacket
+        };
+        if packet.data == LEGACY_VORBIS_COMMENT {
+            // Keep the vendor and encoder value intact; add the standard key
+            // and update this comment's length. Ogg handles page CRCs/lacing.
+            let comment_length_offset = 7 + 4 + 32 + 4;
+            packet.data[comment_length_offset..comment_length_offset + 4]
+                .copy_from_slice(&38u32.to_le_bytes());
+            packet.data.splice(
+                comment_length_offset + 4..comment_length_offset + 4,
+                b"ENCODER=".iter().copied(),
+            );
+            repaired = true;
+        }
+        let serial = packet.stream_serial();
+        let granule = packet.absgp_page();
+        writer
+            .write_packet(packet.data, serial, end, granule)
+            .map_err(|error| format!("writing legacy Vorbis metadata: {error}"))?;
+    }
+    if repaired {
+        tracing::debug!("normalized legacy Sonic Foundry Vorbis encoder comment");
+        Ok(writer.into_inner())
+    } else {
+        Ok(bytes)
+    }
 }
 
 #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
@@ -994,6 +1053,94 @@ pub fn create_language_pack_sample_loader_with_files(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    #[test]
+    fn legacy_vorbis_repair_preserves_packets_and_granules() {
+        let packets = [
+            b"\x01vorbis identification".as_slice(),
+            LEGACY_VORBIS_COMMENT,
+            b"\x05vorbis setup",
+            b"audio packet one",
+            b"audio packet two",
+        ];
+        let mut writer = ogg::PacketWriter::new(Vec::new());
+        for (index, packet) in packets.iter().enumerate() {
+            let end = if index == packets.len() - 1 {
+                ogg::PacketWriteEndInfo::EndStream
+            } else {
+                ogg::PacketWriteEndInfo::EndPage
+            };
+            writer
+                .write_packet(*packet, 123, end, index as u64 * 1024)
+                .unwrap();
+        }
+        let original = writer.into_inner();
+        let repaired = repair_legacy_vorbis_comment(original.clone()).unwrap();
+        assert_ne!(repaired, original);
+        // PacketReader validates CRCs in the rewritten container as well.
+        let mut reader = ogg::PacketReader::new(Cursor::new(&repaired));
+        for (index, expected) in packets.iter().enumerate() {
+            let packet = reader.read_packet().unwrap().unwrap();
+            assert_eq!(packet.stream_serial(), 123);
+            assert_eq!(packet.absgp_page(), index as u64 * 1024);
+            assert_eq!(packet.last_in_stream(), index == packets.len() - 1);
+            if index == 1 {
+                assert_eq!(&packet.data[..47], &expected[..47]); // vendor/count
+                assert_eq!(&packet.data[47..51], &38u32.to_le_bytes());
+                assert_eq!(
+                    &packet.data[51..],
+                    b"ENCODER=Sonic Foundry OggVorbis Beta 3\x01"
+                );
+            } else {
+                assert_eq!(&packet.data, expected);
+            }
+        }
+        assert!(reader.read_packet().unwrap().is_none());
+        assert_eq!(
+            repair_legacy_vorbis_comment(repaired.clone()).unwrap(),
+            repaired
+        );
+    }
+
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    #[test]
+    fn unknown_vorbis_metadata_is_not_rewritten() {
+        let mut unknown = LEGACY_VORBIS_COMMENT.to_vec();
+        unknown[51] = b'X';
+        let mut writer = ogg::PacketWriter::new(Vec::new());
+        writer
+            .write_packet(unknown, 123, ogg::PacketWriteEndInfo::EndStream, 0)
+            .unwrap();
+        let original = writer.into_inner();
+        assert_eq!(
+            repair_legacy_vorbis_comment(original.clone()).unwrap(),
+            original
+        );
+        let wav = b"RIFF non-Ogg input".to_vec();
+        assert_eq!(repair_legacy_vorbis_comment(wav.clone()).unwrap(), wav);
+    }
+
+    #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+    #[test]
+    #[ignore = "requires ROBINHOOD_DATA_DIR pointing to original fullgame data"]
+    fn legacy_vorbis_repair_preserves_decoded_original_music() {
+        let root = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        for name in ["Menu.wav", "Cast_Fight.wav"] {
+            let path = Path::new(&root).join("DATA/Musics").join(name);
+            let bytes = std::fs::read(&path).expect("read original music");
+            let repaired = repair_legacy_vorbis_comment(bytes.clone()).unwrap();
+            assert_ne!(repaired, bytes, "fixture must contain legacy comment");
+            let original = StaticSoundData::from_cursor(Cursor::new(bytes)).unwrap();
+            let normalized = StaticSoundData::from_cursor(Cursor::new(repaired)).unwrap();
+            assert_eq!(normalized.sample_rate, original.sample_rate);
+            assert_eq!(normalized.frames.len(), original.frames.len());
+            for (left, right) in original.frames.iter().zip(normalized.frames.iter()) {
+                assert_eq!(left.left.to_bits(), right.left.to_bits());
+                assert_eq!(left.right.to_bits(), right.right.to_bits());
+            }
+        }
+    }
 
     #[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
     #[test]

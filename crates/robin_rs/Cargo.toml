@@ -261,7 +261,7 @@ multiplayer = [
 # Developer conversion/inspection binaries are built only on demand.
 tools = ["dep:ogg", "dep:rayon"]
 android = ["audio"]
-audio = ["dep:kira", "dep:mint", "dep:rayon"]
+audio = ["dep:kira", "dep:mint", "dep:rayon", "dep:ogg"]
 dialogs = ["dep:rfd"]
 gamepad = ["dep:gilrs"]
 hardware-info = ["dep:sysinfo"]
