@@ -355,7 +355,6 @@ impl std::fmt::Debug for SubmissionReceiptWatcher {
 #[derive(Default)]
 pub(crate) struct ApplicationReceiptWatcher {
     watcher: Option<SubmissionReceiptWatcher>,
-    notices: VecDeque<ReceiptWatcherNotice>,
     retry_initialization_not_before_unix_ms: u64,
     last_initialization_error: Option<String>,
 }
@@ -365,7 +364,6 @@ impl std::fmt::Debug for ApplicationReceiptWatcher {
         formatter
             .debug_struct("ApplicationReceiptWatcher")
             .field("watcher", &self.watcher)
-            .field("notices", &self.notices.len())
             .field(
                 "retry_initialization_not_before_unix_ms",
                 &self.retry_initialization_not_before_unix_ms,
@@ -395,8 +393,8 @@ impl ApplicationReceiptWatcher {
             .enqueue(handoff, now_unix_ms)
     }
 
-    /// Advance at most one status/signing task and retain its bounded notices
-    /// for a later presentation consumer.
+    /// Advance at most one status/signing task. The underlying watcher retains
+    /// bounded diagnostic notices alongside the durable submission state.
     pub(crate) fn poll(&mut self, now_unix_ms: u64) -> Result<(), ReceiptWatcherError> {
         if self.watcher.is_none() {
             if now_unix_ms < self.retry_initialization_not_before_unix_ms {
@@ -420,17 +418,9 @@ impl ApplicationReceiptWatcher {
             .as_mut()
             .expect("successful watcher initialization installs an owner");
         watcher.poll(now_unix_ms);
-        while let Some(notice) = watcher.take_notice() {
-            if self.notices.len() == MAX_NOTICES {
-                self.notices.pop_front();
-            }
-            self.notices.push_back(notice);
-        }
+        // TODO: connect receipt notices to an actual presentation consumer;
+        // do not duplicate the watcher's bounded queue in this owner.
         Ok(())
-    }
-
-    pub(crate) fn take_notice(&mut self) -> Option<ReceiptWatcherNotice> {
-        self.notices.pop_front()
     }
 
     fn ensure_loaded(&mut self) -> Result<(), ReceiptWatcherError> {
