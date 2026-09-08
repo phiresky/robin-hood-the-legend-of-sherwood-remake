@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use crate::main_entry::picture_to_surface;
 use crate::native_font::{self, Font};
 use crate::renderer::{OwnedSurface, Renderer, SurfaceHandle, SurfaceOwnershipError};
-use robin_assets::resource_manager::ResourceManager;
+use robin_assets::resource_manager::{ResourceCacheIdentity, ResourceManager};
 use robin_engine::resource_ids;
 use serde::{Deserialize, Serialize};
 
@@ -1022,7 +1022,7 @@ pub struct IngameMenuResources {
     pub menu_text: MenuText,
 
     // ── Lazily loaded portraits (RHID_DLG_*) ───────────────────────
-    portrait_cache: HashMap<i32, MenuSurface>,
+    portrait_cache: HashMap<PictureCacheKey, MenuSurface>,
     owners: Vec<OwnedSurface>,
 }
 
@@ -1688,14 +1688,7 @@ impl IngameMenuResources {
 
     /// Load a dialogue portrait sprite, caching it on first access.
     pub fn portrait(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
-        self.validate_lookup_renderer(renderer)
-            .expect("menu cache renderer mismatch");
-        if let Some(s) = self.portrait_cache.get(&id) {
-            return Some(*s);
-        }
-        let surf = load_surface(&mut self.res, renderer, &mut self.owners, id)?;
-        self.portrait_cache.insert(id, surf);
-        Some(surf)
+        self.default_picture(renderer, id)
     }
 
     /// Load a picture from the caller-supplied resource manager (e.g.
@@ -1719,30 +1712,34 @@ impl IngameMenuResources {
         if id <= 0 {
             return None;
         }
-        if let Some(s) = self.portrait_cache.get(&id) {
-            return Some(*s);
-        }
-        if let Some(surf) = load_surface(&mut self.res, renderer, &mut self.owners, id) {
-            self.portrait_cache.insert(id, surf);
-            return Some(surf);
-        }
-        let surf = load_surface(external, renderer, &mut self.owners, id)?;
-        self.portrait_cache.insert(id, surf);
-        Some(surf)
+        let result = (|| {
+            if let Some(surface) = cached_picture(
+                &mut self.portrait_cache,
+                &mut self.res,
+                renderer,
+                &mut self.owners,
+                id,
+                0,
+            )? {
+                return Ok(Some(surface));
+            }
+            cached_picture(
+                &mut self.portrait_cache,
+                external,
+                renderer,
+                &mut self.owners,
+                id,
+                0,
+            )
+        })();
+        optional_menu_picture(result, id, 0)
     }
 
     /// Load a DEFAULT.RES picture by resource id and cache the uploaded
     /// renderer surface. Used by small modal screens that need resource
     /// sprites not preloaded by the shared menu cache.
     pub fn default_picture(&mut self, renderer: &mut Renderer, id: i32) -> Option<MenuSurface> {
-        self.validate_lookup_renderer(renderer)
-            .expect("menu cache renderer mismatch");
-        if let Some(s) = self.portrait_cache.get(&id) {
-            return Some(*s);
-        }
-        let surf = load_surface(&mut self.res, renderer, &mut self.owners, id)?;
-        self.portrait_cache.insert(id, surf);
-        Some(surf)
+        self.default_picture_sub(renderer, id, 0)
     }
 
     /// Load a specific DEFAULT.RES sub-picture and cache it separately
@@ -1755,19 +1752,115 @@ impl IngameMenuResources {
     ) -> Option<MenuSurface> {
         self.validate_lookup_renderer(renderer)
             .expect("menu cache renderer mismatch");
-        let key = id.saturating_mul(1000).saturating_add(sub_id as i32);
-        if let Some(s) = self.portrait_cache.get(&key) {
-            return Some(*s);
-        }
-        let surf = load_surface_sub(&mut self.res, renderer, &mut self.owners, id, sub_id)?;
-        self.portrait_cache.insert(key, surf);
-        Some(surf)
+        let result = cached_picture(
+            &mut self.portrait_cache,
+            &mut self.res,
+            renderer,
+            &mut self.owners,
+            id,
+            sub_id,
+        );
+        optional_menu_picture(result, id, sub_id)
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct PictureCacheKey {
+    source: ResourceCacheIdentity,
+    resource: i32,
+    subpicture: usize,
+}
+
+#[test]
+fn picture_cache_keys_do_not_alias_sources_or_arithmetic_subpictures() {
+    let first = ResourceManager::new().cache_identity();
+    let second = ResourceManager::new().cache_identity();
+    let keys = [
+        PictureCacheKey {
+            source: first,
+            resource: 1001,
+            subpicture: 0,
+        },
+        PictureCacheKey {
+            source: first,
+            resource: 1,
+            subpicture: 1,
+        },
+        PictureCacheKey {
+            source: second,
+            resource: 1001,
+            subpicture: 0,
+        },
+        PictureCacheKey {
+            source: first,
+            resource: i32::MAX,
+            subpicture: usize::MAX,
+        },
+        PictureCacheKey {
+            source: first,
+            resource: i32::MAX,
+            subpicture: usize::MAX - 1,
+        },
+    ];
+    let cache: HashMap<_, _> = keys
+        .into_iter()
+        .enumerate()
+        .map(|(n, key)| (key, n))
+        .collect();
+    assert_eq!(cache.len(), keys.len());
+    for (n, key) in keys.iter().enumerate() {
+        assert_eq!(cache[key], n);
+    }
+}
+
+fn cached_picture(
+    cache: &mut HashMap<PictureCacheKey, MenuSurface>,
+    res: &mut ResourceManager,
+    renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
+    id: i32,
+    sub_id: usize,
+) -> anyhow::Result<Option<MenuSurface>> {
+    let key = PictureCacheKey {
+        source: res.cache_identity(),
+        resource: id,
+        subpicture: sub_id,
+    };
+    if let Some(surface) = cache.get(&key) {
+        return Ok(Some(*surface));
+    }
+    let surface = try_load_surface_sub(res, renderer, owners, id, sub_id)?;
+    if let Some(surface) = surface {
+        cache.insert(key, surface);
+    }
+    // Old generations retain GPU owners until the menu retires: queued draws
+    // can still reference them. They cannot satisfy a new-generation lookup.
+    Ok(surface)
+}
+
+/// Existing optional menu APIs remain best-effort, but broken assets must be
+/// observable and must not cause picture_from to select another source.
+fn optional_menu_picture(
+    result: anyhow::Result<Option<MenuSurface>>,
+    id: i32,
+    sub_id: usize,
+) -> Option<MenuSurface> {
+    match result {
+        Ok(surface) => surface,
+        Err(error) => {
+            tracing::warn!(
+                resource = id,
+                subpicture = sub_id,
+                "menu picture failed: {error:#}"
+            );
+            None
+        }
+    }
+}
 
 fn adopt_picture(
     renderer: &mut Renderer,
@@ -1796,15 +1889,7 @@ fn load_surface(
     // can be larger than frame 0 when the resource packs multiple state
     // variants at different sizes.  Using the max stretched popup-scroll
     // pictures taller than they should be.
-    let pic = res.get_picture(id, 0).ok()?;
-    let width = pic.width as i32;
-    let height = pic.height as i32;
-    let surface_id = adopt_picture(renderer, owners, pic, false);
-    Some(MenuSurface {
-        id: surface_id,
-        width,
-        height,
-    })
+    load_surface_sub(res, renderer, owners, id, 0)
 }
 
 /// Load a specific sub-picture (by index) as its own [`MenuSurface`].
@@ -1817,15 +1902,31 @@ fn load_surface_sub(
     id: i32,
     sub_id: usize,
 ) -> Option<MenuSurface> {
-    let pic = res.get_picture(id, sub_id).ok()?;
+    optional_menu_picture(
+        try_load_surface_sub(res, renderer, owners, id, sub_id),
+        id,
+        sub_id,
+    )
+}
+
+fn try_load_surface_sub(
+    res: &mut ResourceManager,
+    renderer: &mut Renderer,
+    owners: &mut Vec<OwnedSurface>,
+    id: i32,
+    sub_id: usize,
+) -> anyhow::Result<Option<MenuSurface>> {
+    let Some(pic) = res.find_picture(id, sub_id)? else {
+        return Ok(None);
+    };
     let width = pic.width as i32;
     let height = pic.height as i32;
     let surface_id = adopt_picture(renderer, owners, pic, false);
-    Some(MenuSurface {
+    Ok(Some(MenuSurface {
         id: surface_id,
         width,
         height,
-    })
+    }))
 }
 
 /// Load a multi-frame sprite pack and upload every frame as a surface.
@@ -1835,32 +1936,38 @@ fn load_sprite_pack(
     owners: &mut Vec<OwnedSurface>,
     id: i32,
 ) -> SpriteBank {
-    let dims = res.get_dimension(id).ok();
-    let surfaces: Vec<Option<SurfaceHandle>> = match res.get_pictures(id) {
-        Ok(pics) => pics
-            .iter()
-            .map(|opt| {
-                opt.as_ref().map(|p| {
-                    adopt_picture(
-                        renderer,
-                        owners,
-                        p,
-                        matches!(
-                            id,
-                            resource_ids::RHID_MENU_BUTTON
-                                | resource_ids::RHID_OK
-                                | resource_ids::RHID_CANCEL
-                                | resource_ids::RHID_RESTART
-                                | resource_ids::RHID_LOAD
-                                | resource_ids::RHID_RADIO
-                        ),
-                    )
-                })
-            })
-            .collect(),
-        Err(_) => Vec::new(),
+    let pics = match res.find_pictures(id) {
+        Ok(Some(pics)) => pics,
+        Ok(None) => &[],
+        Err(error) => {
+            tracing::warn!(resource = id, "menu sprite pack failed: {error:#}");
+            &[]
+        }
     };
-    let (w, h) = dims.map(|(w, h)| (w as i32, h as i32)).unwrap_or((0, 0));
+    let (w, h) = pics.iter().flatten().fold((0, 0), |(w, h), pic| {
+        (w.max(pic.width as i32), h.max(pic.height as i32))
+    });
+    let surfaces: Vec<Option<SurfaceHandle>> = pics
+        .iter()
+        .map(|opt| {
+            opt.as_ref().map(|p| {
+                adopt_picture(
+                    renderer,
+                    owners,
+                    p,
+                    matches!(
+                        id,
+                        resource_ids::RHID_MENU_BUTTON
+                            | resource_ids::RHID_OK
+                            | resource_ids::RHID_CANCEL
+                            | resource_ids::RHID_RESTART
+                            | resource_ids::RHID_LOAD
+                            | resource_ids::RHID_RADIO
+                    ),
+                )
+            })
+        })
+        .collect();
     SpriteBank {
         frames: surfaces,
         width: w,
@@ -1954,10 +2061,45 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         lazy.id
     );
     assert_eq!(cache.owners.len(), count);
+    // Exercise the production lazy path with independently mutable sources.
+    fn picture_manager(id: i32, picture: &Picture) -> ResourceManager {
+        let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
+        value["pictures"][id.to_string()] = serde_json::json!([picture]);
+        serde_json::from_value(value).unwrap()
+    }
+    let mut external = picture_manager(42, &picture);
+    let mut duplicate = external.duplicate();
+    let external_surface = cache.picture_from(renderer, &mut external, 42).unwrap();
+    let duplicate_surface = cache.picture_from(renderer, &mut duplicate, 42).unwrap();
+    assert_ne!(external_surface.id, duplicate_surface.id);
+    assert_eq!(
+        cache.picture_from(renderer, &mut external, 42).unwrap().id,
+        external_surface.id
+    );
+    external.bind_files(files.clone());
+    let rebound = cache.picture_from(renderer, &mut external, 42).unwrap();
+    assert_ne!(rebound.id, external_surface.id);
+    assert!(
+        renderer.surface_dimensions(external_surface.id).is_ok(),
+        "generation changes retain queued-draw owners until retirement"
+    );
+
+    let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
+    value["encoded_pictures"]["42"] = serde_json::json!([
+        robin_assets::resource_manager::EncodedPicture::jxl_rgba565_keyed(vec![0, 1, 2])
+    ]);
+    cache.res = serde_json::from_value(value).unwrap();
+    assert!(
+        cache.picture_from(renderer, &mut external, 42).is_none(),
+        "broken local picture must not silently fall back to an external source"
+    );
     let last = cache.button_surface(0).unwrap();
     cache.retire(renderer).unwrap();
     assert!(renderer.surface_dimensions(last).is_err());
     assert!(renderer.surface_dimensions(lazy.id).is_err());
+    assert!(renderer.surface_dimensions(external_surface.id).is_err());
+    assert!(renderer.surface_dimensions(duplicate_surface.id).is_err());
+    assert!(renderer.surface_dimensions(rebound.id).is_err());
     assert!(cache.button_surface(0).is_none());
     assert!(
         cache.validate_lookup_renderer(other).is_ok(),

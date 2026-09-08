@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -303,7 +304,27 @@ struct ResourceLifetime {
     recovery_disabled: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
+/// Process-local identity of a resource view. Never persisted with asset data.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ResourceCacheIdentity {
+    source: usize,
+    generation: usize,
+}
+
+impl Default for ResourceCacheIdentity {
+    fn default() -> Self {
+        static NEXT_SOURCE: AtomicUsize = AtomicUsize::new(1);
+        let source = NEXT_SOURCE
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
+            .expect("resource cache identity exhausted");
+        Self {
+            source,
+            generation: 0,
+        }
+    }
+}
+
+#[derive(Default, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
 pub struct ResourceManager {
     #[serde(flatten)]
     data: ResourceData,
@@ -313,6 +334,20 @@ pub struct ResourceManager {
     #[serde(skip)]
     #[bitcode(skip)]
     files: Option<Arc<SbFileSystem>>,
+    #[serde(skip)]
+    #[bitcode(skip)]
+    cache_identity: ResourceCacheIdentity,
+}
+
+impl Clone for ResourceManager {
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+            lifetime: self.lifetime.clone(),
+            files: self.files.clone(),
+            cache_identity: ResourceCacheIdentity::default(),
+        }
+    }
 }
 
 impl std::fmt::Debug for ResourceManager {
@@ -326,6 +361,50 @@ impl std::fmt::Debug for ResourceManager {
 }
 
 impl ResourceManager {
+    /// Optional picture lookup: absence (including sparse/out-of-range slots)
+    /// is `Ok(None)`; recovery and decoding failures remain errors.
+    pub fn find_picture(&mut self, id: ResourceId, sub_id: usize) -> Result<Option<&Picture>> {
+        Ok(self
+            .find_pictures(id)?
+            .and_then(|pictures| pictures.get(sub_id))
+            .and_then(Option::as_ref))
+    }
+
+    /// Optional collection lookup without disguising broken registered assets
+    /// as absent. Non-picture resource IDs do not identify pictures.
+    pub fn find_pictures(&mut self, id: ResourceId) -> Result<Option<&[Option<Picture>]>> {
+        let registered_picture = self.lifetime.file_entries.get(&id).is_some_and(|entry| {
+            matches!(
+                &entry.resource_type,
+                b"PIC " | b"PICC" | b"BTTN" | b"TOGL" | b"NPTF" | b"CUR " | b"SLID" | b"RDO "
+            )
+        });
+        if !self.data.pictures.contains_key(&id)
+            && !self.data.encoded_pictures.contains_key(&id)
+            && !registered_picture
+        {
+            return Ok(None);
+        }
+        self.ensure_pictures_loaded(id)?;
+        self.data
+            .pictures
+            .get(&id)
+            .map(|pictures| Some(pictures.as_slice()))
+            .ok_or_else(|| anyhow!("registered picture resource {id} recovered without pictures"))
+    }
+
+    pub fn cache_identity(&self) -> ResourceCacheIdentity {
+        self.cache_identity
+    }
+
+    fn invalidate_picture_cache(&mut self) {
+        self.cache_identity.generation = self
+            .cache_identity
+            .generation
+            .checked_add(1)
+            .expect("resource cache generation exhausted");
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -345,6 +424,7 @@ impl ResourceManager {
 
     /// Rebind decoded resource values at an authorized host boundary.
     pub fn bind_files(&mut self, files: Arc<SbFileSystem>) {
+        self.invalidate_picture_cache();
         self.files = Some(files);
     }
 
@@ -424,6 +504,8 @@ impl ResourceManager {
     }
 
     fn attach_resource_bytes(&mut self, bytes: &[u8], path: &str) -> Result<()> {
+        // Parsing may fail after partially replacing resources.
+        self.invalidate_picture_cache();
         let mut reader = Reader::new(bytes);
 
         // Validate magic
@@ -554,6 +636,7 @@ impl ResourceManager {
         };
         match &entry.resource_type {
             b"PIC " | b"PICC" | b"BTTN" | b"TOGL" | b"NPTF" => {
+                self.invalidate_picture_cache();
                 self.data.pictures.remove(&id);
             }
             _ => {}
@@ -927,6 +1010,7 @@ impl ResourceManager {
     where
         F: FnMut(&Picture) -> Result<EncodedPicture>,
     {
+        self.invalidate_picture_cache();
         let ids: Vec<ResourceId> = self.data.pictures.keys().copied().collect();
         let mut encoded_count = 0usize;
         for id in ids {
@@ -1115,6 +1199,7 @@ impl ResourceManager {
     /// can be spliced in wholesale. Only used by the shipping loader; the
     /// runtime doesn't otherwise need to reach past the accessors above.
     pub(crate) fn extend_from(&mut self, src: &ResourceManager) {
+        self.invalidate_picture_cache();
         // Entries from `src` overwrite any existing ids with the same key.
         self.data
             .pictures
@@ -1405,5 +1490,79 @@ mod tests {
         let mut mgr = ResourceManager::new();
         mgr.lifetime.references.insert(1, 0);
         assert!(mgr.release_reference(1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod cache_lookup_tests {
+    use super::*;
+
+    #[test]
+    fn identities_separate_sources_clones_and_deserialization() {
+        let source = ResourceManager::new();
+        let duplicate = source.duplicate();
+        let decoded: ResourceManager =
+            serde_json::from_value(serde_json::to_value(&source).unwrap()).unwrap();
+        let binary: ResourceManager = bitcode::decode(&bitcode::encode(&source)).unwrap();
+        let identities = [
+            source.cache_identity(),
+            duplicate.cache_identity(),
+            decoded.cache_identity(),
+            binary.cache_identity(),
+        ];
+        assert_eq!(
+            identities
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn reload_and_partial_failure_invalidate_cache_identity() {
+        let mut manager = ResourceManager::new();
+        let initial = manager.cache_identity();
+        manager.extend_from(&ResourceManager::new());
+        let merged = manager.cache_identity();
+        assert_ne!(initial, merged);
+        assert!(
+            manager
+                .attach_resource_bytes(b"invalid", "fixture.res")
+                .is_err()
+        );
+        assert_ne!(merged, manager.cache_identity());
+    }
+
+    #[test]
+    fn optional_lookup_distinguishes_absence_sparse_and_corruption() {
+        let mut manager = ResourceManager::new();
+        assert!(manager.find_picture(1, 0).unwrap().is_none());
+        manager.data.pictures.insert(1, vec![None]);
+        assert!(manager.find_picture(1, 0).unwrap().is_none());
+        assert!(manager.find_picture(1, usize::MAX).unwrap().is_none());
+        manager.data.encoded_pictures.insert(
+            2,
+            vec![Some(EncodedPicture::jxl_rgba565_keyed(vec![0, 1, 2]))],
+        );
+        assert!(manager.find_picture(2, 0).is_err());
+        manager.lifetime.file_entries.insert(
+            3,
+            ResourceFileEntry {
+                file_path: "missing.res".into(),
+                file_offset: 0,
+                resource_type: *b"PIC ",
+            },
+        );
+        assert!(manager.find_picture(3, 0).is_err());
+        manager.lifetime.file_entries.insert(
+            4,
+            ResourceFileEntry {
+                file_path: "missing.res".into(),
+                file_offset: 0,
+                resource_type: *b"TEXT",
+            },
+        );
+        assert!(manager.find_picture(4, 0).unwrap().is_none());
     }
 }
