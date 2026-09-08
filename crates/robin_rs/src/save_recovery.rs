@@ -326,7 +326,7 @@ pub async fn open_for_launch(
         profile.graphic_config.scale_mode,
     );
     renderer.apply_upscale_config(&profile.graphic_config);
-    let resources = IngameMenuResources::new(
+    let mut resources = IngameMenuResources::new(
         &mut renderer,
         context.shipping()?,
         context.preparation_files()?.clone(),
@@ -334,7 +334,27 @@ pub async fn open_for_launch(
     .ok_or_else(|| {
         format!("{original_error}; save recovery UI: Data/Interface/DEFAULT.RES unavailable")
     })?;
-    Ok(open_with_recovery(context, window, &mut renderer, &resources, None).await)
+    let mut cursor = crate::cursor::CursorRenderer::new();
+    cursor.init(&mut renderer);
+    if !cursor.load_cursor(
+        robin_engine::resource_ids::RHMOUSE_DEFAULT,
+        &mut resources.res,
+        &mut renderer,
+    ) {
+        tracing::warn!("Save recovery: default cursor unavailable, using fallback arrow");
+    }
+    Ok(open_with_recovery(
+        context,
+        window,
+        &mut renderer,
+        &resources,
+        Some(&ModalCursor::new(
+            &mut cursor,
+            robin_engine::engine::input::MOUSE_OPACITY_DEFAULT,
+            0,
+        )),
+    )
+    .await)
 }
 
 #[cfg(test)]

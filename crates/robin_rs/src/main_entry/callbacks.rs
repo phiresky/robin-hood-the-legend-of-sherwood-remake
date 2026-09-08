@@ -924,7 +924,8 @@ pub(crate) fn perform_pending_save_load(
                         );
                     }
                     Err(error) => {
-                        tracing::error!("Multiplayer diagnostic save failed: {error:#}")
+                        tracing::error!("Multiplayer diagnostic save failed: {error:#}");
+                        outcome.banner = Some(SaveBannerKind::SaveFailed);
                     }
                 }
                 return outcome;
@@ -966,6 +967,7 @@ pub(crate) fn perform_pending_save_load(
             };
             if let Err(err) = result {
                 tracing::error!("Save failed: {err:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 tracing::info!("Save completed (mission={mission_id})");
                 event = replay_save_written_event(engine, host, game);
@@ -992,6 +994,9 @@ pub(crate) fn perform_pending_save_load(
                         )
                     {
                         tracing::warn!("Continue-mirror after save failed: {err:#}");
+                        callbacks
+                            .autosave_notices
+                            .enqueue_save_failed(format!("Continue mirror: {err:#}"));
                     }
                     // Show "Game saved." banner unless the slot is one
                     // of the filtered types (Restart / Sherwood).
@@ -1149,6 +1154,7 @@ pub(crate) fn perform_pending_save_load(
                 thumb_ref,
             ) {
                 tracing::error!("Restart save failed: {err:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 event = match callbacks.save_manager.restart_session_identity() {
                     Some(identity) => Some(SaveLoadEvent::SaveWritten { identity }),
@@ -1228,6 +1234,7 @@ pub(crate) fn perform_pending_save_load(
                 thumb_ref,
             ) {
                 tracing::error!("Continue save failed: {err:#}");
+                outcome.banner = Some(SaveBannerKind::SaveFailed);
             } else {
                 event = replay_save_written_event(engine, host, game);
             }
@@ -1264,7 +1271,8 @@ pub(crate) fn perform_pending_save_load(
                         );
                     }
                     Err(error) => {
-                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}")
+                        tracing::error!("Multiplayer quick diagnostic failed: {error:#}");
+                        outcome.banner = Some(SaveBannerKind::SaveFailed);
                     }
                 }
                 return outcome;
@@ -1279,6 +1287,7 @@ pub(crate) fn perform_pending_save_load(
             ) {
                 Err(err) => {
                     tracing::error!("Quick save failed: {err:#}");
+                    outcome.banner = Some(SaveBannerKind::SaveFailed);
                 }
                 _ => {
                     tracing::info!("Quick save written (mission={mission_id})");
@@ -1294,6 +1303,9 @@ pub(crate) fn perform_pending_save_load(
                         thumb_ref,
                     ) {
                         tracing::warn!("Continue-mirror after quick-save failed: {err:#}");
+                        callbacks
+                            .autosave_notices
+                            .enqueue_save_failed(format!("Continue mirror: {err:#}"));
                     }
                     outcome.banner = Some(SaveBannerKind::Saved);
                 }
@@ -1423,6 +1435,7 @@ pub(crate) fn perform_pending_save_load(
             ) {
                 Err(err) => {
                     tracing::error!("Sherwood checkpoint save failed: {err:#}");
+                    outcome.banner = Some(SaveBannerKind::SaveFailed);
                 }
                 _ => {
                     tracing::info!("Sherwood checkpoint saved (mission={mission_id})");
@@ -1463,6 +1476,21 @@ mod operation_outcome_tests {
             reason: AutosaveReason::Periodic,
         }]);
         assert_eq!(notices.select_banner(None), Some(SaveBannerKind::Autosaved));
+    }
+
+    #[test]
+    fn save_failure_notice_survives_a_simultaneous_success_banner() {
+        let mut notices = AutosaveNotices::default();
+        notices.enqueue_save_failed("payload publication failed: permission denied".into());
+        assert_eq!(
+            notices.select_banner(Some(SaveBannerKind::Saved)),
+            Some(SaveBannerKind::Saved)
+        );
+        assert_eq!(
+            notices.select_banner(None),
+            Some(SaveBannerKind::SaveFailed)
+        );
+        assert_eq!(notices.select_banner(None), None);
     }
 
     #[test]

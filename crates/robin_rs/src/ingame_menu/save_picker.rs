@@ -37,7 +37,7 @@ pub(super) struct PickerModel {
     viewport_rows: usize,
     scroll_offset: usize,
     delete_confirmation: Option<SlotName>,
-    deletion_error: Option<String>,
+    operation_error: Option<String>,
 }
 
 impl PickerModel {
@@ -56,7 +56,7 @@ impl PickerModel {
             viewport_rows,
             scroll_offset: 0,
             delete_confirmation: None,
-            deletion_error: None,
+            operation_error: None,
         };
         model.refresh(slots);
         model
@@ -212,7 +212,7 @@ impl PickerModel {
             .expect("deletable selection must identify a slot")
             .clone();
         self.delete_confirmation = Some(name.clone());
-        self.deletion_error = None;
+        self.operation_error = None;
         Some(name)
     }
 
@@ -238,11 +238,20 @@ impl PickerModel {
 
     pub fn finish_delete(&mut self, slots: Vec<PickerSlot>, error: Option<String>) {
         self.refresh(slots);
-        self.deletion_error = error;
+        self.operation_error = error;
     }
 
-    pub fn deletion_error(&self) -> Option<&str> {
-        self.deletion_error.as_deref()
+    pub fn operation_error(&self) -> Option<&str> {
+        self.operation_error.as_deref()
+    }
+
+    /// Includes failures while editing a save, before payload publication.
+    pub fn report_error(&mut self, error: String) {
+        self.operation_error = Some(error);
+    }
+
+    pub fn dismiss_error(&mut self) {
+        self.operation_error = None;
     }
 }
 
@@ -304,13 +313,13 @@ mod tests {
         let rows = m.slots.clone();
         m.finish_delete(rows, Some("index publication failed".into()));
         assert!(m.selected_slot().is_some());
-        assert_eq!(m.deletion_error(), Some("index publication failed"));
+        assert_eq!(m.operation_error(), Some("index publication failed"));
         m.finish_delete(
             vec![slot("Savegame_001", 0)],
             Some("cleanup pending".into()),
         );
         assert_eq!(m.selected_slot(), None);
-        assert_eq!(m.deletion_error(), Some("cleanup pending"));
+        assert_eq!(m.operation_error(), Some("cleanup pending"));
     }
 
     #[test]
