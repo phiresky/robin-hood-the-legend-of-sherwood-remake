@@ -1684,7 +1684,7 @@ mod operation_outcome_tests {
             ..Default::default()
         });
         let mut campaign = Campaign::default();
-        campaign.missions.push(engine_campaign::Mission {
+        campaign.missions.push(robin_engine::mission::Mission {
             profile_idx: Some(0),
             ..Default::default()
         });
