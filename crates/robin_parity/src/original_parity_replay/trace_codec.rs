@@ -1,4 +1,7 @@
-//! Extracted trace codec boundary; wire layouts remain in the parent.
+//! Trace codec and lossless-conversion boundary.
+//!
+//! The parent owns current wire layouts; `v66`, `v67`, and `v67_late` own
+//! frozen historical layouts and their explicit conversion into current data.
 use super::*;
 
 pub(super) fn trace_content_sha256(trace_path: &Path) -> String {
