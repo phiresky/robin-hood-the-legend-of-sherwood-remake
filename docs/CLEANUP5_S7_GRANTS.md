@@ -26,4 +26,6 @@ Validation command (run after freezing the implementation commit):
 RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_run_protocol
 ```
 
-Result: pending execution.
+Result at source commit `7f11493fc`: **106 passed, zero failed/ignored**, plus
+zero doc tests. Build completed in 40.13 seconds; unit tests in 0.21 seconds.
+Only the existing unused `validation::unique_text` warning was emitted.
