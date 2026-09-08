@@ -1310,7 +1310,6 @@ impl PositionInterface {
     pub fn set_layer_goal(&mut self, layer: Layer) {
         self.layer_goal = Some(layer);
     }
-    #[inline]
     #[cfg(test)]
     pub(crate) fn clear_layer_goal(&mut self) {
         self.layer_goal = None;

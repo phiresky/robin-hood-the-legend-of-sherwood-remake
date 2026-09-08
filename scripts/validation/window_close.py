@@ -14,8 +14,10 @@ import sys
 import time
 import urllib.request
 
-from Xlib import X, XK, display, protocol
+from Xlib import X, XK, protocol
 from Xlib.ext import xtest
+
+from namespace_x11 import open_display
 
 
 def main():
@@ -41,7 +43,7 @@ def main():
         command.append("--force-main-menu")
     log_path = destination / "client.log"
     start = time.monotonic()
-    connection = display.Display(environment["DISPLAY"])
+    connection = open_display(environment["DISPLAY"])
     result = {"mode": mode, "command": command, "display": environment["DISPLAY"],
               "datadir": environment["ROBINHOOD_DATA_DIR"], "close_sent": False}
     with log_path.open("w") as log:

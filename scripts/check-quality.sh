@@ -91,6 +91,7 @@ case "$1" in
         test -f scripts/validation/save_load_live_test.py
         python3 -m unittest discover -s scripts/validation -p save_load_live_test.py
         python3 -m unittest discover -s scripts/validation -p lifecycle_gate_test.py
+        python3 -m unittest discover -s scripts/validation -p namespace_x11_test.py
         bash scripts/test_parity_orchestration.sh
         ;;
     web) pnpm --dir wasm-www verify:web ;;

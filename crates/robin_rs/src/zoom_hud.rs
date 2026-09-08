@@ -169,7 +169,73 @@ impl ZoomHudLayout {
 }
 
 /// One loaded BTTN sprite frame: surface id plus native pixel size.
-type SpriteFrame = (u32, u16, u16);
+type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
+
+#[cfg(test)]
+pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
+    let mut sprites = ZoomButtonSprites::default();
+    let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();
+    let handle = upload.handle();
+    sprites.zoom_up[BTN_STATE_NORMAL] = Some((upload, 1, 1));
+    assert_eq!(
+        sprites
+            .frame(ZoomButton::ZoomUp, BTN_STATE_HOVER)
+            .unwrap()
+            .0,
+        handle
+    );
+    renderer.draw_surface(handle, None, None, 0).unwrap();
+    sprites.retire(renderer);
+    sprites.retire(renderer);
+    assert!(
+        sprites
+            .frame(ZoomButton::ZoomUp, BTN_STATE_NORMAL)
+            .is_none()
+    );
+    assert!(renderer.surface_dimensions(handle).is_err());
+    assert_eq!(
+        &renderer.try_capture_frame_rgba().unwrap().2[..4],
+        &[248, 252, 248, 255]
+    );
+}
+
+#[test]
+fn sparse_owned_frames_keep_fallback_and_diagnostics_are_inert() {
+    let mut sprites = ZoomButtonSprites::default();
+    sprites.zoom_up[BTN_STATE_NORMAL] = Some((crate::renderer::OwnedSurface::synthetic(42), 7, 9));
+    sprites.zoom_up[BTN_STATE_PRESSED] =
+        Some((crate::renderer::OwnedSurface::synthetic(43), 8, 10));
+    assert_eq!(
+        sprites
+            .frame(ZoomButton::ZoomUp, BTN_STATE_HOVER)
+            .unwrap()
+            .1,
+        7
+    );
+    assert_eq!(
+        sprites
+            .frame(ZoomButton::ZoomUp, BTN_STATE_PRESSED)
+            .unwrap()
+            .1,
+        8
+    );
+    let restored: ZoomButtonSprites =
+        serde_json::from_value(serde_json::to_value(&sprites).unwrap()).unwrap();
+    assert!(
+        restored
+            .frame(ZoomButton::ZoomUp, BTN_STATE_NORMAL)
+            .is_none()
+    );
+    sprites.zoom_up[BTN_STATE_NORMAL] = None;
+    assert!(sprites.frame(ZoomButton::ZoomUp, BTN_STATE_HOVER).is_none());
+    assert_eq!(
+        sprites
+            .frame(ZoomButton::ZoomUp, BTN_STATE_PRESSED)
+            .unwrap()
+            .1,
+        8
+    );
+}
 
 /// Cached sprite surface ids for the two zoom HUD buttons.
 ///
@@ -178,13 +244,33 @@ type SpriteFrame = (u32, u16, u16);
 /// sub-ids fall back to the normal frame at draw time; if even normal
 /// is absent `draw_with_sprites` skips the button entirely (no
 /// fallback rect — see the note in `draw_with_sprites`).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct ZoomButtonSprites {
-    pub zoom_up: [Option<SpriteFrame>; 4],
-    pub zoom_down: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    zoom_up: [Option<SpriteFrame>; 4],
+    #[serde(skip)]
+    zoom_down: [Option<SpriteFrame>; 4],
 }
 
 impl ZoomButtonSprites {
+    pub(crate) fn retire(&mut self, renderer: &mut Renderer) {
+        let banks = [&mut self.zoom_up, &mut self.zoom_down];
+        for bank in &banks {
+            for (upload, _, _) in bank.iter().flatten() {
+                renderer
+                    .validate_surface_retirement(upload)
+                    .expect("HUD bank belongs to its renderer");
+            }
+        }
+        for bank in banks {
+            for frame in bank {
+                if let Some((upload, _, _)) = frame.take() {
+                    renderer.retire_surface(upload);
+                }
+            }
+        }
+    }
+
     /// Load button sprites from the attached DEFAULT.RES.  Walks
     /// sub-ids 0..=3 per resource; a missing sub-id is stored as
     /// `None` and recovered via [`ZoomButtonSprites::frame`].
@@ -230,9 +316,16 @@ impl ZoomButtonSprites {
     /// The sprite actually rendered for a given interaction state,
     /// with a fallback to the normal frame if the requested state
     /// frame is absent.
-    fn frame(&self, btn: ZoomButton, state: usize) -> Option<SpriteFrame> {
+    fn frame(
+        &self,
+        btn: ZoomButton,
+        state: usize,
+    ) -> Option<(crate::renderer::SurfaceHandle, u16, u16)> {
         let frames = self.frames(btn);
-        frames[state].or(frames[BTN_STATE_NORMAL])
+        frames[state]
+            .as_ref()
+            .or(frames[BTN_STATE_NORMAL].as_ref())
+            .map(|(upload, w, h)| (upload.handle(), *w, *h))
     }
 
     /// Native size of the zoom-up button's normal frame, used to size
@@ -248,10 +341,11 @@ impl ZoomButtonSprites {
 
     fn size_of(frames: &[Option<SpriteFrame>; 4]) -> Option<(u16, u16)> {
         frames[BTN_STATE_NORMAL]
-            .or(frames[BTN_STATE_HOVER])
-            .or(frames[BTN_STATE_PRESSED])
-            .or(frames[BTN_STATE_DISABLED])
-            .map(|(_, w, h)| (w, h))
+            .as_ref()
+            .or(frames[BTN_STATE_HOVER].as_ref())
+            .or(frames[BTN_STATE_PRESSED].as_ref())
+            .or(frames[BTN_STATE_DISABLED].as_ref())
+            .map(|(_, w, h)| (*w, *h))
     }
 }
 
@@ -293,7 +387,9 @@ pub fn draw_with_sprites(
             // The original game's zoom widgets use bitmap rendering, not the shadow
             // renderer, so shadow-key pixels are treated by the normal
             // transparent blit path.
-            renderer.blit_to_screen(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT);
+            renderer
+                .draw_surface(sid, None, Some(&dst), BLIT_SOURCE_TRANSPARENT)
+                .expect("live HUD upload");
         }
         // No placeholder-rect fallback — if a zoom sprite is missing
         // from DEFAULT.RES we simply don't draw the button.  The old

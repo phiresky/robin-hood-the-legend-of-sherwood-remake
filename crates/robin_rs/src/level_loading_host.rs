@@ -1009,8 +1009,9 @@ pub fn apply_minimap(
     let decoded = decoded.borrow();
     let mut timer = crate::game_session::PhaseTimer::new("minimap upload");
     let surface = renderer
-        .create_surface_from_rgb565(decoded.width, decoded.height, &decoded.pixels)
+        .upload_rgb565(decoded.width, decoded.height, &decoded.pixels)
         .expect("apply_minimap: decoded minimap dimensions must match RGB565 payload");
+    let surface_handle = surface.handle();
     host.frontend
         .mission_surfaces
         .replace_map(renderer, surface);
@@ -1038,10 +1039,10 @@ pub fn apply_minimap(
     let saved_position = engine_coordinates::ScreenPoint::new(profile.minimap_x, profile.minimap_y);
 
     tracing::info!(
-        "Minimap loaded: {}x{} pixels, surface ID {}, saved position ({:.0}, {:.0})",
+        "Minimap loaded: {}x{} pixels, surface {:?}, saved position ({:.0}, {:.0})",
         decoded.width,
         decoded.height,
-        surface,
+        surface_handle,
         saved_position.x,
         saved_position.y,
     );

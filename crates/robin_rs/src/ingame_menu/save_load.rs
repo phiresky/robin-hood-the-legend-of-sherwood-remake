@@ -1196,13 +1196,13 @@ fn sync_thumbnail_cache(
         (_, Some(slot)) => {
             clear_thumbnail_cache(cache, widget, renderer);
             if let Some(thumb) = save_manager.load_thumbnail(slot) {
-                let id = renderer
-                    .create_surface_from_rgb565(thumb.width, thumb.height, &thumb.pixels)
+                let surface = renderer
+                    .upload_rgb565(thumb.width, thumb.height, &thumb.pixels)
                     .expect("save thumbnail dimensions must match RGB565 payload");
-                widget.set_alternate_picture(id);
+                widget.set_alternate_picture(surface.handle());
                 *cache = Some(ThumbnailCache {
                     slot: target_name.expect("thumbnail load requires a slot identity"),
-                    surface: renderer.adopt_surface(id),
+                    surface,
                     width: thumb.width,
                     height: thumb.height,
                 });

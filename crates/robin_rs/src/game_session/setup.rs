@@ -1705,7 +1705,7 @@ pub(super) fn load_mission_sprites(
     // without touching the resource manager each frame.
     match cursor_res.get_pictures(resource_ids::RHMAP_ITEMS) {
         Ok(pics) => {
-            let surfaces: Vec<Option<u32>> = pics
+            let surfaces: Vec<Option<crate::renderer::OwnedSurface>> = pics
                 .iter()
                 .map(|opt| opt.as_ref().map(|p| picture_to_surface(renderer, p)))
                 .collect();
@@ -1726,7 +1726,7 @@ pub(super) fn load_mission_sprites(
     match cursor_res.get_pictures(resource_ids::RHID_GROUND_FOCUS) {
         Ok(pics) => {
             let first_pic = pics.iter().find_map(|opt| opt.as_ref());
-            let surfaces: Vec<(u32, u16, u16)> = pics
+            let surfaces: Vec<(crate::renderer::OwnedSurface, u16, u16)> = pics
                 .iter()
                 .filter_map(|opt| {
                     opt.as_ref().map(|p| {
