@@ -391,7 +391,7 @@ pub(crate) async fn show_select_player(
             let row_y = LIST_RECT.y + i as i32 * (profile_field_h + 2);
             let is_selected = selected == Some(i);
             if let Some(surf) = resources.input_field_surface(is_selected) {
-                widget_bridge::draw_picture_surface_rect(
+                widget_bridge::draw_menu_surface_rect(
                     renderer,
                     transform,
                     surf,
@@ -1156,12 +1156,14 @@ async fn run_name_prompt(
                 (x + input_rect.w) as f32,
                 (y + input_rect.h) as f32,
             );
-            renderer.blit_to_screen(
-                surf,
-                Some(&src),
-                Some(&dst),
-                crate::renderer::BLIT_SOURCE_TRANSPARENT,
-            );
+            renderer
+                .draw_surface(
+                    surf,
+                    Some(&src),
+                    Some(&dst),
+                    crate::renderer::BLIT_SOURCE_TRANSPARENT,
+                )
+                .expect("live selected input surface");
         } else {
             draw_fallback_panel(renderer, transform, &input_rect);
         }

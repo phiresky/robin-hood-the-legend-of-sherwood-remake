@@ -378,7 +378,9 @@ pub(crate) async fn show_main_menu(
             (bg_x + bg.width) as f32,
             (bg_y + bg.height) as f32,
         );
-        renderer.blit_to_screen(bg.id, Some(&src), Some(&dst), 0);
+        renderer
+            .draw_surface(bg.id, Some(&src), Some(&dst), 0)
+            .expect("live menu background");
         renderer.present();
     }
     prompt_first_launch_new_player(
@@ -569,7 +571,9 @@ pub(crate) async fn show_main_menu(
                 (bg_x + bg.width) as f32,
                 (bg_y + bg.height) as f32,
             );
-            renderer.blit_to_screen(bg.id, Some(&src), Some(&dst), 0);
+            renderer
+                .draw_surface(bg.id, Some(&src), Some(&dst), 0)
+                .expect("live menu background");
         }
 
         // Buttons (sprite layer).
@@ -588,7 +592,9 @@ pub(crate) async fn show_main_menu(
                 let src = BBox::from_coords(0.0, 0.0, bw as f32, bh as f32);
                 let dst =
                     BBox::from_coords(bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32);
-                renderer.blit_to_screen(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT);
+                renderer
+                    .draw_surface(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+                    .expect("live menu button");
             }
         }
 
