@@ -456,7 +456,7 @@ fn drive_leave_mission_prompt(
                     None,
                 ),
                 replay_result,
-                awaiting_authority: false,
+                dismissal: crate::ingame_menu::modal_net::ModalDismissalGate::default(),
             });
         }
     }

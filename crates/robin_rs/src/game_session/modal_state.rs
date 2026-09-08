@@ -9,6 +9,7 @@ use crate::cursor::CursorRenderer;
 use crate::game::Game;
 use crate::host::Host;
 use crate::host::HostSignal;
+use crate::ingame_menu::modal_net::ModalDismissalGate;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::ingame_menu::{
     self, DebriefingModalState, DebriefingOutcome, DialogueModalState, DialogueSentence,
@@ -104,7 +105,7 @@ pub(super) trait ModalScreen: Sized {
 pub(super) struct ModalBatch<S: ModalScreen> {
     lifecycle: ModalBatchState<S::Item>,
     current: Option<(engine_player_command::ModalKind, S)>,
-    awaiting_authority: bool,
+    dismissal: ModalDismissalGate,
 }
 
 pub(super) type ActiveDialogueBatch = ModalBatch<DialogueModalState>;
@@ -116,7 +117,7 @@ impl<S: ModalScreen> ModalBatch<S> {
         Self {
             lifecycle: ModalBatchState::new(pending),
             current: None,
-            awaiting_authority: false,
+            dismissal: ModalDismissalGate::default(),
         }
     }
 
@@ -134,6 +135,7 @@ impl<S: ModalScreen> ModalBatch<S> {
         result: engine_player_command::DialogResult,
         ctx: &mut ModalContext<'_>,
     ) {
+        self.dismissal.retire();
         self.lifecycle.finish(&kind, result);
         ctx.modal_dismissals
             .push(engine_player_command::PlayerCommand::ModalDismiss { kind, result });
@@ -176,6 +178,7 @@ impl<S: ModalScreen> ModalBatch<S> {
             let kind = S::item_kind(&item);
             let screen = S::begin(host, ctx, item);
             self.current = Some((kind, screen));
+            self.dismissal = ModalDismissalGate::default();
         }
 
         let admission = self
@@ -201,23 +204,23 @@ impl<S: ModalScreen> ModalBatch<S> {
 
         if !S::HANDLES_NETWORK_AUTHORITY
             && let Some((kind, _)) = self.current.as_ref()
-            && let Some(net) = host.transport.net.as_ref()
         {
-            let modal_net = ModalNet::new(
-                net,
-                kind.clone(),
-                host.transport.local_seat == engine_player_command::PlayerId::HOST,
-            );
-            if let Some(result) = modal_net.poll_remote_dismissal() {
+            let modal_net = host.transport.net.as_ref().map(|net| {
+                ModalNet::new(
+                    net,
+                    kind.clone(),
+                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                )
+            });
+            if let Some(result) = self.dismissal.poll(modal_net.as_ref()) {
                 let (kind, _) = self
                     .current
                     .take()
                     .expect("active modal disappeared while applying host decision");
-                self.awaiting_authority = false;
                 self.apply_replay_result(kind, result, ctx);
                 return;
             }
-            if self.awaiting_authority {
+            if self.dismissal.is_pending() {
                 return;
             }
         }
@@ -227,18 +230,18 @@ impl<S: ModalScreen> ModalBatch<S> {
         };
 
         if let Some(outcome) = screen.step(kind, host, ctx) {
-            let result = S::to_result(&outcome);
-            if !S::HANDLES_NETWORK_AUTHORITY
-                && let Some(net) = host.transport.net.as_ref()
-            {
-                let modal_net = ModalNet::new(
-                    net,
-                    kind.clone(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
-                );
-                modal_net.publish(result);
-                if !modal_net.is_authority() {
-                    self.awaiting_authority = true;
+            let mut result = S::to_result(&outcome);
+            if !S::HANDLES_NETWORK_AUTHORITY {
+                let modal_net = host.transport.net.as_ref().map(|net| {
+                    ModalNet::new(
+                        net,
+                        kind.clone(),
+                        host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    )
+                });
+                if let Some(confirmed) = self.dismissal.request(result, modal_net.as_ref()) {
+                    result = confirmed;
+                } else {
                     return;
                 }
             }
@@ -535,7 +538,7 @@ pub(super) enum ActiveModal {
         kind: engine_player_command::ModalKind,
         state: MissionStatePopupState,
         replay_result: Option<engine_player_command::DialogResult>,
-        awaiting_authority: bool,
+        dismissal: ModalDismissalGate,
     },
     Trading(Box<TradingModalState>),
 }
@@ -1018,20 +1021,20 @@ pub(super) fn tick_active_modal(
             kind,
             state,
             replay_result,
-            awaiting_authority,
+            dismissal,
         } => {
             if replay_result.is_none() {
                 *replay_result = pop_matching_dismissal(replay_modal_dismissals, kind);
             }
-            if replay_result.is_none()
-                && let Some(net) = host.transport.net.as_ref()
-            {
-                let modal_net = ModalNet::new(
-                    net,
-                    kind.clone(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
-                );
-                *replay_result = modal_net.poll_remote_dismissal();
+            if replay_result.is_none() {
+                let modal_net = host.transport.net.as_ref().map(|net| {
+                    ModalNet::new(
+                        net,
+                        kind.clone(),
+                        host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    )
+                });
+                *replay_result = dismissal.poll(modal_net.as_ref());
             }
             if let Some(result) = replay_result.take() {
                 ctx.modal_dismissals
@@ -1055,7 +1058,7 @@ pub(super) fn tick_active_modal(
                     }
                 };
             }
-            if *awaiting_authority {
+            if dismissal.is_pending() {
                 return ActiveModalOutcome::None;
             }
             let ModalContext {
@@ -1079,24 +1082,22 @@ pub(super) fn tick_active_modal(
                 } else {
                     engine_player_command::DialogResult::Aborted
                 };
-                if let Some(net) = host.transport.net.as_ref() {
-                    let modal_net = ModalNet::new(
+                let modal_net = host.transport.net.as_ref().map(|net| {
+                    ModalNet::new(
                         net,
                         kind.clone(),
                         host.transport.local_seat == engine_player_command::PlayerId::HOST,
-                    );
-                    modal_net.publish(result);
-                    if !modal_net.is_authority() {
-                        *awaiting_authority = true;
-                        return ActiveModalOutcome::None;
-                    }
-                }
+                    )
+                });
+                let Some(result) = dismissal.request(result, modal_net.as_ref()) else {
+                    return ActiveModalOutcome::None;
+                };
                 modal_dismissals.push(engine_player_command::PlayerCommand::ModalDismiss {
                     kind: kind.clone(),
                     result,
                 });
                 *active_modal = None;
-                if confirmed {
+                if result == engine_player_command::DialogResult::Completed {
                     ActiveModalOutcome::QuitMissionRequested
                 } else {
                     ActiveModalOutcome::None
