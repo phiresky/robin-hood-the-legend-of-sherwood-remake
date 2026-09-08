@@ -1648,7 +1648,7 @@ pub enum PendingSnapshotTransitionPayload {
     Save {
         /// Host-local slot identity. Peers receive the exact save payload but do
         /// not resolve it through their unrelated local slot index.
-        slot: Option<usize>,
+        slot: Option<crate::savegame::SlotHandle>,
         save: Box<crate::save_file::GameSaveFile>,
     },
     CampaignExit {

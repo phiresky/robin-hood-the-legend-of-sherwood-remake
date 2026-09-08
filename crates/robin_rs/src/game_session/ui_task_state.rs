@@ -171,7 +171,7 @@ pub(super) enum UiTaskOutcome {
         mission_id: u32,
     },
     QuickLoadAccepted {
-        slot: usize,
+        slot: crate::savegame::SlotHandle,
         mission_id: u32,
         save: Box<GameSaveFile>,
     },
@@ -338,7 +338,7 @@ impl UiTaskKind {
 
 pub(super) struct QuickLoadTaskState {
     dialog: YesNoModalState,
-    slot: usize,
+    slot: crate::savegame::SlotHandle,
     mission_id: u32,
     save: Option<Box<GameSaveFile>>,
 }
@@ -349,7 +349,7 @@ impl QuickLoadTaskState {
         renderer: &Renderer,
         resources: &IngameMenuResources,
         message: String,
-        slot: usize,
+        slot: crate::savegame::SlotHandle,
         mission_id: u32,
         save: GameSaveFile,
     ) -> Self {
@@ -380,7 +380,7 @@ impl QuickLoadTaskState {
         result.map(|accepted| {
             if accepted {
                 UiTaskOutcome::QuickLoadAccepted {
-                    slot: self.slot,
+                    slot: self.slot.clone(),
                     mission_id: self.mission_id,
                     save: self
                         .save
