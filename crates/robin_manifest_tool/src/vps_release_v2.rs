@@ -5240,12 +5240,6 @@ fn nonzero_lower_hex_table(value: &toml::map::Map<String, toml::Value>, field: &
         })
 }
 
-fn validate_final_text(path: &Path, label: &str) -> Result<()> {
-    let bytes = read_regular_file_bounded(path, MAX_CONFIG_BYTES)?;
-    std::str::from_utf8(&bytes).with_context(|| format!("{label} is not UTF-8"))?;
-    reject_placeholders(&bytes, label)
-}
-
 fn validate_final_host_file(
     role: VpsHostFileRoleV2,
     path: &Path,
