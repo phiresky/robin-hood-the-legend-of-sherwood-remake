@@ -61,8 +61,9 @@ The early batch's loading-byte count becomes available when each body completes;
 subsequent requests keep their existing chunk progress reporting.
 
 Source `4a350e912` enables the already-measured early branch by default; the
-comparison build required `replay-preparation=early`. The final optimized
-package was rebuilt from `4a350e9126e5` and checked without that query flag.
+comparison build required `replay-preparation=early`. The default-policy
+package before main integration was rebuilt from `4a350e9126e5` and checked
+without that query flag.
 
 ## Validation and retained evidence
 
@@ -92,3 +93,25 @@ and default selection). Final results, exact hashes and capture headers are in
 `final-admission-validation.json`, `final-game.http.gz.json`,
 `final-admission.http.gz.json` and `final-*-eof.*` under the same artifact directory.
 These final correctness runs are not another timing series.
+
+
+## Final integration validation
+
+Main `b70925eab` was integrated as `dd619699bec5`, preserving its window-aware
+save-recovery callback initialization. The integrated native client suite passed
+1,661 tests with eight existing ignored; the native game and threaded release
+WASM builds passed. The matching admission module retained its isolated,
+nonshared 384 MiB memory contract.
+
+The optimized integrated package passed default-mode browser EOF checks for both
+normal playback (306/306 records) and Restart (6/6), with the early-batch marker
+present, no browser errors and zero duplicate mission requests. Its game module
+is 21,543,305 raw bytes and 7,835,241 captured HTTP gzip bytes. These sizes include
+main's intervening changes and are not a measure of this optimization's code-size
+cost. Exact package hashes, capture headers and correctness results are retained
+under `/tmp/robin-replay-plan-earlier/` in `integrated-package-provenance.json`,
+`integrated-game.http.gz.json`, `integrated-admission.http.gz.json`,
+`integrated-validation.json` and `integrated-*-eof.*`.
+
+The twenty-run timing comparison above remains tied to source `13ff8839fabb`;
+these integrated correctness checks do not establish a new timing baseline.
