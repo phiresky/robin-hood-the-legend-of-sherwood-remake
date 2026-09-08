@@ -316,7 +316,7 @@ impl LoadPickerModalState {
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
-        let total = visible.len();
+        let total = self.model.total_rows();
         let metadata_text = EnglishSaveMetadataText;
         let now_unix = if self.detailed_metadata {
             match crate::save_file::unix_timestamp_now() {
@@ -340,11 +340,7 @@ impl LoadPickerModalState {
         {
             let row_offset =
                 ((mouse_virt.y as i32 - LOAD_LIST_RECT.y - 4) / row_height).max(0) as usize;
-            row_at(
-                SaveLoadMode::Load,
-                self.model.scroll_offset() + row_offset,
-                visible.len(),
-            )
+            self.model.row_at(self.model.scroll_offset() + row_offset)
         } else {
             None
         };
@@ -353,7 +349,10 @@ impl LoadPickerModalState {
             if row_index >= total {
                 break;
             }
-            let row = ListRow::Existing(row_index);
+            let row = self
+                .model
+                .row_at(row_index)
+                .expect("rendered row is within model bounds");
             let row_y = LOAD_LIST_RECT.y + 4 + row_offset as i32 * row_height;
             let Some(font) = resources.list_font(hovered_row == Some(row), selected == Some(row))
             else {
@@ -1166,7 +1165,7 @@ pub async fn show_save_load(
         } else {
             None
         };
-        let total = total_rows(mode, visible.len());
+        let total = model.total_rows();
         let scrollbar_w = list_scrollbar_width(resources);
         let needs_scrollbar = total > visible_rows && scrollbar_w > 0;
         // Row area matches the old +10 left padding; mirror it on the
@@ -1181,7 +1180,7 @@ pub async fn show_save_load(
         // rect directly.
         let hovered_row = if list_rect.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32) {
             let row_offset = ((mouse_virt.y as i32 - list_rect.y - 4) / row_height).max(0) as usize;
-            row_at(mode, model.scroll_offset() + row_offset, visible.len())
+            model.row_at(model.scroll_offset() + row_offset)
         } else {
             None
         };
@@ -1191,7 +1190,9 @@ pub async fn show_save_load(
             if row_index >= total {
                 break;
             }
-            let row = row_at_unchecked(mode, row_index, visible.len());
+            let row = model
+                .row_at(row_index)
+                .expect("rendered row is within model bounds");
             let row_y = list_rect.y + 4 + row_offset as i32 * row_height;
             let is_selected = selected == Some(row);
             let is_focused = hovered_row == Some(row);
@@ -1535,33 +1536,6 @@ fn draw_preview(
 
 fn list_scrollbar_width(resources: &IngameMenuResources) -> i32 {
     resources.list_scrollbar[0].map_or(0, |s| s.width)
-}
-
-fn total_rows(mode: SaveLoadMode, n_visible: usize) -> usize {
-    match mode {
-        SaveLoadMode::Save => n_visible + 1,
-        SaveLoadMode::Load => n_visible,
-    }
-}
-
-fn row_at(mode: SaveLoadMode, index: usize, n_visible: usize) -> Option<ListRow> {
-    if index >= total_rows(mode, n_visible) {
-        return None;
-    }
-    Some(row_at_unchecked(mode, index, n_visible))
-}
-
-fn row_at_unchecked(mode: SaveLoadMode, index: usize, _n_visible: usize) -> ListRow {
-    match mode {
-        SaveLoadMode::Save => {
-            if index == 0 {
-                ListRow::New
-            } else {
-                ListRow::Existing(index - 1)
-            }
-        }
-        SaveLoadMode::Load => ListRow::Existing(index),
-    }
 }
 
 /// Build the listbox row label. The original menu adds only
@@ -2069,13 +2043,26 @@ mod tests {
     fn shared_delete_bridge_handles_cancel_success_and_cleanup_error() {
         let directory = tempfile::tempdir().unwrap();
         let mut manager = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
-        manager
-            .saves
-            .push(SaveGame::new("Savegame_000".into(), "First".into(), 7));
-        manager
-            .saves
-            .push(SaveGame::new("Savegame_001".into(), "Second".into(), 7));
+        for index in 0..2 {
+            let mut save = saved_at("123");
+            save.filename = format!("Savegame_{index:03}");
+            save.campaign_progress = Some(0);
+            save.missions_done = Some(0);
+            save.missions_total = Some(1);
+            save.gang_size = Some(1);
+            save.ransom = Some(0);
+            save.blazons = Some(0);
+            save.amulets = Some(0);
+            save.validate_published_metadata().unwrap();
+            manager.saves.push(save);
+        }
         manager.save_index().unwrap();
+        manager = SaveGameManager::load_index(directory.path().to_str().unwrap()).unwrap();
+        assert_eq!(
+            manager.count(),
+            2,
+            "fixture index must be loadable, not unpublished drafts"
+        );
         let mut model = PickerModel::new(SaveLoadMode::Load, false, 1, picker_slots(&manager));
         model.navigate(true);
         model.request_delete().unwrap();
@@ -2087,6 +2074,9 @@ mod tests {
         assert_eq!(manager.count(), 1);
         assert_eq!(model.selected_row(), None);
         assert_eq!(model.deletion_error(), None);
+        manager = SaveGameManager::load_index(directory.path().to_str().unwrap()).unwrap();
+        assert_eq!(manager.count(), 1);
+        assert_eq!(manager.slot_name(0).unwrap().as_str(), "Savegame_001");
 
         // A directory cannot be unlinked as a payload file. The durable intent
         // has already removed the row, so both adapters must show the new list
@@ -2099,6 +2089,10 @@ mod tests {
         assert_eq!(model.selected_row(), None);
         assert_eq!(model.scroll_offset(), 0);
         assert!(model.deletion_error().unwrap().contains("cleanup"));
+        assert!(SaveGameManager::load_index(directory.path().to_str().unwrap()).is_err());
+        std::fs::remove_dir(directory.path().join("Savegame_001.json")).unwrap();
+        let recovered = SaveGameManager::load_index(directory.path().to_str().unwrap()).unwrap();
+        assert_eq!(recovered.count(), 0);
     }
 
     fn saved_at(timestamp: &str) -> SaveGame {
