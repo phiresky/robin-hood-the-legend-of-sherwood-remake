@@ -1843,7 +1843,6 @@ fn visible_save_filenames(
 ) -> Vec<String> {
     save_manager
         .saves()
-        .iter()
         .filter(|save| match mode {
             SaveLoadMode::Save => !save.is_special(),
             SaveLoadMode::Load => {
