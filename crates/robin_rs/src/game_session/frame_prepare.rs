@@ -1133,6 +1133,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 dev,
                 &mut render_ctx,
             )
+            .await
         } else {
             None
         };

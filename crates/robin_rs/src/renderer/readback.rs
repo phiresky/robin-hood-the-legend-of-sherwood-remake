@@ -13,6 +13,8 @@ pub enum CaptureError {
     InvalidLayout,
     #[error("GPU capture polling failed: {0}")]
     Poll(String),
+    #[error("GPU readback did not complete within 30 seconds")]
+    Timeout,
     #[error("GPU readback mapping failed: {0}")]
     Map(String),
     #[error("GPU readback mapping callback was dropped")]
@@ -102,6 +104,26 @@ fn submit(
     Ok((buffer, layout))
 }
 
+/// Browser GL fences only progress after returning to the event loop. Polling
+/// with Wait on that thread can time out even though the submitted work is valid.
+#[cfg(any(target_arch = "wasm32", test))]
+async fn poll_mapping<T, Y: std::future::Future<Output = ()>>(
+    mut receiver: futures::channel::oneshot::Receiver<T>,
+    mut poll: impl FnMut() -> Result<(), CaptureError>,
+    mut yield_turn: impl FnMut() -> Y,
+) -> Result<T, CaptureError> {
+    loop {
+        poll()?;
+        if let Some(result) = receiver
+            .try_recv()
+            .map_err(|_| CaptureError::CompletionLost)?
+        {
+            return Ok(result);
+        }
+        yield_turn().await;
+    }
+}
+
 async fn complete(
     gpu: &GpuContext,
     buffer: wgpu::Buffer,
@@ -113,15 +135,36 @@ async fn complete(
         .map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
-    // Native and the supported browser WebGL2 backend need explicit polling.
-    // WebGPU polling is a no-op; its async adapter awaits the browser callback.
-    gpu.device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .map_err(|error| CaptureError::Poll(error.to_string()))?;
-    receiver
-        .await
-        .map_err(|_| CaptureError::CompletionLost)?
-        .map_err(|error| CaptureError::Map(error.to_string()))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    let mapped = {
+        gpu.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|error| CaptureError::Poll(error.to_string()))?;
+        receiver.await.map_err(|_| CaptureError::CompletionLost)?
+    };
+    #[cfg(target_arch = "wasm32")]
+    let mapped = {
+        use futures::{future::Either, pin_mut};
+        let completion = poll_mapping(
+            receiver,
+            || {
+                gpu.device
+                    .poll(wgpu::PollType::Poll)
+                    .map(|_| ())
+                    .map_err(|error| CaptureError::Poll(error.to_string()))
+            },
+            || gloo_timers::future::TimeoutFuture::new(1),
+        );
+        // A lost device normally reports through map_async. Also bound the wait
+        // if a browser/driver never delivers that callback, without busy spinning.
+        let timeout = gloo_timers::future::TimeoutFuture::new(30_000);
+        pin_mut!(completion, timeout);
+        match futures::future::select(completion, timeout).await {
+            Either::Left((result, _)) => result?,
+            Either::Right(_) => return Err(CaptureError::Timeout),
+        }
+    };
+    mapped.map_err(|error| CaptureError::Map(error.to_string()))?;
     let result = {
         let mapped = buffer
             .slice(..)
@@ -185,8 +228,12 @@ pub(super) fn capture_frame_rgba(
     #[cfg(target_arch = "wasm32")]
     {
         use futures::FutureExt;
-        // window.rs selects WebGL2, whose map callback completes during poll.
-        // TODO: migrate synchronous capture callers before enabling WebGPU.
+        // Retain immediate-completion captures, but never block the browser
+        // waiting for a GL fence. Dropping a pending future drops its buffer;
+        // wgpu retains submitted resources, and the callback tolerates a dropped
+        // receiver. No mapped view has been obtained at this point.
+        // TODO: migrate browser screenshot consumers to async so they can also
+        // capture when mapping requires another browser event-loop turn.
         capture_frame_rgba_async(gpu, pipelines, resources, frame)
             .now_or_never()
             .ok_or(CaptureError::AsyncRequired)?
@@ -213,6 +260,54 @@ pub(super) fn capture_presented_frame_rgba(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mapping_polls_again_after_yielding_and_preserves_callback_result() {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        let mut sender = Some(sender);
+        let polls = std::cell::Cell::new(0);
+        let yields = std::cell::Cell::new(0);
+        let result = pollster::block_on(poll_mapping(
+            receiver,
+            || {
+                polls.set(polls.get() + 1);
+                assert_eq!(polls.get(), yields.get() + 1);
+                if polls.get() == 3 {
+                    sender.take().unwrap().send(42).unwrap();
+                }
+                Ok(())
+            },
+            || {
+                yields.set(yields.get() + 1);
+                std::future::ready(())
+            },
+        ));
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(yields.get(), 2);
+    }
+
+    #[test]
+    fn mapping_reports_poll_failure_and_dropped_callback() {
+        let (_sender, receiver) = futures::channel::oneshot::channel::<()>();
+        assert!(matches!(
+            pollster::block_on(poll_mapping(
+                receiver,
+                || Err(CaptureError::Poll("device lost".into())),
+                || async { panic!("poll errors must not wait") },
+            )),
+            Err(CaptureError::Poll(_))
+        ));
+        let (sender, receiver) = futures::channel::oneshot::channel::<()>();
+        drop(sender);
+        assert!(matches!(
+            pollster::block_on(poll_mapping(
+                receiver,
+                || Ok(()),
+                || async { panic!("dropped callbacks must not wait") }
+            )),
+            Err(CaptureError::CompletionLost)
+        ));
+    }
 
     #[test]
     fn odd_width_rows_exclude_gpu_padding() {

@@ -424,7 +424,7 @@ fn render_screenshot_rgba(
 /// This mirrors the HTTP screenshot path: render intentionally, read
 /// back immediately, then clear the renderer queue so the live frame
 /// later in the loop starts clean.
-pub(super) fn capture_save_thumbnail(
+pub(super) async fn capture_save_thumbnail(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
@@ -451,7 +451,7 @@ pub(super) fn capture_save_thumbnail(
         RenderCadence::DisplayRefresh,
     );
 
-    let thumb = match ctx.renderer.try_capture_frame_rgba() {
+    let thumb = match ctx.renderer.capture_frame_rgba_async().await {
         Ok((w, h, rgba)) => Thumbnail::from_rgba_downscaled(w, h, &rgba, THUMB_WIDTH, THUMB_HEIGHT)
             .map_err(|err| {
                 tracing::warn!("Save thumbnail capture failed: {err:#}");
