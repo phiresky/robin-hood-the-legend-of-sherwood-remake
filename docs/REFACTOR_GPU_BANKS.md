@@ -23,4 +23,8 @@ Four previous synthetic panic tests are replaced by live-GPU `Result` assertions
 
 The menu-bank continuation is described in `REFACTOR_MENU_BANKS.md`.
 
-TODO: record the focused, combined-client and Vulkan gate results after integration.
+Focused validation at `8846f1805`: `cargo test --locked -p robin_rs --lib
+mission_render_resources` passed all three pure ownership tests. This compiles
+the default client but does not execute the explicitly opted-in GPU contract.
+
+TODO: record the combined-client and named Vulkan gate results after integration.
