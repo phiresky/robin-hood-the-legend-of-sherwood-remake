@@ -571,7 +571,7 @@ impl Voice {
     }
 
     fn stop(&self) {
-        let _ = self.source.stop();
+        let _ = web_sys::AudioScheduledSourceNode::stop(&self.source);
     }
 }
 
