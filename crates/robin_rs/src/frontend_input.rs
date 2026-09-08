@@ -58,6 +58,14 @@ pub struct FrontendPointerCapture {
     touch_plan_captured: bool,
 }
 
+/// One chronological routing decision; only the caller dispatches commands.
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TouchPlanRoute {
+    Forward,
+    Captured,
+    Toggled { cancel_planned: bool },
+}
+
 impl FrontendPointerCapture {
     pub fn right_button_down(&mut self, clicks: u8) {
         self.right_double_click_pending = clicks >= 2;
@@ -73,26 +81,44 @@ impl FrontendPointerCapture {
     pub fn touch_plan_captured(&self) -> bool {
         self.touch_plan_captured
     }
-    /// Drain the captured pointer sequence without consuming keyboard, window,
-    /// or other-button events. A press and release may share one input batch.
-    pub fn filter_touch_plan_events(&mut self, events: &mut Vec<GameEvent>) {
-        if !self.touch_plan_captured {
-            return;
+    /// Admit presses only when enabled, but retire an already captured sequence
+    /// even if policy changes before its release. Never inspect a future event:
+    /// world input on either side of a HUD tap belongs to the world.
+    pub fn route_touch_plan_event(
+        &mut self,
+        planning: &mut FrontendPlanning,
+        event: &GameEvent,
+        admit_touch: bool,
+        hit_test: impl FnOnce(i32, i32) -> bool,
+    ) -> TouchPlanRoute {
+        if self.touch_plan_captured {
+            match event {
+                GameEvent::PointerCancel => {
+                    self.touch_plan_captured = false;
+                    return TouchPlanRoute::Forward;
+                }
+                GameEvent::MouseUp(_, _, 1) => {
+                    self.touch_plan_captured = false;
+                    return TouchPlanRoute::Captured;
+                }
+                GameEvent::MouseDown(_, _, 1, _) | GameEvent::MouseMove { .. } => {
+                    return TouchPlanRoute::Captured;
+                }
+                _ => return TouchPlanRoute::Forward,
+            }
         }
-        let released = events
-            .iter()
-            .any(|event| matches!(event, GameEvent::MouseUp(_, _, 1)));
-        events.retain(|event| {
-            !matches!(
-                event,
-                GameEvent::MouseDown(_, _, 1, _)
-                    | GameEvent::MouseUp(_, _, 1)
-                    | GameEvent::MouseMove { .. }
-            )
-        });
-        if released {
-            self.touch_plan_captured = false;
+        if let GameEvent::MouseDown(x, y, 1, _) = *event
+            && admit_touch
+            && planning.enabled()
+            && hit_test(x, y)
+        {
+            self.capture_touch_plan();
+            planning.toggle_touch();
+            return TouchPlanRoute::Toggled {
+                cancel_planned: !planning.touch_latched(),
+            };
         }
+        TouchPlanRoute::Forward
     }
 
     /// Modal close, engine cancellation and snapshot restoration all retire
@@ -141,8 +167,10 @@ mod tests {
     #[test]
     fn captured_press_release_batch_preserves_unrelated_events() {
         let mut capture = FrontendPointerCapture::default();
-        capture.capture_touch_plan();
-        let mut events = vec![
+        let mut planning = FrontendPlanning::new(true);
+        let events = vec![
+            GameEvent::MouseDown(0, 0, 1, 1),
+            GameEvent::MouseUp(0, 0, 1),
             GameEvent::MouseDown(10, 20, 1, 1),
             GameEvent::MouseMove {
                 x: 11,
@@ -151,31 +179,159 @@ mod tests {
                 yrel: 0,
             },
             GameEvent::MouseUp(11, 20, 1),
+            GameEvent::MouseDown(0, 0, 1, 1),
+            GameEvent::MouseUp(0, 0, 1),
             GameEvent::MouseDown(11, 20, 3, 1),
             GameEvent::Quit,
         ];
-        capture.filter_touch_plan_events(&mut events);
+        let decisions: Vec<_> = events
+            .iter()
+            .map(|event| capture.route_touch_plan_event(&mut planning, event, true, |x, _| x == 10))
+            .collect();
         assert!(!capture.touch_plan_captured());
-        assert!(matches!(
-            events.as_slice(),
-            [GameEvent::MouseDown(_, _, 3, _), GameEvent::Quit]
-        ));
-        events.push(GameEvent::MouseUp(11, 20, 1));
-        capture.filter_touch_plan_events(&mut events);
-        assert_eq!(events.len(), 3, "the next sequence is not captured");
+        use TouchPlanRoute::*;
+        assert_eq!(
+            decisions,
+            [
+                Forward,
+                Forward,
+                Toggled {
+                    cancel_planned: false
+                },
+                Captured,
+                Captured,
+                Forward,
+                Forward,
+                Forward,
+                Forward
+            ]
+        );
     }
 
     #[test]
     fn capture_survives_batches_until_matching_release() {
         let mut capture = FrontendPointerCapture::default();
-        capture.capture_touch_plan();
-        let mut events = vec![GameEvent::MouseUp(0, 0, 3)];
-        capture.filter_touch_plan_events(&mut events);
+        let mut planning = FrontendPlanning::new(true);
+        let route = |capture: &mut FrontendPointerCapture,
+                     planning: &mut FrontendPlanning,
+                     event,
+                     admit| {
+            capture.route_touch_plan_event(planning, &event, admit, |_, _| true)
+        };
+        assert_eq!(
+            route(
+                &mut capture,
+                &mut planning,
+                GameEvent::MouseDown(0, 0, 1, 1),
+                true
+            ),
+            TouchPlanRoute::Toggled {
+                cancel_planned: false
+            }
+        );
+        assert_eq!(
+            route(
+                &mut capture,
+                &mut planning,
+                GameEvent::MouseUp(0, 0, 3),
+                false
+            ),
+            TouchPlanRoute::Forward
+        );
         assert!(capture.touch_plan_captured());
-        assert_eq!(events.len(), 1);
-        events.push(GameEvent::MouseUp(0, 0, 1));
-        capture.filter_touch_plan_events(&mut events);
+        planning.update_preference(false);
+        assert_eq!(
+            route(
+                &mut capture,
+                &mut planning,
+                GameEvent::MouseUp(0, 0, 1),
+                false
+            ),
+            TouchPlanRoute::Captured
+        );
         assert!(!capture.touch_plan_captured());
-        assert_eq!(events.len(), 1);
+        assert_eq!(
+            route(
+                &mut capture,
+                &mut planning,
+                GameEvent::MouseDown(0, 0, 1, 1),
+                true
+            ),
+            TouchPlanRoute::Forward
+        );
+        planning.update_preference(true);
+        assert_eq!(
+            route(
+                &mut capture,
+                &mut planning,
+                GameEvent::MouseDown(0, 0, 1, 1),
+                false
+            ),
+            TouchPlanRoute::Forward
+        );
+    }
+
+    #[test]
+    fn two_taps_emit_ordered_toggle_and_cancellation_and_preserve_keys() {
+        use TouchPlanRoute::*;
+        let mut capture = FrontendPointerCapture::default();
+        let mut planning = FrontendPlanning::new(true);
+        let events = [
+            GameEvent::MouseDown(0, 0, 1, 1),
+            GameEvent::KeyDown {
+                keycode: crate::gfx_types::Keycode::Space,
+                physical_key: Some(winit::keyboard::KeyCode::Space),
+            },
+            GameEvent::MouseUp(0, 0, 3),
+            GameEvent::MouseUp(0, 0, 1),
+            GameEvent::MouseDown(0, 0, 1, 1),
+            GameEvent::MouseUp(0, 0, 1),
+        ];
+        let decisions: Vec<_> = events
+            .iter()
+            .map(|event| capture.route_touch_plan_event(&mut planning, event, true, |_, _| true))
+            .collect();
+        assert_eq!(
+            decisions,
+            [
+                Toggled {
+                    cancel_planned: false
+                },
+                Forward,
+                Forward,
+                Captured,
+                Toggled {
+                    cancel_planned: true
+                },
+                Captured
+            ]
+        );
+        assert!(!planning.touch_latched());
+        assert!(!capture.touch_plan_captured());
+
+        capture.route_touch_plan_event(&mut planning, &events[0], true, |_, _| true);
+        assert_eq!(
+            capture.route_touch_plan_event(
+                &mut planning,
+                &GameEvent::PointerCancel,
+                true,
+                |_, _| true
+            ),
+            Forward
+        );
+        assert!(!capture.touch_plan_captured());
+        assert_eq!(
+            capture.route_touch_plan_event(&mut planning, &events[3], true, |_, _| true),
+            Forward
+        );
+
+        capture.route_touch_plan_event(&mut planning, &events[0], true, |_, _| true);
+        capture.cancel_sequence();
+        planning.cancel_touch();
+        assert_eq!(
+            capture.route_touch_plan_event(&mut planning, &events[3], true, |_, _| true),
+            Forward
+        );
+        assert!(!planning.touch_latched());
     }
 }
