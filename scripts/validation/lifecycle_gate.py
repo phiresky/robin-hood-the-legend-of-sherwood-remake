@@ -26,6 +26,30 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def source_identity():
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=ROOT)
+
+    # Separate index/worktree diffs detect changes cancelling in `git diff HEAD`.
+    staged = git("diff", "--cached", "--binary")
+    unstaged = git("diff", "--binary")
+    return {
+        "harness_source_commit": git("rev-parse", "HEAD").decode().strip(),
+        "harness_source_tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
+        "tracked_source_dirty": bool(staged or unstaged),
+        "index_diff_sha256": hashlib.sha256(staged).hexdigest(),
+        "worktree_diff_sha256": hashlib.sha256(unstaged).hexdigest(),
+        "untracked_paths": git("ls-files", "--others", "--exclude-standard", "-z").decode().split("\0")[:-1],
+    }
+
+
+def verify_source(initial, current, *, browser_build=False):
+    if browser_build and (initial["tracked_source_dirty"] or initial["untracked_paths"]):
+        raise RuntimeError("browser builds require a clean tracked and untracked source checkout")
+    if initial != current:
+        raise RuntimeError("source checkout changed during lifecycle acceptance; rerun on a frozen snapshot")
+
+
 def executable(value):
     result = shutil.which(value)
     if not result:
@@ -196,16 +220,15 @@ def main():
     evidence.mkdir(parents=True, exist_ok=True)
     if any(evidence.iterdir()):
         raise RuntimeError("evidence directory must be empty")
-    summary = {"suite": args.suite, "completed": False,
-               "harness_source_commit": subprocess.check_output(
-                   ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
-               "harness_source_tree": subprocess.check_output(
-                   ["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True).strip(),
-               "tracked_source_dirty": bool(subprocess.check_output(
-                   ["git", "diff", "HEAD", "--name-only"], cwd=ROOT)),
+    initial_source = source_identity()
+    summary = {"suite": args.suite, "completed": False, **initial_source,
                "harness_sha256": digest(Path(__file__))}
     try:
+        verify_source(initial_source, initial_source, browser_build=args.suite == "browser-audio")
         (browser if args.suite == "browser-audio" else native)(evidence, summary)
+        final_source = source_identity()
+        summary["final_source"] = final_source
+        verify_source(initial_source, final_source)
         summary["completed"] = True
     except (Exception, KeyboardInterrupt) as error:
         summary["error"] = str(error)

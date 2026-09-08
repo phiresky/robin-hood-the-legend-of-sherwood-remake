@@ -31,6 +31,27 @@ class LifecycleGateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "required executable"):
             gate.executable(str(self.root / "missing"))
 
+    def test_source_identity_keeps_index_and_worktree_changes_separate(self):
+        with patch.object(gate.subprocess, "check_output", side_effect=[
+                b"staged diff", b"opposite worktree diff", b"commit\n", b"tree\n", b"new.rs\0"]):
+            identity = gate.source_identity()
+        self.assertTrue(identity["tracked_source_dirty"])
+        self.assertNotEqual(identity["index_diff_sha256"], identity["worktree_diff_sha256"])
+        self.assertEqual(identity["untracked_paths"], ["new.rs"])
+
+    def test_source_changes_or_unclean_browser_build_fail_closed(self):
+        initial = {"harness_source_commit": "commit", "tracked_source_dirty": False,
+                   "untracked_paths": [], "index_diff_sha256": "empty", "worktree_diff_sha256": "empty"}
+        gate.verify_source(initial, initial, browser_build=True)
+        for key, value in (("harness_source_commit", "new"), ("index_diff_sha256", "changed"),
+                           ("worktree_diff_sha256", "changed"), ("untracked_paths", ["new.rs"])):
+            with self.assertRaisesRegex(RuntimeError, "changed during"):
+                gate.verify_source(initial, dict(initial, **{key: value}))
+        for dirty in (dict(initial, tracked_source_dirty=True), dict(initial, untracked_paths=["new.rs"])):
+            with self.assertRaisesRegex(RuntimeError, "clean tracked and untracked"):
+                gate.verify_source(dirty, dirty, browser_build=True)
+            gate.verify_source(dirty, dirty)
+
     def test_ambiguous_wasm_bindgen_lockfile_fails(self):
         (self.root / "Cargo.lock").write_text(
             '[[package]]\nname="wasm-bindgen"\nversion="0.2.1"\n'
