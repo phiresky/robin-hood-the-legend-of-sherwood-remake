@@ -50,6 +50,7 @@ impl TerminalLoadSelection {
 enum TerminalLoadTarget {
     Local(crate::savegame::SlotHandle),
     AuthoritativeSnapshot,
+    ReplayContinuation,
 }
 
 fn terminal_load_target(
@@ -59,7 +60,10 @@ fn terminal_load_target(
     playing_back: bool,
     is_client: bool,
 ) -> Result<TerminalLoadTarget, String> {
-    if playing_back || is_client {
+    if playing_back {
+        return Ok(TerminalLoadTarget::ReplayContinuation);
+    }
+    if is_client {
         return Ok(TerminalLoadTarget::AuthoritativeSnapshot);
     }
     selection
@@ -209,6 +213,10 @@ enum TerminalDebriefingPhase {
     AwaitingLeaderboard {
         outcome: SettledDebriefingOutcome,
     },
+    /// Keep the old terminal engine paused even if the host's prepare packet
+    /// arrives after this peer finishes its leaderboard. Network ingress stays
+    /// active and the input phase consumes the eventual committed transition.
+    AwaitingSnapshot,
 }
 
 pub(super) struct TerminalDebriefingState {
@@ -325,6 +333,25 @@ fn terminal_debriefing_page(
 }
 
 impl TerminalDebriefingState {
+    fn await_remote_snapshot(
+        &mut self,
+        outcome: &SettledDebriefingOutcome,
+        playing_back: bool,
+        local_seat: engine_player_command::PlayerId,
+    ) -> bool {
+        if playing_back
+            || local_seat == engine_player_command::PlayerId::HOST
+            || !matches!(outcome, SettledDebriefingOutcome::Load { .. })
+        {
+            return false;
+        }
+        // A locally proposed index cannot authorize this peer's file, even
+        // when the host eventually chooses the same numeric answer.
+        self.local_load = None;
+        self.phase = TerminalDebriefingPhase::AwaitingSnapshot;
+        true
+    }
+
     fn new(
         context: &mut TerminalDebriefingContext<'_>,
         exit_code: GameCode,
@@ -814,6 +841,14 @@ impl TerminalDebriefingState {
                 ) else {
                     unreachable!()
                 };
+                if self.await_remote_snapshot(
+                    &outcome,
+                    context.playing_back,
+                    context.host.transport.local_seat,
+                ) {
+                    context.game.operation.set(GameCode::LevelInProgress);
+                    return TerminalDebriefingProgress::Pending;
+                }
                 context.game.operation.set(self.exit_code);
                 if apply_terminal_debriefing_action(
                     context,
@@ -825,6 +860,12 @@ impl TerminalDebriefingState {
                 } else {
                     TerminalDebriefingProgress::Complete
                 }
+            }
+            TerminalDebriefingPhase::AwaitingSnapshot => {
+                // No timeout or local fallback: normal ingress owns snapshot
+                // commits and fatal disconnects. Replay never enters this hold;
+                // its recorded restore may already have run before this phase.
+                TerminalDebriefingProgress::Pending
             }
         }
     }
@@ -859,17 +900,18 @@ fn apply_terminal_debriefing_action(
             ) {
                 Ok(TerminalLoadTarget::Local(slot)) => slot,
                 Ok(TerminalLoadTarget::AuthoritativeSnapshot) => {
-                    // The host's prepared snapshot (or recorded restore) carries
-                    // the payload. A peer's index may name an unrelated local save.
-                    tracing::info!(
-                        slot,
-                        "terminal load awaits authoritative snapshot; ignoring local catalog index"
-                    );
-                    context.game.operation.set(GameCode::LevelInProgress);
-                    return false;
+                    unreachable!("client load must retain its terminal snapshot-wait phase")
                 }
                 Err(error) => {
                     tracing::error!("Debriefing load rejected stale slot: {error:#}");
+                    return false;
+                }
+                Ok(TerminalLoadTarget::ReplayContinuation) => {
+                    tracing::debug!(
+                        slot,
+                        "terminal replay load is owned by recorded restore boundaries"
+                    );
+                    context.game.operation.set(GameCode::LevelInProgress);
                     return false;
                 }
             };
@@ -1175,11 +1217,57 @@ mod tests {
             // Even a client that proposed this number locally must await the
             // host payload rather than selecting its own same-numbered save.
             let local = TerminalLoadSelection::capture(&manager, 0).unwrap();
-            assert!(matches!(
-                terminal_load_target(&other, Some(local), 0, playback, client).unwrap(),
-                TerminalLoadTarget::AuthoritativeSnapshot
+            let target = terminal_load_target(&other, Some(local), 0, playback, client).unwrap();
+            assert!(match target {
+                TerminalLoadTarget::ReplayContinuation => playback,
+                TerminalLoadTarget::AuthoritativeSnapshot => client && !playback,
+                TerminalLoadTarget::Local(_) => false,
+            });
+        }
+    }
+
+    #[test]
+    fn client_terminal_load_keeps_simulation_paused_before_snapshot_prepare_arrives() {
+        use robin_engine::player_command::PlayerId;
+        let mut state = terminal_state();
+        let outcome = SettledDebriefingOutcome::Load { slot: 7 };
+        state.phase = TerminalDebriefingPhase::AwaitingLeaderboard {
+            outcome: SettledDebriefingOutcome::Load { slot: 7 },
+        };
+        assert!(state.await_remote_snapshot(&outcome, false, PlayerId(1)));
+        assert!(matches!(
+            state.phase,
+            TerminalDebriefingPhase::AwaitingSnapshot
+        ));
+        let mut ui = MissionUi::new(false);
+        ui.terminal_debriefing = Some(state);
+        // There is deliberately no transport prepare/reconnecting flag yet.
+        // Retaining the terminal owner itself supplies pre-tick's modal pause.
+        assert!(ui.terminal_flow_active());
+        assert!(!Game::default().should_run_hourglass(false, false, ui.terminal_flow_active()));
+        assert!(
+            ui.terminal_debriefing
+                .as_ref()
+                .unwrap()
+                .http_result
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn recorded_terminal_load_does_not_wait_for_a_live_snapshot() {
+        use robin_engine::player_command::PlayerId;
+        let outcome = SettledDebriefingOutcome::Load { slot: 7 };
+        for seat in [PlayerId::HOST, PlayerId(1)] {
+            let mut state = terminal_state();
+            assert!(!state.await_remote_snapshot(&outcome, true, seat));
+            assert!(!matches!(
+                state.phase,
+                TerminalDebriefingPhase::AwaitingSnapshot
             ));
         }
+        let mut state = terminal_state();
+        assert!(!state.await_remote_snapshot(&outcome, false, PlayerId::HOST));
     }
 
     #[test]
