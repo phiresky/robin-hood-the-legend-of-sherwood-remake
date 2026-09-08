@@ -1152,7 +1152,7 @@ pub(super) fn render_frame(
         renderer.clear_frozen_scene();
     }
 
-    engine.draw_background(host, renderer);
+    engine.draw_background(&host.frontend.viewport, renderer);
     crate::blit_to_map::render_background_decals(&host.frontend, renderer);
 
     // ═══════════════════════════════════════════════════════════
@@ -1439,7 +1439,7 @@ pub(super) fn render_frame(
     // the persistent dotted-line phase stored on `PcMacroState`.
     // Allied patrol routes share this foreground, floating-chain layer.
     render_selected_allied_patrol_routes(host, engine, assets, local_seat, renderer);
-    crate::ui_panel::render_macro_dotted_chains(host, engine, renderer);
+    crate::ui_panel::render_macro_dotted_chains(&mut host.frontend, engine, renderer);
 
     // The items above are mission-space feedback and belong to the effected
     // gameplay image. Everything after this boundary is screen-space UI and
@@ -1457,7 +1457,7 @@ pub(super) fn render_frame(
     // ── GPU phase: UI panel, minimap ──
     let panel_mouse = threaded_input.position();
     crate::ui_panel::draw_panel(
-        host,
+        &mut host.frontend,
         engine,
         local_seat,
         &assets.profile_manager,
@@ -1780,7 +1780,7 @@ pub(super) fn render_frame(
     {
         let mouse_pos = threaded_input.position();
         crate::ui_panel::draw_pc_info_overlay(
-            host,
+            &mut host.frontend,
             engine,
             &assets.profile_manager,
             renderer,

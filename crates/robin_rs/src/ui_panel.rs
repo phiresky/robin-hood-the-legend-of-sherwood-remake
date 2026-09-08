@@ -13,7 +13,7 @@
 //! The `PANNEL_HEIGHT` used by the engine camera (130px in engine.rs) represents
 //! the full UI chrome height including the panel and its transition zone.
 
-use crate::host::Host;
+use crate::host::HostFrontend;
 use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
@@ -1458,7 +1458,7 @@ fn render_allied_portrait_layer(
 }
 
 fn render_auto_queue_ticks(
-    host: &mut Host,
+    frontend: &mut HostFrontend,
     renderer: &mut Renderer,
     engine: &Engine,
     members: &[EntityId],
@@ -1472,8 +1472,7 @@ fn render_auto_queue_ticks(
         .iter()
         .map(|member| engine.automatic_quick_action_count(*member))
         .sum();
-    let animation = host
-        .frontend
+    let animation = frontend
         .queue_strip_animations
         .entry(animation_key)
         .or_default();
@@ -1505,7 +1504,7 @@ fn render_auto_queue_ticks(
 }
 
 fn render_allied_portrait(
-    host: &mut Host,
+    frontend: &mut HostFrontend,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     engine: &Engine,
@@ -1616,7 +1615,7 @@ fn render_allied_portrait(
     // per queued soldier action, capped to the portrait width with a final
     // longer overflow tick.
     render_auto_queue_ticks(
-        host,
+        frontend,
         renderer,
         engine,
         &item.members,
@@ -1888,7 +1887,7 @@ fn blit_centered_between_scrolls(
 /// Should be called after entity rendering and before `renderer.flip()`.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
-    host: &mut Host,
+    frontend: &mut HostFrontend,
     engine: &Engine,
     local_seat: PlayerId,
     profiles: &engine_profiles::ProfileManager,
@@ -2017,7 +2016,7 @@ pub fn draw_panel(
                 .filter(|(hovered_slot, _)| *hovered_slot == slot as u8)
                 .map(|(_, button)| button);
             render_allied_portrait(
-                host, renderer, portraits, engine, profiles, local_seat, item, x, sh, hovered,
+                frontend, renderer, portraits, engine, profiles, local_seat, item, x, sh, hovered,
             );
             continue;
         }
@@ -2353,15 +2352,13 @@ pub fn draw_panel(
                 // by `SHIFT_FALL_PER_REFRESH` each draw.  The titbit icon is
                 // offset by `shift_phase` along +X to produce the slide.
                 let slot_idx_usz = slot_idx as usize;
-                let shift_phase = host
-                    .frontend
+                let shift_phase = frontend
                     .engine_display
                     .macro_shift_phase(pc_id, slot_idx_usz);
                 // Fizzle-blink visibility: the QA strobe toggles the per-slot
                 // titbit on/off after a macro fizzles.  When blink-hidden,
                 // skip the titbit blit.
-                let blink_hidden = host
-                    .frontend
+                let blink_hidden = frontend
                     .engine_display
                     .macro_titbit_blink_hidden(pc_id, slot_idx_usz);
                 if has_macro && !blink_hidden {
@@ -2426,7 +2423,7 @@ pub fn draw_panel(
                 }
             }
             render_auto_queue_ticks(
-                host,
+                frontend,
                 renderer,
                 engine,
                 std::slice::from_ref(&pc_id),
@@ -3137,7 +3134,7 @@ pub fn draw_screen_tooltip(
 /// `mouse` is the current mouse cursor position — the overlay clamps
 /// itself to the screen bounds each frame.
 pub fn draw_pc_info_overlay(
-    host: &mut Host,
+    frontend: &HostFrontend,
     engine: &Engine,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
@@ -3146,7 +3143,7 @@ pub fn draw_pc_info_overlay(
 ) {
     use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
 
-    let ov = &host.frontend.pc_info_overlay;
+    let ov = &frontend.pc_info_overlay;
     if !ov.visible {
         return;
     }
@@ -3224,12 +3221,15 @@ pub fn draw_pc_info_overlay(
 /// `DrawManager::draw_dotted_line(… DISTANCE_DOT, 1, 0x0000 …)` for each
 /// segment starting at the PC's map position.  The dot phase is a
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
-pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &mut Renderer) {
+pub fn render_macro_dotted_chains(
+    frontend: &HostFrontend,
+    engine: &Engine,
+    renderer: &mut Renderer,
+) {
     use robin_engine::macro_store::DISTANCE_DOT;
 
-    // Snapshot the PC positions first — the draw call borrows engine.host
-    // mutably for the draw_manager and its phase store, so we can't
-    // still be iterating `engine.pc_ids()` while calling it.
+    // Snapshot PC positions before composing each recorded chain. Drawing
+    // uses only the frontend draw manager and never writes simulation state.
     let mut per_pc: Vec<(
         robin_engine::element::EntityId,
         engine_coordinates::MapPoint,
@@ -3264,7 +3264,7 @@ pub fn render_macro_dotted_chains(host: &mut Host, engine: &Engine, renderer: &m
         for slot in state.slots() {
             for step in &slot.steps {
                 let to = step.position;
-                host.frontend.draw_manager.draw_dotted_line(
+                frontend.draw_manager.draw_dotted_line(
                     renderer,
                     from,
                     to,
