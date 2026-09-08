@@ -1283,6 +1283,43 @@ fn garbage_collect_orphans(save_directory: &str, manifest: &AutosaveManifest) ->
 mod tests {
     use super::*;
 
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_save_store_open_uses_memory_and_propagates_autosave_errors() {
+        use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
+        let root = format!("browser-save-store-open-{}", js_sys::Date::now());
+        let mut players = PlayerProfileManager::new(root.clone());
+        let player =
+            players.create_profile("Browser save-store test".into(), DifficultyLevel::Medium);
+        players.set_active(player);
+        let context = crate::host::ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(&root),
+            robin_engine::engine::GlobalOptions::default(),
+            players,
+            crate::key_config_store::KeyConfigStore::new(root),
+            None,
+        )
+        .unwrap();
+        let directory = context.active_profile_save_directory().unwrap();
+        let directory = directory.to_str().unwrap();
+        persist_manifest(directory, &AutosaveManifest::default()).unwrap();
+        let mut manager = SaveGameManager::open_for_context(&context).unwrap();
+        assert_eq!(manager.save_directory(), directory);
+        assert_eq!(manager.count(), 0);
+        let draft = manager.create("Memory draft".into(), 1);
+        manager.remove(draft).unwrap();
+        // A supported persisted backend error must not be swallowed merely
+        // because the desktop manual backend is unavailable in a browser.
+        let key = browser_key(directory, "manifest");
+        browser_storage()
+            .unwrap()
+            .set_item(&key, "corrupt manifest")
+            .unwrap();
+        let result = SaveGameManager::open_for_context(&context);
+        browser_storage().unwrap().remove_item(&key).unwrap();
+        assert!(result.unwrap_err().contains("load autosave manifest"));
+    }
+
     fn published_autosave(filename: impl Into<String>, timestamp: u64) -> SaveGame {
         let mut save = SaveGame::new(filename.into(), "Mission".into(), 1);
         save.timestamp = timestamp.to_string();
