@@ -72,6 +72,8 @@ const RANKED_SETUP_AVAILABLE: u8 = 1;
 const RANKED_SETUP_UNAVAILABLE: u8 = 2;
 
 const HANDSHAKE_FRAME_TIMEOUT: Duration = Duration::from_secs(15);
+/// Finish queued reconnect/commit frames after reader authority is detached.
+const TERMINAL_WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
 const CONTENT_TRANSFER_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const CONTENT_DECISION_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const CONTENT_READINESS_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -586,21 +588,90 @@ enum RankedAdmissionKind {
     Reconnect,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum InactivePeerSession {
+    Released,
+    Superseded { current_generation: u64 },
+    Detached,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum PeerDispatchFailure {
+    Inactive {
+        seat: PlayerId,
+        generation: u64,
+        kind: InactivePeerSession,
+    },
+    Protocol(String),
+}
+
+impl std::fmt::Display for PeerDispatchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Inactive {
+                seat,
+                generation,
+                kind,
+            } => {
+                write!(f, "peer {seat:?} generation {generation} ")?;
+                match kind {
+                    InactivePeerSession::Released => {
+                        f.write_str("has no active authenticated session")
+                    }
+                    InactivePeerSession::Superseded { current_generation } => {
+                        write!(f, "was superseded by generation {current_generation}")
+                    }
+                    InactivePeerSession::Detached => f.write_str("has a detached writer"),
+                }
+            }
+            Self::Protocol(detail) => f.write_str(detail),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum PeerReaderExit {
+    Closed,
+    /// No new reader effects are authorized, but the old writer may own
+    /// terminal frames queued before detachment, replacement, or release.
+    Inactive,
+}
+
+fn peer_reader_dispatch_result(
+    result: Result<(), PeerDispatchFailure>,
+) -> Result<Option<PeerReaderExit>, String> {
+    match result {
+        Ok(()) => Ok(None),
+        Err(error @ PeerDispatchFailure::Inactive { .. }) => {
+            tracing::debug!(%error, "peer reader lost authority; draining its existing writer");
+            Ok(Some(PeerReaderExit::Inactive))
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 impl ServerPeers {
-    fn authorize_session(&self, seat: PlayerId, generation: u64) -> Result<(), String> {
-        let session = self.seats.get(&seat.0).ok_or_else(|| {
-            format!("peer {seat:?} generation {generation} has no active authenticated session")
-        })?;
+    fn authorize_session(
+        &self,
+        seat: PlayerId,
+        generation: u64,
+    ) -> Result<(), PeerDispatchFailure> {
+        let inactive = |kind| PeerDispatchFailure::Inactive {
+            seat,
+            generation,
+            kind,
+        };
+        let session = self
+            .seats
+            .get(&seat.0)
+            .ok_or_else(|| inactive(InactivePeerSession::Released))?;
         if session.generation != generation {
-            return Err(format!(
-                "peer {seat:?} generation {generation} was superseded by generation {}",
-                session.generation
-            ));
+            return Err(inactive(InactivePeerSession::Superseded {
+                current_generation: session.generation,
+            }));
         }
         if session.sender.is_none() {
-            return Err(format!(
-                "peer {seat:?} generation {generation} has a detached writer"
-            ));
+            return Err(inactive(InactivePeerSession::Detached));
         }
         Ok(())
     }
@@ -2651,10 +2722,7 @@ async fn handle_incoming_peer(
             ranked_identity,
             &mut recv,
         );
-        tokio::select! {
-            result = reader => result,
-            result = writer => result.map_err(|e| format!("peer writer: {e}")),
-        }
+        drive_server_peer_io(reader, writer, TERMINAL_WRITER_DRAIN_TIMEOUT).await
     };
 
     release_peer_session(&context, assigned_seat, owner, session_generation);
@@ -3071,18 +3139,63 @@ fn authenticate_peer(
         .map_err(|_| "browser seat proof does not bind this session and transport".to_string())?;
     Ok(owner)
 }
+
+/// Keep the writer future pinned when the reader loses authority. Dropping and
+/// restarting write_frame could duplicate a partially written frame header.
+async fn drive_server_peer_io(
+    reader: impl std::future::Future<Output = Result<PeerReaderExit, String>>,
+    writer: impl std::future::Future<Output = Result<(), String>>,
+    drain_timeout: Duration,
+) -> Result<(), String> {
+    tokio::pin!(writer);
+    tokio::select! {
+        result = reader => match result? {
+            PeerReaderExit::Closed => Ok(()),
+            PeerReaderExit::Inactive => {
+                tokio::time::timeout(drain_timeout, writer.as_mut())
+                    .await
+                    .map_err(|_| "inactive peer writer timed out draining terminal frames".to_string())?
+                    .map_err(|error| format!("peer writer: {error}"))
+            }
+        },
+        result = writer.as_mut() => result.map_err(|error| format!("peer writer: {error}")),
+    }
+}
+
 async fn run_server_peer_reader(
     context: &ServerContext,
     seat: PlayerId,
     session_generation: u64,
     ranked_identity: RankedPeerIdentity,
     recv: &mut RecvStream,
-) -> Result<(), String> {
+) -> Result<PeerReaderExit, String> {
     loop {
-        let Some(message) = read_frame(recv, InboundFramePolicy::ClientToServer).await? else {
-            return Ok(());
+        let message = match read_frame(recv, InboundFramePolicy::ClientToServer).await {
+            Ok(Some(message)) => message,
+            ended => {
+                // A half-close/read error must not cancel a terminal write
+                // already queued by the host while this read was suspended.
+                let _authority = context.session_dispatch.lock();
+                if let Some(exit) = peer_reader_dispatch_result(
+                    context
+                        .peers
+                        .lock()
+                        .authorize_session(seat, session_generation),
+                )? {
+                    return Ok(exit);
+                }
+                return ended.map(|_| PeerReaderExit::Closed);
+            }
         };
-        dispatch_server_peer_message(context, seat, session_generation, ranked_identity, message)?;
+        if let Some(exit) = peer_reader_dispatch_result(dispatch_server_peer_message(
+            context,
+            seat,
+            session_generation,
+            ranked_identity,
+            message,
+        ))? {
+            return Ok(exit);
+        }
     }
 }
 
@@ -3095,12 +3208,24 @@ fn dispatch_server_peer_message(
     session_generation: u64,
     ranked_identity: RankedPeerIdentity,
     message: NetMsg,
-) -> Result<(), String> {
+) -> Result<(), PeerDispatchFailure> {
     let _authority = context.session_dispatch.lock();
     context
         .peers
         .lock()
         .authorize_session(seat, session_generation)?;
+    apply_authenticated_peer_message(context, seat, session_generation, ranked_identity, message)
+        .map_err(PeerDispatchFailure::Protocol)
+}
+
+/// Called only while dispatch_server_peer_message retains the authority gate.
+fn apply_authenticated_peer_message(
+    context: &ServerContext,
+    seat: PlayerId,
+    session_generation: u64,
+    ranked_identity: RankedPeerIdentity,
+    message: NetMsg,
+) -> Result<(), String> {
     validate_server_gameplay_wire_msg(&message)?;
     match message {
         NetMsg::Input {
@@ -5603,7 +5728,7 @@ mod tests {
                 )
                 .unwrap_err();
                 assert!(
-                    error.contains("generation"),
+                    error.to_string().contains("generation"),
                     "{invalidation} {label}: {error}"
                 );
                 assert!(
@@ -5636,6 +5761,7 @@ mod tests {
                         .all(|session| session.ready_frame.is_none())
                 );
                 assert!(peers.readiness.begun.is_none());
+                drop(peers);
                 assert!(
                     super::ranked_lifecycle_lock(&context.ranked_lifecycle)
                         .is_awaiting_prepared_inputs(),
@@ -5757,7 +5883,7 @@ mod tests {
             super::NetMsg::SnapshotTransitionReady { id },
         )
         .unwrap_err();
-        assert!(error.contains("detached writer"));
+        assert!(error.to_string().contains("detached writer"));
         assert!(events.try_recv().is_err());
     }
 
@@ -5835,6 +5961,193 @@ mod tests {
         assert!(!context.peers.lock().is_sim_connected(&next.seat));
         assert!(events.try_recv().is_err());
         assert!(next_wire.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn inactive_reader_drains_terminal_frames_after_buffered_input_without_restarting_writer()
+    {
+        use robin_engine::multiplayer::{NetMsg, SnapshotTransitionId, SnapshotTransitionPayload};
+        for mode in ["commit", "reconnect", "replacement", "release"] {
+            let (context, events) = dispatch_test_context();
+            let owner = PeerOwner::Native([1; 32]);
+            let identity = ranked_identity(1);
+            let (sender, mut wire) = unbounded_channel();
+            let claim = context
+                .peers
+                .lock()
+                .claim_seat(owner, "old", identity, sender)
+                .unwrap();
+            let id = SnapshotTransitionId {
+                session_id: context.session_id,
+                sequence: 1,
+            };
+            if mode == "commit" {
+                context
+                    .peers
+                    .lock()
+                    .transitions
+                    .begin(PendingSnapshotTransition {
+                        id,
+                        payload: SnapshotTransitionPayload::Save {
+                            mission_id: 7,
+                            save_bytes: vec![1],
+                        },
+                        awaiting: HashSet::from([claim.seat]),
+                    });
+            }
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let mut delivered = Vec::new();
+            let writes_started = AtomicU32::new(0);
+            let writer = async {
+                writes_started.fetch_add(1, super::Ordering::Relaxed);
+                started_tx.send(()).unwrap();
+                while let Some(message) = wire.recv().await {
+                    // A write future is deliberately suspended with a frame
+                    // in progress, just as a partially written QUIC frame can be.
+                    tokio::task::yield_now().await;
+                    delivered.push(message);
+                }
+                Ok(())
+            };
+            let reader = async {
+                started_rx.await.unwrap();
+                if mode == "commit" {
+                    super::dispatch_server_peer_message(
+                        &context,
+                        PlayerId(claim.seat),
+                        claim.generation,
+                        identity,
+                        NetMsg::SnapshotTransitionReady { id },
+                    )
+                    .unwrap();
+                } else {
+                    let _authority = context.session_dispatch.lock();
+                    let mut peers = context.peers.lock();
+                    peers
+                        .sender(&claim.seat)
+                        .unwrap()
+                        .send(NetMsg::ReconnectRequired {
+                            reason: "test terminal reconnect".into(),
+                        })
+                        .unwrap();
+                    match mode {
+                        "reconnect" => {
+                            peers.take_sender(&claim.seat).unwrap();
+                        }
+                        "replacement" => {
+                            let (sender, _replacement_wire) = unbounded_channel();
+                            peers
+                                .claim_seat(owner, "successor", identity, sender)
+                                .unwrap();
+                        }
+                        "release" => {
+                            peers
+                                .release_seat_if_owner(claim.seat, owner, claim.generation)
+                                .unwrap();
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                // Models a second frame already buffered behind the final ack.
+                // The production dispatcher denies it, and the production I/O
+                // driver must not cancel the already-started writer as a result.
+                let outcome = super::dispatch_server_peer_message(
+                    &context,
+                    PlayerId(claim.seat),
+                    claim.generation,
+                    identity,
+                    NetMsg::Input {
+                        origin_frame: 99,
+                        command: super::PlayerCommand::Noop,
+                    },
+                );
+                assert!(matches!(
+                    outcome,
+                    Err(super::PeerDispatchFailure::Inactive { .. })
+                ));
+                Ok(super::peer_reader_dispatch_result(outcome)?.expect("reader lost authority"))
+            };
+            super::drive_server_peer_io(reader, writer, Duration::from_secs(1))
+                .await
+                .unwrap();
+            assert_eq!(writes_started.load(super::Ordering::Relaxed), 1);
+            assert_eq!(delivered.len(), 1, "{mode}");
+            if mode == "commit" {
+                assert!(
+                    matches!(delivered[0], NetMsg::CommitSnapshotTransition { id: actual } if actual == id)
+                );
+                assert!(
+                    matches!(events.try_recv().unwrap(), NetEvent::CommitSnapshotTransition { id: actual } if actual == id)
+                );
+            } else {
+                assert!(
+                    matches!(delivered[0], NetMsg::ReconnectRequired { .. }),
+                    "{mode}"
+                );
+            }
+            assert!(
+                events.try_recv().is_err(),
+                "{mode}: unauthorized input reached host"
+            );
+            assert!(
+                context
+                    .peers
+                    .lock()
+                    .seats
+                    .values()
+                    .all(|session| session.ready_frame.is_none())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn inactive_reader_bounds_a_stalled_terminal_writer() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let writer = async {
+            started_tx.send(()).unwrap();
+            std::future::pending::<Result<(), String>>().await
+        };
+        let reader = async {
+            started_rx.await.unwrap();
+            Ok(super::PeerReaderExit::Inactive)
+        };
+        let error = super::drive_server_peer_io(reader, writer, Duration::from_millis(10))
+            .await
+            .unwrap_err();
+        assert!(error.contains("timed out draining terminal frames"));
+    }
+
+    #[test]
+    fn snapshot_tracker_rejects_wrong_and_duplicate_acknowledgements_without_consuming_barrier() {
+        let id = robin_engine::multiplayer::SnapshotTransitionId {
+            session_id: super::MultiplayerSessionId([4; 32]),
+            sequence: 1,
+        };
+        let mut transitions = super::SnapshotTransitions::default();
+        transitions.begin(PendingSnapshotTransition {
+            id,
+            payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id: 7,
+                save_bytes: vec![1],
+            },
+            awaiting: HashSet::from([1, 2]),
+        });
+        let wrong_id = robin_engine::multiplayer::SnapshotTransitionId { sequence: 2, ..id };
+        assert!(transitions.acknowledge(PlayerId(1), wrong_id).is_err());
+        assert!(transitions.acknowledge(PlayerId(3), id).is_err());
+        assert_eq!(
+            transitions.pending().unwrap().awaiting,
+            HashSet::from([1, 2])
+        );
+        transitions.acknowledge(PlayerId(1), id).unwrap();
+        assert!(transitions.acknowledge(PlayerId(1), id).is_err());
+        assert!(transitions.take_completed().is_none());
+        transitions.retain_for_reconnect(1);
+        transitions.acknowledge(PlayerId(2), id).unwrap();
+        assert!(transitions.take_completed().is_none());
+        transitions.acknowledge(PlayerId(1), id).unwrap();
+        assert_eq!(transitions.take_completed(), Some(id));
+        assert_eq!(transitions.take_completed(), None);
     }
 
     fn ranked_identity(byte: u8) -> super::RankedPeerIdentity {
