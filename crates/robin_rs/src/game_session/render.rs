@@ -904,22 +904,41 @@ pub(super) fn update_mouse_and_cursor(
     last_cursor_id: &mut i32,
 ) {
     let mouse_screen = threaded_input.position();
-    let Some(mouse_map) = host.frontend.viewport.screen_to_map(mouse_screen) else {
-        return;
-    };
-    // `is_alt_effective()` so the permanent-alt toggle affects
-    // cursor/view-cone hover the same way the physical key does.
-    let alt_for_cursor = engine.is_alt_effective(&host.frontend.input);
-    let mut new_cursor = crate::host_mouse::update_mouse(
+    let portrait_hit = hit_test_portrait_detailed(
         engine,
-        host,
-        assets,
-        dev,
-        external_actions,
-        mouse_map,
-        alt_for_cursor,
-        shift_held,
+        host.transport.local_seat,
+        portrait_cache,
+        renderer.screen_width(),
+        renderer.screen_height(),
+        mouse_screen.x,
+        mouse_screen.y,
     );
+    // RHGame keeps widget-owned mouse handling outside Engine::UpdateMouse.
+    // The minimap (including its folded button and active drag) must not ask
+    // the occluded world cell which movement/action cursor to display.
+    let over_minimap = host
+        .frontend
+        .engine_display
+        .minimap()
+        .is_over_widget(mouse_screen)
+        || host.frontend.pointer_capture.minimap_drag_active();
+    let mut new_cursor = if portrait_hit.is_some() || over_minimap {
+        engine_resource_ids::RHMOUSE_DEFAULT
+    } else if let Some(mouse_map) = host.frontend.viewport.screen_to_map(mouse_screen) {
+        let alt_for_cursor = engine.is_alt_effective(&host.frontend.input);
+        crate::host_mouse::update_mouse(
+            engine,
+            host,
+            assets,
+            dev,
+            external_actions,
+            mouse_map,
+            alt_for_cursor,
+            shift_held,
+        )
+    } else {
+        engine_resource_ids::RHMOUSE_DEFAULT
+    };
 
     // The Yes/No cursor for armed portrait actions is keyed off the
     // portrait's own attached PC, not the world cell occluded by the
@@ -939,15 +958,9 @@ pub(super) fn update_mouse_and_cursor(
         engine_profiles::Action::Heal
             | engine_profiles::Action::Shield
             | engine_profiles::Action::BigShield
-    ) && let Some(hit) = hit_test_portrait_detailed(
-        engine,
-        local_seat,
-        portrait_cache,
-        renderer.screen_width(),
-        renderer.screen_height(),
-        mouse_screen.x,
-        mouse_screen.y,
-    ) && !hit.is_burned
+    ) && !over_minimap
+        && let Some(hit) = portrait_hit
+        && !hit.is_burned
     {
         let pc_id = hit.pc_id;
         let life = engine
@@ -1862,7 +1875,7 @@ pub(super) fn render_frame(
                                 )
                             {
                                 if !text.is_empty() {
-                                    text.push_str(" — ");
+                                    text.push_str(" - ");
                                 }
                                 text.push_str(extension);
                             }

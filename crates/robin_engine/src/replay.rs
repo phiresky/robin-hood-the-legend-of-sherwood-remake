@@ -89,7 +89,9 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 30 makes vector fog part of the
+/// On-disk replay schema version. Version 31 adds the opt-in reversible
+/// background-patch configuration and remembered activation targets to
+/// deterministic state. Version 30 makes vector fog part of the
 /// deterministic state-hash contract; the replay JSONL record shape itself is
 /// unchanged. The current schema combines the exact bounded
 /// canonical Spellforge package and its deterministic journal/digest state with
@@ -126,7 +128,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 30;
+pub const REPLAY_SCHEMA_VERSION: u32 = 31;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -792,8 +794,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_includes_spellforge_fog_and_rankability_state() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 30);
+    fn replay_schema_version_includes_reversible_background_patches() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 31);
     }
 
     #[test]

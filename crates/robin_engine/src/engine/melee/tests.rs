@@ -1229,6 +1229,65 @@ fn ladder_fall_translation_retains_layer_goal_and_authors_landing_target() {
 }
 
 #[test]
+fn purse_brawl_knocks_out_allied_soldier_independently_of_diplomacy() {
+    for (diplomacy_enabled, faction_wars) in
+        [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let mut engine = make_engine();
+        engine
+            .mission_domain
+            .diplomacy
+            .set_enabled(diplomacy_enabled);
+        engine
+            .mission_domain
+            .diplomacy
+            .set_npc_faction_wars(faction_wars);
+        let null_slot = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let attacker = engine.add_entity(make_soldier(WorldPoint3D::ZERO, None));
+        let victim = engine.add_entity(make_soldier(WorldPoint3D::new(20.0, 0.0, 0.0), None));
+        let assets = assets_with_sword_profile(1, 50);
+        for id in [null_slot, attacker, victim] {
+            engine
+                .get_entity_mut(id)
+                .unwrap()
+                .enemy_ai_mut()
+                .unwrap()
+                .hth_weapon_id = 1;
+        }
+        engine
+            .get_entity_mut(victim)
+            .unwrap()
+            .npc_data_mut()
+            .unwrap()
+            .life_points = 100;
+        // Two original NPC punches cross the 70-concussion knockout threshold.
+        for _ in 0..2 {
+            let damage = crate::sequence::SequenceElement::new_damage(
+                1,
+                Command::ReceiveHitDamage,
+                Some(victim),
+                Some(attacker),
+                0,
+                40,
+            );
+            let sequence = engine.launch_element(damage);
+            engine.apply_hit_damage(
+                &crate::sim_rng::test_context(),
+                &assets,
+                victim,
+                Some(attacker),
+                40,
+                false,
+                (sequence, 0),
+            );
+        }
+        let victim = engine.get_entity(victim).unwrap();
+        assert!(victim.human_data().unwrap().unconscious);
+        assert!(victim.ai_controller().unwrap().knocked_out_in_money_fight);
+    }
+}
+
+#[test]
 fn pc_hit_translation_inherits_silent_human_say_ouch() {
     let mut engine = make_engine();
     let victim = engine.add_entity(make_pc(WorldPoint3D::default(), None));

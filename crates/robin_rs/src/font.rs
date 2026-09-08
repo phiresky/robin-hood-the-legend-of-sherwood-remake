@@ -56,6 +56,25 @@ fn read_u32_le(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap())
 }
 
+// Candidate extensions and style variants are optional; an absent face is
+// reported once after exhausting all candidates.
+fn read_font_candidate(files: &SbFileSystem, path: &str) -> Option<Vec<u8>> {
+    match files.try_exists(path) {
+        Ok(false) => None,
+        Ok(true) => match files.read_all(path) {
+            Ok(bytes) => Some(bytes),
+            Err(status) => {
+                tracing::warn!("failed to read font candidate '{path}': {status}");
+                None
+            }
+        },
+        Err(status) => {
+            tracing::warn!("failed to probe font candidate '{path}': {status}");
+            None
+        }
+    }
+}
+
 fn ttf_search_dirs(sbf_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     push_unique_dir(&mut dirs, sbf_dir.map(Path::to_path_buf));
@@ -275,7 +294,7 @@ impl TrueTypeFont {
                 let name = format!("{base}{suffix}.{ext}");
                 for dir in &dirs {
                     let path = dir.join(&name);
-                    if let Ok(data) = files.read_all(&path.to_string_lossy()) {
+                    if let Some(data) = read_font_candidate(files, &path.to_string_lossy()) {
                         match FontArc::try_from_vec(data) {
                             Ok(f) => {
                                 self.font = Some(f);
@@ -306,7 +325,7 @@ impl TrueTypeFont {
                 // Data/Interface/Fonts/, and the original Linux port shipped
                 // it at the datadir root.
                 for vfs_path in [format!("Data/Interface/Fonts/{name}"), name.clone()] {
-                    if let Ok(data) = files.read_all(&vfs_path) {
+                    if let Some(data) = read_font_candidate(files, &vfs_path) {
                         match FontArc::try_from_vec(data) {
                             Ok(f) => {
                                 self.font = Some(f);

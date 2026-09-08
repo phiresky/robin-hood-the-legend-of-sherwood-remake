@@ -1984,12 +1984,17 @@ impl EngineInner {
         if let Some(attacker_id) = attacker_id {
             let attacker = self.expect_entity(attacker_id, "hit-damage diplomacy attacker");
             let victim = self.expect_entity(victim_id, "hit-damage diplomacy victim");
-            if !self.mission_domain.diplomacy.actors_may_damage(
-                attacker.camp(),
-                attacker.is_pc(),
-                victim.camp(),
-                victim.is_pc(),
-            ) {
+            // Original permits NPC purse brawls, including same-camp knockouts.
+            // Faction-war settings must not suppress these scripted fist hits.
+            let npc_brawl = attacker.kind().is_npc() && victim.kind().is_npc();
+            if !npc_brawl
+                && !self.mission_domain.diplomacy.actors_may_damage(
+                    attacker.camp(),
+                    attacker.is_pc(),
+                    victim.camp(),
+                    victim.is_pc(),
+                )
+            {
                 self.orders
                     .sequence_manager
                     .element_terminated(damage_element.0, damage_element.1);

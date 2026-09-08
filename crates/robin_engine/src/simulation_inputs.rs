@@ -30,7 +30,7 @@ use crate::level_data::LoadedLevel;
 pub const SIMULATION_CONTENT_DOCUMENT_SCHEMA_V1: u32 = 1;
 pub const SIMULATION_CONTENT_COMPONENT_SCHEMA_V1: u32 = 1;
 pub const PREPARED_MISSION_RUN_PROJECTION_SCHEMA_V1: u32 = 2;
-const _: () = assert!(crate::replay::REPLAY_SCHEMA_VERSION == 30);
+const _: () = assert!(crate::replay::REPLAY_SCHEMA_VERSION == 31);
 
 /// Decode the exact canonical official projection SimConfig and prove that no
 /// missing or unknown field was normalized away. Operator tooling and the
@@ -1388,17 +1388,17 @@ mod tests {
             .unwrap()
             .to_string()
         });
-        // Release pins cover replay schema 30 and the exhaustive current
-        // SimConfig, including diplomacy, NPC wars, combat gestures, and fog.
+        // Release pins cover replay schema 31 and the exhaustive current
+        // SimConfig, including the default-off background-patch reversal rule.
         assert_eq!(
             observed,
             [
-                "e210ceb0d4a474dea63604e0b877e7492e7ca9321df75595ec31c44759ad63e4",
-                "1e55e92e5e47792d112a2cd75a0c498bc9c5de085e1587846436620d97c0a627",
-                "f5bd29d0ad22a5dfb93f2d7852f80b628bd1edabc8e6ffbe9286efc22357005e",
-                "cf8c176203cdc6952ff11b8fbd30b6cc725b6f0301cc6c473cfcbcea0a528572",
-                "e054013f8966b142964788f786fb963494c9b501cb82332426df9e2a181b8876",
-                "1f1cf24c85e194ba4ca57a583f3ac9c9c44a025c36547f52ceccd218571d5d6e",
+                "3b729e92df74713dcef8cb036e46376a1ed04fb6f7673bf141424e31dd24177d",
+                "4a1b47b000a26a8c5e393875c6ce63f3a08d049d4c90b4d8729bfa7b3bbdfd87",
+                "29756cda989d10493544a137d66f4bd7eb59493e88268e4e248b4eb5e7b11a9a",
+                "dacb0774587e13d2f8568a8cb9fb91b0c6f9b1b93cad9768c343f4a27a529736",
+                "0301f157ccd76e84662769ffe7a39ca0bbd989e385cc92b9726688861efa2d49",
+                "222d9ffe88b82aaa8172d8f793a52c34ffae6cce95827a552e647b139dcd604e",
             ]
         );
     }

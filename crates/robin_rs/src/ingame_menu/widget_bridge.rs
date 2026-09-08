@@ -1180,6 +1180,15 @@ pub fn play_frame_widget_noise(
     loader: &SampleLoader,
     tracker: &mut NoisyTracker,
 ) {
+    // Leaving a menu button (and pressing it) changes state silently.
+    // Observe every widget each frame, including frames without sound events,
+    // so returning to Focused can play again. Drop removed widgets as well.
+    tracker.entries.retain(|&(widget_id, bank), (state, _)| {
+        bank != noisy_id
+            || frame
+                .widget(widget_id)
+                .is_some_and(|widget| widget.base().state == *state)
+    });
     let Some(backend) = backend else {
         return;
     };
@@ -1213,6 +1222,66 @@ pub fn play_frame_widget_noise(
 #[cfg(test)]
 mod noisy_tracker_tests {
     use super::*;
+
+    #[test]
+    fn silent_mouse_leave_rearms_hover_sound() {
+        let mut frame = make_button_frame(&[(1, "Start", 10, 10, 100, 30)]);
+        let mut input = ModalInputState::new();
+        let mut tracker = NoisyTracker::new();
+        let mut sound = SoundManager::default();
+        let key = (1, WIDGET_NOISY_BUTTON);
+
+        for _ in 0..3 {
+            input.update_from_event(
+                &GameEvent::MouseMove {
+                    x: 20,
+                    y: 20,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                MenuTransform::centered(640, 480),
+            );
+            frame.process_input(&input.as_widget_input());
+            let events = frame.process_input(&input.as_widget_input());
+            assert!(events.iter().any(|e| e.msg_type == UiMsg::WidgetFocused));
+            assert!(!tracker.entries.contains_key(&key));
+            // Record a played hover, then exercise the production dispatch
+            // without an audio device: staying hovered must preserve the gate.
+            tracker.entries.insert(key, (UiState::Focused, true));
+            play_frame_widget_noise(
+                &events,
+                &frame,
+                WIDGET_NOISY_BUTTON,
+                &mut sound,
+                None,
+                &|_| panic!("no audio backend should load samples"),
+                &mut tracker,
+            );
+            assert_eq!(tracker.entries.get(&key), Some(&(UiState::Focused, true)));
+
+            input.update_from_event(
+                &GameEvent::MouseMove {
+                    x: 200,
+                    y: 200,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                MenuTransform::centered(640, 480),
+            );
+            let events = frame.process_input(&input.as_widget_input());
+            assert!(events.is_empty());
+            play_frame_widget_noise(
+                &events,
+                &frame,
+                WIDGET_NOISY_BUTTON,
+                &mut sound,
+                None,
+                &|_| panic!("no audio backend should load samples"),
+                &mut tracker,
+            );
+            assert!(!tracker.entries.contains_key(&key));
+        }
+    }
 
     /// Verify the state-gate behaviour: one sound per state, reset on
     /// state change, force flag bypasses gating.

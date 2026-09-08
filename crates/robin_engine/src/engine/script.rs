@@ -310,7 +310,87 @@ impl EngineInner {
         }
     }
 
+    /// Repeat captured target patch groups without repeating mission messages
+    /// or resetting arbitrary one-shot script variables.
     pub(super) fn call_script_vm_inner(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+        assets: &LevelAssets,
+        key: ScriptVmKey,
+        fn_name: &str,
+        params: &[i32],
+        frame: crate::natives::ScriptCallFrame,
+        active: &mut Vec<ActiveScriptCall>,
+    ) -> Result<i32, ScriptDriverError> {
+        let binding = match key {
+            ScriptVmKey::Target(handle)
+                if self.control.sim_config.reversible_background_patches
+                    && fn_name.starts_with("ActivatedBy") =>
+            {
+                Some((handle, fn_name.to_owned()))
+            }
+            _ => None,
+        };
+        let Some(binding) = binding else {
+            return self
+                .call_script_vm_inner_unwrapped(sim, assets, key, fn_name, params, frame, active);
+        };
+        let recorded: Vec<_> = self
+            .script_domains
+            .interactables
+            .patches
+            .iter()
+            .enumerate()
+            .filter_map(|(index, patch)| {
+                (patch.repeat_activation.as_ref() == Some(&binding)).then_some(index)
+            })
+            .collect();
+        if !recorded.is_empty() {
+            // A mechanism's components must finish together before reversing.
+            if recorded.iter().any(|&index| {
+                let patch = &self.script_domains.interactables.patches[index];
+                patch.in_transition || patch.locked || !patch.active
+            }) {
+                return Ok(1);
+            }
+            for index in recorded {
+                let effects = self.script_domains.interactables.patches[index].apply();
+                let index = crate::patch::PatchIndex::new(index as u32)
+                    .expect("recorded target patch index exceeds patch handle range");
+                self.process_patch_effects(sim, assets, index, effects);
+            }
+            return Ok(1);
+        }
+        let before: Vec<_> = self
+            .script_domains
+            .interactables
+            .patches
+            .iter()
+            .map(|patch| (patch.applied, patch.in_transition))
+            .collect();
+        let result =
+            self.call_script_vm_inner_unwrapped(sim, assets, key, fn_name, params, frame, active)?;
+        for (patch, previous) in self
+            .script_domains
+            .interactables
+            .patches
+            .iter_mut()
+            .zip(before)
+        {
+            if (patch.applied, patch.in_transition) != previous
+                && !patch.definitive
+                && patch.animated
+                && patch.repeat_activation.is_none()
+            {
+                patch.repeat_activation = Some(binding.clone());
+            }
+        }
+        // TODO: delayed ApplyPatch commands need authored trigger metadata;
+        // replaying their complete scripts would repeat unrelated mission effects.
+        Ok(result)
+    }
+
+    fn call_script_vm_inner_unwrapped(
         &mut self,
         sim: &crate::sim_rng::SimulationContext,
         assets: &LevelAssets,
@@ -6988,6 +7068,44 @@ mod script_context_tests {
     use super::*;
     use crate::scb::{ClassEntry, SCB_VERSION, ScbFile};
 
+    #[test]
+    fn repeated_patch_target_skips_one_shot_vm_and_respects_config_and_locks() {
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        let mut engine = EngineInner::new();
+        engine.control.sim_config.reversible_background_patches = true;
+        let mut patch = crate::patch::Patch::new();
+        patch.active = true;
+        patch.applied = true;
+        patch.repeat_activation = Some((42, "ActivatedBySword".into()));
+        engine.script_domains.interactables.patches.push(patch);
+        let activate = |engine: &mut EngineInner| {
+            engine.call_script_vm_inner(
+                &sim,
+                &assets,
+                ScriptVmKey::Target(42),
+                "ActivatedBySword",
+                &[1],
+                crate::natives::ScriptCallFrame::default(),
+                &mut Vec::new(),
+            )
+        };
+        // No VM is installed: succeeding proves mission-only effects cannot
+        // run again, even for targets whose scripts set a one-shot guard.
+        assert_eq!(activate(&mut engine).unwrap(), 1);
+        assert!(!engine.script_domains.interactables.patches[0].applied);
+        assert_eq!(activate(&mut engine).unwrap(), 1);
+        assert!(engine.script_domains.interactables.patches[0].applied);
+        engine.script_domains.interactables.patches[0].locked = true;
+        assert_eq!(activate(&mut engine).unwrap(), 1);
+        assert!(engine.script_domains.interactables.patches[0].applied);
+        engine.control.sim_config.reversible_background_patches = false;
+        assert!(
+            activate(&mut engine).is_err(),
+            "parity mode must dispatch the original VM"
+        );
+    }
+
     fn empty_mission_script() -> MissionScript {
         let startup = ClassEntry {
             source_file: "script_context_test.scs".into(),
@@ -7002,6 +7120,116 @@ mod script_context_tests {
             classes: vec![startup],
         })
         .expect("minimal StartUp script must load")
+    }
+
+    #[test]
+    fn target_callback_discovers_two_patch_bindings_and_restores_them_from_save() {
+        use crate::vm::{Opcode, Quad};
+        let instruction = |opcode: Opcode, symbol: u16, immediate: i32| {
+            let mut operands = [0; 8];
+            operands[0..2].copy_from_slice(&symbol.to_le_bytes());
+            operands[4..8].copy_from_slice(&immediate.to_le_bytes());
+            Quad {
+                operation: opcode as u8,
+                operands,
+            }
+        };
+        let mut begin = instruction(Opcode::BeginFunction, 0, 0);
+        begin.operands[2..4].copy_from_slice(&1u16.to_le_bytes());
+        let mut quads = vec![begin];
+        for index in 0..2 {
+            quads.push(instruction(
+                Opcode::Aff0IConstant,
+                0xC000,
+                crate::natives::ScriptHandleCodec::patch_handle_from_index(index),
+            ));
+            quads.push(instruction(Opcode::NativeParam, 0xC000, 0));
+            let mut native = instruction(Opcode::NativeCall, 0, 0);
+            native.operands[0..4]
+                .copy_from_slice(&(crate::natives::NativeFn::ApplyPatch as u32).to_le_bytes());
+            quads.push(native);
+        }
+        quads.push(instruction(Opcode::Aff0IConstant, 0xC000, 1));
+        quads.push(instruction(Opcode::ReturnVal, 0xC000, 0));
+        quads.push(instruction(Opcode::EndFunction, 0, 0));
+        let class = ClassEntry {
+            source_file: "patch_trigger_test.scs".into(),
+            class_name: "StartUp".into(),
+            size_of_member_variables: 0,
+            member_variables: Vec::new(),
+            functions: vec![crate::scb::Function {
+                name: "ActivatedBySword".into(),
+                address: 0,
+                num_parameters: 1,
+                size_of_return_value: 4,
+                size_of_parameters: 4,
+                size_of_volatile: 0,
+                size_of_temporary: 4,
+            }],
+            quads,
+        };
+        let mut script = MissionScript::from_scb(ScbFile {
+            version: SCB_VERSION,
+            classes: vec![class],
+        })
+        .unwrap();
+        let instance = script.manager.create_instance("StartUp").unwrap();
+        script.target_instances.insert(42, instance);
+        let mut engine = EngineInner::new();
+        engine.scripts.mission = Some(script);
+        engine.control.sim_config.reversible_background_patches = true;
+        engine.script_domains.interactables.patches = (0..2)
+            .map(|_| {
+                let mut patch = crate::patch::Patch::new();
+                patch.active = true;
+                patch
+            })
+            .collect();
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        engine.attach_script_bindings(&assets);
+        let activate = |engine: &mut EngineInner| {
+            engine.call_script_vm_inner(
+                &sim,
+                &assets,
+                ScriptVmKey::Target(42),
+                "ActivatedBySword",
+                &[1],
+                crate::natives::ScriptCallFrame::default(),
+                &mut Vec::new(),
+            )
+        };
+        assert_eq!(activate(&mut engine).unwrap(), 1);
+        for patch in &engine.script_domains.interactables.patches {
+            assert!(patch.applied);
+            assert_eq!(
+                patch.repeat_activation,
+                Some((42, "ActivatedBySword".into()))
+            );
+        }
+        let saved = serde_json::to_string(&engine.script_domains.interactables.patches).unwrap();
+        engine.script_domains.interactables.patches = serde_json::from_str(&saved).unwrap();
+        // Removing the original callback proves repeats cannot rerun its
+        // mission-only messages, even after a serialized save round trip.
+        engine.scripts.mission = None;
+        assert_eq!(activate(&mut engine).unwrap(), 1);
+        assert!(
+            engine
+                .script_domains
+                .interactables
+                .patches
+                .iter()
+                .all(|patch| !patch.applied)
+        );
+        assert_eq!(activate(&mut engine).unwrap(), 1);
+        assert!(
+            engine
+                .script_domains
+                .interactables
+                .patches
+                .iter()
+                .all(|patch| patch.applied)
+        );
     }
 
     #[test]

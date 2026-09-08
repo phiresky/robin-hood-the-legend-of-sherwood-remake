@@ -57,6 +57,11 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
 
     let mut engine = EngineInner::new();
     install_test_building_sector(&mut engine, 42);
+    let interior_plane = crate::position_interface::PlaneZCoeffs {
+        az: 0.0,
+        bz: 0.0,
+        dz: 75.0,
+    };
     let owner = engine.add_entity(make_test_soldier(Posture::Upright));
     {
         let entity = engine.get_entity_mut(owner).unwrap();
@@ -64,6 +69,9 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
             SectorHandle::new(42),
             crate::fast_find_grid::SectorIndex::new(0),
         );
+        entity
+            .position_iface_mut()
+            .set_obstacle(None, Some(interior_plane));
         entity.actor_data_mut().unwrap().continuation.motion_state = MotionState::Done;
     }
 
@@ -89,6 +97,13 @@ fn terminal_building_move_preserves_prior_actor_done_edge() {
             .unwrap()
             .state,
         SequenceState::Terminated
+    );
+    let entity = engine.get_entity(owner).unwrap();
+    assert_eq!(entity.position_iface().get_plane(), Some(&interior_plane));
+    assert_eq!(entity.element_data().position().z, 75.0);
+    assert_eq!(
+        entity.element_data().position_map(),
+        crate::coordinates::MapPoint::new(100.0, 200.0)
     );
     let actor = engine.get_entity(owner).unwrap().actor_data().unwrap();
     assert_eq!(actor.installed_order, None);

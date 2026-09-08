@@ -609,7 +609,10 @@ impl EngineInner {
                 super::special_motion::SpecialMovePosition::Map(destination),
                 None,
                 None,
-                Some(destination),
+                // RHelementactor.cpp:3726 retains the installed plane
+                // for hidden interior motion; buildings have no floor
+                // projection polygon to query at this destination.
+                None,
                 "building interior move",
             );
             self.orders

@@ -233,11 +233,32 @@ pub(crate) fn render_fog_of_war(
     );
 }
 
+/// Original RHSprite::GenerateBlitBox scales both destination edges. Keep
+/// sprite, ghost, FX and outline dimensions in the same zoom space as anchors
+/// and occlusion masks; texture dimensions remain native world units.
+pub(crate) fn zoomed_sprite_rect(x: i32, y: i32, width: u16, height: u16, zoom: f32) -> Rect {
+    assert!(zoom.is_finite() && zoom > 0.0, "invalid sprite zoom {zoom}");
+    Rect::new(
+        x,
+        y,
+        (width as f32 * zoom).round().max(1.0) as u32,
+        (height as f32 * zoom).round().max(1.0) as u32,
+    )
+}
+
 #[cfg(test)]
 mod fog_render_tests {
     use super::*;
     use robin_engine::coordinates::MapSize;
     use robin_engine::element::{ElementData, ElementFx, FxData};
+
+    #[test]
+    fn sprite_destinations_scale_with_the_map() {
+        for (zoom, width, height) in [(0.5, 20, 40), (1.0, 40, 80), (2.0, 80, 160)] {
+            let rect = zoomed_sprite_rect(120, 90, 40, 80, zoom);
+            assert_eq!((rect.x, rect.y, rect.w, rect.h), (120, 90, width, height));
+        }
+    }
 
     #[test]
     fn cache_key_tracks_polygon_generation() {
@@ -1346,7 +1367,7 @@ pub(crate) fn render_entities_gpu(
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
 
-        let margin = 256;
+        let margin = (256.0 * zoom).ceil() as i32;
         if screen_x < -margin
             || screen_y < -margin
             || screen_x > screen_w + margin
@@ -1448,7 +1469,7 @@ pub(crate) fn render_entities_gpu(
             let dst_x = ((sprite_x - view.x) * zoom) as i32;
             let dst_y = ((sprite_y - view.y) * zoom) as i32;
 
-            let dst_rect = Rect::new(dst_x, dst_y, sw as u32, sh as u32);
+            let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
             let kind = entity.kind();
             let actor_layer = elem.layer();
             let is_flying_human = elem.posture() == Posture::Flying;
@@ -1499,7 +1520,7 @@ pub(crate) fn render_entities_gpu(
                 let ghost_y = (before.y - center.y).floor() + offset.y;
                 let ghost_dst_x = ((ghost_x - view.x) * zoom) as i32;
                 let ghost_dst_y = ((ghost_y - view.y) * zoom) as i32;
-                let ghost_rect = Rect::new(ghost_dst_x, ghost_dst_y, sw as u32, sh as u32);
+                let ghost_rect = zoomed_sprite_rect(ghost_dst_x, ghost_dst_y, sw, sh, zoom);
                 let ghost_draw_checkpoint = renderer.draw_queue_checkpoint();
                 renderer.render_cached_sprite_alpha(
                     bank_id,
@@ -1959,7 +1980,7 @@ pub(crate) fn render_selection_outlines_gpu(
         let world_y = visual_pos.y;
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
-        let margin = 256;
+        let margin = (256.0 * zoom).ceil() as i32;
         if screen_x < -margin
             || screen_y < -margin
             || screen_x > screen_w + margin
@@ -1984,9 +2005,9 @@ pub(crate) fn render_selection_outlines_gpu(
             shadow_level,
         ) {
             let rgb = rgb565_to_rgb8(outline_color_565);
-            let outline_x = dst_x - OUTLINE_PAD as i32;
+            let outline_x = dst_x - (OUTLINE_PAD as f32 * zoom).round() as i32;
             let outline_y = dst_y;
-            let outline_rect = Rect::new(outline_x, outline_y, ow as u32, oh as u32);
+            let outline_rect = zoomed_sprite_rect(outline_x, outline_y, ow, oh, zoom);
             renderer.render_cached_outline(
                 bank_id,
                 variant,
@@ -2128,7 +2149,7 @@ fn render_fx_entities_gpu<I>(
             continue;
         }
 
-        let margin = 256;
+        let margin = (256.0 * zoom).ceil() as i32;
         let screen_x = ((world_x - view.x) * zoom) as i32;
         let screen_y = ((world_y - view.y) * zoom) as i32;
         if screen_x < -margin
@@ -2161,7 +2182,7 @@ fn render_fx_entities_gpu<I>(
             let dst_x = ((sprite_x - view.x) * zoom) as i32;
             let dst_y = ((sprite_y - view.y) * zoom) as i32;
 
-            let dst_rect = Rect::new(dst_x, dst_y, sw as u32, sh as u32);
+            let dst_rect = zoomed_sprite_rect(dst_x, dst_y, sw, sh, zoom);
             renderer.render_cached_sprite(bank_id, variant, shadow_color, shadow_level, dst_rect);
         }
     }
