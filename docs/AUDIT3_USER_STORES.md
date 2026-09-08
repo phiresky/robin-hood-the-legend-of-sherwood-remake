@@ -1,5 +1,8 @@
 # Audit 3: native user-store publication and ownership cleanup
 
+Final combined validation passed; see [AUDIT3_ACCEPTANCE.md](AUDIT3_ACCEPTANCE.md).
+The lane-local validation notes below describe the original implementation handoff.
+
 Implements findings 5 and 8 of `CODE_QUALITY_AUDIT_3.md` from base
 `7be45078e`. No browser persistence, Original-compatible first-launch recovery,
 trust revocation, savegame storage or performance code was changed.

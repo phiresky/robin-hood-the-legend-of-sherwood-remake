@@ -1,5 +1,8 @@
 # Audit 3: lawful ranked-driver fixtures
 
+Final combined validation passed; see [AUDIT3_ACCEPTANCE.md](AUDIT3_ACCEPTANCE.md).
+The lane-local validation notes below describe the original implementation handoff.
+
 Finding 7 of [CODE_QUALITY_AUDIT_3.md](CODE_QUALITY_AUDIT_3.md) is implemented
 entirely in the existing ranked runtime test modules. Production protocol
 validation and historical byte goldens are unchanged.

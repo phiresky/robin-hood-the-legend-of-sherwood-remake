@@ -1,5 +1,8 @@
 # Audit3 worker completion ownership
 
+The full service suite and three LLVM unwind cases also passed at the combined
+checkpoint; see [AUDIT3_ACCEPTANCE.md](AUDIT3_ACCEPTANCE.md) for final integration evidence.
+
 Implements finding 1 of [CODE_QUALITY_AUDIT_3.md](CODE_QUALITY_AUDIT_3.md), based
 on `7be45078e`. No performance branches or admin backup implementation changed.
 

@@ -1,5 +1,8 @@
 # Audit 3: shared save/load picker behavior
 
+Final combined validation passed; see [AUDIT3_ACCEPTANCE.md](AUDIT3_ACCEPTANCE.md).
+The lane-local validation notes below describe the original implementation handoff.
+
 Implements finding 6 in `CODE_QUALITY_AUDIT_3.md`, on top of the save-store API
 migration in `6e08fc606` and subsequent save-store hardening. The lane includes
 current main through that prerequisite; picker changes do not modify performance

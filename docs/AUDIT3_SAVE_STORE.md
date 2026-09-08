@@ -1,5 +1,8 @@
 # Audit 3: save-store authority, recovery, allocation and deletion
 
+Final combined validation passed; see [AUDIT3_ACCEPTANCE.md](AUDIT3_ACCEPTANCE.md).
+The lane-local validation notes below describe the original implementation handoff.
+
 Implements findings 2, 3 and 4 of `CODE_QUALITY_AUDIT_3.md`. The source lane
 starts at `7be45078e` and merges the user's main `246d6cd86`, preserving its
 prepared-save identity, in-memory browser Restart and autosave sequencing work.
