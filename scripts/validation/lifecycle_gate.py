@@ -87,6 +87,8 @@ def browser(evidence, summary):
     selection = ["--profile", "wasm-dev", "--target", "wasm32-unknown-unknown",
                  "-p", "robin_rs", "--no-default-features", "--features", "audio"]
     run([cargo[0], "check", cargo[1], *selection, "--bin", "robin", "--tests"])
+    multiplayer_selection = ["audio,multiplayer" if item == "audio" else item for item in selection]
+    run([cargo[0], "check", cargo[1], *multiplayer_selection, "--bin", "robin", "--tests"])
     # Cargo's JSON artifact event identifies the exact linked test executable;
     # never guess using glob order or a stale target-directory timestamp.
     argv = [cargo[0], "test", cargo[1], *selection, "--lib", "--no-run",
@@ -131,7 +133,8 @@ def browser(evidence, summary):
         if not re.search(r"test web_audio_backend::[^\n]+\.\.\. ok", log.read_text()):
             raise RuntimeError("browser runner did not execute audio ownership tests")
         summary["browser_tests_passed"] = int(result[1])
-    summary["checks"] = {"audio_target_check": True, "test_module_link": True,
+    summary["checks"] = {"audio_target_check": True, "audio_multiplayer_target_check": True,
+                         "test_module_link": True,
                          "real_browser_tests": True}
 
 

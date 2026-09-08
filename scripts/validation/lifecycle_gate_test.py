@@ -154,7 +154,7 @@ class LifecycleGateTests(unittest.TestCase):
                     self.assertTrue(any(x.startswith("--user-data-dir=") for x in args))
                     kwargs["log"].write_text(f"test web_audio_backend::ownership ... ok\ntest result: ok. {count} passed; 0 failed")
                 else:
-                    self.assertIn("audio", argv)
+                    self.assertIn("audio", argv[argv.index("--features") + 1].split(","))
                     self.assertIn("check", argv)
                     self.assertNotIn("timeout", kwargs)
             with patch.dict(os.environ, CHROME="chrome", CHROMEDRIVER="driver",

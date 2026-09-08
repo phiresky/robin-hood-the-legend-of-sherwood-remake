@@ -22,8 +22,9 @@ WASM_BINDGEN_TEST_RUNNER=/absolute/path/to/wasm-bindgen-test-runner \
 CARGO_BUILD_JOBS=1 bash scripts/check-quality.sh browser-audio
 ```
 
-The gate first runs audio-enabled client bin/tests checking, then separately
-links the actual library test module with `wasm-dev`. It obtains the artifact
+The gate first checks client bin/tests with `audio`, then `audio,multiplayer`
+(so browser transport code is not silently excluded), then separately links
+the audio-enabled library test module with `wasm-dev`. It obtains the artifact
 from Cargo's compiler-artifact event, printing every Cargo output line instead
 of guessing from stale files in target. Compilation has no runtime timeout and
 uses the checkout's ordinary target directory. It then executes all browser
