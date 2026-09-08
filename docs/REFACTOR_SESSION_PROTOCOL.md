@@ -33,8 +33,9 @@ release, but cannot authorize new reader messages.
 
 Inactive dispatch failures are typed (released, superseded, detached), not parsed
 from error strings. The async peer I/O driver preserves the same pinned writer
-future for every inactive outcome, allowing already-queued reconnect/commit
-frames to drain for at most 15 seconds. No new reader effects are allowed during
+future for every inactive outcome. Once the reader reports inactivity,
+already-queued reconnect/commit frames may drain for at most 15 seconds.
+Ordinary active-reader write behavior is unchanged. No new reader effects are allowed during
 that drain. Continuing the original future avoids replaying a partially written
 frame header. EOF/read errors after authority loss use the same drain path.
 
@@ -72,12 +73,23 @@ cover stale teardown, readiness policy, snapshot acknowledgement rejection, and
 admission deadline/cancellation generation binding. Existing native lifecycle/co-sign tests
 are retained and use the extracted state operations.
 
+The async driver test preserves an already-started writer waiting on its queue;
+it does not emulate partially emitted QUIC frame bytes. EOF/read-error authority
+classification was independently code-reviewed, but is not directly exercised by
+a dedicated regression test.
+
 Initial checkpoint `8ccd2adfa`: 39 focused release-native tests passed, including
 the existing real-iroh ranked/reconnect tests. Independent review subsequently
 identified the terminal-writer cancellation race described above; the drain fix
 and async regression tests were added before final acceptance.
 
-TODO: record post-drain-fix focused and combined test results after frozen-source runs.
+Post-drain checkpoint `098f00021`: all 42 focused release-native tests passed,
+including the async terminal-drain and timeout regressions, with no new warnings.
+Command: `RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked
+-p robin_rs --lib --no-default-features --features release multiplayer::native::tests`.
+`cargo fmt --all` and `git diff --check` also passed.
+
+TODO: root integration records combined release/client and live-runtime results.
 TODO: a future bounded actor mailbox could replace the synchronous gate if server
 throughput measurements justify it; this change intentionally does not alter the
 existing runtime scheduling or introduce queue backpressure policy.

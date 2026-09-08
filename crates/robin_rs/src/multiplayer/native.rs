@@ -6002,8 +6002,9 @@ mod tests {
                 writes_started.fetch_add(1, super::Ordering::Relaxed);
                 started_tx.send(()).unwrap();
                 while let Some(message) = wire.recv().await {
-                    // A write future is deliberately suspended with a frame
-                    // in progress, just as a partially written QUIC frame can be.
+                    // Keep draining asynchronous. The start signal proves the
+                    // original writer was already waiting on its queue before
+                    // authority loss; this is not a partial-QUIC-write test.
                     tokio::task::yield_now().await;
                     delivered.push(message);
                 }
