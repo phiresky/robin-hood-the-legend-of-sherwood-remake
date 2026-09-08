@@ -49,11 +49,15 @@ dependencies were introduced.
   the repository's Cranelift test backend does not reliably support catching and
   resuming unwinds. These hashes exclude host/render/input state; the existing
   sound-boundary and nested-selection tests remain necessary.
-- Native compilation and test execution are intentionally assigned to the
-  combined integration lane, avoiding another cold Cargo target. Required:
-  `cargo test --locked -p robin_engine` and affected replay/parity suites.
-  Particularly retain the existing nested/independent-selection, sound-boundary,
-  recorded interaction/ground-throw, DropAle-route and invalid-quick-action tests.
+- Coordinated engine suite passed at `9f0b52c2a`: 4472 tests, four ignored,
+  including nested/independent-selection, sound-boundary, recorded interactions,
+  DropAle-route and invalid-quick-action tests. Parity 155 and verifier 36 library
+  tests plus their integrations also passed. The first new panic harness failed
+  under Cranelift; `339efdca8` changed only its expected-panic test contract.
+- Fresh ordinary/save-load replay EOF gates and both-seat multiplayer command,
+  rollback and snapshot-reconnect/hash gates passed against the retained
+  `f5f531c7` release binary. [Final acceptance](AUDIT2_PLAN.md#final-acceptance)
+  records exact provenance and exclusions.
 
 ## Deliberate limits
 

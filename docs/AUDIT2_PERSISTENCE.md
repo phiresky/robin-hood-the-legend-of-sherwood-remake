@@ -40,13 +40,14 @@ This is deliberately not claimed as compile-time prevention of raw SQL access.
 - Added router regression for interrupted campaign and forbidden fourth field:
   assert abandoned/tokenless reservation, no submission publication, successful
   exact retry, and one submission after a second exact retry.
-- Cargo compilation and runtime tests are delegated to the combined integration
-  lane; no independent cold build was started here.
+- Coordinated explicit highscore package suite passed at `9f0b52c2a`: 164
+  library, 31 admin, five server, nine worker and 12 real-router tests, plus
+  doctests. The new interrupted-ingestion/exact-retry regression passed.
 
-Required combined checks: `cargo test -p robin_highscores` (library, admin and
-router E2E tests). In particular retain exact compact preflight/retry, red
+The executed combined checks retain exact compact preflight/retry, red
 admission, concurrent reservation, expired lease/recovery, campaign-fork,
 worker lease-loss and backup/fence crash-recovery coverage.
+Exact checkpoints and coverage limits: [final acceptance](AUDIT2_PLAN.md#final-acceptance).
 
 ## Deliberate limits
 
@@ -54,6 +55,12 @@ No schema, wire, signature, artifact encoding or transaction policy changes.
 Ingestion/mark failures still abandon; preparation/finalization failures leave
 uploaded state recoverable. Request cancellation still belongs to existing
 detached fenced task owners. No nested per-query fences were introduced.
+
+Separate fresh review found a pre-existing worker heartbeat-failure quiescence
+gap involving detached blocking filesystem work. This refactor preserves that
+behavior; ordinary passing fence tests do not establish its absence. The finding
+is source-based, not a reproduced backup-corruption incident; follow-up belongs
+to the separate code-quality audit.
 
 TODO: stronger type-level authenticated/preflight upload admission could replace
 the documented internal caller contract in a future pass. The current refactor
