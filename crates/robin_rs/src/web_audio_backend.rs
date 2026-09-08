@@ -31,6 +31,8 @@ use assets::{
 const AUDIO_IO_CONCURRENCY: usize = 3;
 struct BrowserAudio {
     mission_warmup: Option<futures::future::AbortHandle>,
+    warmup_pauses: usize,
+    warmup_waiters: Vec<futures::channel::oneshot::Sender<()>>,
     retired: bool,
     context: AudioContext,
     files: Arc<SbFileSystem>,
@@ -56,12 +58,39 @@ impl std::fmt::Debug for BrowserAudioSession {
     }
 }
 
+/// Scoped bandwidth reservation for critical mission data. Dropping a load
+/// future also drops its reservation, so abandoned loads cannot strand audio.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct StartupWarmupPause {
+    #[serde(skip)]
+    session: Weak<RefCell<BrowserAudio>>,
+}
+
+impl Drop for StartupWarmupPause {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.upgrade() {
+            let mut audio = session.borrow_mut();
+            audio.warmup_pauses = audio
+                .warmup_pauses
+                .checked_sub(1)
+                .expect("startup audio warmup pause released twice");
+            if audio.warmup_pauses == 0 {
+                for waiter in audio.warmup_waiters.drain(..) {
+                    let _ = waiter.send(()); // Cancelled warmup no longer needs waking.
+                }
+            }
+        }
+    }
+}
+
 impl BrowserAudioSession {
     pub fn new(files: Arc<SbFileSystem>, catalog: Arc<ShippingDatadir>) -> Result<Self, String> {
         let context = platform_context()?;
         Ok(Self {
             inner: Some(Rc::new(RefCell::new(BrowserAudio {
                 mission_warmup: None,
+                warmup_pauses: 0,
+                warmup_waiters: Vec::new(),
                 retired: false,
                 context,
                 files,
@@ -71,6 +100,50 @@ impl BrowserAudioSession {
                 backends: Vec::new(),
             }))),
         })
+    }
+
+    pub(crate) fn pause_startup_warmup(&self) -> Result<Option<StartupWarmupPause>, String> {
+        let window = web_sys::window().ok_or("pause audio warmup: no window")?;
+        let query = web_sys::UrlSearchParams::new_with_str(
+            &window
+                .location()
+                .search()
+                .map_err(|error| format!("read audio startup query: {error:?}"))?,
+        )
+        .map_err(|error| format!("parse audio startup query: {error:?}"))?;
+        match query.get("audio-downloads").as_deref() {
+            Some("eager") => return Ok(None),
+            None | Some("deferred") => {}
+            Some(value) => return Err(format!("unknown audio-downloads policy {value:?}")),
+        }
+        self.pause_warmup().map(Some)
+    }
+
+    fn pause_warmup(&self) -> Result<StartupWarmupPause, String> {
+        self.with_audio(|audio| audio.warmup_pauses += 1)?;
+        Ok(StartupWarmupPause {
+            session: self.downgrade()?,
+        })
+    }
+
+    async fn wait_for_warmup_bandwidth(&self) -> Result<(), String> {
+        loop {
+            let waiter = self.with_audio(|audio| {
+                if audio.warmup_pauses == 0 {
+                    None
+                } else {
+                    let (send, receive) = futures::channel::oneshot::channel();
+                    audio.warmup_waiters.push(send);
+                    Some(receive)
+                }
+            })?;
+            let Some(waiter) = waiter else {
+                return Ok(());
+            };
+            waiter
+                .await
+                .map_err(|_| "browser audio session retired while warmup paused".to_owned())?;
+        }
     }
 
     fn with_audio<R>(&self, f: impl FnOnce(&mut BrowserAudio) -> R) -> Result<R, String> {
@@ -93,6 +166,7 @@ impl BrowserAudioSession {
         };
         let mut audio = inner.borrow_mut();
         audio.retired = true;
+        audio.warmup_waiters.clear();
         if let Some(task) = audio.mission_warmup.take() {
             task.abort();
         }
@@ -284,19 +358,23 @@ where
     crate::window::yield_to_runtime().await;
     yield_ms += yield_started.elapsed().as_secs_f64() * 1000.0;
     let mut work = futures::stream::iter(plan.into_iter().map(|item| async move {
-        let result = match item.work {
-            WarmWork::Encoded { url, retain_bundle } => {
-                match request_encoded(session, &url, retain_bundle) {
-                    Ok(load) => load.await.map(|_| ()),
-                    Err(error) => Err(error),
+        let result = async {
+            session.wait_for_warmup_bandwidth().await?;
+            match item.work {
+                WarmWork::Encoded { url, retain_bundle } => {
+                    match request_encoded(session, &url, retain_bundle) {
+                        Ok(load) => load.await.map(|_| ()),
+                        Err(error) => Err(error),
+                    }
                 }
+                WarmWork::Decoded(asset) => match request_decoded(session, asset) {
+                    Ok(DecodedRequest::Ready(_)) => Ok(()),
+                    Ok(DecodedRequest::Pending(load)) => load.await.map(|_| ()),
+                    Err(error) => Err(error),
+                },
             }
-            WarmWork::Decoded(asset) => match request_decoded(session, asset) {
-                Ok(DecodedRequest::Ready(_)) => Ok(()),
-                Ok(DecodedRequest::Pending(load)) => load.await.map(|_| ()),
-                Err(error) => Err(error),
-            },
-        };
+        }
+        .await;
         (item.label, result)
     }))
     .buffer_unordered(AUDIO_IO_CONCURRENCY);
@@ -1443,6 +1521,45 @@ mod browser_lifecycle_tests {
             other_backend.state.borrow().channels[other_index],
             ChannelSlot::Empty
         ));
+    }
+
+    #[wasm_bindgen_test]
+    fn startup_warmup_pause_is_nested_cancellable_and_session_owned() {
+        use futures::FutureExt as _;
+        let first = session();
+        let other = session();
+        let outer = first.pause_warmup().unwrap();
+        let inner = first.pause_warmup().unwrap();
+        assert!(first.wait_for_warmup_bandwidth().now_or_never().is_none());
+        assert!(
+            other
+                .wait_for_warmup_bandwidth()
+                .now_or_never()
+                .unwrap()
+                .is_ok()
+        );
+        drop(inner);
+        assert!(first.wait_for_warmup_bandwidth().now_or_never().is_none());
+        drop(outer);
+        assert!(
+            first
+                .wait_for_warmup_bandwidth()
+                .now_or_never()
+                .unwrap()
+                .is_ok()
+        );
+        assert!(
+            first
+                .with_audio(|audio| audio.warmup_waiters.is_empty())
+                .unwrap()
+        );
+        let retired_pause = first.pause_warmup().unwrap();
+        let mut waiting = Box::pin(first.wait_for_warmup_bandwidth());
+        assert!(waiting.as_mut().now_or_never().is_none());
+        first.retire();
+        assert!(waiting.now_or_never().unwrap().is_err());
+        drop(retired_pause);
+        other.retire();
     }
 
     #[wasm_bindgen_test]

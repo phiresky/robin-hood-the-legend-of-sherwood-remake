@@ -23,8 +23,22 @@ impl std::ops::Deref for CompressedPayload {
     }
 }
 
-#[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
 const MISSION_FETCH_CONCURRENCY: usize = 8;
+
+/// The generated layout is a scheduling hint, never a correctness filter.
+/// Unknown/legacy paths remain required and receive ordinary data priority.
+fn mission_download_priority(path: &str) -> u8 {
+    match path.split('/').next() {
+        Some("missions") => 0,
+        Some("terrain") => 1,
+        Some("audio") => 3,
+        _ => 2,
+    }
+}
+
+fn prioritize_mission_downloads(files: &mut [String]) {
+    files.sort_by_key(|path| mission_download_priority(path));
+}
 
 /// One observable step at the asynchronous shipping-data boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +166,14 @@ where
     } else {
         None
     };
+    // Pause speculative menu/mission warmup while critical data is loading.
+    // Required playback bypasses the pause; cancellation/errors release it.
+    #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+    let mut audio_download_pause = audio
+        .as_ref()
+        .map(|audio| audio.pause_startup_warmup())
+        .transpose()
+        .map_err(anyhow::Error::msg)?;
     progress(MissionLoadProgress {
         phase: MissionLoadPhase::Data,
         completed: 0,
@@ -191,7 +213,8 @@ where
         }
         return Ok(());
     }
-    let files = dependencies.files;
+    let mut files = dependencies.files;
+    prioritize_mission_downloads(&mut files);
     let exclamation_ids = dependencies.exclamation_ids;
     // Fresh install epoch: drops the previous mission's late-grid cells and
     // invalidates any still-running background sprite-streaming driver.
@@ -200,6 +223,10 @@ where
     let install_epoch = robin_assets::late_sprites::begin_epoch();
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
     let _ = install_epoch;
+    let mut downloads_finished = || {
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
+        drop(audio_download_pause.take());
+    };
     // Native (and plain single-threaded wasm) path: bounded-concurrency
     // fetch, merge on arrival, materialize inside `install_mission`.
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
@@ -236,9 +263,10 @@ where
             // builds make this a no-op.
             crate::window::yield_to_runtime().await;
         }
+        downloads_finished();
         (merged, fetched_bytes)
     };
-    // Browser worker-pool build: all requests in flight at once, parts merged
+    // Browser worker-pool build: prioritized bounded requests, parts merged
     // as they arrive, and critical VQ sprite chunks materialized concurrently
     // with the remaining downloads; reinforcement-only chunks return as a
     // deferred tail that streams after activation. `install_mission` still
@@ -253,6 +281,7 @@ where
         has_decoded_saved_world,
         &files,
         &mut progress,
+        &mut downloads_finished,
     )
     .await?;
     let install_start = web_time::Instant::now();
@@ -745,6 +774,7 @@ async fn fetch_merge_materialize_streaming<F>(
     has_decoded_saved_world: bool,
     files: &[String],
     progress: &mut F,
+    downloads_finished: &mut impl FnMut(),
 ) -> Result<(
     ShippingMission,
     usize,
@@ -787,6 +817,17 @@ where
         workers = wasm_threads::pool_threads(),
         "mission worker scheduling policy"
     );
+    let mut download_files = files.to_vec();
+    let download_concurrency = match query.get("mission-downloads").as_deref() {
+        None | Some("prioritized") => MISSION_FETCH_CONCURRENCY,
+        Some("unbounded") => {
+            // Restore the original alphabetical all-at-once policy exactly.
+            download_files.sort();
+            total.max(1)
+        }
+        Some(value) => return Err(anyhow!("unknown mission-downloads policy {value:?}")),
+    };
+    tracing::info!(download_concurrency, "mission download scheduling policy");
     let fetch_progress = Arc::new(FetchByteProgress::default());
     let mut work = InstallWorkModel {
         files_total: total,
@@ -804,7 +845,7 @@ where
     } else {
         None
     };
-    let mut fetched = futures::stream::iter(files.iter().cloned().map(|file| {
+    let mut fetched = futures::stream::iter(download_files.into_iter().map(|file| {
         let fetch_progress = Arc::clone(&fetch_progress);
         async move {
             let compressed = fetch_counted(datadir, &file, &fetch_progress)
@@ -844,7 +885,7 @@ where
             Ok::<_, anyhow::Error>((file, bytes, payload))
         }
     }))
-    .buffer_unordered(total.max(1))
+    .buffer_unordered(download_concurrency)
     .fuse();
 
     enum Event {
@@ -1073,6 +1114,7 @@ where
         elapsed_ms = stream_start.elapsed().as_secs_f64() * 1000.0,
         "startup timing: all parts merged"
     );
+    downloads_finished();
     let vq_drain_start = web_time::Instant::now();
     if let Some(bank) = merged.payload.sprite_bank.as_mut() {
         // The level part has merged by now on any well-formed payload
@@ -1683,6 +1725,36 @@ mod tests {
     };
     use robin_engine::campaign::{Campaign, PcDescription};
     use robin_engine::profiles::{CharacterProfile, CharacterProfileIdx, ProfileManager};
+
+    #[test]
+    fn download_order_unblocks_terrain_and_sprites_before_audio_metadata() {
+        let original = [
+            "audio/voice",
+            "rhs/base",
+            "terrain/map",
+            "missions/header",
+            "custom/part",
+        ];
+        let mut files: Vec<String> = original.iter().map(|path| (*path).into()).collect();
+        super::prioritize_mission_downloads(&mut files);
+        assert_eq!(
+            files,
+            [
+                "missions/header",
+                "terrain/map",
+                "rhs/base",
+                "custom/part",
+                "audio/voice"
+            ]
+        );
+        let mut unchanged_set: Vec<_> = original.iter().map(|path| (*path).to_owned()).collect();
+        unchanged_set.sort();
+        files.sort();
+        assert_eq!(
+            files, unchanged_set,
+            "scheduling must never omit save/audio dependencies"
+        );
+    }
 
     #[test]
     fn streaming_budget_reserves_part_and_terrain_capacity() {
