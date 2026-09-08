@@ -677,7 +677,8 @@ impl Ctx {
         // level for marginal probability-mass savings. Skipping those
         // contexts must match on both coder sides (it does: this is the
         // single exclusion entry point).
-        if self.distinct() > excl_source_cap() {
+        let cap = excl_source_cap();
+        if cap == 0 || self.distinct() > cap {
             return;
         }
         match self {
@@ -934,11 +935,9 @@ const SEE_LEVEL_AUX: usize = 5;
 /// so exclusion is off.
 const EXCL_SOURCE_CAP: u32 = 0;
 
-/// TEMPORARY experiment override for [`EXCL_SOURCE_CAP`] via the
-/// `ROBIN_EXCL_CAP` env var, to measure the size/decode-time ladder without
-/// rebuilding per value. Bitstream contract still applies: encode and decode
-/// must run with the same value. TODO: bake the chosen value back into the
-/// const and delete this before shipping chunks encoded with it.
+/// Native-only experiment override. Encode and decode must use the same cap;
+/// browser shipping builds always use the schema's fixed value.
+#[cfg(not(target_arch = "wasm32"))]
 fn excl_source_cap() -> u32 {
     static CAP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *CAP.get_or_init(|| {
@@ -947,6 +946,14 @@ fn excl_source_cap() -> u32 {
             .and_then(|v| v.parse().ok())
             .unwrap_or(EXCL_SOURCE_CAP)
     })
+}
+
+// Expose the schema value to the optimizer, so browser decoding has no
+// OnceLock reads, exclusion scans, or optional dense-mirror allocations.
+#[cfg(target_arch = "wasm32")]
+#[inline]
+const fn excl_source_cap() -> u32 {
+    EXCL_SOURCE_CAP
 }
 
 /// Per-symbol exclusion set as a generation-stamped array: O(1) insert and
@@ -962,13 +969,20 @@ struct Excl {
 impl Excl {
     fn new(alphabet: u16) -> Self {
         Self {
-            stamp: vec![0; alphabet as usize],
+            stamp: if cfg!(target_arch = "wasm32") && EXCL_SOURCE_CAP == 0 {
+                Vec::new()
+            } else {
+                vec![0; alphabet as usize]
+            },
             generation: 0,
             list: Vec::new(),
         }
     }
 
     fn begin(&mut self) {
+        if cfg!(target_arch = "wasm32") && EXCL_SOURCE_CAP == 0 {
+            return;
+        }
         self.generation += 1;
         self.list.clear();
         if self.generation == u32::MAX {
@@ -979,7 +993,7 @@ impl Excl {
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        (cfg!(target_arch = "wasm32") && EXCL_SOURCE_CAP == 0) || self.list.is_empty()
     }
 
     #[inline]
@@ -1028,14 +1042,23 @@ struct Model {
 }
 
 impl Model {
-    fn new(alphabet: u16) -> Self {
+    fn new(alphabet: u16, has_pair: bool, has_aux: bool) -> Self {
         Self {
             // Pre-size the context maps: models routinely end with tens of
             // thousands of order-2 contexts, and growing there from empty
             // shows up as rehash churn in decode profiles.
             c2: HashMap::with_capacity_and_hasher(1 << 15, Default::default()),
-            c2pair: HashMap::with_capacity_and_hasher(1 << 14, Default::default()),
-            c2aux: HashMap::with_capacity_and_hasher(1 << 14, Default::default()),
+            // Reserve only model levels this stream can visit. An unused
+            // order-2 map otherwise allocates thousands of empty contexts
+            // for every chunk, including chunks decoding concurrently.
+            c2pair: HashMap::with_capacity_and_hasher(
+                if has_pair { 1 << 14 } else { 0 },
+                Default::default(),
+            ),
+            c2aux: HashMap::with_capacity_and_hasher(
+                if has_aux { 1 << 14 } else { 0 },
+                Default::default(),
+            ),
             // Order-1 contexts are direct-indexed by symbol (last slot =
             // EDGE): no hashing on the per-tile hot path.
             c1: (0..=alphabet as usize).map(|_| Ctx::default()).collect(),
@@ -1382,7 +1405,11 @@ pub fn encode_grids_multi(
         }
     }
     let mut enc = RangeEncoder::new();
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        false,
+    );
     for (gi, g) in grids.iter().enumerate() {
         let cols = g.cols as usize;
         if g.indices.len() != cols * g.rows as usize {
@@ -1466,7 +1493,7 @@ pub fn encode_grids_auxref(
         ));
     }
     let mut enc = RangeEncoder::new();
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(alphabet, false, aux.iter().any(Option::is_some));
     for (gi, g) in grids.iter().enumerate() {
         let cols = g.cols as usize;
         if g.indices.len() != cols * g.rows as usize {
@@ -1510,7 +1537,7 @@ pub fn decode_grids_auxref(
         ));
     }
     let mut dec = RangeDecoder::new(blob);
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(alphabet, false, aux.iter().any(Option::is_some));
     let mut out = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
@@ -1573,7 +1600,11 @@ pub fn encode_grids_shipping(
         }
     }
     let mut enc = RangeEncoder::new();
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        selfref.iter().any(Option::is_some),
+    );
     for (gi, g) in grids.iter().enumerate() {
         let cols = g.cols as usize;
         if g.indices.len() != cols * g.rows as usize {
@@ -1669,7 +1700,11 @@ pub fn decode_grids_shipping(
         }
     }
     let mut dec = RangeDecoder::new(blob);
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        selfref.iter().any(Option::is_some),
+    );
     let mut out: Vec<Vec<u16>> = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
@@ -1775,7 +1810,11 @@ pub fn decode_grids_multi(
         }
     }
     let mut dec = RangeDecoder::new(blob);
-    let mut model = Model::new(alphabet);
+    let mut model = Model::new(
+        alphabet,
+        base2.is_some_and(|refs| refs.iter().any(Option::is_some)),
+        false,
+    );
     let mut out = Vec::with_capacity(dims.len());
     for (gi, &(cols16, rows)) in dims.iter().enumerate() {
         let cols = cols16 as usize;
@@ -2152,6 +2191,19 @@ mod tests {
         ];
         let blob =
             encode_grids_shipping(4096, &grids, Some(&base), Some(&base2), &selfref).unwrap();
+        use sha2::{Digest, Sha256};
+        // Freeze the shipping stream produced before exclusion specialization
+        // and conditional model allocation. Roundtrips alone would not catch
+        // an encoder/decoder pair that accidentally changes the format.
+        if excl_source_cap() == 0 {
+            assert_eq!(
+                Sha256::digest(&blob).as_slice(),
+                &[
+                    38, 62, 236, 102, 222, 253, 119, 108, 131, 62, 110, 69, 95, 191, 198, 154, 88,
+                    108, 6, 164, 149, 150, 87, 0, 142, 116, 36, 27, 22, 76, 59, 76
+                ],
+            );
+        }
         let dims: Vec<(u16, u16)> = grids.iter().map(|g| (g.cols, g.rows)).collect();
         let decoded =
             decode_grids_shipping(4096, &dims, Some(&base), Some(&base2), &selfref, &blob).unwrap();
