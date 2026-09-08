@@ -16,7 +16,6 @@ use crate::renderer::Renderer;
 use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
 use crate::widget::FrameWnd;
-use robin_assets::res_descr::{self, LevelDescriptors};
 use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir as assets_shipping_datadir;
 use robin_engine::campaign::Campaign;
@@ -947,7 +946,11 @@ fn campaign_map_items(
             ) {
                 return None;
             }
-            let descriptors = load_level_descriptors(profile.id, shipping);
+            let descriptors = crate::mission_descriptors::for_presentation(
+                application_context,
+                shipping,
+                profile.id,
+            );
             let description =
                 MissionDescriptionScreen::get_mission_text(descriptors.as_ref(), text_resources, 1);
             let remaining_lifetime = u32::from(profile.life_time)
@@ -972,19 +975,6 @@ fn campaign_map_items(
             })
         })
         .collect()
-}
-
-fn load_level_descriptors(
-    mission_id: u32,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-) -> Option<LevelDescriptors> {
-    let filename = res_descr::red_filename(mission_id);
-    shipping
-        .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
-        .or_else(|| {
-            let path = format!("Data/Text/{filename}");
-            res_descr::load(&path).ok()
-        })
 }
 
 fn build_campaign_frame(

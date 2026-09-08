@@ -41,12 +41,12 @@
 //! `RHLevelSB.red`).  They live in the text directory
 //! (`Data/Text/` by default).
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 use crate::picture::read_u32;
 use crate::resource_manager::ResourceId;
-use robin_data_io::sbfile::{SbFile, SbFileSystem};
+use robin_data_io::sbfile::{SBFILE_ERROR_FILE_NOT_FOUND, SbFile, SbFileSystem};
 
 // ═══════════════════════════════════════════════════════════════════
 //  Public types
@@ -147,10 +147,37 @@ pub fn load(path: &str) -> Result<LevelDescriptors> {
 
 /// Read descriptors through caller-owned preparation authority.
 pub fn load_with_files(path: &str, files: &SbFileSystem) -> Result<LevelDescriptors> {
-    let mut file = files
+    let file = files
         .open(path, 0)
         .map_err(|e| anyhow!("open '{path}': error {e}"))?;
+    decode(file).with_context(|| format!("decode descriptor '{path}'"))
+}
 
+/// Resolve optional mission metadata using only the application's selected
+/// shipping installation and reader. Localized shipping metadata precedes
+/// shared metadata (as selected by `localized_level_descriptors`), then loose
+/// files. Absence is optional; unreadable or malformed content is an error.
+/// No process-global filesystem snapshot is consulted.
+pub fn resolve(
+    mission_id: u32,
+    files: &SbFileSystem,
+    shipping: Option<&crate::shipping_datadir::ShippingDatadir>,
+) -> Result<Option<LevelDescriptors>> {
+    let filename = red_filename(mission_id);
+    if let Some(descriptor) = shipping.and_then(|dd| dd.localized_level_descriptors(&filename)) {
+        return Ok(Some(descriptor.clone()));
+    }
+    let path = format!("Data/Text/{filename}");
+    match files.open(&path, 0) {
+        Ok(file) => decode(file)
+            .map(Some)
+            .with_context(|| format!("decode descriptor '{path}'")),
+        Err(SBFILE_ERROR_FILE_NOT_FOUND) => Ok(None),
+        Err(error) => Err(anyhow!("open descriptor '{path}': error {error}")),
+    }
+}
+
+fn decode(mut file: SbFile) -> Result<LevelDescriptors> {
     // ── Mission description (2 × u32) ──
     let mission_description = MissionDescription {
         text_table_id: read_id(&mut file)?,
@@ -220,6 +247,93 @@ pub fn load_with_files(path: &str, files: &SbFileSystem) -> Result<LevelDescript
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shipping_datadir::{ShippingAssets, ShippingDatadir, ShippingLocale};
+    use robin_util::asset_fs::{AssetVfs, Bundle};
+    use std::sync::Arc;
+
+    const FIXTURE_MISSION: u32 = 0x3851_445a;
+
+    fn descriptor_bytes(text_id: u32) -> Vec<u8> {
+        [text_id, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            .into_iter()
+            .flat_map(u32::to_le_bytes)
+            .collect()
+    }
+
+    fn mount_descriptor(vfs: &AssetVfs, bytes: Vec<u8>) {
+        vfs.mount_bundle(Arc::new(Bundle::from([(
+            format!("text/{}", red_filename(FIXTURE_MISSION)).to_lowercase(),
+            bytes.into(),
+        )])))
+        .unwrap();
+    }
+
+    #[test]
+    fn owned_readers_ignore_conflicting_legacy_descriptor() {
+        // The unique fixture key does not replace or reset any other legacy
+        // mounts used by parallel tests.
+        mount_descriptor(robin_util::asset_fs::global(), descriptor_bytes(300));
+        let first = Arc::new(AssetVfs::new());
+        let second = Arc::new(AssetVfs::new());
+        mount_descriptor(&first, descriptor_bytes(100));
+        mount_descriptor(&second, descriptor_bytes(200));
+        for (vfs, expected) in [(first, 100), (second, 200)] {
+            let files = SbFileSystem::new(vfs);
+            assert_eq!(
+                resolve(FIXTURE_MISSION, &files, None)
+                    .unwrap()
+                    .unwrap()
+                    .mission_description
+                    .text_table_id,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn optional_absence_is_not_malformed_content() {
+        let vfs = Arc::new(AssetVfs::new());
+        let files = SbFileSystem::new(vfs.clone());
+        assert!(resolve(FIXTURE_MISSION, &files, None).unwrap().is_none());
+        mount_descriptor(&vfs, vec![1, 2, 3]);
+        let error = resolve(FIXTURE_MISSION, &files, None).unwrap_err();
+        assert!(error.to_string().contains("decode descriptor"));
+    }
+
+    #[test]
+    fn installed_shipping_precedes_files_and_tracks_its_own_locale() {
+        let vfs = Arc::new(AssetVfs::new());
+        mount_descriptor(&vfs, descriptor_bytes(10));
+        let mut datadir = ShippingDatadir::default();
+        let mut shared = LevelDescriptors::default();
+        shared.mission_description.text_table_id = 20;
+        datadir
+            .red_files
+            .insert(red_filename(FIXTURE_MISSION), shared);
+        let mut localized = LevelDescriptors::default();
+        localized.mission_description.text_table_id = 30;
+        let mut german = ShippingLocale::default();
+        german
+            .red_files
+            .insert(red_filename(FIXTURE_MISSION).to_lowercase(), localized);
+        datadir.locales.insert("de-DE".into(), german);
+        datadir
+            .locales
+            .insert("en-US".into(), ShippingLocale::default());
+        let installed = ShippingAssets::install(Arc::new(datadir), vfs.clone()).unwrap();
+        let files = SbFileSystem::new(vfs);
+        for (locale, expected) in [(None, 20), (Some("de-DE"), 30), (Some("en-US"), 20)] {
+            installed.datadir().set_active_locale(locale).unwrap();
+            assert_eq!(
+                resolve(FIXTURE_MISSION, &files, Some(installed.datadir()))
+                    .unwrap()
+                    .unwrap()
+                    .mission_description
+                    .text_table_id,
+                expected
+            );
+        }
+    }
 
     #[test]
     fn red_filename_demo_leicester() {

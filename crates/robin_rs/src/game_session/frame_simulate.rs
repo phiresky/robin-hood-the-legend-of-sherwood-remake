@@ -823,37 +823,30 @@ impl InteractiveFrameSimulation {
                                 });
                         }
 
-                        host.frontend.key_config = result.key_config.clone();
-                        host.frontend.custom_key_config = result.custom_key_config.clone();
-                        host.frontend.control_tactical_units =
-                            result.profile_gameplay_config.control_tactical_units;
-                        host.frontend
-                            .planning
-                            .update_preference(result.profile_gameplay_config.plan_quick_actions);
-                        if !host.frontend.planning.enabled() {
+                        let effects = crate::host::FrontendPreferences::new(
+                            result.key_config.clone(),
+                            result.custom_key_config.clone(),
+                            result.profile_gameplay_config,
+                            &result.graphic_config,
+                        )
+                        .apply(&mut host.frontend);
+                        // Preserve live side-effect order: cancel planning, update
+                        // window/renderer presentation, release tactical control,
+                        // then enqueue authorized simulation-setting commands.
+                        if effects.cancel_planned_action {
                             dispatch_local_command(
                                 &host.transport,
                                 &mut frame.post_commands,
                                 &PlayerCommand::CancelPlannedAction,
                             );
                         }
-                        host.frontend.touch_camera_gestures =
-                            result.profile_gameplay_config.touch_camera_gestures;
-                        host.frontend.gameplay_config = result.profile_gameplay_config;
-                        host.frontend.native_refresh_presentation =
-                            result.graphic_config.native_refresh_presentation;
-                        host.frontend.quick_action_cursor_pulse =
-                            result.graphic_config.quick_action_cursor_pulse;
-                        host.frontend.diplomacy_visuals = result.graphic_config.diplomacy_visuals;
-                        window.set_native_refresh_presentation(
-                            result.graphic_config.native_refresh_presentation,
-                        );
+                        window.set_native_refresh_presentation(effects.native_refresh_presentation);
                         presentation.renderer.configure_native_refresh_presentation(
-                            result.graphic_config.native_refresh_presentation,
+                            effects.native_refresh_presentation,
                             window.surface_config.width,
                             window.surface_config.height,
                         );
-                        if !host.frontend.control_tactical_units {
+                        if effects.release_tactical_control {
                             dispatch_local_command(
                                 &host.transport,
                                 &mut frame.post_commands,

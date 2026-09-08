@@ -34,7 +34,6 @@ use crate::sherwood_hud::{SherwoodButton, SherwoodButtonEnable, SherwoodHudLayou
 use crate::ui_panel::{self, PortraitCache, PortraitHitArea, PortraitTarget};
 use crate::ui_screens::MissionChoice;
 use crate::window::GameWindow;
-use robin_assets::res_descr as assets_res_descr;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Command, Posture};
@@ -2331,23 +2330,11 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     // back to the generic strategical-mission text
                     // only if the resource lookup fails.
                     let last_id = engine.campaign().last_pseudo_mission_id;
-                    let pseudo_red = {
-                        let filename = assets_res_descr::red_filename(last_id);
-                        host.frontend.shipping
-                            .as_deref()
-                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
-                            .or_else(|| {
-                                let path = format!("Data/Text/{filename}");
-                                assets_res_descr::load(&path)
-                                    .map_err(|e| {
-                                        tracing::warn!(
-                                            "Pseudo-mission debriefing: failed to load .red {path}: {e}"
-                                        );
-                                        e
-                                    })
-                                    .ok()
-                            })
-                    };
+                    let pseudo_red = crate::mission_descriptors::for_presentation(
+                        host.application_context(),
+                        host.frontend.shipping.as_deref(),
+                        last_id,
+                    );
                     let per_mission_text = pseudo_red.as_ref().and_then(|desc| {
                         let table_id = if won {
                             desc.debriefing.win_text_table_id
@@ -2417,15 +2404,11 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         let campaign = engine.campaign();
                         let mission = &campaign.missions[idx];
                         let mission_id = mission.profile(&assets.profile_manager).id;
-                        let filename = assets_res_descr::red_filename(mission_id);
-                        host.frontend
-                            .shipping
-                            .as_deref()
-                            .and_then(|dd| dd.localized_level_descriptors(&filename).cloned())
-                            .or_else(|| {
-                                let path = format!("Data/Text/{filename}");
-                                assets_res_descr::load(&path).ok()
-                            })
+                        crate::mission_descriptors::for_presentation(
+                            host.application_context(),
+                            host.frontend.shipping.as_deref(),
+                            mission_id,
+                        )
                     };
                     *sherwood_flow = Some(SherwoodCampaignFlow::MissionDescription {
                         mission_index: idx,
