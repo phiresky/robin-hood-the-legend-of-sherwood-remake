@@ -134,11 +134,33 @@ pub fn finish_download_tail(epoch: u64) {
 }
 
 /// Publish one decoded chunk's grids. Returns `false` when the epoch is
-/// stale (a different mission started installing); the caller must stop.
+/// stale (a different mission started installing), or the experimental tail
+/// failed validation. The caller must stop; `readiness` preserves the error.
 pub fn publish_chunk(epoch: u64, blob_bytes: u64, grids: &[(u32, Arc<Vec<u16>>)]) -> bool {
     let mut reg = registry().lock().expect("late-sprite registry poisoned");
     if reg.epoch != epoch {
         return false;
+    }
+    if reg.experimental {
+        if reg.failure.is_some() {
+            return false;
+        }
+        // Validate the complete chunk before publishing any cell, including
+        // conflicting duplicate IDs within this same incoming chunk.
+        let mut incoming = HashMap::new();
+        for (sprite_id, grid) in grids {
+            let previous = incoming.insert(*sprite_id, grid);
+            let existing = reg.cells.get(sprite_id).and_then(|cell| cell.get());
+            if previous.is_some_and(|previous| previous.as_ref() != grid.as_ref())
+                || existing.is_some_and(|existing| existing.as_ref() != grid.as_ref())
+            {
+                let error = format!("conflicting decoded grid for sprite {sprite_id}");
+                tracing::error!(epoch, sprite_id, "{error}");
+                reg.tail_failed = true;
+                reg.failure = Some(error);
+                return false;
+            }
+        }
     }
     for (sprite_id, grid) in grids {
         // A sprite listed by two chunks decodes identically (validated by
@@ -225,7 +247,9 @@ pub fn fail_tail_with_error(epoch: u64, error: String) {
         return;
     }
     reg.tail_failed = true;
-    reg.failure = Some(error);
+    // Keep the originating validation failure when a caller subsequently
+    // reports the generic failure to publish the same chunk.
+    reg.failure.get_or_insert(error);
 }
 
 /// IDs absent from the late-cell registry are resident bank rows. A completed
@@ -361,6 +385,43 @@ mod tests {
         begin_epoch();
         finish_download_tail(epoch);
         assert_eq!(all_readiness(epoch), Readiness::Superseded);
+    }
+
+    #[test]
+    fn experimental_publish_rejects_conflicting_grids_without_partial_publication() {
+        let _guard = test_lock();
+        let epoch = begin_epoch();
+        set_experimental(epoch, true);
+        set_tail_work(epoch, 3, 30);
+        let original = Arc::new(vec![1, 2]);
+        assert!(publish_chunk(epoch, 10, &[(7, Arc::clone(&original))]));
+        assert!(publish_chunk(epoch, 10, &[(7, Arc::clone(&original))]));
+        let untouched = cell(8);
+        assert!(!publish_chunk(
+            epoch,
+            10,
+            &[(8, Arc::new(vec![3])), (7, Arc::new(vec![9]))]
+        ));
+        assert!(untouched.get().is_none());
+        assert_eq!(cell(7).get(), Some(&original));
+        fail_tail_with_error(epoch, "generic publication failure".to_owned());
+        assert_eq!(
+            readiness(epoch, &[7]),
+            Readiness::Failed("conflicting decoded grid for sprite 7".to_owned())
+        );
+        assert!(!publish_chunk(epoch, 10, &[(8, Arc::new(vec![3]))]));
+        let next = begin_epoch();
+        set_experimental(next, true);
+        assert!(!publish_chunk(
+            next,
+            10,
+            &[(9, Arc::new(vec![1])), (9, Arc::new(vec![2]))]
+        ));
+        assert!(cell(9).get().is_none());
+        assert_eq!(
+            all_readiness(next),
+            Readiness::Failed("conflicting decoded grid for sprite 9".to_owned())
+        );
     }
 
     #[test]
