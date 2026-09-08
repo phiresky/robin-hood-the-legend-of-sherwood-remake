@@ -896,6 +896,15 @@ pub(crate) async fn run_session(
                 result: Err(format!("selected save {} no longer exists", name.as_str())),
             };
         };
+        let slot = match callbacks.save_manager.slot_handle(slot) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return SessionOutcome {
+                    campaign,
+                    result: Err(format!("selected save is unavailable: {error:#}")),
+                };
+            }
+        };
         callbacks.queue_operation(SaveLoadRequest::Load {
             slot: Some(slot),
             mission_id,
@@ -961,7 +970,7 @@ pub(crate) async fn run_session(
         campaign = save.engine.campaign().clone();
         preselected_mission = Some(target_idx);
         callbacks.queue_operation(SaveLoadRequest::Load {
-            slot: Some(slot),
+            slot,
             mission_id,
             save: Some(save.into_payload()),
         });
@@ -1150,6 +1159,14 @@ pub(crate) async fn run_session(
                     tracing::warn!("LevelLoad exit without a pending load — returning to map");
                     continue;
                 };
+                if let Err(error) = req.validate_slot(&callbacks.save_manager) {
+                    return SessionOutcome {
+                        campaign,
+                        result: Err(format!(
+                            "cross-mission save selection became invalid: {error:#}"
+                        )),
+                    };
+                }
                 // The old session has been consumed, but `session_args` still
                 // owns its archive/cache lifetime. Drop that owner before
                 // mounting the next exact descriptor so two same-path custom
@@ -1169,7 +1186,7 @@ pub(crate) async fn run_session(
                     };
                 session_args.resolved_mission_assets = Some(resolved);
                 tracing::info!(
-                    "Cross-mission load: switching to mission id={} (idx={}) and applying slot {}",
+                    "Cross-mission load: switching to mission id={} (idx={}) and applying slot {:?}",
                     req.target_mission_id,
                     idx,
                     req.slot,
@@ -1182,7 +1199,7 @@ pub(crate) async fn run_session(
                 // Queue the Load again so the first frame of the
                 // new mission applies the save to its fresh engine.
                 let request = SaveLoadRequest::Load {
-                    slot: Some(req.slot),
+                    slot: req.slot,
                     mission_id: req.target_mission_id,
                     save: Some(save),
                 };
@@ -1467,6 +1484,14 @@ fn prepare_quickload_cross_mission(
         callbacks.clear_operation();
         return None;
     }
+    let slot = match callbacks.save_manager.slot_handle(idx) {
+        Ok(slot) => slot,
+        Err(error) => {
+            tracing::error!("QuickLoad confirmation rejected stale {slot_name} handle: {error:#}");
+            callbacks.clear_operation();
+            return None;
+        }
+    };
     let current = current_mission_id(engine.campaign(), profiles);
     let active_mission_assets = match game.mission_assets() {
         Ok(descriptor) => descriptor,
@@ -1492,7 +1517,7 @@ fn prepare_quickload_cross_mission(
     };
     if target_mission_id.is_none() {
         callbacks.queue_operation(SaveLoadRequest::Load {
-            slot: Some(idx),
+            slot: Some(slot),
             mission_id: current,
             save: Some(save.into_payload()),
         });
@@ -1509,7 +1534,7 @@ fn prepare_quickload_cross_mission(
             renderer,
             resources,
             msg,
-            idx,
+            slot,
             current,
             save.into_payload(),
         ),

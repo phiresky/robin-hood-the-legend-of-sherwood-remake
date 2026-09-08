@@ -700,7 +700,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
                 crate::host::PendingSnapshotTransitionPayload::Save { slot, save } => {
                     let target_mission_id = save.header.mission_id;
                     *campaign_transition = Some(crate::main_entry::PendingLevelLoad {
-                        slot: slot.unwrap_or(usize::MAX),
+                        slot,
                         target_mission_id,
                         origin: crate::main_entry::OperationOrigin::CommittedMultiplayer,
                         save: *save,

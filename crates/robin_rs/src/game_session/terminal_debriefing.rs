@@ -714,6 +714,13 @@ fn apply_terminal_debriefing_action(
             false
         }
         TerminalDebriefingAction::Load { slot, mission_id } => {
+            let slot = match context.callbacks.save_manager.slot_handle(slot) {
+                Ok(slot) => slot,
+                Err(error) => {
+                    tracing::error!("Debriefing load rejected stale slot: {error:#}");
+                    return false;
+                }
+            };
             context.callbacks.queue_operation(SaveLoadRequest::Load {
                 slot: Some(slot),
                 mission_id,
