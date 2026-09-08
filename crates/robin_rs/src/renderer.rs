@@ -954,14 +954,12 @@ impl Renderer {
         self.resources.alpha_mask(id)
     }
 
-    /// A live upload may lack retained CPU pixels for a mask. A foreign or
-    /// retired handle is an error, not an absent optional mask.
-    pub fn surface_alpha_mask(
-        &self,
-        handle: SurfaceHandle,
-    ) -> Result<Option<AlphaMask>, MissingSurface> {
+    /// A foreign or retired handle is an error, not an absent optional mask.
+    pub fn surface_alpha_mask(&self, handle: SurfaceHandle) -> Result<AlphaMask, MissingSurface> {
         self.surface_dimensions(handle)?;
-        Ok(self.resources.alpha_mask(handle.id))
+        self.resources
+            .alpha_mask(handle.id)
+            .ok_or(MissingSurface(handle))
     }
 
     /// Override the shadow alpha baked into `SHADOW_KEY` pixels at
