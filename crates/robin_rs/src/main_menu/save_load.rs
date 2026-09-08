@@ -56,7 +56,12 @@ pub(crate) async fn run_main_menu_load(
     };
 
     match save_manager.slot_mission_id(slot) {
-        Some(mission_id) => Some(MainMenuChoice::Load { slot, mission_id }),
+        Some(mission_id) => Some(MainMenuChoice::Load {
+            slot: save_manager
+                .slot_name(slot)
+                .expect("selected save identity is valid"),
+            mission_id,
+        }),
         None => {
             tracing::error!("Load: selected slot {slot} has no cached mission id — cancelling");
             None

@@ -44,6 +44,7 @@ pub mod pause;
 pub mod popup_scroll;
 pub mod resources;
 pub mod save_load;
+mod save_picker;
 pub mod shortcuts;
 pub mod sounds;
 pub mod spellforge_content;

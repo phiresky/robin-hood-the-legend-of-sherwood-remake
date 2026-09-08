@@ -367,7 +367,7 @@ impl AutosaveCoordinator {
                 .collect(),
         };
         let job = AutosaveJob {
-            save_directory: manager.save_directory.clone(),
+            save_directory: manager.save_directory().to_owned(),
             filename,
             payload,
             metadata,
@@ -667,10 +667,10 @@ pub(crate) fn load_into_manager(manager: &mut SaveGameManager) -> Result<()> {
             .collect(),
     };
     manager.replace_autosaves(Vec::new());
-    let manifest = load_manifest(&manager.save_directory)?.unwrap_or(legacy_seed);
+    let manifest = load_manifest(manager.save_directory())?.unwrap_or(legacy_seed);
     manifest.validate()?;
-    garbage_collect_orphans(&manager.save_directory, &manifest)?;
-    validate_manifest_payloads(&manager.save_directory, &manifest)?;
+    garbage_collect_orphans(manager.save_directory(), &manifest)?;
+    validate_manifest_payloads(manager.save_directory(), &manifest)?;
     manager.replace_autosaves(manifest.saves);
     Ok(())
 }

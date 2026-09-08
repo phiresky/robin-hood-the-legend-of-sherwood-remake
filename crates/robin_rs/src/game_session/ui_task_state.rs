@@ -1432,7 +1432,11 @@ impl SaveLoadTaskState {
                             let slot = save_manager
                                 .find_by_filename(&filename)
                                 .expect("confirmed delete slot disappeared");
-                            save_manager.remove(slot);
+                            if let Err(error) = save_manager.remove(slot) {
+                                tracing::error!(
+                                    "Delete save failed (cleanup may be pending): {error:#}"
+                                );
+                            }
                             save_manager.sort_by_time();
                             self.visible = visible_save_filenames(
                                 save_manager,

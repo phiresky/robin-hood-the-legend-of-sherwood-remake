@@ -25,7 +25,7 @@ use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
 use crate::renderer::Renderer;
-use crate::savegame::{SaveGame, SaveGameManager};
+use crate::savegame::{SaveGame, SaveGameManager, SlotName};
 use crate::sound::{AudioBackend, SoundManager};
 use crate::ui::{MouseButtons, UiKeyboard, UiState};
 use crate::widget::{FrameWnd, TextFromCaretSide, WidgetInput, WidgetInputField, WidgetPicture};
@@ -39,6 +39,7 @@ use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_DELETE, MT_BTN_LOAD, MT_BTN_SAVE,
     MT_MSG_REALLY_DELETE_SAVEGAME, MT_MSG_REALLY_OVERWRITE_SAVEGAME,
 };
+use super::save_picker::{ListRow, PickerModel, PickerSlot, retire_thumbnail};
 use super::widget_bridge::{self, ModalCursor, ModalInputState};
 use super::yesno::{YesNoModalState, show_yesno};
 
@@ -65,18 +66,15 @@ pub enum SaveLoadOutcome {
 /// mission-time load flow uses this persistent state so the outer driver can
 /// continue servicing networking and automation.
 pub struct LoadPickerModalState {
-    selected: Option<ListRow>,
-    visible: Vec<usize>,
+    model: PickerModel,
     visible_rows: usize,
-    scroll_offset: usize,
     thumb_widget: WidgetPicture,
     thumb_cache: Option<ThumbnailCache>,
     input_state: ModalInputState,
-    delete_confirmation: Option<(usize, YesNoModalState)>,
+    delete_confirmation: Option<YesNoModalState>,
     detailed_metadata: bool,
     local_time_zone: Option<TimeZone>,
     clock_error_reported: bool,
-    multiplayer_connected: bool,
 }
 
 impl LoadPickerModalState {
@@ -88,16 +86,6 @@ impl LoadPickerModalState {
         multiplayer_connected: bool,
     ) -> Self {
         save_manager.sort_by_time();
-        let visible = collect_visible_slots(save_manager, SaveLoadMode::Load)
-            .into_iter()
-            .filter(|&slot| {
-                !multiplayer_connected
-                    || !save_manager
-                        .get(slot)
-                        .expect("visible load slot exists")
-                        .multiplayer_diagnostic
-            })
-            .collect();
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
             renderer.screen_height() as i32,
@@ -110,10 +98,13 @@ impl LoadPickerModalState {
             COMPACT_ROW_HEIGHT
         };
         Self {
-            selected: None,
-            visible,
+            model: PickerModel::new(
+                SaveLoadMode::Load,
+                multiplayer_connected,
+                (LOAD_LIST_RECT.h / row_height).max(1) as usize,
+                picker_slots(save_manager),
+            ),
             visible_rows: (LOAD_LIST_RECT.h / row_height).max(1) as usize,
-            scroll_offset: 0,
             thumb_widget: WidgetPicture::new(u32::MAX),
             thumb_cache: None,
             input_state,
@@ -123,7 +114,6 @@ impl LoadPickerModalState {
                 .inspect_err(|error| tracing::warn!("Save menu local time is unavailable: {error}"))
                 .ok(),
             clock_error_reported: false,
-            multiplayer_connected,
         }
     }
 
@@ -139,35 +129,28 @@ impl LoadPickerModalState {
         audio_backend: Option<&mut dyn AudioBackend>,
         sample_loader: Option<&SampleLoader>,
     ) -> Option<SaveLoadOutcome> {
-        if let Some((slot, confirmation)) = self.delete_confirmation.as_mut() {
+        self.model.refresh(picker_slots(save_manager));
+        if let Some(confirmation) = self.delete_confirmation.as_mut() {
             let outcome = confirmation.tick(event_pump, renderer, resources, cursor.as_ref());
             let Some(confirmed) = outcome else {
                 return None;
             };
-            let slot = *slot;
             self.delete_confirmation = None;
-            if confirmed {
-                save_manager.remove(slot);
-                save_manager.sort_by_time();
-                self.visible = collect_visible_slots(save_manager, SaveLoadMode::Load)
-                    .into_iter()
-                    .filter(|&slot| {
-                        !self.multiplayer_connected
-                            || !save_manager
-                                .get(slot)
-                                .expect("visible load slot exists")
-                                .multiplayer_diagnostic
-                    })
-                    .collect();
-                self.selected = None;
-                self.scroll_offset = 0;
-                if let Some(old) = self.thumb_cache.take() {
-                    renderer.retire_surface(old.surface);
-                    self.thumb_widget.reset_alternate_picture();
-                }
-            }
+            finish_picker_delete(&mut self.model, save_manager, confirmed);
+            sync_thumbnail_cache(
+                &mut self.thumb_cache,
+                &mut self.thumb_widget,
+                self.model.selected_row(),
+                &self.model.visible(),
+                save_manager,
+                renderer,
+                SaveLoadMode::Load,
+            );
             return None;
         }
+
+        let visible = self.model.visible();
+        let mut selected = self.model.selected_row();
 
         let transform = MenuTransform::centered(
             renderer.screen_width() as i32,
@@ -211,8 +194,8 @@ impl LoadPickerModalState {
                 bottom_buttons[2].y,
             ),
         ];
-        let action_enabled = matches!(self.selected, Some(ListRow::Existing(_)));
-        let delete_enabled = selected_is_deletable(self.selected, save_manager, &self.visible);
+        let action_enabled = matches!(selected, Some(ListRow::Existing(_)));
+        let delete_enabled = self.model.can_delete();
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
@@ -230,6 +213,7 @@ impl LoadPickerModalState {
         let mut activated = None;
         for event in event_pump.poll_events() {
             self.input_state.update_from_event(&event, transform);
+            apply_picker_navigation(&mut self.model, &event);
             match event {
                 GameEvent::Quit
                 | GameEvent::KeyDown {
@@ -240,14 +224,13 @@ impl LoadPickerModalState {
                     keycode: Keycode::Up,
                     ..
                 } => {
-                    self.selected =
-                        previous_row(self.selected, SaveLoadMode::Load, self.visible.len());
+                    selected = self.model.selected_row();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Down,
                     ..
                 } => {
-                    self.selected = next_row(self.selected, SaveLoadMode::Load, self.visible.len());
+                    selected = self.model.selected_row();
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Return | Keycode::KpEnter,
@@ -257,16 +240,14 @@ impl LoadPickerModalState {
                     let (vx, vy) = transform.from_screen(x, y);
                     if LOAD_LIST_RECT.contains_virt(vx, vy) {
                         let row_offset = ((vy - LOAD_LIST_RECT.y - 4) / row_height).max(0) as usize;
-                        self.selected = row_at(
-                            SaveLoadMode::Load,
-                            self.scroll_offset + row_offset,
-                            self.visible.len(),
-                        );
+                        self.model
+                            .select(self.model.row_at(self.model.scroll_offset() + row_offset));
+                        selected = self.model.selected_row();
                         if self
                             .input_state
                             .buttons
                             .contains(MouseButtons::LEFT_DOUBLE_CLICK)
-                            && self.selected.is_some()
+                            && selected.is_some()
                         {
                             activated = Some(ID_LOAD_SAVE);
                         }
@@ -280,14 +261,6 @@ impl LoadPickerModalState {
                         delete_enabled,
                     ) {
                         activated = Some(id);
-                    }
-                }
-                GameEvent::MouseWheel(dy) => {
-                    let max_scroll = self.visible.len().saturating_sub(self.visible_rows);
-                    if dy > 0 {
-                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                    } else if dy < 0 {
-                        self.scroll_offset = (self.scroll_offset + 1).min(max_scroll);
                     }
                 }
                 _ => {}
@@ -314,17 +287,15 @@ impl LoadPickerModalState {
         match activated {
             Some(ID_CANCEL) => return Some(SaveLoadOutcome::Cancel),
             Some(ID_LOAD_SAVE) => {
-                if let Some(ListRow::Existing(visible_index)) = self.selected {
-                    return Some(SaveLoadOutcome::Slot(self.visible[visible_index]));
+                if let Some(ListRow::Existing(visible_index)) = selected {
+                    return Some(SaveLoadOutcome::Slot(visible[visible_index]));
                 }
             }
             Some(ID_DELETE) => {
-                if let Some(ListRow::Existing(visible_index)) = self.selected {
-                    let slot = self.visible[visible_index];
+                if self.model.request_delete().is_some() {
                     let message = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
-                    self.delete_confirmation = Some((
-                        slot,
-                        YesNoModalState::new(event_pump, renderer, resources, message),
+                    self.delete_confirmation = Some(YesNoModalState::new(
+                        event_pump, renderer, resources, message,
                     ));
                 }
             }
@@ -334,8 +305,8 @@ impl LoadPickerModalState {
         sync_thumbnail_cache(
             &mut self.thumb_cache,
             &mut self.thumb_widget,
-            self.selected,
-            &self.visible,
+            selected,
+            &visible,
             save_manager,
             renderer,
             SaveLoadMode::Load,
@@ -345,7 +316,7 @@ impl LoadPickerModalState {
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
-        let total = self.visible.len();
+        let total = visible.len();
         let metadata_text = EnglishSaveMetadataText;
         let now_unix = if self.detailed_metadata {
             match crate::save_file::unix_timestamp_now() {
@@ -371,27 +342,26 @@ impl LoadPickerModalState {
                 ((mouse_virt.y as i32 - LOAD_LIST_RECT.y - 4) / row_height).max(0) as usize;
             row_at(
                 SaveLoadMode::Load,
-                self.scroll_offset + row_offset,
-                self.visible.len(),
+                self.model.scroll_offset() + row_offset,
+                visible.len(),
             )
         } else {
             None
         };
         for row_offset in 0..self.visible_rows {
-            let row_index = self.scroll_offset + row_offset;
+            let row_index = self.model.scroll_offset() + row_offset;
             if row_index >= total {
                 break;
             }
             let row = ListRow::Existing(row_index);
             let row_y = LOAD_LIST_RECT.y + 4 + row_offset as i32 * row_height;
-            let Some(font) =
-                resources.list_font(hovered_row == Some(row), self.selected == Some(row))
+            let Some(font) = resources.list_font(hovered_row == Some(row), selected == Some(row))
             else {
                 continue;
             };
             let label = truncate_to_pixel_width(
                 font,
-                &row_label(row, save_manager, &self.visible, &metadata_text),
+                &row_label(row, save_manager, &visible, &metadata_text),
                 row_area_w,
             );
             if !label.is_empty() {
@@ -400,7 +370,7 @@ impl LoadPickerModalState {
             for (line_index, detail) in row_detail_lines(
                 row,
                 save_manager,
-                &self.visible,
+                &visible,
                 now_unix,
                 self.local_time_zone.as_ref(),
                 &metadata_text,
@@ -432,7 +402,7 @@ impl LoadPickerModalState {
                 LOAD_LIST_RECT.y,
                 scrollbar_w,
                 LOAD_LIST_RECT.h,
-                self.scroll_offset,
+                self.model.scroll_offset(),
                 self.visible_rows,
                 total,
             );
@@ -440,8 +410,8 @@ impl LoadPickerModalState {
         draw_preview(
             renderer,
             transform,
-            self.selected,
-            &self.visible,
+            selected,
+            &visible,
             self.thumb_cache.as_ref(),
             &self.thumb_widget,
             save_manager,
@@ -460,10 +430,7 @@ impl LoadPickerModalState {
     }
 
     pub fn close(&mut self, renderer: &mut Renderer) {
-        if let Some(cache) = self.thumb_cache.take() {
-            renderer.retire_surface(cache.surface);
-            self.thumb_widget.reset_alternate_picture();
-        }
+        clear_thumbnail_cache(&mut self.thumb_cache, &mut self.thumb_widget, renderer);
     }
 }
 
@@ -757,21 +724,13 @@ pub async fn show_save_load(
         ),
     ];
 
-    let mut selected: Option<ListRow> = match mode {
-        // Default the Save mode selection to the "new save" pseudo-row so
-        // the action button is enabled out of the gate.
-        SaveLoadMode::Save => Some(ListRow::New),
-        SaveLoadMode::Load => None,
-    };
-
     // Snapshot of visible save indices. Filter depends on mode (Load
     // hides only Continue/Restart; Save hides every special slot).
     // Sort before rebuilding the list so the entries display in
     // chronological order rather than insertion order.
     save_manager.sort_by_time();
-    let mut visible = collect_visible_slots(save_manager, mode);
     let visible_rows = (list_rect.h / row_height).max(1) as usize;
-    let mut scroll_offset: usize = 0;
+    let mut model = PickerModel::new(mode, false, visible_rows, picker_slots(save_manager));
 
     // Name-entry state lives on a `WidgetInputField` kept in
     // `SelectedEditable` for the duration of the Save-mode dialog. Committed
@@ -827,13 +786,16 @@ pub async fn show_save_load(
         .ok();
 
     let outcome = loop {
+        model.refresh(picker_slots(save_manager));
+        let mut visible = model.visible();
+        let mut selected = model.selected_row();
         // Build (or rebuild) the widget frame. Save mode accepts an
         // empty name and fills a default label on confirmation.
         let action_enabled = matches!(
             (mode, selected),
             (SaveLoadMode::Save, Some(_)) | (SaveLoadMode::Load, Some(ListRow::Existing(_)))
         );
-        let delete_enabled = selected_is_deletable(selected, save_manager, &visible);
+        let delete_enabled = model.can_delete();
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
@@ -856,6 +818,7 @@ pub async fn show_save_load(
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
             input_state.update_from_event(&event, transform);
+            apply_picker_navigation(&mut model, &event);
             match event {
                 GameEvent::Quit => {
                     activated = Some(ID_CANCEL);
@@ -870,7 +833,7 @@ pub async fn show_save_load(
                     keycode: Keycode::Up,
                     ..
                 } => {
-                    let new_sel = previous_row(selected, mode, visible.len());
+                    let new_sel = model.selected_row();
                     if new_sel != selected {
                         selected = new_sel;
                         sync_input_for_selection(
@@ -887,7 +850,7 @@ pub async fn show_save_load(
                     keycode: Keycode::Down,
                     ..
                 } => {
-                    let new_sel = next_row(selected, mode, visible.len());
+                    let new_sel = model.selected_row();
                     if new_sel != selected {
                         selected = new_sel;
                         sync_input_for_selection(
@@ -967,7 +930,8 @@ pub async fn show_save_load(
                     let (vx, vy) = transform.from_screen(x, y);
                     if list_rect.contains_virt(vx, vy) {
                         let row_offset = ((vy - list_rect.y - 4) / row_height).max(0) as usize;
-                        let new_selection = row_at(mode, scroll_offset + row_offset, visible.len());
+                        let new_selection = model.row_at(model.scroll_offset() + row_offset);
+                        model.select(new_selection);
                         if new_selection != selected {
                             selected = new_selection;
                             sync_input_for_selection(
@@ -1005,15 +969,6 @@ pub async fn show_save_load(
                         delete_enabled,
                     ) {
                         activated = Some(id);
-                    }
-                }
-                GameEvent::MouseWheel(dy) => {
-                    let total = total_rows(mode, visible.len());
-                    let max_scroll = total.saturating_sub(visible_rows);
-                    if dy > 0 {
-                        scroll_offset = scroll_offset.saturating_sub(1);
-                    } else if dy < 0 {
-                        scroll_offset = (scroll_offset + 1).min(max_scroll);
                     }
                 }
                 _ => {}
@@ -1134,31 +1089,21 @@ pub async fn show_save_load(
                     _ => {}
                 },
                 ID_DELETE => {
-                    if let Some(ListRow::Existing(v_idx)) = selected {
-                        let slot = visible[v_idx];
-                        if save_manager.get(slot).is_some_and(SaveGame::is_autosave) {
-                            tracing::warn!(
-                                "manual save picker ignored a delete request for an autosave"
-                            );
-                            continue;
-                        }
+                    if model.request_delete().is_some() {
                         let msg = resources.menu_text.get(MT_MSG_REALLY_DELETE_SAVEGAME);
-                        if show_yesno(
+                        let confirmed = show_yesno(
                             event_pump,
                             renderer,
                             resources,
                             cursor.as_mut().map(|c| c.reborrow()),
                             &msg,
                         )
-                        .await
-                        {
-                            save_manager.remove(slot);
-                            // Sort before rebuilding the list, including
-                            // post-delete refreshes.
-                            save_manager.sort_by_time();
-                            visible = collect_visible_slots(save_manager, mode);
-                            selected = None;
-                            scroll_offset = 0;
+                        .await;
+                        finish_picker_delete(&mut model, save_manager, confirmed);
+                        visible = model.visible();
+                        let old_selection = selected;
+                        selected = model.selected_row();
+                        if selected != old_selection {
                             sync_input_for_selection(
                                 &mut input_widget,
                                 selected,
@@ -1166,10 +1111,6 @@ pub async fn show_save_load(
                                 &visible,
                                 save_manager,
                             );
-                            if let Some(old) = thumb_cache.take() {
-                                renderer.retire_surface(old.surface);
-                                thumb_widget.reset_alternate_picture();
-                            }
                         }
                     }
                 }
@@ -1240,13 +1181,13 @@ pub async fn show_save_load(
         // rect directly.
         let hovered_row = if list_rect.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32) {
             let row_offset = ((mouse_virt.y as i32 - list_rect.y - 4) / row_height).max(0) as usize;
-            row_at(mode, scroll_offset + row_offset, visible.len())
+            row_at(mode, model.scroll_offset() + row_offset, visible.len())
         } else {
             None
         };
 
         for row_offset in 0..visible_rows {
-            let row_index = scroll_offset + row_offset;
+            let row_index = model.scroll_offset() + row_offset;
             if row_index >= total {
                 break;
             }
@@ -1296,7 +1237,7 @@ pub async fn show_save_load(
                 list_rect.y,
                 scrollbar_w,
                 list_rect.h,
-                scroll_offset,
+                model.scroll_offset(),
                 visible_rows,
                 total,
             );
@@ -1331,10 +1272,7 @@ pub async fn show_save_load(
 
     // Make sure the cached thumbnail surface is returned to the renderer
     // pool before we unwind.
-    if let Some(cache) = thumb_cache {
-        renderer.retire_surface(cache.surface);
-        thumb_widget.reset_alternate_picture();
-    }
+    clear_thumbnail_cache(&mut thumb_cache, &mut thumb_widget, renderer);
     if mode == SaveLoadMode::Save {
         crate::window::stop_text_input();
     }
@@ -1346,7 +1284,7 @@ pub async fn show_save_load(
 /// every frame while the selection is stable.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct ThumbnailCache {
-    slot: usize,
+    slot: SlotName,
     surface: crate::renderer::OwnedSurface,
     width: u16,
     height: u16,
@@ -1369,29 +1307,38 @@ fn sync_thumbnail_cache(
     // Save-mode never previews a thumbnail — the picture widget stays
     // disabled and the entire reload branch is gated on Load mode.
     let target_slot = match (mode, selected) {
-        (SaveLoadMode::Load, Some(ListRow::Existing(v))) => visible.get(v).copied(),
+        (SaveLoadMode::Load, Some(ListRow::Existing(v))) => Some(
+            *visible
+                .get(v)
+                .expect("selected thumbnail row must be visible"),
+        ),
         _ => None,
     };
+    let target_name = target_slot.map(|slot| {
+        save_manager
+            .slot_name(slot)
+            .expect("thumbnail slot must have a validated identity")
+    });
+    if retire_thumbnail(
+        cache.as_ref().map(|cache| &cache.slot),
+        target_name.as_ref(),
+    ) {
+        clear_thumbnail_cache(cache, widget, renderer);
+    }
     match (&*cache, target_slot) {
-        (Some(c), Some(slot)) if c.slot == slot => {}
+        (Some(c), Some(_)) if Some(&c.slot) == target_name.as_ref() => {}
         (_, None) => {
-            if let Some(old) = cache.take() {
-                renderer.retire_surface(old.surface);
-            }
-            widget.reset_alternate_picture();
+            clear_thumbnail_cache(cache, widget, renderer);
         }
         (_, Some(slot)) => {
-            if let Some(old) = cache.take() {
-                renderer.retire_surface(old.surface);
-            }
-            widget.reset_alternate_picture();
+            clear_thumbnail_cache(cache, widget, renderer);
             if let Some(thumb) = save_manager.load_thumbnail(slot) {
                 let id = renderer
                     .create_surface_from_rgb565(thumb.width, thumb.height, &thumb.pixels)
                     .expect("save thumbnail dimensions must match RGB565 payload");
                 widget.set_alternate_picture(id);
                 *cache = Some(ThumbnailCache {
-                    slot,
+                    slot: target_name.expect("thumbnail load requires a slot identity"),
                     surface: renderer.adopt_surface(id),
                     width: thumb.width,
                     height: thumb.height,
@@ -1399,6 +1346,17 @@ fn sync_thumbnail_cache(
             }
         }
     }
+}
+
+fn clear_thumbnail_cache(
+    cache: &mut Option<ThumbnailCache>,
+    widget: &mut WidgetPicture,
+    renderer: &mut Renderer,
+) {
+    if let Some(old) = cache.take() {
+        renderer.retire_surface(old.surface);
+    }
+    widget.reset_alternate_picture();
 }
 
 fn draw_input_field(
@@ -1517,7 +1475,10 @@ fn draw_preview(
     // widget when there is no selected save or no thumbnail file; it
     // does not draw a placeholder frame or metadata panel.
     if let Some(cache) = thumb_cache
-        && cache.slot == slot
+        && cache.slot
+            == save_manager
+                .slot_name(slot)
+                .expect("preview slot must have a validated identity")
     {
         renderer
             .surface_dimensions(cache.surface.handle())
@@ -1576,15 +1537,6 @@ fn list_scrollbar_width(resources: &IngameMenuResources) -> i32 {
     resources.list_scrollbar[0].map_or(0, |s| s.width)
 }
 
-/// One row in the slot list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ListRow {
-    /// The synthetic "New Save" row at the top of Save-mode lists.
-    New,
-    /// An existing slot at `visible[idx]`.
-    Existing(usize),
-}
-
 fn total_rows(mode: SaveLoadMode, n_visible: usize) -> usize {
     match mode {
         SaveLoadMode::Save => n_visible + 1,
@@ -1612,41 +1564,6 @@ fn row_at_unchecked(mode: SaveLoadMode, index: usize, _n_visible: usize) -> List
     }
 }
 
-fn previous_row(current: Option<ListRow>, mode: SaveLoadMode, n_visible: usize) -> Option<ListRow> {
-    let total = total_rows(mode, n_visible);
-    if total == 0 {
-        return None;
-    }
-    let cur_idx = match current {
-        Some(row) => row_index(row, mode),
-        None => return row_at(mode, 0, n_visible),
-    };
-    let new_idx = cur_idx.saturating_sub(1);
-    row_at(mode, new_idx, n_visible)
-}
-
-fn next_row(current: Option<ListRow>, mode: SaveLoadMode, n_visible: usize) -> Option<ListRow> {
-    let total = total_rows(mode, n_visible);
-    if total == 0 {
-        return None;
-    }
-    let cur_idx = match current {
-        Some(row) => row_index(row, mode),
-        None => return row_at(mode, 0, n_visible),
-    };
-    let new_idx = (cur_idx + 1).min(total - 1);
-    row_at(mode, new_idx, n_visible)
-}
-
-fn row_index(row: ListRow, mode: SaveLoadMode) -> usize {
-    match (mode, row) {
-        (SaveLoadMode::Save, ListRow::New) => 0,
-        (SaveLoadMode::Save, ListRow::Existing(v)) => v + 1,
-        (SaveLoadMode::Load, ListRow::Existing(v)) => v,
-        (SaveLoadMode::Load, ListRow::New) => 0, // shouldn't happen
-    }
-}
-
 /// Build the listbox row label. The original menu adds only
 /// original-game save text to the list box.
 fn row_label(
@@ -1669,20 +1586,6 @@ fn row_label(
             }
         }
     }
-}
-
-fn selected_is_deletable(
-    selected: Option<ListRow>,
-    save_manager: &SaveGameManager,
-    visible: &[usize],
-) -> bool {
-    let Some(ListRow::Existing(visible_index)) = selected else {
-        return false;
-    };
-    visible
-        .get(visible_index)
-        .and_then(|&slot| save_manager.get(slot))
-        .is_some_and(|save| !save.is_autosave())
 }
 
 fn row_detail_lines(
@@ -2051,29 +1954,152 @@ fn sync_input_for_selection(
     input_widget.caret_offset = input_widget.edit_text.chars().count();
 }
 
-/// Collect the indices of user-visible saves for the given picker mode.
-///
-/// - **Load**: hides only Continue and Restart. QuickSave / ExQuickSave /
-///   Sherwood are still loadable by the player.
-/// - **Save**: hides *any* special slot so the player can't overwrite
-///   the auto-managed Continue/QuickSave/etc. entries by hand.
-fn collect_visible_slots(save_manager: &SaveGameManager, mode: SaveLoadMode) -> Vec<usize> {
+/// Snapshot manager rows for the pure model's shared filtering policy.
+fn picker_slots(save_manager: &SaveGameManager) -> Vec<PickerSlot> {
     (0..save_manager.count())
-        .filter(|&i| {
+        .map(|i| {
             let save = save_manager
                 .get(i)
                 .expect("index from 0..count() must resolve");
-            match mode {
-                SaveLoadMode::Load => !save.is_continue() && !save.is_restart(),
-                SaveLoadMode::Save => !save.is_special(),
+            PickerSlot {
+                name: save_manager
+                    .slot_name(i)
+                    .expect("save picker requires validated slot identities"),
+                manager_index: i,
+                special: save.is_special(),
+                hidden_from_load: save.is_continue() || save.is_restart(),
+                autosave: save.is_autosave(),
+                multiplayer_diagnostic: save.multiplayer_diagnostic,
             }
         })
         .collect()
 }
 
+/// Shared input interpretation; the adapters retain their own event scheduling,
+/// modal suppression and save-only text/IME handling.
+fn apply_picker_navigation(model: &mut PickerModel, event: &GameEvent) {
+    match event {
+        GameEvent::KeyDown {
+            keycode: Keycode::Up,
+            ..
+        } => {
+            model.navigate(false);
+        }
+        GameEvent::KeyDown {
+            keycode: Keycode::Down,
+            ..
+        } => {
+            model.navigate(true);
+        }
+        GameEvent::MouseWheel(dy) if *dy != 0 => model.scroll(*dy < 0),
+        _ => {}
+    }
+}
+
+/// Both scheduling adapters resolve confirmation and publish its outcome here.
+/// An error can follow index publication, so refresh even when deletion fails.
+fn finish_picker_delete(model: &mut PickerModel, manager: &mut SaveGameManager, confirmed: bool) {
+    model.refresh(picker_slots(manager));
+    let error = match model.confirm_delete(confirmed) {
+        Ok(Some(slot)) => manager
+            .remove_by_filename(slot.as_str())
+            .err()
+            .map(|error| format!("{error:#}")),
+        Ok(None) => None,
+        Err(error) => Some(error),
+    };
+    manager.sort_by_time();
+    model.finish_delete(picker_slots(manager), error);
+    if let Some(error) = model.deletion_error() {
+        tracing::error!("Delete save failed (cleanup may be pending): {error}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_input_trace_is_independent_of_cooperative_frame_boundaries() {
+        let mut manager = SaveGameManager::new("unused-picker-model-store".into());
+        for index in 0..5 {
+            manager.saves.push(SaveGame::new(
+                format!("Savegame_{index:03}"),
+                format!("Save {index}"),
+                7,
+            ));
+        }
+        let mut cooperative =
+            PickerModel::new(SaveLoadMode::Load, false, 2, picker_slots(&manager));
+        let mut standalone = cooperative.clone();
+        let down = GameEvent::KeyDown {
+            keycode: Keycode::Down,
+            physical_key: None,
+        };
+        let up = GameEvent::KeyDown {
+            keycode: Keycode::Up,
+            physical_key: None,
+        };
+        let events = [
+            down.clone(),
+            down.clone(),
+            GameEvent::MouseWheel(-1),
+            down.clone(),
+            down,
+            up,
+            GameEvent::MouseWheel(1),
+        ];
+        // The actual adapters share this input bridge, but the cooperative
+        // driver may return to the host between every event. Refresh must not
+        // turn its stable selection into an old presentation offset.
+        for event in &events {
+            cooperative.refresh(picker_slots(&manager));
+            apply_picker_navigation(&mut cooperative, event);
+        }
+        for event in &events {
+            apply_picker_navigation(&mut standalone, event);
+        }
+        assert_eq!(cooperative, standalone);
+        assert_eq!(cooperative.selected_row(), Some(ListRow::Existing(2)));
+        assert_eq!(cooperative.scroll_offset(), 1);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn shared_delete_bridge_handles_cancel_success_and_cleanup_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(directory.path().to_string_lossy().into_owned());
+        manager
+            .saves
+            .push(SaveGame::new("Savegame_000".into(), "First".into(), 7));
+        manager
+            .saves
+            .push(SaveGame::new("Savegame_001".into(), "Second".into(), 7));
+        manager.save_index().unwrap();
+        let mut model = PickerModel::new(SaveLoadMode::Load, false, 1, picker_slots(&manager));
+        model.navigate(true);
+        model.request_delete().unwrap();
+        finish_picker_delete(&mut model, &mut manager, false);
+        assert_eq!(manager.count(), 2);
+        assert_eq!(model.selected_row(), Some(ListRow::Existing(0)));
+        model.request_delete().unwrap();
+        finish_picker_delete(&mut model, &mut manager, true);
+        assert_eq!(manager.count(), 1);
+        assert_eq!(model.selected_row(), None);
+        assert_eq!(model.deletion_error(), None);
+
+        // A directory cannot be unlinked as a payload file. The durable intent
+        // has already removed the row, so both adapters must show the new list
+        // and preserve the reported error rather than restoring a ghost row.
+        std::fs::create_dir(directory.path().join("Savegame_001.json")).unwrap();
+        model.navigate(true);
+        model.request_delete().unwrap();
+        finish_picker_delete(&mut model, &mut manager, true);
+        assert_eq!(manager.count(), 0);
+        assert_eq!(model.selected_row(), None);
+        assert_eq!(model.scroll_offset(), 0);
+        assert!(model.deletion_error().unwrap().contains("cleanup"));
+    }
 
     fn saved_at(timestamp: &str) -> SaveGame {
         let mut save = SaveGame::new("Savegame_000".into(), "My save".into(), 7);
@@ -2093,14 +2119,16 @@ mod tests {
             7,
         ));
 
-        let load_visible = collect_visible_slots(&manager, SaveLoadMode::Load);
+        let mut load_model = PickerModel::new(SaveLoadMode::Load, false, 3, picker_slots(&manager));
+        let load_visible = load_model.visible();
         assert_eq!(load_visible, vec![0]);
-        assert!(!selected_is_deletable(
-            Some(ListRow::Existing(0)),
-            &manager,
-            &load_visible,
-        ));
-        assert!(collect_visible_slots(&manager, SaveLoadMode::Save).is_empty());
+        load_model.select(Some(ListRow::Existing(0)));
+        assert!(!load_model.can_delete());
+        assert!(
+            PickerModel::new(SaveLoadMode::Save, false, 3, picker_slots(&manager))
+                .visible()
+                .is_empty()
+        );
         assert_eq!(
             row_label(
                 ListRow::Existing(0),
