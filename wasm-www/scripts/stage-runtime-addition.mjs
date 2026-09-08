@@ -63,7 +63,8 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
     const javascriptModules = JSON.parse(output(process.execPath, ['wasm-www/scripts/runtime-javascript-modules.mjs', artifact, '--replay-admission']));
     const hash = async name => createHash('sha256').update(await readFile(join(artifact, name))).digest('hex');
     const manifest = {
-        commit, short, builtAt: new Date().toISOString(), netProtocol: contract.netProtocol,
+        // Runtime manifests use canonical whole-second UTC timestamps.
+        commit, short, builtAt: new Date().toISOString().replace(/\.\d{3}Z$/u, 'Z'), netProtocol: contract.netProtocol,
         ticketSchema: contract.ticketSchema,
         multiplayerContent: { schema: contract.contentSchema,
             demo: { url: 'https://robinhood.phiresky.xyz/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst',
