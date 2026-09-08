@@ -9,36 +9,41 @@
 // into game files.
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import {
-  parseLevel3D,
-  parseSceneDoc,
-  documentProvenance,
   sceneToGame,
   IDENTITY_TRANSFORM,
   gameToScene,
   gameTransformMatrix,
   groupCentroid,
-  groupObstacles,
   groupParts,
   isIdentity,
   obstacleCentroid,
-  snapFloatingParts,
   transformedObstacle,
   type GameTransform,
   type Level3D,
   type Level3DGroup,
   type Level3DObject,
   type ProtoLevel,
-  type SceneDoc,
   type Vec3,
 } from "@rle/shared";
-import { MapSession } from "./session";
+import {
+  SessionPublication,
+  type SessionSnapshot,
+} from "./session-publication";
+import {
+  duplicateSelection,
+  deleteSelection,
+  patchPart,
+  patchGroup,
+  type Selection,
+} from "./document-commands";
+import { prepareMapCandidate } from "./map-candidate";
+import { EditorViewport } from "./editor-viewport";
 import { disposeObjectResources } from "./resources";
-import { listFiles, readJson, subdir, writeText } from "./fs";
-import { loadProtoLevel, type DatadirIndex } from "./datadir";
+import { listFiles, subdir, writeText } from "./fs";
+import type { DatadirIndex } from "./datadir";
 
 /** Z-up scene frame -> glTF Y-up, as the GLB's root node applies it */
 const ZUP_TO_YUP = new THREE.Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
@@ -50,7 +55,7 @@ interface View {
   meshes: THREE.Mesh[];
 }
 
-export type Selection = { kind: "group" | "part"; id: string } | null;
+export type { Selection } from "./document-commands";
 
 /** the library directory handle, wrapped because handles are async-iterable and Solid 2 would iterate them */
 export interface LibraryRef {
@@ -64,24 +69,24 @@ export interface EditorProps {
   onStatus: (msg: string | null) => void;
 }
 
-const groupId = (root: number) => `group-${String(root).padStart(3, "0")}`;
-
 export default function Editor3D(props: EditorProps) {
   const [maps, setMaps] = createSignal<string[]>([]);
-  const [mapName, setMapName] = createSignal<string | null>(null);
-  const [doc, setDoc] = createSignal<Level3D | null>(null);
-  const [history, setHistory] = createSignal<{
-    past: Level3D[];
-    future: Level3D[];
-  }>({ past: [], future: [] });
-  const session = new MapSession<Level3D, FileSystemDirectoryHandle>();
-  const [dirty, setDirty] = createSignal(false);
+  const [revision, setRevision] = createSignal<SessionSnapshot<Level3D> | null>(
+    null,
+  );
+  const mapName = () => revision()?.name ?? null;
+  const doc = () => revision()?.document ?? null;
+  const dirty = () => revision()?.dirty ?? false;
+  const history = () => revision() ?? { past: [], future: [] };
+  const session = new SessionPublication<Level3D, FileSystemDirectoryHandle>(
+    (snapshot, reason) => {
+      setRevision(snapshot);
+      if (reason === "revision") syncViews(snapshot.document);
+    },
+  );
   let saving = false;
   let disposed = false;
-  let sourceAsset: THREE.Object3D | null = null;
-  let observer: ResizeObserver | null = null;
-  let animationFrame = 0;
-  const listeners = new AbortController();
+  const viewport = new EditorViewport();
   const [selected, setSelected] = createSignal<Selection>(null);
   const [filter, setFilter] = createSignal("");
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
@@ -117,7 +122,6 @@ export default function Editor3D(props: EditorProps) {
   const groupViews = new Map<string, View>();
   /** reconstruction nodes by name, kept out of the scene, cloned into views */
   const sourceNodes = new Map<string, THREE.Object3D>();
-  let groundNode: THREE.Object3D | null = null;
   const raycaster = new THREE.Raycaster();
   const selectionBox = new THREE.Box3Helper(new THREE.Box3(), 0xffcc40);
   selectionBox.visible = false;
@@ -126,12 +130,12 @@ export default function Editor3D(props: EditorProps) {
 
   function setup(el: HTMLDivElement) {
     container = el;
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = viewport.renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
     camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100000, 100000);
     camera.position.set(0, 2000, 3000);
-    orbit = new OrbitControls(camera, renderer.domElement);
+    orbit = viewport.ownControl(new OrbitControls(camera, renderer.domElement));
     orbit.enableDamping = true;
     orbit.zoomToCursor = true;
     // left drag pans (or moves the selection, handler below), right drag
@@ -143,7 +147,9 @@ export default function Editor3D(props: EditorProps) {
       RIGHT: null as unknown as THREE.MOUSE,
     };
     setupCursorOrbit(renderer.domElement);
-    gizmo = new TransformControls(camera, renderer.domElement);
+    gizmo = viewport.ownControl(
+      new TransformControls(camera, renderer.domElement),
+    );
     gizmo.setMode("translate");
     gizmo.showY = false;
     scene.add(gizmo.getHelper());
@@ -161,8 +167,7 @@ export default function Editor3D(props: EditorProps) {
       renderer.setPixelRatio(window.devicePixelRatio);
       applyFrustum();
     };
-    observer = new ResizeObserver(resize);
-    observer.observe(el);
+    viewport.observe(el, resize);
     resize();
     // click = pick (a click that did not orbit); alt-click picks a single part
     let downAt: [number, number] | null = null;
@@ -171,7 +176,7 @@ export default function Editor3D(props: EditorProps) {
       (e) => {
         if (e.button === 0) downAt = [e.clientX, e.clientY];
       },
-      { signal: listeners.signal },
+      { signal: viewport.listeners.signal },
     );
     renderer.domElement.addEventListener(
       "pointerup",
@@ -182,16 +187,14 @@ export default function Editor3D(props: EditorProps) {
         if (moved > 4 || dragging) return;
         pick(e, e.altKey);
       },
-      { signal: listeners.signal },
+      { signal: viewport.listeners.signal },
     );
-    const tick = () => {
+    viewport.animate(() => {
       if (!renderer || !camera) return;
       if (flight) stepFlight();
       else orbit?.update();
       renderer.render(scene, camera);
-      animationFrame = requestAnimationFrame(tick);
-    };
-    tick();
+    });
   }
 
   // ── camera flights: the view buttons glide instead of jumping ──
@@ -293,7 +296,7 @@ export default function Editor3D(props: EditorProps) {
     const up = new THREE.Vector3(0, 1, 0);
     // the right button is ours now, so OrbitControls no longer swallows the context menu
     el.addEventListener("contextmenu", (e) => e.preventDefault(), {
-      signal: listeners.signal,
+      signal: viewport.listeners.signal,
     });
     const setRay = (e: PointerEvent) => {
       const rect = el.getBoundingClientRect();
@@ -316,7 +319,7 @@ export default function Editor3D(props: EditorProps) {
           return;
         setRay(e);
         const hits = raycaster.intersectObjects(
-          [objectsRoot, ...(groundNode ? [groundNode] : [])],
+          [objectsRoot, ...(viewport.groundNode ? [viewport.groundNode] : [])],
           true,
         );
         if (e.button === 0) {
@@ -359,7 +362,7 @@ export default function Editor3D(props: EditorProps) {
         dragging = true;
         el.setPointerCapture(e.pointerId);
       },
-      { signal: listeners.signal },
+      { signal: viewport.listeners.signal },
     );
     el.addEventListener(
       "pointermove",
@@ -406,7 +409,7 @@ export default function Editor3D(props: EditorProps) {
           .applyQuaternion(q)
           .add(active.pivot);
       },
-      { signal: listeners.signal },
+      { signal: viewport.listeners.signal },
     );
     const end = (e: PointerEvent) => {
       if (e.button === 0 && moving) {
@@ -420,8 +423,12 @@ export default function Editor3D(props: EditorProps) {
         orbit.update();
       }
     };
-    el.addEventListener("pointerup", end, { signal: listeners.signal });
-    el.addEventListener("pointercancel", end, { signal: listeners.signal });
+    el.addEventListener("pointerup", end, {
+      signal: viewport.listeners.signal,
+    });
+    el.addEventListener("pointercancel", end, {
+      signal: viewport.listeners.signal,
+    });
   }
 
   function applyFrustum() {
@@ -436,7 +443,7 @@ export default function Editor3D(props: EditorProps) {
 
   function contentBox(): THREE.Box3 {
     const box = new THREE.Box3();
-    if (groundNode) box.expandByObject(groundNode);
+    if (viewport.groundNode) box.expandByObject(viewport.groundNode);
     box.expandByObject(objectsRoot);
     return box;
   }
@@ -514,41 +521,24 @@ export default function Editor3D(props: EditorProps) {
   );
 
   // ── document ──
-  function publishRevision() {
-    const current = session.current;
-    if (!current) return;
-    setHistory({ past: [...current.past], future: [...current.future] });
-    setDoc(current.document);
-    setDirty(session.dirty);
-    syncViews(current.document);
-  }
   function pushHistory(next: Level3D) {
     session.edit(next);
-    publishRevision();
   }
   function undo() {
     session.undo();
-    publishRevision();
   }
   function redo() {
     session.redo();
-    publishRevision();
   }
   function updatePart(id: string, patch: Partial<Level3DObject>) {
     const d = doc();
     if (!d) return;
-    pushHistory({
-      ...d,
-      objects: d.objects.map((o) => (o.id === id ? { ...o, ...patch } : o)),
-    });
+    pushHistory(patchPart(d, id, patch));
   }
   function updateGroup(id: string, patch: Partial<Level3DGroup>) {
     const d = doc();
     if (!d) return;
-    pushHistory({
-      ...d,
-      groups: d.groups.map((g) => (g.id === id ? { ...g, ...patch } : g)),
-    });
+    pushHistory(patchGroup(d, id, patch));
   }
   const selectedPart = () => {
     const s = selected();
@@ -580,134 +570,16 @@ export default function Editor3D(props: EditorProps) {
     let preparedAsset: THREE.Object3D | null = null;
     props.onStatus(`loading ${name}…`);
     try {
-      const dir = await subdir(lib.handle, ["scenes"]);
-      if (!dir) throw new Error("scenes/ missing");
-      const glbName = `${name}-volumes.scene.glb`;
-      const sceneDoc = parseSceneDoc(
-        await readJson<unknown>(dir, `${name}-volumes.scene.json`),
-      );
-      if (sceneDoc.map.toLowerCase() !== name.toLowerCase()) {
-        throw new Error(
-          `${name}-volumes.scene.json: source map is ${sceneDoc.map}`,
-        );
-      }
-      const lvl = idx ? await loadProtoLevel(idx, sceneDoc.map) : null;
-      const file = await (await dir.getFileHandle(glbName)).getFile();
-      const bytes = await file.arrayBuffer();
-      const provenance = await documentProvenance(lvl, bytes);
-      const gltf = await new GLTFLoader().parseAsync(bytes, "");
-      preparedAsset = gltf.scene;
-      const nextSources = new Map<string, THREE.Object3D>();
-      let nextGround: THREE.Object3D | null = null;
-      const root =
-        gltf.scene.children.find((c) => c.name === "map") ?? gltf.scene;
-      for (const child of [...root.children]) {
-        if (child.name === "ground") nextGround = child;
-        else
-          for (const node of child.children) {
-            if (nextSources.has(node.name))
-              throw new Error(`Duplicate GLB node ${node.name}`);
-            nextSources.set(node.name, node);
-          }
-      }
-      const nextSuspects = new Map<
-        number,
-        { delta: number; support: number }
-      >();
-      let d: Level3D | null = null;
-      const docName = `${name}.level3d.json`;
-      const files = await listFiles(dir);
-      if (files.includes(docName)) {
-        d = parseLevel3D(await readJson<unknown>(dir, docName), {
-          map: sceneDoc.map,
-          glb: glbName,
-          level: lvl ?? undefined,
-          nodes: new Set(nextSources.keys()),
-        });
-        if (lvl) {
-          const terraces = new Set(
-            d.objects
-              .filter((o) => o.kind === "terrace")
-              .map((o) => o.source.obstacle),
-          );
-          const sus = new Map<number, { delta: number; support: number }>();
-          for (const x of snapFloatingParts(lvl.sight_obstacles, terraces, {
-            includeOpaque: true,
-          }).snapped)
-            sus.set(x.index, { delta: x.delta, support: x.support });
-          for (const [key, value] of sus) nextSuspects.set(key, value);
-        }
-      }
-      if (!d) {
-        if (!lvl)
-          throw new Error(
-            "connect the datadir to build the level document from the game data",
-          );
-        const objects: Level3DObject[] = [];
-        const terraces = new Set<number>();
-        for (const nodeName of [...nextSources.keys()].sort()) {
-          const m = /^(building|terrace)-(\d+)$/.exec(nodeName);
-          if (!m) continue;
-          const obstacle = Number(m[2]);
-          if (m[1] === "terrace") terraces.add(obstacle);
-          objects.push({
-            id: nodeName,
-            kind: m[1] as "building" | "terrace",
-            node: nodeName,
-            source: { map: sceneDoc.map, obstacle },
-            obstacle: lvl.sight_obstacles[obstacle]!,
-            transform: { ...IDENTITY_TRANSFORM },
-          });
-        }
-        // buildings: parts stacked on the same footprint
-        const groupOf = groupObstacles(lvl.sight_obstacles, terraces);
-        // parts that may be stored displaced along the view ray: offered as a per-part snap, never applied automatically
-        const sus = new Map<number, { delta: number; support: number }>();
-        for (const x of snapFloatingParts(lvl.sight_obstacles, terraces, {
-          includeOpaque: true,
-        }).snapped)
-          sus.set(x.index, { delta: x.delta, support: x.support });
-        for (const [key, value] of sus) nextSuspects.set(key, value);
-        const groups: Level3DGroup[] = [];
-        const seen = new Set<string>();
-        for (const o of objects) {
-          const root = groupOf.get(o.source.obstacle);
-          if (root === undefined) continue;
-          o.group = groupId(root);
-          if (!seen.has(o.group)) {
-            seen.add(o.group);
-            groups.push({ id: o.group, transform: { ...IDENTITY_TRANSFORM } });
-          }
-        }
-        d = {
-          version: 1,
-          map: sceneDoc.map,
-          size: sceneDoc.size,
-          camera: sceneDoc.camera,
-          glb: glbName,
-          objects,
-          groups,
-        };
-      }
-      parseLevel3D(d, {
-        scene: sceneDoc,
-        map: sceneDoc.map,
-        glb: glbName,
-        level: lvl ?? undefined,
-        nodes: new Set(nextSources.keys()),
-        sourceSha256: provenance.source_sha256,
-        glbSha256: provenance.glb_sha256,
-      });
-      const hadProvenance = !!d.provenance;
-      d = {
-        ...d,
-        provenance: {
-          ...d.provenance,
-          ...provenance,
-          source_sha256:
-            provenance.source_sha256 ?? d.provenance?.source_sha256,
-        },
-      };
+      const candidate = await prepareMapCandidate(name, lib.handle, idx);
+      preparedAsset = candidate.asset;
+      const {
+        document: d,
+        directory: dir,
+        level: lvl,
+        sources: nextSources,
+        ground: nextGround,
+        suspects: nextSuspects,
+      } = candidate;
       if (
         disposed ||
         !session.isCurrent(generation) ||
@@ -720,35 +592,18 @@ export default function Editor3D(props: EditorProps) {
       }
       // All asynchronous reads and validation precede publication.
       select(null);
-      disposeObjectResources([
-        overlayRoot,
-        ...(sourceAsset ? [sourceAsset] : []),
-        ...(groundNode ? [groundNode] : []),
-      ]);
-      if (groundNode) mapRoot.remove(groundNode);
+      viewport.retireMap(overlayRoot);
       objectsRoot.clear();
       overlayRoot.clear();
       partViews.clear();
       groupViews.clear();
       sourceNodes.clear();
-      sourceAsset = preparedAsset;
+      viewport.installMap(preparedAsset, nextGround, mapRoot);
       preparedAsset = null;
-      groundNode = nextGround;
-      if (groundNode) mapRoot.add(groundNode);
       for (const [key, value] of nextSources) sourceNodes.set(key, value);
-      session.publish(
-        generation,
-        name,
-        d,
-        dir,
-        files.includes(docName) && hadProvenance,
-      );
-      setMapName(name);
+      session.publish(generation, name, d, dir, candidate.saved);
       setLevel(lvl);
       setSuspects(nextSuspects);
-      setHistory({ past: [], future: [] });
-      setDirty(session.dirty);
-      setDoc(d);
       syncViews(d);
       buildOverlays();
       gameCamera(true);
@@ -1041,64 +896,20 @@ export default function Editor3D(props: EditorProps) {
 
   // ── actions ──
   function duplicateSelected() {
-    const d = doc();
-    const g = selectedGroup();
-    const p = selectedPart();
-    if (!d) return;
-    if (g) {
-      let n = 1;
-      while (d.groups.some((x) => x.id === `${g.id}-copy${n}`)) n++;
-      const id = `${g.id}-copy${n}`;
-      const copyGroup: Level3DGroup = {
-        ...g,
-        id,
-        transform: {
-          ...g.transform,
-          dx: g.transform.dx + 40,
-          dy: g.transform.dy + 20,
-        },
-      };
-      const copies = groupParts(d, g.id).map((o) => ({
-        ...o,
-        id: `${o.id}-${id}`,
-        group: id,
-      }));
-      pushHistory({
-        ...d,
-        groups: [...d.groups, copyGroup],
-        objects: [...d.objects, ...copies],
-      });
-      select({ kind: "group", id });
-    } else if (p) {
-      let n = 1;
-      while (d.objects.some((x) => x.id === `${p.id}-copy${n}`)) n++;
-      const copy: Level3DObject = {
-        ...p,
-        id: `${p.id}-copy${n}`,
-        transform: {
-          ...p.transform,
-          dx: p.transform.dx + 40,
-          dy: p.transform.dy + 20,
-        },
-      };
-      pushHistory({ ...d, objects: [...d.objects, copy] });
-      select({ kind: "part", id: copy.id });
-    }
+    const document = doc();
+    const selection = selected();
+    if (!document || !selection) return;
+    const result = duplicateSelection(document, selection);
+    pushHistory(result.document);
+    select(result.selection);
   }
   function deleteSelected() {
-    const d = doc();
-    const g = selectedGroup();
-    const p = selectedPart();
-    if (!d) return;
+    const document = doc();
+    const selection = selected();
+    if (!document || !selection) return;
+    const next = deleteSelection(document, selection);
     select(null);
-    if (g)
-      pushHistory({
-        ...d,
-        groups: d.groups.filter((x) => x.id !== g.id),
-        objects: d.objects.filter((o) => o.group !== g.id),
-      });
-    else if (p)
-      pushHistory({ ...d, objects: d.objects.filter((o) => o.id !== p.id) });
+    pushHistory(next);
   }
   function rotateSelected(delta: number) {
     const t = selectedTransform();
@@ -1128,7 +939,6 @@ export default function Editor3D(props: EditorProps) {
       );
       session.saved(snapshot);
       if (!disposed && session.current === snapshot.session) {
-        setDirty(session.dirty);
         props.onStatus(`saved ${snapshot.name}.level3d.json`);
       }
     } catch (e) {
@@ -1160,27 +970,13 @@ export default function Editor3D(props: EditorProps) {
     else if (e.key === "f") frameContent();
     else if (e.key === "Escape") select(null);
   }
-  window.addEventListener("keydown", onKey, { signal: listeners.signal });
+  window.addEventListener("keydown", onKey, {
+    signal: viewport.listeners.signal,
+  });
   onCleanup(() => {
     disposed = true;
-    session.beginLoad();
-    listeners.abort();
-    cancelAnimationFrame(animationFrame);
-    observer?.disconnect();
-    select(null);
-    gizmo?.dispose();
-    orbit?.dispose();
-    disposeObjectResources([
-      overlayRoot,
-      selectionBox,
-      ...(sourceAsset ? [sourceAsset] : []),
-      ...(groundNode ? [groundNode] : []),
-    ]);
-    renderer?.dispose();
-    // The viewport owns this context; release driver-owned default textures and
-    // framebuffers too when its canvas is permanently removed.
-    renderer?.forceContextLoss();
-    renderer?.domElement.remove();
+    session.dispose();
+    viewport.dispose(overlayRoot, selectionBox, () => select(null));
     renderer = null;
   });
 
