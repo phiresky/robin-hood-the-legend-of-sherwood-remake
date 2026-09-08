@@ -35,7 +35,7 @@ const STANDALONE_OPTIONS_PER_PAGE: usize = 12;
 const OPTION_COLUMN_LEFT_X: i32 = 30;
 const OPTION_COLUMN_RIGHT_X: i32 = 330;
 const OPTION_ROW_START_Y: i32 = 100;
-const OPTION_ROW_GAP: i32 = 2;
+const OPTION_ROW_GAP: i32 = 6;
 const OPTION_COLUMN_WIDTH_LIMIT: i32 = 280;
 const OPTION_ROW_HEIGHT_LIMIT: i32 = 34;
 pub(crate) const SHERWOOD_TRADING_OPTION_INDEX: usize = 16;
@@ -418,7 +418,7 @@ pub(crate) fn fit_button_label(
     resources.menu_button_font_any(enabled).map_or_else(
         || label.to_owned(),
         |font| {
-            elide_to_width_by(label, (width - 8).max(1), |candidate| {
+            elide_to_width_by(label, (width - 24).max(1), |candidate| {
                 font.text_width(candidate)
             })
         },
@@ -518,7 +518,7 @@ fn build_standalone_frame(
         "Next Page",
         page + 1 < standalone_page_count(),
         30,
-        417,
+        388 + btn_h + OPTION_ROW_GAP,
         btn_w,
         btn_h,
     ));

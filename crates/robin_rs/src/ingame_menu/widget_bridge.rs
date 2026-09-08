@@ -707,7 +707,7 @@ pub fn draw_widget_button(
                 source_x[part] as f32,
                 0.0,
                 source_x[part + 1] as f32,
-                h.min(i32::from(source_h)) as f32,
+                f32::from(source_h),
             );
             let dst = BBox::from_coords(
                 (sx + target_x[part]) as f32,
@@ -1004,11 +1004,30 @@ pub fn draw_widget_radio(
     use crate::renderer::BLIT_SOURCE_TRANSPARENT;
 
     if let Some(surf) = resources.input_field_surface(selected) {
-        let src = BBox::from_coords(0.0, 0.0, w as f32, h as f32);
-        let dst = BBox::from_coords(sx as f32, sy as f32, (sx + w) as f32, (sy + h) as f32);
-        renderer
-            .draw_surface(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+        let (source_w, source_h) = renderer
+            .surface_dimensions(surf)
             .expect("live menu radio surface");
+        let (source_x, target_x) = button_horizontal_slices(i32::from(source_w), w);
+        for part in 0..3 {
+            if target_x[part] == target_x[part + 1] {
+                continue;
+            }
+            let src = BBox::from_coords(
+                source_x[part] as f32,
+                0.0,
+                source_x[part + 1] as f32,
+                f32::from(source_h),
+            );
+            let dst = BBox::from_coords(
+                (sx + target_x[part]) as f32,
+                sy as f32,
+                (sx + target_x[part + 1]) as f32,
+                (sy + h) as f32,
+            );
+            renderer
+                .draw_surface(surf, Some(&src), Some(&dst), BLIT_SOURCE_TRANSPARENT)
+                .expect("live menu radio surface");
+        }
     } else {
         let bg = if selected {
             Renderer::create_color_16(100, 80, 40)
@@ -1035,7 +1054,7 @@ pub fn draw_widget_radio(
     }
 
     if let Some(font) = resources.menu_button_font_any(base.enabled) {
-        let tx = sx + 4;
+        let tx = sx + (w - font.text_width(&base.text)) / 2;
         let ty = sy + (h - font.height() as i32) / 2;
         super::layout::render_text_screen_font(renderer, font, &base.text, tx, ty);
     }
@@ -1105,12 +1124,12 @@ pub fn play_widget_noise(
 }
 
 /// Extend wide settings buttons through their center, preserving the corner
-/// posts. Native-size and narrower controls keep their existing source crop.
+/// posts, including when the control is narrower than its source sprite.
 fn button_horizontal_slices(source_width: i32, width: i32) -> ([i32; 4], [i32; 4]) {
-    if width <= source_width {
+    if width == source_width {
         return ([0, width, width, width], [0, width, width, width]);
     }
-    let edge = 8.min(source_width / 2);
+    let edge = 8.min(source_width / 2).min(width / 2);
     (
         [0, edge, source_width - edge, source_width],
         [0, edge, width - edge, width],
@@ -1258,12 +1277,16 @@ mod noisy_tracker_tests {
         let (source, target) = button_horizontal_slices(164, 280);
         assert_eq!(source, [0, 8, 156, 164]);
         assert_eq!(target, [0, 8, 272, 280]);
-        for width in [128, 164] {
+        for width in [164] {
             assert_eq!(
                 button_horizontal_slices(164, width),
                 ([0, width, width, width], [0, width, width, width])
             );
         }
+        assert_eq!(
+            button_horizontal_slices(400, 280),
+            ([0, 8, 392, 400], [0, 8, 272, 280])
+        );
     }
 
     #[test]

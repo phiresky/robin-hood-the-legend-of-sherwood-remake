@@ -44,6 +44,7 @@ const BUTTON_GAP: i32 = 2;
 const MAX_PAGE_BUTTONS: usize = 8;
 const OPTIONS_SETTINGS_PER_PAGE: usize = 12;
 const OPTIONS_SETTING_ROW_START_Y: i32 = 112;
+const OPTIONS_SETTING_ROW_GAP: i32 = 6;
 const SPELLFORGE_CONTENT_BUTTON_Y: i32 = 350;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1118,13 +1119,15 @@ impl OptionsTaskState {
                         if setting < 6 { 30 } else { 330 },
                         OPTIONS_SETTING_ROW_START_Y
                             + i32::try_from(setting % 6).expect("option row fits i32")
-                                * (row_h + BUTTON_GAP),
+                                * (row_h + OPTIONS_SETTING_ROW_GAP),
                         setting_button_w,
                         row_h,
                     )
                 }
                 OptionRowAction::PreviousPage => (30, 388, button_w, row_h),
-                OptionRowAction::NextPage => (30, 388 + row_h + BUTTON_GAP, button_w, row_h),
+                OptionRowAction::NextPage => {
+                    (30, 388 + row_h + OPTIONS_SETTING_ROW_GAP, button_w, row_h)
+                }
                 OptionRowAction::ManageSpellforgeContent => {
                     (330, SPELLFORGE_CONTENT_BUTTON_Y, setting_button_w, row_h)
                 }
@@ -2037,7 +2040,8 @@ mod tests {
         for visible_index in 0..OPTIONS_SETTINGS_PER_PAGE {
             let column_index = visible_index % 6;
             let x = if visible_index < 6 { 30 } else { 330 };
-            let y = OPTIONS_SETTING_ROW_START_Y + column_index as i32 * (row_height + BUTTON_GAP);
+            let y = OPTIONS_SETTING_ROW_START_Y
+                + column_index as i32 * (row_height + OPTIONS_SETTING_ROW_GAP);
             assert!(x >= 0 && x < 640);
             assert!(y >= OPTIONS_SETTING_ROW_START_Y && y + row_height < 350);
         }
