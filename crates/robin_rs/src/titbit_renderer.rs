@@ -360,17 +360,15 @@ impl TitbitRenderer {
                 let map_pt = engine_coordinates::MapPoint::from_world_xyz(
                     position.x, position.y, position.z,
                 );
-                let Some(screen_pt) = host.frontend.viewport.map_to_screen(map_pt) else {
-                    return;
-                };
                 renderer.enqueue_external_texture(
                     view,
-                    crate::gfx_types::Rect {
-                        x: floor_centered(screen_pt.x, w),
-                        y: floor_bottom(screen_pt.y, h),
-                        w: w as i32,
-                        h: h as i32,
-                    },
+                    world_titbit_rect(
+                        &host.frontend.viewport,
+                        floor_centered(map_pt.x, w),
+                        floor_bottom(map_pt.y, h),
+                        w,
+                        h,
+                    ),
                     [0.0, 0.0, 1.0, 1.0],
                     [1.0, 1.0, 1.0, 1.0],
                     BlendMode::Blend,
@@ -637,9 +635,6 @@ impl TitbitRenderer {
                 titbit.position.y,
                 titbit.position.z,
             );
-            let Some(screen_pt) = host.frontend.viewport.map_to_screen(map_pt) else {
-                continue;
-            };
 
             // ── QuickAction: special positioning ──
             // QA icons sit at positionMap - (0.5*spriteWidth,
@@ -650,9 +645,9 @@ impl TitbitRenderer {
                 TitbitKind::QuickAction | TitbitKind::QuickActionRun
             ) {
                 let supplier_attached = titbit.element_supplier.is_some();
-                let (mut dst_x, dst_y) = quick_action_screen_origin(
-                    screen_pt.x,
-                    screen_pt.y,
+                let (mut dst_x, dst_y) = quick_action_map_origin(
+                    map_pt.x,
+                    map_pt.y,
                     w,
                     h,
                     ox as i32,
@@ -664,12 +659,7 @@ impl TitbitRenderer {
                 }
                 renderer.enqueue_external_texture(
                     view,
-                    crate::gfx_types::Rect {
-                        x: dst_x,
-                        y: dst_y,
-                        w: w as i32,
-                        h: h as i32,
-                    },
+                    world_titbit_rect(&host.frontend.viewport, dst_x, dst_y, w, h),
                     [0.0, 0.0, 1.0, 1.0],
                     tint,
                     blend,
@@ -697,58 +687,49 @@ impl TitbitRenderer {
                     };
                     let center_w = row_mw.unwrap_or(w);
                     let center_h = row_mh.unwrap_or(h);
-                    let x = floor_centered(screen_pt.x, center_w) + ox as i32;
+                    let x = floor_centered(map_pt.x, center_w) + ox as i32;
                     let y = if center_vertical {
-                        floor_centered(screen_pt.y - vertical_offset as f32, center_h) + oy as i32
+                        floor_centered(map_pt.y - vertical_offset as f32, center_h) + oy as i32
                     } else {
-                        floor_anchor(screen_pt.y, vertical_offset) + oy as i32
+                        floor_anchor(map_pt.y, vertical_offset) + oy as i32
                     };
                     (x, y)
                 }
                 TitbitKind::UnconsciousStar if titbit.element_supplier.is_some() => (
-                    floor_centered(screen_pt.x, row_mw.unwrap_or(w)) + ox as i32,
-                    floor_centered(screen_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
+                    floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
+                    floor_centered(map_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
                 ),
                 TitbitKind::WeakStunned | TitbitKind::AppleSmell | TitbitKind::Speak => (
-                    floor_centered(screen_pt.x, row_mw.unwrap_or(w)) + ox as i32,
-                    floor_centered(screen_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
+                    floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
+                    floor_centered(map_pt.y - 10.0, row_mh.unwrap_or(h)) + oy as i32,
                 ),
                 TitbitKind::Lock | TitbitKind::Hidden => (
-                    floor_centered(screen_pt.x, row_mw.unwrap_or(w)) + ox as i32,
-                    floor_centered(screen_pt.y, row_mh.unwrap_or(h)) + oy as i32,
+                    floor_centered(map_pt.x, row_mw.unwrap_or(w)) + ox as i32,
+                    floor_centered(map_pt.y, row_mh.unwrap_or(h)) + oy as i32,
                 ),
                 TitbitKind::DangerPoint => (
-                    floor_centered(screen_pt.x, w) + ox as i32,
-                    floor_centered(screen_pt.y, h) + oy as i32,
+                    floor_centered(map_pt.x, w) + ox as i32,
+                    floor_centered(map_pt.y, h) + oy as i32,
                 ),
 
                 // These kinds rely on the original game's final sprite-centering step
                 // pass. That center includes the current frame offset, so the
                 // offset cancels out when blit-box generation adds it.
-                TitbitKind::Water | TitbitKind::Plouf | TitbitKind::WorkIcon => (
-                    floor_centered(screen_pt.x, w),
-                    floor_centered(screen_pt.y, h),
-                ),
+                TitbitKind::Water | TitbitKind::Plouf | TitbitKind::WorkIcon => {
+                    (floor_centered(map_pt.x, w), floor_centered(map_pt.y, h))
+                }
                 TitbitKind::GunImpact
                 | TitbitKind::Smoke
                 | TitbitKind::Dust
                 | TitbitKind::Ghost
                 | TitbitKind::UnconsciousStar => {
-                    (floor_centered(screen_pt.x, w), floor_bottom(screen_pt.y, h))
+                    (floor_centered(map_pt.x, w), floor_bottom(map_pt.y, h))
                 }
-                _ => (
-                    floor_centered(screen_pt.x, w),
-                    floor_centered(screen_pt.y, h),
-                ),
+                _ => (floor_centered(map_pt.x, w), floor_centered(map_pt.y, h)),
             };
             renderer.enqueue_external_texture(
                 view,
-                crate::gfx_types::Rect {
-                    x: dst_x,
-                    y: dst_y,
-                    w: w as i32,
-                    h: h as i32,
-                },
+                world_titbit_rect(&host.frontend.viewport, dst_x, dst_y, w, h),
                 [0.0, 0.0, 1.0, 1.0],
                 tint,
                 blend,
@@ -778,6 +759,24 @@ fn effective_titbit_frame(kind: TitbitKind, row: u16, phase: u16, sprite_frame: 
     }
 }
 
+/// RHtitbit::Draw positions and centers sprites in map units before
+/// GenerateBlitBox applies the viewport zoom, including offsets above actors.
+fn world_titbit_rect(
+    viewport: &crate::host::ViewportState,
+    x: i32,
+    y: i32,
+    w: u16,
+    h: u16,
+) -> Rect {
+    crate::game_render::zoomed_sprite_rect(
+        ((x as f32 - viewport.view_position.x) * viewport.zoom_factor) as i32,
+        ((y as f32 - viewport.view_position.y) * viewport.zoom_factor) as i32,
+        w,
+        h,
+        viewport.zoom_factor,
+    )
+}
+
 fn floor_centered(anchor: f32, extent: u16) -> i32 {
     (anchor - 0.5 * extent as f32).floor() as i32
 }
@@ -786,7 +785,7 @@ fn floor_anchor(anchor: f32, offset: i32) -> i32 {
     (anchor - offset as f32).floor() as i32
 }
 
-fn quick_action_screen_origin(
+fn quick_action_map_origin(
     screen_x: f32,
     screen_y: f32,
     width: u16,
@@ -1000,6 +999,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn world_indicator_offsets_and_sizes_follow_zoom() {
+        let mut viewport = crate::host::ViewportState::default();
+        viewport.view_position = engine_coordinates::MapPoint::new(100.0, 200.0);
+        viewport.zoom_factor = 0.5;
+        // A 20x20 supplier icon at (200,300) is positioned 50 map units
+        // above its supplier before the entire destination is zoomed.
+        let (x, y) = quick_action_map_origin(200.0, 300.0, 20, 20, 0, 0, true);
+        let rect = world_titbit_rect(&viewport, x, y, 20, 20);
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (45, 15, 10, 10));
+    }
+
+    #[test]
     fn centered_anchor_matches_original_floor_after_half_extent() {
         assert_eq!(floor_centered(100.0, 20), 90);
         assert_eq!(floor_centered(100.0, 21), 89);
@@ -1010,11 +1021,11 @@ mod tests {
     #[test]
     fn fixed_qa_crosshair_is_centered_but_supplier_icon_floats_above_target() {
         assert_eq!(
-            quick_action_screen_origin(100.0, 100.0, 20, 20, 0, 0, false),
+            quick_action_map_origin(100.0, 100.0, 20, 20, 0, 0, false),
             (90, 90)
         );
         assert_eq!(
-            quick_action_screen_origin(100.0, 100.0, 20, 20, 0, 0, true),
+            quick_action_map_origin(100.0, 100.0, 20, 20, 0, 0, true),
             (90, 30)
         );
     }

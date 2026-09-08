@@ -3521,6 +3521,44 @@ fn verify_deferred_menu_surfaces(renderer: &mut Renderer) {
         renderer.try_capture_frame_rgba().unwrap().2,
         [0, 0, 0, 255].repeat(6)
     );
+
+    // Reproduce normal presentation's split world/UI composition before a
+    // pause snapshot. Captures normally draw the full queue and would hide
+    // the regression where only the world survived in the logical target.
+    renderer.render_gpu_rect(0, 0, 3, 2, 0, 255, 0, 255);
+    renderer.begin_ui_layer();
+    renderer.render_gpu_rect(2, 0, 1, 2, 255, 0, 0, 255);
+    renderer.frame.push_implicit_base_quad();
+    renderer.frame.upload_queue_geometry(&renderer.gpu);
+    let mut encoder = renderer
+        .gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("split UI modal regression"),
+        });
+    renderer
+        .frame
+        .encode_scene_to_rt(&mut encoder, &renderer.pipelines, &renderer.resources);
+    renderer.frame.encode_ui_to_logical_frame(
+        &mut encoder,
+        &renderer.pipelines,
+        &renderer.resources,
+    );
+    renderer.gpu.queue.submit(Some(encoder.finish()));
+    renderer.frame.clear_recording();
+    renderer.freeze_scene_for_modal();
+    let expected = [0, 255, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255].repeat(2);
+    assert_eq!(renderer.try_capture_frame_rgba().unwrap().2, expected);
+    renderer.colorize_framebuffer(210.0, 0.35);
+    let tinted = renderer.try_capture_frame_rgba().unwrap().2;
+    for pixel in tinted.chunks_exact(4) {
+        assert!(
+            pixel[2] > pixel[0],
+            "pause tint must include world and portrait: {pixel:?}"
+        );
+        assert_eq!(pixel[3], 255);
+    }
+    renderer.clear_frozen_scene();
 }
 
 #[cfg(test)]

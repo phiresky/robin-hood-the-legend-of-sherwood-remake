@@ -496,6 +496,10 @@ impl FrameState {
             );
         }
 
+        if compose_logical_frame {
+            self.encode_ui_to_logical_frame(&mut encoder, pipelines, resources);
+        }
+
         let submit_start = web_time::Instant::now();
         gpu.queue.submit(Some(encoder.finish()));
         let submit_us = submit_start.elapsed().as_micros();
@@ -1242,7 +1246,7 @@ impl FrameState {
 
     /// World-only composition leaves UI outside presentation effects; capture
     /// uses the same pass planner with the complete queue.
-    fn encode_scene_to_rt(
+    pub(super) fn encode_scene_to_rt(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         pipelines: &PipelineStore,
@@ -1254,6 +1258,30 @@ impl FrameState {
             resources,
             self.ui_layer_start.unwrap_or(self.queued.len()),
         );
+    }
+
+    /// Presentation scales the world and HUD independently, but modal snapshots
+    /// and presented-frame captures need the complete logical framebuffer,
+    /// matching RHMenuScreen::CreateBkgndColorized copying the full surface.
+    /// Append the HUD only after the world has been sampled for presentation.
+    pub(super) fn encode_ui_to_logical_frame(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipelines: &PipelineStore,
+        resources: &GpuResources,
+    ) {
+        if let Some(start) = self.ui_layer_start {
+            self.encode_pass_range_to_target(
+                encoder,
+                pipelines,
+                resources,
+                start,
+                self.queued.len(),
+                &self.render_target_view,
+                &self.sprite_stencil_view,
+                wgpu::LoadOp::Load,
+            );
+        }
     }
 
     fn encode_composition(
