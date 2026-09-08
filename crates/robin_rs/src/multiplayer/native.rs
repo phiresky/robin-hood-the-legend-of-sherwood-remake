@@ -5949,10 +5949,56 @@ mod tests {
     }
 
     #[test]
+    fn failed_campaign_server_start_keeps_handoff_and_releases_lease() {
+        let campaign = super::MultiplayerCampaignSession::default();
+        let key = iroh::SecretKey::from_bytes(&[3; 32]);
+        let continuation = HostSessionContinuation {
+            host_endpoint_id: key.public(),
+            session_id: robin_engine::multiplayer::MultiplayerSessionId([4; 32]),
+            expected_players: 2,
+            owner_seats: std::collections::HashMap::from([(PeerOwner::Native([8; 32]), 1)]),
+            relay_url: None,
+        };
+        super::publish_host_session_continuation(campaign.state(), continuation.clone());
+        let (_channels, incoming, outgoing, cursor, snapshot) =
+            crate::multiplayer::NetChannels::new();
+        let result = super::start_server_inner(
+            &campaign,
+            key,
+            "host".into(),
+            "Dem_Lei_MP".into(),
+            42,
+            robin_engine::engine::SimConfig::default(),
+            None,
+            incoming,
+            outgoing,
+            cursor,
+            snapshot,
+            3,
+            None,
+            false,
+        );
+        let Err(error) = result else {
+            panic!("mismatched replacement unexpectedly started");
+        };
+        assert!(error.to_string().contains("expects 2 players"));
+        let pending = super::pending_host_session_continuation(
+            campaign.state(),
+            continuation.host_endpoint_id,
+            2,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(pending.owner_seats, continuation.owner_seats);
+        assert!(campaign.reserve_server().is_ok());
+    }
+
+    #[test]
     fn campaign_server_lease_rejects_overlap_and_releases_failed_preparation() {
         let campaign = super::MultiplayerCampaignSession::default();
         let lease = campaign.reserve_server().unwrap();
         assert!(campaign.reserve_server().is_err());
+        assert!(campaign.discard_host_continuation().is_err());
         let other = super::MultiplayerCampaignSession::default();
         let other_lease = other.reserve_server().unwrap();
         drop(lease);
