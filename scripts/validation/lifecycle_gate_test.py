@@ -60,6 +60,8 @@ class LifecycleGateTests(unittest.TestCase):
         destination = Path(argv[argv.index("--evidence") + 1])
         destination.mkdir()
         result = {"completed": True, "binary_sha256": gate.digest(self.binary),
+                  "snapshot": "fixture-source",
+                  "checks": dict.fromkeys(gate.REPLAY_CHECKS | gate.LIVE_CHECKS | gate.SAVE_CHECKS, True),
                   "save_load": {"load_record_frame": 149, "final_record_frame": 259}}
         (destination / "summary.json").write_text(json.dumps(result))
         (destination / "export.rhrec").write_bytes(b"fixture replay")
@@ -100,6 +102,23 @@ class LifecycleGateTests(unittest.TestCase):
                 patch.object(gate, "run", side_effect=incomplete):
             with self.assertRaisesRegex(RuntimeError, "invalid acceptance"):
                 gate.native(self.evidence, {})
+
+    def test_native_rejects_completed_summary_missing_evidence_or_wrong_source(self):
+        for change in ({"checks": {}}, {"checks": {"native_playback_finished": False}},
+                       {"snapshot": "different-source"}):
+            with self.subTest(change=change):
+                destination = self.root / ("case-" + str(len(list(self.root.iterdir()))))
+                destination.mkdir()
+                def invalid(argv, **kwargs):
+                    self.fake_native_run(argv, **kwargs)
+                    target = Path(argv[argv.index("--evidence") + 1]) / "summary.json"
+                    result = json.loads(target.read_text())
+                    result.update(change)
+                    target.write_text(json.dumps(result))
+                with patch.dict(os.environ, self.env), patch.object(gate, "executable"), \
+                        patch.object(gate, "run", side_effect=invalid):
+                    with self.assertRaisesRegex(RuntimeError, "invalid acceptance"):
+                        gate.native(destination, {})
 
     def test_browser_rejects_runner_version_before_build(self):
         with patch.dict(os.environ, CHROME="chrome", CHROMEDRIVER="driver",

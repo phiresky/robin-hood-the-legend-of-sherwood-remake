@@ -14,6 +14,11 @@ import tempfile
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
+REPLAY_CHECKS = {"native_playback_finished", "post_bootstrap_hash_verified"}
+LIVE_CHECKS = {"normal_frame_and_manual_steps", "paused_manual_steps",
+               "canonical_compact_export"}
+SAVE_CHECKS = {"native_save_load_restored_state", "recording_continues_after_state_load",
+               "save_load_post_restore_replay_hashes"}
 
 
 def digest(path):
@@ -155,7 +160,12 @@ def native(evidence, summary):
                  driver, "--binary", binary, "--data", data, "--snapshot", snapshot,
                  "--evidence", destination, *flags], timeout=330)
             result = json.loads((destination / "summary.json").read_text())
-            if not result.get("completed") or result.get("binary_sha256") != expected:
+            required = REPLAY_CHECKS | (LIVE_CHECKS if suffix == "headless" else set())
+            if name == "save-load" and suffix == "headless":
+                required |= SAVE_CHECKS
+            if (result.get("completed") is not True or result.get("binary_sha256") != expected
+                    or result.get("snapshot") != snapshot
+                    or any(result.get("checks", {}).get(key) is not True for key in required)):
                 raise RuntimeError(f"invalid acceptance summary: {destination}")
             if name == "save-load" and suffix == "graphical":
                 from save_load_live import verify_replay
