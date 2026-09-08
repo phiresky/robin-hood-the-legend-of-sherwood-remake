@@ -163,6 +163,7 @@ fn apply_post_save_ui_state(
             SaveBannerKind::Loaded => "Game loaded.",
             SaveBannerKind::Autosaved => "Game autosaved.",
             SaveBannerKind::AutosaveFailed => "Autosave failed - check the log.",
+            SaveBannerKind::SaveFailed => "Save failed - check the log before retrying.",
         };
         // TODO(refactor): replace these literals with MT_MSG_GAME_SAVED and
         // MT_MSG_GAME_LOADED once the localized text ownership is explicit.

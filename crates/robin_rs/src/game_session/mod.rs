@@ -487,6 +487,8 @@ fn center_on_reselected_allied_portrait(
 pub(crate) enum SessionResult {
     /// Player chose to return to the main menu.
     QuitToMenu,
+    /// Save admission recovery propagated an explicit application close.
+    ExitRequested,
 }
 
 /// Consuming result of one mission. The campaign is returned on every
@@ -867,7 +869,26 @@ pub(crate) async fn run_session(
     initial_load: Option<(crate::savegame::SlotName, u32)>,
 ) -> SessionOutcome {
     let mut session_args = args.clone();
-    let mut callbacks = RustCallbacks::new(application_context.clone());
+    let mut callbacks =
+        match RustCallbacks::new_for_window(application_context.clone(), window).await {
+            Ok(Some(callbacks)) => callbacks,
+            Ok(None) => {
+                return SessionOutcome {
+                    campaign,
+                    result: Ok(if window.close_requested {
+                        SessionResult::ExitRequested
+                    } else {
+                        SessionResult::QuitToMenu
+                    }),
+                };
+            }
+            Err(error) => {
+                return SessionOutcome {
+                    campaign,
+                    result: Err(error),
+                };
+            }
+        };
     if let Some((name, mission_id)) = initial_load {
         let Some(slot) = callbacks.save_manager.find_by_filename(name.as_str()) else {
             return SessionOutcome {

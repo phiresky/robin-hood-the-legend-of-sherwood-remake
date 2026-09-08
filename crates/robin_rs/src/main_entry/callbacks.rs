@@ -103,6 +103,7 @@ pub enum SaveBannerKind {
     Loaded,
     Autosaved,
     AutosaveFailed,
+    SaveFailed,
 }
 
 /// Pending save/load intent set by the state machine and consumed
@@ -211,6 +212,11 @@ impl AutosaveNotices {
         self.pending = Some(SaveBannerKind::AutosaveFailed);
     }
 
+    pub(crate) fn enqueue_save_failed(&mut self, details: String) {
+        tracing::error!("Save operation failed: {details}");
+        self.pending = Some(SaveBannerKind::SaveFailed);
+    }
+
     pub(crate) fn select_banner(
         &mut self,
         manual: Option<SaveBannerKind>,
@@ -298,9 +304,30 @@ impl RustCallbacks {
         })
     }
 
-    pub fn new(application_context: ApplicationContext) -> Self {
-        let save_manager = SaveGameManager::open_for_context(&application_context)
-            .unwrap_or_else(|error| panic!("Cannot open session save store: {error}"));
+    pub fn new(
+        application_context: ApplicationContext,
+    ) -> Result<Self, crate::save_recovery::SaveStoreOpenError> {
+        let save_manager = crate::save_recovery::try_open(&application_context)?;
+        Ok(Self::with_save_manager(application_context, save_manager))
+    }
+
+    pub(crate) async fn new_for_window(
+        application_context: ApplicationContext,
+        window: &mut crate::window::GameWindow,
+    ) -> Result<Option<Self>, String> {
+        match crate::save_recovery::open_for_launch(&application_context, window).await? {
+            crate::save_recovery::OpenedSaveStore::Ready(manager) => {
+                Ok(Some(Self::with_save_manager(application_context, manager)))
+            }
+            crate::save_recovery::OpenedSaveStore::Cancelled
+            | crate::save_recovery::OpenedSaveStore::ExitRequested => Ok(None),
+        }
+    }
+
+    fn with_save_manager(
+        application_context: ApplicationContext,
+        save_manager: SaveGameManager,
+    ) -> Self {
         Self {
             #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
             multiplayer_campaign: crate::multiplayer::MultiplayerCampaignSession::default(),
@@ -1458,7 +1485,7 @@ mod operation_outcome_tests {
         .unwrap();
         let mut host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 640.0, 480.0).unwrap();
-        let mut callbacks = RustCallbacks::new(context);
+        let mut callbacks = RustCallbacks::new(context).unwrap();
         let mut assets = engine_api::LevelAssets::default();
         let mut engine =
             engine_api::Engine::new_for_test(640.0, 480.0, Campaign::default(), &mut assets)
