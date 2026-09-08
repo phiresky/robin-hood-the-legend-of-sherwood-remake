@@ -17,6 +17,7 @@ pub mod error;
 pub mod identity;
 pub mod live_schema;
 pub mod model;
+pub mod physical_work;
 pub mod replay_store;
 pub mod runtime_authority;
 mod secure_fs;

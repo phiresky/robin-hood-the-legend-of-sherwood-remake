@@ -69,16 +69,20 @@ impl CampaignStore {
                 )));
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                tokio::fs::create_dir(&root).await?;
+                let create_root = root.clone();
+                crate::physical_work::spawn_blocking(move || std::fs::create_dir(create_root))
+                    .await
+                    .map_err(std::io::Error::other)??;
             }
             Err(error) => return Err(error.into()),
         }
         set_mode(&root, crate::secure_fs::SHARED_PRIVATE_DIRECTORY_MODE).await?;
         let pinned_path = root.clone();
-        let root_dir =
-            tokio::task::spawn_blocking(move || crate::secure_fs::pin_private_root(&pinned_path))
-                .await
-                .map_err(|error| std::io::Error::other(error))??;
+        let root_dir = crate::physical_work::spawn_blocking(move || {
+            crate::secure_fs::pin_private_root(&pinned_path)
+        })
+        .await
+        .map_err(|error| std::io::Error::other(error))??;
         Ok(Self {
             root,
             root_dir: Arc::new(root_dir),
@@ -109,7 +113,7 @@ impl CampaignStore {
         let shard = hex::encode(&digest[..1]);
         let root = Arc::clone(&self.root_dir);
         Ok(Arc::new(
-            tokio::task::spawn_blocking(move || {
+            crate::physical_work::spawn_blocking(move || {
                 crate::secure_fs::ensure_private_dir(&root, Path::new(&shard))
             })
             .await
@@ -143,20 +147,22 @@ impl CampaignStore {
         let final_name = Self::object_name(digest);
         let create_shard = Arc::clone(&shard);
         let create_name = temporary.clone();
-        let file = tokio::task::spawn_blocking(move || {
-            crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))
+        let bytes = bytes.to_vec();
+        // Keep all mutation in one tracked physical job. Tokio file writes can
+        // themselves enqueue blocking work that outlives a dropped File waiter.
+        crate::physical_work::spawn_blocking(move || {
+            use std::io::Write as _;
+            let mut file =
+                crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))?;
+            file.write_all(&bytes)?;
+            #[cfg(unix)]
+            file.set_permissions(std::fs::Permissions::from_mode(
+                crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE,
+            ))?;
+            file.sync_all()
         })
         .await
         .map_err(|error| std::io::Error::other(error))??;
-        let mut file = tokio::fs::File::from_std(file);
-        file.write_all(bytes).await?;
-        #[cfg(unix)]
-        file.set_permissions(std::fs::Permissions::from_mode(
-            crate::secure_fs::SHARED_IMMUTABLE_FILE_MODE,
-        ))
-        .await?;
-        file.sync_all().await?;
-        drop(file);
         let result = async {
             if !crate::secure_fs::link_immutable_object(
                 Arc::clone(&shard),
@@ -175,7 +181,8 @@ impl CampaignStore {
         if result.is_err() {
             let cleanup_shard = Arc::clone(&shard);
             let _ =
-                tokio::task::spawn_blocking(move || cleanup_shard.remove_file(&temporary)).await;
+                crate::physical_work::spawn_blocking(move || cleanup_shard.remove_file(&temporary))
+                    .await;
         }
         result
     }
@@ -206,7 +213,7 @@ impl CampaignStore {
         let final_name = Self::object_name(&expected_digest);
         let create_shard = Arc::clone(&shard);
         let create_name = temporary.clone();
-        let file = tokio::task::spawn_blocking(move || {
+        let file = crate::physical_work::spawn_blocking(move || {
             crate::secure_fs::create_private_file(&create_shard, Path::new(&create_name))
         })
         .await
@@ -273,7 +280,8 @@ impl CampaignStore {
         if result.is_err() {
             let cleanup_shard = Arc::clone(&shard);
             let _ =
-                tokio::task::spawn_blocking(move || cleanup_shard.remove_file(&temporary)).await;
+                crate::physical_work::spawn_blocking(move || cleanup_shard.remove_file(&temporary))
+                    .await;
         }
         result
     }
@@ -285,7 +293,7 @@ impl CampaignStore {
         let shard_name = hex::encode(&digest[..1]);
         let root = Arc::clone(&self.root_dir);
         let shard = Arc::new(
-            tokio::task::spawn_blocking(move || {
+            crate::physical_work::spawn_blocking(move || {
                 crate::secure_fs::open_private_dir(&root, Path::new(&shard_name))
             })
             .await
@@ -303,7 +311,7 @@ impl CampaignStore {
     ) -> Result<tokio::fs::File, CampaignStoreError> {
         let opened_directory = Arc::clone(&directory);
         let opened_name = name.clone();
-        let file = tokio::task::spawn_blocking(move || {
+        let file = crate::physical_work::spawn_blocking(move || {
             crate::secure_fs::open_regular_file(&opened_directory, Path::new(&opened_name))
         })
         .await
@@ -321,7 +329,7 @@ impl CampaignStore {
 
     pub async fn inventory(&self) -> Result<Vec<CampaignInventoryEntry>, CampaignStoreError> {
         let root = Arc::clone(&self.root_dir);
-        let mut entries = tokio::task::spawn_blocking(move || {
+        let mut entries = crate::physical_work::spawn_blocking(move || {
             let mut entries = Vec::new();
             for shard_entry in root.entries()? {
                 let shard_entry = shard_entry?;
@@ -421,7 +429,7 @@ impl CampaignStore {
         let purge = {
             let root = Arc::clone(&self.root_dir);
             Arc::new(
-                tokio::task::spawn_blocking(move || {
+                crate::physical_work::spawn_blocking(move || {
                     crate::secure_fs::ensure_private_dir(&root, Path::new(".purge"))
                 })
                 .await
@@ -458,7 +466,7 @@ impl CampaignStore {
         let rename_shard = Arc::clone(&shard);
         let rename_purge = Arc::clone(&purge);
         let rename_destination = destination_name.clone();
-        tokio::task::spawn_blocking(move || {
+        crate::physical_work::spawn_blocking(move || {
             rename_shard.rename(&source_name, &rename_purge, &rename_destination)?;
             crate::secure_fs::sync_private_dir(&rename_shard)?;
             crate::secure_fs::sync_private_dir(&rename_purge)
@@ -480,7 +488,7 @@ impl CampaignStore {
             .ok_or_else(|| std::io::Error::other("campaign purge name is not UTF-8"))?
             .to_owned();
         let root = Arc::clone(&self.root_dir);
-        tokio::task::spawn_blocking(move || {
+        crate::physical_work::spawn_blocking(move || {
             let purge = match crate::secure_fs::open_private_dir(&root, Path::new(".purge")) {
                 Ok(purge) => purge,
                 Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
@@ -576,8 +584,8 @@ async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
 #[cfg(all(unix, not(target_os = "linux")))]
 async fn set_mode(path: &Path, mode: u32) -> Result<(), std::io::Error> {
     use std::os::unix::fs::PermissionsExt as _;
-    if tokio::fs::metadata(path).await?.permissions().mode() & 0o7777 != mode {
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).await?;
+    if std::fs::metadata(path)?.permissions().mode() & 0o7777 != mode {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))?;
     }
     Ok(())
 }
