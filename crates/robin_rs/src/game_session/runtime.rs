@@ -2193,6 +2193,15 @@ mod tests {
             } else {
                 assert!(timeline.recorded_save_frames_by_identity.is_empty());
             }
+            // Metadata is valid only beside an authoritative recorded frame.
+            assert!(timeline.replay_recorder.as_mut().unwrap().write_frame(
+                0,
+                0,
+                1,
+                robin_engine::engine::SimulationFrameInput::new(Vec::new()).with_hourglass(true),
+                Vec::new(),
+                None,
+            ));
             drop(timeline);
             let replay =
                 robin_engine::replay::ReplayData::from_file(path.to_str().unwrap()).unwrap();
