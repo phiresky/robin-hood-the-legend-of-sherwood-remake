@@ -79,6 +79,8 @@ where
     R: FnMut() -> RF,
     RF: Future<Output = anyhow::Result<bool>>,
 {
+    use futures_util::FutureExt as _;
+
     let refresh_every = ttl
         .checked_div(3)
         .filter(|interval| !interval.is_zero())
@@ -92,12 +94,17 @@ where
         tokio::select! {
             result = &mut operation => break result,
             () = tokio::time::sleep(refresh_every) => {
-                let refresh_error = match refresh().await {
-                    Ok(true) => continue,
-                    Ok(false) => anyhow::anyhow!(
+                // A refresh panic must take the same drain path as a returned
+                // error, not unwind past the pending physical-work owner.
+                let refresh_result = std::panic::AssertUnwindSafe(async { refresh().await })
+                    .catch_unwind().await;
+                let refresh_error = match refresh_result {
+                    Ok(Ok(true)) => continue,
+                    Ok(Ok(false)) => anyhow::anyhow!(
                         "maintenance-write lease expired or was replaced during an active operation"
                     ),
-                    Err(error) => error.into(),
+                    Ok(Err(error)) => error,
+                    Err(_) => anyhow::anyhow!("maintenance-write lease refresh panicked"),
                 };
                 // Dropping only the waiter cannot stop a queued hard link,
                 // rename, unlink or verifier process. Retain the fence until
@@ -1360,7 +1367,7 @@ mod tests {
         let notify_refresh = Arc::clone(&refresh_seen);
         let owner_database = database.clone();
         let operation_database = database.clone();
-        let caller = tokio::spawn(async move {
+        let mut caller = tokio::spawn(async move {
             run_owned_fenced_operation(owner_database, async move {
                 let token = operation_database
                     .acquire_maintenance_write_lease(
@@ -1390,6 +1397,9 @@ mod tests {
                             panic!("injected operation panic");
                         }
                         physical.await?;
+                        if mode == "heartbeat_then_operation_panic" {
+                            panic!("injected operation panic after heartbeat failure");
+                        }
                         Ok(())
                     },
                     move || {
@@ -1398,7 +1408,10 @@ mod tests {
                             notify_refresh.notify_one();
                             match mode {
                                 "heartbeat_lost" => Ok(false),
-                                "heartbeat_error" => anyhow::bail!("injected heartbeat error"),
+                                "heartbeat_error" | "heartbeat_then_operation_panic" => {
+                                    anyhow::bail!("injected heartbeat error")
+                                }
+                                "heartbeat_panic" => panic!("injected heartbeat panic"),
                                 _ => Ok(true),
                             }
                         }
@@ -1419,6 +1432,17 @@ mod tests {
         }
         if mode == "caller_cancelled" {
             caller.abort();
+            assert!((&mut caller).await.unwrap_err().is_cancelled());
+        } else {
+            // A notification proves refresh was attempted, not that its owner
+            // has reached release. Require it to remain pending long enough to
+            // expose the old release-before-join policy, not just sample it.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(100), &mut caller)
+                    .await
+                    .is_err(),
+                "worker owner returned while physical mutation was still blocked"
+            );
         }
         assert!(!mutation.exists());
         assert!(
@@ -1438,9 +1462,7 @@ mod tests {
             "physical work outlived lease ownership"
         );
         release.send(()).unwrap();
-        if mode == "caller_cancelled" {
-            assert!(caller.await.unwrap_err().is_cancelled());
-        } else {
+        if mode != "caller_cancelled" {
             let result = tokio::time::timeout(Duration::from_secs(5), caller)
                 .await
                 .unwrap()
@@ -1451,7 +1473,10 @@ mod tests {
                 let error = format!("{:#}", result.unwrap_err());
                 let expected = match mode {
                     "heartbeat_lost" => "expired or was replaced",
-                    "heartbeat_error" => "injected heartbeat error",
+                    "heartbeat_error" | "heartbeat_then_operation_panic" => {
+                        "injected heartbeat error"
+                    }
+                    "heartbeat_panic" => "lease refresh panicked",
                     "operation_error" => "injected operation error",
                     "operation_panic" => "panicked after physical-work drain",
                     _ => unreachable!(),
@@ -1513,6 +1538,18 @@ mod tests {
     #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
     async fn physical_work_is_drained_after_operation_panic() {
         assert_physical_work_is_fenced("operation_panic").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
+    async fn physical_work_is_drained_after_heartbeat_panic() {
+        assert_physical_work_is_fenced("heartbeat_panic").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
+    async fn physical_work_is_drained_after_heartbeat_then_operation_panic() {
+        assert_physical_work_is_fenced("heartbeat_then_operation_panic").await;
     }
 
     #[derive(Clone, Default)]

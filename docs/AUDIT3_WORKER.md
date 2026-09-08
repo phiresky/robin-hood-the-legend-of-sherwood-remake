@@ -9,7 +9,9 @@ The existing detached `run_owned_fenced_operation` remains the cancellation
 owner. Its caller may disappear, but the inner operation retains the shared
 database fence. The worker heartbeat now drains its operation after refresh
 failure instead of dropping it, and retains the original heartbeat error even
-if the operation subsequently fails. Lease release occurs only after draining.
+if the operation subsequently fails or panics. Refresh construction/polling also
+has a narrow unwind boundary that routes panic through this same drain path.
+Lease release occurs only after draining.
 
 The new runtime-only `physical_work` scope registers blocking jobs **before
 enqueueing** them. A guard in each blocking closure retires its registration
@@ -30,6 +32,9 @@ to hand borrowed input to a `'static` blocking closure.
 ## Boundaries and separately reviewed paths
 
 - Runtime ownership is not serialized. The helper is not a general task system.
+  It tracks closure execution, not arbitrary destructors of returned values;
+  detached verifier output cleanup can retire its private temporary directory
+  later. That directory is not a canonical campaign/replay store publication.
 - No worker operation spawns detached async descendants. Task-local tracking is
   not inherited by `tokio::spawn`; future such work must explicitly retain the
   completion owner. Nested drain scopes are rejected, not silently untracked.
@@ -46,14 +51,16 @@ to hand borrowed input to a `'static` blocking closure.
   mechanisms remain necessary for process death.
 - Admin `run_with_backup_lock_heartbeat` was reviewed separately. Its scheduled
   backup path retains an **exclusive** admission/quiescence pair across gate
-  release and SQL pool close (`backup_scheduled` and
+  release and SQL pool close (`backup_and_publish_status_with_limit_and_publisher_and_hooks` and
   `release_backup_gate_and_close_pool_under_exclusive_fence`). Its heartbeat
-  still drops its own future on error, and filesystem completion there needs
-  a distinct audit of backup destination jobs, publication and failure cleanup;
+  still drops its own future on error. Partial-backup async filesystem jobs can
+  therefore outlive EX after that SQL drain; authenticated final installation
+  and status publication are synchronous and cannot themselves publish late
+  through this cancellation schedule. No published-backup corruption has been
+  demonstrated. TODO: give partial-backup work/cleanup its own physical drain;
   SQL draining alone is not a filesystem drain. The legacy `backup` path also
-  uses that helper with a different fence lifetime. No blanket claim that either
-  path is fixed or safe follows from this worker change, and they were not
-  consolidated into the worker owner.
+  uses that helper with a different fence lifetime. These are narrower admin
+  follow-ups, not fixed or consolidated into the worker owner in this pass.
 
 ## Regression coverage and validation
 
@@ -61,7 +68,10 @@ Added actual database-fence and lease assertions around a latch-controlled
 blocking filesystem mutation for success, heartbeat rejection, heartbeat error,
 operation error, caller cancellation and recoverable operation panic. Heartbeat
 failure is injected at the refresh boundary, with a notification proving the
-failure branch has run before checking the still-held fence. Panic coverage is
+failure branch has run before checking the still-held fence. A bounded pending
+assertion prevents a premature snapshot of the owner from masking early release;
+caller cancellation is awaited before checking ownership. Panic cases cover the
+operation, refresh, and an operation panic after a heartbeat error, and are
 explicitly ignored in the ordinary Cranelift lane.
 
 A one-blocking-thread regression also proves registration covers queued jobs
@@ -69,4 +79,8 @@ whose join handle is dropped before the job starts. A source guard prevents
 ordinary raw `tokio::task::spawn_blocking` from being reintroduced in the four
 worker store/launcher modules (not a substitute for reviewing new async paths).
 
-Validation results will be appended after the frozen committed source runs.
+First frozen full package suite at `6b51dfb5f` passed: 166 library, 31 admin,
+5 server, 14 worker and 12 router tests, plus doctests. Worker had two ignored
+cases (process helper and explicit LLVM panic). This baseline run preceded the
+narrow refresh-panic catch and stronger pending assertions above; final validation
+results will be appended after those changes run.
