@@ -230,6 +230,9 @@ pub struct Patch {
     pub display_doors: bool,
     /// Actors currently inside this patch's sector.
     pub occupants: Vec<OccupantId>,
+    /// First target callback that applied this patch; repeated activation can
+    /// replay the patch effect without repeating one-shot mission script logic.
+    pub repeat_activation: Option<(i32, String)>,
 
     // -- Level data --
     /// If true, the patch can only be applied once and becomes inactive after.
@@ -332,6 +335,9 @@ pub(crate) struct PersistedPatch {
 
     occupants: Vec<OccupantId>,
 
+    #[serde(default)]
+    repeat_activation: Option<(i32, String)>,
+
     definitive: bool,
 
     initially_active: bool,
@@ -390,6 +396,7 @@ impl PersistedPatch {
             locked: _,
             display_doors: _,
             occupants: _,
+            repeat_activation: _,
             definitive: _,
             initially_active: _,
             animated: _,
@@ -421,6 +428,7 @@ impl PersistedPatch {
             in_transition: value.in_transition.clone(),
             locked: value.locked.clone(),
             occupants: value.occupants.clone(),
+            repeat_activation: value.repeat_activation.clone(),
             definitive: value.definitive.clone(),
             initially_active: value.initially_active.clone(),
             animated: value.animated.clone(),
@@ -456,6 +464,7 @@ impl PersistedPatch {
             locked: self.locked,
             display_doors: false,
             occupants: self.occupants,
+            repeat_activation: self.repeat_activation,
             definitive: self.definitive,
             initially_active: self.initially_active,
             animated: self.animated,
@@ -495,6 +504,7 @@ impl Default for Patch {
             animated: true,
             locked: false,
             occupants: Vec::new(),
+            repeat_activation: None,
             initially_active: false,
             door_triggered: false,
             triggers_door: false,
@@ -525,6 +535,14 @@ impl Patch {
     /// Create a new patch with default (unapplied, inactive) state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Resolve the opt-in extension once at mission load; the resulting policy
+    /// is saved with the patch and never changes halfway through an animation.
+    pub fn configure_background_reversal(&mut self, enabled: bool) {
+        if enabled && self.animation_flags.transition_valid {
+            self.definitive = false;
+        }
     }
 
     // -- State queries -------------------------------------------------------
@@ -901,6 +919,59 @@ mod tests {
             applied: false,
             forced_reset: false,
         }));
+    }
+
+    #[test]
+    fn opted_in_definitive_animation_reverses_terrain_and_doors_repeatedly() {
+        let mut patch = active_patch_with_animations();
+        patch.definitive = true;
+        patch.configure_background_reversal(true);
+        patch.repeat_activation = Some((123, "ActivatedBySword".into()));
+        for _ in 0..2 {
+            assert!(patch.apply().contains(&PatchEffect::StartAnimation {
+                anim: PatchAnimation::Transition,
+                reverse: false,
+            }));
+            patch.in_transition = false;
+            let forward = patch.apply_final(false);
+            assert!(patch.active && patch.applied);
+            assert!(forward.contains(&PatchEffect::SwapObjects {
+                applied: true,
+                forced_reset: false
+            }));
+            assert!(forward.contains(&PatchEffect::SwapDoors));
+            // Save/load between clicks must retain the resolved policy.
+            patch = serde_json::from_str(&serde_json::to_string(&patch).unwrap()).unwrap();
+            assert_eq!(
+                patch.repeat_activation,
+                Some((123, "ActivatedBySword".into()))
+            );
+            let reverse = patch.apply();
+            assert!(reverse.contains(&PatchEffect::SwapBackground { applied: false }));
+            assert!(reverse.contains(&PatchEffect::StartAnimation {
+                anim: PatchAnimation::Transition,
+                reverse: true,
+            }));
+            patch.in_transition = false;
+            let reversed = patch.apply_final(false);
+            assert!(patch.active && !patch.applied);
+            assert!(reversed.contains(&PatchEffect::SwapObjects {
+                applied: false,
+                forced_reset: false
+            }));
+            assert!(reversed.contains(&PatchEffect::SwapDoors));
+        }
+    }
+
+    #[test]
+    fn reversal_opt_out_and_nonanimated_patches_keep_definitive_policy() {
+        let mut patch = active_patch_with_animations();
+        patch.definitive = true;
+        patch.configure_background_reversal(false);
+        assert!(patch.definitive);
+        patch.animation_flags.transition_valid = false;
+        patch.configure_background_reversal(true);
+        assert!(patch.definitive);
     }
 
     #[test]

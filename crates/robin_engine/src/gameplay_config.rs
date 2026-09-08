@@ -278,6 +278,10 @@ pub struct GameplayConfig {
     #[serde(default)]
     pub reusable_cloaks: bool,
 
+    /// Make animated background patches reusable on the next mission launch.
+    #[serde(default)]
+    pub reversible_background_patches: bool,
+
     /// Deterministic item rebalances. Missing data preserves shipped behavior.
     #[serde(default = "ItemGameplayConfig::classic")]
     pub item_gameplay: ItemGameplayConfig,
@@ -404,6 +408,7 @@ impl Default for GameplayConfig {
             touch_camera_gestures: true,
             show_production_forecast: default_show_production_forecast(),
             reusable_cloaks: true,
+            reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::default(),
             item_previews: ItemPreviewConfig::default(),
             noise_distraction_feedback: true,
@@ -448,6 +453,7 @@ impl GameplayConfig {
             touch_camera_gestures: true,
             show_production_forecast: true,
             reusable_cloaks: false,
+            reversible_background_patches: false,
             item_gameplay: ItemGameplayConfig::classic(),
             item_previews: ItemPreviewConfig::classic(),
             noise_distraction_feedback: false,
@@ -477,6 +483,26 @@ impl GameplayConfig {
 #[cfg(test)]
 mod tests {
     use super::{GameplayConfig, ItemGameplayConfig, ItemPreviewConfig};
+
+    #[test]
+    fn background_reversal_is_opt_in_and_persisted() {
+        assert!(!GameplayConfig::default().reversible_background_patches);
+        assert!(!GameplayConfig::migrated().reversible_background_patches);
+        assert!(
+            !serde_json::from_str::<GameplayConfig>("{}")
+                .unwrap()
+                .reversible_background_patches
+        );
+        let config = GameplayConfig {
+            reversible_background_patches: true,
+            ..GameplayConfig::default()
+        };
+        assert!(
+            serde_json::from_str::<GameplayConfig>(&serde_json::to_string(&config).unwrap())
+                .unwrap()
+                .reversible_background_patches
+        );
+    }
 
     #[test]
     fn hard_reaction_time_fix_is_the_default() {
