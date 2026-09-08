@@ -67,6 +67,61 @@ fn grid_sha(bank: &ShippingSpriteBank) -> String {
         .collect()
 }
 
+// Raw bitplanes are benchmark sidecars, with IDs/dimensions/offsets in JSON.
+// TODO: assess ArnoLaw dictionary recoloring before designing resident masks.
+fn opacity_masks(
+    bank: &ShippingSpriteBank,
+    dictionaries: &[robin_assets::frame_holder::FrameDictionary],
+    ids: &BTreeSet<u32>,
+) -> Result<(Vec<u8>, serde_json::Value)> {
+    use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
+    let mut bytes = Vec::new();
+    let mut metadata = Vec::new();
+    let mut hash = Sha256::new();
+    hash.update(b"robinhood-sprite-opacity-v1\0");
+    for (id, row) in bank.sprites.iter().filter(|(id, _)| ids.contains(id)) {
+        let dict = dictionaries
+            .get(usize::from(row.dictionary_index))
+            .context("opacity dictionary missing")?;
+        ensure!(row.width.is_multiple_of(4), "invalid VQ width for {id}");
+        let pixels = usize::from(row.width) * usize::from(row.height);
+        ensure!(
+            row.packed_data.len() * 4 == pixels,
+            "invalid VQ grid for {id}"
+        );
+        let mut ordinary = vec![0u8; pixels.div_ceil(8)];
+        let mut blipped = vec![0u8; pixels.div_ceil(8)];
+        for (tile, &index) in row.packed_data.iter().enumerate() {
+            let colors = dict.lookup_pixels(index);
+            ensure!(colors.len() == 4, "dictionary tile is not four pixels");
+            for (offset, &color) in colors.iter().enumerate() {
+                let pixel = tile * 4 + offset;
+                if color != TRANSPARENT_COLOR_16 {
+                    blipped[pixel / 8] |= 1 << (pixel % 8);
+                    if color != dict.shadow_color() {
+                        ordinary[pixel / 8] |= 1 << (pixel % 8);
+                    }
+                }
+            }
+        }
+        hash.update(id.to_le_bytes());
+        hash.update(row.width.to_le_bytes());
+        hash.update(row.height.to_le_bytes());
+        hash.update([0]);
+        hash.update(&ordinary);
+        hash.update([1]);
+        hash.update(&blipped);
+        metadata.push(serde_json::json!({"id":id,"width":row.width,"height":row.height,"offset":bytes.len(),"plane_bytes":ordinary.len()}));
+        bytes.extend(ordinary);
+        bytes.extend(blipped);
+    }
+    ensure!(metadata.len() == ids.len(), "opacity rows missing");
+    let sha: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    let compressed = zstd_compress_with_window(&bytes, 30)?;
+    let report = serde_json::json!({"canonical_sha256":sha,"raw_bytes":bytes.len(),"zstd30_bytes":compressed.len(),"sprites":metadata,"bit_order":"row-major, least-significant bit first; ordinary then blipped for each sprite","dictionary_state":"boot"});
+    Ok((compressed, report))
+}
+
 fn append_tails(files: &mut Vec<String>, tails: &BTreeMap<String, String>) {
     let extra: Vec<_> = files.iter().filter_map(|f| tails.get(f)).cloned().collect();
     for tail in extra {
@@ -79,9 +134,13 @@ fn append_tails(files: &mut Vec<String>, tails: &BTreeMap<String, String>) {
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     ensure!(
-        args.len() == 3,
-        "usage: partition_sprite_startup <source Data> <new output Data> <first N>"
+        (3..=4).contains(&args.len()),
+        "usage: partition_sprite_startup <source Data> <new output Data> <first N> [new opacity audit directory]"
     );
+    let audit = args.get(3).map(Path::new);
+    if let Some(audit) = audit {
+        ensure!(!audit.exists(), "opacity audit directory exists");
+    }
     let source = std::fs::canonicalize(&args[0])?;
     let target = Path::new(&args[1]);
     let first: usize = args[2].parse()?;
@@ -114,6 +173,11 @@ fn main() -> Result<()> {
     }
     files.extend(dd.saved_world_rhs_files.iter().cloned());
     copy_tree(&source, target)?;
+    if let Some(audit) = audit {
+        std::fs::create_dir_all(audit)?;
+    }
+    let mut masks_raw_total = 0usize;
+    let mut masks_compressed_total = 0usize;
     let mut tails = BTreeMap::new();
     let (mut before_total, mut head_total, mut tail_total) = (0usize, 0usize, 0usize);
     for name in files {
@@ -148,6 +212,11 @@ fn main() -> Result<()> {
             .flat_map(|s| s.frame_ids.iter().take(first).copied())
             .collect();
         ensure!(!keep.is_empty(), "{name}: no script frame metadata");
+        let vq_ids: BTreeSet<_> = bank
+            .vq_chunks
+            .iter()
+            .flat_map(|c| c.sprite_ids.iter().copied())
+            .collect();
         let mut original = decode_mission_compressed(&bytes)?;
         materialize(&mut original)?;
         let original_bank = original
@@ -237,12 +306,34 @@ fn main() -> Result<()> {
         std::fs::create_dir_all(tail_path.parent().context("tail parent missing")?)?;
         std::fs::write(target.join(&name), &head_bytes)?;
         std::fs::write(tail_path, &tail_bytes)?;
+        let dictionaries = &dd
+            .sprite_bank
+            .as_ref()
+            .context("boot dictionary bank missing")?
+            .dictionaries;
+        let (mask_bytes, mask_report) = opacity_masks(original_bank, dictionaries, &vq_ids)?;
+        masks_raw_total += mask_report["raw_bytes"]
+            .as_u64()
+            .context("mask raw bytes missing")? as usize;
+        masks_compressed_total += mask_bytes.len();
+        if let Some(audit) = audit {
+            let basename = Path::new(&name)
+                .file_name()
+                .context("part basename missing")?
+                .to_str()
+                .context("non-UTF8 filename")?;
+            std::fs::write(audit.join(format!("{basename}.masks.zst")), &mask_bytes)?;
+            std::fs::write(
+                audit.join(format!("{basename}.json")),
+                serde_json::to_vec_pretty(&mask_report)?,
+            )?;
+        }
         before_total += bytes.len();
         head_total += head_bytes.len();
         tail_total += tail_bytes.len();
         println!(
             "{}",
-            serde_json::json!({"file":name,"tail":tail_name,"before_bytes":bytes.len(),"head_bytes":head_bytes.len(),"tail_bytes":tail_bytes.len(),"head_frames":counts[0],"tail_frames":counts[1],"original_grid_sha256":before_sha,"reencoded_grid_sha256":after_sha,"full_payload_parity":true})
+            serde_json::json!({"file":name,"tail":tail_name,"before_bytes":bytes.len(),"head_bytes":head_bytes.len(),"tail_bytes":tail_bytes.len(),"head_frames":counts[0],"tail_frames":counts[1],"original_grid_sha256":before_sha,"reencoded_grid_sha256":after_sha,"full_payload_parity":true,"opacity_raw_bytes":mask_report["raw_bytes"],"opacity_zstd30_bytes":mask_bytes.len(),"opacity_sha256":mask_report["canonical_sha256"]})
         );
         tails.insert(name, tail_name);
     }
@@ -260,7 +351,7 @@ fn main() -> Result<()> {
     )?;
     println!(
         "{}",
-        serde_json::json!({"first_frames_per_script":first,"parts":tails.len(),"before_bytes":before_total,"head_bytes":head_total,"tail_bytes":tail_total,"initial_saved_bytes":before_total as i64-head_total as i64,"total_expansion_bytes":head_total as i64+tail_total as i64-before_total as i64,"benchmark_only":true})
+        serde_json::json!({"first_frames_per_script":first,"parts":tails.len(),"before_bytes":before_total,"head_bytes":head_total,"tail_bytes":tail_total,"initial_saved_bytes":before_total as i64-head_total as i64,"total_expansion_bytes":head_total as i64+tail_total as i64-before_total as i64,"benchmark_only":true,"opacity_raw_bytes":masks_raw_total,"opacity_zstd30_bytes":masks_compressed_total})
     );
     Ok(())
 }
