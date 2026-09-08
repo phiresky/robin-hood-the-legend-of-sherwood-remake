@@ -123,7 +123,7 @@ mod tests {
 
         frontend.clear_background_decals();
         assert!(frontend.background_decals.is_empty());
-        assert_eq!(banks(&frontend.background_decals), []);
+        assert!(banks(&frontend.background_decals).is_empty());
 
         frontend.background_decals.insert(id(2), decal(12));
         frontend.background_decals.insert(id(1), decal(11));

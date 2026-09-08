@@ -229,7 +229,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let outcome = crate::main_entry::perform_pending_save_load(
+        let mut outcome = crate::main_entry::perform_pending_save_load(
             &mut host,
             &mut game,
             &mut callbacks,
@@ -238,9 +238,9 @@ mod tests {
             &profiles,
             None,
         );
-        assert!(outcome.event.is_none() && outcome.restore.is_none());
+        assert!(outcome.event.is_none() && outcome.restore().is_none());
         let transition = outcome
-            .transition
+            .take_transition()
             .expect("different descriptor requires a mission handoff");
         engine.test_set_frame_counter(99);
         callbacks
