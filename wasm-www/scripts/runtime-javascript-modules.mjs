@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { parse } from 'es-module-lexer/js';
 
 const ENTRY = 'robin.js';
+const ADMISSION = 'replay_admission.js';
 const CLIENT = 'browser_identity_client.js';
 const VAULT = 'browser_identity_vault.js';
 const STATIC_IMPORT = 1;
@@ -95,7 +96,7 @@ async function javascriptFiles(root) {
     return files;
 }
 
-async function deriveRuntimeJavascriptModules(directory) {
+async function deriveRuntimeJavascriptModules(directory, { replayAdmission = false } = {}) {
     const root = resolve(directory);
     const files = await javascriptFiles(root);
     if (!files.has(ENTRY)) throw new Error(`runtime JavaScript build is missing ${ENTRY}`);
@@ -149,6 +150,11 @@ async function deriveRuntimeJavascriptModules(directory) {
         state.set(path, 'visited');
     }
     visit(ENTRY);
+    if (replayAdmission) {
+        if (!files.has(ADMISSION)) throw new Error('runtime is missing its replay admission entry');
+        if (graph.get(ADMISSION).length !== 0) throw new Error('replay admission entry must be standalone');
+        visit(ADMISSION);
+    }
     const orphans = [...files.keys()].filter(path => !reachable.has(path));
     if (orphans.length !== 0) {
         throw new Error(`runtime JavaScript module closure contains orphan modules: ${orphans.join(', ')}`);
@@ -168,11 +174,11 @@ async function deriveRuntimeJavascriptModules(directory) {
     return claims;
 }
 
-export async function authorRuntimeJavascriptModules(directory) {
-    return deriveRuntimeJavascriptModules(directory);
+export async function authorRuntimeJavascriptModules(directory, options) {
+    return deriveRuntimeJavascriptModules(directory, options);
 }
 
-export async function verifyRuntimeJavascriptModules(directory, claims) {
+export async function verifyRuntimeJavascriptModules(directory, claims, options) {
     if (!Array.isArray(claims) || claims.length === 0 || claims.length > 32) {
         throw new Error('runtime JavaScript module claims must contain between 1 and 32 entries');
     }
@@ -182,7 +188,7 @@ export async function verifyRuntimeJavascriptModules(directory, claims) {
     ))) {
         throw new Error('runtime JavaScript module claims are not unique and UTF-8 sorted');
     }
-    const derived = await deriveRuntimeJavascriptModules(directory);
+    const derived = await deriveRuntimeJavascriptModules(directory, options);
     if (JSON.stringify(claims) !== JSON.stringify(derived)) {
         throw new Error('runtime JavaScript module claims do not match the exact imported module closure');
     }
@@ -190,11 +196,11 @@ export async function verifyRuntimeJavascriptModules(directory, claims) {
 }
 
 async function main() {
-    const [directory, extra] = process.argv.slice(2);
-    if (directory === undefined || extra !== undefined) {
-        throw new Error('usage: node runtime-javascript-modules.mjs BUILD_DIRECTORY');
+    const [directory, flag, extra] = process.argv.slice(2);
+    if (directory === undefined || extra !== undefined || (flag !== undefined && flag !== '--replay-admission')) {
+        throw new Error('usage: node runtime-javascript-modules.mjs BUILD_DIRECTORY [--replay-admission]');
     }
-    console.log(JSON.stringify(await authorRuntimeJavascriptModules(directory)));
+    console.log(JSON.stringify(await authorRuntimeJavascriptModules(directory, { replayAdmission: flag === '--replay-admission' })));
 }
 
 const invokedPath = process.argv[1];

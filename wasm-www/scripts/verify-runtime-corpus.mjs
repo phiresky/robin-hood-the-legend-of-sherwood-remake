@@ -1,3 +1,4 @@
+import { verifyReplayAdmissionWasm } from './verify-replay-admission-wasm.mjs';
 import { brotliDecompressSync } from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { lstat, readFile, readdir } from 'node:fs/promises';
@@ -167,16 +168,19 @@ async function validateManifest(root, manifestPath, files, demoAuthority, additi
     }
 
     const hasBrotli = Object.hasOwn(manifest.files, 'wasmBrotli');
-    exactKeys(manifest.files, ['js', 'jsGzip', 'wasm', 'wasmGzip', ...(hasBrotli ? ['wasmBrotli'] : [])], `${manifestPath} files`);
+    const hasAdmission = Object.hasOwn(manifest.files, 'replayAdmissionWasm');
+    const admissionFields = hasAdmission ? ['replayAdmissionJs', 'replayAdmissionWasm'] : [];
+    exactKeys(manifest.files, ['js', 'jsGzip', 'wasm', 'wasmGzip', ...(hasBrotli ? ['wasmBrotli'] : []), ...admissionFields], `${manifestPath} files`);
     const expectedFiles = {
         js: 'robin.js', jsGzip: 'robin.js.gz', wasm: 'robin_bg.wasm', wasmGzip: 'robin_bg.wasm.gz',
         ...(hasBrotli ? { wasmBrotli: 'robin_bg.wasm.br' } : {}),
+        ...(hasAdmission ? { replayAdmissionJs: 'replay_admission.js', replayAdmissionWasm: 'replay_admission_bg.wasm' } : {}),
     };
     for (const [field, name] of Object.entries(expectedFiles)) {
         exact(manifest.files[field], name, `${manifestPath} ${field} path`);
         if (!files.has(`wasm/${manifest.short}/${name}`)) throw new Error(`${manifestPath} references missing ${name}`);
     }
-    const digestFields = ['wasm', 'wasmGzip', ...(hasBrotli ? ['wasmBrotli'] : [])];
+    const digestFields = ['wasm', 'wasmGzip', ...(hasBrotli ? ['wasmBrotli'] : []), ...admissionFields];
     exactKeys(manifest.sha256, digestFields, `${manifestPath} sha256`);
     for (const field of digestFields) {
         if (!DIGEST.test(manifest.sha256[field])) throw new Error(`${manifestPath} has an invalid ${field} digest`);
@@ -187,9 +191,11 @@ async function validateManifest(root, manifestPath, files, demoAuthority, additi
         const decoded = brotliDecompressSync(await readFile(resolve(root, `wasm/${manifest.short}/robin_bg.wasm.br`)), { maxOutputLength: CLOUDFLARE_ASSET_BYTES_LIMIT });
         exact(digest(decoded), manifest.sha256.wasm, `${manifestPath} Brotli decoded wasm digest`);
     }
+    if (hasAdmission) verifyReplayAdmissionWasm(await readFile(resolve(root, `wasm/${manifest.short}/replay_admission_bg.wasm`)));
     await verifyRuntimeJavascriptModules(
         resolve(root, 'wasm', manifest.short),
         manifest.javascriptModules,
+        { replayAdmission: hasAdmission },
     );
 
     exactKeys(manifest.multiplayerContent, ['demo', 'full', 'schema'], `${manifestPath} multiplayerContent`);
@@ -313,6 +319,7 @@ export async function verifyRuntimeCorpus(directory, {
         throw new Error('wasm/latest.json must exactly equal one versioned manifest');
     }
     if (expectedContract !== undefined) {
+        if (!Object.hasOwn(selected.manifest.files, 'replayAdmissionWasm')) throw new Error('latest current runtime is missing replay admission');
         exact(selected.manifest.netProtocol, expectedContract.netProtocol, 'latest current netProtocol');
         exact(selected.manifest.ticketSchema, expectedContract.ticketSchema, 'latest current ticketSchema');
         exact(

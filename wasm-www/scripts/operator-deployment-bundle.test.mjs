@@ -1,3 +1,4 @@
+import { admissionFixture } from './replay-admission-wasm-fixture.mjs';
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -179,7 +180,11 @@ async function installValidRuntimeForRealVerifier(value) {
         { path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' },
         { path: 'Data/Interface/UI/marker.png', url: 'Data/Interface/UI/marker.png' },
     ], null, 2)}\n`);
-    const javascriptModules = await authorRuntimeJavascriptModules(build);
+    const admissionJs = Buffer.from('export function validate_compact_replay() {}');
+    const admissionWasm = admissionFixture();
+    await writeFile(resolve(build, 'replay_admission.js'), admissionJs);
+    await writeFile(resolve(build, 'replay_admission_bg.wasm'), admissionWasm);
+    const javascriptModules = await authorRuntimeJavascriptModules(build, { replayAdmission: true });
     const datadir = JSON.parse(await readFile(
         resolve(value.materializationRoot, 'deployment/datadir-authority.json'),
         'utf8',
@@ -205,9 +210,11 @@ async function installValidRuntimeForRealVerifier(value) {
             jsGzip: 'robin.js.gz',
             wasm: 'robin_bg.wasm',
             wasmGzip: 'robin_bg.wasm.gz',
+            replayAdmissionJs: 'replay_admission.js',
+            replayAdmissionWasm: 'replay_admission_bg.wasm',
         },
         javascriptModules,
-        sha256: { wasm: sha256(wasm), wasmGzip: sha256(wasmGzip) },
+        sha256: { wasm: sha256(wasm), wasmGzip: sha256(wasmGzip), replayAdmissionJs: sha256(admissionJs), replayAdmissionWasm: sha256(admissionWasm) },
     }, null, 2)}\n`;
     await writeFile(resolve(build, 'manifest.json'), manifest);
     await writeFile(resolve(addition, 'wasm/latest.json'), manifest);

@@ -1,3 +1,4 @@
+import { admissionFixture } from './replay-admission-wasm-fixture.mjs';
 import assert from 'node:assert/strict';
 import { brotliCompressSync } from 'node:zlib';
 import { writeBrotliWasm } from './compress-runtime-wasm.mjs';
@@ -214,7 +215,8 @@ test('runtime is wasm-only and requires the exact external authority plus deploy
         rm(root, { recursive: true, force: true }),
     ]));
 
-    assert.equal((await verifyRuntimeCorpus(addition, { addition: true, expectedContract: contract })).assetCount, 10);
+    await assert.rejects(verifyRuntimeCorpus(addition, { addition: true, expectedContract: contract }), /missing replay admission/);
+    assert.equal((await verifyRuntimeCorpus(addition, { addition: true })).assetCount, 10);
     const assembled = await assembleRuntimeCorpus({
         existing: null,
         addition,
@@ -387,4 +389,28 @@ test('optional Brotli sidecars are packaged, digest-bound and decode to the decl
     await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /wasmBrotli digest/u);
     await rewriteRuntimeManifest(root, manifest => { manifest.sha256.wasmBrotli = sha(wrong); });
     await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /Brotli decoded wasm digest/u);
+});
+
+test('current runtime admission is independently hashed, memory-capped and included in its JS closure', async t => {
+    const root = await runtimeAddition();
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const build = resolve(root, 'wasm', short);
+    const js = Buffer.from('export default async function init() {}\nexport function validate_compact_replay() {}\n');
+    const wasm = admissionFixture();
+    await writeFile(resolve(build, 'replay_admission.js'), js);
+    await writeFile(resolve(build, 'replay_admission_bg.wasm'), wasm);
+    const claims = await authorRuntimeJavascriptModules(build, { replayAdmission: true });
+    await rewriteRuntimeManifest(root, manifest => {
+        manifest.files.replayAdmissionJs = 'replay_admission.js';
+        manifest.files.replayAdmissionWasm = 'replay_admission_bg.wasm';
+        manifest.sha256.replayAdmissionJs = sha(js);
+        manifest.sha256.replayAdmissionWasm = sha(wasm);
+        manifest.javascriptModules = claims;
+    });
+    await verifyRuntimeCorpus(root, { addition: true, expectedContract: contract });
+    const unbounded = admissionFixture({ max: null });
+    await writeFile(resolve(build, 'replay_admission_bg.wasm'), unbounded);
+    await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /replayAdmissionWasm digest/);
+    await rewriteRuntimeManifest(root, manifest => { manifest.sha256.replayAdmissionWasm = sha(unbounded); });
+    await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /memory capped/);
 });
