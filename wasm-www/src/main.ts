@@ -3,7 +3,7 @@ import { fetchWithProgress, fetchJson, fetchPrecompressedWasm } from './boot-tra
 import { withAbort } from './cancellation.js';
 import { installCanvasBackingStore } from './canvas-lifecycle.js';
 import { preloadRuntimeAssets } from './asset-preload.js';
-import { bootGame, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
+import { bootGame, loadRuntimeInParallel, type BuildSelection, type BrowserJoinContext, type RobinWasmModule } from './boot-lifecycle.js';
 import { appendLogLine } from './log.js';
 import {
     authenticateBrowserJoinTicket,
@@ -52,23 +52,22 @@ const bpRoot = document.getElementById('boot-progress');
 const bpFill = document.getElementById('bp-fill');
 const bpLabel = document.getElementById('bp-label');
 const bpDetail = document.getElementById('bp-detail');
+const bootPhaseProgress = new Map<BootPhase, number>();
 
 function bootProgress(phase: BootPhase, label: string, frac: number, detail = ''): void {
     if (bpFill === null || bpLabel === null || bpDetail === null) {
         return;
     }
-    let base = 0;
-    let width = 0;
+    // Downloads overlap, so a later phase must not imply earlier ones finished.
+    const clamped = Math.min(Math.max(frac, 0), 1);
+    bootPhaseProgress.set(phase, Math.max(bootPhaseProgress.get(phase) ?? 0, clamped));
+    let completed = 0;
     let total = 0;
     for (const [name, weight] of BOOT_PHASES) {
-        if (name === phase) {
-            base = total;
-            width = weight;
-        }
+        completed += weight * (bootPhaseProgress.get(name) ?? 0);
         total += weight;
     }
-    const clamped = Math.min(Math.max(frac, 0), 1);
-    bpFill.style.width = `${(((base + width * clamped) / total) * 100).toFixed(1)}%`;
+    bpFill.style.width = `${((completed / total) * 100).toFixed(1)}%`;
     bpLabel.textContent = label;
     bpDetail.textContent = detail;
 }
@@ -375,8 +374,6 @@ async function loadWasmModule(
     // Worker re-imports the glue by that same URL; a blob: module would
     // break both. Static Assets serves JavaScript with ordinary compression,
     // so nothing is lost by skipping the precompressed `.gz` sibling.
-    const wasm = await withAbort(signal, () => import(/* @vite-ignore */ jsUrl)) as RobinWasmModule;
-    bootProgress('engine-js', 'loading engine…', 1);
 
     const onWasmBytes = (loaded: number, total: number): void => {
         bootProgress(
@@ -391,13 +388,21 @@ async function loadWasmModule(
     // module does not cross the network uncompressed. Local development keeps
     // the ordinary URL path. The counted body streams while WebAssembly
     // compiles it, so the byte callback drives the progress bar.
-    const wasmResponse = preferPrecompressed
-        ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache, onWasmBytes, signal)
-        : undefined;
-    await wasm.default({
-        module_or_path: wasmResponse
-            ?? await fetchWithProgress(wasmUrl, cache, 'application/wasm', onWasmBytes, signal),
-    });
+    const wasm = await loadRuntimeInParallel(
+        async loadingSignal => {
+            const module = await withAbort(loadingSignal, () => import(/* @vite-ignore */ jsUrl)) as RobinWasmModule;
+            loadingSignal.throwIfAborted();
+            bootProgress('engine-js', 'loading engine…', 1);
+            return module;
+        },
+        async loadingSignal => {
+            const response = preferPrecompressed
+                ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache, onWasmBytes, loadingSignal)
+                : undefined;
+            return response ?? await fetchWithProgress(wasmUrl, cache, 'application/wasm', onWasmBytes, loadingSignal);
+        },
+        signal,
+    );
     signal.throwIfAborted();
     bootProgress('engine-start', 'engine ready', 1);
     return wasm;
