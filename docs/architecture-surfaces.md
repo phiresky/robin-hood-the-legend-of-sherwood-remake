@@ -31,4 +31,15 @@ with the renderer; renderer teardown releases abandoned GPU resources.
 Validation: focused mission ownership tests and the named Vulkan GPU contract
 gate cover sparse/repeated retirement, replacement, duplicate ownership, screen
 aliases, cross-renderer same-number IDs, diagnostic decoding, and queued draws.
-Execution results will be recorded after the builds finish.
+Results on source `8147ffa73`:
+
+- `cargo test --locked -p robin_rs --lib mission_render_resources`: 7 passed.
+- `cargo test --locked -p robin_rs --lib surface_diagnostics_never_restore_renderer_authority`: 1 passed.
+- `bash scripts/check-quality.sh gpu`: 1 Vulkan multipass/ownership contract
+  passed in 2.38 seconds; isolated runtime directory
+  `/tmp/architecture-surfaces-gpu.kD9AbL`.
+- `cargo fmt --all` and `git diff --check`: passed.
+
+Build/test commands used `CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2`; initial cold
+test compilation took 20m46s. Existing unrelated compiler warnings were retained.
+The integration coordinator owns the final combined executable build and tests.
