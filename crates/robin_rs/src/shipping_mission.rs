@@ -221,6 +221,38 @@ where
     // Deliberately after the loaded-mission early return above — a restart
     // of the same mission keeps its (possibly still-filling) cells.
     let install_epoch = robin_assets::late_sprites::begin_epoch();
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    let experimental_tail_files = {
+        let window = web_sys::window().context("sprite residency requires a browser window")?;
+        let query = web_sys::UrlSearchParams::new_with_str(
+            &window
+                .location()
+                .search()
+                .map_err(|e| anyhow!("read residency query: {e:?}"))?,
+        )
+        .map_err(|e| anyhow!("parse residency query: {e:?}"))?;
+        let requested = match query.get("sprite-residency").as_deref() {
+            None | Some("eager") => false,
+            Some("first-frame") => true,
+            Some(value) => return Err(anyhow!("unknown sprite-residency policy {value:?}")),
+        };
+        let tail = if requested && robin_assets::wasm_threads::pool_threads() > 0 {
+            separate_experimental_tail_files(&mut files)
+        } else {
+            Vec::new()
+        };
+        if !tail.is_empty() {
+            robin_assets::late_sprites::set_experimental(install_epoch, true);
+            robin_assets::late_sprites::begin_download_tail(install_epoch);
+            tracing::info!(
+                mission,
+                initial_files = files.len(),
+                tail_files = tail.len(),
+                "experimental sprite residency enabled"
+            );
+        }
+        tail
+    };
     #[cfg(not(all(target_arch = "wasm32", feature = "wasm-threads")))]
     let _ = install_epoch;
     // Only the browser/audio closure mutates its captured pause guard.
@@ -286,6 +318,16 @@ where
         &mut downloads_finished,
     )
     .await?;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if !experimental_tail_files.is_empty() {
+        for (key, bytes) in &merged.raw {
+            if key.starts_with("__startup_opacity/") {
+                let batch = robin_assets::sprite_residency::decode(bytes)
+                    .with_context(|| format!("decode resident opacity {key}"))?;
+                robin_assets::late_sprites::install_opacity(install_epoch, batch)?;
+            }
+        }
+    }
     let install_start = web_time::Instant::now();
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
@@ -312,6 +354,16 @@ where
     let payload = datadir
         .loaded_mission(mission)
         .ok_or_else(|| anyhow!("shipping mission {mission} disappeared after installation"))?;
+    #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+    if !experimental_tail_files.is_empty() {
+        spawn_experimental_sprite_downloads(
+            Arc::clone(datadir),
+            mission.to_owned(),
+            install_epoch,
+            Arc::clone(&payload),
+            experimental_tail_files,
+        );
+    }
     tracing::info!(
         mission,
         files = files.len(),
@@ -331,6 +383,165 @@ where
         .context("start active mission browser audio warmup")?;
     }
     Ok(())
+}
+
+/// The opt-in experiment recognizes only converter-authored tails. Ordinary
+/// and unknown dependencies stay eager. All metadata remains in the head.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn separate_experimental_tail_files(files: &mut Vec<String>) -> Vec<String> {
+    let mut tails = Vec::new();
+    files.retain(|file| {
+        if file.starts_with("rhs-tail/") {
+            tails.push(file.clone());
+            false
+        } else {
+            true
+        }
+    });
+    tails
+}
+
+/// Experimental tail files may contain standalone pixels only. A format or
+/// converter mistake must fail before publishing a partial generation.
+#[cfg(any(test, all(target_arch = "wasm32", feature = "wasm-threads")))]
+fn experimental_tail_chunks(
+    mut part: ShippingMission,
+    bank: &robin_assets::shipping_datadir::ShippingSpriteBank,
+) -> Result<Vec<robin_assets::shipping_datadir::SpriteVqChunk>> {
+    anyhow::ensure!(
+        part.levels.is_empty()
+            && part.scripts.is_empty()
+            && part.rhs_files.is_empty()
+            && part.raw.is_empty()
+            && part.audio_durations_ms.is_empty(),
+        "sprite tail contains eager metadata"
+    );
+    let tail = part.sprite_bank.take().context("sprite tail has no bank")?;
+    anyhow::ensure!(
+        tail.signature == bank.signature && tail.sprite_count == bank.sprite_count,
+        "sprite tail bank generation mismatch"
+    );
+    anyhow::ensure!(
+        tail.sprites.is_empty() && tail.dictionaries.is_empty() && tail.rle_jxl_chunks.is_empty(),
+        "sprite tail contains eager bank data"
+    );
+    let mut ids = BTreeSet::new();
+    for chunk in &tail.vq_chunks {
+        anyhow::ensure!(
+            chunk.base_rhs.is_none()
+                && chunk.base2_rhs.is_empty()
+                && chunk.base_ids.iter().all(Option::is_none)
+                && chunk.base2_ids.iter().all(Option::is_none),
+            "experimental tail must not have cross-chunk dependencies"
+        );
+        for id in &chunk.sprite_ids {
+            anyhow::ensure!(ids.insert(*id), "sprite tail repeats sprite {id}");
+            let index = bank
+                .sprites
+                .binary_search_by_key(id, |(id, _)| *id)
+                .map_err(|_| anyhow!("sprite tail references missing head row {id}"))?;
+            anyhow::ensure!(
+                bank.sprites[index].1.packed_data.is_empty(),
+                "sprite tail overwrites resident sprite {id}"
+            );
+        }
+    }
+    Ok(tail.vq_chunks)
+}
+
+/// Fetch and decode after activation. Every missing selected frame has an
+/// explicit host await; replay/input opacity is already resident. Errors poison
+/// the epoch and propagate at that await, never produce empty render sprites.
+#[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+fn spawn_experimental_sprite_downloads(
+    datadir: Arc<ShippingDatadir>,
+    mission: String,
+    epoch: u64,
+    payload: Arc<ShippingMission>,
+    files: Vec<String>,
+) {
+    use futures::TryStreamExt as _;
+    use robin_assets::{late_sprites, shipping_datadir::VqDecodeScheduler, wasm_threads};
+    wasm_bindgen_futures::spawn_local(async move {
+        let started = web_time::Instant::now();
+        let result: Result<()> = async {
+            let bank = payload
+                .sprite_bank
+                .as_ref()
+                .context("experimental mission has no sprite bank")?;
+            let datadir = &datadir;
+            let payload = &payload;
+            // TODO: prioritize by replay pose lookahead once first-presentation
+            // traces establish which action chunks are actually demanded.
+            let mut downloads = futures::stream::iter(files.into_iter().map(|file| async move {
+                anyhow::ensure!(
+                    late_sprites::experimental_epoch() == Some(epoch),
+                    "sprite tail generation superseded"
+                );
+                let compressed = fetch(datadir, &file)
+                    .await
+                    .with_context(|| format!("fetch experimental sprite tail {file}"))?;
+                let part =
+                    wasm_threads::run_on_pool(move || decode_mission_compressed(&compressed))
+                        .await?
+                        .with_context(|| format!("decode experimental sprite tail {file}"))?;
+                let mut pending = experimental_tail_chunks(part, bank)
+                    .with_context(|| format!("validate experimental sprite tail {file}"))?;
+                late_sprites::extend_tail_work(
+                    epoch,
+                    pending.len(),
+                    pending.iter().map(|chunk| chunk.blob.len() as u64).sum(),
+                );
+                let mut scheduler = VqDecodeScheduler::default();
+                loop {
+                    anyhow::ensure!(
+                        late_sprites::experimental_epoch() == Some(epoch),
+                        "sprite tail generation superseded"
+                    );
+                    scheduler.dispatch_ready_bounded(
+                        bank,
+                        &mut pending,
+                        &payload.rhs_files,
+                        true,
+                        2,
+                    )?;
+                    let Some((chunk, grids)) = scheduler.next_decoded().await? else {
+                        anyhow::ensure!(
+                            pending.is_empty(),
+                            "sprite tail dependencies cannot progress"
+                        );
+                        break;
+                    };
+                    let grids: Vec<_> = grids
+                        .into_iter()
+                        .map(|(id, grid)| (id, Arc::new(grid)))
+                        .collect();
+                    anyhow::ensure!(
+                        late_sprites::publish_chunk(epoch, chunk.blob.len() as u64, &grids),
+                        "sprite tail generation superseded"
+                    );
+                    crate::window::yield_to_runtime().await;
+                }
+                tracing::debug!(file, "experimental sprite tail ready");
+                Ok::<_, anyhow::Error>(())
+            }))
+            .buffer_unordered(MISSION_FETCH_CONCURRENCY);
+            while downloads.try_next().await?.is_some() {}
+            late_sprites::finish_download_tail(epoch);
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            late_sprites::fail_tail_with_error(epoch, format!("{error:#}"));
+            tracing::error!(mission, "experimental sprite residency failed: {error:#}");
+        } else {
+            tracing::info!(
+                mission,
+                elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+                "experimental sprite tail downloads complete"
+            );
+        }
+    });
 }
 
 /// Deferred sprite-chunk work handed to [`spawn_deferred_sprite_tail`] after
@@ -846,7 +1057,10 @@ where
     // A decoded saved world can contain any entity — reinforcements that
     // already spawned included — so "present at mission start" cannot be
     // derived from the authored level: keep every chunk activation-blocking.
-    let mut deferral = if pooled && !has_decoded_saved_world {
+    let mut deferral = if pooled
+        && !has_decoded_saved_world
+        && robin_assets::late_sprites::experimental_epoch().is_none()
+    {
         Some(SpriteDeferral::new(datadir, mission, campaign, profiles)?)
     } else {
         None
@@ -1760,6 +1974,87 @@ mod tests {
             files, unchanged_set,
             "scheduling must never omit save/audio dependencies"
         );
+    }
+
+    #[test]
+    fn experimental_partition_preserves_every_non_tail_dependency() {
+        let mut files = vec![
+            "rhs/a".into(),
+            "rhs-tail/rhs/a".into(),
+            "rhs-tailish/a".into(),
+            "missions/main".into(),
+            "rhs-tail/rhs/b".into(),
+        ];
+        assert_eq!(
+            super::separate_experimental_tail_files(&mut files),
+            ["rhs-tail/rhs/a", "rhs-tail/rhs/b"]
+        );
+        assert_eq!(files, ["rhs/a", "rhs-tailish/a", "missions/main"]);
+    }
+
+    #[test]
+    fn experimental_tail_rejects_metadata_and_wrong_bank_generation() {
+        use robin_assets::shipping_datadir::ShippingSpriteBank;
+        let bank = ShippingSpriteBank {
+            signature: 7,
+            sprite_count: 10,
+            dictionaries: vec![],
+            sprites: vec![],
+            vq_chunks: vec![],
+            rle_jxl_chunks: vec![],
+        };
+        let tail = || {
+            let mut part = ShippingMission::default();
+            part.sprite_bank = Some(bank.clone());
+            part
+        };
+        assert!(
+            super::experimental_tail_chunks(tail(), &bank)
+                .unwrap()
+                .is_empty()
+        );
+        let mut metadata = tail();
+        metadata.raw.insert("simulation-script".into(), vec![1]);
+        assert!(super::experimental_tail_chunks(metadata, &bank).is_err());
+        let mut mismatch = tail();
+        mismatch.sprite_bank.as_mut().unwrap().signature += 1;
+        assert!(super::experimental_tail_chunks(mismatch, &bank).is_err());
+        let mut missing_row = tail();
+        missing_row
+            .sprite_bank
+            .as_mut()
+            .unwrap()
+            .vq_chunks
+            .push(SpriteVqChunk {
+                rhs: "character".into(),
+                base_rhs: None,
+                base2_rhs: String::new(),
+                alphabet: 2,
+                sprite_ids: vec![3],
+                base_ids: vec![None],
+                base2_ids: vec![],
+                self_refs: false,
+                blob: vec![],
+            });
+        assert!(super::experimental_tail_chunks(missing_row, &bank).is_err());
+        let mut based = tail();
+        based
+            .sprite_bank
+            .as_mut()
+            .unwrap()
+            .vq_chunks
+            .push(SpriteVqChunk {
+                rhs: "character".into(),
+                base_rhs: Some("hub".into()),
+                base2_rhs: String::new(),
+                alphabet: 2,
+                sprite_ids: vec![],
+                base_ids: vec![],
+                base2_ids: vec![],
+                self_refs: false,
+                blob: vec![],
+            });
+        assert!(super::experimental_tail_chunks(based, &bank).is_err());
     }
 
     #[test]
