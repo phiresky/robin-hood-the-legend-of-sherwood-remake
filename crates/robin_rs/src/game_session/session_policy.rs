@@ -297,6 +297,7 @@ impl SessionModalScheduler {
         Some(PlayerCommand::ModalDismiss { kind, result })
     }
 
+    #[cfg(test)]
     pub(super) fn is_active(&self) -> bool {
         self.active.is_some()
     }

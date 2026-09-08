@@ -1110,6 +1110,7 @@ pub fn start_server_with_content(
 
 /// [`start_server`] with an explicit identity key.  Tests use this to
 /// avoid touching the per-install on-disk identity.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub fn start_server_with_key(
     key: SecretKey,
@@ -3646,9 +3647,10 @@ pub(crate) fn connect_client_with_keys(
     )
 }
 
-/// Explicit-key client entry used by transport tests and isolated tooling.
+/// Explicit-key client entry used by transport tests.
 /// The injected key owns both the test transport and its ranked identity;
 /// production still derives only the durable ranked key from install state.
+#[cfg(test)]
 pub fn connect_client_with_key(
     key: SecretKey,
     addr: impl AsRef<str>,
@@ -4145,18 +4147,6 @@ async fn resolve_reconnect_prelude(
 
 fn publish_speech_timing_authority(shared: &Mutex<Option<Option<String>>>, locale: Option<String>) {
     *shared.lock() = Some(locale);
-}
-
-fn validate_reconnect_session_id(
-    expected: MultiplayerSessionId,
-    actual: MultiplayerSessionId,
-) -> Result<(), String> {
-    if actual != expected {
-        return Err(format!(
-            "reconnect joined a different multiplayer session {actual:?}; expected {expected:?}"
-        ));
-    }
-    Ok(())
 }
 
 /// Drive one connection until it ends, then auto-reconnect with
@@ -5519,7 +5509,7 @@ mod tests {
         connect_client_with_keys, discard_session_outbound, handle_client_wire_msg,
         publish_speech_timing_authority, retain_transition_peer_for_reconnect,
         start_server_with_key, take_committed_snapshot_transition, validate_peer_command_authority,
-        validate_reconnect_session_id, validate_reconnect_state, validate_server_gameplay_outbound,
+        validate_reconnect_state, validate_server_gameplay_outbound,
         validate_server_gameplay_wire_msg,
     };
     use crate::leaderboard_ranked_session::{
@@ -6942,15 +6932,6 @@ mod tests {
     #[test]
     fn reconnect_rejects_wrong_session_mission_config_or_speech_locale() {
         let expected = robin_engine::engine::SimConfig::default();
-        let session_id = robin_engine::multiplayer::MultiplayerSessionId([21; 32]);
-        assert!(validate_reconnect_session_id(session_id, session_id).is_ok());
-        assert!(
-            validate_reconnect_session_id(
-                session_id,
-                robin_engine::multiplayer::MultiplayerSessionId([22; 32]),
-            )
-            .is_err()
-        );
         assert!(
             validate_reconnect_state(
                 PlayerId(1),

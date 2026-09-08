@@ -978,17 +978,6 @@ impl ApplicationContext {
         let _ = watcher.poll(now_unix_ms);
     }
 
-    pub(crate) fn take_leaderboard_receipt_notice(
-        &self,
-    ) -> Result<Option<crate::leaderboard_receipt_watcher::ReceiptWatcherNotice>, String> {
-        Ok(self
-            .required_services()?
-            .leaderboard_receipts
-            .lock()
-            .map_err(|_| "ApplicationContext leaderboard-receipt lock poisoned".to_owned())?
-            .take_notice())
-    }
-
     fn required_services(&self) -> Result<&ApplicationServices, String> {
         self.services.as_deref().ok_or_else(|| {
             "ApplicationContext services requested before rust initialization".to_string()
