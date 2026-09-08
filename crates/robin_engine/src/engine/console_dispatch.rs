@@ -1359,10 +1359,11 @@ mod tests {
 
     fn soldier(blipped: bool) -> Entity {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                blipped,
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element.blipped = blipped;
                 // Soldiers loaded from a level always carry a concrete
                 // posture (the deserialiser remaps `Undefined` to the
                 // kind-specific default).  Test helpers don't go
@@ -1370,8 +1371,7 @@ mod tests {
                 // it the `posture_after_transition` stamp picks up
                 // `Undefined` and the posture-transition panic
                 // arm fires when the test launches a sequence.
-                posture: Posture::Upright,
-                ..ElementData::default()
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),

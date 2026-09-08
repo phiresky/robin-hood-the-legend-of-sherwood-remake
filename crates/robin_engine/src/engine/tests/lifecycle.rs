@@ -825,10 +825,11 @@ fn constructor_primed_throwables_receive_exactly_one_appended_live_slot_advance(
 fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_retention() {
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ObjectProjectile,
-            active: false,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectProjectile;
+            initial_element.active = false;
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type: crate::element::ObjectType::None,
@@ -849,10 +850,11 @@ fn inactive_unsupported_projectile_mapping_panics_before_owner_slot_retention() 
 fn inactive_unsupported_net_mapping_panics_before_owner_slot_retention() {
     let mut engine = EngineInner::new();
     engine.add_entity(Entity::Net(crate::element::ElementNet {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ObjectNet,
-            active: false,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ObjectNet;
+            initial_element.active = false;
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type: crate::element::ObjectType::None,
@@ -877,10 +879,11 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
 
     fn projectile(object_type: ObjectType, flying: bool) -> Entity {
         Entity::Projectile(ElementProjectile {
-            element: ElementData {
-                kind: ElementKind::ObjectProjectile,
-                active: false,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ObjectProjectile;
+                initial_element.active = false;
+                initial_element
             },
             object: ObjectData {
                 object_type,
@@ -902,10 +905,11 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
     let grounded_coin = engine.add_entity(projectile(ObjectType::Coin, false));
     let flying_coin = engine.add_entity(projectile(ObjectType::Coin, true));
     let grounded_net = engine.add_entity(Entity::Net(ElementNet {
-        element: ElementData {
-            kind: ElementKind::ObjectNet,
-            active: false,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectNet;
+            initial_element.active = false;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Net,
@@ -919,10 +923,11 @@ fn inactive_projectile_virtual_results_are_applied_after_derived_tails() {
         net: Default::default(),
     }));
     let flying_net = engine.add_entity(Entity::Net(ElementNet {
-        element: ElementData {
-            kind: ElementKind::ObjectNet,
-            active: false,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectNet;
+            initial_element.active = false;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Net,
@@ -999,10 +1004,11 @@ fn grounded_arrow_exposes_terminal_active_frame_then_refresh_retires_its_slot() 
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
-        element: ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Arrow,
@@ -1091,10 +1097,11 @@ fn frame_sound_refresh_waits_for_the_post_snapshot_presentation_boundary() {
 
     let mut engine = EngineInner::new();
     let fx_id = engine.add_entity(Entity::Fx(ElementFx {
-        element: ElementData {
-            kind: ElementKind::Fx,
-            sprite,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.sprite = sprite;
+            initial_element
         },
         fx: FxData::default(),
     }));
@@ -1140,10 +1147,11 @@ fn disappearing_arrow_human_hit_still_exposes_terminal_active_frame() {
     let sim = crate::sim_rng::test_context();
     let mut engine = EngineInner::new();
     let arrow = engine.add_entity(Entity::Projectile(ElementProjectile {
-        element: ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Arrow,
@@ -1189,10 +1197,11 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
     use crate::sim_rng::{RngSite, SimulationContext};
 
     fn falling_arrow(position: WorldPoint3D) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(position);
         Entity::Projectile(ElementProjectile {
@@ -1219,10 +1228,11 @@ fn falling_arrow_refresh_follows_fx_merged_display_order() {
     // This rising masking edge classifies only the deeper arrow as behind the
     // FX. The phase-three display-sort merge therefore extracts it
     // before the shallower arrow despite their initial world-Y order.
-    let mut fx_element = ElementData {
-        kind: ElementKind::Fx,
-        active: true,
-        ..Default::default()
+    let mut fx_element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = ElementKind::Fx;
+        initial_element.active = true;
+        initial_element
     };
     fx_element.set_position(WorldPoint3D::new(50.0, 50.0, 1.0));
     let fx = engine.add_entity(Entity::Fx(ElementFx {
@@ -1293,10 +1303,11 @@ fn successful_projectile_human_hit_rewind_settles_and_deletes_trajectory() {
     let mut engine = EngineInner::new();
     let old = crate::coordinates::WorldPoint3D::new(12.0, 8.0, 4.0);
     let projectile = engine.add_entity(Entity::Projectile(ElementProjectile {
-        element: ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Arrow,
@@ -1343,10 +1354,11 @@ fn apple_and_stone_impact_selects_burst_row_then_derived_tail_owns_removal() {
 
     for object_type in [ObjectType::Apple, ObjectType::Stone] {
         let mut engine = EngineInner::new();
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[Animation::ObjectFlying as usize] = 0;
@@ -3847,10 +3859,11 @@ fn heal_done_revalidates_before_effect_and_ammo_consumption() {
                 target
             }
             TargetKind::Fx(distance) => {
-                let mut element = ElementData {
-                    kind: ElementKind::Target,
-                    active: true,
-                    ..Default::default()
+                let mut element = {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::Target;
+                    initial_element.active = true;
+                    initial_element
                 };
                 element.set_position_map(MapPoint::new(distance, 0.0));
                 engine.add_entity(Entity::Fx(ElementFx {
@@ -7822,10 +7835,11 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
     let mut engine = EngineInner::new();
 
     let pc_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            posture: crate::element::Posture::Tree,
-            ..Default::default()
+        element: {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Tree);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         },
         actor: crate::element::ActorData {
             action_state: crate::element::ActionState::Waiting,
@@ -7853,7 +7867,7 @@ fn enter_helping_climb_from_tree_retains_exit_prefix_until_animation_done() {
     assert_eq!(result, GameCode::LevelInProgress);
     let pc = engine.get_entity(pc_id).expect("pc still exists");
     assert_eq!(
-        pc.element_data().posture,
+        pc.element_data().posture(),
         crate::element::Posture::Tree,
         "Translate must not apply the DONE-side posture early"
     );
@@ -7901,11 +7915,12 @@ fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
     let mut engine = EngineInner::new();
 
     let pc_id = engine.add_entity(crate::element::Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            active: false,
-            posture: crate::element::Posture::Upright,
-            ..Default::default()
+        element: {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element.active = false;
+            initial_element
         },
         actor: crate::element::ActorData {
             action_state: crate::element::ActionState::Waiting,
@@ -7942,7 +7957,7 @@ fn enter_helping_climb_on_inactive_pc_terminates_at_init_validity() {
 
     let pc = engine.get_entity(pc_id).expect("pc still exists");
     assert_eq!(
-        pc.element_data().posture,
+        pc.element_data().posture(),
         crate::element::Posture::Upright,
         "terminated enter-helping-climb must not change posture"
     );

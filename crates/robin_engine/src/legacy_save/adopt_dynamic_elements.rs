@@ -409,10 +409,11 @@ fn construct_entity(
                 object_type,
             },
         )?;
-    let element = ElementData {
-        kind,
-        sprite,
-        ..Default::default()
+    let element = {
+        let mut initial_element = ElementData::default();
+        initial_element.kind = kind;
+        initial_element.sprite = sprite;
+        initial_element
     };
     let object = ObjectData {
         associated_action: object_type.to_action(),
@@ -506,10 +507,11 @@ fn construct_pc(
     let (has_lockpick, has_climb, has_jump) = PcData::movement_auth_from_profile(profile);
 
     Ok(Entity::Pc(ActorPc {
-        element: ElementData {
-            kind: ElementKind::ActorPc,
-            sprite,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.sprite = sprite;
+            initial_element
         },
         actor: ActorData::default(),
         human: HumanData {

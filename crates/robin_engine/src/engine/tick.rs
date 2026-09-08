@@ -70,11 +70,11 @@ mod restored_pass_door_completion_tests {
 
     fn airborne_pc() -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Flying,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Flying);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::Moving,
@@ -97,7 +97,7 @@ mod restored_pass_door_completion_tests {
         );
 
         let pc = engine.get_entity(owner).unwrap();
-        assert_eq!(pc.element_data().posture, Posture::Crouched);
+        assert_eq!(pc.element_data().posture(), Posture::Crouched);
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Waiting);
         assert!(pc.actor_data().unwrap().active_door_pass.is_none());
     }
@@ -122,7 +122,11 @@ mod restored_pass_door_completion_tests {
             );
 
             let actor = engine.get_entity(owner).unwrap();
-            assert_eq!(actor.element_data().posture, Posture::Upright, "{action:?}");
+            assert_eq!(
+                actor.element_data().posture(),
+                Posture::Upright,
+                "{action:?}"
+            );
             assert_eq!(
                 actor.actor_data().unwrap().action_state,
                 ActionState::Waiting,
@@ -143,7 +147,7 @@ mod restored_pass_door_completion_tests {
         );
 
         let pc = engine.get_entity(owner).unwrap();
-        assert_eq!(pc.element_data().posture, Posture::Flying);
+        assert_eq!(pc.element_data().posture(), Posture::Flying);
         assert_eq!(pc.actor_data().unwrap().action_state, ActionState::Moving);
     }
 }
@@ -165,10 +169,11 @@ mod frozen_actor_entry_condolation_tests {
         let mut npc = NpcData::default();
         npc.ai_brain = crate::element::AiBrain::Enemy(Box::default());
         let owner = engine.add_entity(Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::WaitingSword,
@@ -315,10 +320,11 @@ mod mobile_owner_boundary_tests {
     use crate::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
     fn inactive_civilian(position: MapPoint) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorCivilian,
-            active: false,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorCivilian;
+            initial_element.active = false;
+            initial_element
         };
         element.set_position_map(position);
         Entity::Civilian(crate::element::ActorCivilian {
@@ -331,10 +337,11 @@ mod mobile_owner_boundary_tests {
     }
 
     fn mobile_fx(index: u16, position: MapPoint) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::Fx,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(position);
         Entity::Fx(ElementFx {
@@ -420,7 +427,10 @@ mod mobile_owner_boundary_tests {
             .mobile_elements
             .push(mobile(vec![first, second]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -481,7 +491,10 @@ mod mobile_owner_boundary_tests {
         }
         engine.world.mobile_elements.push(mobile(vec![child]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let mut observations = Vec::new();
@@ -512,9 +525,10 @@ mod mobile_owner_boundary_tests {
         let mut engine = EngineInner::new();
         engine.set_actors_frozen(true);
         let hole = engine.add_entity(Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element
             },
             fx: FxData::default(),
         }));
@@ -524,7 +538,10 @@ mod mobile_owner_boundary_tests {
         engine.world.mobile_elements.push(mobile(vec![first]));
         engine.world.mobile_elements.push(mobile(vec![second]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let visited = std::cell::RefCell::new(Vec::new());
@@ -537,9 +554,10 @@ mod mobile_owner_boundary_tests {
                 engine.tick_mobile_child_owner_boundary(&sim_context, &assets, owner);
                 if owner == first {
                     let tail = engine.add_entity(Entity::Fx(ElementFx {
-                        element: ElementData {
-                            kind: ElementKind::Fx,
-                            ..Default::default()
+                        element: {
+                            let mut initial_element = ElementData::default();
+                            initial_element.kind = ElementKind::Fx;
+                            initial_element
                         },
                         fx: FxData::default(),
                     }));
@@ -561,16 +579,20 @@ mod mobile_owner_boundary_tests {
         let mut engine = EngineInner::new();
         let child = engine.add_entity(mobile_fx(0, MapPoint::new(0.0, 0.0)));
         let static_fx = engine.add_entity(Entity::Fx(ElementFx {
-            element: ElementData {
-                kind: ElementKind::Fx,
-                active: false,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Fx;
+                initial_element.active = false;
+                initial_element
             },
             fx: FxData::default(),
         }));
         engine.world.mobile_elements.push(mobile(vec![child]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -633,24 +655,27 @@ mod mobile_owner_boundary_tests {
             owner.current_waypoint = 1;
             engine.world.mobile_elements.push(owner);
             let assets = LevelAssets {
-                hiking_paths: std::sync::Arc::new(vec![RawHikingPath {
-                    waypoints: vec![
-                        RawWaypoint {
-                            x: 0,
-                            y: 0,
-                            sector: 0,
-                            level: 0,
-                            command: WaypointCommand::None,
-                        },
-                        RawWaypoint {
-                            x: 2,
-                            y: 0,
-                            sector: 0,
-                            level: 0,
-                            command: speed_macro(3.0),
-                        },
-                    ],
-                }]),
+                navigation: crate::engine::LevelNavigationAssets {
+                    hiking_paths: std::sync::Arc::new(vec![RawHikingPath {
+                        waypoints: vec![
+                            RawWaypoint {
+                                x: 0,
+                                y: 0,
+                                sector: 0,
+                                level: 0,
+                                command: WaypointCommand::None,
+                            },
+                            RawWaypoint {
+                                x: 2,
+                                y: 0,
+                                sector: 0,
+                                level: 0,
+                                command: speed_macro(3.0),
+                            },
+                        ],
+                    }]),
+                    ..Default::default()
+                },
                 ..Default::default()
             };
 
@@ -707,7 +732,10 @@ mod mobile_owner_boundary_tests {
         owner.stopped = true;
         engine.world.mobile_elements.push(owner);
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
         let _ = super::super::movement::take_last_mobile_crossing_increment();
@@ -758,7 +786,10 @@ mod mobile_owner_boundary_tests {
             .mobile_elements
             .push(mobile(vec![first, second]));
         let assets = LevelAssets {
-            hiking_paths: std::sync::Arc::new(vec![path()]),
+            navigation: crate::engine::LevelNavigationAssets {
+                hiking_paths: std::sync::Arc::new(vec![path()]),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -831,12 +862,12 @@ mod generic_actor_line_crossing_tests {
                 0,
             );
         }
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            sprite: dying_sprite(),
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element.sprite = dying_sprite();
+            initial_element
         };
         element.set_position_map(MapPoint::new(130.0, 130.0));
         // Aim horizontally before corpse placement so the relocation's +Y
@@ -941,11 +972,11 @@ mod generic_actor_line_crossing_tests {
 
         let stale = MapVec::new(1.0, 0.0);
         let destination = MapPoint::new(130.0, 134.0);
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Tied,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(130.0, 130.0));
         element.sprite.position_iface.set_map_increment(stale);
@@ -2655,7 +2686,12 @@ impl EngineInner {
                 {
                     continue;
                 }
-                let duration = assets.source_durations.get(&src.id).copied().unwrap_or(0);
+                let duration = assets
+                    .audio
+                    .source_durations
+                    .get(&src.id)
+                    .copied()
+                    .unwrap_or(0);
                 self.feedback
                     .sound_sim
                     .playing_sources
@@ -3072,6 +3108,7 @@ impl EngineInner {
     ) -> Result<(), String> {
         let identifier = (pending.profile_id & 0xFFFF_0000) | u32::from(pending.exclamation_id);
         let group = assets
+            .audio
             .speech_timing_catalog
             .groups
             .get(&identifier)
@@ -3449,7 +3486,7 @@ impl EngineInner {
             // Check if any civilian was killed (not by accident) → mission failure
             let mut killed_civilian = None;
             for (npc_id, civilian) in self.world.entities.civilians() {
-                if civilian.element.posture.is_dead() {
+                if civilian.element.posture().is_dead() {
                     let npc_id: EntityId = npc_id.into();
                     // Check killed_by_accident via the civilian's human data
                     let accident = civilian.human.killed_by_accident;
@@ -4054,7 +4091,7 @@ impl EngineInner {
         // coordinator applies cross-owner consequences.
         self.trace_path_barrier("enter");
         let completed = self.path_schedule_context().process_requests(
-            assets.pathfinder_graph.as_ref(),
+            assets.navigation.pathfinder_graph.as_ref(),
             sim.config().synchronous_pathfinding,
         );
         self.trace_path_barrier("after_schedule");
@@ -4470,6 +4507,7 @@ impl EngineInner {
 
             let path_index = self.world.mobile_elements[mobile_index].path_index;
             let path = assets
+                .navigation
                 .hiking_paths
                 .get(usize::from(path_index))
                 .unwrap_or_else(|| panic!("mobile {mobile_index} lost hiking path {path_index}"));
@@ -6852,7 +6890,7 @@ impl EngineInner {
         }
 
         let posture = match self.world.entities.get(owner) {
-            Some(e) => e.element_data().posture,
+            Some(e) => e.element_data().posture(),
             None => return false,
         };
 
@@ -8039,7 +8077,7 @@ impl crate::titbit::TitbitUpdateQuery for EntityTitbitQuery<'_> {
             return false;
         };
         matches!(
-            entity.element_data().posture,
+            entity.element_data().posture(),
             Posture::Spy | Posture::Cloaked | Posture::Tree | Posture::AnonymousArcher
         )
     }
@@ -8061,11 +8099,11 @@ mod bow_command_body_parity_tests {
 
     fn make_aiming_pc(action_state: ActionState) -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state,
@@ -8103,11 +8141,11 @@ mod bow_command_body_parity_tests {
 
     fn make_bow_soldier(posture: Posture, action_state: ActionState) -> Entity {
         Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(posture);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state,
@@ -8987,7 +9025,7 @@ mod bow_command_body_parity_tests {
         // DONE, so the element stays selected/in-progress and the actor is
         // untouched during dispatch.
         let entity = engine.world.entities.get(owner).unwrap();
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -9058,7 +9096,7 @@ mod bow_command_body_parity_tests {
             .get_mut(owner)
             .unwrap()
             .element_data_mut()
-            .posture = Posture::Spy;
+            .publish_order_posture(Posture::Spy);
         let mut sequence = Sequence::new();
         // Production launches LeaveSpy with the auto-leave helper, which
         // never reaches priority arbitration; preset the priority the way
@@ -9676,11 +9714,11 @@ mod soldier_take_drink_parity_tests {
     use crate::sequence::SequenceElement;
 
     fn make_soldier_at(x: f32, y: f32) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
@@ -9695,11 +9733,11 @@ mod soldier_take_drink_parity_tests {
     }
 
     fn make_pc_at(x: f32, y: f32) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
@@ -9713,10 +9751,11 @@ mod soldier_take_drink_parity_tests {
     }
 
     fn make_projectile_object_at(object_type: ObjectType, x: f32, y: f32) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
@@ -9731,14 +9770,15 @@ mod soldier_take_drink_parity_tests {
     }
 
     fn make_bonus_object_at(object_type: ObjectType, x: f32, y: f32) -> Entity {
-        let mut element = ElementData {
-            kind: if object_type == ObjectType::Ale {
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = if object_type == ObjectType::Ale {
                 ElementKind::ObjectOther
             } else {
                 ElementKind::ObjectBonus
-            },
-            active: true,
-            ..ElementData::default()
+            };
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(WorldPoint3D { x, y, z: 0.0 });
         element.set_position_map(crate::coordinates::MapPoint { x, y });
@@ -9813,7 +9853,8 @@ mod soldier_take_drink_parity_tests {
     #[test]
     fn crouched_pc_take_uses_stamped_crouched_animation() {
         let mut pc = make_pc_at(0.0, 0.0);
-        pc.element_data_mut().posture = Posture::Crouched;
+        pc.element_data_mut()
+            .publish_order_posture(Posture::Crouched);
         let (engine, actor_id) = launch_interaction_and_tick(
             Command::Take,
             pc,
@@ -9918,11 +9959,11 @@ mod drop_ammo_merge_tests {
         campaign.characters.push(desc);
         engine.mission_domain.campaign = campaign;
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         let mut pc_conversion =
             vec![crate::sprite_script::UNMAPPED; crate::sprite_script::NONANIMATION_END];

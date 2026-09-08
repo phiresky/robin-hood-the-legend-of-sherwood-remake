@@ -158,12 +158,13 @@ impl InteractiveMission {
             // Rendering cannot mutate simulation; the optional reveal command
             // above completes at its original explicit diagnostic boundary.
             let MissionPresentationPhase {
-                host,
+                host: mut presentation_host,
                 game,
                 engine,
                 assets,
                 dev,
             } = world.presentation_phase();
+            let host = &mut presentation_host;
 
             // A full-map export is not an interactive screenshot. Keep the
             // cursor out of its top-left map pixel. Viewport captures retain
@@ -279,22 +280,54 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
 
         let phase_start = super::frame_perf::start(profiling);
+        runtime.begin_presentation();
+        runtime.trace(FrameContractStage::Presentation);
+        let warming_up_map_export = args.mission_start_map_output.is_some()
+            && runtime.frame_number() <= args.mission_start_map_frame;
+        let should_draw = !world.view().host.frontend.skip_render
+            && !modal_rendered_this_frame
+            && !warming_up_map_export;
+        if should_draw {
+            // Cursor command production and deferred decal effects belong to
+            // the fixed-tick input/host boundary, not the rendering capability.
+            let MissionInputPhase {
+                host,
+                engine,
+                assets,
+                dev,
+                external_actions,
+                ..
+            } = world.post_tick_input_phase(&mut frame);
+            pre_render_engine_setup(host);
+            update_mouse_and_cursor(
+                engine,
+                host,
+                assets,
+                dev,
+                external_actions,
+                &mut frontend.presentation.renderer,
+                &mut frontend.resources.cursor,
+                &mut frontend.presentation.sprites.cursor_renderer,
+                &frontend.input.threaded,
+                &frontend.presentation.sprites.portrait_cache,
+                shift_held,
+                &mut frontend.hud.last_cursor_id,
+            );
+        }
         let MissionPresentationPhase {
-            host,
+            host: mut presentation_host,
             game,
             engine,
             assets,
             dev,
         } = world.presentation_phase();
+        let host = &mut presentation_host;
         let input = &mut frontend.input;
         let resources = &mut frontend.resources;
         let ui = &mut frontend.ui;
         let hud = &mut frontend.hud;
         let presentation = &mut frontend.presentation;
         let native_refresh_interpolation = &mut frontend.native_refresh_interpolation;
-        runtime.begin_presentation();
-        runtime.trace(FrameContractStage::Presentation);
-
         // ── Render dispatch ──
         // The display-state machine (display_op transitions, scrolling
         // deceleration, zoom interpolation, minimap transition) now runs
@@ -304,33 +337,8 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // File-backed map exports need normal simulation/PostInitialize frames,
         // not intermediate window presentation. Their requested full-map
         // screenshot is rendered once immediately after the target frame.
-        let warming_up_map_export = args.mission_start_map_output.is_some()
-            && runtime.frame_number() <= args.mission_start_map_frame;
-        let draw_result =
-            if host.frontend.skip_render || modal_rendered_this_frame || warming_up_map_export {
-                1
-            } else {
-                0
-            };
-
         let mut fixed_tick_presented = false;
-        if draw_result == 0 {
-            pre_render_engine_setup(host);
-            update_mouse_and_cursor(
-                engine,
-                host,
-                assets,
-                dev,
-                &mut frame.post_external_actions,
-                &mut presentation.renderer,
-                &mut resources.cursor,
-                &mut presentation.sprites.cursor_renderer,
-                &input.threaded,
-                &presentation.sprites.portrait_cache,
-                shift_held,
-                &mut hud.last_cursor_id,
-            );
-
+        if should_draw {
             let mut render_ctx = presentation.render_context(
                 resources,
                 hud,
@@ -380,7 +388,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
 
             let display_snapshot = host.frontend.engine_display.clone();
-            let saved_camera = CameraPresentationPose::capture(host);
+            let saved_camera = CameraPresentationPose::capture(&host.frontend);
             let saved_draw_order = host.frontend.draw_order.clone();
             let interpolation_enabled = host.frontend.native_refresh_presentation
                 && !args.fast_forward
@@ -395,10 +403,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let sampled_camera = native_refresh_interpolation
                 .sample(crate::window::process_uptime_ms())
                 .unwrap_or(saved_camera);
-            sampled_camera.apply(host);
+            sampled_camera.apply(&mut host.frontend);
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
             host.frontend.draw_order = render_engine.compute_display_order();
-            sync_render_camera(host);
+            sync_render_camera(&mut host.frontend);
             render_frame(
                 render_engine,
                 &display_snapshot,
@@ -420,10 +428,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
             render_ctx.present();
             fixed_tick_presented = true;
-            saved_camera.apply(host);
+            saved_camera.apply(&mut host.frontend);
             host.frontend.draw_order = saved_draw_order;
-            sync_render_camera(host);
-            post_render_engine_cleanup(&mut frame, host);
+            sync_render_camera(&mut host.frontend);
+            post_render_engine_cleanup(&mut frame, host.local_seat);
         } else {
             native_refresh_interpolation.clear();
         }
@@ -467,13 +475,17 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
 
         let phase_start = super::frame_perf::start(profiling);
+        let view = world.view();
+        let (target, presentation_deadline_ms) =
+            plan_interactive_pacing(runtime, view.host, &view.manager.engine, &frame, args);
         let MissionPresentationPhase {
-            host,
+            host: mut presentation_host,
             game,
             engine,
             assets,
             dev,
         } = world.presentation_phase();
+        let host = &mut presentation_host;
         let display_snapshot = host.frontend.engine_display.clone();
         let render_view_state = RenderViewState {
             shift_held,
@@ -484,18 +496,18 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                     engine.campaign(),
                 ),
         };
-        pace_interactive_frame(runtime, host, engine, &frame, args, |host, now_ms| {
+        pace_interactive_frame(host, target, presentation_deadline_ms, |host, now_ms| {
             let Some(sampled_camera) = native_refresh_interpolation.sample(now_ms) else {
                 return presentation.renderer.present_cached();
             };
             let render_engine = native_refresh_interpolation
                 .engine()
                 .expect("sampled native-refresh interpolation has a working engine");
-            let saved_camera = CameraPresentationPose::capture(host);
+            let saved_camera = CameraPresentationPose::capture(&host.frontend);
             let saved_draw_order = host.frontend.draw_order.clone();
-            sampled_camera.apply(host);
+            sampled_camera.apply(&mut host.frontend);
             host.frontend.draw_order = render_engine.compute_display_order();
-            sync_render_camera(host);
+            sync_render_camera(&mut host.frontend);
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
             render_frame(
@@ -508,9 +520,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 RenderCadence::DisplayRefresh,
             );
             render_ctx.present();
-            saved_camera.apply(host);
+            saved_camera.apply(&mut host.frontend);
             host.frontend.draw_order = saved_draw_order;
-            sync_render_camera(host);
+            sync_render_camera(&mut host.frontend);
             true
         })
         .await;
@@ -522,10 +534,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 presentation.sprites.cursor_renderer.advance_animation();
             }
             if host.frontend.input.is_dragging()
-                && crate::game_input::is_selected_unit_swordfighting(
-                    engine,
-                    host.transport.local_seat,
-                )
+                && crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat)
                 && !host.frontend.mouse_way.is_empty()
                 && let Some(trail) = presentation.sprites.mouse_trail_renderer.as_ref()
             {
@@ -673,13 +682,14 @@ fn finish_interactive_audio(
     callbacks: &mut RustCallbacks,
 ) {
     let MissionAudioPhase {
-        host,
-        manager,
+        audio,
+        viewport,
+        engine,
         assets,
     } = world.audio_phase();
     execute_app_effects(
         &mut callbacks.app_effects,
-        &mut host.audio.sound,
+        &mut audio.sound,
         &mut frontend.input.threaded,
         frontend
             .audio
@@ -688,7 +698,7 @@ fn finish_interactive_audio(
             .map(|backend| backend as &mut dyn crate::sound::AudioBackend),
     );
     runtime.trace(FrameContractStage::AppEffects);
-    if let Some(boundary) = frontend.audio.tick(manager, host, assets) {
+    if let Some(boundary) = frontend.audio.tick(engine, audio, viewport, assets) {
         runtime.queue_sound_boundary(boundary);
     }
     runtime.trace(FrameContractStage::Audio);
@@ -794,21 +804,25 @@ impl RefreshPresentationSchedule {
 
 /// Apply graphical cadence, host-clock correction, and authoritative hash
 /// publication after presentation and PostInitialize complete.
-async fn pace_interactive_frame(
+/// Network clock publication happens before granting display-refresh authority.
+fn plan_interactive_pacing(
     runtime: &mut super::runtime::TimelineRuntime,
-    host: &mut Host,
+    host: &Host,
     engine: &Engine,
     frame: &MissionFrame,
     args: &crate::main_entry::CliArgs,
-    mut present_refresh_sample: impl FnMut(&mut Host, u32) -> bool,
-) {
+) -> (u32, u64) {
     runtime.trace(FrameContractStage::Pacing);
     // ── Frame timing (25 fps) ──
     // `--fast-forward` CLI flag skips the pacing sleep entirely so
     // the loop runs at full host speed (tests / profiling).  The
     // in-game fast-forward engine flag uses a 1 ms floor instead so
     // other host timers don't starve.
-    let frame_end_ms = crate::window::process_uptime_ms();
+    // Presentation deadlines use the wide process clock. Simulation/wire
+    // timestamps retain their existing u32 contract, but a presentation wait
+    // must not turn into a multi-day sleep when that clock wraps.
+    let presentation_now_ms = crate::window::process_uptime_us() / 1_000;
+    let frame_end_ms = presentation_now_ms as u32;
     let elapsed = frame_end_ms.saturating_sub(frame.started_at_ms);
     let target = if args.fast_forward {
         0
@@ -878,11 +892,23 @@ async fn pace_interactive_frame(
         );
         net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms);
     }
-    // Hash publication and other pacing-tail work happened after the frame
-    // outcome was planned. Charge it against the same fixed-step deadline
-    // instead of blindly sleeping the stale original remainder.
-    let pacing_tail_ms = crate::window::process_uptime_ms().saturating_sub(frame_end_ms);
-    let remaining_wait_ms = remaining_sleep_ms.saturating_sub(pacing_tail_ms);
+    // Preserve the absolute deadline across the capability handoff. Hash
+    // publication and preparing the presentation borrow both consume this
+    // budget; neither may turn it into a fresh relative sleep.
+    (
+        target,
+        presentation_now_ms.saturating_add(u64::from(remaining_sleep_ms)),
+    )
+}
+
+async fn pace_interactive_frame(
+    host: &mut crate::host::HostPresentation<'_>,
+    target: u32,
+    presentation_deadline_ms: u64,
+    mut present_refresh_sample: impl FnMut(&mut crate::host::HostPresentation<'_>, u32) -> bool,
+) {
+    let remaining_wait_ms =
+        presentation_wait_ms(presentation_deadline_ms, crate::window::process_uptime_us());
     if remaining_wait_ms > 0 {
         let refresh_presentation = host.frontend.native_refresh_presentation
             && target >= engine_api::FRAME_TIME_MS
@@ -925,10 +951,28 @@ async fn pace_interactive_frame(
     }
 }
 
+fn presentation_wait_ms(deadline_ms: u64, now_us: u64) -> u64 {
+    deadline_ms.saturating_sub(now_us / 1_000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FrameControl, MissionExit, RefreshPresentationSchedule};
     use robin_engine::game_operation::GameCode;
+
+    #[test]
+    fn presentation_deadline_charges_handoff_time_and_survives_u32_clock_wrap() {
+        let start = u64::from(u32::MAX) - 10;
+        let deadline = start + 40;
+        assert_eq!(
+            super::presentation_wait_ms(deadline, (start + 25) * 1_000),
+            15
+        );
+        assert_eq!(
+            super::presentation_wait_ms(deadline, (start + 45) * 1_000),
+            0
+        );
+    }
 
     #[test]
     fn frame_control_keeps_restart_and_exit_distinct() {
@@ -1016,6 +1060,10 @@ mod tests {
 
         assert!(pacing.contains("present_refresh_sample(host"));
         for forbidden in [
+            "&mut Host,",
+            ".transport",
+            "send_state_hash",
+            "publish_frame",
             "render_frame(",
             "update_mouse_and_cursor(",
             "advance_frame(",

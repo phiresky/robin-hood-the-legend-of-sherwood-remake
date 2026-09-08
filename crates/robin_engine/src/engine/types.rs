@@ -948,73 +948,8 @@ impl FadeToBlack {
 
 // ─── Level assets (immutable after load) ────────────────────────────
 
-/// Host-side callback for per-pixel sprite opacity.
-///
-/// Wired at level-load time into [`LevelAssets::pixel_opacity`]: the host
-/// owns the `FrameHolder` with the packed sprite banks and implements
-/// this trait. The engine uses it to close the per-pixel sprite pick
-/// path (transparent-color and dictionary-owned shadow rejection) without
-/// depending on `robin_assets`.
-pub trait PixelOpacityLookup: Send + Sync {
-    /// Return the native pixel dimensions of one sprite-bank frame.
-    ///
-    /// Original's render path writes the current frame's dimensions back to
-    /// the serialized sprite fields while creating its target surface.
-    /// The Rust renderer deliberately cannot mutate simulation state, so
-    /// parity diagnostics query the same immutable frame metadata here.
-    fn sprite_dimensions(&self, _bank_id: u32) -> Option<(u16, u16)> {
-        None
-    }
-
-    /// Return `true` if the pixel at local `(x, y)` within the sprite
-    /// frame identified by `bank_id` is opaque.
-    ///
-    /// The lookup owns the exact dictionary generation and its bound shadow
-    /// color. Shadow pixels are transparent unless `blue_pixels_are_in` is
-    /// `true` (the engine passes the entity's `is_blipped` flag so blipped
-    /// entities remain clickable in their shadow area).
-    fn is_pixel_opaque(&self, bank_id: u32, x: u16, y: u16, blue_pixels_are_in: bool) -> bool;
-
-    /// SHA-256 of the exact opacity behavior for the sorted reachable bank
-    /// IDs. Implementations hash dimensions and both shadow interpretations,
-    /// never storage-level dictionary/RLE bytes.
-    fn simulation_opacity_sha256(&self, sorted_bank_ids: &[u32]) -> [u8; 32] {
-        use sha2::{Digest as _, Sha256};
-
-        let mut hash = Sha256::new();
-        hash.update(b"robinhood-sprite-opacity-v1\0");
-        for &bank_id in sorted_bank_ids {
-            let (width, height) = self.sprite_dimensions(bank_id).unwrap_or_else(|| {
-                panic!("simulation-reachable sprite bank id {bank_id} is missing")
-            });
-            hash.update(bank_id.to_le_bytes());
-            hash.update(width.to_le_bytes());
-            hash.update(height.to_le_bytes());
-            for blue_pixels_are_in in [false, true] {
-                hash.update([u8::from(blue_pixels_are_in)]);
-                let mut byte = 0_u8;
-                let mut bit = 0_u8;
-                for y in 0..height {
-                    for x in 0..width {
-                        if self.is_pixel_opaque(bank_id, x, y, blue_pixels_are_in) {
-                            byte |= 1 << bit;
-                        }
-                        bit += 1;
-                        if bit == 8 {
-                            hash.update([byte]);
-                            byte = 0;
-                            bit = 0;
-                        }
-                    }
-                }
-                if bit != 0 {
-                    hash.update([byte]);
-                }
-            }
-        }
-        hash.finalize().into()
-    }
-}
+/// Host opacity contract, attached through [`LevelRuntimeAttachments::pixel_opacity`].
+pub use robin_content::PixelOpacityLookup;
 
 /// Immutable level assets loaded once per mission.
 ///
@@ -1035,24 +970,13 @@ pub trait PixelOpacityLookup: Send + Sync {
 /// path reaches the packed sprite data through [`PixelOpacityLookup`].
 #[derive(Clone, Default)]
 pub struct LevelAssets {
+    pub navigation: LevelNavigationAssets,
+    pub environment: LevelEnvironmentAssets,
+    pub audio: LevelAudioAssets,
+    pub attachments: LevelRuntimeAttachments,
     /// Sprite script loader/cache. Loads `.rhs` animation profiles.
     /// Arc-wrapped — immutable after load, cheap to clone for rollback.
     pub sprite_scriptor: std::sync::Arc<crate::sprite_script::SpriteScriptor>,
-    /// Static fast-find grid geometry built at level load. Runtime
-    /// active/overlay bits live on `EngineInner::fast_grid`; snapshots
-    /// reattach this Arc after decode.
-    pub level_grid: std::sync::Arc<crate::fast_find_grid::LevelGrid>,
-    /// Static pathfinder graph built at level load. Runtime pathfinder
-    /// snapshots carry only the per-area state table; after decode the
-    /// engine clones this baseline graph and reapplies those states.
-    pub pathfinder_graph: std::sync::Arc<crate::pathfinder::PathGraph>,
-    /// Hiking/patrol paths loaded from the mission file (PWAY/RAIL chunks).
-    pub hiking_paths: std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
-    /// Exact live sector identity for each `(path index, waypoint index)`.
-    /// `None` is reserved for synthetic/test levels whose waypoints are
-    /// intentionally number-only.
-    pub hiking_waypoint_sectors:
-        Option<std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>>,
     /// Weapon / character profiles loaded from the CPF file.
     /// Shared via `Arc` with `Campaign`.
     pub profile_manager: std::sync::Arc<crate::profiles::ProfileManager>,
@@ -1065,26 +989,6 @@ pub struct LevelAssets {
     pub scripts: LevelScriptAssets,
     /// Immutable entity identities and construction-time script attachments.
     pub entities: LevelEntityAssets,
-    /// Exact immutable construction topology of Original's
-    /// original-game spatial-grid arrays. `None` is reserved for synthetic/test levels
-    /// which did not retain source chunk order.
-    pub legacy_grid_topology: Option<LegacyGridTopologyAssets>,
-    /// Every valid authored LIGHT/DARK polygon paired with its ambience
-    /// bitmask. Runtime schedules toggle the corresponding hashed
-    /// `FastFindGrid::sector_active` entries without rebuilding immutable
-    /// level geometry.
-    pub ambience_shadow_sectors: std::sync::Arc<Vec<(crate::fast_find_grid::SectorIndex, u32)>>,
-    // TODO(level-assets): migrate rendering, navigation, environment, and
-    // audio fields into equivalent domain groups in focused follow-up slices.
-    /// Host-provided per-pixel sprite hit-test callback. `None` before
-    /// the host publishes its final loaded dictionary generation; engine code
-    /// that wants per-pixel sprite pick behaviour falls back to bbox-only when
-    /// missing. The concrete host publisher synchronizes later ambiance
-    /// shadow-key generations across every cloned `LevelAssets` handle.
-    pub pixel_opacity: Option<std::sync::Arc<dyn PixelOpacityLookup>>,
-    /// Process-local Spellforge VM.  Its package identity and complete event
-    /// tape live in Engine state; this attachment is reconstructed at load.
-    pub spellforge_runtime: Option<std::sync::Arc<dyn crate::spellforge::SpellforgeRuntime>>,
     /// Localized peasant firstname pool (menu text IDs 100-121). Used
     /// to build civilian display names by picking a random
     /// firstname/surname for non-VIP peasants. Populated once at
@@ -1107,34 +1011,40 @@ pub struct LevelAssets {
     /// dynamic PC's serialized state is read.
     pub character_sprite_prototypes:
         std::collections::HashMap<crate::profiles::CharacterProfileIdx, crate::sprite::Sprite>,
-    /// Diagnostic maximum exclamation length populated by the host at level
-    /// load. Logical completion uses the concrete sound-manager resolution,
-    /// never this upper bound.
-    /// `Arc` so cloning `LevelAssets` is a refcount bump.
-    pub exclamation_durations: ExclamationDurations,
-    /// Ordered, source-authoritative speech selection metadata. Unlike
-    /// `exclamation_durations` (a diagnostic maximum), this retains random
-    /// gaps, exact variant order, sample identities, and each variant's
-    /// duration so deterministic consumers can validate a concrete speech
-    /// boundary.
-    pub speech_timing_catalog: std::sync::Arc<SpeechTimingCatalog>,
-    /// Exact authored, team, and reinforcement speech-profile closure
-    /// selected before mission construction.
-    pub required_exclamation_ids: std::collections::BTreeSet<u32>,
-    /// Sample-length lookup for sound sources (sample id → sim frames).
-    /// Populated by the host at level load from the decoded WAV lengths
-    /// in `SoundCache::source_cache` after initializing the required
-    /// source sample IDs.  The engine reads it when
-    /// activating a `Single` / `Volatile` source to schedule the
-    /// deterministic finish frame — so rollback replay reproduces the
-    /// exact `sources.active` / `delete` transitions without depending
-    /// on the audio backend's wall-clock playback-completion callback.
-    pub source_durations: super::SourceDurations,
-    /// Required sound-source sample IDs collected during proto-level
-    /// loading. The host consumes this after `Engine::new` to populate
-    /// `SoundCache::initialize_sound_source_cache`, immediately after
-    /// the source manager is loaded.
-    pub sound_source_required_ids: std::collections::BTreeSet<u32>,
+}
+
+/// Immutable navigation geometry and exact authored topology. Runtime active bits remain in the engine.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelNavigationAssets {
+    /// Static fast-find grid geometry built at level load. Runtime
+    /// active/overlay bits live on `EngineInner::fast_grid`; snapshots
+    /// reattach this Arc after decode.
+    pub level_grid: std::sync::Arc<crate::fast_find_grid::LevelGrid>,
+    /// Static pathfinder graph built at level load. Runtime pathfinder
+    /// snapshots carry only the per-area state table; after decode the
+    /// engine clones this baseline graph and reapplies those states.
+    pub pathfinder_graph: std::sync::Arc<crate::pathfinder::PathGraph>,
+    /// Hiking/patrol paths loaded from the mission file (PWAY/RAIL chunks).
+    pub hiking_paths: std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
+    /// Exact live sector identity for each `(path index, waypoint index)`.
+    /// `None` is reserved for synthetic/test levels whose waypoints are
+    /// intentionally number-only.
+    pub hiking_waypoint_sectors:
+        Option<std::sync::Arc<Vec<Vec<crate::position_interface::SectorHandle>>>>,
+    /// Exact immutable construction topology of Original's
+    /// original-game spatial-grid arrays. `None` is reserved for synthetic/test levels
+    /// which did not retain source chunk order.
+    pub legacy_grid_topology: Option<LegacyGridTopologyAssets>,
+}
+
+/// Immutable environmental geometry. Preserve authored vector order; dynamic activation lives in engine state.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelEnvironmentAssets {
+    /// Every valid authored LIGHT/DARK polygon paired with its ambience
+    /// bitmask. Runtime schedules toggle the corresponding hashed
+    /// `FastFindGrid::sector_active` entries without rebuilding immutable
+    /// level geometry.
+    pub ambience_shadow_sectors: std::sync::Arc<Vec<(crate::fast_find_grid::SectorIndex, u32)>>,
     /// Water/hole zones for projectile-splash detection. Rebuilt from
     /// the proto material chunk at level load. Used by the water/hole
     /// determination path.
@@ -1161,6 +1071,148 @@ pub struct LevelAssets {
     /// participates in rollback hashing; this immutable geometry does
     /// not.
     pub static_sight_obstacles: std::sync::Arc<Vec<crate::sight_obstacle::SightObstacle>>,
+}
+
+/// Deterministic audio inputs published together before sealing a mission. Missing optional source timing remains explicit.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelAudioAssets {
+    /// Diagnostic maximum exclamation length populated by the host at level
+    /// load. Logical completion uses the concrete sound-manager resolution,
+    /// never this upper bound.
+    /// `Arc` so cloning `LevelAssets` is a refcount bump.
+    pub(crate) exclamation_durations: ExclamationDurations,
+    /// Ordered, source-authoritative speech selection metadata. Unlike
+    /// `exclamation_durations` (a diagnostic maximum), this retains random
+    /// gaps, exact variant order, sample identities, and each variant's
+    /// duration so deterministic consumers can validate a concrete speech
+    /// boundary.
+    pub(crate) speech_timing_catalog: std::sync::Arc<SpeechTimingCatalog>,
+    /// Exact authored, team, and reinforcement speech-profile closure
+    /// selected before mission construction.
+    pub required_exclamation_ids: std::collections::BTreeSet<u32>,
+    /// Sample-length lookup for sound sources (sample id → sim frames).
+    /// Populated by the host at level load from the decoded WAV lengths
+    /// in `SoundCache::source_cache` after initializing the required
+    /// source sample IDs.  The engine reads it when
+    /// activating a `Single` / `Volatile` source to schedule the
+    /// deterministic finish frame — so rollback replay reproduces the
+    /// exact `sources.active` / `delete` transitions without depending
+    /// on the audio backend's wall-clock playback-completion callback.
+    pub(crate) source_durations: super::SourceDurations,
+    /// Required sound-source sample IDs collected before mission preparation.
+    /// The host initializes their cache and publishes timing before sealing;
+    /// the engine's source-loading stage retains the same authored closure.
+    pub sound_source_required_ids: std::collections::BTreeSet<u32>,
+}
+
+/// A malformed prepared table, or an explicitly unavailable ranked timing input.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, thiserror::Error)]
+pub enum AudioPreparationError {
+    #[error("prepared audio duration must be positive: {0}")]
+    ZeroDuration(String),
+    #[error("speech group {group:#010x} variant {index} has an empty sample identity")]
+    EmptySampleIdentity { group: u32, index: usize },
+    #[error("ranked timing requires a nonempty speech catalog")]
+    MissingSpeechCatalog,
+    #[error("speech group {group:#010x} variant {index} has no source timing")]
+    MissingSpeechDuration { group: u32, index: usize },
+    #[error("required sound source {0:#010x} has no source timing")]
+    MissingSourceDuration(u32),
+}
+
+impl LevelAudioAssets {
+    /// Atomically publish all deterministic timing tables. A failed build leaves
+    /// the previous tables intact. Missing samples are retained, not fabricated:
+    /// ordinary/synthetic missions allow them, while ranked admission explicitly
+    /// checks [`Self::validate_ranked_timing`]. This is independent of playback.
+    pub fn publish_timing(
+        &mut self,
+        exclamations: ExclamationDurations,
+        speech: std::sync::Arc<SpeechTimingCatalog>,
+        sources: super::SourceDurations,
+    ) -> Result<(), AudioPreparationError> {
+        for (key, &duration) in exclamations.iter() {
+            if duration == 0 {
+                return Err(AudioPreparationError::ZeroDuration(format!(
+                    "exclamation {key:?}"
+                )));
+            }
+        }
+        for (&id, &duration) in sources.iter() {
+            if duration == 0 {
+                return Err(AudioPreparationError::ZeroDuration(format!(
+                    "source {id:#010x}"
+                )));
+            }
+        }
+        for (&group, timing) in &speech.groups {
+            for (index, variant) in timing.variants.iter().enumerate() {
+                if variant.sample_identity.is_empty() {
+                    return Err(AudioPreparationError::EmptySampleIdentity { group, index });
+                }
+                if variant.duration_frames == Some(0) {
+                    return Err(AudioPreparationError::ZeroDuration(format!(
+                        "speech {group:#010x}/{index}"
+                    )));
+                }
+            }
+        }
+        self.exclamation_durations = exclamations;
+        self.speech_timing_catalog = speech;
+        self.source_durations = sources;
+        Ok(())
+    }
+
+    pub fn exclamation_durations(&self) -> &ExclamationDurations {
+        &self.exclamation_durations
+    }
+
+    pub fn speech_timing_catalog(&self) -> &std::sync::Arc<SpeechTimingCatalog> {
+        &self.speech_timing_catalog
+    }
+
+    pub fn source_durations(&self) -> &super::SourceDurations {
+        &self.source_durations
+    }
+
+    /// The existing ranked completeness policy, expressed once for every
+    /// driver. Empty catalogs remain valid for unranked synthetic missions.
+    /// Serde decoding this data is not proof of preparation or admission.
+    pub fn validate_ranked_timing(&self) -> Result<(), AudioPreparationError> {
+        if self.speech_timing_catalog.groups.is_empty() {
+            return Err(AudioPreparationError::MissingSpeechCatalog);
+        }
+        for (&group, timing) in &self.speech_timing_catalog.groups {
+            for (index, variant) in timing.variants.iter().enumerate() {
+                if variant.duration_frames.is_none() {
+                    return Err(AudioPreparationError::MissingSpeechDuration { group, index });
+                }
+            }
+        }
+        for &id in &self.sound_source_required_ids {
+            if !self.source_durations.contains_key(&id) {
+                return Err(AudioPreparationError::MissingSourceDuration(id));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Process-local implementations reattached after snapshot decoding. Projection
+/// includes opacity behavior and package identity, never these implementations.
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct LevelRuntimeAttachments {
+    /// Host-provided per-pixel sprite hit-test callback. `None` before
+    /// the host publishes its final loaded dictionary generation; engine code
+    /// that wants per-pixel sprite pick behaviour falls back to bbox-only when
+    /// missing. The concrete host publisher synchronizes later ambiance
+    /// shadow-key generations across every cloned `LevelAssets` handle.
+    #[serde(skip)]
+    pub pixel_opacity: Option<std::sync::Arc<dyn PixelOpacityLookup>>,
+    /// Process-local Spellforge VM.  Its package identity and complete event
+    /// tape live in Engine state; this attachment is reconstructed at load.
+    #[serde(skip)]
+    pub spellforge_runtime: Option<std::sync::Arc<dyn crate::spellforge::SpellforgeRuntime>>,
 }
 
 /// Script-facing immutable level data, grouped separately from rendering and
@@ -1412,8 +1464,149 @@ pub struct SpeechTimingVariant {
 #[cfg(test)]
 mod speech_timing_metadata_tests {
     use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Arc;
 
-    use super::{SpeechTimingCatalog, SpeechTimingGroup, SpeechTimingVariant};
+    use super::{
+        AudioPreparationError, LevelAssets, LevelAudioAssets, LevelRuntimeAttachments,
+        SpeechTimingCatalog, SpeechTimingGroup, SpeechTimingVariant,
+    };
+
+    fn prepared_audio(duration: Option<u32>) -> LevelAudioAssets {
+        let mut audio = LevelAudioAssets::default();
+        audio.required_exclamation_ids.insert(0x1000_0000);
+        audio.sound_source_required_ids.insert(7);
+        audio
+            .publish_timing(
+                Arc::new(BTreeMap::new()),
+                Arc::new(SpeechTimingCatalog {
+                    groups: BTreeMap::from([(0x1000_0001, group(2, "first.wav", duration))]),
+                }),
+                Arc::new(BTreeMap::from([(7, 11)])),
+            )
+            .unwrap();
+        audio
+    }
+
+    #[test]
+    fn prepared_audio_publication_preserves_order_and_missing_optional_timing() {
+        let audio = prepared_audio(None);
+        assert_eq!(audio.speech_timing_catalog().groups[&0x1000_0001].gaps, 2);
+        assert_eq!(
+            audio.speech_timing_catalog().groups[&0x1000_0001].variants[0].duration_frames,
+            None
+        );
+        assert_eq!(
+            audio.validate_ranked_timing(),
+            Err(AudioPreparationError::MissingSpeechDuration {
+                group: 0x1000_0001,
+                index: 0,
+            })
+        );
+        assert!(prepared_audio(Some(11)).validate_ranked_timing().is_ok());
+    }
+
+    #[test]
+    fn prepared_audio_required_source_completeness_is_explicit() {
+        let mut audio = prepared_audio(Some(11));
+        audio.sound_source_required_ids.insert(8);
+        assert_eq!(
+            audio.validate_ranked_timing(),
+            Err(AudioPreparationError::MissingSourceDuration(8))
+        );
+        assert!(!audio.source_durations().contains_key(&8));
+    }
+
+    #[test]
+    fn prepared_audio_failed_publication_preserves_all_old_tables() {
+        let mut audio = prepared_audio(Some(11));
+        let old = audio.clone();
+        let error = audio
+            .publish_timing(
+                Arc::new(BTreeMap::new()),
+                Arc::new(SpeechTimingCatalog::default()),
+                Arc::new(BTreeMap::from([(7, 0)])),
+            )
+            .unwrap_err();
+        assert!(matches!(error, AudioPreparationError::ZeroDuration(_)));
+        assert!(Arc::ptr_eq(
+            audio.source_durations(),
+            old.source_durations()
+        ));
+        assert!(Arc::ptr_eq(
+            audio.speech_timing_catalog(),
+            old.speech_timing_catalog()
+        ));
+        assert!(Arc::ptr_eq(
+            audio.exclamation_durations(),
+            old.exclamation_durations()
+        ));
+    }
+
+    #[test]
+    fn prepared_audio_rejects_malformed_concrete_speech_without_erasing_missing_samples() {
+        let mut audio = LevelAudioAssets::default();
+        for (sample, duration, expected_empty) in [("", None, true), ("voice.wav", Some(0), false)]
+        {
+            let result = audio.publish_timing(
+                Arc::new(BTreeMap::new()),
+                Arc::new(SpeechTimingCatalog {
+                    groups: BTreeMap::from([(1, group(0, sample, duration))]),
+                }),
+                Arc::new(BTreeMap::new()),
+            );
+            if expected_empty {
+                assert_eq!(
+                    result,
+                    Err(AudioPreparationError::EmptySampleIdentity { group: 1, index: 0 })
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(AudioPreparationError::ZeroDuration(_))
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_audio_synthetic_empty_and_deserialized_missing_inputs_are_not_ranked_proofs() {
+        let mut empty = LevelAudioAssets::default();
+        empty
+            .publish_timing(Arc::default(), Arc::default(), Arc::default())
+            .unwrap();
+        assert_eq!(
+            empty.validate_ranked_timing(),
+            Err(AudioPreparationError::MissingSpeechCatalog)
+        );
+        let restored: LevelAudioAssets =
+            serde_json::from_str(&serde_json::to_string(&prepared_audio(None)).unwrap()).unwrap();
+        assert_eq!(
+            restored.validate_ranked_timing(),
+            prepared_audio(None).validate_ranked_timing()
+        );
+    }
+
+    #[test]
+    fn prepared_asset_groups_retain_snapshot_sharing_and_attachment_absence() {
+        let mut original = LevelAssets::new();
+        original.audio = prepared_audio(Some(11));
+        let snapshot = original.clone();
+        assert!(Arc::ptr_eq(
+            &snapshot.navigation.level_grid,
+            &original.navigation.level_grid
+        ));
+        assert!(Arc::ptr_eq(
+            &snapshot.environment.static_sight_obstacles,
+            &original.environment.static_sight_obstacles
+        ));
+        assert!(Arc::ptr_eq(
+            snapshot.audio.speech_timing_catalog(),
+            original.audio.speech_timing_catalog()
+        ));
+        let restored: LevelRuntimeAttachments = serde_json::from_str("{}").unwrap();
+        assert!(restored.pixel_opacity.is_none());
+        assert!(restored.spellforge_runtime.is_none());
+    }
 
     fn group(gaps: u16, sample: &str, duration_frames: Option<u32>) -> SpeechTimingGroup {
         SpeechTimingGroup {
@@ -1497,7 +1690,7 @@ mod speech_timing_metadata_tests {
     }
 }
 
-impl LevelAssets {
+impl LevelNavigationAssets {
     pub(crate) fn hiking_waypoint_sector(
         &self,
         path_index: usize,
@@ -1523,7 +1716,9 @@ impl LevelAssets {
         );
         Some(exact)
     }
+}
 
+impl LevelAssets {
     /// Mutable access to sprite_scriptor during initialization.
     pub fn sprite_scriptor_mut(&mut self) -> &mut crate::sprite_script::SpriteScriptor {
         std::sync::Arc::make_mut(&mut self.sprite_scriptor)
@@ -1531,33 +1726,20 @@ impl LevelAssets {
 
     pub fn new() -> Self {
         Self {
+            navigation: LevelNavigationAssets::default(),
+            environment: LevelEnvironmentAssets::default(),
+            audio: LevelAudioAssets::default(),
+            attachments: LevelRuntimeAttachments::default(),
             sprite_scriptor: std::sync::Arc::new(crate::sprite_script::SpriteScriptor::new()),
-            level_grid: std::sync::Arc::new(crate::fast_find_grid::LevelGrid::default()),
-            pathfinder_graph: std::sync::Arc::new(crate::pathfinder::PathGraph::default()),
-            hiking_paths: std::sync::Arc::new(Vec::new()),
-            hiking_waypoint_sectors: None,
             profile_manager: std::sync::Arc::new(crate::profiles::ProfileManager::new()),
             bank_signature: 0,
             scripts: LevelScriptAssets::default(),
             entities: LevelEntityAssets::default(),
-            legacy_grid_topology: None,
-            ambience_shadow_sectors: std::sync::Arc::new(Vec::new()),
-            pixel_opacity: None,
-            spellforge_runtime: None,
             peasant_firstnames: Vec::new(),
             peasant_surnames: Vec::new(),
             fixed_vip_names: std::collections::BTreeMap::new(),
             accessory_sprite_prototypes: std::collections::HashMap::new(),
             character_sprite_prototypes: std::collections::HashMap::new(),
-            exclamation_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
-            speech_timing_catalog: std::sync::Arc::new(SpeechTimingCatalog::default()),
-            required_exclamation_ids: std::collections::BTreeSet::new(),
-            source_durations: std::sync::Arc::new(std::collections::BTreeMap::new()),
-            sound_source_required_ids: std::collections::BTreeSet::new(),
-            water_zones: crate::water_zones::WaterZones::new(),
-            material_sectors: crate::material_sectors::MaterialSectors::new(),
-            all_material_sectors: Vec::new(),
-            static_sight_obstacles: std::sync::Arc::new(Vec::new()),
         }
     }
 

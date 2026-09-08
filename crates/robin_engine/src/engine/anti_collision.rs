@@ -181,7 +181,7 @@ pub fn snapshot_all(
             position_map: elem.position_map(),
             layer: layer.get(),
             sector: elem.sector(),
-            posture: elem.posture,
+            posture: elem.posture(),
             element_kind: elem.kind,
             // Prefer the live seek target, then fall back to the
             // active movement element's antagonist/target field.
@@ -289,7 +289,7 @@ pub fn entity_repulsive_point(
 ) -> Option<RepulsivePoint> {
     let elem = entity.element_data();
     let pos = elem.position_map();
-    let posture = elem.posture;
+    let posture = elem.posture();
 
     if !entity.is_human() {
         // Object-level repulsive point: emits one point using the
@@ -1185,10 +1185,11 @@ mod tests {
         use crate::entity_id::PcId;
 
         let entity = Entity::Pc(ActorPc {
-            element: ElementData {
-                active: false,
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.active = false;
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1206,10 +1207,11 @@ mod tests {
         use crate::element_kinds::ObjectType;
         use crate::entity_id::ProjectileId;
 
-        let mut element = ElementData {
-            active: true,
-            kind: ElementKind::ObjectProjectile,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element
         };
         element.clear_layer();
         let entity = Entity::Projectile(ElementProjectile {
@@ -1238,11 +1240,11 @@ mod tests {
 
         let corpse_id = EntityId::Soldier(SoldierId(1));
 
-        let mut mover_element = ElementData {
-            active: true,
-            kind: ElementKind::ActorPc,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut mover_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element
         };
         mover_element.set_position_map(map_pt(0.0, 0.0));
         mover_element.set_sector(crate::position_interface::SectorHandle::new(1));
@@ -1262,11 +1264,11 @@ mod tests {
             ..Default::default()
         };
 
-        let mut corpse_element = ElementData {
-            active: true,
-            kind: ElementKind::ActorSoldier,
-            posture: Posture::Dead,
-            ..Default::default()
+        let mut corpse_element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Dead);
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element
         };
         corpse_element.set_position_map(map_pt(8.0, 0.0));
         corpse_element.set_sector(crate::position_interface::SectorHandle::new(1));
@@ -1299,10 +1301,11 @@ mod tests {
         use crate::element_kinds::ObjectType;
         use crate::entity_id::BonusId;
 
-        let mut element = ElementData {
-            active: true,
-            kind: ElementKind::ObjectOther,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.active = true;
+            initial_element.kind = ElementKind::ObjectOther;
+            initial_element
         };
         element.set_position_map(map_pt(557.0, 1184.0));
         element.set_sector(crate::position_interface::SectorHandle::new(0));
@@ -1730,10 +1733,11 @@ mod tests {
         weapon.distance[crate::weapons::WeaponDistance::Maximal as usize] = 50;
         profile_manager.hth_weapons.push(weapon);
 
-        let mut element = crate::element::ElementData {
-            kind: ElementKind::ActorPc,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element
         };
         element.set_position_map(MapPoint::new(10.0, 20.0));
 

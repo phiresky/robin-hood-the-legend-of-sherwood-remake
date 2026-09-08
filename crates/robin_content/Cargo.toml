@@ -1,0 +1,22 @@
+[package]
+name = "robin_content"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+sha2.workspace = true
+robin_util = { workspace = true, optional = true }
+robin_state_hash_derive = { workspace = true, optional = true }
+bitcode = { workspace = true, optional = true }
+
+[features]
+# Compatibility for existing simulation snapshots/hashes, not a new wire format.
+simulation-codecs = ["dep:robin_util", "dep:robin_state_hash_derive", "dep:bitcode"]
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

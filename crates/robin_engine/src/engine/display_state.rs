@@ -469,7 +469,7 @@ impl EngineInner {
         // `lean_out` is read from the live posture for NPCs; the
         // PC variant always treats lean_out as false.
         let is_pc = entity.pc_data().is_some();
-        let lean_out = !is_pc && matches!(edata.posture, crate::element::Posture::LeaningOut);
+        let lean_out = !is_pc && matches!(edata.posture(), crate::element::Posture::LeaningOut);
         let params = ViewParameters {
             direction: dir,
             half_aperture,
@@ -541,7 +541,7 @@ impl EngineInner {
                 half_aperture: npc.real_half_aperture,
                 radius,
                 alpha,
-                lean_out: matches!(edata.posture, crate::element::Posture::LeaningOut),
+                lean_out: matches!(edata.posture(), crate::element::Posture::LeaningOut),
                 viewer_z: eye.z,
                 projection_plane: entity.position_iface().get_plane().copied(),
                 projection_obstacle: entity.position_iface().get_obstacle(),
@@ -838,7 +838,7 @@ impl EngineInner {
             is_blipped: elem.blipped,
             is_dead: entity.is_dead(),
             is_unconscious: entity.human_data().is_some_and(|h| h.unconscious),
-            posture_lying: elem.posture == Posture::Lying,
+            posture_lying: elem.posture() == Posture::Lying,
             camp,
             legacy_camp,
         })
@@ -1010,10 +1010,11 @@ mod display_order_tests {
         display_polyline: Vec<MapPoint>,
         patch_index: Option<crate::patch::PatchIndex>,
     ) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::Fx,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position(position);
         Entity::Fx(ElementFx {

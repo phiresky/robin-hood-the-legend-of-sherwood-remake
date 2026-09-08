@@ -180,9 +180,10 @@ mod conscious_hit_notification_tests {
     #[test]
     fn conscious_hit_notifies_npc_but_not_pc() {
         let pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -191,9 +192,10 @@ mod conscious_hit_notification_tests {
         assert!(!conscious_hit_notifies_ai(&pc));
 
         let mut soldier = Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -804,7 +806,7 @@ impl EngineInner {
         if self
             .expect_entity(victim_id, "apply_sword_damage pre-translation victim")
             .element_data()
-            .posture
+            .posture()
             == Posture::CarryingCorpse
         {
             self.force_drop_carried_corpse_instant(victim_id);
@@ -884,7 +886,7 @@ impl EngineInner {
                         "ReceiveSwordDamage victim {victim_id:?} vanished before grounded-posture translation"
                     )
                 });
-            let posture = victim.element_data().posture;
+            let posture = victim.element_data().posture();
             let is_rider = matches!(victim, Entity::Soldier(s) if s.soldier.rider);
             let dead_rider = is_rider && life_points_after <= 0;
             (
@@ -925,7 +927,7 @@ impl EngineInner {
                     "ReceiveSwordDamage grounded lethal posture publication",
                 )
                 .element_data_mut()
-                .posture = Posture::Dead;
+                .publish_order_posture(Posture::Dead);
             }
             let (dseq, didx) = damage_element;
             self.orders.sequence_manager.element_terminated(dseq, didx);
@@ -1063,7 +1065,7 @@ impl EngineInner {
             let victim_posture = self
                 .expect_entity(victim_id, "sword-damage hit-reaction victim")
                 .element_data()
-                .posture;
+                .posture();
             let is_shoulder_posture = matches!(
                 victim_posture,
                 Posture::OnShoulders | Posture::CarryingOnShoulders | Posture::HelpingToClimb
@@ -1078,7 +1080,7 @@ impl EngineInner {
             } else if still_alive && still_conscious {
                 let anims = {
                     let e = self.expect_entity(victim_id, "sword-damage hit-reaction victim");
-                    let posture = e.element_data().posture;
+                    let posture = e.element_data().posture();
                     let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
                     select_combat_animations(posture, action)
                 };
@@ -1125,7 +1127,7 @@ impl EngineInner {
         // ladder/wall victims.
         let informer_reachable = {
             let victim = self.expect_entity(victim_id, "sword-damage informer victim");
-            let posture = victim.element_data().posture;
+            let posture = victim.element_data().posture();
             let is_dead_rider =
                 matches!(victim, Entity::Soldier(s) if s.soldier.rider) && victim_died;
             // Player actors override sword-damage translation and route all
@@ -1213,7 +1215,7 @@ impl EngineInner {
                             result,
                             victim_died,
                             victim.human_data().is_some_and(|human| human.unconscious),
-                            victim.element_data().posture,
+                            victim.element_data().posture(),
                             enemy.base.current_state,
                             enemy.base.current_substate,
                             attacker
@@ -1253,7 +1255,7 @@ impl EngineInner {
             let stunning_effect = combat::get_strike_stunning_effect(&attacker_profile, strike);
             if !is_rider && stunning_effect > 0 {
                 let e = self.expect_entity(victim_id, "sword-damage death anim victim");
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
                 select_combat_animations(posture, action).map(|a| a.falling_back)
             } else {
@@ -1278,7 +1280,7 @@ impl EngineInner {
             && !result.contains(combat::SwordDamageResult::NO_DAMAGE_PARRIED)
         {
             let repeated_dying_anim = self.get_entity(victim_id).and_then(|victim| {
-                let posture = victim.element_data().posture;
+                let posture = victim.element_data().posture();
                 let action = victim
                     .actor_data()
                     .map(|actor| actor.action_state)
@@ -1378,7 +1380,7 @@ impl EngineInner {
             // held and copies the carrier's plane Z onto the carried;
             // reading it from the carrier's already-resolved
             // `PositionInterface` here mirrors that path and avoids
-            // re-resolving from `assets.static_sight_obstacles`.
+            // re-resolving from `assets.environment.static_sight_obstacles`.
             let plane = carrier.position_iface().get_plane().copied();
             (
                 elem.position_map(),
@@ -1490,7 +1492,7 @@ impl EngineInner {
         //      `!is_dead()`, to keep parity with the original guard.
         let pre_posture = self
             .get_entity(victim_id)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
             self.translate_ladder_wall_fall(assets, victim_id, damage_element);
@@ -1558,7 +1560,7 @@ impl EngineInner {
         // handler.
         let victim_posture = self
             .get_entity(victim_id)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
         if matches!(
             victim_posture,
@@ -1602,7 +1604,7 @@ impl EngineInner {
                     .map(|h| !h.unconscious)
                     .unwrap_or(false),
                 victim
-                    .map(|e| !e.element_data().posture.is_lying())
+                    .map(|e| !e.element_data().posture().is_lying())
                     .unwrap_or(false),
             )
         };
@@ -1610,7 +1612,7 @@ impl EngineInner {
             let hit_anim = self
                 .get_entity(victim_id)
                 .and_then(|e| {
-                    let posture = e.element_data().posture;
+                    let posture = e.element_data().posture();
                     let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
                     select_combat_animations(posture, action)
                 })
@@ -1663,7 +1665,7 @@ impl EngineInner {
         // on the posture produced by the damage (notably amulet coma -> Lying).
         let pre_posture = self
             .get_entity(victim_id)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
 
         let victim = match self.world.entities.get(victim_id) {
@@ -1757,7 +1759,7 @@ impl EngineInner {
 
         let translation_posture = self
             .get_entity(victim_id)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
         // Raw attempted damage — overkill hits show the same number
         // as a non-overkill hit would.  `add_damage_number` no-ops on 0.
@@ -1858,7 +1860,7 @@ impl EngineInner {
                 self.get_entity_mut(victim_id)
                     .expect("piercing-damage victim disappeared during translation")
                     .element_data_mut()
-                    .posture = Posture::Dead;
+                    .publish_order_posture(Posture::Dead);
             }
             if !is_rider || !post_dead {
                 let (dseq, didx) = damage_element;
@@ -1897,12 +1899,12 @@ impl EngineInner {
                     .map(|h| !h.unconscious)
                     .unwrap_or(false),
                 victim
-                    .map(|e| !e.element_data().posture.is_lying())
+                    .map(|e| !e.element_data().posture().is_lying())
                     .unwrap_or(false),
             )
         };
         let animations = self.get_entity(victim_id).and_then(|e| {
-            let posture = e.element_data().posture;
+            let posture = e.element_data().posture();
             let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
             select_combat_animations(posture, action)
         });
@@ -2090,7 +2092,7 @@ impl EngineInner {
         let victim_posture = self
             .expect_entity(victim_id, "apply_hit_damage victim")
             .element_data()
-            .posture;
+            .posture();
 
         // Human hit-damage translation adds concussion and sends the
         // NPC's synchronous EVENT_GOTHIT before testing for an already-lying
@@ -2197,7 +2199,7 @@ impl EngineInner {
                 Some(e) => e,
                 None => return,
             };
-            let posture = v.element_data().posture;
+            let posture = v.element_data().posture();
             let action = v.actor_data().map(|a| a.action_state).unwrap_or_default();
             (posture, action)
         };
@@ -2476,7 +2478,7 @@ impl EngineInner {
     pub(super) fn apply_net(&mut self, victim_id: EntityId) {
         let (already_stuck, can_transition) = match self.get_entity(victim_id) {
             Some(e) => {
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let already_stuck = posture == Posture::StuckUnderNet;
                 let unconscious = e.human_data().is_some_and(|h| h.unconscious);
                 let dead = e.is_dead();
@@ -3174,7 +3176,7 @@ impl EngineInner {
         // Select dying animation (None when posture is already
         // Lying/Dead/Carried — the "already on the ground" case).
         let dying_anim = self.get_entity(victim_id).and_then(|e| {
-            let posture = e.element_data().posture;
+            let posture = e.element_data().posture();
             let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
             select_combat_animations(posture, action)
                 .map(|a| dying_anim_override.unwrap_or(a.dying_forward))
@@ -3447,7 +3449,7 @@ impl EngineInner {
         let falling_anim = self
             .get_entity(victim_id)
             .and_then(|e| {
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let action = e.actor_data().map(|a| a.action_state).unwrap_or_default();
                 select_combat_animations(posture, action)
             })
@@ -3469,7 +3471,7 @@ impl EngineInner {
         if falling_anim.is_none() {
             self.expect_entity_mut(victim_id, "knockout victim posture fallback")
                 .element_data_mut()
-                .posture = Posture::Lying;
+                .publish_order_posture(Posture::Lying);
         }
 
         // Queue roll if on a slope.
@@ -3545,7 +3547,7 @@ impl EngineInner {
             // returns.
             npc.inform_my_friends = attacker_is_pc;
         }
-        if set_lying_now && !victim.element_data().posture.is_lying() {
+        if set_lying_now && !victim.element_data().posture().is_lying() {
             victim.set_posture(Posture::Lying);
         }
     }

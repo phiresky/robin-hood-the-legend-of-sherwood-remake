@@ -5894,6 +5894,7 @@ dependencies = [
  "memmap2",
  "png",
  "rayon",
+ "robin_content",
  "robin_data_io",
  "robin_engine",
  "robin_util",
@@ -5909,6 +5910,18 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-rayon",
  "zstd",
+]
+
+[[package]]
+name = "robin_content"
+version = "0.0.0"
+dependencies = [
+ "bitcode 0.6.9 (git+https://github.com/SoftbearStudios/bitcode.git?rev=7ae88076943b74151e99713f33635ac5a5d4f4bf)",
+ "robin_state_hash_derive",
+ "robin_util",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
 ]
 
 [[package]]
@@ -5938,6 +5951,7 @@ dependencies = [
  "nonmax",
  "num_enum",
  "rayon",
+ "robin_content",
  "robin_data_io",
  "robin_run_protocol",
  "robin_state_hash_derive",

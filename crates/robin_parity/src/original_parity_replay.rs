@@ -1233,7 +1233,7 @@ fn apply_legacy_interactive_chain_macro_fallback(
         .elements
     {
         let Some((path_id, waypoint, offset)) =
-            terminal_macro_waypoint(element, &assets.hiking_paths)
+            terminal_macro_waypoint(element, &assets.navigation.hiking_paths)
         else {
             continue;
         };
@@ -7045,7 +7045,7 @@ fn initialize_headless_engine(
     .expect("initialize engine");
     crate::populate_sound_duration_tables(&mut assets, &profiles, "Data/Sounds")
         .expect("load deterministic sound duration tables");
-    assets.pixel_opacity = Some(Arc::new(frame_holder));
+    assets.attachments.pixel_opacity = Some(Arc::new(frame_holder));
     (engine, assets, scb)
 }
 
@@ -7180,7 +7180,7 @@ fn initialize_engine(
     // dimensions into the serialized sprite frontier. The parity engine is
     // intentionally headless, so publish the immutable frame metadata used
     // to project that post-render state without mutating the simulation.
-    assets.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
     (engine, assets, host, background, scb, menu_text)
 }
 
@@ -7271,6 +7271,7 @@ impl EntityMap {
             );
         }
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("parity replay requires retained Original fast-grid topology");
@@ -7663,7 +7664,7 @@ fn print_debug_element(label: &str, engine: &Engine, frame: &TraceFrame) {
         id,
         entity.element_data().direction(),
         sprite.position_iface.get_direction_goal().as_u8(),
-        entity.element_data().posture,
+        entity.element_data().posture(),
         actor.action_state,
         engine.actor_order_type(id),
         actor.installed_order.map(|order| order.order_id),
@@ -7810,7 +7811,7 @@ fn print_startup_actors(label: &str, engine: &Engine, frame: &TraceFrame, entity
             "  original={:?} rust={id:?} expected_posture={} rust_posture={:?} expected_dir={}/{} rust_dir={:?}/{:?} pos={:?} goal_pos={:?} action={:?} last_action={:?} alt_profile={} command={:?} order={:?} sector={:?} ai={ai_debug:?}",
             expected.entity_id,
             expected.posture,
-            actual.element_data().posture,
+            actual.element_data().posture(),
             expected.direction,
             expected.direction_goal,
             actual.element_data().sprite.position_iface.get_direction(),

@@ -476,7 +476,7 @@ impl LegacyVmArenaBuilder<'_> {
             let converted = location
                 .as_ref()
                 .map(|location| {
-                    let sector_count = self.assets.legacy_grid_topology.as_ref().map_or(
+                    let sector_count = self.assets.navigation.legacy_grid_topology.as_ref().map_or(
                         self.engine.world.fast_grid.level.sectors.len(),
                         |topology| topology.sectors.len(),
                     );

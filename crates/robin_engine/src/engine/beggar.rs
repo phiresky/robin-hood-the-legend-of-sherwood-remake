@@ -288,7 +288,7 @@ fn give_money_to_beggar(
         let obstacle_check = bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &engine.world.fast_grid,
             sight_obstacles: engine.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         bow_shot::spawn_coin(
             None,

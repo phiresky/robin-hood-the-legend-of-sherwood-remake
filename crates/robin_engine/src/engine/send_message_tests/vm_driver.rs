@@ -25,11 +25,12 @@ fn animated_sprite() -> crate::sprite::Sprite {
 
 fn animated_scroll() -> Entity {
     Entity::Scroll(crate::element::ElementScroll {
-        element: ElementData {
-            kind: ElementKind::ObjectScroll,
-            active: true,
-            sprite: animated_sprite(),
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectScroll;
+            initial_element.active = true;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type: crate::element::ObjectType::Scroll,
@@ -42,11 +43,12 @@ fn animated_scroll() -> Entity {
 
 fn animated_target(progression: crate::sprite::FrameProgression) -> Entity {
     Entity::Target(crate::element::ElementTarget {
-        element: ElementData {
-            kind: ElementKind::Target,
-            active: true,
-            sprite: animated_sprite(),
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Target;
+            initial_element.active = true;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         fx: Default::default(),
         target: crate::element::TargetData {
@@ -58,15 +60,16 @@ fn animated_target(progression: crate::sprite::FrameProgression) -> Entity {
 
 fn animated_bonus(object_type: crate::element::ObjectType, active: bool) -> Entity {
     Entity::Bonus(crate::element::ElementBonus {
-        element: ElementData {
-            kind: if object_type == crate::element::ObjectType::Ale {
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = if object_type == crate::element::ObjectType::Ale {
                 ElementKind::ObjectOther
             } else {
                 ElementKind::ObjectBonus
-            },
-            active,
-            sprite: animated_sprite(),
-            ..Default::default()
+            };
+            initial_element.active = active;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type,
@@ -285,11 +288,12 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
         false,
     ));
     let projectile = engine.add_entity(Entity::Projectile(crate::element::ElementProjectile {
-        element: ElementData {
-            kind: ElementKind::ObjectProjectile,
-            active: true,
-            sprite: animated_sprite(),
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectProjectile;
+            initial_element.active = true;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type: crate::element::ObjectType::Wasp,
@@ -298,11 +302,12 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
         projectile: Default::default(),
     }));
     let net = engine.add_entity(Entity::Net(crate::element::ElementNet {
-        element: ElementData {
-            kind: ElementKind::ObjectNet,
-            active: true,
-            sprite: animated_sprite(),
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectNet;
+            initial_element.active = true;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         object: crate::element::ObjectData {
             object_type: crate::element::ObjectType::Net,
@@ -384,11 +389,12 @@ fn concrete_static_objects_run_once_and_broad_objects_stay_in_their_lanes() {
     );
 
     let mobile_child = engine.add_entity(Entity::Fx(crate::element::ElementFx {
-        element: ElementData {
-            kind: ElementKind::Fx,
-            active: true,
-            sprite: animated_sprite(),
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.active = true;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         fx: crate::element::FxData {
             mobile_index: Some(0),
@@ -422,11 +428,12 @@ fn completed_fx_patch_is_visible_to_the_later_live_slot() {
     let mut engine = EngineInner::new();
     engine.scripts.mission = Some(message_script());
     let fx = Entity::Fx(crate::element::ElementFx {
-        element: ElementData {
-            kind: ElementKind::Fx,
-            active: true,
-            sprite: animated_sprite(),
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.active = true;
+            initial_element.sprite = animated_sprite();
+            initial_element
         },
         fx: crate::element::FxData {
             patch_index: crate::patch::PatchIndex::new(0),

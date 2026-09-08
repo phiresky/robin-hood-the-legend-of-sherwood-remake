@@ -570,7 +570,7 @@ impl NativeContext<'_, '_> {
                     );
                     return 0;
                 }
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let dead = e.is_dead();
                 let tied = posture == Posture::Tied;
                 let unconscious = e.human_data().is_some_and(|h| h.unconscious);

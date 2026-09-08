@@ -762,7 +762,7 @@ fn resolve_action_left_click(
                 );
                 return vec![];
             };
-            let archer_posture = pc_entity.element_data().posture;
+            let archer_posture = pc_entity.element_data().posture();
             if !is_deferred && archer_posture == Posture::AnonymousArcher {
                 tracing::info!(
                     ?pc_id,
@@ -1177,7 +1177,7 @@ fn resolve_action_left_click(
             //   default                                → EnterBeggar (+ deselect on double)
             let posture = engine
                 .get_entity(pc_id)
-                .map(|e| e.element_data().posture)
+                .map(|e| e.element_data().posture())
                 .unwrap_or(Posture::Undefined);
             if posture == Posture::SimulatingBeggar {
                 if is_double && !is_recording {
@@ -1208,7 +1208,7 @@ fn resolve_action_left_click(
             //   default → launch EnterHelpingClimb (+ deselect).
             let posture = engine
                 .get_entity(pc_id)
-                .map(|e| e.element_data().posture)
+                .map(|e| e.element_data().posture())
                 .unwrap_or(Posture::Undefined);
             if matches!(
                 posture,
@@ -1635,7 +1635,7 @@ fn resolve_right_click_stop(engine: &Engine, local_seat: PlayerId) -> Vec<Player
         let (posture, action_state, in_motion, sector_is_building) = match engine.get_entity(pc_id)
         {
             Some(e) => {
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let action_state = e
                     .actor_data()
                     .map(|a| a.action_state)
@@ -2088,7 +2088,7 @@ fn determine_use_command(
     }
 
     let is_dead = entity.is_dead();
-    let posture = entity.element_data().posture;
+    let posture = entity.element_data().posture();
     let is_unconscious = entity.human_data().is_some_and(|h| h.unconscious);
     let is_tied = posture == Posture::Tied;
 
@@ -2309,11 +2309,11 @@ mod tests {
         active: bool,
         life_points: i16,
     ) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active,
-            posture,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(posture);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = active;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, y));
         // Settle the position interface so the freshly-placed PC does
@@ -2333,11 +2333,11 @@ mod tests {
     }
 
     fn add_soldier(engine: &mut Engine, x: f32, y: f32, life_points: i16) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, y));
         engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
@@ -2353,10 +2353,11 @@ mod tests {
     }
 
     fn add_bonus(engine: &mut Engine, x: f32, y: f32) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectBonus,
-            active: true,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectBonus;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, y));
         engine.test_add_entity(engine_element::Entity::Bonus(ElementBonus {
@@ -2392,11 +2393,11 @@ mod tests {
         y: f32,
         opponent: EntityId,
     ) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, y));
         engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
@@ -2422,11 +2423,11 @@ mod tests {
     }
 
     fn add_allied_soldier(engine: &mut Engine, x: f32, y: f32) -> EntityId {
-        let mut element = ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..Default::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(MapPoint::new(x, y));
         engine.test_add_entity(engine_element::Entity::Soldier(ActorSoldier {
@@ -3589,10 +3590,11 @@ mod tests {
         let (mut engine, assets, _host) = fixture();
         let pc = add_pc(&mut engine, 10.0, 10.0, Posture::Upright);
         let target = engine.test_add_entity(Entity::Target(ElementTarget {
-            element: ElementData {
-                kind: ElementKind::Target,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::Target;
+                initial_element.active = true;
+                initial_element
             },
             fx: FxData::default(),
             target: TargetData {

@@ -708,7 +708,7 @@ impl EngineInner {
         assets: &mut LevelAssets,
         sim: &crate::sim_rng::SimulationContext,
     ) {
-        if let Some(runtime) = assets.spellforge_runtime.as_ref() {
+        if let Some(runtime) = assets.attachments.spellforge_runtime.as_ref() {
             runtime.set_name_bindings(assets.scripts.names.as_ref().clone());
         }
         self.scripts
@@ -729,12 +729,18 @@ impl EngineInner {
         self.validate_actor_placement();
 
         // Pathfinder obstacle states now that the graph is loaded.
-        if !assets.pathfinder_graph.static_data.move_layers.is_empty() {
+        if !assets
+            .navigation
+            .pathfinder_graph
+            .static_data
+            .move_layers
+            .is_empty()
+        {
             let world = &mut self.world;
             let grid = std::sync::Arc::make_mut(&mut world.fast_grid);
             world
                 .pathfinder
-                .initialize_from_graph(assets.pathfinder_graph.as_ref(), grid);
+                .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
 
         // Original-game initialization runs script initialization before AI
@@ -742,7 +748,7 @@ impl EngineInner {
         // now that AI initialization's typed state changes synchronously dispatch
         // FilterAIEvent through the bound actor VMs.
         if self.scripts.mission.is_some() {
-            self.initialize_mission_script_with(sim, assets, 0, &assets.hiking_paths);
+            self.initialize_mission_script_with(sim, assets, 0, &assets.navigation.hiking_paths);
         }
 
         // The original initializes scrolls immediately after the engine
@@ -1603,6 +1609,7 @@ impl EngineInner {
     /// they are lowered into runtime movement sequences.
     pub fn legacy_gate_order(&self, assets: &LevelAssets) -> Vec<crate::gate::DoorIndex> {
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("Original gate translation requires retained grid topology");
@@ -2476,7 +2483,7 @@ impl EngineInner {
         let (actor_posture, actor_action_state) = self
             .get_entity(owner)
             .map(|e| {
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let action_state = e.actor_data().map(|a| a.action_state).unwrap_or_default();
                 (posture, action_state)
             })
@@ -2516,7 +2523,7 @@ impl EngineInner {
         if !entity.is_pc() {
             return;
         }
-        if entity.element_data().posture != Posture::OnShoulders {
+        if entity.element_data().posture() != Posture::OnShoulders {
             return;
         }
         let Some(carrier_id) = entity.human_data().and_then(|h| h.carrier) else {
@@ -2570,7 +2577,7 @@ impl EngineInner {
         let Some(rider) = self.get_entity(owner) else {
             return owner;
         };
-        if !rider.is_pc() || rider.element_data().posture != Posture::OnShoulders {
+        if !rider.is_pc() || rider.element_data().posture() != Posture::OnShoulders {
             return owner;
         }
         let carrier = rider
@@ -3998,7 +4005,7 @@ impl EngineInner {
         let Some(entity) = self.get_entity(owner) else {
             return false;
         };
-        let posture = entity.element_data().posture;
+        let posture = entity.element_data().posture();
         if matches!(
             posture,
             Posture::Flying | Posture::OnLadder | Posture::OnWall
@@ -4323,6 +4330,7 @@ impl EngineInner {
         assets: &LevelAssets,
     ) -> bool {
         let waypoint = assets
+            .navigation
             .hiking_paths
             .get(usize::from(path_id))
             .and_then(|path| path.waypoints.get(usize::from(waypoint_index)))
@@ -4504,7 +4512,7 @@ impl EngineInner {
         }
 
         let elem = entity.element_data();
-        if elem.posture == crate::element::Posture::Flying
+        if elem.posture() == crate::element::Posture::Flying
             || elem.hidden_in_building
             || elem.is_in_door_transit()
         {
@@ -4885,7 +4893,7 @@ impl EngineInner {
         assets: &'a LevelAssets,
     ) -> crate::sight_obstacle::ObstacleList<'a> {
         crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         }
@@ -6042,9 +6050,10 @@ mod campaign_lifecycle_tests {
 
     fn lacklandist_soldier(life_points: i16) -> crate::element::Entity {
         let mut soldier = crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

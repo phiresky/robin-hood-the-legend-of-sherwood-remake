@@ -993,9 +993,10 @@ mod tests {
         ai.base.primary_target = Some(crate::ai::AiEntityHandle::new(0));
         let owner = live.add_entity(crate::element::Entity::Soldier(
             crate::element::ActorSoldier {
-                element: crate::element::ElementData {
-                    kind: crate::element::ElementKind::ActorSoldier,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = crate::element::ElementData::default();
+                    initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: Default::default(),
@@ -1415,7 +1416,7 @@ mod tests {
         level_grid
             .move_box_half_diagonals
             .push(crate::coordinates::MoveBoxHalfDiagonal::new(1.0, 1.0));
-        assets.level_grid = std::sync::Arc::new(level_grid);
+        assets.navigation.level_grid = std::sync::Arc::new(level_grid);
         let mut loaded = crate::level_data::LoadedLevel::empty_for_test();
         let mut graph_bytes = Vec::new();
         graph_bytes.extend_from_slice(&1_u16.to_le_bytes());

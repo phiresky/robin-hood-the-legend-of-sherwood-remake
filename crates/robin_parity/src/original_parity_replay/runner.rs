@@ -733,6 +733,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                 &mut consumed_group_move_route_ordinals,
                 map,
                 &assets
+                    .navigation
                     .legacy_grid_topology
                     .as_ref()
                     .expect("parity replay requires retained Original fast-grid topology")
@@ -766,6 +767,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                     &mut consumed_group_move_route_ordinals,
                     map,
                     &assets
+                        .navigation
                         .legacy_grid_topology
                         .as_ref()
                         .expect("parity replay requires retained Original fast-grid topology")
@@ -997,7 +999,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                     path.current_waypoint_index,
                     path.last_waypoint_index,
                     path.forward,
-                    path.current_waypoint(&assets.hiking_paths)
+                    path.current_waypoint(&assets.navigation.hiking_paths)
                 )),
                 ai.patrol_path.as_ref().map(|path| &path.history),
             );
@@ -1007,7 +1009,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
                 eprintln!(
                     "rust soldier{} route {:?}",
                     original_index,
-                    assets.hiking_paths[usize::from(path.hiking_path_index)].waypoints
+                    assets.navigation.hiking_paths[usize::from(path.hiking_path_index)].waypoints
                 );
             }
         }

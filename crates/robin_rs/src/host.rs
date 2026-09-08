@@ -1996,7 +1996,43 @@ pub struct Host {
     pub scripting: HostScripting,
 }
 
+/// Borrowed presentation authority. Unlike `Host`, this cannot submit network
+/// traffic, run scripts, enqueue application effects, or mutate audio state.
+/// Process-local borrows are deliberately not serialized.
+pub(crate) struct HostPresentation<'a> {
+    pub(crate) frontend: &'a mut HostFrontend,
+    pub(crate) sound: &'a crate::sound::SoundManager,
+    pub(crate) options: &'a engine_api::GlobalOptions,
+    pub(crate) local_seat: robin_engine::player_command::PlayerId,
+    application: &'a ApplicationContext,
+}
+
+impl HostPresentation<'_> {
+    /// Read only the active presentation settings, without granting storage,
+    /// profile mutation, asset preparation, or other application authority.
+    pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
+        self.application
+            .with_player_profiles(|profiles| {
+                profiles
+                    .get_active()
+                    .map(|profile| profile.graphic_config.clone())
+            })
+            .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
+            .expect("rendering requires an active profile")
+    }
+}
+
 impl Host {
+    pub(crate) fn presentation(&mut self) -> HostPresentation<'_> {
+        HostPresentation {
+            frontend: &mut self.frontend,
+            sound: &self.audio.sound,
+            options: self.application_context.options(),
+            local_seat: self.transport.local_seat,
+            application: &self.application_context,
+        }
+    }
+
     pub(crate) fn bind_session_achievement_eligibility(
         &mut self,
         eligibility: crate::session_achievement::SessionAchievementEligibility,
@@ -3405,16 +3441,17 @@ mod application_context_tests {
             sound_ids: vec![0],
             ..Default::default()
         };
-        let mut element = ElementData {
-            kind: ElementKind::Fx,
-            sprite: Sprite {
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.sprite = Sprite {
                 current_width: 4,
                 current_height: 1,
                 scripts: Arc::new(vec![script]),
                 center: SpriteAnchor::ZERO,
                 ..Default::default()
-            },
-            ..Default::default()
+            };
+            initial_element
         };
         element.set_position_map(MapPoint::new(100.0, 100.0));
         Entity::Fx(ElementFx {
@@ -3433,7 +3470,7 @@ mod application_context_tests {
         let published = host.frontend.publish_frame_holder_opacity();
 
         let mut assets = engine_api::LevelAssets::new();
-        assets.pixel_opacity = Some(published.clone());
+        assets.attachments.pixel_opacity = Some(published.clone());
         let engine =
             engine_api::Engine::new_for_test(1024.0, 768.0, Campaign::default(), &mut assets)
                 .expect("construct sprite-hit-test engine");

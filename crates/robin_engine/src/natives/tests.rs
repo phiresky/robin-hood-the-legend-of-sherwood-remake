@@ -1239,10 +1239,11 @@ fn script_actor_handle_maps_back_to_zero_based_entity_index() {
 
 fn mobile_fx(mobile_index: u16) -> Entity {
     Entity::Fx(crate::element::ElementFx {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::Fx,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::Fx;
+            initial_element.active = true;
+            initial_element
         },
         fx: crate::element::FxData {
             mobile_index: Some(mobile_index),
@@ -1256,9 +1257,10 @@ fn mobile_master_is_appended_to_script_actor_indices() {
     let mut host = BoundScriptEffects::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element
             },
             fx: crate::element::FxData::default(),
         })));
@@ -3027,9 +3029,10 @@ fn scroll_status_mutates_canonical_state_before_a_later_native_in_the_same_callb
     let mut host = BoundScriptEffects::new();
     host.entities
         .push(Some(Entity::Scroll(crate::element::ElementScroll {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ObjectScroll,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::ObjectScroll;
+                initial_element
             },
             ..Default::default()
         })));
@@ -3398,9 +3401,10 @@ fn animation_state_write_is_immediately_visible_from_canonical_entity() {
     let mut host = BoundScriptEffects::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::Fx,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::default();
+                initial_element.kind = crate::element::ElementKind::Fx;
+                initial_element
             },
             fx: crate::element::FxData::default(),
         })));
@@ -3630,9 +3634,10 @@ fn direct_owner_add_campaign_value_score_credits_added_score_silently() {
 
 fn native_test_soldier() -> Entity {
     Entity::Soldier(crate::element::ActorSoldier {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element
         },
         actor: crate::element::ActorData::default(),
         human: crate::element::HumanData::default(),
@@ -3818,9 +3823,10 @@ fn set_always_attentive_preserves_ordinary_alert_branches() {
 
 fn native_test_pc(disabled_actions: Vec<bool>, disabled_actions_temp: Vec<bool>) -> Entity {
     Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::default();
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         },
         actor: crate::element::ActorData::default(),
         human: crate::element::HumanData::default(),
@@ -4277,7 +4283,8 @@ fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> BoundSc
     npc.element_data_mut()
         .set_position_map(crate::coordinates::MapPoint::ZERO);
     npc.element_data_mut().set_direction_instantly(4);
-    npc.element_data_mut().posture = Posture::Upright;
+    npc.element_data_mut()
+        .publish_order_posture(Posture::Upright);
     let npc_data = npc.npc_data_mut().expect("test soldier has NPC data");
     npc_data.view_radius = 400;
     npc_data.eye_status = crate::element::EyeStatus::LookForward;
@@ -4290,7 +4297,8 @@ fn native_sees_host(target: crate::coordinates::MapPoint, camp: Camp) -> BoundSc
 
     let mut pc = native_test_pc(Vec::new(), Vec::new());
     pc.element_data_mut().set_position_map(target);
-    pc.element_data_mut().posture = Posture::Upright;
+    pc.element_data_mut()
+        .publish_order_posture(Posture::Upright);
 
     let mut host = BoundScriptEffects::new();
     host.entities = crate::entities::Entities::from_legacy_slots(vec![Some(npc), Some(pc)]);

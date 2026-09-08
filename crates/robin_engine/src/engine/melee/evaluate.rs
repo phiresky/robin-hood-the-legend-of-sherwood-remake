@@ -1318,7 +1318,7 @@ impl EngineInner {
         // Build the nearby-victim list (same shape as the soldier path).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
         let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
@@ -1816,8 +1816,8 @@ impl EngineInner {
                     &scratch.ai_entity_views,
                     &scratch.ai_sight_obstacles,
                     &self.world.fast_grid,
-                    &assets.hiking_paths,
-                    &assets.hiking_waypoint_sectors,
+                    &assets.navigation.hiking_paths,
+                    &assets.navigation.hiking_waypoint_sectors,
                     &self.ai.global.all_soldier_handles,
                     self.control.sim_config.difficulty,
                 );
@@ -2048,7 +2048,7 @@ impl EngineInner {
             // PC strike-propose paths.
             let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
             let obstacles = crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &self.world.dynamic_sight_obstacles,
                 static_active: &self.world.static_sight_obstacle_active,
             };
@@ -2409,7 +2409,7 @@ impl EngineInner {
         // game).
         let inv_aspect = INVERSE_SWORDFIGHT_ASPECT_RATIO;
         let obstacles = crate::sight_obstacle::ObstacleList {
-            static_obstacles: assets.static_sight_obstacles.as_slice(),
+            static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
             dynamic_obstacles: &self.world.dynamic_sight_obstacles,
             static_active: &self.world.static_sight_obstacle_active,
         };
@@ -2670,8 +2670,8 @@ impl EngineInner {
                             &scratch.ai_entity_views,
                             &scratch.ai_sight_obstacles,
                             &self.world.fast_grid,
-                            &assets.hiking_paths,
-                            &assets.hiking_waypoint_sectors,
+                            &assets.navigation.hiking_paths,
+                            &assets.navigation.hiking_waypoint_sectors,
                             &self.ai.global.all_soldier_handles,
                             self.control.sim_config.difficulty,
                         )

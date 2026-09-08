@@ -1,7 +1,7 @@
 //! Developer rendering overlays.
 
 use super::render_text_with_shadow;
-use crate::host::Host;
+use crate::host::HostPresentation;
 use crate::hud_text::HudFonts;
 use crate::renderer::{Renderer, rgb565_to_rgb8};
 use robin_engine::coordinates as engine_coordinates;
@@ -21,7 +21,7 @@ use robin_engine::pathfinder as engine_pathfinder;
 /// `params.radius` is sufficient to match the gameplay-relevant debug
 /// cue.
 pub(crate) fn render_shadow_polygon_sphere_debug(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     selected_view_element: Option<engine_element::EntityId>,
     dev: &engine_api::DevState,
@@ -60,7 +60,7 @@ pub(crate) fn render_shadow_polygon_sphere_debug(
 /// (same architectural shift the `draw_status_bar` docstring calls
 /// out).
 pub(crate) fn render_debug_doors(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -159,7 +159,7 @@ pub(crate) fn render_debug_doors(
 /// view rect.  World→screen transform is
 /// `(point - view_rect.top_left) * zoom`.
 pub(crate) fn render_debug_motion_graph(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
@@ -202,7 +202,7 @@ pub(crate) fn render_debug_motion_graph(
     let pathfinder = engine.pathfinder();
 
     pathfinder.draw_graph(
-        assets.pathfinder_graph.as_ref(),
+        assets.navigation.pathfinder_graph.as_ref(),
         view_rect,
         half_diagonal_idx,
         |a, b, color| {
@@ -214,7 +214,7 @@ pub(crate) fn render_debug_motion_graph(
     );
 
     pathfinder.draw_nodes(
-        assets.pathfinder_graph.as_ref(),
+        assets.navigation.pathfinder_graph.as_ref(),
         view_rect,
         half_diagonal_idx,
         |a, b, color| {
@@ -324,14 +324,11 @@ fn fill_polygon_map(
 /// Find the `(layer, area_idx)` the selected character is standing on,
 /// using the canonical `PathGraph::find_area_at_point` lookup.
 fn selected_surface(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     graph: &engine_pathfinder::PathGraph,
 ) -> Option<(usize, usize)> {
-    let pc_id = engine
-        .hero_selection(host.transport.local_seat)
-        .first()
-        .copied()?;
+    let pc_id = engine.hero_selection(host.local_seat).first().copied()?;
     let entity = engine.get_entity(pc_id)?;
     let ed = entity.element_data();
     let layer = ed.layer() as usize;
@@ -346,7 +343,7 @@ fn selected_surface(
 /// MotionArea is filled — outlining every area is left to the post-
 /// sprite pass so the sprite art reads cleanly.
 pub(crate) fn render_debug_surfaces_fill(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
@@ -363,7 +360,7 @@ pub(crate) fn render_debug_surfaces_fill(
     }
     let to_screen_f =
         move |p: MapPoint| -> (f32, f32) { ((p.x - view.x) * zoom, (p.y - view.y) * zoom) };
-    let graph = assets.pathfinder_graph.as_ref();
+    let graph = assets.navigation.pathfinder_graph.as_ref();
     let Some((sel_layer, sel_area)) = selected_surface(host, engine, graph) else {
         return;
     };
@@ -383,7 +380,7 @@ pub(crate) fn render_debug_surfaces_fill(
 /// highlighted-surface outline, and the committed-path polyline all
 /// sit on top of the world and remain readable.
 pub(crate) fn render_debug_surfaces_outline(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
@@ -405,13 +402,10 @@ pub(crate) fn render_debug_surfaces_outline(
         (sx.round() as i32, sy.round() as i32)
     };
 
-    let graph = assets.pathfinder_graph.as_ref();
+    let graph = assets.navigation.pathfinder_graph.as_ref();
     let move_layers = &graph.static_data.move_layers;
     let selected_layer_area = selected_surface(host, engine, graph);
-    let selected_id = engine
-        .hero_selection(host.transport.local_seat)
-        .first()
-        .copied();
+    let selected_id = engine.hero_selection(host.local_seat).first().copied();
 
     // Pass 1: outline every walkable area, plus active obstacles within.
     for (layer_idx, areas) in move_layers.iter().enumerate() {
@@ -541,7 +535,7 @@ pub(crate) fn render_debug_surfaces_outline(
 ///    is selected), draw a black ring at its `cover_noise_deafness`
 ///    radius — the "can't hear inside this circle" envelope.
 pub(crate) fn render_noise_display(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
@@ -559,7 +553,7 @@ pub(crate) fn render_noise_display(
     // ── (0) Sound-sector polygon outlines ────────────────────────
     // Iterate material sectors registered as sound sectors and draw
     // each polygon outline in dark teal.
-    for sector in &assets.material_sectors.sectors {
+    for sector in &assets.environment.material_sectors.sectors {
         if sector.points.len() < 2 {
             continue;
         }
@@ -687,7 +681,7 @@ pub(crate) fn render_noise_display(
 }
 
 pub(crate) fn render_debug_animation_lines(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     engine: &Engine,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -728,8 +722,12 @@ pub(crate) fn render_debug_animation_lines(
 /// `render_debug_doors`, `draw_status_bar`, etc.) so we just
 /// world→screen transform and let the framebuffer clip.  Empty rects
 /// are skipped.
-pub(crate) fn render_debug_whatsup_overlay(host: &Host, engine: &Engine, renderer: &mut Renderer) {
-    let enabled = host.application_context().options().whatsup;
+pub(crate) fn render_debug_whatsup_overlay(
+    host: &HostPresentation<'_>,
+    engine: &Engine,
+    renderer: &mut Renderer,
+) {
+    let enabled = host.options.whatsup;
     if !enabled {
         return;
     }

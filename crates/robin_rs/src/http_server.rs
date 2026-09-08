@@ -1686,7 +1686,7 @@ fn bow_range_debug(
             "position_map": shooter.element_data().position_map(),
             "hand_point": hand_point,
             "direction": shooter.element_data().direction(),
-            "posture": shooter.element_data().posture,
+            "posture": shooter.element_data().posture(),
             "pc_current_action": shooter.pc_data().map(|pc| pc.current_action),
             "actor_action_state": shooter.actor_data().map(|actor| actor.action_state),
         },
@@ -1709,22 +1709,22 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
         "counts".into(),
         serde_json::json!({
             "level_grid": {
-                "lines": assets.level_grid.lines.len(),
-                "sectors": assets.level_grid.sectors.len(),
-                "masks": assets.level_grid.masks.len(),
-                "jump_lines": assets.level_grid.jump_lines.len(),
-                "blocks": assets.level_grid.blocks.len(),
-                "layers": assets.level_grid.layers.len(),
-                "level_repulsive_points": assets.level_grid.level_repulsive_points.len(),
-                "shadow_data": assets.level_grid.shadow_data.len(),
+                "lines": assets.navigation.level_grid.lines.len(),
+                "sectors": assets.navigation.level_grid.sectors.len(),
+                "masks": assets.navigation.level_grid.masks.len(),
+                "jump_lines": assets.navigation.level_grid.jump_lines.len(),
+                "blocks": assets.navigation.level_grid.blocks.len(),
+                "layers": assets.navigation.level_grid.layers.len(),
+                "level_repulsive_points": assets.navigation.level_grid.level_repulsive_points.len(),
+                "shadow_data": assets.navigation.level_grid.shadow_data.len(),
             },
             "pathfinder_graph": {
-                "nodes": assets.pathfinder_graph.nodes.len(),
-                "layers": assets.pathfinder_graph.layers.len(),
-                "links": assets.pathfinder_graph.static_data.links.len(),
-                "link_configs": assets.pathfinder_graph.static_data.link_configs.len(),
-                "move_layers": assets.pathfinder_graph.static_data.move_layers.len(),
-                "alternative_move_layers": assets.pathfinder_graph.static_data.alternative_move_layers.len(),
+                "nodes": assets.navigation.pathfinder_graph.nodes.len(),
+                "layers": assets.navigation.pathfinder_graph.layers.len(),
+                "links": assets.navigation.pathfinder_graph.static_data.links.len(),
+                "link_configs": assets.navigation.pathfinder_graph.static_data.link_configs.len(),
+                "move_layers": assets.navigation.pathfinder_graph.static_data.move_layers.len(),
+                "alternative_move_layers": assets.navigation.pathfinder_graph.static_data.alternative_move_layers.len(),
             },
             "profiles": {
                 "characters": assets.profile_manager.characters.len(),
@@ -1735,11 +1735,11 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
                 "missions": assets.profile_manager.missions.len(),
             },
             "mission_script_programs": assets.scripts.mission_programs.len(),
-            "hiking_paths": assets.hiking_paths.len(),
-            "static_sight_obstacles": assets.static_sight_obstacles.len(),
+            "hiking_paths": assets.navigation.hiking_paths.len(),
+            "static_sight_obstacles": assets.environment.static_sight_obstacles.len(),
             "accessory_sprite_prototypes": assets.accessory_sprite_prototypes.len(),
-            "water_zones": assets.water_zones.zones.len(),
-            "material_sectors": assets.material_sectors.sectors.len(),
+            "water_zones": assets.environment.water_zones.zones.len(),
+            "material_sectors": assets.environment.material_sectors.sectors.len(),
             "script_locations": assets.scripts.location_count,
             "script_points": assets.scripts.point_count,
             "script_buildings": assets.scripts.building_count,
@@ -1748,15 +1748,19 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
     );
     root.insert(
         "pixel_opacity_attached".into(),
-        serde_json::json!(assets.pixel_opacity.is_some()),
+        serde_json::json!(assets.attachments.pixel_opacity.is_some()),
     );
     insert_json(&mut root, "fast_grid_runtime", engine.fast_grid())?;
 
     let mut asset = serde_json::Map::new();
     insert_json(&mut asset, "sprite_scriptor", &*assets.sprite_scriptor)?;
-    insert_json(&mut asset, "level_grid", &*assets.level_grid)?;
-    insert_json(&mut asset, "pathfinder_graph", &*assets.pathfinder_graph)?;
-    insert_json(&mut asset, "hiking_paths", &*assets.hiking_paths)?;
+    insert_json(&mut asset, "level_grid", &*assets.navigation.level_grid)?;
+    insert_json(
+        &mut asset,
+        "pathfinder_graph",
+        &*assets.navigation.pathfinder_graph,
+    )?;
+    insert_json(&mut asset, "hiking_paths", &*assets.navigation.hiking_paths)?;
     insert_json(&mut asset, "profile_manager", &*assets.profile_manager)?;
     insert_json(&mut asset, "bank_signature", &assets.bank_signature)?;
     insert_json(
@@ -1774,13 +1778,17 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
     insert_json(
         &mut asset,
         "exclamation_durations",
-        &assets.exclamation_durations,
+        &assets.audio.exclamation_durations(),
     )?;
-    insert_json(&mut asset, "source_durations", &assets.source_durations)?;
+    insert_json(
+        &mut asset,
+        "source_durations",
+        &assets.audio.source_durations(),
+    )?;
     insert_json(
         &mut asset,
         "sound_source_required_ids",
-        &assets.sound_source_required_ids,
+        &assets.audio.sound_source_required_ids,
     )?;
     insert_json(
         &mut asset,
@@ -1802,12 +1810,16 @@ fn level_assets_json(engine: &Engine, assets: &LevelAssets) -> Result<serde_json
         "soldier_subordinate_ids",
         &assets.entities.soldier_subordinate_ids,
     )?;
-    insert_json(&mut asset, "water_zones", &assets.water_zones)?;
-    insert_json(&mut asset, "material_sectors", &assets.material_sectors)?;
+    insert_json(&mut asset, "water_zones", &assets.environment.water_zones)?;
+    insert_json(
+        &mut asset,
+        "material_sectors",
+        &assets.environment.material_sectors,
+    )?;
     insert_json(
         &mut asset,
         "static_sight_obstacles",
-        &*assets.static_sight_obstacles,
+        &*assets.environment.static_sight_obstacles,
     )?;
     insert_json(
         &mut asset,

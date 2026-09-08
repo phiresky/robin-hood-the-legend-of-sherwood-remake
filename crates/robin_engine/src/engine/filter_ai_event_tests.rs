@@ -233,11 +233,11 @@ fn test_campaign() -> crate::campaign::Campaign {
 }
 
 fn make_pc(robin: bool) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ActorPc,
-        active: true,
-        posture: Posture::Upright,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorPc;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position(WorldPoint3D::default());
     Entity::Pc(ActorPc {
@@ -256,11 +256,11 @@ fn make_pc(robin: bool) -> Entity {
 
 fn make_scripted_soldier(script_class: &str) -> Entity {
     Entity::Soldier(ActorSoldier {
-        element: ElementData {
-            kind: ElementKind::ActorSoldier,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorSoldier;
+            initial_element.active = true;
+            initial_element
         },
         actor: ActorData {
             script_class: script_class.into(),
@@ -911,8 +911,8 @@ fn closure_review_alert_cap_counts_acceptances_after_script_refusals() {
         &scratch.ai_entity_views,
         &scratch.ai_sight_obstacles,
         &engine.world.fast_grid,
-        &assets.hiking_paths,
-        &assets.hiking_waypoint_sectors,
+        &assets.navigation.hiking_paths,
+        &assets.navigation.hiking_waypoint_sectors,
         &engine.ai.global.all_soldier_handles,
         engine.control.sim_config.difficulty,
     );
@@ -4185,10 +4185,11 @@ fn frozen_all_consumes_actor_initialisation_once_without_sprite_identity() {
     let mut engine = EngineInner::new();
     let soldier = engine.add_entity(make_scripted_soldier(""));
     let bottle = engine.add_entity(Entity::Bonus(ElementBonus {
-        element: ElementData {
-            kind: ElementKind::ObjectOther,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectOther;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Ale,
@@ -4893,7 +4894,9 @@ fn waking_up_creation_order_engine(
             .entities
             .get_mut(target)
             .expect("wake target exists");
-        target_entity.element_data_mut().posture = Posture::Lying;
+        target_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Lying);
         target_entity
             .human_data_mut()
             .expect("wake target is human")
@@ -5133,11 +5136,11 @@ fn npc_searching_animation_rejects_present_stale_antagonist() {
 
 fn make_scripted_civilian(script_class: &str) -> Entity {
     Entity::Civilian(ActorCivilian {
-        element: ElementData {
-            kind: ElementKind::ActorCivilian,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorCivilian;
+            initial_element.active = true;
+            initial_element
         },
         actor: ActorData {
             script_class: script_class.into(),
@@ -7054,10 +7057,11 @@ fn ai_focus_accepts_live_object_element() {
     let mut engine = EngineInner::new();
     let observer = engine.add_entity(make_scripted_soldier(""));
     let ale = engine.add_entity(Entity::Bonus(ElementBonus {
-        element: ElementData {
-            kind: ElementKind::ObjectBonus,
-            active: true,
-            ..Default::default()
+        element: {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectBonus;
+            initial_element.active = true;
+            initial_element
         },
         object: ObjectData {
             object_type: ObjectType::Ale,

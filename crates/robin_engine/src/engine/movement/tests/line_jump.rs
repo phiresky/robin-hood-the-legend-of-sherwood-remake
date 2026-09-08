@@ -12,10 +12,10 @@ mod suite {
 
     fn extraction_test_pc(posture: Posture) -> Entity {
         Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(posture);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -304,10 +304,10 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[physical as usize] = 0;
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::OnWall,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::OnWall);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -453,10 +453,10 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[physical as usize] = 0;
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -600,11 +600,11 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[physical as usize] = 0;
         let mut pc = Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -679,7 +679,7 @@ mod suite {
             [690.0, 1450.0, 5.0],
         ];
         let mut assets = LevelAssets::new();
-        assets.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![ramp]);
         engine.world.static_sight_obstacle_active = vec![true];
 
         crate::movement_diagnostics::begin_parity_movement_capture();
@@ -938,11 +938,11 @@ mod suite {
         let mut conversion = vec![UNMAPPED; NONANIMATION_END];
         conversion[transition as usize] = 0;
 
-        let mut element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![script; 16]),
@@ -1309,10 +1309,10 @@ mod suite {
         }
 
         let mut target_entity = Entity::Soldier(ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),

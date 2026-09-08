@@ -14,10 +14,10 @@ pub(super) fn make_test_soldier(posture: crate::element::Posture) -> Entity {
     // invalid as soon as they exercise diplomacy-aware combat scans.
     soldier_data.cached_camp = crate::element::Camp::Lacklandists;
     let mut entity = Entity::Soldier(crate::element::ActorSoldier {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorSoldier,
-            posture,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
+            initial_element.kind = crate::element::ElementKind::ActorSoldier;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -36,10 +36,10 @@ pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
     // Loaded civilian profiles likewise always provide a real allegiance.
     civilian_data.cached_camp = crate::element::Camp::Royalists;
     let mut entity = Entity::Civilian(crate::element::ActorCivilian {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorCivilian,
-            posture,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
+            initial_element.kind = crate::element::ElementKind::ActorCivilian;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),
@@ -54,10 +54,10 @@ pub(super) fn make_test_civilian(posture: crate::element::Posture) -> Entity {
 
 pub(super) fn make_test_pc(posture: crate::element::Posture) -> Entity {
     let mut entity = Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            posture,
-            ..Default::default()
+        element: {
+            let mut initial_element = crate::element::ElementData::from_initial_posture(posture);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),

@@ -219,10 +219,11 @@ pub(crate) fn load_raw_mission_inputs(
     .ok_or(RankedVerifierLoadError::MissingBackground)?;
     let bg_pixel_dims = (background.width as f32, background.height as f32);
 
-    assets.required_exclamation_ids = required_mission_exclamation_ids(&loaded, campaign, profiles)
-        .map_err(RankedVerifierLoadError::SpeechClosure)?;
+    assets.audio.required_exclamation_ids =
+        required_mission_exclamation_ids(&loaded, campaign, profiles)
+            .map_err(RankedVerifierLoadError::SpeechClosure)?;
     let ambiance_mask = authored_ambiance.to_bitmask();
-    assets.sound_source_required_ids = loaded
+    assets.audio.sound_source_required_ids = loaded
         .proto
         .sound_sources
         .iter()
@@ -239,7 +240,8 @@ pub(crate) fn load_raw_mission_inputs(
     );
     let (night_r, night_g, night_b) = authored_ambiance.night_color_rgb();
     frame_holder.apply_arno_law(robin_util::color::rgb565(night_r, night_g, night_b));
-    assets.pixel_opacity = Some(Arc::new(PublishedFrameHolder::new(Arc::new(frame_holder))));
+    assets.attachments.pixel_opacity =
+        Some(Arc::new(PublishedFrameHolder::new(Arc::new(frame_holder))));
 
     Ok(RawMissionInputs {
         assets,
@@ -764,6 +766,7 @@ fn populate_ranked_sound_duration_tables(
     for (&group_id, group) in &speech_cache.groups {
         let prefix = group_id & 0xffff_0000;
         if !assets
+            .audio
             .required_exclamation_ids
             .iter()
             .any(|profile| profile & 0xffff_0000 == prefix)
@@ -807,7 +810,7 @@ fn populate_ranked_sound_duration_tables(
     }
 
     let mut source_cache = SoundCache::new();
-    source_cache.initialize_sound_source_cache(&assets.sound_source_required_ids);
+    source_cache.initialize_sound_source_cache(&assets.audio.sound_source_required_ids);
     let source_durations = source_cache
         .source_cache
         .entries
@@ -816,9 +819,14 @@ fn populate_ranked_sound_duration_tables(
             loader(&entry.file_name).map(|(_, _, milliseconds)| (id, frames_from_ms(milliseconds)))
         })
         .collect();
-    assets.exclamation_durations = Arc::new(exclamation_durations);
-    assets.speech_timing_catalog = Arc::new(catalog);
-    assets.source_durations = Arc::new(source_durations);
+    assets
+        .audio
+        .publish_timing(
+            Arc::new(exclamation_durations),
+            Arc::new(catalog),
+            Arc::new(source_durations),
+        )
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 

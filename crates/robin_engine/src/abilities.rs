@@ -377,7 +377,7 @@ pub fn begin_carry(
             if !e.is_human() {
                 false
             } else {
-                let posture = e.element_data().posture;
+                let posture = e.element_data().posture();
                 let unconscious = e.human_data().is_some_and(|h| h.unconscious);
                 let dead = e.is_dead();
                 let available_carrier = e
@@ -475,7 +475,7 @@ pub(crate) fn initialize_carry_relationship(
         .get(target_id)
         .unwrap_or_else(|| panic!("Carry target {target_id:?} vanished at initialization"))
         .element_data()
-        .posture;
+        .posture();
     let target_posture = if target_posture == Posture::Dead {
         Posture::DeadBack
     } else {
@@ -637,7 +637,7 @@ pub fn begin_climb_on_shoulders(
     let (helper_pos_map, helper_pos_3d, helper_valid) = match entities.get(helper_id) {
         Some(e) => {
             let valid =
-                e.is_pc() && !e.is_dead() && e.element_data().posture == Posture::HelpingToClimb;
+                e.is_pc() && !e.is_dead() && e.element_data().posture() == Posture::HelpingToClimb;
             (
                 e.element_data().position_map(),
                 e.position_iface().get_position(),
@@ -804,7 +804,7 @@ pub fn begin_climb_down_from_shoulders(
             if !e.is_pc() || e.is_dead() {
                 return BeginResult::Impossible;
             }
-            if e.element_data().posture != Posture::OnShoulders {
+            if e.element_data().posture() != Posture::OnShoulders {
                 return BeginResult::Impossible;
             }
             if e.actor_data().is_some_and(|a| a.active_ability.is_active()) {
@@ -871,7 +871,7 @@ pub fn begin_tie(
     // Validate target: must be unconscious and lying (not already tied).
     let target_valid = match entities.get(target_id) {
         Some(e) => {
-            let posture = e.element_data().posture;
+            let posture = e.element_data().posture();
             let unconscious = e.human_data().is_some_and(|h| h.unconscious);
             unconscious && posture == Posture::Lying
         }
@@ -946,7 +946,7 @@ pub fn begin_untie(
             && target.is_npc()
             && !target.is_dead()
             && target.human_data().is_some()
-            && target.element_data().posture == Posture::Tied
+            && target.element_data().posture() == Posture::Tied
     });
     if !target_valid {
         return BeginResult::Impossible;
@@ -2235,7 +2235,7 @@ pub fn tick_ability(
             .expect("active Tie ability must retain its antagonist");
         let target_valid = entities.get(target_id).is_some_and(|target| {
             target.human_data().is_some_and(|human| human.unconscious)
-                && target.element_data().posture == Posture::Lying
+                && target.element_data().posture() == Posture::Lying
         });
         if !target_valid {
             results.push(AbilityTickResult::Aborted {
@@ -2257,7 +2257,7 @@ pub fn tick_ability(
                 && target.is_npc()
                 && !target.is_dead()
                 && target.human_data().is_some()
-                && target.element_data().posture == Posture::Tied
+                && target.element_data().posture() == Posture::Tied
         });
         if !target_valid {
             results.push(AbilityTickResult::Aborted {
@@ -3525,11 +3525,12 @@ mod tests {
     fn take_corpse_translation_fixture() -> (Entities, EntityId, EntityId, EntityId) {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::CarryingCorpse,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    ElementData::from_initial_posture(Posture::CarryingCorpse);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -3539,11 +3540,11 @@ mod tests {
             },
         })));
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Tied,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData {
@@ -3556,11 +3557,11 @@ mod tests {
             },
         })));
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Lying,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Lying);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData {
@@ -3748,9 +3749,10 @@ mod tests {
     fn corpse_carry_fixture(carrier_action: OrderType) -> (Entities, EntityId, EntityId) {
         let mut entities = Entities::new();
         let mut carrier = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -3767,10 +3769,10 @@ mod tests {
             .set_material(crate::element::GameMaterial::Stone);
         carrier.element.sprite.last_action = carrier_action;
         let mut body = ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                posture: Posture::Carried,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Carried);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -3952,18 +3954,20 @@ mod tests {
     fn pay_translation_preserves_direction_goal_until_execute_initialization() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
             pc: PcData::default(),
         })));
         entities.push(Some(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4033,9 +4037,10 @@ mod tests {
         let mut entities = Entities::new();
         for _ in 0..2 {
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: HumanData::default(),
@@ -4072,10 +4077,11 @@ mod tests {
     fn untie_translation_targets_living_tied_npc_and_reverses_tying_animation() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4085,11 +4091,11 @@ mod tests {
             },
         })));
         entities.push(Some(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Tied,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData {
@@ -4162,10 +4168,11 @@ mod tests {
         let mut conversion = vec![UNMAPPED; crate::sprite_script::NONANIMATION_END];
         conversion[OrderType::Tying as usize] = 0;
 
-        let mut owner_element = ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            ..Default::default()
+        let mut owner_element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         };
         owner_element.sprite = crate::sprite::Sprite::new(
             std::sync::Arc::new(vec![tying_script; 16]),
@@ -4182,11 +4189,11 @@ mod tests {
             },
         })));
         entities.push(Some(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                active: true,
-                posture: Posture::Tied,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Tied);
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData {
@@ -4269,9 +4276,10 @@ mod tests {
         let mut entities = Entities::new();
         for _ in 0..2 {
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: HumanData::default(),
@@ -4307,9 +4315,10 @@ mod tests {
     fn loaded_ability_behind_transition_prefix_reconstructs_from_first_command_order() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4359,18 +4368,20 @@ mod tests {
     fn hit_translation_preserves_live_movement_state_and_facing() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
             pc: PcData::default(),
         })));
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4428,18 +4439,20 @@ mod tests {
     fn strangle_translation_preserves_live_movement_state_for_stale_dead_target() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
             pc: PcData::default(),
         })));
         entities.push(Some(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4456,7 +4469,9 @@ mod tests {
         let target = entities.id_at_legacy_slot(1).unwrap();
         {
             let target = entities.get_mut(target).unwrap();
-            target.element_data_mut().posture = Posture::Dead;
+            target
+                .element_data_mut()
+                .publish_order_posture(Posture::Dead);
             target.npc_data_mut().unwrap().life_points = 0;
         }
         entities
@@ -4506,9 +4521,10 @@ mod tests {
         let mut entities = Entities::new();
         for _ in 0..2 {
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: HumanData::default(),
@@ -4566,9 +4582,10 @@ mod tests {
         let mut entities = Entities::new();
         for _ in 0..2 {
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: HumanData::default(),
@@ -4614,9 +4631,10 @@ mod tests {
         let mut entities = Entities::new();
         for _ in 0..2 {
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::default();
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: HumanData::default(),
@@ -4666,18 +4684,20 @@ mod tests {
     fn strangle_turn_fast_short_circuits_attacker_before_victim() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
             pc: PcData::default(),
         })));
         entities.push(Some(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4749,9 +4769,10 @@ mod tests {
     fn listen_uses_three_real_sequence_orders_with_stable_identity() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4818,9 +4839,10 @@ mod tests {
     fn frozen_listen_entry_publishes_in_progress_without_advancing_sprite() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Pc(ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4902,10 +4924,10 @@ mod tests {
     fn carry_creates_only_its_canonical_sequence_order() {
         let mut entities = Entities::new();
         let mut carrier_entity = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -4930,10 +4952,10 @@ mod tests {
         carrier_scripts[0].sound_ids = vec![0];
         carrier_entity.element.sprite.scripts = std::sync::Arc::new(carrier_scripts);
         let mut target_entity = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Dead,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Dead);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5041,10 +5063,10 @@ mod tests {
         for initial_action_state in [ActionState::Moving, ActionState::Waiting] {
             let mut entities = Entities::new();
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    posture: Posture::Upright,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: crate::element::ActorData {
                     action_state: initial_action_state,
@@ -5057,10 +5079,10 @@ mod tests {
                 },
             })));
             entities.push(Some(Entity::Pc(ActorPc {
-                element: ElementData {
-                    kind: ElementKind::ActorPc,
-                    posture: Posture::Dead,
-                    ..Default::default()
+                element: {
+                    let mut initial_element = ElementData::from_initial_posture(Posture::Dead);
+                    initial_element.kind = ElementKind::ActorPc;
+                    initial_element
                 },
                 actor: Default::default(),
                 human: HumanData::default(),
@@ -5105,9 +5127,10 @@ mod tests {
     fn receive_purse_uses_three_real_sequence_orders_with_stable_identity() {
         let mut entities = Entities::new();
         entities.push(Some(Entity::Civilian(ActorCivilian {
-            element: ElementData {
-                kind: ElementKind::ActorCivilian,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::default();
+                initial_element.kind = ElementKind::ActorCivilian;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5172,10 +5195,10 @@ mod tests {
     fn climb_translation_defers_posture_snap_and_orientation_until_execute_initialization() {
         let mut entities = Entities::new();
         let mut climber = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5184,10 +5207,11 @@ mod tests {
         climber.element.set_position_map(MapPoint::new(10.0, 20.0));
         climber.element.set_direction_instantly(3);
         let mut helper = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::HelpingToClimb,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    ElementData::from_initial_posture(Posture::HelpingToClimb);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5226,7 +5250,7 @@ mod tests {
         assert!(matches!(result, ClimbResult::Started));
 
         let climber = entities.get(climber_id).unwrap();
-        assert_eq!(climber.element_data().posture, Posture::Upright);
+        assert_eq!(climber.element_data().posture(), Posture::Upright);
         assert_eq!(
             climber.element_data().position_map(),
             MapPoint::new(10.0, 20.0)
@@ -5235,7 +5259,7 @@ mod tests {
         assert_eq!(i16::from(climber.position_iface().get_direction_goal()), 3);
         assert_eq!(climber.human_data().unwrap().carrier, None);
         let helper = entities.get(helper_id).unwrap();
-        assert_eq!(helper.element_data().posture, Posture::HelpingToClimb);
+        assert_eq!(helper.element_data().posture(), Posture::HelpingToClimb);
         assert_eq!(helper.element_data().direction(), 10);
         assert_eq!(helper.pc_data().unwrap().carried, None);
 
@@ -5244,14 +5268,17 @@ mod tests {
         initialize_climb_on_shoulders_relationship(&mut entities, climber_id, helper_id);
 
         let climber = entities.get(climber_id).unwrap();
-        assert_eq!(climber.element_data().posture, Posture::OnShoulders);
+        assert_eq!(climber.element_data().posture(), Posture::OnShoulders);
         assert_eq!(
             climber.element_data().position_map(),
             MapPoint::new(30.0, 40.0)
         );
         assert_eq!(climber.human_data().unwrap().carrier, Some(helper_id));
         let helper = entities.get(helper_id).unwrap();
-        assert_eq!(helper.element_data().posture, Posture::CarryingOnShoulders);
+        assert_eq!(
+            helper.element_data().posture(),
+            Posture::CarryingOnShoulders
+        );
         assert_eq!(helper.element_data().direction(), 10);
         assert_eq!(
             i16::from(helper.position_iface().get_direction_goal()),
@@ -5264,10 +5291,10 @@ mod tests {
     fn terminal_shoulder_sync_does_not_restore_stale_helper_transition() {
         let mut entities = Entities::new();
         let mut climber = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::OnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::OnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5278,10 +5305,11 @@ mod tests {
         climber.element.sprite.frame_count = 1;
 
         let mut helper = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::CarryingOnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    ElementData::from_initial_posture(Posture::CarryingOnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5421,10 +5449,11 @@ mod tests {
     fn live_shoulder_sync_preserves_progressive_climber_turn() {
         let mut entities = Entities::new();
         let mut helper = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::CarryingOnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element =
+                    ElementData::from_initial_posture(Posture::CarryingOnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),
@@ -5434,10 +5463,10 @@ mod tests {
         helper.element.set_direction_instantly(3);
 
         let mut climber = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                posture: Posture::OnShoulders,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::OnShoulders);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: HumanData::default(),

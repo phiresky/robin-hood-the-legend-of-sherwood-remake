@@ -9,11 +9,12 @@ use super::*;
 #[cfg(test)]
 fn add_test_pc(engine: &mut EngineInner) -> crate::element::EntityId {
     let pc = engine.add_entity(Entity::Pc(crate::element::ActorPc {
-        element: crate::element::ElementData {
-            kind: crate::element::ElementKind::ActorPc,
-            active: true,
-            posture: crate::element::Posture::Upright,
-            ..Default::default()
+        element: {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Upright);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         },
         actor: Default::default(),
         human: Default::default(),

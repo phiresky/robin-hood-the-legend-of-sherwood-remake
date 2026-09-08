@@ -350,7 +350,7 @@ impl EngineInner {
                     let is_searchable_tied_npc = self.control.sim_config.enable_unbinding
                         && victim.is_npc()
                         && !victim.is_dead()
-                        && victim.element_data().posture == Posture::Tied;
+                        && victim.element_data().posture() == Posture::Tied;
                     if !is_searchable_tied_npc {
                         return false;
                     }
@@ -457,7 +457,7 @@ impl EngineInner {
                     .and_then(|i| self.world.fast_grid.level.jump_lines.get(i as usize))
                     .map(|dst| dst.z_a - src_line.z_a)
                     .unwrap_or(0.0);
-                !(actor.element_data().posture != Posture::OnShoulders
+                !(actor.element_data().posture() != Posture::OnShoulders
                     && jump_height > 0.0
                     && src_line.helper_needed)
             }
@@ -476,7 +476,7 @@ impl EngineInner {
                 let Some(corpse) = interaction_victim(self, element) else {
                     return false;
                 };
-                let posture = corpse.element_data().posture;
+                let posture = corpse.element_data().posture();
                 let posture_ok = matches!(
                     posture,
                     Posture::Lying | Posture::Dead | Posture::DeadBack | Posture::Tied
@@ -524,7 +524,7 @@ impl EngineInner {
                 if !carrier.is_pc() {
                     return false;
                 }
-                if carrier.element_data().posture != Posture::HelpingToClimb
+                if carrier.element_data().posture() != Posture::HelpingToClimb
                     || carrier.pc_data().map(|p| p.current_action)
                         != Some(crate::profiles::Action::HelpToClimb)
                 {
@@ -545,7 +545,7 @@ impl EngineInner {
                     return true;
                 }
                 let has_carrier = actor.human_data().and_then(|h| h.carrier).is_some();
-                let on_shoulders = actor.element_data().posture == Posture::OnShoulders;
+                let on_shoulders = actor.element_data().posture() == Posture::OnShoulders;
                 has_carrier && on_shoulders
             }
 
@@ -631,7 +631,7 @@ impl EngineInner {
                     return false;
                 };
                 let unconscious = victim.human_data().is_some_and(|h| h.unconscious);
-                let lying = victim.element_data().posture == Posture::Lying;
+                let lying = victim.element_data().posture() == Posture::Lying;
                 if !unconscious || !lying {
                     return false;
                 }
@@ -681,13 +681,14 @@ impl EngineInner {
                 {
                     return false;
                 }
-                let target_is_tied = victim.element_data().posture == Posture::Tied;
+                let target_is_tied = victim.element_data().posture() == Posture::Tied;
                 // Untie changes the target at the authored DONE point, but
                 // the reversed Tying animation still owns the actor until
                 // TERMINATED. Keep that exact in-flight interaction valid so
                 // the remaining reversed frames play instead of turning the
                 // successful release into an Impossible sequence.
-                let finishing_successful_release = victim.element_data().posture == Posture::Lying
+                let finishing_successful_release = victim.element_data().posture()
+                    == Posture::Lying
                     && actor.actor_data().is_some_and(|actor| {
                         owns_active_release && actor.active_ability.done_effect_applied
                     });
@@ -1147,7 +1148,7 @@ impl EngineInner {
         // check on the next Execute, and terminates without playing
         // any animation.  Skipping the pre-pass for inactive PCs let
         // the transition play instead, so no active gate here.
-        if entity.element_data().posture.is_dead() {
+        if entity.element_data().posture().is_dead() {
             return false;
         }
         // PC override `Execute` opens with
@@ -1332,7 +1333,7 @@ impl EngineInner {
         if human.stuck_under_nets_counter > 0 {
             return false;
         }
-        if entity.element_data().posture == Posture::Tied {
+        if entity.element_data().posture() == Posture::Tied {
             return false;
         }
         if !allow_in_buildings
@@ -1389,7 +1390,7 @@ impl EngineInner {
         let obstacle_check = crate::bow_shot::TrajectoryObstacleCheck {
             fast_find_grid: &self.world.fast_grid,
             sight_obstacles: self.sight_obstacles(assets),
-            water_zones: Some(&assets.water_zones),
+            water_zones: Some(&assets.environment.water_zones),
         };
         let trajectory = crate::bow_shot::compute_trajectory_ballistic(
             source,
@@ -1430,7 +1431,7 @@ pub(super) fn striking_down_sword_valid_without_position(
     if actor.is_dead()
         || actor_human.unconscious
         || actor_human.stuck_under_nets_counter > 0
-        || actor.element_data().posture == Posture::Tied
+        || actor.element_data().posture() == Posture::Tied
     {
         return false;
     }
@@ -1439,7 +1440,7 @@ pub(super) fn striking_down_sword_valid_without_position(
         .human_data()
         .map(|human| human.unconscious)
         .unwrap_or(false);
-    let posture = victim.element_data().posture;
+    let posture = victim.element_data().posture();
     victim.is_active()
         && !victim.element_data().blipped
         && !victim.is_dead()
@@ -1701,20 +1702,22 @@ mod tests {
     };
 
     fn actor_element(kind: ElementKind) -> ElementData {
-        let mut element = ElementData {
-            kind,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = kind;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(0.0, 0.0));
         element
     }
 
     fn object_element(object_type: ObjectType) -> Entity {
-        let mut element = ElementData {
-            kind: ElementKind::ObjectBonus,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::ObjectBonus;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(10.0, 0.0));
         Entity::Bonus(ElementBonus {
@@ -1748,10 +1751,11 @@ mod tests {
     fn add_stopped_mobile(engine: &mut EngineInner, position_x: f32) -> EntityId {
         let mobile_index =
             u16::try_from(engine.world.mobile_elements.len()).expect("test mobile index fits u16");
-        let mut element = ElementData {
-            kind: ElementKind::Fx,
-            active: true,
-            ..ElementData::default()
+        let mut element = {
+            let mut initial_element = ElementData::default();
+            initial_element.kind = ElementKind::Fx;
+            initial_element.active = true;
+            initial_element
         };
         element.set_position_map(crate::coordinates::MapPoint::new(position_x, 0.0));
         let child = engine.add_entity(Entity::Fx(ElementFx {

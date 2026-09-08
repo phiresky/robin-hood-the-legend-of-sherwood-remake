@@ -300,7 +300,7 @@ fn circle_warning_tolerance_uses_radians_returned_by_sword_profile() {
             &assets.profile_manager,
             &engine.world.fast_grid,
             crate::sight_obstacle::ObstacleList {
-                static_obstacles: assets.static_sight_obstacles.as_slice(),
+                static_obstacles: assets.environment.static_sight_obstacles.as_slice(),
                 dynamic_obstacles: &engine.world.dynamic_sight_obstacles,
                 static_active: &engine.world.static_sight_obstacle_active,
             },
@@ -592,11 +592,11 @@ fn make_soldier(
     pos: WorldPoint3D,
     sector: Option<crate::position_interface::SectorHandle>,
 ) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ActorSoldier,
-        active: true,
-        posture: Posture::Upright,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorSoldier;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position(pos);
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
@@ -625,11 +625,11 @@ fn make_soldier(
 }
 
 fn make_pc(pos: WorldPoint3D, sector: Option<crate::position_interface::SectorHandle>) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ActorPc,
-        active: true,
-        posture: Posture::Upright,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorPc;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position(pos);
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
@@ -787,11 +787,11 @@ fn action_test_assets(actions: [crate::profiles::Action; 3]) -> LevelAssets {
 }
 
 fn make_civilian(pos: WorldPoint3D) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ActorCivilian,
-        active: true,
-        posture: Posture::Upright,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ActorCivilian;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position(pos);
     element.set_position_map(crate::coordinates::MapPoint::from_world_xyz(
@@ -5078,7 +5078,7 @@ fn helping_climb_shoulder_damage_keeps_posture_until_fall_executes() {
             .get_entity(victim)
             .expect("test victim must remain live")
             .element_data()
-            .posture,
+            .posture(),
         Posture::HelpingToClimb,
         "shoulder-damage translation only queues FallingBackUpright; execution start changes posture on the actor's next slot"
     );
@@ -5161,7 +5161,7 @@ fn slope_translate_roll_order_keeps_its_source_authored_direction_recompute() {
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
     let mut assets = LevelAssets::new();
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     {
         let victim = engine.get_entity_mut(victim).unwrap();
         victim.element_data_mut().set_obstacle_index(
@@ -5977,7 +5977,7 @@ fn surviving_sword_knockout_quits_before_good_strike_and_fall_translation() {
     let mut assets = assets_with_sword_profile_effects(1, 50, 4, 100);
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     let victim_entity = engine.get_entity_mut(victim).unwrap();
     victim_entity.element_data_mut().set_obstacle_index(
         crate::position_interface::ObstacleHandle::new(0),
@@ -6079,7 +6079,9 @@ fn preexisting_unconscious_smalltalk_hit_preserves_closed_eyes_and_plain_quit() 
     ));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
-        victim_entity.element_data_mut().posture = Posture::Upright;
+        victim_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Upright);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         victim_entity.human_data_mut().unwrap().unconscious = true;
         victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
@@ -6205,7 +6207,9 @@ fn protected_preexisting_unconscious_smalltalk_hit_has_no_translation() {
     ));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
-        victim_entity.element_data_mut().posture = Posture::Upright;
+        victim_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Upright);
         victim_entity.actor_data_mut().unwrap().action_state = ActionState::WaitingSword;
         victim_entity.human_data_mut().unwrap().unconscious = true;
         victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
@@ -6302,7 +6306,9 @@ fn grounded_preexisting_unconscious_smalltalk_hit_terminates_without_quit() {
     ));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
-        victim_entity.element_data_mut().posture = Posture::Lying;
+        victim_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Lying);
         victim_entity.human_data_mut().unwrap().unconscious = true;
         victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
         victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
@@ -6922,7 +6928,9 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
     ));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
-        victim_entity.element_data_mut().posture = Posture::Carried;
+        victim_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Carried);
         victim_entity.human_data_mut().unwrap().unconscious = true;
         victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
     }
@@ -6955,7 +6963,7 @@ fn no_animation_fresh_push_knockout_does_not_repeat_ko_side_effects() {
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert!(victim_entity.human_data().unwrap().unconscious);
-    assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+    assert_eq!(victim_entity.element_data().posture(), Posture::Lying);
     assert_eq!(
         victim_entity
             .ai_controller()
@@ -6988,7 +6996,9 @@ fn preexisting_unconscious_push_preserves_closed_eyes_without_replaying_ko() {
     ));
     {
         let victim_entity = engine.get_entity_mut(victim).unwrap();
-        victim_entity.element_data_mut().posture = Posture::Upright;
+        victim_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::Upright);
         victim_entity.human_data_mut().unwrap().unconscious = true;
         victim_entity.npc_data_mut().unwrap().eye_status = EyeStatus::Closed;
         victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
@@ -7344,7 +7354,7 @@ fn parried_true_circle_still_queues_push_fall() {
     engine.tick_push_flights(&sim, &assets);
     let victim_after_fall_start = engine.get_entity(victim).unwrap();
     assert_eq!(
-        victim_after_fall_start.element_data().posture,
+        victim_after_fall_start.element_data().posture(),
         Posture::Flying
     );
     assert_eq!(
@@ -7499,7 +7509,7 @@ fn pushed_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plan
         SwordStrike::H,
         crate::profiles::WeaponThrustKind::TrueCircle,
     );
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
 
     let mut damage =
         crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
@@ -7668,7 +7678,7 @@ fn hit_flight_starts_from_cached_takeoff_elevation_after_installing_goal_plane()
     ];
     obstacle.rebuild_geometry();
     let mut assets = LevelAssets::new();
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
 
     let mut damage = crate::sequence::SequenceElement::new_damage(
         1,
@@ -8101,7 +8111,9 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
         ));
         {
             let victim_entity = engine.get_entity_mut(victim).unwrap();
-            victim_entity.element_data_mut().posture = initial_posture;
+            victim_entity
+                .element_data_mut()
+                .publish_order_posture(initial_posture);
             victim_entity.npc_data_mut().unwrap().life_points = 1;
             victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
         }
@@ -8132,7 +8144,7 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
             .get_element(sequence, 0)
             .expect("grounded sword damage remains registered");
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture,
+            engine.get_entity(victim).unwrap().element_data().posture(),
             Posture::Dead,
             "sword-damage translation must publish Dead for lethal {initial_posture:?} non-riders"
         );
@@ -8164,7 +8176,7 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
             let Entity::Soldier(victim_entity) = engine.get_entity_mut(victim).unwrap() else {
                 unreachable!()
             };
-            victim_entity.element.posture = Posture::Lying;
+            victim_entity.element.publish_order_posture(Posture::Lying);
             victim_entity.npc.life_points = life_points;
             victim_entity.soldier.rider = rider;
             victim_entity
@@ -8200,7 +8212,7 @@ fn grounded_sword_damage_preserves_living_and_dead_rider_posture_controls() {
         );
 
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture,
+            engine.get_entity(victim).unwrap().element_data().posture(),
             Posture::Lying,
             "living grounded actors and lethal riders bypass the Dead rewrite"
         );
@@ -8392,7 +8404,7 @@ fn sword_damage_amulet_coma_preserves_carried_body_and_terminates_during_transla
 
     let victim_entity = engine.get_entity(victim).unwrap();
     assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
-    assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+    assert_eq!(victim_entity.element_data().posture(), Posture::Lying);
     assert_eq!(victim_entity.pc_data().unwrap().carried, Some(carried));
     assert_eq!(
         victim_entity.actor_data().unwrap().action_state,
@@ -8400,7 +8412,7 @@ fn sword_damage_amulet_coma_preserves_carried_body_and_terminates_during_transla
         "the coma posture change bypasses PC sword-damage translation's CarryingCorpse case"
     );
     let carried_entity = engine.get_entity(carried).unwrap();
-    assert_eq!(carried_entity.element_data().posture, Posture::Carried);
+    assert_eq!(carried_entity.element_data().posture(), Posture::Carried);
     assert_eq!(carried_entity.human_data().unwrap().carrier, Some(victim));
     assert!(carried_entity.actor_data().unwrap().execution_frozen);
     assert_eq!(
@@ -8499,7 +8511,7 @@ fn consecutive_lethal_arrow_damage_preserves_new_amulet_coma() {
         let victim_entity = engine.get_entity(victim).unwrap();
         assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
         assert_eq!(victim_entity.pc_data().unwrap().life_points, 5);
-        assert_eq!(victim_entity.element_data().posture, Posture::Lying);
+        assert_eq!(victim_entity.element_data().posture(), Posture::Lying);
         assert_eq!(
             victim_entity.position_iface().map_goal(),
             crate::coordinates::MapPoint::ZERO,
@@ -8613,7 +8625,7 @@ fn sherwood_lethal_arrow_still_consumes_amulet_without_hurting_pc() {
     assert_eq!(victim.pc_data().unwrap().life_points, 100);
     assert_eq!(victim.human_data().unwrap().concussion_of_the_brain, 0);
     assert!(!victim.human_data().unwrap().unconscious);
-    assert_eq!(victim.element_data().posture, Posture::Lying);
+    assert_eq!(victim.element_data().posture(), Posture::Lying);
     assert!(engine.mission_domain.campaign.characters[0].status.in_coma);
     assert_eq!(
         engine.mission_domain.campaign.values[crate::campaign::CampaignValue::Amulets],
@@ -8637,7 +8649,7 @@ fn same_frame_arrow_after_death_replaces_dying_order_and_then_rolls() {
     let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
     obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
     let mut assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
-    assets.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+    assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
     {
         let victim = engine.get_entity_mut(victim).unwrap();
         victim.element_data_mut().set_obstacle_index(
@@ -8735,7 +8747,9 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
                 .human_and_life_points_mut()
                 .expect("grounded test victim must be human");
             *life_points = 0;
-            victim.element_data_mut().posture = initial_posture;
+            victim
+                .element_data_mut()
+                .publish_order_posture(initial_posture);
         }
         let assets = action_test_assets([crate::profiles::Action::NoAction; 3]);
         let mut damage = crate::sequence::SequenceElement::new_damage(
@@ -8764,7 +8778,7 @@ fn arrow_damage_to_dead_grounded_actor_sets_dead_and_terminates_without_orders()
         );
         assert!(element.orders.is_empty());
         assert_eq!(
-            engine.get_entity(victim).unwrap().element_data().posture,
+            engine.get_entity(victim).unwrap().element_data().posture(),
             Posture::Dead,
             "arrow-damage translation changes dead {initial_posture:?} non-riders to Dead"
         );
@@ -8786,7 +8800,9 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         .carried = Some(victim);
     {
         let victim = engine.get_entity_mut(victim).unwrap();
-        victim.element_data_mut().posture = Posture::OnShoulders;
+        victim
+            .element_data_mut()
+            .publish_order_posture(Posture::OnShoulders);
         victim.human_data_mut().unwrap().carrier = Some(carrier);
     }
 
@@ -8816,7 +8832,7 @@ fn arrow_damage_to_pc_on_shoulders_uses_virtual_shoulder_translation() {
         "PC arrow-damage translation must dispatch shoulder-damage translation"
     );
     assert_ne!(
-        engine.get_entity(victim).unwrap().element_data().posture,
+        engine.get_entity(victim).unwrap().element_data().posture(),
         Posture::Dead,
         "PC OnShoulders must not enter Human's dead-grounded fallthrough"
     );

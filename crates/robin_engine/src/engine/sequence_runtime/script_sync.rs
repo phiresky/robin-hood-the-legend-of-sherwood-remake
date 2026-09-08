@@ -581,7 +581,7 @@ impl EngineInner {
         }
         let is_anonymous_archer_pc = self.get_entity(owner).is_some_and(|entity| {
             entity.is_pc()
-                && entity.element_data().posture == crate::element_kinds::Posture::AnonymousArcher
+                && entity.element_data().posture() == crate::element_kinds::Posture::AnonymousArcher
         });
         if is_anonymous_archer_pc {
             self.hero_speaking(

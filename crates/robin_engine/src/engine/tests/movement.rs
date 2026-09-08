@@ -837,7 +837,9 @@ fn walking_corpse_sync_is_visible_to_later_body_detection_in_same_owner_walk() {
 
     let body_entity = engine.get_entity_mut(body).unwrap();
     body_entity.element_data_mut().active = true;
-    body_entity.element_data_mut().posture = Posture::Carried;
+    body_entity
+        .element_data_mut()
+        .publish_order_posture(Posture::Carried);
     body_entity
         .element_data_mut()
         .set_position_map(MapPoint::new(90.0, 100.0));
@@ -1246,7 +1248,7 @@ fn dead_path_request_still_consumes_its_scheduling_slot() {
     // The fixture graph has no nodes, so every A* search fails; it still needs
     // the request's sector in its conversion table to be searched at all.
     {
-        let graph = std::sync::Arc::make_mut(&mut assets.pathfinder_graph);
+        let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
         graph.layers.push(vec![Vec::new()]);
         graph.alternative_layers.push(vec![Vec::new()]);
         graph.states.push(vec![0]);
@@ -1909,7 +1911,7 @@ fn install_rider_charge_fixture(
         .expect("rider fixture remains enemy AI")
         .hth_weapon_id = 1;
     soldier.element.active = true;
-    soldier.element.posture = Posture::Upright;
+    soldier.element.publish_order_posture(Posture::Upright);
     soldier
         .element
         .set_position_map(MapPoint::new(100.0, 100.0));
@@ -2115,7 +2117,9 @@ fn production_owner_final_arrival_drains_reachpoint_condolation_exactly_once() {
     let assets = LevelAssets::new();
     let mut mover = make_test_pc(Posture::Upright);
     mover.element_data_mut().active = true;
-    mover.element_data_mut().posture = Posture::Upright;
+    mover
+        .element_data_mut()
+        .publish_order_posture(Posture::Upright);
     let mover_id = engine.add_entity(mover);
     install_charge_victim_motion(
         &mut engine,

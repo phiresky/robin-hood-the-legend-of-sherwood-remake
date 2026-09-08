@@ -622,7 +622,7 @@ impl GamePadState {
         };
         let leader_posture = engine
             .get_entity(leader)
-            .map(|e| e.element_data().posture)
+            .map(|e| e.element_data().posture())
             .unwrap_or_default();
         let leader_swordfighting = engine
             .get_entity(leader)

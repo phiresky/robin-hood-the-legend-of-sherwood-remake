@@ -257,16 +257,14 @@ impl EngineInner {
                 ),
             });
         };
-        let topology =
-            assets
-                .legacy_grid_topology
-                .as_ref()
-                .ok_or_else(|| EngineError::MissionLevelStage {
-                    stage: "Legendary enemy reinforcements",
-                    reason: format!(
-                        "mission {mission_name} has no retained sparse sector topology"
-                    ),
-                })?;
+        let topology = assets
+            .navigation
+            .legacy_grid_topology
+            .as_ref()
+            .ok_or_else(|| EngineError::MissionLevelStage {
+                stage: "Legendary enemy reinforcements",
+                reason: format!("mission {mission_name} has no retained sparse sector topology"),
+            })?;
         topology
             .position_sector_indices
             .iter()

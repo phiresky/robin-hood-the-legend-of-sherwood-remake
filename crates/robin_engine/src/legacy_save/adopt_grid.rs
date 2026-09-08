@@ -205,6 +205,7 @@ impl LegacyFastFindGridAdoptionPlan {
 
         let decoded_topology = derive_grid_topology(engine, assets)?;
         let retained = assets
+            .navigation
             .legacy_grid_topology
             .as_ref()
             .expect("derive_grid_topology accepted missing retained topology");
@@ -462,7 +463,10 @@ impl LegacyFastFindGridAdoptionPlan {
 
         let mut runtime_grid = (*engine.world.fast_grid).clone();
         let mut pathfinder = crate::pathfinder::PathFinder::new();
-        pathfinder.initialize_from_graph(assets.pathfinder_graph.as_ref(), &mut runtime_grid);
+        pathfinder.initialize_from_graph(
+            assets.navigation.pathfinder_graph.as_ref(),
+            &mut runtime_grid,
+        );
         let mut sight_obstacle_active = engine.world.static_sight_obstacle_active.clone();
         for planned in &patches {
             let patch = &engine.script_domains.interactables.patches[planned.patch_index];
@@ -493,7 +497,10 @@ impl LegacyFastFindGridAdoptionPlan {
             }
             if applied && patch.use_changing_obstacles {
                 let area = pathfinder
-                    .try_convert_sector(assets.pathfinder_graph.as_ref(), patch.pathfinder_sector)
+                    .try_convert_sector(
+                        assets.navigation.pathfinder_graph.as_ref(),
+                        patch.pathfinder_sector,
+                    )
                     .ok_or_else(|| LegacyGridAdoptError::InvalidChangingObstacle {
                         patch_index: planned.patch_index,
                         detail: format!(
@@ -534,7 +541,7 @@ impl LegacyFastFindGridAdoptionPlan {
                 let mut line_toggles = Vec::new();
                 let mut sector_toggles = Vec::new();
                 pathfinder.toggle_obstacle_state(
-                    assets.pathfinder_graph.as_ref(),
+                    assets.navigation.pathfinder_graph.as_ref(),
                     layer,
                     usize::from(area),
                     changing_obstacle,

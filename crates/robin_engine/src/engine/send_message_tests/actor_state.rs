@@ -345,11 +345,11 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
     let mut assets = LevelAssets::new();
     let make_pc = || {
         let mut entity = Entity::Pc(crate::element::ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..ElementData::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -458,7 +458,7 @@ fn anonymous_archer_accepts_a_non_pc_human_and_adds_hidden_titbit_inline() {
         0
     );
     let entity = engine.get_entity(receiver).expect("receiver");
-    assert_eq!(entity.element_data().posture, Posture::AnonymousArcher);
+    assert_eq!(entity.element_data().posture(), Posture::AnonymousArcher);
     assert_eq!(
         entity.actor_data().expect("actor").action_state,
         crate::element::ActionState::Waiting
@@ -570,11 +570,11 @@ fn recorded_lock_user_clears_and_restores_selection_in_original_order() {
     let (mut engine, _receiver, _handle) = engine_with_receiver();
     let assets = LevelAssets::new();
     let pc_id = engine.add_entity(Entity::Pc(crate::element::ActorPc {
-        element: ElementData {
-            kind: ElementKind::ActorPc,
-            active: true,
-            posture: Posture::Upright,
-            ..ElementData::default()
+        element: {
+            let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+            initial_element.kind = ElementKind::ActorPc;
+            initial_element.active = true;
+            initial_element
         },
         actor: ActorData::default(),
         human: HumanData::default(),

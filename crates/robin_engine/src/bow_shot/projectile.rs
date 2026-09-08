@@ -58,11 +58,11 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     };
     let end_pos = trajectory_end_or_start(&trajectory, bow_point, "arrow");
 
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        posture: Posture::Upright,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     // The position interface initializes both serialized posture slots to
     // UPRIGHT. Sprite state stores its maximum-value order sentinel as 65535;
@@ -170,11 +170,11 @@ pub fn spawn_net(
         x: throw_pos.x,
         y: throw_pos.y,
     };
-    let mut element = ElementData {
-        kind: ElementKind::ObjectNet,
-        active: true,
-        posture: Posture::Undefined,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+        initial_element.kind = ElementKind::ObjectNet;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(map_pos);
     element.set_position(throw_pos);
@@ -268,11 +268,11 @@ pub fn spawn_wasp_nest(
         x: throw_pos.x,
         y: throw_pos.y,
     };
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        posture: Posture::Undefined,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(map_pos);
     element.set_position(throw_pos);
@@ -322,11 +322,11 @@ pub const NUMBER_OF_WASPS: u16 = 20;
 /// `BonusOne` animation.  Per-frame AI (direction change / victim
 /// choice / sting) lives in `EngineInner::tick_wasp_nests`.
 pub fn spawn_wasp(nest_id: EntityId, position: WorldPoint3D, layer: u16) -> Entity {
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        posture: Posture::Undefined,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(MapPoint::from_world_xyz(position.x, position.y, position.z));
     element.set_position(position);
@@ -486,11 +486,11 @@ fn spawn_throwable(
         x: throw_pos.x,
         y: throw_pos.y,
     };
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        posture: Posture::Undefined,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(map_pos);
     element.set_position(throw_pos);
@@ -615,11 +615,11 @@ pub fn spawn_purse(
         x: throw_pos.x,
         y: throw_pos.y,
     };
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        posture: Posture::Undefined,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(map_pos);
     element.set_position(throw_pos);
@@ -770,11 +770,11 @@ pub fn spawn_coin(
         x: source_pos.x,
         y: source_pos.y,
     };
-    let mut element = ElementData {
-        kind: ElementKind::ObjectProjectile,
-        active: true,
-        posture: Posture::Undefined,
-        ..ElementData::default()
+    let mut element = {
+        let mut initial_element = ElementData::from_initial_posture(Posture::Undefined);
+        initial_element.kind = ElementKind::ObjectProjectile;
+        initial_element.active = true;
+        initial_element
     };
     element.set_position_map(map_pos);
     element.set_position(source_pos);
@@ -1437,7 +1437,7 @@ fn tick_arrows_matching(
             // Posture filter: skip targets that can't be hit by
             // arrows (lying on ground, carried, dead, netted, tied,
             // hiding in a tree).
-            let posture = e.element_data().posture;
+            let posture = e.element_data().posture();
             use crate::element::Posture::*;
             if matches!(
                 posture,

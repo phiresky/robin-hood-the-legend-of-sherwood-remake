@@ -1054,6 +1054,7 @@ fn populate_sound_duration_tables(
     for (&group_id, group) in &canonical_speech_cache.groups {
         let profile_prefix = group_id & 0xFFFF_0000;
         if !assets
+            .audio
             .required_exclamation_ids
             .iter()
             .any(|profile_id| profile_id & 0xFFFF_0000 == profile_prefix)
@@ -1118,9 +1119,17 @@ fn populate_sound_duration_tables(
         sources = source_durations.len(),
         "Populated deterministic sound duration tables"
     );
-    assets.exclamation_durations = Arc::new(exclamation_durations);
-    assets.speech_timing_catalog = Arc::new(speech_timing_catalog);
-    assets.source_durations = Arc::new(source_durations);
+    assets
+        .audio
+        .publish_timing(
+            Arc::new(exclamation_durations),
+            Arc::new(speech_timing_catalog),
+            Arc::new(source_durations),
+        )
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = assets.audio.validate_ranked_timing() {
+        tracing::warn!(%error, "prepared audio timing is incomplete; ranked admission will reject it");
+    }
     Ok(())
 }
 
@@ -2233,7 +2242,7 @@ pub(super) fn load_level_and_sprite_bank(
     assets.sprite_scriptor = std::sync::Arc::new(
         engine_sprite_script::SpriteScriptor::with_resources(resources.clone()),
     );
-    assets.spellforge_runtime = host
+    assets.attachments.spellforge_runtime = host
         .scripting
         .lua_session
         .as_ref()
@@ -2503,7 +2512,7 @@ pub(super) fn load_level_and_sprite_bank(
             ambiance_mask |= cue.ambiance.to_bitmask();
         }
     }
-    assets.required_exclamation_ids =
+    assets.audio.required_exclamation_ids =
         match required_mission_exclamation_ids(&loaded, &campaign, profiles) {
             Ok(ids) => ids,
             Err(error) => {
@@ -2513,7 +2522,7 @@ pub(super) fn load_level_and_sprite_bank(
                 ));
             }
         };
-    assets.sound_source_required_ids = loaded
+    assets.audio.sound_source_required_ids = loaded
         .proto
         .sound_sources
         .iter()
@@ -2523,7 +2532,7 @@ pub(super) fn load_level_and_sprite_bank(
     if let Err(message) = initialize_mission_sound_caches(
         host,
         profiles,
-        &assets.sound_source_required_ids,
+        &assets.audio.sound_source_required_ids,
         files.clone(),
     ) {
         return Err(MissionLoadError::new(campaign, message));
@@ -2685,7 +2694,7 @@ pub(super) fn load_level_and_sprite_bank(
     host.frontend
         .frame_holder_mut()
         .apply_arno_law(initial_shadow_key);
-    assets.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
 
     // This is the only point at which setup transfers campaign ownership.
     // Every fallible file/decode step above borrows the session campaign, and

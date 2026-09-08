@@ -581,13 +581,14 @@ impl EngineInner {
                 // default material.
                 let material = crate::element::GameMaterial::from_u32_with_default(
                     beam_me.material,
-                    assets.material_sectors.default_material,
+                    assets.environment.material_sectors.default_material,
                 );
                 // Validate that the beam-me's obstacle index is a
                 // projection area and the beam-me position is inside its
                 // screen box.  We warn so a corrupt mission still loads.
                 if beam_me.projection_area != 0xFFFF {
                     match assets
+                        .environment
                         .static_sight_obstacles
                         .get(beam_me.projection_area as usize)
                     {
@@ -632,7 +633,7 @@ impl EngineInner {
                         crate::position_interface::ObstacleHandle::from_serialized_pointer(
                             beam_me.projection_area,
                         ),
-                        assets.static_sight_obstacles.as_slice(),
+                        assets.environment.static_sight_obstacles.as_slice(),
                     ),
                 );
                 prime_mission_start_sprite(
@@ -697,12 +698,13 @@ impl EngineInner {
                     .status
                     .clone();
                 let entity = Entity::Pc(crate::element::ActorPc {
-                    element: crate::element::ElementData {
-                        kind: crate::element::ElementKind::ActorPc,
-                        sprite,
+                    element: {
+                        let mut initial_element =
+                            crate::element::ElementData::from_initial_posture(initial_posture);
+                        initial_element.kind = crate::element::ElementKind::ActorPc;
+                        initial_element.sprite = sprite;
                         // Initial posture from action initialization.
-                        posture: initial_posture,
-                        ..Default::default()
+                        initial_element
                     },
                     actor: crate::element::ActorData {
                         // The per-actor Initialize() dispatch in

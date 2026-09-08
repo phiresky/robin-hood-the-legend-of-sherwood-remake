@@ -4640,10 +4640,12 @@ mod tests {
 
     fn pc_view() -> crate::ai_entity_view::AiEntityView {
         let entity = crate::element::Entity::Pc(crate::element::ActorPc {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorPc,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorPc;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),
@@ -6587,11 +6589,13 @@ mod tests {
         // shared entity-view table, and that list always includes the
         // evaluating soldier itself.
         let me_entity = crate::element::Entity::Soldier(crate::element::ActorSoldier {
-            element: crate::element::ElementData {
-                kind: crate::element::ElementKind::ActorSoldier,
-                active: true,
-                posture: crate::element::Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = crate::element::ElementData::from_initial_posture(
+                    crate::element::Posture::Upright,
+                );
+                initial_element.kind = crate::element::ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: Default::default(),
             human: Default::default(),

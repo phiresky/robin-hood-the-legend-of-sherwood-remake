@@ -1705,7 +1705,7 @@ mod tests {
             },
         );
         let entity = engine.get_entity(owner).unwrap();
-        assert_eq!(entity.element_data().posture, Posture::Upright);
+        assert_eq!(entity.element_data().posture(), Posture::Upright);
         assert_eq!(
             entity.actor_data().unwrap().action_state,
             ActionState::Waiting
@@ -1727,11 +1727,11 @@ mod tests {
 
     fn test_pc_at(x: f32, y: f32, sector: u16) -> Entity {
         let mut pc = ActorPc {
-            element: ElementData {
-                kind: ElementKind::ActorPc,
-                active: true,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorPc;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData::default(),
             human: HumanData::default(),
@@ -1745,11 +1745,11 @@ mod tests {
 
     fn test_moving_soldier_at(position: crate::coordinates::WorldPoint3D) -> Entity {
         let mut soldier = ActorSoldier {
-            element: ElementData {
-                kind: ElementKind::ActorSoldier,
-                active: true,
-                posture: Posture::Upright,
-                ..Default::default()
+            element: {
+                let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
+                initial_element.kind = ElementKind::ActorSoldier;
+                initial_element.active = true;
+                initial_element
             },
             actor: ActorData {
                 action_state: ActionState::Moving,
@@ -2067,7 +2067,9 @@ mod tests {
         }];
 
         let mut owner_entity = test_pc_at(0.0, 0.0, 1);
-        owner_entity.element_data_mut().posture = Posture::HelpingToClimb;
+        owner_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::HelpingToClimb);
         owner_entity
             .position_iface_mut()
             .set_move_box(crate::coordinates::MoveBox::from_coords(
@@ -2148,7 +2150,9 @@ mod tests {
             ..Door::default()
         }];
         let mut owner_entity = test_pc_at(0.0, 0.0, 1);
-        owner_entity.element_data_mut().posture = Posture::HelpingToClimb;
+        owner_entity
+            .element_data_mut()
+            .publish_order_posture(Posture::HelpingToClimb);
         let owner = engine.add_entity(owner_entity);
 
         let sequence_id = engine
