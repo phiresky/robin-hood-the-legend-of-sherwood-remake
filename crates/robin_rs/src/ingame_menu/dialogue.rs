@@ -130,8 +130,8 @@ pub(crate) struct PortraitFade {
 
 /// "No previous portrait" sentinel — used so the first-ever render runs
 /// through the fade-in path with nothing to blend against.
-/// `Renderer::blit_to_screen_alpha` returns `false` for an unknown
-/// `src_id`, so an id of 0 is naturally a no-op blit.
+/// This is an asset resource sentinel, not an uploaded surface handle;
+/// resource lookup omits the previous portrait when the id is zero.
 pub(crate) const NO_PORTRAIT: i32 = 0;
 
 impl PortraitFade {
@@ -175,7 +175,7 @@ impl PortraitFade {
     }
 
     /// Current new-portrait alpha, expressed as an integer percentage
-    /// 0..=100 to match the renderer's `blit_to_screen_alpha` range.
+    /// 0..=100 to match the renderer's `draw_surface_alpha` range.
     pub(crate) fn fade_percent(&self) -> u16 {
         (self.fade.clamp(0.0, 1.0) * 100.0) as u16
     }
@@ -1170,7 +1170,7 @@ fn render_dropped_initial_text(
 /// with an optional constant alpha.
 ///
 /// `alpha_percent` is 0..=100 to match
-/// [`crate::renderer::Renderer::blit_to_screen_alpha`] — 0 skips the
+/// [`crate::renderer::Renderer::draw_surface_alpha`] — 0 skips the
 /// blit entirely, 100 uses the opaque fast path, and any value in
 /// between falls through to the alpha-modulated GPU blit.
 #[allow(clippy::too_many_arguments)]
@@ -1210,7 +1210,7 @@ fn draw_portrait_frame_alpha(
             .expect("live dialogue portrait");
     } else {
         // Our `alpha_percent` is opacity (100 = opaque, 0 = transparent),
-        // but `Renderer::blit_to_screen_alpha` uses the inverse
+        // but `Renderer::draw_surface_alpha` uses the inverse
         // convention (0 = opaque, 100 = transparent). Invert the
         // percentage so a fade with `alpha_percent = 25` renders the
         // new portrait at 25 % opacity.

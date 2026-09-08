@@ -26,7 +26,7 @@ pub struct WidgetPicture {
     /// callers must re-set them after reload, which is why this field is
     /// skipped.
     #[serde(skip)]
-    alternate_picture: Option<u32>,
+    alternate_picture: Option<crate::renderer::SurfaceHandle>,
 }
 
 impl Default for WidgetPicture {
@@ -67,7 +67,7 @@ impl WidgetPicture {
 
     /// Set the runtime surface to blit in place of the resource-mapped
     /// picture.
-    pub fn set_alternate_picture(&mut self, surface_id: u32) {
+    pub fn set_alternate_picture(&mut self, surface_id: crate::renderer::SurfaceHandle) {
         self.alternate_picture = Some(surface_id);
     }
 
@@ -78,7 +78,7 @@ impl WidgetPicture {
     }
 
     /// Current alternate surface handle, if any.
-    pub fn alternate_picture(&self) -> Option<u32> {
+    pub fn alternate_picture(&self) -> Option<crate::renderer::SurfaceHandle> {
         self.alternate_picture
     }
 
@@ -141,6 +141,19 @@ impl WidgetPicture {
         self.base.state = UiState::Selected;
         vec![self.base.make_event(UiMsg::WidgetActivated)]
     }
+}
+
+#[test]
+fn alternate_upload_is_borrowed_and_not_restored_from_diagnostics() {
+    let owner = crate::renderer::OwnedSurface::synthetic(42);
+    let mut picture = WidgetPicture::default();
+    picture.set_alternate_picture(owner.handle());
+    assert_eq!(picture.clone().alternate_picture(), Some(owner.handle()));
+    let restored: WidgetPicture =
+        serde_json::from_value(serde_json::to_value(&picture).unwrap()).unwrap();
+    assert!(restored.alternate_picture().is_none());
+    picture.reset_alternate_picture();
+    assert!(picture.alternate_picture().is_none());
 }
 
 /// Multi-frame picture widget.

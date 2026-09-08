@@ -884,6 +884,18 @@ pub(super) struct InteractiveFrontend {
 
 impl Drop for InteractiveFrontend {
     fn drop(&mut self) {
+        self.hud
+            .corner_sprites
+            .retire(&mut self.presentation.renderer);
+        self.hud
+            .zoom_sprites
+            .retire(&mut self.presentation.renderer);
+        self.hud
+            .stature_sprites
+            .retire(&mut self.presentation.renderer);
+        self.hud
+            .sherwood_sprites
+            .retire(&mut self.presentation.renderer);
         if let Some(menu) = self.resources.menu.as_mut()
             && let Err(error) = menu.retire(&mut self.presentation.renderer)
         {
