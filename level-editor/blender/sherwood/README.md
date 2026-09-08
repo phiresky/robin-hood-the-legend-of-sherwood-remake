@@ -31,6 +31,16 @@ Inspection outputs in `pass2/`:
 - `refined-river-close.png`: riverbank inspection.
 - `animation-01.png` and `animation-33.png`: moving foliage check.
 
+`inspection-depth/` contains thirteen additional solid, triangulated wireframe
+and textured renders, including foliage-hidden structure views. Generate these
+with `render_inspection.py` through MCP. The wire renders hide the clearing mesh
+so its dense grid does not obscure the structures.
+
+Canopy depth now follows supporting trunk footprints instead of the sprite's
+top-left/elevation billboard plane. The original image projection is preserved
+within 0.00015 pixels. Broad crowns interpolate between supporting trunks;
+the foreground Arbre05 root lies outside the image and remains inferred.
+
 ## Geometry passes
 
 | Collection | Reconstruction |

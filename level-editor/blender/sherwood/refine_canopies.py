@@ -13,12 +13,37 @@ import numpy as np
 from mathutils import Vector
 
 sys.path.insert(0,str(Path(__file__).parent))
-from modeling import EYE, ROOT, collection
+from modeling import EYE, ROOT, DATA, SIN, COS, collection, game_point
 
 NAME='10 Animated foliage - curved canopy shells'
 c=collection(NAME)
 records=json.loads((ROOT/'level-editor/work/sherwood-refinement/animation-references/manifest.json').read_text())['assets']
 references=bpy.data.collections['07 Reference only - authored animated sprites']
+level=json.loads((DATA/'Levels/Sherwood.rhp.json').read_text())
+# Sprite elevation establishes draw placement, not the crown's ground depth.
+# Anchor the reconstructed crown to the trees visible beneath its silhouette.
+supports={'Sherwood - Arbre01':[27,30,32],
+          'Sherwood - Arbre02':[46,35,29,31,24,25,27],
+          'Sherwood - Arbre03':[44,42,45,36,37],
+          'Sherwood - Arbre04':[34],
+          'Sherwood - Arbre06':[40]}
+def ground_depth(profile,x):
+    if profile=='Sherwood - Arbre05':
+        # The foreground trunk exits below the picture; its root is off-map.
+        return 1120.0
+    controls=[]
+    for index in supports[profile]:
+        points=level['sight_obstacles'][index]['points']
+        controls.append(((min(p['x'] for p in points)+max(p['x'] for p in points))/2,
+                         (min(p['y'] for p in points)+max(p['y'] for p in points))/2))
+    controls.sort()
+    if x<=controls[0][0]:return controls[0][1]
+    for (ax,ay),(bx,by) in zip(controls,controls[1:]):
+        if x<=bx:
+            t=(x-ax)/(bx-ax)
+            t=t*t*(3-2*t)
+            return ay+(by-ay)*t
+    return controls[-1][1]
 counts={}
 for record in records:
     if record['kind']!='tree':
@@ -69,6 +94,9 @@ for record in records:
         for x,y in keys:
             u,v=x/nx,y/ny
             base=p0+(p1-p0)*u+(p3-p0)*v
+            pixel_y=-base.y*SIN-base.z*COS
+            gy=ground_depth(record['profile'],base.x)
+            base=game_point(base.x,gy,gy-pixel_y)
             dome=max(0,1-((u-.5)/.65)**2-((v-.5)/.65)**2)**.5
             clusters=max(math.exp(-((u-cu)**2+(v-cv)**2)/(2*radius**2))
                          for cu,cv,radius in [(.18,.22,.24),(.48,.20,.26),(.78,.27,.24),
@@ -95,6 +123,7 @@ for record in records:
     obj['profile']=record['profile'];obj['frame_count']=16
     obj['inferred']='Closed clustered shell depth; source alpha, offsets and animation preserved'
     obj['source_elevation']=record['elevation']
+    obj['depth_anchor']='Supporting trunk footprints; foreground Arbre05 root inferred beyond image'
     ref.hide_render=True
     for scene in bpy.data.scenes:
         for layer in scene.view_layers:
