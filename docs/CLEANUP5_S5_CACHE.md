@@ -29,3 +29,7 @@ disconnected workers, spawn failures, retained notices, independent owners, and
 application clone/serialization boundaries. Formatting and whitespace checks are
 local; native/browser compilation and affected tests are consolidated by root.
 No local Cargo-pass claim is made before those gates.
+
+The four pure owner cases are registered for both native tests and the real
+browser WASM test runner. They exercise the shared owner state machine, not an
+actual browser cache deletion or graphical panel automation.

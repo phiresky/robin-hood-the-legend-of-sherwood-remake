@@ -148,7 +148,8 @@ impl CacheMaintenance {
 mod tests {
     use super::*;
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn panel_close_and_reopen_retains_pending_then_success_or_failure() {
         for result in [Ok(4), Err("mounted content prevents clearing".into())] {
             let application = CacheMaintenance::new();
@@ -179,7 +180,8 @@ mod tests {
         }
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn pending_request_does_not_admit_another_worker() {
         let application = CacheMaintenance::new();
         let mut worker = None;
@@ -216,7 +218,8 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn worker_disconnect_and_spawn_failure_are_retained_errors() {
         let application = CacheMaintenance::new();
         application
@@ -243,7 +246,8 @@ mod tests {
         assert_eq!(application.status().unwrap(), failed);
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn independent_applications_and_decoded_data_have_no_shared_authority() {
         let first = CacheMaintenance::new();
         let second = CacheMaintenance::new();
