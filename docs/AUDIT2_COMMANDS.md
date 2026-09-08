@@ -42,10 +42,13 @@ dependencies were introduced.
 - A mechanical comparison confirmed that the entire quick-action implementation
   body is unchanged apart from visibility, module paths and formatting; the
   preflight-through-recording source block is byte-for-byte unchanged.
-- Three new regression tests assert full deterministic state-hash preservation:
-  unauthorized seat lifecycle cannot allocate seats; unreachable object Take
-  cannot capture a step or launch work; missing recording identities panic
-  before capture or dispatch.
+- Two new regression tests assert deterministic state-hash preservation:
+  unauthorized seat lifecycle cannot allocate seats, and unreachable object Take
+  cannot capture a step or launch work. A third test expects the explicit missing
+  recording-target preflight panic. It does not claim post-panic state coverage:
+  the repository's Cranelift test backend does not reliably support catching and
+  resuming unwinds. These hashes exclude host/render/input state; the existing
+  sound-boundary and nested-selection tests remain necessary.
 - Native compilation and test execution are intentionally assigned to the
   combined integration lane, avoiding another cold Cargo target. Required:
   `cargo test --locked -p robin_engine` and affected replay/parity suites.
