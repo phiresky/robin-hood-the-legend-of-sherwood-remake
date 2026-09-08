@@ -61,22 +61,54 @@ async fn run_with_write_lease_heartbeat<T, F>(
 where
     F: Future<Output = anyhow::Result<T>>,
 {
+    run_with_write_lease_heartbeat_using(database, token, ttl, operation, || async {
+        Ok(database.refresh_maintenance_write_lease(token, ttl).await?)
+    })
+    .await
+}
+
+async fn run_with_write_lease_heartbeat_using<T, F, R, RF>(
+    database: &Database,
+    token: &str,
+    ttl: Duration,
+    operation: F,
+    mut refresh: R,
+) -> anyhow::Result<T>
+where
+    F: Future<Output = anyhow::Result<T>>,
+    R: FnMut() -> RF,
+    RF: Future<Output = anyhow::Result<bool>>,
+{
     let refresh_every = ttl
         .checked_div(3)
         .filter(|interval| !interval.is_zero())
         .ok_or_else(|| anyhow::anyhow!("maintenance-write lease TTL is too short"))?;
+    // Catch unwind and join queued/running physical work before releasing the
+    // lease. The outer detached fence owner keeps this future alive even when
+    // its caller is cancelled.
+    let operation = robin_highscores::physical_work::drain(operation);
     tokio::pin!(operation);
     let result = loop {
         tokio::select! {
             result = &mut operation => break result,
             () = tokio::time::sleep(refresh_every) => {
-                match database.refresh_maintenance_write_lease(token, ttl).await {
-                    Ok(true) => {}
-                    Ok(false) => break Err(anyhow::anyhow!(
+                let refresh_error = match refresh().await {
+                    Ok(true) => continue,
+                    Ok(false) => anyhow::anyhow!(
                         "maintenance-write lease expired or was replaced during an active operation"
+                    ),
+                    Err(error) => error.into(),
+                };
+                // Dropping only the waiter cannot stop a queued hard link,
+                // rename, unlink or verifier process. Retain the fence until
+                // terminal completion, while preserving the heartbeat error.
+                let drained = (&mut operation).await;
+                break Err(match drained {
+                    Ok(_) => refresh_error,
+                    Err(error) => refresh_error.context(format!(
+                        "worker operation also failed while draining: {error:#}"
                     )),
-                    Err(error) => break Err(error.into()),
-                }
+                });
             }
         }
     };
@@ -1314,6 +1346,174 @@ fn bounded_private_detail(detail: &str) -> String {
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    async fn assert_physical_work_is_fenced(mode: &'static str) {
+        let directory = tempfile::tempdir().unwrap();
+        let mut config = ServerConfig::default();
+        config.database_path = directory.path().join("highscores.sqlite3");
+        let database = Database::migrate(&config).await.unwrap();
+        let mutation = directory.path().join("published-object");
+        let write_path = mutation.clone();
+        let (started, wait_started) = tokio::sync::oneshot::channel();
+        let (release, wait_release) = std::sync::mpsc::channel();
+        let refresh_seen = Arc::new(tokio::sync::Notify::new());
+        let notify_refresh = Arc::clone(&refresh_seen);
+        let owner_database = database.clone();
+        let operation_database = database.clone();
+        let caller = tokio::spawn(async move {
+            run_owned_fenced_operation(owner_database, async move {
+                let token = operation_database
+                    .acquire_maintenance_write_lease(
+                        robin_highscores::db::MaintenanceWriteClass::Worker,
+                        "physical-work-test",
+                        Duration::from_secs(60),
+                    )
+                    .await?;
+                run_with_write_lease_heartbeat_using(
+                    &operation_database,
+                    &token,
+                    Duration::from_millis(30),
+                    async move {
+                        let physical = robin_highscores::physical_work::spawn_blocking(move || {
+                            started.send(()).unwrap();
+                            // A failing assertion must not leave the Tokio runtime
+                            // hanging forever on an intentionally blocked closure.
+                            wait_release.recv_timeout(Duration::from_secs(10)).unwrap();
+                            std::fs::write(write_path, b"published").unwrap();
+                        });
+                        if mode == "operation_error" {
+                            drop(physical);
+                            anyhow::bail!("injected operation error");
+                        }
+                        if mode == "operation_panic" {
+                            drop(physical);
+                            panic!("injected operation panic");
+                        }
+                        physical.await?;
+                        Ok(())
+                    },
+                    move || {
+                        let notify_refresh = Arc::clone(&notify_refresh);
+                        async move {
+                            notify_refresh.notify_one();
+                            match mode {
+                                "heartbeat_lost" => Ok(false),
+                                "heartbeat_error" => anyhow::bail!("injected heartbeat error"),
+                                _ => Ok(true),
+                            }
+                        }
+                    },
+                )
+                .await
+            })
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(5), wait_started)
+            .await
+            .unwrap()
+            .unwrap();
+        if mode.starts_with("heartbeat_") {
+            tokio::time::timeout(Duration::from_secs(5), refresh_seen.notified())
+                .await
+                .unwrap();
+        }
+        if mode == "caller_cancelled" {
+            caller.abort();
+        }
+        assert!(!mutation.exists());
+        assert!(
+            database
+                .runtime_fence()
+                .try_lock_exclusive_quiescence()
+                .unwrap()
+                .is_none(),
+            "physical work outlived the shared database fence"
+        );
+        assert_eq!(
+            database
+                .active_maintenance_write_lease_count()
+                .await
+                .unwrap(),
+            1,
+            "physical work outlived lease ownership"
+        );
+        release.send(()).unwrap();
+        if mode == "caller_cancelled" {
+            assert!(caller.await.unwrap_err().is_cancelled());
+        } else {
+            let result = tokio::time::timeout(Duration::from_secs(5), caller)
+                .await
+                .unwrap()
+                .unwrap();
+            if mode == "success" {
+                result.unwrap();
+            } else {
+                let error = format!("{:#}", result.unwrap_err());
+                let expected = match mode {
+                    "heartbeat_lost" => "expired or was replaced",
+                    "heartbeat_error" => "injected heartbeat error",
+                    "operation_error" => "injected operation error",
+                    "operation_panic" => "panicked after physical-work drain",
+                    _ => unreachable!(),
+                };
+                assert!(error.contains(expected), "{error}");
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if database
+                    .runtime_fence()
+                    .try_lock_exclusive_quiescence()
+                    .unwrap()
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(mutation).unwrap(), b"published");
+        assert_eq!(
+            database
+                .active_maintenance_write_lease_count()
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn physical_work_is_drained_after_heartbeat_loss() {
+        assert_physical_work_is_fenced("heartbeat_lost").await;
+    }
+
+    #[tokio::test]
+    async fn physical_work_is_drained_after_heartbeat_error() {
+        assert_physical_work_is_fenced("heartbeat_error").await;
+    }
+
+    #[tokio::test]
+    async fn physical_work_is_drained_after_operation_error() {
+        assert_physical_work_is_fenced("operation_error").await;
+    }
+
+    #[tokio::test]
+    async fn physical_work_is_drained_after_caller_cancellation() {
+        assert_physical_work_is_fenced("caller_cancelled").await;
+    }
+
+    #[tokio::test]
+    async fn physical_work_is_drained_after_success() {
+        assert_physical_work_is_fenced("success").await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires explicit LLVM backend for actual catch_unwind/destructor execution"]
+    async fn physical_work_is_drained_after_operation_panic() {
+        assert_physical_work_is_fenced("operation_panic").await;
+    }
 
     #[derive(Clone, Default)]
     struct RecordingNotifier {

@@ -316,7 +316,7 @@ impl VerifierProcessConfig {
         let content_catalog_destination = job_config.template.content_catalog_root.clone();
         let raw_content_destination = job_config.template.raw_content_root.clone();
         let (output_directory, result_file, final_campaign_file) =
-            tokio::task::spawn_blocking(move || {
+            crate::physical_work::spawn_blocking(move || {
                 launch_direct_verifier(
                     &launcher_config,
                     SandboxArtifacts {
