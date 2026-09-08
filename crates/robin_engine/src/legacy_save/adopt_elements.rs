@@ -4283,12 +4283,8 @@ mod tests {
 
     #[test]
     fn position_adoption_restores_the_original_single_posture_source() {
-        let mut element = {
-            let mut initial_element =
-                crate::element::ElementData::from_initial_posture(crate::element::Posture::Spy);
-
-            initial_element
-        };
+        let mut element =
+            crate::element::ElementData::from_initial_posture(crate::element::Posture::Spy);
         let mut position = element.sprite.position_iface.v48_serialized_state();
         position.posture = crate::element::Posture::LeaningOut;
         position.old_posture = crate::element::Posture::Upright;
