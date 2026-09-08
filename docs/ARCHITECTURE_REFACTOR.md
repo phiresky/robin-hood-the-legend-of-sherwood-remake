@@ -138,9 +138,29 @@ The retained final native installation is
   unchanged. The two native identity tests pass. New multiplayer browser cases
   are compile-checked, not part of the audio-only executed test module.
 
-TODO: record the final actual Chrome audio module result and exact evidence
-checkpoint when the browser gate finishes. Both audio and audio-plus-multiplayer
-WASM bin/test compile checks have passed after the target-guard correction.
+The final browser gate passed at clean, unchanged `136971d92` (`0af685eea`
+plus the identity-test target correction). Both `audio` and `audio,multiplayer`
+WASM binary/test checks, the actual linked audio test module, and all **15 real
+Chrome tests** passed. This includes encoded-cache eviction, retention promotion
+and decoding oversized bundles. Chrome/ChromeDriver were `152.0.7977.64`, with
+lock-matched `wasm-bindgen-test-runner 0.2.127`. Evidence:
+`/tmp/robin-lifecycle-gate-clf5rwia/{summary.json,browser-tests.log,browser-tests.wasm}`.
+WASM SHA256:
+`f45176c480f5ab5d5fc2f1647f702b40f2b18d636026bb44d87061bb15b12b38`.
+The wrapper confirmed identical source identity before/after and removed the
+private browser profile. These results do not claim audible output or execution
+of the multiplayer-gated browser identity cases.
+
+### Handoff and recovery
+
+All architecture implementation branches are integrated. Their commits are
+also retained in `/tmp/robin-architecture-final.nLNNLF/architecture-branches.bundle`
+before removing the completed architecture worktrees and branches. This is an
+incremental Git bundle with prerequisite `cc36f8d75`, which remains in main's
+ancestry. Native/browser evidence and immutable test executables remain outside
+the disposable worktrees. Concurrent performance worktrees/branches and
+untracked `original-code/` were not changed. No remote push or deployment was
+performed.
 
 ### Deliberate limits and next slices
 
