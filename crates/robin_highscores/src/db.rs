@@ -158,8 +158,10 @@ pub struct VerificationCampaignAuthority {
     pub campaign_session: Option<CampaignSessionBindingV1>,
 }
 
-/// Immutable, authenticated metadata which must reserve a challenge before
-/// the HTTP layer is allowed to read any replay or campaign bytes.
+/// Immutable storage projection of authenticated submission metadata. Bounded
+/// opaque replay transport preflight precedes reservation; durable artifact
+/// ingestion and campaign streaming require the acquired reservation. This
+/// serializable record is data, not proof of authentication on its own.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubmissionUploadIntent {

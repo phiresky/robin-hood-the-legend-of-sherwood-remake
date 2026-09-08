@@ -2292,6 +2292,52 @@ async fn truncated_three_part_multipart_fails_before_creating_submission_state()
 }
 
 #[tokio::test]
+async fn authenticated_submission_rejects_shape_signature_and_offer_before_reservation() {
+    let rig = TestRig::new().await;
+    let owner = SigningKey::from_bytes(&[93; 32]);
+    rig.rename(&owner, "Authentication Robin", Ipv4Addr::new(127, 0, 9, 3))
+        .await;
+    let offer = rig
+        .issue_offer(&owner, rig.offer_request(&owner, 93), 93)
+        .await;
+    let replay = compact_replay_fixture("authentication-93");
+    let signed = signed_submission(&owner, offer, &replay, &rig.starting_campaign);
+
+    let mut malformed = signed.clone();
+    malformed.participant_signatures.clear();
+    let mut invalid_signature = signed.clone();
+    invalid_signature.participant_signatures[0].signature = sign(
+        &SigningKey::from_bytes(&[94; 32]),
+        &signed.signing_bytes().unwrap(),
+    );
+    invalid_signature.validate().unwrap();
+    // A legal independent offer mutation preserves document shape, but is not
+    // the exact server-issued offer. It must reject as conflict before crypto.
+    let mut different_offer = signed.clone();
+    different_offer.submission.offer.upload_challenge_nonce =
+        robin_run_protocol::ChallengeNonce32::from_bytes([95; 32]);
+    different_offer.validate().unwrap();
+    for (candidate, status) in [
+        (&malformed, StatusCode::BAD_REQUEST),
+        (&invalid_signature, StatusCode::UNAUTHORIZED),
+        (&different_offer, StatusCode::CONFLICT),
+    ] {
+        let response = rig
+            .app
+            .clone()
+            .oneshot(metadata_only_multipart_request(candidate))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status);
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submission_upload_reservations")
+            .fetch_one(rig.database.pool())
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+}
+
+#[tokio::test]
 async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once() {
     for extra_field in [false, true] {
         let rig = TestRig::new().await;
@@ -2334,6 +2380,38 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
             .unwrap();
         assert_eq!(submissions, 0, "partial artifacts must never be finalized");
 
+        // Model a concurrent exact retry holding the reservation. A valid replay
+        // with deliberately wrong campaign bytes must stop at Busy, without
+        // invoking campaign ingestion (which would return BadRequest).
+        sqlx::query(
+            "UPDATE submission_upload_reservations SET state = 'reserved', \
+             lease_token = ?, lease_expires_at_ms = reservation_expires_at_ms, \
+             abandoned_at_ms = NULL WHERE upload_challenge_id = ?",
+        )
+        .bind(uuid::Uuid::now_v7().to_string())
+        .bind(signed.submission.offer.upload_challenge_id.as_str())
+        .execute(rig.database.pool())
+        .await
+        .unwrap();
+        let busy = rig
+            .app
+            .clone()
+            .oneshot(multipart_request(&signed, &replay, b"not the campaign"))
+            .await
+            .unwrap();
+        assert_eq!(busy.status(), StatusCode::CONFLICT);
+        let busy_body: serde_json::Value = json_body(busy).await;
+        assert_eq!(busy_body["error"]["code"], "upload_in_progress");
+        sqlx::query(
+            "UPDATE submission_upload_reservations SET state = 'abandoned', \
+             lease_token = NULL, lease_expires_at_ms = NULL, \
+             abandoned_at_ms = updated_at_ms WHERE upload_challenge_id = ?",
+        )
+        .bind(signed.submission.offer.upload_challenge_id.as_str())
+        .execute(rig.database.pool())
+        .await
+        .unwrap();
+
         // Cleanup releases the lease, not the immutable signed identity. An
         // exact retry may reuse content-addressed artifacts and finalize once.
         for _ in 0..2 {
@@ -2345,11 +2423,49 @@ async fn reserved_upload_failures_abandon_lease_and_exact_retry_finalizes_once()
                 .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
         }
+        let committed = rig
+            .app
+            .clone()
+            .oneshot(multipart_request(&signed, &replay, b"not the campaign"))
+            .await
+            .unwrap();
+        assert_eq!(
+            committed.status(),
+            StatusCode::ACCEPTED,
+            "committed retries do not ingest campaign bytes"
+        );
         let submissions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
             .fetch_one(rig.database.pool())
             .await
             .unwrap();
         assert_eq!(submissions, 1);
+        let persisted = sqlx::query(
+            "SELECT s.envelope_json, s.controller_public_key, s.session_genesis_sha256, \
+             r.envelope_json AS reserved_envelope, r.controller_public_key AS reserved_controller, \
+             r.session_genesis_sha256 AS reserved_genesis \
+             FROM submissions s JOIN submission_upload_reservations r \
+             ON r.submission_id = s.id",
+        )
+        .fetch_one(rig.database.pool())
+        .await
+        .unwrap();
+        assert_eq!(
+            persisted.get::<String, _>("envelope_json"),
+            serde_json::to_string(&signed).unwrap()
+        );
+        assert_eq!(
+            persisted.get::<String, _>("envelope_json"),
+            persisted.get::<String, _>("reserved_envelope")
+        );
+        for (final_column, reserved_column) in [
+            ("controller_public_key", "reserved_controller"),
+            ("session_genesis_sha256", "reserved_genesis"),
+        ] {
+            assert_eq!(
+                persisted.get::<Vec<u8>, _>(final_column),
+                persisted.get::<Vec<u8>, _>(reserved_column)
+            );
+        }
     }
 }
 

@@ -2102,7 +2102,8 @@ async fn submit(
         .database
         .stored_offer(signed.submission.offer.upload_challenge_id.as_str())
         .await?;
-    crate::submission::authenticate_reserved_offer(&signed, &stored_offer.offer_json)?;
+    let authenticated =
+        crate::submission::authenticate_reserved_offer(&signed, &stored_offer.offer_json)?;
 
     let build = state
         .config
@@ -2249,7 +2250,7 @@ async fn submit(
     };
     let lifecycle = crate::submission::complete_upload(
         &state.database,
-        &signed,
+        &authenticated,
         lease_ttl,
         Duration::from_secs(state.config.upload_reservation_ttl_seconds),
         ensure_upload_admission_ready(
