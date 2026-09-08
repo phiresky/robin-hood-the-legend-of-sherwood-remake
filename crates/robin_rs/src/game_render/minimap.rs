@@ -1,6 +1,6 @@
 //! Mission minimap rendering.
 
-use crate::host::Host;
+use crate::host::HostPresentation;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, Renderer};
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::engine as engine_api;
@@ -15,7 +15,7 @@ use robin_engine::sprite::BBox;
 /// indicator rectangle for the current camera view, and a dot per
 /// active entity coloured by kind + state.
 pub(crate) fn render_minimap(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     display: &engine_api::HostDisplayState,
     engine: &Engine,
     assets: &LevelAssets,
@@ -207,7 +207,7 @@ pub(crate) fn render_minimap(
 /// Blit a single minimap dot sprite centred on a converted world
 /// position.
 fn refresh_dot(
-    host: &Host,
+    host: &HostPresentation<'_>,
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
@@ -233,7 +233,7 @@ fn refresh_dot(
 
 #[allow(clippy::too_many_arguments)]
 fn refresh_dot_alpha(
-    host: &Host,
+    host: &HostPresentation<'_>,
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
@@ -258,7 +258,7 @@ fn refresh_dot_alpha(
 }
 
 fn clipped_dot_blit(
-    host: &Host,
+    host: &HostPresentation<'_>,
     mm: &engine_minimap::MinimapState,
     level_size: engine_coordinates::MapSize,
     world_pos: engine_coordinates::MapPoint,
@@ -328,7 +328,7 @@ fn clipped_dot_blit(
     Some((surface, src_box, dst_box))
 }
 
-fn level_size_for(host: &Host) -> engine_coordinates::MapSize {
+fn level_size_for(host: &HostPresentation<'_>) -> engine_coordinates::MapSize {
     host.frontend.viewport.level_size
 }
 

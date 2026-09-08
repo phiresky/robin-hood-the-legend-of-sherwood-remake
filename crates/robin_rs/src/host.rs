@@ -1996,7 +1996,43 @@ pub struct Host {
     pub scripting: HostScripting,
 }
 
+/// Borrowed presentation authority. Unlike `Host`, this cannot submit network
+/// traffic, run scripts, enqueue application effects, or mutate audio state.
+/// Process-local borrows are deliberately not serialized.
+pub(crate) struct HostPresentation<'a> {
+    pub(crate) frontend: &'a mut HostFrontend,
+    pub(crate) sound: &'a crate::sound::SoundManager,
+    pub(crate) options: &'a engine_api::GlobalOptions,
+    pub(crate) local_seat: robin_engine::player_command::PlayerId,
+    application: &'a ApplicationContext,
+}
+
+impl HostPresentation<'_> {
+    /// Read only the active presentation settings, without granting storage,
+    /// profile mutation, asset preparation, or other application authority.
+    pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
+        self.application
+            .with_player_profiles(|profiles| {
+                profiles
+                    .get_active()
+                    .map(|profile| profile.graphic_config.clone())
+            })
+            .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
+            .expect("rendering requires an active profile")
+    }
+}
+
 impl Host {
+    pub(crate) fn presentation(&mut self) -> HostPresentation<'_> {
+        HostPresentation {
+            frontend: &mut self.frontend,
+            sound: &self.audio.sound,
+            options: self.application_context.options(),
+            local_seat: self.transport.local_seat,
+            application: &self.application_context,
+        }
+    }
+
     pub(crate) fn bind_session_achievement_eligibility(
         &mut self,
         eligibility: crate::session_achievement::SessionAchievementEligibility,

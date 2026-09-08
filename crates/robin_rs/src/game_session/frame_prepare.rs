@@ -1122,7 +1122,7 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
             capture_save_thumbnail(
                 &manager.engine,
                 &display_snapshot,
-                host,
+                &mut host.presentation(),
                 assets,
                 dev,
                 &mut render_ctx,

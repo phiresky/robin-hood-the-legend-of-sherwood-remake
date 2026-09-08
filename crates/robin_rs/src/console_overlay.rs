@@ -578,10 +578,15 @@ impl ConsoleOverlay {
     /// engine dispatcher but still want to show up in the overlay's
     /// history.
     pub fn drain_pending_host_output(&mut self, host: &mut crate::host::Host) {
-        if host.frontend.pending_console_output.is_empty() {
+        self.drain_pending_output(&mut host.frontend.pending_console_output);
+    }
+
+    /// Consume only the deferred text queue; rendering needs no host authority.
+    pub(crate) fn drain_pending_output(&mut self, pending: &mut Vec<String>) {
+        if pending.is_empty() {
             return;
         }
-        let lines = std::mem::take(&mut host.frontend.pending_console_output);
+        let lines = std::mem::take(pending);
         for line in lines {
             if line.is_empty() {
                 continue;
@@ -874,6 +879,25 @@ impl ConsoleOverlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presentation_drains_only_the_explicit_console_queue_once() {
+        let mut overlay = ConsoleOverlay::new();
+        let mut pending = vec![String::new(), "first\nsecond".into(), "third".into()];
+        overlay.drain_pending_output(&mut pending);
+        assert!(pending.is_empty());
+        let lines: Vec<_> = overlay
+            .output
+            .iter()
+            .map(|line| match line {
+                OutputLine::Response(text) => text.as_str(),
+                _ => panic!("deferred host output must become a response"),
+            })
+            .collect();
+        assert_eq!(lines, ["first", "second", "third"]);
+        overlay.drain_pending_output(&mut pending);
+        assert_eq!(overlay.output.len(), 3);
+    }
 
     #[test]
     fn toggle_starts_hidden() {

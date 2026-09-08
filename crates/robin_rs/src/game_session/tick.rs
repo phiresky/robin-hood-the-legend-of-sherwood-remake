@@ -24,19 +24,20 @@ use robin_engine::sound_cache::SampleLoader;
 /// `alert_status` runs inside `perform_hourglass` so it's part of the
 /// rollback snapshot.
 pub(super) fn tick_audio(
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut Host,
+    engine: &engine_api::Engine,
+    audio: &mut crate::host::HostAudio,
+    viewport: &crate::host::ViewportState,
     backend: &mut KiraAudioBackend,
     sample_loader: &SampleLoader,
     sound_rng: &mut fastrand::Rng,
     assets: &engine_api::LevelAssets,
 ) -> Option<engine_api::SoundBoundary> {
-    let alert_status = match manager.engine.ai_global().overall_alert_status {
+    let alert_status = match engine.ai_global().overall_alert_status {
         AlertLevel::Green => AlertStatus::Green,
         AlertLevel::Yellow => AlertStatus::Yellow,
         AlertLevel::Red => AlertStatus::Red,
     };
-    let deferred = std::mem::take(&mut host.audio.deferred);
+    let deferred = std::mem::take(&mut audio.deferred);
     let mut pending_play_delayed_sources = Vec::new();
     let mut resume_all_sources = false;
     let mut activate_sources = Vec::new();
@@ -61,47 +62,46 @@ pub(super) fn tick_audio(
     }
     // Drain sim-emitted sound commands that need access to
     // `engine.sound_sim.sources` (stashed on host by `apply_side_effects`).
-    host.sync_sound_listener();
+    audio
+        .sound
+        .set_listen_point(viewport.sound_listen_point(), viewport.zoom_factor);
     if resume_all_sources {
-        host.audio.sound.resume_all_sound_sources(
-            &manager.engine.sound_sim().sources,
-            host.frontend.viewport.sound_listen_point(),
-            host.frontend.viewport.zoom_factor,
+        audio.sound.resume_all_sound_sources(
+            &engine.sound_sim().sources,
+            viewport.sound_listen_point(),
+            viewport.zoom_factor,
         );
     }
     if refresh_ambience_sources {
-        host.audio
+        audio
             .sound
-            .sync_ambience_sources(&manager.engine.sound_sim().sources, backend);
+            .sync_ambience_sources(&engine.sound_sim().sources, backend);
     }
     for idx in activate_sources {
         // Sim already flipped `src.active = true` inside
         // `perform_hourglass`; host only starts the audio channel.
-        host.audio
+        audio
             .sound
-            .activate_sound_source(&manager.engine.sound_sim().sources, idx);
+            .activate_sound_source(&engine.sound_sim().sources, idx);
     }
     for actor_id in stop_exclamation_channels {
-        host.audio
-            .sound
-            .stop_exclamation_channel_only(actor_id, backend);
+        audio.sound.stop_exclamation_channel_only(actor_id, backend);
     }
     for actor_id in stop_exclamations {
-        host.audio.sound.stop_exclamation(actor_id, backend);
+        audio.sound.stop_exclamation(actor_id, backend);
     }
-    let resolved_exclamations = host.audio.sound.hourglass(
+    let resolved_exclamations = audio.sound.hourglass(
         backend,
         sample_loader,
         &mut |n| sound_rng.u32(0..n),
         alert_status,
-        &manager.engine.sound_sim().sources,
+        &engine.sound_sim().sources,
         &mut pending_play_delayed_sources,
     );
     let resolved_exclamations: Vec<_> = resolved_exclamations
         .into_iter()
         .map(|resolved| {
-            let pending = manager
-                .engine
+            let pending = engine
                 .sound_sim()
                 .pending_exclamations
                 .iter()
@@ -138,7 +138,7 @@ pub(super) fn tick_audio(
         .collect();
     // The hourglass drains the queue; whatever it left behind
     // (nothing today, but defensive) goes back on host for next frame.
-    host.audio.deferred.extend(
+    audio.deferred.extend(
         pending_play_delayed_sources
             .into_iter()
             .map(DeferredAudioRequest::PlayDelayedSource),
@@ -157,22 +157,22 @@ pub(super) fn tick_audio(
 /// cache derived state, not sim state, and lives outside the command
 /// pipeline.
 pub(super) fn pre_render_engine_setup(host: &mut Host) {
-    sync_render_camera(host);
+    sync_render_camera(&mut host.frontend);
     crate::blit_to_map::drain_pending_bg_blits(&mut host.frontend, &mut host.effects);
 }
 
 /// Refresh camera-derived draw parameters without consuming any fixed-tick
 /// side-effect queues. Native-refresh interpolation calls this for each
 /// sampled camera pose.
-pub(super) fn sync_render_camera(host: &mut Host) {
-    let view = host.frontend.viewport.view_position;
-    let screen = host.frontend.viewport.screen_size;
-    let zoom = host.frontend.viewport.zoom_factor;
+pub(super) fn sync_render_camera(frontend: &mut crate::host::HostFrontend) {
+    let view = frontend.viewport.view_position;
+    let screen = frontend.viewport.screen_size;
+    let zoom = frontend.viewport.zoom_factor;
     if zoom > 0.0 {
         // The original game's refresh updates
         // the draw manager from the current camera before any world-space
         // overlay uses it.
-        host.frontend.draw_manager.update_drawing_parameters(
+        frontend.draw_manager.update_drawing_parameters(
             0,
             MapBBox::from_coords(
                 view.x,
@@ -185,24 +185,14 @@ pub(super) fn sync_render_camera(host: &mut Host) {
     }
 }
 
-/// Pump any host-side deferred console output into the overlay. Keeps
-/// the overlay-owned scrollback as the single display surface for all
-/// cheat feedback, regardless of which subsystem originates the message.
-pub(super) fn drain_pending_console_output(
-    console_overlay: &mut crate::console_overlay::ConsoleOverlay,
-    host: &mut Host,
-) {
-    console_overlay.drain_pending_host_output(host);
-}
-
 /// Post-render bookkeeping: clear the one-shot `display_double_status_bar`
 /// NPC flag after `render_combat_status_bars` has observed it.
 pub(super) fn post_render_engine_cleanup(
     frame: &mut super::runtime::MissionFrame,
-    host: &mut Host,
+    local_seat: robin_engine::player_command::PlayerId,
 ) {
     frame.post_commands.push(PlayerInput::new(
-        host.transport.local_seat,
+        local_seat,
         PlayerCommand::ClearNpcDoubleStatusBarFlags,
     ));
 }

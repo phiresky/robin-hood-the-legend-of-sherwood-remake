@@ -13,7 +13,7 @@
 
 use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
-use crate::host::Host;
+use crate::host::HostPresentation;
 use crate::host::HostTitbitPreview;
 use robin_assets::picture::Picture;
 use robin_engine::coordinates as engine_coordinates;
@@ -313,7 +313,7 @@ impl TitbitRenderer {
 
     fn render_host_preview_if_due(
         &mut self,
-        host: &Host,
+        host: &HostPresentation<'_>,
         engine: &Engine,
         renderer: &mut crate::renderer::Renderer,
         next_sim_display_order: f32,
@@ -337,7 +337,7 @@ impl TitbitRenderer {
 
     fn render_host_preview(
         &self,
-        host: &Host,
+        host: &HostPresentation<'_>,
         engine: &Engine,
         renderer: &mut crate::renderer::Renderer,
         preview: HostTitbitPreview,
@@ -399,9 +399,9 @@ impl TitbitRenderer {
     /// - QuickAction → entity position, sprite anchored 50px above.
     /// - DangerPoint/QuickAction — only rendered when entity is selected.
     /// - Ghost — frame index offset by +7.
-    pub fn render_up_to(
+    pub(crate) fn render_up_to(
         &mut self,
-        host: &mut Host,
+        host: &mut HostPresentation<'_>,
         engine: &Engine,
         assets: &engine_api::LevelAssets,
         renderer: &mut crate::renderer::Renderer,
@@ -463,7 +463,7 @@ impl TitbitRenderer {
                     continue;
                 };
                 if !engine
-                    .hero_selection(host.transport.local_seat)
+                    .hero_selection(host.local_seat)
                     .iter()
                     .any(|&id| id.index() == mgr)
                 {
@@ -477,7 +477,7 @@ impl TitbitRenderer {
                     continue;
                 };
                 if !engine
-                    .hero_selection(host.transport.local_seat)
+                    .hero_selection(host.local_seat)
                     .iter()
                     .any(|&id| id.index() == mgr)
                 {

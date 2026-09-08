@@ -1015,14 +1015,14 @@ pub fn apply_minimap(
 /// Patch effects ([`super::blit_to_map`]) render as separate persistent
 /// GPU decals immediately above the base map.
 pub trait EngineLevelLoadExt {
-    fn draw_background(&self, host: &mut Host, renderer: &mut Renderer);
+    fn draw_background(&self, viewport: &crate::host::ViewportState, renderer: &mut Renderer);
 }
 
 impl EngineLevelLoadExt for Engine {
-    fn draw_background(&self, host: &mut Host, renderer: &mut Renderer) {
-        let view = &host.frontend.viewport.view_position;
-        let screen = &host.frontend.viewport.screen_size;
-        let zoom = host.frontend.viewport.zoom_factor;
+    fn draw_background(&self, viewport: &crate::host::ViewportState, renderer: &mut Renderer) {
+        let view = &viewport.view_position;
+        let screen = &viewport.screen_size;
+        let zoom = viewport.zoom_factor;
 
         let src_min = *view;
         let src_max = MapPoint::new(

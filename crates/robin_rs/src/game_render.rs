@@ -6,7 +6,7 @@
 //! [`crate::game_session`].
 
 use crate::gfx_types::Rect;
-use crate::host::Host;
+use crate::host::HostPresentation;
 use crate::hud_text::{self, HudFonts};
 use crate::ingame_menu::layout;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
@@ -55,16 +55,8 @@ pub(crate) struct FramePresentationInputs {
 }
 
 impl FramePresentationInputs {
-    pub(crate) fn prepare(host: &Host, engine: &Engine) -> Self {
-        let graphic_config = host
-            .application_context()
-            .with_player_profiles(|profiles| {
-                profiles
-                    .get_active()
-                    .map(|profile| profile.graphic_config.clone())
-            })
-            .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
-            .expect("rendering requires an active profile");
+    pub(crate) fn prepare(host: &HostPresentation<'_>, engine: &Engine) -> Self {
+        let graphic_config = host.graphic_config();
         let dynamic = graphic_config.dynamic_ambience_visuals;
         Self {
             ambiance: if dynamic {
@@ -207,7 +199,11 @@ fn rasterize_fog_region(
 
 /// Composite the smooth visibility field after every world-space pass and
 /// before HUD rendering, so unseen sprites and effects cannot leak through.
-pub(crate) fn render_fog_of_war(host: &Host, engine: &Engine, renderer: &mut Renderer) {
+pub(crate) fn render_fog_of_war(
+    host: &HostPresentation<'_>,
+    engine: &Engine,
+    renderer: &mut Renderer,
+) {
     if !engine.fog_of_war_enabled() {
         return;
     }
@@ -309,7 +305,7 @@ const ALPHA_JUMPZONE: u32 = 64;
 ///     of its door polygons, and each opposite-side motion-area's own door
 ///     polygons.
 pub(crate) fn render_door_overlays(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     renderer: &mut Renderer,
@@ -385,7 +381,7 @@ pub(crate) fn render_door_overlays(
     };
 
     // ── 1. Selected PCs inside buildings (runs unconditionally) ──
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.local_seat;
     for &pc_id in engine.hero_selection(local_seat) {
         let Some(entity) = engine.get_entity(pc_id) else {
             continue;
@@ -647,7 +643,7 @@ pub(crate) fn render_door_overlays(
 /// brightness on top of the darkened base — the overlay must run before
 /// the entity refresh loop.
 pub(crate) fn render_view_cone_overlay(
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     assets: &LevelAssets,
@@ -944,7 +940,7 @@ fn shadow_polygon_slice_radius(
 
 /// Render view cones for ALL NPCs with per-NPC alert tinting (`--view-cones`).
 fn render_all_view_cones(
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     assets: &LevelAssets,
@@ -1067,7 +1063,7 @@ fn render_all_view_cones(
 /// preview marks advance on the same hourglass cadence without entering
 /// sim state.
 pub(crate) fn render_ground_marks(
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     _assets: &LevelAssets,
@@ -1088,7 +1084,7 @@ pub(crate) fn render_ground_marks(
 }
 
 fn render_ground_mark_set(
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     ground_mark: &GroundMark,
     engine: &Engine,
@@ -1280,7 +1276,7 @@ fn entity_visual_map_position(entity: &Entity) -> MapPoint {
 /// frames with the same `(bank_id, variant, shadow_color)` key reuse the
 /// cached texture in a queued GPU draw (zero CPU decompression work).
 pub(crate) fn render_entities_gpu(
-    host: &mut Host,
+    host: &mut HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     assets: &LevelAssets,
@@ -1765,7 +1761,7 @@ fn transition_crenel_climb_up_mask_position(
 
 #[allow(clippy::too_many_arguments)]
 fn render_sprite_mask_debug_overlay(
-    host: &Host,
+    host: &HostPresentation<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
     sprite_world_bbox: &engine_coordinates::MapBBox,
@@ -1807,7 +1803,7 @@ fn render_sprite_mask_debug_overlay(
 }
 
 fn draw_map_bbox_outline(
-    host: &Host,
+    host: &HostPresentation<'_>,
     renderer: &mut Renderer,
     bbox: &engine_coordinates::MapBBox,
     color: u16,
@@ -1827,7 +1823,7 @@ fn draw_map_bbox_outline(
 }
 
 fn draw_map_cross(
-    host: &Host,
+    host: &HostPresentation<'_>,
     renderer: &mut Renderer,
     point: engine_coordinates::MapPoint,
     color: u16,
@@ -1837,7 +1833,7 @@ fn draw_map_cross(
     renderer.draw_line_screen(x, y - 4, x, y + 4, color);
 }
 
-fn map_to_screen(host: &Host, point: engine_coordinates::MapPoint) -> (i32, i32) {
+fn map_to_screen(host: &HostPresentation<'_>, point: engine_coordinates::MapPoint) -> (i32, i32) {
     let view = host.frontend.viewport.view_position;
     let zoom = host.frontend.viewport.zoom_factor;
     (
@@ -1856,7 +1852,7 @@ fn map_to_screen(host: &Host, point: engine_coordinates::MapPoint) -> (i32, i32)
 /// For each outlined entity, the cached outline mask texture is tinted and
 /// alpha-modulated by the GPU pipeline (for hulk fade animation).
 pub(crate) fn render_selection_outlines_gpu(
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     _assets: &LevelAssets,
@@ -1913,7 +1909,7 @@ pub(crate) fn render_selection_outlines_gpu(
 
         let is_selected_tactical = host.frontend.control_tactical_units
             && engine
-                .tactical_selection(host.transport.local_seat)
+                .tactical_selection(host.local_seat)
                 .contains(&entity_id);
         let outline_color_565 = if is_selected_tactical && hulk_running && !is_focused {
             robin_engine::element_kinds::outline_colors::pc_default()
@@ -2047,7 +2043,7 @@ fn render_entity_fallback(
 /// `render_entities_gpu`.
 pub(crate) fn render_bg_animations_gpu(
     engine: &Engine,
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     _assets: &LevelAssets,
     renderer: &mut Renderer,
@@ -2068,7 +2064,7 @@ pub(crate) fn render_bg_animations_gpu(
 fn render_fx_entities_gpu<I>(
     entity_ids: I,
     engine: &Engine,
-    host: &Host,
+    host: &HostPresentation<'_>,
     presentation: &FramePresentationInputs,
     renderer: &mut Renderer,
 ) where
