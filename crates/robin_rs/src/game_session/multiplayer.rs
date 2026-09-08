@@ -1360,7 +1360,7 @@ pub(super) async fn setup_multiplayer_session(
     Ok(())
 }
 
-#[cfg(feature = "multiplayer")]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result<bool, String> {
     let saved = args
         .global_options
@@ -1375,7 +1375,7 @@ fn resolve_browser_join_publication(args: &crate::main_entry::CliArgs) -> Result
     ))
 }
 
-#[cfg(any(test, feature = "multiplayer"))]
+#[cfg(any(test, all(feature = "multiplayer", not(target_arch = "wasm32"))))]
 fn resolve_publication_preference(cli_override: Option<bool>, saved: bool) -> bool {
     cli_override.unwrap_or(saved)
 }

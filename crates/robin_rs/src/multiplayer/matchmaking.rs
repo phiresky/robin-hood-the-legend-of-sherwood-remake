@@ -19,6 +19,7 @@
 //! the game identity key if this ever matters.
 
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, Sender};
 
 pub const START_DELAY_MS: u64 = 1_500;
@@ -83,6 +84,7 @@ fn default_expected_players() -> u32 {
 }
 
 /// Everything broadcast on the matchmaking topic.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum TopicMsg {
@@ -117,6 +119,7 @@ pub enum MatchmakingEvent {
     Disconnected(String),
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 enum Command {
     Create {
         mission_id: u32,
@@ -134,11 +137,13 @@ enum Command {
 /// swarm plus the local player's hosting / joining state.  Dropping
 /// it leaves the swarm (the hosted listing expires from everyone's
 /// browser within [`SOFT_STATE_TTL`]).
+#[cfg(not(target_arch = "wasm32"))]
 pub struct MatchmakingSession {
     commands: Sender<Command>,
     events: Receiver<MatchmakingEvent>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl MatchmakingSession {
     /// Join the matchmaking swarm.  Returns immediately; discovery
     /// progress arrives as [`MatchmakingEvent::Neighbors`] events.
@@ -191,6 +196,48 @@ impl MatchmakingSession {
     }
 }
 
+/// Browser discovery is not implemented, so no live gossip session can exist.
+/// Direct browser invites use the game transport instead of this session.
+#[cfg(target_arch = "wasm32")]
+pub enum MatchmakingSession {}
+
+#[cfg(target_arch = "wasm32")]
+impl MatchmakingSession {
+    pub fn open(_nickname: String) -> Result<Self, String> {
+        // TODO: wire browser gossip discovery into the wasm transport.
+        Err("multiplayer matchmaking is not available in browser builds".to_string())
+    }
+
+    pub fn create_game(&self, _mission_id: u32, _mission_name: String) -> Result<(), String> {
+        match *self {}
+    }
+
+    pub fn create_game_with_content(
+        &self,
+        _mission_id: u32,
+        _mission_name: String,
+        _host_content: robin_engine::multiplayer::DistributedModOffer,
+    ) -> Result<(), String> {
+        match *self {}
+    }
+
+    pub fn join_game(&self, _game_id: String) -> Result<(), String> {
+        match *self {}
+    }
+
+    pub fn leave_game(&self) -> Result<(), String> {
+        match *self {}
+    }
+
+    pub fn start_game(&self) -> Result<(), String> {
+        match *self {}
+    }
+
+    pub fn try_recv(&self) -> Option<MatchmakingEvent> {
+        match *self {}
+    }
+}
+
 fn checked_epoch_ms(millis: u128) -> Result<u64, String> {
     u64::try_from(millis)
         .map_err(|_| "system clock timestamp exceeds the u64 Unix range".to_owned())
@@ -233,13 +280,6 @@ fn try_current_epoch_ms() -> Result<u64, String> {
 /// directly and reports the failure to the menu before changing game state.
 pub fn current_epoch_ms() -> u64 {
     try_current_epoch_ms().expect("multiplayer requires a valid Unix system clock")
-}
-
-#[cfg(target_arch = "wasm32")]
-fn open_native(_nickname: String) -> Result<MatchmakingSession, String> {
-    // TODO: browser matchmaking needs iroh's wasm support wired into
-    // the wasm transport before this can come back to the web build.
-    Err("multiplayer matchmaking is not available in browser builds".to_string())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -822,5 +862,19 @@ mod tests {
         let error = checked_start_epoch_ms(u64::MAX)
             .expect_err("overflowing matchmaking start time must fail");
         assert!(error.contains("exceeds the u64 Unix range"), "{error}");
+    }
+}
+
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests {
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn discovery_rejects_open_without_creating_a_session() {
+        match super::MatchmakingSession::open("Browser player".into()) {
+            Err(error) => assert_eq!(
+                error,
+                "multiplayer matchmaking is not available in browser builds"
+            ),
+            Ok(session) => match session {},
+        }
     }
 }

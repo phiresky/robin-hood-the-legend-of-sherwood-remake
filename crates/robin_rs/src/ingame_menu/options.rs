@@ -31,7 +31,7 @@ use super::layout::{
     render_text_virt_font,
 };
 use super::leaderboard_settings::show_leaderboard_settings;
-#[cfg(feature = "multiplayer")]
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 use super::multiplayer_privacy::show_multiplayer_privacy;
 use super::resources::{
     IngameMenuResources, MT_BTN_BACK, MT_BTN_GRAPHICS, MT_BTN_SHORTCUTS, MT_BTN_SOUNDS,

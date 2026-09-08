@@ -10,6 +10,8 @@
 #[cfg(feature = "multiplayer")]
 mod client_protocol;
 
+#[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
+pub(crate) use robin_engine::multiplayer::INPUT_DELAY_FRAMES;
 use robin_engine::multiplayer::LeaderboardAuthorizationInbox;
 use robin_engine::multiplayer::LeaderboardCoSignResponse;
 #[cfg(any(test, feature = "multiplayer"))]
@@ -24,9 +26,7 @@ pub(crate) use robin_engine::multiplayer::{
     RankedOfficialSessionSetupDocument, RankedSubmissionAcceptedDocument, STATE_HASH_INTERVAL,
 };
 #[cfg(feature = "multiplayer")]
-pub(crate) use robin_engine::multiplayer::{
-    INPUT_DELAY_FRAMES, NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg,
-};
+pub(crate) use robin_engine::multiplayer::{NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg};
 #[cfg(feature = "multiplayer")]
 pub(crate) use robin_engine::multiplayer::{RankedBrowseOnlyReason, RankedJoinUnavailableReason};
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
@@ -68,14 +68,14 @@ pub(crate) enum NetFrameClass {
 
 #[cfg(feature = "multiplayer")]
 pub(crate) const MAX_SERVER_CONTROL_FRAME_BYTES: usize = 64 * 1024;
-#[cfg(feature = "multiplayer")]
+#[cfg(all(feature = "multiplayer", any(test, not(target_arch = "wasm32"))))]
 pub(crate) const MAX_CLIENT_CONTROL_FRAME_BYTES: usize = 32 * 1024;
 #[cfg(feature = "multiplayer")]
 pub(crate) const MAX_INPUT_FRAME_BYTES: usize = 256 * 1024;
 #[cfg(feature = "multiplayer")]
 pub(crate) const MAX_SNAPSHOT_FRAME_BYTES: usize =
     robin_engine::multiplayer::MAX_SNAPSHOT_FRAME_BYTES;
-#[cfg(feature = "multiplayer")]
+#[cfg(all(feature = "multiplayer", any(test, not(target_arch = "wasm32"))))]
 pub(crate) const MAX_HELLO_FRAME_BYTES: usize = 24 * 1024;
 #[cfg(feature = "multiplayer")]
 pub(crate) const MAX_CONTENT_FRAME_BYTES: usize =
@@ -106,7 +106,11 @@ impl NetFrameClass {
 #[cfg(feature = "multiplayer")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InboundFramePolicy {
+    // Browser production transport is client-only; shared framing tests still
+    // exercise every direction on both targets.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     ClientHello,
+    #[cfg(any(test, not(target_arch = "wasm32")))]
     ClientToServer,
     ServerToClient,
 }
@@ -115,13 +119,17 @@ pub(crate) enum InboundFramePolicy {
 impl InboundFramePolicy {
     pub(crate) const fn limit(self, class: NetFrameClass) -> Option<usize> {
         match (self, class) {
+            #[cfg(any(test, not(target_arch = "wasm32")))]
             (Self::ClientHello, NetFrameClass::Control) => Some(MAX_HELLO_FRAME_BYTES),
+            #[cfg(any(test, not(target_arch = "wasm32")))]
             (Self::ClientToServer, NetFrameClass::Control) => Some(MAX_CLIENT_CONTROL_FRAME_BYTES),
+            #[cfg(any(test, not(target_arch = "wasm32")))]
             (Self::ClientToServer, NetFrameClass::Input) => Some(MAX_INPUT_FRAME_BYTES),
             (Self::ServerToClient, NetFrameClass::Control) => Some(MAX_SERVER_CONTROL_FRAME_BYTES),
             (Self::ServerToClient, NetFrameClass::Input) => Some(MAX_INPUT_FRAME_BYTES),
             (Self::ServerToClient, NetFrameClass::Snapshot) => Some(MAX_SNAPSHOT_FRAME_BYTES),
             (Self::ServerToClient, NetFrameClass::Content) => Some(MAX_CONTENT_FRAME_BYTES),
+            #[cfg(any(test, not(target_arch = "wasm32")))]
             (
                 Self::ClientHello,
                 NetFrameClass::Input | NetFrameClass::Snapshot | NetFrameClass::Content,

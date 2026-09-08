@@ -2,7 +2,9 @@
 //! before publishing metadata or retiring its directory authority.
 
 use crate::savegame::{SaveGame, SlotName};
-use anyhow::{Context, Result};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
+use anyhow::Result;
 
 /// Runtime authority: a running thread cannot be cloned or deserialized.
 #[derive(Debug, Default)]

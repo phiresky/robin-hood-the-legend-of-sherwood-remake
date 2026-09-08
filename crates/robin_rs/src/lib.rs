@@ -13,7 +13,9 @@
 // `#[allow(clippy::disallowed_methods)]` with a comment.
 #![warn(clippy::disallowed_methods)]
 
-use std::sync::{Mutex, Once, OnceLock};
+use std::sync::Once;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(all(
     feature = "auto-update",
