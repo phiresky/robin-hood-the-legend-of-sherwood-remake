@@ -39,6 +39,15 @@ pub(super) enum LoadCompletion {
     Quick,
 }
 
+impl LoadCompletion {
+    pub(super) fn mirrors_continue(&self) -> bool {
+        !matches!(
+            self,
+            Self::Restart | Self::Selected(Some(SpecialSlot::Continue | SpecialSlot::Restart))
+        )
+    }
+}
+
 pub(super) fn route(
     save: PreparedLoad,
     engine: &engine_api::Engine,
@@ -100,10 +109,11 @@ impl AppliedLoad {
                 identity,
                 is_continue,
             }),
-            restore: Some(PostLoadSync { is_continue }),
-            reset_input,
+            completion: super::super::OperationCompletion::Restored {
+                sync: PostLoadSync { is_continue },
+                reset_input,
+            },
             banner,
-            ..OperationOutcome::NO_EVENT
         }
     }
 }
@@ -135,6 +145,20 @@ mod tests {
     use crate::savegame::SpecialSlot;
 
     #[test]
+    fn continue_mirror_policy_matrix() {
+        for (completion, expected) in [
+            (LoadCompletion::Restart, false),
+            (LoadCompletion::Quick, true),
+            (LoadCompletion::Selected(None), true),
+            (LoadCompletion::Selected(Some(SpecialSlot::Continue)), false),
+            (LoadCompletion::Selected(Some(SpecialSlot::Restart)), false),
+            (LoadCompletion::Selected(Some(SpecialSlot::Sherwood)), true),
+        ] {
+            assert_eq!(completion.mirrors_continue(), expected);
+        }
+    }
+
+    #[test]
     fn routing_owns_prepared_payload_and_only_application_emits_restore() {
         let directory = tempfile::tempdir().unwrap();
         let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
@@ -164,10 +188,10 @@ mod tests {
         assert_eq!(engine.frame_counter(), 41);
         assert_eq!(applied.mission_id(), 17);
         let outcome = applied.outcome(LoadCompletion::Quick);
-        assert!(outcome.processed && outcome.reset_input);
+        assert!(outcome.processed() && outcome.reset_input());
         assert_eq!(outcome.banner, Some(SaveBannerKind::Loaded));
-        assert!(!outcome.restore.unwrap().is_continue);
-        assert!(outcome.transition.is_none() && !outcome.restart_requested);
+        assert!(!outcome.restore().unwrap().is_continue);
+        assert!(outcome.transition().is_none() && !outcome.restart_requested());
     }
 
     #[test]
@@ -243,10 +267,10 @@ mod tests {
             let bytes = serde_json::to_vec(&receipt).unwrap();
             assert!(serde_json::from_slice::<AppliedLoad>(&bytes).is_err());
             let outcome = receipt.outcome(completion);
-            assert_eq!(outcome.reset_input, reset);
+            assert_eq!(outcome.reset_input(), reset);
             assert_eq!(outcome.banner, banner);
-            assert_eq!(outcome.restore.unwrap().is_continue, continued);
-            assert!(outcome.event.is_none() && outcome.transition.is_none());
+            assert_eq!(outcome.restore().unwrap().is_continue, continued);
+            assert!(outcome.event.is_none() && outcome.transition().is_none());
         }
     }
 }

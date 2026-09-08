@@ -31,7 +31,7 @@ fn apply_post_save_ui_state(
     input: &mut MissionInput,
     outcome: &crate::main_entry::OperationOutcome,
 ) {
-    if outcome.reset_input {
+    if outcome.reset_input() {
         input.reset_after_engine_request(host);
     }
     if let Some(kind) = notices.select_banner(outcome.banner) {
@@ -287,7 +287,7 @@ pub(super) async fn process_operation_and_save(
             profiles,
             pending_thumbnail.clone(),
         );
-        if save_load.processed
+        if save_load.processed()
             && let Some(ref mut checker) = runtime.rollback_checker
         {
             checker.reset();
@@ -295,20 +295,20 @@ pub(super) async fn process_operation_and_save(
         if let Some(event) = save_load.event {
             runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
         }
-        if let Some(transition) = save_load.transition.take() {
+        if let Some(transition) = save_load.take_transition() {
             *campaign_transition = Some(transition);
             game.operation.set(GameCode::LevelLoad);
             runtime.trace(FrameContractStage::Exit);
             return Ok(ControlFlow::Break(FrameControl::exit(GameCode::LevelLoad)));
         }
-        if save_load.restart_requested {
+        if save_load.restart_requested() {
             game.operation.set(GameCode::LevelRestart);
             runtime.trace(FrameContractStage::Exit);
             return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
                 GameCode::LevelRestart,
             ))));
         }
-        if let Some(sync) = save_load.restore {
+        if let Some(sync) = save_load.restore() {
             runtime.note_state_restored();
             game.apply_post_load_sync(sync.is_continue);
             game.post_load_resolution_resync();
@@ -328,7 +328,7 @@ pub(super) async fn process_operation_and_save(
         profiles,
         pending_thumbnail,
     );
-    if save_load.processed
+    if save_load.processed()
         && let Some(ref mut checker) = runtime.rollback_checker
     {
         checker.reset();
@@ -342,7 +342,7 @@ pub(super) async fn process_operation_and_save(
     // to LevelInProgress would keep the failed mission alive with mixed
     // lifecycle state. The outer session owns the authoritative restart
     // campaign/RNG/SimConfig checkpoint.
-    if save_load.restart_requested {
+    if save_load.restart_requested() {
         game.operation.set(GameCode::LevelRestart);
         runtime.trace(FrameContractStage::Exit);
         return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
@@ -356,7 +356,7 @@ pub(super) async fn process_operation_and_save(
     // the Game state machine into LevelLoad so `process_operation` exits
     // on the next iteration; the outer session loop will switch missions
     // and re-queue the Load on the fresh engine.
-    if let Some(transition) = save_load.transition.take() {
+    if let Some(transition) = save_load.take_transition() {
         *campaign_transition = Some(transition);
         game.operation.set(GameCode::LevelLoad);
         runtime.trace(FrameContractStage::Exit);
@@ -371,7 +371,7 @@ pub(super) async fn process_operation_and_save(
     // is armed by `perform_pending_save_load` after any Load
     // variant succeeds, threading the slot type back out of the
     // save-I/O layer.
-    if let Some(sync) = save_load.restore {
+    if let Some(sync) = save_load.restore() {
         runtime.note_state_restored();
         game.apply_post_load_sync(sync.is_continue);
         game.post_load_resolution_resync();

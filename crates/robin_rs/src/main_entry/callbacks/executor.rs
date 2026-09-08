@@ -1,9 +1,9 @@
 //! Staged save/load execution after the callback consume/publication barrier.
 
 use super::{
-    AutosaveNotices, OperationOutcome, PendingLevelLoad, PreparedLoad, SaveBannerKind,
-    SaveLoadEvent, SaveLoadRequest, begin_multiplayer_snapshot_transition, current_mission_id,
-    replay_save_written_event,
+    AutosaveNotices, OperationCompletion, OperationOutcome, PendingLevelLoad, PreparedLoad,
+    SaveBannerKind, SaveLoadEvent, SaveLoadRequest, begin_multiplayer_snapshot_transition,
+    current_mission_id, replay_save_written_event,
 };
 use crate::save_file::special_slots;
 use crate::savegame::{SaveGameManager, SpecialSlot};
@@ -162,96 +162,19 @@ pub(super) fn execute(
             };
             match resolved {
                 Some(save) => {
-                    // Remote committed snapshots have no local slot metadata;
-                    // all locally selected handles were validated by preflight.
-                    let idx = match save
-                        .slot()
-                        .map(|handle| save_manager.resolve_handle(handle))
-                        .transpose()
-                    {
-                        Ok(index) => index,
-                        Err(error) => {
-                            tracing::error!("Load rejected stale slot handle: {error:#}");
-                            return outcome;
-                        }
-                    };
-                    if host.transport.net.is_some() && !save.is_committed() {
-                        match begin_multiplayer_snapshot_transition(host, save) {
-                            Ok(true) => return outcome,
-                            Ok(false) => unreachable!("multiplayer transition guard checked net"),
-                            Err(error) => {
-                                tracing::error!("Load rejected: {error}");
-                                return outcome;
-                            }
-                        }
-                    }
-                    let save = match load::route(save, engine, game, profiles) {
-                        Ok(load::LoadRoute::Current(save)) => save,
-                        Ok(load::LoadRoute::OtherMission {
-                            save,
-                            target_mission_id,
-                            active_mission_id,
-                        }) => {
-                            tracing::info!(
-                                "Load slot {idx:?}: cross-mission load (header={}, current={}) — routing through session LevelLoad",
-                                target_mission_id,
-                                active_mission_id
-                            );
-                            outcome.transition = Some(PendingLevelLoad::new(save));
-                            return outcome;
-                        }
-                        Err(error) => {
-                            tracing::error!("Load preflight rejected slot {idx:?}: {error}");
-                            return outcome;
-                        }
-                    };
-                    match load::apply(save, engine, host, game, assets) {
-                        Err(err) => {
-                            tracing::error!("Load failed: {err:#}");
-                        }
-                        Ok(applied) => {
-                            // Thread the slot type through so the frame loop
-                            // can replay the continue / campaign-map fix-ups.
-                            let special = match idx {
-                                Some(idx) => {
-                                    let Some(metadata) = save_manager.get(idx) else {
-                                        tracing::error!(
-                                            "Loaded slot metadata disappeared after preflight"
-                                        );
-                                        return outcome;
-                                    };
-                                    metadata.special
-                                }
-                                // A remote snapshot is deliberately not any of
-                                // this peer's local special slots.
-                                None => None,
-                            };
-                            // Mirror the load into the Continue slot,
-                            // guarded by IsContinue/IsRestart so we
-                            // don't clobber the slot we just loaded.
-                            if !matches!(
-                                special,
-                                Some(SpecialSlot::Continue | SpecialSlot::Restart)
-                            ) && let Err(error) = save_manager.write_continue_save_background(
-                                host,
-                                game,
-                                engine,
-                                applied.mission_id(),
-                                Some(profiles),
-                                thumb_ref,
-                            ) {
-                                tracing::warn!(
-                                    "Continue-mirror after load could not start: {error:#}"
-                                );
-                            }
-                            tracing::info!("Load completed from slot {idx:?}");
-                            return applied.outcome(load::LoadCompletion::Selected(special));
-                        }
-                    }
+                    return execute_load(
+                        save,
+                        load::LoadCompletion::Selected(None),
+                        save_manager,
+                        host,
+                        game,
+                        engine,
+                        assets,
+                        profiles,
+                        thumb_ref,
+                    );
                 }
-                None => {
-                    tracing::warn!("Load requested but no matching save slot found");
-                }
+                None => tracing::warn!("Load requested but no matching save slot found"),
             }
         }
         SaveLoadRequest::Restart => {
@@ -270,50 +193,27 @@ pub(super) fn execute(
             }
         }
         SaveLoadRequest::LoadRestart => {
-            if host.transport.net.is_some() {
-                match PreparedLoad::restart(save_manager) {
-                    Ok(Some(save)) => {
-                        if let Err(error) = begin_multiplayer_snapshot_transition(host, save) {
-                            tracing::error!("Multiplayer restart rejected: {error}");
-                        }
-                    }
-                    Ok(None) => {
-                        tracing::error!("Multiplayer restart rejected: no restart snapshot exists")
-                    }
-                    Err(error) => {
-                        tracing::error!("Multiplayer restart snapshot preflight failed: {error:#}")
-                    }
-                }
-                return outcome;
-            }
-            let restore_result = (|| -> anyhow::Result<_> {
-                let save = PreparedLoad::restart(save_manager)?
-                    .ok_or_else(|| anyhow::anyhow!("no restart snapshot exists"))?;
-                let save = match load::route(save, engine, game, profiles)
-                    .map_err(anyhow::Error::msg)?
-                {
-                    load::LoadRoute::Current(save) => save,
-                    load::LoadRoute::OtherMission {
-                        target_mission_id,
-                        active_mission_id,
-                        ..
-                    } => anyhow::bail!(
-                        "save mission {target_mission_id} does not match active mission {active_mission_id}"
-                    ),
-                };
-                load::apply(save, engine, host, game, assets)
-            })();
-            match restore_result {
-                Ok(applied) => {
-                    tracing::info!("Restart snapshot restored");
-                    return applied.outcome(load::LoadCompletion::Restart);
-                }
-                Err(error) => {
-                    tracing::error!(
-                        "Restart snapshot could not be restored; routing through authoritative LevelRestart: {error:#}"
+            match PreparedLoad::restart(save_manager) {
+                Ok(Some(save)) => {
+                    return execute_load(
+                        save,
+                        load::LoadCompletion::Restart,
+                        save_manager,
+                        host,
+                        game,
+                        engine,
+                        assets,
+                        profiles,
+                        thumb_ref,
                     );
-                    outcome.restart_requested = true;
-                    game.operation.set(GameCode::LevelRestart);
+                }
+                missing => {
+                    tracing::error!("Restart snapshot unavailable: {missing:?}");
+                    // Multiplayer cannot unilaterally fall back to LevelRestart.
+                    if host.transport.net.is_none() {
+                        outcome.completion = OperationCompletion::RestartRequested;
+                        game.operation.set(GameCode::LevelRestart);
+                    }
                 }
             }
         }
@@ -419,62 +319,17 @@ pub(super) fn execute(
                             );
                         }
                         Ok(Some(save)) => {
-                            if host.transport.net.is_some() {
-                                match begin_multiplayer_snapshot_transition(host, save) {
-                                    Ok(true) => return outcome,
-                                    Ok(false) => {
-                                        unreachable!("multiplayer transition guard checked net")
-                                    }
-                                    Err(error) => {
-                                        tracing::error!(
-                                            "Quick load ({slot_name}) rejected: {error}"
-                                        );
-                                        return outcome;
-                                    }
-                                }
-                            }
-                            let save = match load::route(save, engine, game, profiles) {
-                                Ok(load::LoadRoute::Current(save)) => save,
-                                Ok(load::LoadRoute::OtherMission {
-                                    save,
-                                    target_mission_id,
-                                    ..
-                                }) => {
-                                    tracing::info!(
-                                        "Quick load ({slot_name}): routing mission {target_mission_id} through session LevelLoad"
-                                    );
-                                    outcome.transition = Some(PendingLevelLoad::new(save));
-                                    return outcome;
-                                }
-                                Err(error) => {
-                                    tracing::error!("Quick load ({slot_name}) rejected: {error}");
-                                    return outcome;
-                                }
-                            };
-                            let applied = match load::apply(save, engine, host, game, assets) {
-                                Ok(applied) => applied,
-                                Err(error) => {
-                                    tracing::error!("Quick load ({slot_name}) failed: {error:#}");
-                                    return outcome;
-                                }
-                            };
-                            // Mirror into the Continue slot — QuickSave is
-                            // neither Continue nor Restart so it always
-                            // mirrors.
-                            if let Err(error) = save_manager.write_continue_save_background(
+                            return execute_load(
+                                save,
+                                load::LoadCompletion::Quick,
+                                save_manager,
                                 host,
                                 game,
                                 engine,
-                                applied.mission_id(),
-                                Some(profiles),
+                                assets,
+                                profiles,
                                 thumb_ref,
-                            ) {
-                                tracing::warn!(
-                                    "Continue-mirror after quick-load could not start: {error:#}"
-                                );
-                            }
-                            tracing::info!("Quick save loaded from {slot_name}");
-                            return applied.outcome(load::LoadCompletion::Quick);
+                            );
                         }
                     }
                 }
@@ -501,9 +356,92 @@ pub(super) fn execute(
             }
         }
     }
-    OperationOutcome {
-        processed: true,
-        event,
-        ..outcome
+    OperationOutcome { event, ..outcome }
+}
+
+/// Shared stages: validate local identity, publish to peers, route, apply, mirror,
+/// then construct the receipt. Completion policy preserves each caller's UI and
+/// fallback rules; no caller may mark a rejected application as restored.
+fn execute_load(
+    save: PreparedLoad,
+    mut completion: load::LoadCompletion,
+    save_manager: &mut SaveGameManager,
+    host: &mut crate::host::Host,
+    game: &mut crate::game::Game,
+    engine: &mut engine_api::Engine,
+    assets: &engine_api::LevelAssets,
+    profiles: &ProfileManager,
+    thumb_ref: Option<&crate::save_file::Thumbnail>,
+) -> OperationOutcome {
+    let restart = matches!(completion, load::LoadCompletion::Restart);
+    let multiplayer = host.transport.net.is_some();
+    let result = (|| -> anyhow::Result<OperationOutcome> {
+        if matches!(completion, load::LoadCompletion::Selected(_)) {
+            let special = save
+                .slot()
+                .map(|handle| {
+                    let index = save_manager.resolve_handle(handle)?;
+                    save_manager
+                        .get(index)
+                        .map(|metadata| metadata.special)
+                        .ok_or_else(|| anyhow::anyhow!("selected slot metadata disappeared"))
+                })
+                .transpose()?
+                .flatten();
+            completion = load::LoadCompletion::Selected(special);
+        }
+        if multiplayer && !save.is_committed() {
+            anyhow::ensure!(
+                begin_multiplayer_snapshot_transition(host, save).map_err(anyhow::Error::msg)?,
+                "multiplayer transport disappeared during publication"
+            );
+            return Ok(OperationOutcome::NO_EVENT);
+        }
+        let save = match load::route(save, engine, game, profiles).map_err(anyhow::Error::msg)? {
+            load::LoadRoute::Current(save) => save,
+            load::LoadRoute::OtherMission {
+                save,
+                target_mission_id,
+                active_mission_id,
+            } => {
+                anyhow::ensure!(
+                    !restart,
+                    "restart mission {target_mission_id} does not match active mission {active_mission_id}"
+                );
+                return Ok(OperationOutcome {
+                    completion: OperationCompletion::Transition(PendingLevelLoad::new(save)),
+                    ..OperationOutcome::NO_EVENT
+                });
+            }
+        };
+        let applied = load::apply(save, engine, host, game, assets)?;
+        if completion.mirrors_continue() {
+            if let Err(error) = save_manager.write_continue_save_background(
+                host,
+                game,
+                engine,
+                applied.mission_id(),
+                Some(profiles),
+                thumb_ref,
+            ) {
+                tracing::warn!("Continue mirror after load could not start: {error:#}");
+            }
+        }
+        Ok(applied.outcome(completion))
+    })();
+    match result {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::error!("Load failed: {error:#}");
+            if restart && !multiplayer {
+                game.operation.set(GameCode::LevelRestart);
+                OperationOutcome {
+                    completion: OperationCompletion::RestartRequested,
+                    ..OperationOutcome::NO_EVENT
+                }
+            } else {
+                OperationOutcome::NO_EVENT
+            }
+        }
     }
 }
