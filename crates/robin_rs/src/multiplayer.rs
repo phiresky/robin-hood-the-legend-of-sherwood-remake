@@ -15,21 +15,20 @@ use robin_engine::multiplayer::LeaderboardCoSignResponse;
 #[cfg(any(test, feature = "multiplayer"))]
 pub(crate) use robin_engine::multiplayer::MultiplayerSessionId;
 use robin_engine::multiplayer::NetChannels as EngineNetChannels;
-#[cfg(feature = "multiplayer")]
-pub(crate) use robin_engine::multiplayer::RankedJoinUnavailableReason;
 #[cfg(all(test, feature = "multiplayer", not(target_arch = "wasm32")))]
 use robin_engine::multiplayer::new_frame_cursor;
 pub(crate) use robin_engine::multiplayer::{
-    FrameCursor, InitialSnapshot, NetEvent, NetOutbound, RankedBrowseOnlyReason,
-    RankedCoSignContextDocument, RankedContinuationPreflightClaimDocument,
-    RankedContinuationPreflightSignatureDocument, RankedContinuationReceiptSelectionDocument,
-    RankedContinuationReceiptSelectionRequestDocument, RankedOfficialSessionSetupDocument,
-    RankedSubmissionAcceptedDocument, STATE_HASH_INTERVAL,
+    FrameCursor, InitialSnapshot, NetEvent, NetOutbound, RankedCoSignContextDocument,
+    RankedContinuationPreflightClaimDocument, RankedContinuationPreflightSignatureDocument,
+    RankedContinuationReceiptSelectionDocument, RankedContinuationReceiptSelectionRequestDocument,
+    RankedOfficialSessionSetupDocument, RankedSubmissionAcceptedDocument, STATE_HASH_INTERVAL,
 };
 #[cfg(feature = "multiplayer")]
 pub(crate) use robin_engine::multiplayer::{
     INPUT_DELAY_FRAMES, NET_PROTOCOL_VERSION, NetMsg, decode_msg, encode_msg,
 };
+#[cfg(feature = "multiplayer")]
+pub(crate) use robin_engine::multiplayer::{RankedBrowseOnlyReason, RankedJoinUnavailableReason};
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub(crate) use robin_engine::multiplayer::{
     RankedJoinAccepted, RankedJoinClaimDocument, RankedParticipantRosterDocument,
