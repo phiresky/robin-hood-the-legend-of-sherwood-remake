@@ -104,6 +104,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Normalize Rust toolchains for release cache
+        shell: bash
+        run: |
+          # rust-cache hashes every installed compiler, including the runner's
+          # unused stable toolchain. Keep only the repository-pinned compiler
+          # on these disposable runners so image updates cannot change the key.
+          # rustc installs the toolchain/components from rust-toolchain.toml.
+          rustc --version
+          release_toolchain="$(rustup show active-toolchain)"
+          release_toolchain="${release_toolchain%% *}"
+          rustup default "${release_toolchain}"
+          installed_toolchains="$(rustup toolchain list)"
+          while read -r toolchain annotations; do
+            if [[ "${toolchain}" != "${release_toolchain}" ]]; then
+              rustup toolchain uninstall "${toolchain}"
+            fi
+          done <<< "${installed_toolchains}"
+
       - name: Install Linux build dependencies
         if: matrix.runtime == 'linux-x64'
         run: |
