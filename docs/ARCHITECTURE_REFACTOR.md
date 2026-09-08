@@ -87,10 +87,60 @@ verification passed 23 tests with four explicitly ignored operator-data cases.
 The quality-suite orchestration tests (13) and lifecycle wrapper tests (12)
 also passed after the dispatch hardening.
 
-TODO: record final combined engine/client/browser/GPU and retained native
-lifecycle results after the client field correction and graphical frame-boundary
-regression are verified. Do not treat isolated branch results as final combined
-acceptance.
+The graphical failure was repaired in `42e29ceec`: this drain's explicit rollback
+result reopens only the pending pre-tick snapshot tiers and recorder hash. It
+preserves queued inputs, external facts, timeline ordinal and timing. Two tests
+through the production second-drain helper reproduced the original assertion
+before the repair and passed afterward (recent-history and sparse fallback).
+Another 131 related multiplayer/frame tests passed. Independent review confirmed
+the fix does not use stale telemetry or weaken history invariants.
+
+Final native production source: `0af685eea`. Later changes are documentation,
+acceptance harness corrections and identity-test target guards, not production
+Rust changes. Explicit combined acceptance:
+
+| Suite | Result |
+| --- | --- |
+| Engine, on `43ab1f432` (engine unchanged afterward) | 4,461 unit, 15 integration, 22 doctests passed; 5 explicit ignores |
+| Lua, same checkpoint | 35 unit/integration tests passed |
+| Assets/content/data I/O | Expanded named gate passed, including default/codec-only variants and dependency graph assertions |
+| Parity/ranked verification | 152 parity and 23 ranked tests passed; 4 ranked operator-data cases ignored |
+| Default client library, `0af685eea` | 1,568 passed, 6 explicit ignores |
+| Release-feature client library, `0af685eea` | 1,658 passed, 6 explicit ignores |
+| Seven client integration targets | 33 passed, 4 original-corpus cases ignored |
+| Client doctests | 7 passed, including 5 compile-fail authority checks |
+| Vulkan multipass/ownership execution | Passed, 1.59 seconds |
+| Cache focused + real LLVM panic recovery | 14 ordinary tests plus separately selected panic/retry test passed |
+| Developer examples with `tools,projection-export` | All examples checked successfully |
+| Quality-suite/lifecycle orchestration | 13 and 15 tests passed; formatting and whitespace checks passed |
+
+The retained final native installation is
+`/tmp/robin-architecture-final.nLNNLF`, binary SHA256
+`988b06789e0ec4170129e4e23d2b792b2fe5f09192d6a53987ac0a8d1a7a23d0`.
+
+- Both `multiplayer-headless/summary.json` and
+  `multiplayer-graphical/summary.json` pass all ten coverage checks: real two-seat
+  admission, commands, forced late rollback, pre/post reconnect hash agreement,
+  snapshot reconnect and seat preservation. Both have zero desyncs and zero
+  missed comparisons. The previously failing graphical path now passes.
+- `native-lifecycle-final/summary.json` passes all four phases: live stepping and
+  ordinary playback, graphical playback, live native save/load with continued
+  recording, and graphical playback of the post-load recording. Both replay
+  backends verify hashes beyond the restored-save boundary. The harness stayed
+  clean/frozen at `1404279b1`, independently recording the prebuilt binary's
+  `0af685eea` source and SHA256.
+- Early harness preflights rejected the supported uppercase `DATA/` directory
+  and required unused `xdotool`. Both assumptions were corrected and regression
+  tested; no game installation or player profile was changed.
+- The new audio-plus-multiplayer WASM test compile exposed a pre-existing native
+  identity test without a native target guard. `5d406c666` aligns the tests with
+  the existing native/browser authority split; production key behavior is
+  unchanged. The two native identity tests pass. New multiplayer browser cases
+  are compile-checked, not part of the audio-only executed test module.
+
+TODO: record the final actual Chrome audio module result and exact evidence
+checkpoint when the browser gate finishes. Both audio and audio-plus-multiplayer
+WASM bin/test compile checks have passed after the target-guard correction.
 
 ### Deliberate limits and next slices
 
