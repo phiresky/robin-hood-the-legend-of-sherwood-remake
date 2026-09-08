@@ -14,7 +14,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { resolve, join, extname, sep } from 'node:path';
 import { tmpdir } from 'node:os';
-import { gzipSync, brotliDecompressSync } from 'node:zlib';
+import { gzipSync, brotliDecompressSync, gunzipSync } from 'node:zlib';
 import { performance } from 'node:perf_hooks';
 import { parseArgs } from 'node:util';
 import { SharedBandwidth } from './startup_throttle.mjs';
@@ -25,6 +25,7 @@ const { values } = parseArgs({ options: {
     mission: { type: 'string', default: 'auto' }, 'require-present': { type: 'boolean', default: false },
     trace: { type: 'boolean', default: false }, 'cpu-profile': { type: 'boolean', default: false },
     'http-wasm-br': { type: 'string' }, 'http-admission-br': { type: 'string' },
+    'http-wasm-gzip': { type: 'string' }, 'http-admission-gzip': { type: 'string' },
     replay: { type: 'string' },
     'repeat-replay': { type: 'string', multiple: true, default: [] },
     query: { type: 'string', multiple: true, default: [] },
@@ -63,6 +64,18 @@ const httpAdmissionBr = values['http-admission-br'] ? await readFile(resolve(val
 if (httpAdmissionBr && !brotliDecompressSync(httpAdmissionBr).equals(await readFile(join(pkg, 'replay_admission_bg.wasm')))) {
     throw new Error('--http-admission-br does not decode to the supplied package admission WASM');
 }
+const gzipFixtures = new Map();
+for (const [kind, file] of [['wasm', 'robin_bg.wasm'], ['admission', 'replay_admission_bg.wasm']]) {
+    const option = `http-${kind}-gzip`;
+    if (!values[option]) continue;
+    if (values[`http-${kind}-br`]) throw new Error(`--${option} conflicts with --http-${kind}-br`);
+    const path = resolve(values[option]);
+    const bytes = await readFile(path);
+    if (!gunzipSync(bytes).equals(await readFile(join(pkg, file)))) {
+        throw new Error(`--${option} does not decode to the supplied package WASM`);
+    }
+    gzipFixtures.set(file, { path, bytes });
+}
 const hash = replayBuild ?? '000000000000'; // Replay builds retain their real envelope identity.
 const runtimePrefix = `/wasm/${hash}/`;
 const dataPrefix = '/datadirs/demo-leicester/';
@@ -100,6 +113,7 @@ async function asset(path) {
             const suffix = path.slice(runtimePrefix.length);
             file = safePath(suffix.startsWith('Data/') ? core : pkg, suffix);
             if (suffix === 'robin_bg.wasm.gz') body = execFileSync('gzip', ['-9', '-n', '-c', join(pkg, 'robin_bg.wasm')], { maxBuffer: 256 * 1024 * 1024 });
+            if (gzipFixtures.has(suffix)) { body = gzipFixtures.get(suffix).bytes; encoding = 'gzip'; }
             if (suffix === 'robin_bg.wasm' && httpWasmBr) { body = httpWasmBr; encoding = 'br'; }
             if (suffix === 'replay_admission_bg.wasm' && httpAdmissionBr) { body = httpAdmissionBr; encoding = 'br'; }
         } else if (path.startsWith(dataPrefix)) {
@@ -255,6 +269,7 @@ try {
         const navigationServerAt = page.timeOrigin - performance.timeOrigin;
         const result = {
             inputs: { wasmSha256: sha256(await readFile(join(pkg, 'robin_bg.wasm'))), wasmGzipSha256: sha256((await asset(runtimePrefix + 'robin_bg.wasm.gz')).body), bootSha256: sha256(await readFile(join(datadir, 'Data/datadir.bin'))), siteIndexSha256: sha256(await readFile(join(site, 'index.html'))) },
+            httpGzip: Object.fromEntries([...gzipFixtures].map(([file, { path, bytes }]) => [file, { path, bytes: bytes.length, sha256: sha256(bytes), caveat: 'Explicit verified HTTP gzip fixture; retain capture provenance separately.' }])),
             httpAdmissionBrotli: httpAdmissionBr ? { path: resolve(values['http-admission-br']), bytes: httpAdmissionBr.length, sha256: sha256(httpAdmissionBr), rawSha256: sha256(await readFile(join(pkg, 'replay_admission_bg.wasm'))), caveat: 'Supplied encoded fixture is verified against admission package bytes; retain capture provenance separately.' } : null,
             httpWasmBrotli: httpWasmBr ? { path: resolve(values['http-wasm-br']), bytes: httpWasmBr.length, sha256: sha256(httpWasmBr), caveat: 'Supplied encoded fixture is verified against package bytes; retain capture provenance separately.' } : null,
             replay: replayContent === undefined ? null : { path: resolve(replayRun.path), sha256: sha256(Buffer.from(replayRun.content)), build: replayBuild, state: replayState },
