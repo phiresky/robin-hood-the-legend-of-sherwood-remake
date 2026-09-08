@@ -29,8 +29,8 @@ use assets::{
 };
 
 const AUDIO_IO_CONCURRENCY: usize = 3;
-
 struct BrowserAudio {
+    mission_warmup: Option<futures::future::AbortHandle>,
     retired: bool,
     context: AudioContext,
     files: Arc<SbFileSystem>,
@@ -61,6 +61,7 @@ impl BrowserAudioSession {
         let context = platform_context()?;
         Ok(Self {
             inner: Some(Rc::new(RefCell::new(BrowserAudio {
+                mission_warmup: None,
                 retired: false,
                 context,
                 files,
@@ -92,6 +93,9 @@ impl BrowserAudioSession {
         };
         let mut audio = inner.borrow_mut();
         audio.retired = true;
+        if let Some(task) = audio.mission_warmup.take() {
+            task.abort();
+        }
         for backend in audio.backends.drain(..) {
             if let Some(backend) = backend.upgrade() {
                 backend.borrow_mut().stop_all();
@@ -257,16 +261,23 @@ async fn run_warm_plan<F>(
 where
     F: FnMut(AudioWarmProgress<'_>),
 {
+    let started = web_time::Instant::now();
+    let mut yield_ms = 0.0;
+    let mut progress_ms = 0.0;
     let mut progress_counter = ProgressCounter::new(plan.len());
+    let progress_started = web_time::Instant::now();
     progress(AudioWarmProgress {
         completed: 0,
         total: progress_counter.total(),
         file: None,
     });
-    // Present the blocking mission-audio phase before its first network or
-    // decode step; otherwise the loading screen would remain on "data ready"
-    // until an arbitrarily slow first asset completed.
+    // Let a blocking caller present its progress before the first network
+    // or decode step. Background warmup uses a no-op progress observer and
+    // cooperatively yields to the engine here instead.
+    progress_ms += progress_started.elapsed().as_secs_f64() * 1000.0;
+    let yield_started = web_time::Instant::now();
     crate::window::yield_to_runtime().await;
+    yield_ms += yield_started.elapsed().as_secs_f64() * 1000.0;
     let mut work = futures::stream::iter(plan.into_iter().map(|item| async move {
         let result = match item.work {
             WarmWork::Encoded { url, retain_bundle } => {
@@ -286,13 +297,24 @@ where
     .buffer_unordered(AUDIO_IO_CONCURRENCY);
     while let Some((label, result)) = work.next().await {
         result.map_err(|error| format!("warm browser audio {label}: {error}"))?;
+        let progress_started = web_time::Instant::now();
         progress(AudioWarmProgress {
             completed: progress_counter.advance(),
             total: progress_counter.total(),
             file: Some(&label),
         });
+        progress_ms += progress_started.elapsed().as_secs_f64() * 1000.0;
+        let yield_started = web_time::Instant::now();
         crate::window::yield_to_runtime().await;
+        yield_ms += yield_started.elapsed().as_secs_f64() * 1000.0;
     }
+    tracing::info!(
+        items = progress_counter.total(),
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        progress_ms,
+        yield_ms,
+        "startup timing: audio warmup"
+    );
     Ok(())
 }
 
@@ -311,16 +333,12 @@ pub async fn preload_boot_catalog(session: &BrowserAudioSession) -> Result<(), S
     run_warm_plan(session, plan, |_| {}).await
 }
 
-/// Preload active-mission critical audio while its loading screen is visible.
+/// Build the active mission audio warmup plan from shipping metadata.
 /// Common short SFX are fetched as their compact logical bundle but remain
 /// encoded; dialogue, actor voices, music and long standalone ambience decode.
-pub async fn preload_active_mission<F>(
+fn active_mission_warm_plan(
     session: &BrowserAudioSession,
-    progress: F,
-) -> Result<(), String>
-where
-    F: FnMut(AudioWarmProgress<'_>),
-{
+) -> Result<(String, Vec<WarmItem>), String> {
     let datadir = session.with_audio(|audio| audio.catalog.clone())?;
     let mission = datadir
         .active_mission_name()
@@ -340,7 +358,47 @@ where
         items = plan.len(),
         "warming active mission browser audio"
     );
+    Ok((mission, plan))
+}
+
+pub async fn preload_active_mission<F>(
+    session: &BrowserAudioSession,
+    progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(AudioWarmProgress<'_>),
+{
+    let (_, plan) = active_mission_warm_plan(session)?;
     run_warm_plan(session, plan, progress).await
+}
+
+/// Begin presentation-only audio work without blocking engine construction.
+/// Engine duration tables use shipping metadata. A cold playback request
+/// joins the in-flight decode and retains its existing cancellation policy.
+pub fn preload_active_mission_in_background(session: &BrowserAudioSession) -> Result<(), String> {
+    let (mission, plan) = active_mission_warm_plan(session)?;
+    let (abort, registration) = futures::future::AbortHandle::new_pair();
+    session.with_audio(|audio| {
+        if let Some(previous) = audio.mission_warmup.replace(abort) {
+            previous.abort();
+        }
+    })?;
+    let session = session.clone();
+    tracing::info!(mission, "background mission audio warmup started");
+    wasm_bindgen_futures::spawn_local(async move {
+        match futures::future::Abortable::new(run_warm_plan(&session, plan, |_| {}), registration)
+            .await
+        {
+            Ok(Ok(())) => tracing::info!(mission, "background mission audio warmup complete"),
+            Ok(Err(error)) => tracing::warn!(
+                mission,
+                error,
+                "background mission audio warmup failed; playback will retry on demand"
+            ),
+            Err(_) => tracing::debug!(mission, "background mission audio warmup cancelled"),
+        }
+    });
+    Ok(())
 }
 
 /// Compatibility entry point for old host-preload callers. Encoded bytes no
@@ -359,6 +417,9 @@ pub async fn preload_boot(session: &BrowserAudioSession, path: &str) -> Result<(
 /// id/generation can never start playback in the new mission.
 pub fn clear_mission(session: &BrowserAudioSession) -> Result<(), String> {
     let (generation, backends) = session.with_audio(|audio| {
+        if let Some(task) = audio.mission_warmup.take() {
+            task.abort();
+        }
         let generation = audio.generation.advance();
         audio.backends.retain(|backend| backend.strong_count() != 0);
         (generation, audio.backends.clone())

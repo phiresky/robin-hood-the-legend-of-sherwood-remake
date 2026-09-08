@@ -3037,3 +3037,123 @@ packages and the benchmark runner are in `/tmp/robin-grid-perf/`.
 
 TODO: continue profiling the optimized package's JXL validation and terrain
 decode/upload costs; the grid shortcut leaves most startup time intact.
+
+### Detailed browser startup timing (2026-09-08)
+
+The Chrome harness now accepts `--timings FILE`. It saves browser-clock
+console timestamps, request Resource Timing entries, and Web Audio decode
+spans (start/end, success and decoded PCM size). Resource entries cover the
+main window, not worker-local requests. Timing capture is opt-in; ordinary
+benchmark runs do not wrap Web Audio. The harness also reports the end of
+mission bootstrap separately from the earlier replay-recording marker.
+Rust logs direct durations for boot decoding, worker-pool initialization,
+Rust initialization, window creation, mission dependency planning, streaming
+through the last merged part, the VQ/RLE drain tails, mission installation
+and audio warmup. Audio timing separates progress-callback time and explicit
+yield time from the remaining asynchronous work.
+
+Three optimized baseline runs with these timers gave these medians:
+
+| Measured interval | Median |
+| --- | ---: |
+| Boot zstd/bitcode decode | 57.4 ms |
+| Worker-pool initialization | 34.2 ms |
+| Rust initialization | 7.0 ms |
+| Window ready | 24.2 ms |
+| Mission dependency planning | 0.35 ms |
+| Streaming start → all 66 parts merged | 390.2 ms |
+| Remaining VQ dependency/worker wait and application | 1498.1 ms |
+| Remaining RLE/JXL wait and application | 0.6 ms |
+| Mission installation/activation | 3.0 ms |
+| Active audio warmup, 489 planned items | 1271.5 ms |
+| Within audio: progress callbacks | 1.6 ms |
+| Within audio: explicit yields | 17.8 ms |
+
+The streaming interval overlaps fetches, zstd/bitcode decoding, merging and
+sprite work. The drain intervals measure only work remaining after all parts
+merge; they are not the total CPU costs of their respective codecs. Boot
+audio runs concurrently and is not an additional sequential startup phase.
+
+Main-window requests show mission payload downloads finishing in roughly
+100 ms on localhost, long before activation. The active audio phase issues
+488 decode calls with peak concurrency three. Their summed async latencies
+are about 3.46 s inside a 1.27 s wall-time phase; this sum includes overlapping
+waits and must not be described as CPU time. Progress rendering and zero-delay
+yields are a small fraction of this phase, explaining why the earlier
+audio-yield batching experiment did not help.
+
+Correction to the earlier informal phase breakdown: the ~170 ms
+`runtime + replay init` timer ends **after** the “Recording replay” marker.
+Subtracting the entire bootstrap timer from time-to-recording understated the
+earlier audio gap by about that amount. Use the direct audio duration and
+keep time-to-recording separate from time-to-bootstrap-completion.
+
+Mission audio warmup now runs as an abortable background task after asset
+activation. Engine duration tables continue to use the shipping metadata;
+playback uses the existing shared fetch/decode futures and pending-request
+handling. No warm-plan entries were removed, and concurrency remains three.
+A restart or mission transition aborts the old queued warmup; already
+in-flight content-addressed requests may finish and populate the cache.
+Planning errors still propagate synchronously; asynchronous warmup failures
+are logged and ordinary playback can retry the failed request on demand.
+Cold audio may start after gameplay begins, rather than holding the entire
+engine behind every voice decode. The existing 96 MiB PCM cache limit and
+voice/effect cancellation policies are unchanged.
+
+Use `--wait-audio` with the harness to keep the page alive until background
+warmup completes. `--timings` saves separate recording-marker and audio-complete
+resource snapshots. `--fail-request URL_PATH` can force a local request to
+return HTTP 404 to exercise the background failure path.
+
+Five alternating before/after pairs (three baseline-first, two candidate-first)
+compare the instrumented blocking baseline with background warmup, using the
+same optimized packages, corpus and Chrome settings. No task builds or CPU
+profiling overlap the runs. The shared host was noisier than in the earlier
+three-run attribution sample; do not compare absolute times across batches.
+
+| Endpoint | Blocking median | Background median |
+| --- | ---: | ---: |
+| Navigation → recording replay | 6.279 s | 4.532 s |
+| Navigation → bootstrap complete | 6.462 s | 4.716 s |
+
+All five pairs improve; the median paired recording-time reduction is
+1.438 s. The difference between overall medians is 1.747 s, which also
+reflects variation in unrelated stages. Every background run completes all
+489 planned warmup items successfully. Warmup itself now overlaps gameplay
+and finishes later (9.0–17.6 s after its task starts in this software-rendered
+fixture). Those durations include event-loop contention and explicit yields,
+not just decoder time. The captured background intervals also include an
+additional on-demand playback decode, so their summed PCM output is not
+directly comparable to the foreground-only audio interval.
+
+Representative updated run (the median startup run), disjoint browser-clock
+intervals through bootstrap completion:
+
+| Phase | Wall time |
+| --- | ---: |
+| Navigation → `wasm_boot` | 416 ms |
+| Boot, worker pool, initialization and loading UI → streaming start | 268 ms |
+| Fetch/decompress/merge through final part, overlapping sprite work | 679 ms |
+| Remaining VQ work and application | 1939 ms |
+| RLE tail, activation and background-audio launch | 11 ms |
+| Level and engine setup | 506 ms |
+| Renderer, terrain, sprites and menus | 701 ms |
+| Remaining runtime/replay initialization | 196 ms |
+| **Total to bootstrap completion** | **4716 ms** |
+
+Recording begins earlier, at 4532 ms. Within level setup, engine construction
+is 295 ms; within frontend setup, terrain decode join is 327 ms and map
+upload is 129 ms. These are nested intervals, not additional time. Neither
+endpoint is a measurement of the first physically presented gameplay frame.
+
+Validation: 1,505 active client library tests pass (five ignored), native
+game and threaded WASM release builds pass, and the final Chrome runs
+verify both startup and eventual background-audio completion. A forced
+HTTP 404 for the mission dialogue bundle produces the expected warmup
+warning while still reaching recording and bootstrap completion. The final
+change leaves decoder formats and simulation duration metadata untouched.
+Raw logs, JSON timelines and packages are in `/tmp/robin-startup-detail/`.
+
+TODO: profile the remaining VQ critical path on workers. Also tune background
+warmup pacing separately: per-item yields are cheap before gameplay but
+become expensive while sharing a busy rendering event loop.

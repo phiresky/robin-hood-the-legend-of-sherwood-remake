@@ -14,6 +14,8 @@
 //   node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> \
 //       [--mission H01_Lin_VL] [--pkg wasm-www/pkg] [--serial] [--chrome BIN]
 //
+// --timings FILE saves browser-clock log timestamps and Resource Timing entries.
+// Worker-local resource entries are not included in the main-window buffer.
 // --serial withholds the COOP/COEP headers, so crossOriginIsolated is false
 // and the game exercises the no-worker-pool fallback of the same build.
 import { createServer } from 'node:http';
@@ -29,7 +31,10 @@ let pkgDir = 'wasm-www/pkg';
 let chromeBin = 'google-chrome';
 let isolated = true;
 let waitIngame = false;
+let waitAudio = false;
 let cpuProfile = null;
+let timingsFile = null;
+let failedRequest = null;
 for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--mission') mission = args[++i];
@@ -37,14 +42,17 @@ for (let i = 0; i < args.length; i++) {
     else if (arg === '--chrome') chromeBin = args[++i];
     else if (arg === '--serial') isolated = false;
     else if (arg === '--wait-ingame') waitIngame = true;
+    else if (arg === '--wait-audio') waitAudio = true;
     else if (arg === '--cpu-profile') cpuProfile = args[++i];
+    else if (arg === '--timings') timingsFile = args[++i];
+    else if (arg === '--fail-request') failedRequest = args[++i];
     else positional.push(arg);
 }
 const [root] = positional;
 if (!root) {
     console.error(
         'usage: node scripts/wasm_mission_install_chrome.mjs <converted-datadir-root> ' +
-        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--cpu-profile FILE]',
+        '[--mission NAME] [--pkg DIR] [--serial] [--chrome BIN] [--wait-ingame] [--wait-audio] [--cpu-profile FILE] [--timings FILE] [--fail-request URL_PATH]',
     );
     process.exit(2);
 }
@@ -75,9 +83,40 @@ const page = `<!DOCTYPE html>
 <script>
 // Relay the console (tracing-wasm writes there) to the harness.
 const relay = [];
+const collectTimings = ${JSON.stringify(Boolean(timingsFile))};
+const audioDecodes = [];
+if (collectTimings) {
+    performance.setResourceTimingBufferSize(10000);
+    const originalDecode = BaseAudioContext.prototype.decodeAudioData;
+    BaseAudioContext.prototype.decodeAudioData = function (...args) {
+        const span = { start: performance.now(), bytes: args[0].byteLength };
+        audioDecodes.push(span);
+        const result = originalDecode.apply(this, args);
+        result.then(
+            (buffer) => {
+                span.end = performance.now();
+                span.ok = true;
+                span.pcmBytes = buffer.length * buffer.numberOfChannels * 4;
+            },
+            () => { span.end = performance.now(); span.ok = false; },
+        );
+        return result;
+    };
+}
 let relayTimer = null;
 const post = (line) => {
     relay.push({ line, pageMs: performance.now() });
+    if (collectTimings && (line.includes('Recording replay') || line.includes('background mission audio warmup complete'))) {
+        void fetch('/timings', {
+            method: 'POST',
+            body: JSON.stringify({
+                reason: line.includes('Recording replay') ? 'recording' : 'audio complete',
+                capturedAt: performance.now(),
+                audioDecodes,
+                resources: performance.getEntriesByType('resource').map((entry) => entry.toJSON()),
+            }),
+        });
+    }
     if (relayTimer === null) {
         relayTimer = setTimeout(() => {
             relayTimer = null;
@@ -102,13 +141,16 @@ addEventListener('unhandledrejection', (e) => post('pageerror: ' + e.reason));
 const preloadPaths = ${JSON.stringify(preloadPaths)};
 try {
     console.log('harness: isolated=' + crossOriginIsolated);
+    console.log('startup: module import begin');
     const glue = await import('/pkg/robin.js');
     await glue.default({ module_or_path: '/pkg/robin_bg.wasm' });
+    console.log('startup: module ready; core preloads begin');
     for (const path of preloadPaths) {
         const resp = await fetch('/core/' + path);
         if (!resp.ok) throw new Error('preload ' + path + ': HTTP ' + resp.status);
         glue.wasm_preload_asset(path, new Uint8Array(await resp.arrayBuffer()));
     }
+    console.log('startup: core preloads complete; boot fetch begin');
     const datadir = new Uint8Array(await (await fetch('/data/Data/datadir.bin')).arrayBuffer());
     console.log('harness: boot t0');
     glue.wasm_boot(datadir, '/data/Data');
@@ -117,10 +159,16 @@ try {
 }
 </script>`;
 
+const timingLogs = [];
+let resourceTimings = null;
+const resourceSnapshots = [];
+let audioExpected = false;
+let audioDone = false;
 let bootAt = null;
 let done = false;
 let activatedAt = null;
 let inGameAt = null;
+let bootstrapAt = null;
 // Lazy character-chunk streaming: activation can precede the deferred
 // sprite-decode tail. When the install announces a deferred tail, keep the
 // page alive until the tail's completion line so its duration is measured.
@@ -132,6 +180,7 @@ const maybeFinish = () => {
     // run alive through session bootstrap so its PhaseTimer spans land too.
     if (waitIngame && inGameAt === null) return;
     if (tailExpected && !tailDone) return;
+    if (waitAudio && audioExpected && !audioDone) return;
     done = true;
     // Give trailing logs a moment, then finish.
     setTimeout(() => finish(0), 1500);
@@ -143,13 +192,31 @@ const server = createServer((req, res) => {
         res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
     }
     res.setHeader('Cache-Control', 'no-store');
+    if (req.method === 'POST' && url.pathname === '/timings') {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk; });
+        req.on('end', () => {
+            const snapshot = JSON.parse(body);
+            resourceSnapshots.push(snapshot);
+            if (snapshot.reason === 'recording') resourceTimings = snapshot;
+            res.end('ok');
+        });
+        return;
+    }
     if (req.method === 'POST' && url.pathname === '/log') {
         let body = '';
         req.on('data', (c) => { body += c; });
         req.on('end', () => {
             res.end('ok');
             for (const { line, pageMs } of JSON.parse(body)) {
+                if (timingsFile) timingLogs.push({ line, pageMs });
                 console.log(`[page] ${line}`);
+                if (line.includes('background mission audio warmup started')) audioExpected = true;
+                if (line.includes('background mission audio warmup complete')) audioDone = true;
+                if (waitAudio && line.includes('background mission audio warmup failed')) {
+                    void finish(1);
+                    return;
+                }
                 if (line.includes('boot t0')) bootAt = pageMs;
                 const secs = () => ((pageMs - bootAt) / 1000).toFixed(3);
                 if (line.includes('activated shipping mission') && bootAt !== null
@@ -166,6 +233,10 @@ const server = createServer((req, res) => {
                 if (line.includes('Recording replay') && bootAt !== null && inGameAt === null) {
                     inGameAt = pageMs;
                     console.log(`RESULT: in-game (recording replay) ${secs()}s after wasm_boot; ${(pageMs / 1000).toFixed(3)}s after navigation`);
+                }
+                if (line.includes('mission bootstrap: total elapsed_ms') && bootstrapAt === null) {
+                    bootstrapAt = pageMs;
+                    console.log(`RESULT: bootstrap complete ${(pageMs / 1000).toFixed(3)}s after navigation`);
                 }
                 maybeFinish();
             }
@@ -185,7 +256,7 @@ const server = createServer((req, res) => {
     } else if (url.pathname.startsWith('/core/')) {
         filePath = join(coreRoot, normalize(url.pathname.slice(6)));
     }
-    if (filePath === null || !existsSync(filePath)) {
+    if (url.pathname === failedRequest || filePath === null || !existsSync(filePath)) {
         res.writeHead(404, { 'Content-Type': 'text/plain' });
         res.end(`not found: ${url.pathname}`);
         return;
@@ -261,6 +332,18 @@ async function finish(code) {
             chrome.once('exit', resolve);
             chrome.kill('SIGKILL');
         });
+    }
+    if (timingsFile) {
+        writeFileSync(timingsFile, JSON.stringify({
+            mission, pkgDir: resolve(pkgDir), bootAt, activatedAt, inGameAt, bootstrapAt,
+            logs: timingLogs.sort((a, b) => a.pageMs - b.pageMs),
+            resourceTimings, resourceSnapshots,
+        }, null, 2));
+        console.log(`Startup timings: ${timingsFile}`);
+        if (code === 0 && waitIngame && resourceTimings === null) {
+            console.error('Missing browser resource timings');
+            code = 1;
+        }
     }
     server.close();
     if (profile !== null) rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

@@ -242,8 +242,13 @@ fn wasm_log_level_from_query() -> (tracing::Level, Option<String>) {
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_bindgen::JsValue> {
+    let boot_start = web_time::Instant::now();
     let mut dd = assets_shipping_datadir::ShippingDatadir::from_compressed_bytes(datadir_bin)
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("datadir decode: {e:#}")))?;
+    tracing::info!(
+        elapsed_ms = boot_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: boot decode"
+    );
     dd.set_remote_base_url(data_base_url);
     let dd = assets_shipping_datadir::install_global(std::sync::Arc::new(dd)).map_err(|e| {
         wasm_bindgen::JsValue::from_str(&format!("install shipping datadir: {e:#}"))
@@ -404,11 +409,22 @@ fn wasm_query_thread_override() -> Option<usize> {
 async fn wasm_main(
     shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
 ) -> anyhow::Result<()> {
+    let pool_start = web_time::Instant::now();
     #[cfg(feature = "wasm-threads")]
     wasm_init_thread_pool().await;
+    tracing::info!(
+        elapsed_ms = pool_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: worker pool"
+    );
     let args = robin_rs::main_entry::parse_cli();
+    let init_start = web_time::Instant::now();
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
+    tracing::info!(
+        elapsed_ms = init_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: rust initialization"
+    );
+    let window_start = web_time::Instant::now();
     tracing::info!("Rust initialization complete.");
 
     robin_rs::window::run_with_game(
@@ -416,6 +432,10 @@ async fn wasm_main(
         1024,
         768,
         move |mut window| async move {
+            tracing::info!(
+                elapsed_ms = window_start.elapsed().as_secs_f64() * 1000.0,
+                "startup timing: window ready"
+            );
             match robin_rs::main_entry::run_rust_game(
                 &mut window,
                 campaign,

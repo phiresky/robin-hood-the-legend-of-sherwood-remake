@@ -132,6 +132,7 @@ where
     if datadir.missions.is_empty() {
         return Ok(());
     }
+    let plan_start = web_time::Instant::now();
     let dependencies = required_dependencies(
         datadir,
         mission,
@@ -139,6 +140,11 @@ where
         profiles,
         has_decoded_saved_world,
     )?;
+    tracing::info!(
+        mission,
+        elapsed_ms = plan_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: mission dependency planning"
+    );
     let total = dependencies.files.len();
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     let audio = if _warm_audio {
@@ -175,22 +181,13 @@ where
         });
         #[cfg(all(target_arch = "wasm32", feature = "audio"))]
         if _warm_audio {
-            crate::audio_backend::preload_active_mission(
+            crate::audio_backend::preload_active_mission_in_background(
                 audio
                     .as_ref()
                     .expect("warm audio session initialized above"),
-                |audio| {
-                    progress(MissionLoadProgress {
-                        phase: MissionLoadPhase::Audio,
-                        completed: audio.completed,
-                        total: audio.total,
-                        file: audio.file,
-                    });
-                },
             )
-            .await
             .map_err(anyhow::Error::msg)
-            .context("warm active mission browser audio")?;
+            .context("start active mission browser audio warmup")?;
         }
         return Ok(());
     }
@@ -258,9 +255,15 @@ where
         &mut progress,
     )
     .await?;
+    let install_start = web_time::Instant::now();
     datadir
         .install_mission_parts(mission, std::iter::once(merged))
         .with_context(|| format!("install shipping mission {mission}"))?;
+    tracing::info!(
+        mission,
+        elapsed_ms = install_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: mission install"
+    );
     datadir.set_active_exclamation_ids(exclamation_ids);
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
     if let Some(tail) = deferred_tail {
@@ -279,22 +282,13 @@ where
     );
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     if _warm_audio {
-        crate::audio_backend::preload_active_mission(
+        crate::audio_backend::preload_active_mission_in_background(
             audio
                 .as_ref()
                 .expect("warm audio session initialized above"),
-            |audio| {
-                progress(MissionLoadProgress {
-                    phase: MissionLoadPhase::Audio,
-                    completed: audio.completed,
-                    total: audio.total,
-                    file: audio.file,
-                });
-            },
         )
-        .await
         .map_err(anyhow::Error::msg)
-        .context("warm active mission browser audio")?;
+        .context("start active mission browser audio warmup")?;
     }
     Ok(())
 }
@@ -696,6 +690,8 @@ where
     };
     use robin_assets::wasm_threads;
 
+    let stream_start = web_time::Instant::now();
+    tracing::info!(mission, "startup timing: mission streaming begin");
     let total = files.len();
     let pooled = wasm_threads::pool_threads() > 0;
     let fetch_progress = Arc::new(FetchByteProgress::default());
@@ -850,6 +846,12 @@ where
             }
         }
     }
+    tracing::info!(
+        mission,
+        elapsed_ms = stream_start.elapsed().as_secs_f64() * 1000.0,
+        "startup timing: all parts merged"
+    );
+    let vq_drain_start = web_time::Instant::now();
     if let Some(bank) = merged.payload.sprite_bank.as_mut() {
         // The level part has merged by now on any well-formed payload
         // (installation fails later otherwise); make sure its start-entity
@@ -904,6 +906,12 @@ where
                 .await
                 .with_context(|| format!("materialize VQ sprite chunks for mission {mission}"))?;
         }
+        tracing::info!(
+            mission,
+            elapsed_ms = vq_drain_start.elapsed().as_secs_f64() * 1000.0,
+            "startup timing: VQ tail wait and apply"
+        );
+        let rle_drain_start = web_time::Instant::now();
         // Apply the worker-pool RLE-JXL decodes that ran alongside the
         // fetches; anything still pending falls to the strict serial pass.
         while let Some((chunk, packed)) = rle_scheduler.next_decoded().await? {
@@ -913,6 +921,11 @@ where
         bank.rle_jxl_chunks.append(&mut pending_rle);
         bank.materialize_rle_jxl_chunks()
             .with_context(|| format!("materialize RLE-JXL sprite chunks for mission {mission}"))?;
+        tracing::info!(
+            mission,
+            elapsed_ms = rle_drain_start.elapsed().as_secs_f64() * 1000.0,
+            "startup timing: RLE tail wait and apply"
+        );
     }
     progress(MissionLoadProgress {
         phase: MissionLoadPhase::Data,
