@@ -70,10 +70,15 @@ reblocking, and legacy semantic tests remain in place.
 - `cargo fmt --all`: passed.
 - `git diff --check`: passed.
 - Independent bitcode-only fixture generator: build and execution passed.
-- Repository Cargo tests deliberately deferred to the coordinated integration
-  lane to avoid another cold engine target. Required suite:
-  `RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_parity`.
-  Compile the optional client feature in the integrated client lane as well.
+- Coordinated explicit `robin_parity` suite passed at `9f0b52c2a`: 155 library
+  tests, dependency-closure integration and doctests. All four frozen-byte tests
+  passed. Independent comparison matched all 42 moved declarations/conversions.
+- Optional `--features client` check passed at `d224ecdae` after `5ad9693fd`
+  corrected a pre-existing render consumer to borrow `host.frontend.viewport`.
+  The base already had this API mismatch; no historical schema changed.
+- Fresh native game replay/save-load EOF acceptance passed; this does not claim
+  execution of original licensed parity corpora. Exact provenance and limits:
+  [final acceptance](AUDIT2_PLAN.md#final-acceptance).
 
 This change isolates native wire generations, not every behavioral repair for
 old Original captures. Simulation compatibility helpers stay with their callers;

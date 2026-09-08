@@ -70,12 +70,11 @@ Existing descriptor-substitution, symlink, fault-injected rename/sync, uncertain
 persistence, source-consumption recovery, runtime-fence, canonical inventory,
 and template-policy tests remain in their existing parent test modules.
 
-TODO (integration acceptance): run
-`RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 RUST_TEST_THREADS=2 cargo test --locked -p robin_manifest_tool`
-in the designated combined build lane. No Cargo compile/test was run in this
-cold worktree, by coordinator instruction to avoid parallel disk exhaustion.
-If a separate executable is needed, build the package's manifestctl binary in a
-separate step before running any bounded validation process.
+Integration acceptance passed at `9f0b52c2a`: explicit `robin_manifest_tool`
+suite, 150 library tests, binary test target and doctests, including the six new
+regressions and retained descriptor/fault-injection/recovery tests. No deployment
+or publication command ran. The implementation worktree itself did not duplicate
+the combined build. See [final acceptance](AUDIT2_PLAN.md#final-acceptance).
 
 ## Integration seam and remaining scope
 
