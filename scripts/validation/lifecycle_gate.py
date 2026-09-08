@@ -161,7 +161,8 @@ def native(evidence, summary):
                 raise RuntimeError("binary changed during acceptance")
             run(["unshare", "--user", "--map-root-user", "--net", sys.executable,
                  driver, "--binary", binary, "--data", data, "--snapshot", snapshot,
-                 "--evidence", destination, *flags], timeout=330)
+                 "--evidence", destination, *flags], timeout=330,
+                env=dict(os.environ, PYTHONOPTIMIZE="0"))
             result = json.loads((destination / "summary.json").read_text())
             required = REPLAY_CHECKS | (LIVE_CHECKS if suffix == "headless" else set())
             if name == "save-load" and suffix == "headless":

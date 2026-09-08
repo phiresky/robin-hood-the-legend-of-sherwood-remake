@@ -57,6 +57,7 @@ class LifecycleGateTests(unittest.TestCase):
     def fake_native_run(self, argv, **kwargs):
         self.assertEqual(argv[:5], ["unshare", "--user", "--map-root-user", "--net", sys.executable])
         self.assertEqual(kwargs["timeout"], 330)
+        self.assertEqual(kwargs["env"]["PYTHONOPTIMIZE"], "0")
         destination = Path(argv[argv.index("--evidence") + 1])
         destination.mkdir()
         result = {"completed": True, "binary_sha256": gate.digest(self.binary),
