@@ -22,6 +22,10 @@ required-features = ["engine-adapters"]
 name = "asset_decode_bench"
 required-features = ["engine-adapters"]
 
+[[example]]
+name = "rechunk_sprite_groups"
+required-features = ["engine-adapters"]
+
 [[test]]
 name = "vm_integration"
 required-features = ["engine-adapters"]

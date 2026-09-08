@@ -148,6 +148,13 @@ struct Args {
     /// alpha-atlas section). WEB ONLY: it breaks framebuffer parity.
     #[arg(long, value_enum, default_value_t = RleSpriteFormat::Exact)]
     rle_sprite_format: RleSpriteFormat,
+    /// Shipping: maximum VQ tiles per independent decoder job (whole grids).
+    /// Zero preserves one adaptive stream per RHS for compression comparisons.
+    #[arg(long, default_value_t = 0)]
+    vq_group_tiles: usize,
+    /// Shipping: independent JXL atlases per decoder job; zero keeps each RHS together.
+    #[arg(long, default_value_t = 0)]
+    rle_group_blobs: usize,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -320,6 +327,8 @@ fn main() -> Result<()> {
                     resume: args.resume,
                     rank_dictionaries: args.rank_dictionaries,
                     rle_sprite_format: args.rle_sprite_format,
+                    vq_group_tiles: args.vq_group_tiles,
+                    rle_group_blobs: args.rle_group_blobs,
                 },
             )?;
             if let Some(identity) = native_content_sha256 {
@@ -343,6 +352,8 @@ struct ShippingOpts {
     resume: bool,
     rank_dictionaries: bool,
     rle_sprite_format: RleSpriteFormat,
+    vq_group_tiles: usize,
+    rle_group_blobs: usize,
 }
 
 /// Count how often every dictionary entry is referenced across the whole
