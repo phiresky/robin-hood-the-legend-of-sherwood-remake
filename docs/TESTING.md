@@ -27,7 +27,7 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 | `core` | `robin_util`, `robin_state_hash_derive`, `robin_spellforge`, `robin_lua` | Unit, integration and doc tests |
 | `scripting-llvm` | `robin_spellforge`, `robin_lua` | Explicit poison recovery and native-session unwind tests with LLVM package overrides |
 | `engine` | `robin_engine` | Deterministic simulation tests |
-| `assets` | `robin_assets`, `robin_data_io` | Synthetic formats/assets and fixture resolver tests |
+| `assets` | `robin_content`, `robin_assets`, `robin_data_io` | Content with/without simulation codecs; assets with/without engine adapters; fixture resolver tests; resolved pure-content dependency boundary |
 | `protocols` | `robin_run_protocol`, `robin_replay_format`, `robin_official_content`, `robin_ranked_verification`, `robin_identity_signer` | Wire, content, admission and isolated signer tests |
 | `services` | `robin_highscores`, `robin_manifest_tool`, `robin_replay_verifier` | Server, manifest and verifier tests |
 | `parity` | `robin_parity` | Runner unit/contract tests; does not replay licensed corpora |
@@ -43,6 +43,10 @@ workspace member has an explicit gate, so adding a crate requires assigning it.
 
 Feature choices are deliberate. Do not substitute `--all-features`; video,
 Android, browser threads, and shader tooling have distinct dependencies.
+The assets gate checks resolved normal/build dependencies across all targets:
+pure `robin_assets` must not pull in `robin_engine`; pure `robin_content` also
+excludes `robin_util`, `robin_state_hash_derive` and `bitcode`. The checker prints
+the complete Cargo tree and rejects an empty or unexpected graph.
 The wasm gate is a compile check, not a browser execution or memory-cap test.
 The separate browser-audio gate runs synthetic browser tests, not full-game
 browser rendering or audible-output acceptance. Native-lifecycle is a local

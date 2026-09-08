@@ -31,7 +31,13 @@ case "$1" in
             --config 'profile.test.package.robin_lua.codegen-backend="llvm"'
         ;;
     engine) cargo test --locked -p robin_engine ;;
-    assets) cargo test --locked -p robin_assets -p robin_data_io ;;
+    assets)
+        cargo test --locked -p robin_content
+        cargo test --locked -p robin_content --features simulation-codecs
+        cargo test --locked -p robin_assets -p robin_data_io
+        cargo test --locked -p robin_assets --no-default-features
+        python3 scripts/check_asset_boundary.py
+        ;;
     protocols)
         cargo test --locked -p robin_run_protocol -p robin_replay_format -p robin_official_content -p robin_ranked_verification -p robin_identity_signer
         ;;

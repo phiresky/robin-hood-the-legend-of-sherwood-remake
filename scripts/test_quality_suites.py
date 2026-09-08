@@ -9,6 +9,8 @@ import tempfile
 import tomllib
 import unittest
 
+from check_asset_boundary import assert_boundary
+
 ROOT = Path(__file__).resolve().parents[1]
 RUST_SUITES = (
     "core", "scripting-llvm", "engine", "assets", "protocols", "services", "parity",
@@ -27,7 +29,8 @@ class QualitySuitesTests(unittest.TestCase):
             "#!/usr/bin/env python3\n"
             "import json, os, sys\n"
             "with open(os.environ['QUALITY_TEST_CALLS'], 'a') as output:\n"
-            "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n",
+            "    output.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "if sys.argv[1] == 'tree': print(sys.argv[sys.argv.index('-p') + 1] + ' v0.1.0')\n",
             encoding="utf-8",
         )
         cargo.chmod(0o755)
@@ -79,6 +82,13 @@ class QualitySuitesTests(unittest.TestCase):
     def test_client_build_is_a_separate_command(self):
         self.run_suite("client")
         self.assertEqual([call[0] for call in self.calls()], ["test", "build"])
+
+    def test_content_boundary_rejects_engine_and_empty_graph(self):
+        with self.assertRaisesRegex(RuntimeError, "contains"):
+            assert_boundary("robin_assets v0.1.0\nrobin_engine v0.1.0", "robin_assets", {"robin_engine"})
+        with self.assertRaisesRegex(RuntimeError, "did not include"):
+            assert_boundary("", "robin_assets", {"robin_engine"})
+        assert_boundary("robin_assets v0.1.0\nrobin_engine_adapter_fixture v0.1.0", "robin_assets", {"robin_engine"})
 
     def test_signer_workspace_dependency_boundary_including_target_and_build_edges(self):
         workspace = tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]
