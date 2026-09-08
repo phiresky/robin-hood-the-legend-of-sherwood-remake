@@ -257,7 +257,7 @@ impl StatureHudLayout {
 
 type SpriteFrame = (crate::renderer::OwnedSurface, u16, u16);
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_ownership(renderer: &mut Renderer) {
     let mut sprites = StatureSprites::default();
     let upload = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();

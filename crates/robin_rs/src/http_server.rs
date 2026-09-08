@@ -1995,6 +1995,7 @@ impl ReplaySpool {
             chunks.push(Arc::from(state.tail.clone()));
         }
         Ok(ReplaySnapshot {
+            #[cfg(all(test, not(target_arch = "wasm32")))]
             generation: state.generation,
             byte_length: state.committed_bytes,
             chunks,
@@ -2115,7 +2116,7 @@ impl std::io::Write for ReplaySpoolWriter {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReplaySnapshot {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     generation: u64,
     byte_length: usize,
     chunks: Vec<Arc<[u8]>>,

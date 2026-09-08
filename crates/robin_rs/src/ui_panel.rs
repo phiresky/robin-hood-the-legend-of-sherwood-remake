@@ -3769,7 +3769,7 @@ pub fn hit_test_portrait_detailed(
 }
 
 /// Runs inside the named headless GPU gate, using two live renderer identities.
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut Renderer) {
     let picture = Picture {
         width: 1,

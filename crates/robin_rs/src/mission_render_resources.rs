@@ -254,7 +254,7 @@ impl MissionRenderResources {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
     let mut host = crate::host::Host::scratch(3.0, 2.0);
     let upload = |renderer: &mut Renderer| renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();

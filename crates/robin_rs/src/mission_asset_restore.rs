@@ -845,17 +845,20 @@ fn is_safe_logical_relative_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
     use robin_engine::mission_assets::{
         ArchiveMissionAssets, DistributedCacheIdentity, InstalledArchiveLocator, InstalledModsRoot,
-        MissionAssetDescriptor,
     };
+    #[cfg(not(target_arch = "wasm32"))]
     fn independent_files() -> Arc<robin_engine::sbfile::SbFileSystem> {
         Arc::new(robin_engine::sbfile::SbFileSystem::new(Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         )))
     }
+    #[cfg(not(target_arch = "wasm32"))]
     use std::io::Write;
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn rhm(map: &str, marker: u8) -> Vec<u8> {
         let mut bytes = vec![0_u8; 34 + map.len() + 2];
         bytes[..4].copy_from_slice(b"RHMI");
@@ -866,6 +869,7 @@ mod tests {
         bytes
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn zip(entries: &[(&str, Vec<u8>)]) -> Vec<u8> {
         let mut cursor = std::io::Cursor::new(Vec::new());
         {
@@ -881,6 +885,7 @@ mod tests {
         cursor.into_inner()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn identity(bytes: &[u8]) -> ArchiveIdentity {
         ArchiveIdentity {
             sha256: Sha256::digest(bytes).into(),
@@ -888,6 +893,7 @@ mod tests {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn installed_descriptor(
         mission: &[u8],
         relative: &str,
@@ -1192,7 +1198,8 @@ mod tests {
         assert!(files.read_all("Data/Levels/ColdMission.rhm").is_err());
     }
 
-    #[test]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
     fn built_in_descriptor_rejects_embedded_guest_code() {
         let descriptor = MissionAssetDescriptor::built_in("H01_Lin", "lincoln", "lincoln").unwrap();
         let package = SpellforgePackage {
@@ -1211,6 +1218,10 @@ mod tests {
             .into(),
             sha256: [0; 32],
         };
+        assert!(matches!(
+            resolve_built_in_mission_assets(&descriptor, Some(&package)),
+            Err(MissionAssetRestoreError::BuiltInSpellforgePackage)
+        ));
         #[cfg(not(target_arch = "wasm32"))]
         assert!(matches!(
             resolve_native_mission_assets(

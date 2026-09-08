@@ -76,7 +76,7 @@ thread_local! {
     static FAILURE: std::cell::Cell<Option<FailurePoint>> = const { std::cell::Cell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(super) fn inject_failure(point: FailurePoint) {
     FAILURE.set(Some(point));
 }

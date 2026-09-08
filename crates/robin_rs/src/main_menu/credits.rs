@@ -246,7 +246,7 @@ fn retire_uploads(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_gpu_retirement(renderer: &mut Renderer) {
     for with_background in [false, true] {
         let credits = renderer.upload_rgb565(1, 1, &[0xffff]).unwrap();

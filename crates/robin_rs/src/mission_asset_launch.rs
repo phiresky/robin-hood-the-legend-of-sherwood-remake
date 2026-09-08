@@ -709,6 +709,7 @@ mod tests {
     }
     use std::io::Write;
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn write_zip(path: &std::path::Path, entries: &[(&str, &[u8])]) {
         let file = std::fs::File::create(path).unwrap();
         let mut writer = zip::ZipWriter::new(file);
