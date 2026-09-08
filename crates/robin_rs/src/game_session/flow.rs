@@ -428,6 +428,19 @@ impl InteractiveFrameFinish<'_, '_, '_> {
 
             render_ctx.present();
             fixed_tick_presented = true;
+            #[cfg(target_arch = "wasm32")]
+            {
+                // One process-startup endpoint, after the first normal mission
+                // render/present call (never a loading-screen or screenshot
+                // render). This is not a browser compositor/display timestamp:
+                // present can also return after a surface acquisition failure.
+                // TODO: correlate this marker with browser presentation traces.
+                static FIRST_MISSION_PRESENT: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !FIRST_MISSION_PRESENT.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::info!("startup timing: first mission present returned");
+                }
+            }
             saved_camera.apply(&mut host.frontend);
             host.frontend.draw_order = saved_draw_order;
             sync_render_camera(&mut host.frontend);
