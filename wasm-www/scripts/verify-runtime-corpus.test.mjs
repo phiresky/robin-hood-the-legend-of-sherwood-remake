@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { brotliCompressSync } from 'node:zlib';
+import { writeBrotliWasm } from './compress-runtime-wasm.mjs';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -367,4 +369,22 @@ test('runtime manifest rejects private vault and orphan JavaScript modules', asy
         verifyRuntimeCorpus(orphan, { addition: true }),
         /orphan modules/u,
     );
+});
+
+test('optional Brotli sidecars are packaged, digest-bound and decode to the declared WASM', async t => {
+    const root = await runtimeAddition();
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const path = resolve(root, 'wasm', short, 'robin_bg.wasm');
+    await writeBrotliWasm(path);
+    const bytes = await readFile(`${path}.br`);
+    await rewriteRuntimeManifest(root, manifest => {
+        manifest.files.wasmBrotli = 'robin_bg.wasm.br';
+        manifest.sha256.wasmBrotli = sha(bytes);
+    });
+    await verifyRuntimeCorpus(root, { addition: true });
+    const wrong = brotliCompressSync(Buffer.from('different wasm'));
+    await writeFile(`${path}.br`, wrong);
+    await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /wasmBrotli digest/u);
+    await rewriteRuntimeManifest(root, manifest => { manifest.sha256.wasmBrotli = sha(wrong); });
+    await assert.rejects(verifyRuntimeCorpus(root, { addition: true }), /Brotli decoded wasm digest/u);
 });

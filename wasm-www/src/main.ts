@@ -1,5 +1,5 @@
 import { requestFullContentFolder } from './content-picker.js';
-import { fetchWithProgress, fetchJson, fetchPrecompressedWasm } from './boot-transport.js';
+import { fetchWithProgress, fetchJson, fetchRuntimeWasm } from './boot-transport.js';
 import { withAbort } from './cancellation.js';
 import { installCanvasBackingStore } from './canvas-lifecycle.js';
 import { preloadRuntimeAssets } from './asset-preload.js';
@@ -381,11 +381,8 @@ async function loadWasmModule(
             progressDetail(loaded, total),
         );
     };
-    // Runtime Static Assets may serve the checked-in `.gz` object without a
-    // Content-Encoding header. Decompress that sibling in the browser so the
-    // module does not cross the network uncompressed. Local development keeps
-    // the ordinary URL path. The counted body streams while WebAssembly
-    // compiles it, so the byte callback drives the progress bar.
+    // Keep native HTTP compression and optional precompressed sidecars
+    // streaming into compilation; local builds use the ordinary URL directly.
     const wasm = await loadRuntimeInParallel(
         async loadingSignal => {
             const module = await withAbort(loadingSignal, () => import(/* @vite-ignore */ jsUrl)) as RobinWasmModule;
@@ -393,12 +390,7 @@ async function loadWasmModule(
             bootProgress('engine-js', 'loading engine…', 1);
             return module;
         },
-        async loadingSignal => {
-            const response = preferPrecompressed
-                ? await fetchPrecompressedWasm(`${wasmUrl}.gz`, cache, onWasmBytes, loadingSignal)
-                : undefined;
-            return response ?? await fetchWithProgress(wasmUrl, cache, 'application/wasm', onWasmBytes, loadingSignal);
-        },
+        loadingSignal => fetchRuntimeWasm(wasmUrl, preferPrecompressed, cache, onWasmBytes, loadingSignal),
         signal,
     );
     signal.throwIfAborted();

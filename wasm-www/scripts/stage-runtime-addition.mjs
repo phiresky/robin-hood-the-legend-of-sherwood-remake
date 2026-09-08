@@ -1,3 +1,4 @@
+import { writeBrotliWasm } from './compress-runtime-wasm.mjs';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile, rm, copyFile } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
@@ -54,6 +55,7 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
     await rm(optimized);
     run('wasm-strip', [join(artifact, 'robin_bg.wasm')]);
     run('gzip', ['-9', '-n', '-k', join(artifact, 'robin.js'), join(artifact, 'robin_bg.wasm')]);
+    await writeBrotliWasm(join(artifact, 'robin_bg.wasm'));
     run(process.execPath, ['wasm-www/scripts/stage-engine-preload-assets.mjs', 'assets/core-datadir', artifact]);
     const javascriptModules = JSON.parse(output(process.execPath, ['wasm-www/scripts/runtime-javascript-modules.mjs', artifact]));
     const hash = async name => createHash('sha256').update(await readFile(join(artifact, name))).digest('hex');
@@ -64,8 +66,8 @@ export async function stageRuntimeAddition({ root = 'target/static-runtime-addit
             demo: { url: 'https://robinhood.phiresky.xyz/datadirs/demo-leicester/v8-web-opus-q80.rhdata.zst',
                 sha256: identity.demoSha, byteLength: identity.demoBytes, nativeContentSha256: identity.nativeDemoSha },
             full: identity.fullSha ? { manifestSha256: identity.fullSha } : null },
-        files: { js: 'robin.js', jsGzip: 'robin.js.gz', wasm: 'robin_bg.wasm', wasmGzip: 'robin_bg.wasm.gz' },
-        javascriptModules, sha256: { wasm: await hash('robin_bg.wasm'), wasmGzip: await hash('robin_bg.wasm.gz') },
+        files: { js: 'robin.js', jsGzip: 'robin.js.gz', wasm: 'robin_bg.wasm', wasmGzip: 'robin_bg.wasm.gz', wasmBrotli: 'robin_bg.wasm.br' },
+        javascriptModules, sha256: { wasm: await hash('robin_bg.wasm'), wasmGzip: await hash('robin_bg.wasm.gz'), wasmBrotli: await hash('robin_bg.wasm.br') },
     };
     await writeFile(join(artifact, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
     await copyFile(join(artifact, 'manifest.json'), join(root, 'wasm/latest.json'));
