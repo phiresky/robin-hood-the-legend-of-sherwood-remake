@@ -309,23 +309,19 @@ pub async fn show_sounds(
             .cloned()
             .partition(|e| is_slider_id(e.origin_widget_id));
 
-        // Buttons: use the widget's own state for gating.
-        for e in &button_events {
-            let state = frame
-                .widget(e.origin_widget_id)
-                .map(|w| w.base().state)
-                .unwrap_or(UiState::Default);
+        // Observe buttons even on silent mouse-leave frames to rearm hover.
+        if let (Some(snd), Some(loader)) = (sound.as_deref_mut(), sample_loader) {
             let backend: Option<&mut dyn AudioBackend> = audio_backend
                 .as_mut()
                 .map(|b| &mut **b as &mut dyn AudioBackend);
-            dispatch_noise(
-                std::slice::from_ref(e),
+            widget_bridge::play_frame_widget_noise(
+                &button_events,
+                &frame,
                 widget_bridge::WIDGET_NOISY_BUTTON,
-                sound.as_deref_mut(),
+                snd,
                 backend,
-                sample_loader,
-                Some(&mut noisy_tracker),
-                state,
+                loader,
+                &mut noisy_tracker,
             );
         }
         for e in &slider_events {
