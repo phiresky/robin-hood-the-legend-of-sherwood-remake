@@ -4,6 +4,8 @@
 //! it has finalized the deterministic command stream. No presentation borrow
 //! escapes the phase or crosses into simulation.
 
+mod transport;
+
 use std::ops::ControlFlow;
 
 use super::event_hud::{
@@ -706,92 +708,24 @@ impl<'mission, 'services, 'app> InteractiveFramePreparation<'mission, 'services,
         let presentation = &mut frontend.presentation;
 
         if let Some(transition) = host.transport.take_committed_snapshot_transition() {
-            let transition_id = transition.id();
-            if transition.is_save() {
-                let load = crate::main_entry::PreparedLoad::from_committed_snapshot(transition)
-                    .map_err(|error| format!("committed load admission failed: {error:#}"))?;
-                let target_mission_id = load.mission_id();
-                *campaign_transition = Some(crate::main_entry::PendingLevelLoad::new(load));
-                game.operation.set(GameCode::LevelLoad);
-                tracing::info!(
-                    ?transition_id,
-                    target_mission_id,
-                    "multiplayer: authoritative load committed; rebuilding mission transport"
-                );
-                runtime.trace(FrameContractStage::Exit);
-                return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
-                    GameCode::LevelLoad,
-                ))));
-            } else {
-                match transition.into_payload() {
-                    crate::host::PendingSnapshotTransitionPayload::CampaignExit {
-                        exit_code,
-                        engine,
-                    } => {
-                        if let Some(engine) = engine {
-                            manager.engine = *engine;
-                        }
-                        game.operation.set(exit_code);
-                        tracing::info!(
-                            ?transition_id,
-                            ?exit_code,
-                            "multiplayer: host campaign transition committed"
-                        );
-                        runtime.trace(FrameContractStage::Exit);
-                        return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
-                            exit_code,
-                        ))));
-                    }
-                    crate::host::PendingSnapshotTransitionPayload::Save { .. } => {
-                        unreachable!("save transition handled above")
-                    }
-                }
-            }
+            let exit_code = transport::apply_committed_transition(
+                transition,
+                &mut manager.engine,
+                &mut game.operation,
+                campaign_transition,
+            )?;
+            runtime.trace(FrameContractStage::Exit);
+            return Ok(ControlFlow::Break(FrameControl::Exit(MissionExit::new(
+                exit_code,
+            ))));
         }
-        if host
-            .transport
-            .pending_campaign_exit
-            .is_some_and(|pending| runtime.frame_number() >= pending.not_before_frame)
-        {
-            let pending = host
-                .transport
-                .pending_campaign_exit
-                .take()
-                .expect("checked deferred multiplayer campaign exit exists");
-            assert_eq!(
-                host.transport.local_seat,
-                robin_engine::player_command::PlayerId::HOST,
-                "only the host may publish a campaign-exit snapshot"
-            );
-            assert!(
-                host.transport.snapshot_transition.is_none() && !host.transport.reconnecting,
-                "campaign exit reached its snapshot boundary during another transition"
-            );
-            assert!(
-                callbacks.pending_request().is_none(),
-                "campaign exit cannot overwrite another pending save/load request"
-            );
-            let engine_bytes = manager.engine.encode_native_snapshot();
-            let id = host
-                .transport
-                .net
-                .as_ref()
-                .expect("deferred multiplayer campaign exit lost its transport")
-                .begin_campaign_exit_transition(GameCode::LevelInterrupted, engine_bytes)
-                .unwrap_or_else(|error| {
-                    panic!("failed to begin multiplayer campaign transition: {error}")
-                });
-            host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition::new(
-                id,
-                crate::host::PendingSnapshotTransitionPayload::CampaignExit {
-                    exit_code: GameCode::LevelInterrupted,
-                    engine: None,
-                },
-            ));
-            host.transport.reconnecting = true;
-            callbacks.queue_operation(crate::main_entry::SaveLoadRequest::Sherwood {
-                mission_id: pending.mission_id,
-            });
+        if let Some((request, id)) = transport::begin_deferred_campaign_exit(
+            &mut host.transport,
+            &manager.engine,
+            runtime.frame_number(),
+            callbacks.pending_request().is_none(),
+        ) {
+            callbacks.queue_operation(request);
             tracing::info!(
                 ?id,
                 frame = runtime.frame_number(),
