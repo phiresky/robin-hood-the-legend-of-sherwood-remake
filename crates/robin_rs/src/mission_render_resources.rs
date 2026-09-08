@@ -4,34 +4,29 @@
 //! bank retires its old uploads; absent frames remain absent rather than aliasing
 //! the renderer's screen surface (legacy ID zero).
 
-use crate::renderer::{Renderer, SurfaceHandle};
+use crate::renderer::{MissingSurface, OwnedSurface, Renderer, SurfaceOwnershipError};
 use robin_engine::coordinates::ScreenSize;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct SpriteSurface {
-    handle: SurfaceHandle,
+    upload: OwnedSurface,
     width: u16,
     height: u16,
 }
 
 impl SpriteSurface {
-    pub fn parts(self) -> (u32, u16, u16) {
-        (self.handle.legacy_id(), self.width, self.height)
+    pub fn parts(&self) -> (u32, u16, u16) {
+        (self.upload.handle().legacy_id(), self.width, self.height)
     }
 
-    fn uploaded(renderer: &Renderer, id: u32) -> Self {
-        let handle = SurfaceHandle::from_legacy(id);
-        assert_ne!(
-            handle.legacy_id(),
-            0,
-            "mission upload cannot own the screen"
-        );
+    fn uploaded(renderer: &mut Renderer, id: u32) -> Self {
+        let upload = renderer.adopt_surface(id);
         let (width, height) = renderer
-            .surface_dimensions(handle)
+            .surface_dimensions(upload.handle())
             .expect("mission upload must reference a live renderer surface");
         Self {
-            handle,
+            upload,
             width,
             height,
         }
@@ -44,9 +39,9 @@ struct SpriteBank {
 }
 
 impl SpriteBank {
-    fn retire(&mut self, delete: &mut impl FnMut(u32)) {
+    fn retire(&mut self, delete: &mut impl FnMut(OwnedSurface)) {
         for frame in self.frames.drain(..).flatten() {
-            delete(frame.handle.legacy_id());
+            delete(frame.upload);
         }
     }
 }
@@ -67,16 +62,15 @@ pub struct MissionRenderResources {
     ground_marks: SpriteBank,
 }
 
-fn delete_surface(renderer: &mut Renderer, id: u32) {
-    assert!(
-        renderer.delete_surface(id),
-        "owned mission surface {id} was already retired"
-    );
+fn delete_surface(renderer: &mut Renderer, upload: OwnedSurface) {
+    renderer.retire_surface(upload);
 }
 
 impl MissionRenderResources {
     pub fn map(&self) -> Option<u32> {
-        self.map.map(|frame| frame.handle.legacy_id())
+        self.map
+            .as_ref()
+            .map(|frame| frame.upload.handle().legacy_id())
     }
 
     pub fn corner_size(&self) -> ScreenSize {
@@ -88,8 +82,8 @@ impl MissionRenderResources {
             .frames
             .get(index)
             .or(self.corners.frames.first())
-            .and_then(|frame| *frame)
-            .map(|frame| frame.handle.legacy_id())
+            .and_then(|frame| frame.as_ref())
+            .map(|frame| frame.upload.handle().legacy_id())
     }
 
     pub fn dots(&self) -> &[Option<SpriteSurface>] {
@@ -100,25 +94,42 @@ impl MissionRenderResources {
     }
 
     pub fn replace_map(&mut self, renderer: &mut Renderer, id: u32) {
-        self.validate_new_ids([id]);
+        self.try_replace_map(renderer, id)
+            .expect("mission map replacement requires a local unowned upload");
+    }
+
+    pub fn try_replace_map(
+        &mut self,
+        renderer: &mut Renderer,
+        id: u32,
+    ) -> Result<(), SurfaceOwnershipError> {
+        self.validate_renderer(renderer)?;
+        renderer.validate_surface_adoption(id)?;
         let frame = SpriteSurface::uploaded(renderer, id);
         if let Some(previous) = self.map.replace(frame) {
-            delete_surface(renderer, previous.handle.legacy_id());
+            delete_surface(renderer, previous.upload);
         }
+        Ok(())
     }
 
     pub fn replace_corners(&mut self, renderer: &mut Renderer, size: ScreenSize, ids: Vec<u32>) {
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.validate_new_ids(ids.iter().copied());
         Self::replace_bank(&mut self.corners, renderer, ids.into_iter().map(Some));
         self.corner_size = size;
     }
 
     pub fn replace_dots(&mut self, renderer: &mut Renderer, ids: Vec<Option<u32>>) {
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.validate_new_ids(ids.iter().flatten().copied());
         Self::replace_bank(&mut self.dots, renderer, ids);
     }
 
     pub fn replace_ground_marks(&mut self, renderer: &mut Renderer, ids: Vec<u32>) {
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.validate_new_ids(ids.iter().copied());
         Self::replace_bank(&mut self.ground_marks, renderer, ids.into_iter().map(Some));
     }
@@ -130,7 +141,7 @@ impl MissionRenderResources {
             .chain(self.corners.frames.iter().flatten())
             .chain(self.dots.frames.iter().flatten())
             .chain(self.ground_marks.frames.iter().flatten())
-            .map(|frame| frame.handle.legacy_id())
+            .map(|frame| frame.upload.handle().legacy_id())
             .collect();
         for id in ids {
             assert!(id > 1, "mission upload cannot own the screen");
@@ -146,6 +157,12 @@ impl MissionRenderResources {
         renderer: &mut Renderer,
         ids: impl IntoIterator<Item = Option<u32>>,
     ) {
+        let ids: Vec<_> = ids.into_iter().collect();
+        for id in ids.iter().flatten() {
+            renderer
+                .validate_surface_adoption(*id)
+                .expect("mission bank requires local unowned uploads");
+        }
         let frames = ids
             .into_iter()
             .map(|id| id.map(|id| SpriteSurface::uploaded(renderer, id)))
@@ -157,10 +174,12 @@ impl MissionRenderResources {
     /// Start sprite preparation without retaining stale resources on a missing
     /// optional bank. Does not retire the map, uploaded earlier in level loading.
     pub fn retire_sprites(&mut self, renderer: &mut Renderer) {
+        self.validate_renderer(renderer)
+            .expect("mission uploads require their originating renderer");
         self.retire_sprite_banks(&mut |id| delete_surface(renderer, id));
     }
 
-    fn retire_sprite_banks(&mut self, delete: &mut impl FnMut(u32)) {
+    fn retire_sprite_banks(&mut self, delete: &mut impl FnMut(OwnedSurface)) {
         self.corners.retire(delete);
         self.dots.retire(delete);
         self.ground_marks.retire(delete);
@@ -168,12 +187,32 @@ impl MissionRenderResources {
     }
 
     pub fn retire(&mut self, renderer: &mut Renderer) {
-        self.retire_with(&mut |id| delete_surface(renderer, id));
+        self.try_retire(renderer)
+            .expect("mission uploads require their originating renderer");
     }
 
-    fn retire_with(&mut self, delete: &mut impl FnMut(u32)) {
+    pub fn try_retire(&mut self, renderer: &mut Renderer) -> Result<(), MissingSurface> {
+        self.validate_renderer(renderer)?;
+        self.retire_with(&mut |id| delete_surface(renderer, id));
+        Ok(())
+    }
+
+    fn validate_renderer(&self, renderer: &Renderer) -> Result<(), MissingSurface> {
+        for frame in self
+            .map
+            .iter()
+            .chain(self.corners.frames.iter().flatten())
+            .chain(self.dots.frames.iter().flatten())
+            .chain(self.ground_marks.frames.iter().flatten())
+        {
+            renderer.surface_dimensions(frame.upload.handle())?;
+        }
+        Ok(())
+    }
+
+    fn retire_with(&mut self, delete: &mut impl FnMut(OwnedSurface)) {
         if let Some(map) = self.map.take() {
-            delete(map.handle.legacy_id());
+            delete(map.upload);
         }
         self.retire_sprite_banks(delete);
     }
@@ -195,11 +234,7 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         }
         host.frontend.mission_surfaces.replace_map(renderer, id);
         if let Some(old) = previous {
-            assert!(
-                renderer
-                    .surface_dimensions(SurfaceHandle::from_legacy(old))
-                    .is_err()
-            );
+            assert!(renderer.surface_handle(old).is_err());
             assert_eq!(
                 &renderer.try_capture_frame_rgba().unwrap().2[..4],
                 &[248, 252, 248, 255],
@@ -209,11 +244,7 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
         previous = Some(id);
         host.post_load_reset();
         assert_eq!(host.frontend.mission_surfaces.map(), Some(id));
-        assert!(
-            renderer
-                .surface_dimensions(SurfaceHandle::from_legacy(id))
-                .is_ok()
-        );
+        assert!(renderer.surface_handle(id).is_ok());
     }
     let dot = upload(renderer);
     let corner_size = ScreenSize::new(12.0, 15.0);
@@ -243,17 +274,9 @@ pub(crate) fn verify_gpu_lifecycle(renderer: &mut Renderer) {
     host.frontend
         .mission_surfaces
         .replace_dots(renderer, vec![]);
-    assert!(
-        renderer
-            .surface_dimensions(SurfaceHandle::from_legacy(dot))
-            .is_err()
-    );
+    assert!(renderer.surface_handle(dot).is_err());
     host.frontend.mission_surfaces.retire(renderer);
-    assert!(
-        renderer
-            .surface_dimensions(SurfaceHandle::from_legacy(previous.unwrap()))
-            .is_err()
-    );
+    assert!(renderer.surface_handle(previous.unwrap()).is_err());
     host.frontend.mission_surfaces.retire(renderer);
 }
 
@@ -265,7 +288,7 @@ mod tests {
     // always validates live renderer uploads before accepting them.
     fn frame(id: u32) -> SpriteSurface {
         SpriteSurface {
-            handle: SurfaceHandle::from_legacy(id),
+            upload: OwnedSurface::synthetic(id),
             width: 3,
             height: 4,
         }
@@ -277,10 +300,10 @@ mod tests {
         owner.map = Some(frame(2));
         owner.dots.frames = vec![Some(frame(3)), None, Some(frame(4))];
         assert!(owner.dots()[1].is_none());
-        assert_eq!(owner.dots()[2].unwrap().parts(), (4, 3, 4));
+        assert_eq!(owner.dots()[2].as_ref().unwrap().parts(), (4, 3, 4));
         let mut deleted = Vec::new();
-        owner.retire_with(&mut |id| deleted.push(id));
-        owner.retire_with(&mut |id| deleted.push(id));
+        owner.retire_with(&mut |id| deleted.push(id.handle().legacy_id()));
+        owner.retire_with(&mut |id| deleted.push(id.handle().legacy_id()));
         assert_eq!(deleted, [2, 3, 4]);
         assert!(owner.map().is_none());
     }
@@ -292,7 +315,7 @@ mod tests {
         owner.corners.frames = vec![Some(frame(3))];
         owner.corner_size = ScreenSize::new(3.0, 4.0);
         let mut deleted = Vec::new();
-        owner.retire_sprite_banks(&mut |id| deleted.push(id));
+        owner.retire_sprite_banks(&mut |id| deleted.push(id.handle().legacy_id()));
         assert_eq!(deleted, [3]);
         assert_eq!(owner.map(), Some(2));
         assert_eq!(owner.corner_size(), ScreenSize::default());
