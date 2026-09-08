@@ -298,6 +298,7 @@ mod tests {
 
     #[test]
     #[cfg(panic = "unwind")]
+    #[ignore = "requires LLVM codegen to exercise unwind cleanup; see docs/architecture-cache.md"]
     fn unwound_worker_releases_scheduler_reservation() {
         let finished = Arc::new(AtomicBool::new(false));
         let completion = FinishOnDrop(finished.clone());
