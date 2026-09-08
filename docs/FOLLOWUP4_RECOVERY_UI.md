@@ -23,6 +23,10 @@ translation TODOs are explicit. Diagnostics preserve the backend error, wrap lon
 path components at character boundaries and scroll with arrows/wheel. Both
 recovery and acknowledgement retain widget state between frames, so pointer
 hover/press/release and drag-off cancellation work across frame boundaries.
+The same recovery dialog/input owner also survives failed Retry attempts, so a
+stationary pointer can click Retry again after external repair without moving
+away and back. A real-index regression covers successive failed stationary
+clicks followed by a successful retry after explicit fixture repair.
 
 ## Picker and save-operation presentation
 

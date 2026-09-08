@@ -59,42 +59,43 @@ fn recovery_choice(event: &crate::gfx_types::GameEvent) -> Option<RecoveryChoice
     }
 }
 
-/// Small existing-assets dialog. It yields every frame, handles native/browser
-/// close events and uses existing localized Cancel/Quit action labels.
-async fn choose_recovery(
-    context: &ApplicationContext,
-    window: &mut GameWindow,
-    renderer: &mut Renderer,
-    resources: &IngameMenuResources,
-    cursor: Option<&ModalCursor<'_>>,
-    error: &SaveStoreOpenError,
-) -> RecoveryChoice {
-    let mut input = ModalInputState::new();
-    let mut scroll = 0;
-    let (width, height) = resources.button_dimensions();
-    let labels = [
-        // No Retry token exists in the original game's menu table.
-        // TODO(i18n): add a translated recovery Retry action.
-        "Retry".to_string(),
-        resources.menu_text.get(MT_BTN_CANCEL),
-        resources.menu_text.get(MT_BTN_QUIT_GAME),
-    ];
-    let mut frame = recovery_frame(&labels, width, height);
-    loop {
-        context.poll_leaderboard_receipts();
-        let (events, transform) = layout::poll_events_with_transform(window, renderer);
+/// Runtime input/capture ownership spans the entire recovery episode, including
+/// failed retries. A stationary pointer must not need a new motion event after
+/// the store opener returns another error.
+struct RecoveryDialog {
+    input: ModalInputState,
+    scroll: usize,
+    labels: [String; 3],
+    frame: crate::widget::FrameWnd,
+}
+
+impl RecoveryDialog {
+    fn new(labels: [String; 3], width: i32, height: i32) -> Self {
+        Self {
+            frame: recovery_frame(&labels, width, height),
+            labels,
+            input: ModalInputState::new(),
+            scroll: 0,
+        }
+    }
+
+    fn handle_events(
+        &mut self,
+        events: &[crate::gfx_types::GameEvent],
+        transform: MenuTransform,
+    ) -> Option<RecoveryChoice> {
         let mut choice = None;
         for event in events {
-            input.update_from_event(&event, transform);
-            scroll_diagnostic(&mut scroll, &event);
-            if choice != Some(RecoveryChoice::Exit) {
-                if let Some(action) = recovery_choice(&event) {
-                    choice = Some(action);
-                }
+            self.input.update_from_event(event, transform);
+            scroll_diagnostic(&mut self.scroll, event);
+            if choice != Some(RecoveryChoice::Exit)
+                && let Some(action) = recovery_choice(event)
+            {
+                choice = Some(action);
             }
         }
-        let events = frame.process_input(&input.as_widget_input());
-        input.end_frame();
+        let events = self.frame.process_input(&self.input.as_widget_input());
+        self.input.end_frame();
         if choice != Some(RecoveryChoice::Exit)
             && let Some(id) = widget_bridge::find_activated(&events)
         {
@@ -105,7 +106,25 @@ async fn choose_recovery(
                 _ => unreachable!("recovery button id"),
             });
         }
-        if let Some(choice) = choice {
+        choice
+    }
+}
+
+/// Small existing-assets dialog. It yields every frame, handles native/browser
+/// close events and uses existing localized Cancel/Quit action labels.
+async fn choose_recovery(
+    context: &ApplicationContext,
+    window: &mut GameWindow,
+    renderer: &mut Renderer,
+    resources: &IngameMenuResources,
+    cursor: Option<&ModalCursor<'_>>,
+    error: &SaveStoreOpenError,
+    dialog: &mut RecoveryDialog,
+) -> RecoveryChoice {
+    loop {
+        context.poll_leaderboard_receipts();
+        let (events, transform) = layout::poll_events_with_transform(window, renderer);
+        if let Some(choice) = dialog.handle_events(&events, transform) {
             if choice == RecoveryChoice::Exit {
                 window.close_requested = true;
             }
@@ -129,12 +148,12 @@ async fn choose_recovery(
         // TODO(i18n): give recovery guidance its own translated menu-text entry.
         let message = format!(
             "Saves are unavailable. Repair the reported problem, then select {}. {} leaves this launch without saving. No files will be reset. Scroll with Up/Down or mouse wheel.\n\n{error}",
-            labels[0], labels[1]
+            dialog.labels[0], dialog.labels[1]
         );
-        draw_diagnostic(renderer, resources, transform, &message, &mut scroll);
-        widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
+        draw_diagnostic(renderer, resources, transform, &message, &mut dialog.scroll);
+        widget_bridge::draw_frame_buttons(renderer, resources, transform, &dialog.frame);
         if let Some(cursor) = cursor {
-            cursor.draw(renderer, transform, &input);
+            cursor.draw(renderer, transform, &dialog.input);
         }
         renderer.present();
         crate::window::sleep_ui_frame().await;
@@ -308,12 +327,37 @@ async fn recover_attempt(
     cursor: Option<&ModalCursor<'_>>,
     mut attempt: Result<SaveGameManager, SaveStoreOpenError>,
 ) -> OpenedSaveStore {
+    let mut dialog = None;
     loop {
         match attempt {
             Ok(store) => return OpenedSaveStore::Ready(store),
             Err(error) => {
                 tracing::error!("{error}");
-                match choose_recovery(context, window, renderer, resources, cursor, &error).await {
+                let dialog = dialog.get_or_insert_with(|| {
+                    let (width, height) = resources.button_dimensions();
+                    let mut dialog = RecoveryDialog::new(
+                        [
+                            // No Retry token exists in the original menu table.
+                            // TODO(i18n): add a translated recovery Retry action.
+                            "Retry".to_string(),
+                            resources.menu_text.get(MT_BTN_CANCEL),
+                            resources.menu_text.get(MT_BTN_QUIT_GAME),
+                        ],
+                        width,
+                        height,
+                    );
+                    dialog.input.seed_mouse_from_window(
+                        window,
+                        MenuTransform::centered(
+                            renderer.screen_width() as i32,
+                            renderer.screen_height() as i32,
+                        ),
+                    );
+                    dialog
+                });
+                match choose_recovery(context, window, renderer, resources, cursor, &error, dialog)
+                    .await
+                {
                     RecoveryChoice::Retry => {
                         attempt = retry(|| SaveGameManager::open_for_context(context));
                     }
@@ -440,6 +484,57 @@ mod tests {
             notice.frame.is_none(),
             "runtime widgets are initialized on the first frame"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn stationary_pointer_can_retry_repeated_errors_then_external_repair() {
+        use crate::gfx_types::GameEvent;
+        let directory = tempfile::tempdir().unwrap();
+        let index = directory.path().join("saves.json");
+        std::fs::write(&index, b"broken").unwrap();
+        let mut dialog =
+            RecoveryDialog::new(["Retry".into(), "Cancel".into(), "Quit".into()], 100, 40);
+        let transform = MenuTransform::centered(640, 480);
+        assert_eq!(
+            dialog.handle_events(
+                &[GameEvent::MouseMove {
+                    x: 80,
+                    y: 370,
+                    xrel: 0,
+                    yrel: 0
+                }],
+                transform
+            ),
+            None
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                dialog.handle_events(&[GameEvent::MouseDown(80, 370, 1, 1)], transform),
+                None
+            );
+            assert_eq!(
+                dialog.handle_events(&[GameEvent::MouseUp(80, 370, 1)], transform),
+                Some(RecoveryChoice::Retry)
+            );
+            assert!(
+                retry(|| SaveGameManager::load_index(directory.path().to_str().unwrap())).is_err()
+            );
+            assert_eq!(std::fs::read(&index).unwrap(), b"broken");
+            // The returned error starts another render frame in the SAME
+            // dialog; neither real nor synthetic mouse motion is required.
+            assert_eq!(dialog.handle_events(&[], transform), None);
+        }
+        std::fs::write(&index, br#"{"saves":[],"next_id":0}"#).unwrap();
+        assert_eq!(
+            dialog.handle_events(&[GameEvent::MouseDown(80, 370, 1, 1)], transform),
+            None
+        );
+        assert_eq!(
+            dialog.handle_events(&[GameEvent::MouseUp(80, 370, 1)], transform),
+            Some(RecoveryChoice::Retry)
+        );
+        assert!(retry(|| SaveGameManager::load_index(directory.path().to_str().unwrap())).is_ok());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
