@@ -162,7 +162,7 @@ class LifecycleGateTests(unittest.TestCase):
                     patch.object(gate, "executable", side_effect=lambda x: x), \
                     patch.object(gate.subprocess, "check_output", side_effect=[
                         "runner " + gate.lock_bindgen_version(), "Chrome 152.1", "Driver 152.1"]), \
-                    patch.object(gate, "run", side_effect=fake_run), \
+                    patch.object(gate, "run", side_effect=fake_run) as run, \
                     patch.object(gate.subprocess, "Popen") as popen:
                 child = popen.return_value.__enter__.return_value
                 child.stdout = [json.dumps(event)]
@@ -175,6 +175,9 @@ class LifecycleGateTests(unittest.TestCase):
                     with self.assertRaisesRegex(RuntimeError, "nonempty"):
                         gate.browser(self.evidence, {})
                 command = popen.call_args.args[0]
+                checked_features = [call.args[0][call.args[0].index("--features") + 1]
+                                    for call in run.call_args_list[:2]]
+                self.assertEqual(checked_features, ["audio", "audio,multiplayer"])
                 self.assertIn("--no-run", command)
                 self.assertIn("--locked", command)
                 self.assertNotIn("--target-dir", command)
