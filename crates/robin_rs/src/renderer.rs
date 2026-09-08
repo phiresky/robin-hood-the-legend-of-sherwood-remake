@@ -3064,10 +3064,10 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert!(renderer.try_adopt_surface(local_id).is_err());
     assert!(renderer.try_delete_legacy_surface(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
-    mission.retire(&mut other_renderer);
     renderer.retire_surface(owned);
     assert!(renderer.surface_handle(local_id).is_err());
     assert!(other_renderer.surface_handle(other_id).is_ok());
+    mission.retire(&mut other_renderer);
     let pixels = [
         255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255, 255, 255,
         0, 255,
