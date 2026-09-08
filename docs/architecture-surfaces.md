@@ -8,6 +8,10 @@ legacy IDs 0 and 1 resolve to it only at the compatibility boundary.
 `OwnedSurface` is a non-Clone retirement token. The renderer tracks adopted IDs,
 rejects second owners, and prevents integer-based deletion from bypassing an
 owner. Retirement validates the originating renderer before changing residency.
+Fallible adoption and compatibility deletion return typed errors. Failed typed
+retirement returns the original token, allowing recovery with the correct
+renderer; mission map replacement and retirement likewise offer non-mutating
+error paths. GPU negative tests use these paths, without relying on unwinding.
 Borrowed handles support validated dimensions and drawing; queued draws retain
 their cloned GPU bindings after retirement.
 

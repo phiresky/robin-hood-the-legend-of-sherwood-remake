@@ -1361,6 +1361,11 @@ fn sync_thumbnail_cache(
     renderer: &mut Renderer,
     mode: SaveLoadMode,
 ) {
+    if let Some(current) = cache.as_ref() {
+        renderer
+            .surface_dimensions(current.surface.handle())
+            .expect("thumbnail cache requires its originating renderer");
+    }
     // Save-mode never previews a thumbnail — the picture widget stays
     // disabled and the entire reload branch is gated on Load mode.
     let target_slot = match (mode, selected) {
@@ -1514,6 +1519,9 @@ fn draw_preview(
     if let Some(cache) = thumb_cache
         && cache.slot == slot
     {
+        renderer
+            .surface_dimensions(cache.surface.handle())
+            .expect("thumbnail drawing requires its originating renderer");
         let mut widget = thumb_widget.clone();
         widget
             .base
