@@ -22,6 +22,7 @@ use super::filesystem::read_bounded_regular_nofollow;
 use super::filesystem::record_file;
 use super::filesystem::revalidate_pinned_regular_path;
 use super::filesystem::revalidate_pinned_root_directory;
+#[cfg(unix)]
 use super::filesystem::set_backup_permissions;
 use super::filesystem::set_private_directory;
 use super::filesystem::sync_cap_directory;
@@ -59,8 +60,6 @@ use sqlx::sqlite::SqliteJournalMode;
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::io::Write as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
@@ -317,7 +316,6 @@ where
     )?;
     let backup_authority_key: [u8; 32] = backup_authority_source
         .bytes()
-        .as_slice()
         .try_into()
         .map_err(|_| anyhow::anyhow!("backup authority HMAC key has the wrong length"))?;
     anyhow::ensure!(

@@ -29,14 +29,8 @@ use robin_highscores::backup::BackupVerificationReceiptV2;
 use robin_highscores::backup::load_backup_release_identity_oob_file;
 use robin_highscores::backup::parse_backup_id;
 use robin_run_protocol::canonical_json_bytes;
-use sqlx::Connection as _;
 use sqlx::sqlite::SqliteConnectOptions;
 use std::collections::BTreeSet;
-use std::io::Read as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;

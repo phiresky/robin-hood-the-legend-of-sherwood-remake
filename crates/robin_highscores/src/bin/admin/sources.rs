@@ -32,8 +32,6 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;

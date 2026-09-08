@@ -27,7 +27,6 @@ use super::filesystem::validate_managed_metadata;
 use super::filesystem::validate_private_pinned_file;
 use super::sources::load_preserved_release_authority;
 use super::verification::verify_backup_with_schema_policy;
-use anyhow::Context as _;
 use robin_highscores::Database;
 use robin_highscores::backup::BackupCleanupJournalV1;
 use robin_highscores::backup::BackupManifestV4 as BackupManifest;
@@ -40,8 +39,6 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io::Write as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;

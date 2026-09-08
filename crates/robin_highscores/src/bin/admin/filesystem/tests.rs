@@ -1,6 +1,4 @@
 use super::*;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 
 #[cfg(unix)]
 #[test]

@@ -2,13 +2,7 @@ use super::super::filesystem::write_private_file;
 use super::super::fixtures::write_test_release_manifest;
 use super::super::policy::RELEASE_AUTHORITY_STORE;
 use super::*;
-use sha2::Digest as _;
 use sha2::Sha256;
-use std::io::Read as _;
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 
 #[tokio::test]
 async fn pinned_restore_sources_reject_path_swaps_and_in_place_mutation() {

@@ -49,8 +49,6 @@ use sqlx::Row as _;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt as _;
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
