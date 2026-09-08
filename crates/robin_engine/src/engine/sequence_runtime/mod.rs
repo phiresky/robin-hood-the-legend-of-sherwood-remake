@@ -795,6 +795,7 @@ struct TargetAnimationContext<'a> {
     entities: &'a mut crate::entities::Entities,
     sequence_manager: &'a mut crate::sequence::SequenceManager,
     next_order_id: &'a mut u32,
+    preserve_trigger_visual: bool,
 }
 
 impl TargetAnimationContext<'_> {
@@ -844,6 +845,18 @@ impl TargetAnimationContext<'_> {
         if !owner_entity.kind().is_fx_target() {
             self.sequence_manager.element_terminated(seq_id, elem_idx);
             return OwnerActionBarrier::Skip;
+        }
+
+        if self.preserve_trigger_visual
+            && matches!(command, Command::PlayAnimFreeze | Command::PlayAnimFrozen)
+        {
+            // One-shot mechanisms can freeze on an entirely transparent spent
+            // sprite (Lincoln's drawbridge uses action 160). Keep the reusable
+            // control visible and pixel-pickable. This queued command executes
+            // after ActivatedBy* returns and captures its reversible patches.
+            // Complete normally so following mission messages still run once.
+            self.sequence_manager.element_terminated(seq_id, elem_idx);
+            return OwnerActionBarrier::Reach;
         }
 
         let progression_ordinal = match command {
