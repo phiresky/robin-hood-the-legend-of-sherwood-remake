@@ -102,6 +102,7 @@ impl AutosaveManifest {
 /// serialization and persistence happen on the single writer.
 #[derive(Clone, Serialize, Deserialize)]
 struct AutosaveJob {
+    capture_sequence: u32,
     save_directory: String,
     filename: String,
     payload: GameSaveFile,
@@ -228,11 +229,36 @@ pub(crate) enum AutosavePollResult {
     },
 }
 
+/// Deferred captures may finish out of order. Only a successfully published
+/// newer checkpoint supersedes an older pending snapshot.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Default, Serialize, Deserialize)]
+struct AutosavePublicationOrder {
+    newest_sequence: Option<u32>,
+    retired: bool,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl AutosavePublicationOrder {
+    fn permits(&self, sequence: u32) -> bool {
+        !self.retired && self.newest_sequence.is_none_or(|newest| sequence > newest)
+    }
+
+    fn published(&mut self, sequence: u32) {
+        self.newest_sequence = Some(
+            self.newest_sequence
+                .map_or(sequence, |newest| newest.max(sequence)),
+        );
+    }
+}
+
 /// Process-local scheduler and exactly-one-writer queue.
 pub(crate) struct AutosaveCoordinator {
     schedule: AutosaveSchedule,
     planned: Option<PlannedAutosave>,
     next_filename_sequence: u32,
+    #[cfg(target_arch = "wasm32")]
+    publication_order: std::rc::Rc<std::cell::RefCell<AutosavePublicationOrder>>,
     #[cfg(not(target_arch = "wasm32"))]
     command_tx: std::sync::mpsc::Sender<Option<AutosaveJob>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -279,6 +305,9 @@ impl Default for AutosaveCoordinator {
         #[cfg(target_arch = "wasm32")]
         {
             Self {
+                publication_order: std::rc::Rc::new(std::cell::RefCell::new(
+                    AutosavePublicationOrder::default(),
+                )),
                 schedule: AutosaveSchedule::default(),
                 planned: None,
                 next_filename_sequence: 0,
@@ -321,7 +350,7 @@ impl AutosaveCoordinator {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn enqueue(
+    fn prepare_job(
         &mut self,
         manager: &SaveGameManager,
         host: &Host,
@@ -331,7 +360,7 @@ impl AutosaveCoordinator {
         profiles: &ProfileManager,
         thumbnail: Option<Thumbnail>,
         reason: AutosaveReason,
-    ) -> Result<()> {
+    ) -> Result<(AutosaveJob, PlannedAutosave)> {
         let planned = self
             .planned
             .filter(|planned| planned.mission_id == mission_id && planned.reason == reason)
@@ -367,6 +396,7 @@ impl AutosaveCoordinator {
                 .collect(),
         };
         let job = AutosaveJob {
+            capture_sequence: self.next_filename_sequence,
             save_directory: manager.save_directory.clone(),
             filename,
             payload,
@@ -376,6 +406,24 @@ impl AutosaveCoordinator {
             reason,
         };
 
+        Ok((job, planned))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue(
+        &mut self,
+        manager: &SaveGameManager,
+        host: &Host,
+        game: &Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: &ProfileManager,
+        thumbnail: Option<Thumbnail>,
+        reason: AutosaveReason,
+    ) -> Result<()> {
+        let (job, planned) = self.prepare_job(
+            manager, host, game, engine, mission_id, profiles, thumbnail, reason,
+        )?;
         #[cfg(not(target_arch = "wasm32"))]
         self.command_tx
             .send(Some(job))
@@ -389,6 +437,9 @@ impl AutosaveCoordinator {
                 // caller instead of merely queueing a failed completion.
                 let completion = write_job(&job)
                     .with_context(|| format!("publishing urgent {reason:?} browser autosave"))?;
+                self.publication_order
+                    .borrow_mut()
+                    .published(job.capture_sequence);
                 self.completions.borrow_mut().push_back(completion);
                 self.writer_running.set(false);
             } else {
@@ -397,10 +448,11 @@ impl AutosaveCoordinator {
                     let completions = self.completions.clone();
                     let pending_jobs = self.pending_jobs.clone();
                     let writer_running = self.writer_running.clone();
+                    let publication_order = self.publication_order.clone();
                     wasm_bindgen_futures::spawn_local(async move {
                         // No timer precedes persistence. Periodic writes move
                         // to the next microtask only.
-                        drain_browser_jobs(&pending_jobs, &completions);
+                        drain_browser_jobs(&pending_jobs, &completions, &publication_order);
                         writer_running.set(false);
                     });
                 }
@@ -411,12 +463,91 @@ impl AutosaveCoordinator {
         self.planned = None;
         Ok(())
     }
+    /// Snapshot mission-entry state now, but finish its already-submitted GPU
+    /// thumbnail independently of the live frame. Real exits/background events
+    /// still use enqueue's synchronous publication path.
+    #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_initial_with_thumbnail(
+        &mut self,
+        manager: &SaveGameManager,
+        host: &Host,
+        game: &Game,
+        engine: &Engine,
+        mission_id: u32,
+        profiles: &ProfileManager,
+        thumbnail: std::pin::Pin<Box<dyn std::future::Future<Output = Option<Thumbnail>>>>,
+    ) -> Result<()> {
+        let planned = self.planned.context("missing initial autosave plan")?;
+        if planned.frame != 0
+            || planned.reason != AutosaveReason::MissionTransition
+            || self.schedule.mission_id == Some(mission_id)
+        {
+            bail!("deferred thumbnail requires the initial mission-entry autosave");
+        }
+        let started = web_time::Instant::now();
+        let (mut job, planned) = self.prepare_job(
+            manager,
+            host,
+            game,
+            engine,
+            mission_id,
+            profiles,
+            None,
+            AutosaveReason::MissionTransition,
+        )?;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "initial autosave: immutable payload capture"
+        );
+        let completions = self.completions.clone();
+        let publication_order = self.publication_order.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let thumbnail = thumbnail.await;
+            if !publication_order.borrow().permits(job.capture_sequence) {
+                tracing::info!(
+                    filename = job.filename,
+                    "Initial autosave superseded by a newer checkpoint or retired session"
+                );
+                return;
+            }
+            // write_job is synchronous on the browser thread, including both
+            // payload and manifest publication. There is no await/reentrant
+            // callback between this ordering check and advancing the watermark.
+            let completion = match thumbnail {
+                Some(thumbnail) => {
+                    job.thumbnail = Some(thumbnail);
+                    match write_job(&job) {
+                        Ok(completion) => {
+                            publication_order
+                                .borrow_mut()
+                                .published(job.capture_sequence);
+                            completion
+                        }
+                        Err(error) => AutosaveCompletion::failed(&job, error),
+                    }
+                }
+                None => AutosaveCompletion::failed(
+                    &job,
+                    anyhow::anyhow!("initial autosave thumbnail capture failed"),
+                ),
+            };
+            completions.borrow_mut().push_back(completion);
+        });
+        self.schedule
+            .commit(planned.mission_id, planned.frame, planned.reason);
+        self.planned = None;
+        Ok(())
+    }
 
     fn next_unique_filename(&mut self, manager: &SaveGameManager) -> Result<String> {
         let timestamp = current_unix_timestamp()?;
         loop {
             let sequence = self.next_filename_sequence;
-            self.next_filename_sequence = self.next_filename_sequence.wrapping_add(1);
+            self.next_filename_sequence = self
+                .next_filename_sequence
+                .checked_add(1)
+                .context("autosave sequence exhausted")?;
             let filename = format!("Autosave_{timestamp}_{sequence:04}");
             if manager.find_by_filename(&filename).is_none() {
                 return Ok(filename);
@@ -459,7 +590,9 @@ impl AutosaveCoordinator {
     /// Finish every accepted native write and surface every queued completion
     /// before the callback/save-manager pair is destroyed. Browser urgent
     /// writes are synchronous; periodic microtasks retain their own queue and
-    /// are recovered from the manifest when the next manager opens.
+    /// are recovered from the manifest when the next manager opens. A pending
+    /// initial thumbnail is retired here so it cannot resurrect a checkpoint
+    /// after this session's save manager has shut down.
     pub(crate) fn shutdown_and_poll(
         &mut self,
         manager: &mut SaveGameManager,
@@ -469,9 +602,17 @@ impl AutosaveCoordinator {
         #[cfg(target_arch = "wasm32")]
         {
             if !self.pending_jobs.borrow().is_empty() {
-                drain_browser_jobs(&self.pending_jobs, &self.completions);
+                drain_browser_jobs(
+                    &self.pending_jobs,
+                    &self.completions,
+                    &self.publication_order,
+                );
                 self.writer_running.set(false);
             }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.publication_order.borrow_mut().retired = true;
         }
         self.poll(manager)
     }
@@ -496,10 +637,23 @@ impl AutosaveCoordinator {
 fn drain_browser_jobs(
     pending_jobs: &std::rc::Rc<std::cell::RefCell<VecDeque<AutosaveJob>>>,
     completions: &std::rc::Rc<std::cell::RefCell<VecDeque<AutosaveCompletion>>>,
+    publication_order: &std::rc::Rc<std::cell::RefCell<AutosavePublicationOrder>>,
 ) {
     while let Some(job) = pending_jobs.borrow_mut().pop_front() {
+        if !publication_order.borrow().permits(job.capture_sequence) {
+            tracing::info!(
+                filename = job.filename,
+                "Queued autosave superseded by a newer checkpoint or retired session"
+            );
+            continue;
+        }
         let completion = match write_job(&job) {
-            Ok(completion) => completion,
+            Ok(completion) => {
+                publication_order
+                    .borrow_mut()
+                    .published(job.capture_sequence);
+                completion
+            }
             Err(error) => AutosaveCompletion::failed(&job, error),
         };
         completions.borrow_mut().push_back(completion);
@@ -594,6 +748,7 @@ fn staged_manifest(
 }
 
 fn write_job(job: &AutosaveJob) -> Result<AutosaveCompletion> {
+    let started = web_time::Instant::now();
     tracing::info!(
         filename = job.filename,
         reason = ?job.reason,
@@ -618,6 +773,10 @@ fn write_job(job: &AutosaveJob) -> Result<AutosaveCompletion> {
         |manifest| persist_manifest(&job.save_directory, manifest),
         |filename| remove_payload(&job.save_directory, filename),
     )?;
+    tracing::debug!(
+        elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+        "autosave: publish payload and manifest"
+    );
     Ok(AutosaveCompletion::Saved {
         manifest,
         filename: job.filename.clone(),
@@ -1160,6 +1319,25 @@ mod tests {
     }
 
     #[test]
+    fn delayed_capture_cannot_replace_a_newer_checkpoint_or_retired_session() {
+        let mut order = AutosavePublicationOrder::default();
+        assert!(order.permits(1));
+        // Finishing the old capture first must not suppress the newer capture.
+        order.published(1);
+        assert!(order.permits(2));
+        // A newer urgent save completed while an old GPU mapping was pending.
+        order.published(3);
+        assert!(!order.permits(2));
+        assert!(!order.permits(3));
+        assert!(order.permits(4));
+        // Failed publication does not call published, preserving the last
+        // successful watermark and allowing another pending recovery point.
+        assert!(order.permits(4));
+        order.retired = true;
+        assert!(!order.permits(4));
+    }
+
+    #[test]
     fn schedule_uses_mission_boundaries_and_five_active_minutes() {
         let mut schedule = AutosaveSchedule::default();
         assert_eq!(
@@ -1306,6 +1484,7 @@ mod tests {
         metadata.timestamp = payload.header.timestamp_unix.to_string();
 
         let completion = write_job(&AutosaveJob {
+            capture_sequence: 0,
             save_directory: save_directory.clone(),
             filename: filename.clone(),
             payload,
@@ -1364,6 +1543,7 @@ mod tests {
             coordinator
                 .command_tx
                 .send(Some(AutosaveJob {
+                    capture_sequence: 0,
                     save_directory: save_directory.clone(),
                     filename,
                     payload,

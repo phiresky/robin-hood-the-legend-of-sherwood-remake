@@ -276,10 +276,15 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             timeline: runtime,
             ..
         } = runtime;
+        let mut startup_timer = (runtime.frame_number() <= 1)
+            .then(|| super::setup::PhaseTimer::new("first mission presentation"));
         let profiling = super::frame_perf::enabled();
         let phase_start = super::frame_perf::start(profiling);
         finish_interactive_audio(runtime, world, frontend, callbacks);
         super::frame_perf::record(super::frame_perf::Phase::Audio, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("audio");
+        }
 
         let phase_start = super::frame_perf::start(profiling);
         runtime.begin_presentation();
@@ -428,27 +433,33 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 drain_print_screen_request(render_ctx.renderer, request);
             }
 
-            render_ctx.present();
+            let presented = render_ctx.present();
             #[cfg(all(target_arch = "wasm32", feature = "audio"))]
             if services.startup_audio_pause.take().is_some() {
-                // A surface-acquisition failure also ends this reservation:
-                // presentation failure must not indefinitely park warmup.
-                // Actual music/briefing playback always bypasses the guard.
+                // Actual playback bypasses this reservation. A failed surface
+                // acquisition must not indefinitely park speculative warmup.
+                if !presented {
+                    tracing::warn!(
+                        "startup audio warmup released after failed presentation attempt"
+                    );
+                }
                 tracing::info!(
+                    presented,
                     "startup timing: audio warmup released after mission present attempt"
                 );
             }
-            fixed_tick_presented = true;
+            fixed_tick_presented = presented;
             #[cfg(target_arch = "wasm32")]
             {
                 // One process-startup endpoint, after the first normal mission
                 // render/present call (never a loading-screen or screenshot
                 // render). This is not a browser compositor/display timestamp:
-                // present can also return after a surface acquisition failure.
                 // TODO: correlate this marker with browser presentation traces.
                 static FIRST_MISSION_PRESENT: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);
-                if !FIRST_MISSION_PRESENT.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                if presented
+                    && !FIRST_MISSION_PRESENT.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
                     tracing::info!("startup timing: first mission present returned");
                 }
             }
@@ -461,6 +472,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         }
         // end if draw_result == 0 (skip render in fast-forward)
         super::frame_perf::record(super::frame_perf::Phase::Render, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("render and present");
+        }
 
         // The original game's ordering is refresh (including draw/flip),
         // then sound updates, then the one-shot engine
@@ -478,6 +492,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         } = world.mutation();
         run_interactive_post_initialize(runtime, host, manager, assets, dev, &mut frame);
         super::frame_perf::record(super::frame_perf::Phase::PostInitialize, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("post initialize");
+        }
 
         if history_commit_pending {
             runtime.commit_simulation_history(
@@ -497,6 +514,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         finalize_interactive_recording(runtime, &mut frame);
         runtime.seal_terminal_recording(&frame);
         super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("history and replay");
+        }
 
         let phase_start = super::frame_perf::start(profiling);
         let view = world.view();
@@ -576,6 +596,9 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
         }
         super::frame_perf::record(super::frame_perf::Phase::Pacing, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("pacing");
+        }
     }
 }
 
@@ -586,6 +609,9 @@ impl InteractiveMission {
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<FrameControl, String> {
+        let first_frame = self.runtime.timeline.frame_number() == 0;
+        let mut startup_timer =
+            first_frame.then(|| super::setup::PhaseTimer::new("first mission frame"));
         let profiling = super::frame_perf::enabled();
         let total_start = super::frame_perf::start(profiling);
         let phase_start = super::frame_perf::start(profiling);
@@ -601,6 +627,9 @@ impl InteractiveMission {
             }
         };
         super::frame_perf::record(super::frame_perf::Phase::Prepare, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("input and saves");
+        }
         let PreparedFrame {
             frame,
             rewind_active,
@@ -625,6 +654,9 @@ impl InteractiveMission {
         .run(self, services)
         .await?;
         super::frame_perf::record(super::frame_perf::Phase::Simulation, phase_start);
+        if let Some(timer) = startup_timer.as_mut() {
+            timer.step("simulation");
+        }
         let control = match outcome {
             FrameSimulationOutcome::Control(control) => control,
             FrameSimulationOutcome::Present(handoff) => {
@@ -640,6 +672,9 @@ impl InteractiveMission {
                     },
                 )
                 .await;
+                if let Some(timer) = startup_timer.as_mut() {
+                    timer.step("presentation and pacing");
+                }
                 // A debugger tick is a separate complete transaction. In
                 // particular, do not replace the normal frame's pre-command
                 // checkpoint before modal inputs, PostInitialize, history and

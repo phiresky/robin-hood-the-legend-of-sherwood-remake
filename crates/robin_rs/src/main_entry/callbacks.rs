@@ -386,6 +386,32 @@ impl RustCallbacks {
             .map_err(|error| format!("{error:#}"))
     }
 
+    #[cfg(target_arch = "wasm32")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn enqueue_initial_autosave_with_thumbnail(
+        &mut self,
+        host: &crate::host::Host,
+        game: &crate::game::Game,
+        engine: &engine_api::Engine,
+        mission_id: u32,
+        profiles: &engine_profiles::ProfileManager,
+        thumbnail: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Option<crate::save_file::Thumbnail>>>,
+        >,
+    ) -> Result<(), String> {
+        self.autosave
+            .enqueue_initial_with_thumbnail(
+                &self.save_manager,
+                host,
+                game,
+                engine,
+                mission_id,
+                profiles,
+                thumbnail,
+            )
+            .map_err(|error| format!("{error:#}"))
+    }
+
     pub(crate) fn poll_autosaves(&mut self) -> Vec<AutosavePollResult> {
         self.autosave.poll(&mut self.save_manager)
     }

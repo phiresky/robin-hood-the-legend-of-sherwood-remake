@@ -172,8 +172,8 @@ impl FrameState {
         gpu: &GpuContext,
         pipelines: &mut PipelineStore,
         resources: &GpuResources,
-    ) {
-        let _ = self.present_impl(gpu, pipelines, resources, true);
+    ) -> bool {
+        self.present_impl(gpu, pipelines, resources, true)
     }
 
     /// Present the already-composited logical render target again without

@@ -5,6 +5,10 @@ use crate::window::GpuContext;
 
 pub type CapturedFrame = (u32, u32, Vec<u8>);
 
+/// Owns the submitted buffer; completing it never borrows the live renderer.
+pub type PendingCapture =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<CapturedFrame, CaptureError>>>>;
+
 #[derive(Debug, thiserror::Error, serde::Serialize, serde::Deserialize)]
 pub enum CaptureError {
     #[error("cannot capture a zero-sized render target")]
@@ -176,12 +180,13 @@ async fn complete(
     result
 }
 
-pub(super) async fn capture_frame_rgba_async(
+pub(super) fn begin_capture_frame_rgba(
     gpu: &GpuContext,
     pipelines: &PipelineStore,
     resources: &GpuResources,
     frame: &mut FrameState,
-) -> Result<CapturedFrame, CaptureError> {
+) -> PendingCapture {
+    let submitted_at = web_time::Instant::now();
     frame.push_implicit_base_quad();
     frame.upload_queue_geometry(gpu);
     let mut encoder = gpu
@@ -196,8 +201,30 @@ pub(super) async fn capture_frame_rgba_async(
     let submitted = submit(gpu, frame, encoder);
     // Submission consumes commands even when subsequent mapping fails.
     frame.clear_recording();
-    let (buffer, layout) = submitted?;
-    complete(gpu, buffer, layout).await
+    tracing::debug!(
+        elapsed_ms = submitted_at.elapsed().as_secs_f64() * 1000.0,
+        "save thumbnail GPU: encode and submit"
+    );
+    let submitted_at = web_time::Instant::now();
+    let gpu = gpu.clone();
+    Box::pin(async move {
+        let (buffer, layout) = submitted?;
+        let captured = complete(&gpu, buffer, layout).await;
+        tracing::debug!(
+            elapsed_ms = submitted_at.elapsed().as_secs_f64() * 1000.0,
+            "save thumbnail GPU: map and unpack"
+        );
+        captured
+    })
+}
+
+pub(super) async fn capture_frame_rgba_async(
+    gpu: &GpuContext,
+    pipelines: &PipelineStore,
+    resources: &GpuResources,
+    frame: &mut FrameState,
+) -> Result<CapturedFrame, CaptureError> {
+    begin_capture_frame_rgba(gpu, pipelines, resources, frame).await
 }
 
 /// Reads the logical target from the last presentation without consuming

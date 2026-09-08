@@ -37,7 +37,7 @@ mod resources;
 use atlas::AtlasSlot;
 use frame::FrameState;
 use pipelines::PipelineStore;
-pub use readback::{CaptureError, CapturedFrame};
+pub use readback::{CaptureError, CapturedFrame, PendingCapture};
 use resources::GpuResources;
 
 /// Borrowed identity minted by one renderer. Deserialization never restores authority.
@@ -1295,8 +1295,14 @@ impl Renderer {
     /// in submission order, switching pipeline per blend-mode and
     /// rebinding the texture group per texture source.
     pub fn present(&mut self) {
+        let _ = self.try_present();
+    }
+
+    /// True only when a swapchain texture was acquired and submitted.
+    /// This is not a physical display presentation timestamp.
+    pub fn try_present(&mut self) -> bool {
         self.frame
-            .present(&self.gpu, &mut self.pipelines, &self.resources);
+            .present(&self.gpu, &mut self.pipelines, &self.resources)
     }
 
     /// Re-present the last completed logical frame. Unlike [`Self::present`],
@@ -2604,6 +2610,17 @@ impl Renderer {
         readback::capture_presented_frame_rgba(&self.gpu, &self.frame)
     }
 
+    /// Submit a snapshot now; the owned completion can run after the renderer
+    /// has moved on to another frame without reading that later frame.
+    pub fn begin_capture_frame_rgba(&mut self) -> PendingCapture {
+        readback::begin_capture_frame_rgba(
+            &self.gpu,
+            &self.pipelines,
+            &self.resources,
+            &mut self.frame,
+        )
+    }
+
     pub async fn capture_frame_rgba_async(&mut self) -> Result<CapturedFrame, CaptureError> {
         readback::capture_frame_rgba_async(
             &self.gpu,
@@ -3262,6 +3279,20 @@ pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
     assert_eq!(
         renderer.try_capture_frame_rgba().unwrap().2,
         [255, 0, 0, 255].repeat(6)
+    );
+    // Detaching a submitted capture must preserve the old frame, even when
+    // another frame overwrites the logical target before mapping starts.
+    renderer.render_gpu_rect(0, 0, 3, 2, 0, 255, 0, 255);
+    let pending_capture = renderer.begin_capture_frame_rgba();
+    assert_eq!(renderer.draw_queue_checkpoint(), 0);
+    renderer.render_gpu_rect(0, 0, 3, 2, 0, 0, 255, 255);
+    assert_eq!(
+        renderer.try_capture_frame_rgba().unwrap().2,
+        [0, 0, 255, 255].repeat(6)
+    );
+    assert_eq!(
+        pollster::block_on(pending_capture).unwrap().2,
+        [0, 255, 0, 255].repeat(6)
     );
     let id = renderer
         .create_surface_from_rgb565(1, 1, &[0xffff])
