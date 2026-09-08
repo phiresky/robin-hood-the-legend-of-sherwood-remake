@@ -74,6 +74,7 @@ pub struct LoadPickerModalState {
     thumb_widget: WidgetPicture,
     thumb_cache: Option<ThumbnailCache>,
     controller: PickerController,
+    noise_tracker: widget_bridge::NoisyTracker,
     delete_confirmation: Option<YesNoModalState>,
     error_notice: Option<crate::save_recovery::ErrorNotice>,
     detailed_metadata: bool,
@@ -112,6 +113,7 @@ impl LoadPickerModalState {
             thumb_widget: WidgetPicture::new(u32::MAX),
             thumb_cache: None,
             controller: PickerController::new(input_state),
+            noise_tracker: widget_bridge::NoisyTracker::new(),
             delete_confirmation: None,
             error_notice: None,
             detailed_metadata,
@@ -230,12 +232,14 @@ impl LoadPickerModalState {
         let mouse_virt = widget_input.mouse_position;
         self.controller.input.end_frame();
         if let (Some(sound), Some(loader)) = (sound, sample_loader) {
-            widget_bridge::play_widget_noise(
+            widget_bridge::play_frame_widget_noise(
                 &widget_events,
+                self.controller.frame(),
                 widget_bridge::WIDGET_NOISY_BUTTON,
                 sound,
                 audio_backend,
                 loader,
+                &mut self.noise_tracker,
             );
         }
         match self.controller.take_action() {
@@ -725,6 +729,7 @@ pub async fn show_save_load(
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
     let mut controller = PickerController::new(input_state);
+    let mut noise_tracker = widget_bridge::NoisyTracker::new();
 
     // Stub keyboard fed into the input-field widget so its special-key
     // branches (Backspace / Delete / Left / Right / Home / End / Tab /
@@ -858,12 +863,14 @@ pub async fn show_save_load(
             let backend: Option<&mut dyn AudioBackend> = audio_backend
                 .as_deref_mut()
                 .map(|b| b as &mut dyn AudioBackend);
-            widget_bridge::play_widget_noise(
+            widget_bridge::play_frame_widget_noise(
                 &widget_events,
+                controller.frame(),
                 widget_bridge::WIDGET_NOISY_BUTTON,
                 snd,
                 backend,
                 loader,
+                &mut noise_tracker,
             );
         }
         if !field_events.is_empty()

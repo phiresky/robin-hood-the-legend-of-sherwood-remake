@@ -14,8 +14,8 @@ use crate::widget::FrameWnd;
 use robin_engine::graphic_config::GraphicConfig;
 
 use super::layout::{
-    MenuTransform, align_bottom_right, align_on_first_widget, dim_screen, draw_fallback_rect,
-    draw_screen_background, enter_modal_gpu_phase, render_text_virt_font,
+    MenuTransform, dim_screen, draw_fallback_rect, draw_screen_background, enter_modal_gpu_phase,
+    render_text_virt_font,
 };
 use super::resources::{
     IngameMenuResources, MT_BTN_CANCEL, MT_BTN_OK, MT_STR_ALPHA_VISION_FIELD,
@@ -35,13 +35,15 @@ const ID_OK: u32 = 300;
 const ID_CANCEL: u32 = 301;
 const ID_SCALE_BASE: u32 = 400;
 const ID_EFFECT_BASE: u32 = 500;
-const OPTION_START_Y: i32 = 250;
-const OPTION_MAX_HEIGHT: i32 = 20;
-const OPTION_SPACING: i32 = 2;
-const PRESET_LIST_X: i32 = 360;
-const PRESET_LIST_Y: i32 = 350;
-const PRESET_LIST_W: i32 = 240;
-const PRESET_LIST_ROW_H: i32 = 15;
+const ID_PAGE_BASE: u32 = 600;
+const COLUMN_W: i32 = 280;
+const PARAMETER_ROW_H: i32 = 40;
+const OPTION_START_Y: i32 = 112;
+const OPTION_SPACING: i32 = 6;
+const PRESET_LIST_X: i32 = 330;
+const PRESET_LIST_Y: i32 = 150;
+const PRESET_LIST_W: i32 = COLUMN_W;
+const PRESET_LIST_ROW_H: i32 = 28;
 const PRESET_LIST_ROWS: usize = 4;
 
 /// Labels for the scaling radio column.
@@ -73,271 +75,100 @@ pub async fn show_graphics(
         .unwrap_or(0)
         .saturating_sub(PRESET_LIST_ROWS / 2);
 
-    // ── OK / Cancel (bottom-right) ─────────────────────────────────
-    let (btn_w, btn_h) = resources.button_dimensions();
     let ok_label = resources.menu_text.get(MT_BTN_OK);
     let cancel_label = resources.menu_text.get(MT_BTN_CANCEL);
-    let bottom_labels: &[(&str, bool)] = &[(&ok_label, true), (&cancel_label, true)];
-    let bottom = align_bottom_right(bottom_labels, btn_w, btn_h);
-
-    // ── Resolution radio buttons (3 stacked from (30,100)) ────────
-    let (field_w, field_h) = resources.input_field_dimensions();
-    let res_low_label = resources.menu_text.get(MT_STR_RES_LOW);
-    let res_med_label = resources.menu_text.get(MT_STR_RES_MEDIUM);
-    let res_high_label = resources.menu_text.get(MT_STR_RES_HIGH);
-    let mut res_layout = vec![
-        super::layout::MenuButton {
-            label: res_low_label,
-            enabled: true,
-            x: 30,
-            y: 100,
-            w: field_w,
-            h: field_h,
-        },
-        super::layout::MenuButton {
-            label: res_med_label,
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: field_h,
-        },
-        super::layout::MenuButton {
-            label: res_high_label,
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: field_h,
-        },
-    ];
-    align_on_first_widget(&mut res_layout, 2);
-    let widescreen_button = super::layout::MenuButton {
-        // Rust extension; shipped string tables predate widescreen support.
-        label: "Adaptive Widescreen".to_string(),
-        enabled: true,
-        x: 30,
-        y: 205,
-        w: field_w,
-        h: field_h,
-    };
-
-    // ── Option toggle buttons stacked below widescreen policy ─────
-    // Ten rows must remain fully visible in the fixed 640x480 virtual menu,
-    // including when a resource pack supplies unusually tall field sprites.
-    let option_h = field_h.clamp(1, OPTION_MAX_HEIGHT);
-    let mut opt_layout = vec![
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
-            enabled: true,
-            x: 30,
-            y: OPTION_START_Y,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_TRANSPARENT_SHADOWS),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_EFFECT_ANIMATIONS),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            label: resources.menu_text.get(MT_STR_BCKGND_ANIMATIONS),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            // Rust extension; the original string table has no label for it.
-            label: "Fog/Night All Sprites".to_string(),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            // Rust extension; the original string table has no label for it.
-            label: "Native Refresh Rate".to_string(),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            label: "Mission Countdown".to_string(),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            label: "Dynamic Ambience Visuals".to_string(),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            label: "Diplomacy Colors (neutral = amber)".to_string(),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-        super::layout::MenuButton {
-            // Rust extension; shipped string tables predate this cursor aid.
-            label: "Quick-Action Cursor Pulse".to_string(),
-            enabled: true,
-            x: 30,
-            y: 0,
-            w: field_w,
-            h: option_h,
-        },
-    ];
-    assert_eq!(
-        opt_layout.len(),
-        OPTION_COUNT as usize,
-        "graphics option layout/count drifted"
-    );
-    align_on_first_widget(&mut opt_layout, OPTION_SPACING);
-    assert!(
-        opt_layout
-            .last()
-            .is_some_and(|row| row.y + row.h <= super::layout::MENU_H),
-        "graphics option rows must fit the 640x480 virtual menu"
-    );
-
-    // ── Scaling radios (right column, stacked from (360, 100)) ─────
-    // One row per supported [`TextureScaleMode`]. RetroArch is omitted when
-    // this build cannot execute presets; selected shaders fail explicitly
-    // instead of silently changing the requested presentation mode.
-    // We use the OK/Cancel button width (not the full input-field
-    // width) so the rows fit inside the menu frame without clipping
-    // the right edge, and each row is shorter than a resolution button
-    // so the column fits within the vertical space that's left.
     let scale_modes = scale_modes();
-    let scale_btn_w = btn_w;
-    let scale_btn_h = 13;
-    let scale_row_spacing = 0;
-    let scale_x = super::layout::MENU_W - 40 - scale_btn_w;
-    let mut scale_layout: Vec<super::layout::MenuButton> = scale_modes
-        .iter()
-        .enumerate()
-        .map(|(i, mode)| super::layout::MenuButton {
-            label: mode.label().to_string(),
-            enabled: true,
-            x: scale_x,
-            y: if i == 0 { 94 } else { 0 },
-            w: scale_btn_w,
-            h: scale_btn_h,
-        })
-        .collect();
-    align_on_first_widget(&mut scale_layout, scale_row_spacing);
-
-    let effect_y = 94 + scale_modes.len() as i32 * scale_btn_h + 8;
-    let mut effect_layout: Vec<super::layout::MenuButton> = TextureEffect::ALL
-        .iter()
-        .map(|effect| super::layout::MenuButton {
-            label: effect.label().to_string(),
-            enabled: true,
-            x: scale_x,
-            y: if *effect == TextureEffect::None {
-                effect_y
-            } else {
-                0
-            },
-            w: scale_btn_w,
-            h: scale_btn_h,
-        })
-        .collect();
-    align_on_first_widget(&mut effect_layout, 0);
-
-    // Build the FrameWnd with all widgets.
+    let row_h = resources.button_dimensions().1;
+    let scale_x = 330;
+    let scale_btn_w = COLUMN_W;
+    let effect_y = OPTION_START_Y;
+    let parameter_y = PRESET_LIST_Y;
+    let mut page = 0;
     let mut frame = FrameWnd::default();
     frame.enabled = true;
     frame.input_enabled = true;
-
-    for (i, mb) in res_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
+    let mut add = |id, label: &str, x, y, width, height| {
+        let label = super::gameplay::fit_button_label(resources, label, true, width);
+        frame.add_widget_absolute(widget_bridge::make_button(id, &label, x, y, width, height));
+    };
+    for (i, label) in ["Display", "Scaling", "Effects & Tuning"]
+        .iter()
+        .enumerate()
+    {
+        add(
+            ID_PAGE_BASE + i as u32,
+            label,
+            30 + i as i32 * 196,
+            55,
+            188,
+            row_h,
+        );
+    }
+    for (i, label) in [
+        resources.menu_text.get(MT_STR_RES_LOW),
+        resources.menu_text.get(MT_STR_RES_MEDIUM),
+        resources.menu_text.get(MT_STR_RES_HIGH),
+    ]
+    .iter()
+    .enumerate()
+    {
+        add(
             ID_RES_BASE + i as u32,
-            &mb.label,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
+            label,
+            30,
+            OPTION_START_Y + i as i32 * (row_h + OPTION_SPACING),
+            COLUMN_W,
+            row_h,
+        );
     }
-    frame.add_widget_absolute(widget_bridge::make_button(
+    add(
         ID_ADAPTIVE_WIDESCREEN,
-        &widescreen_button.label,
-        widescreen_button.x,
-        widescreen_button.y,
-        widescreen_button.w,
-        widescreen_button.h,
-    ));
-    for (i, mb) in opt_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
-            ID_OPT_BASE + i as u32,
-            &mb.label,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
+        "Adaptive Widescreen",
+        30,
+        OPTION_START_Y + 3 * (row_h + OPTION_SPACING),
+        COLUMN_W,
+        row_h,
+    );
+    let option_labels = [
+        resources.menu_text.get(MT_STR_ALPHA_VISION_FIELD),
+        resources.menu_text.get(MT_STR_TRANSPARENT_SHADOWS),
+        resources.menu_text.get(MT_STR_EFFECT_ANIMATIONS),
+        resources.menu_text.get(MT_STR_BCKGND_ANIMATIONS),
+        "Fog/Night All Sprites".into(),
+        "Native Refresh Rate".into(),
+        "Mission Countdown".into(),
+        "Dynamic Ambience Visuals".into(),
+        "Diplomacy Colors (neutral = amber)".into(),
+        "Quick-Action Cursor Pulse".into(),
+    ];
+    assert_eq!(option_labels.len(), OPTION_COUNT as usize);
+    for (i, label) in option_labels.iter().enumerate() {
+        let (x, y) = option_position(i, row_h);
+        add(ID_OPT_BASE + i as u32, label, x, y, COLUMN_W, row_h);
     }
-    for (i, mb) in scale_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
+    for (i, mode) in scale_modes.iter().enumerate() {
+        let (x, y) = scaling_position(i, scale_modes.len(), row_h);
+        add(
             ID_SCALE_BASE + i as u32,
-            &mb.label,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
+            mode.label(),
+            x,
+            y,
+            COLUMN_W,
+            row_h,
+        );
     }
-    for (i, mb) in effect_layout.iter().enumerate() {
-        frame.add_widget_absolute(widget_bridge::make_button(
+    for (i, effect) in TextureEffect::ALL.iter().enumerate() {
+        add(
             ID_EFFECT_BASE + i as u32,
-            &mb.label,
-            mb.x,
-            mb.y,
-            mb.w,
-            mb.h,
-        ));
+            effect.label(),
+            30,
+            effect_y + i as i32 * (row_h + OPTION_SPACING),
+            COLUMN_W,
+            row_h,
+        );
     }
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_OK,
-        &bottom[0].label,
-        bottom[0].x,
-        bottom[0].y,
-        bottom[0].w,
-        bottom[0].h,
-    ));
-    frame.add_widget_absolute(widget_bridge::make_button(
-        ID_CANCEL,
-        &bottom[1].label,
-        bottom[1].x,
-        bottom[1].y,
-        bottom[1].w,
-        bottom[1].h,
-    ));
+    add(ID_OK, &ok_label, 330, 472 - row_h, 134, row_h);
+    add(ID_CANCEL, &cancel_label, 476, 472 - row_h, 134, row_h);
 
     let title = resources.menu_text.get(MT_TTL_GRAPHICS);
     let res_label = resources.menu_text.get(MT_STR_RES);
@@ -347,7 +178,6 @@ pub async fn show_graphics(
     let mut accepted = false;
     let mut parameter_page_effect = false;
     let mut parameter_status = String::new();
-    let parameter_y = effect_y + TextureEffect::ALL.len() as i32 * scale_btn_h + 14;
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
 
@@ -357,15 +187,15 @@ pub async fn show_graphics(
             input_state.update_from_event(&event, transform);
             match event {
                 GameEvent::Quit => done = true,
-                GameEvent::MouseDown(x, y, 1, _) => {
+                GameEvent::MouseDown(x, y, 1, _) if page == 2 => {
                     let (vx, vy) = transform.from_screen(x, y);
                     let row_count = if parameter_page_effect { 5 } else { 3 };
                     if (edit.working.scale_mode != TextureScaleMode::RetroArch
                         || parameter_page_effect)
                         && (scale_x..scale_x + scale_btn_w).contains(&vx)
-                        && (parameter_y..parameter_y + row_count * 12).contains(&vy)
+                        && (parameter_y..parameter_y + row_count * PARAMETER_ROW_H).contains(&vy)
                     {
-                        let row = ((vy - parameter_y) / 12) as usize;
+                        let row = ((vy - parameter_y) / PARAMETER_ROW_H) as usize;
                         adjust_parameter(
                             &mut edit.working,
                             parameter_page_effect,
@@ -373,7 +203,8 @@ pub async fn show_graphics(
                             vx >= scale_x + scale_btn_w / 2,
                         );
                         dirty = true;
-                    } else if edit.working.scale_mode == TextureScaleMode::RetroArch
+                    } else if page == 2
+                        && edit.working.scale_mode == TextureScaleMode::RetroArch
                         && !parameter_page_effect
                         && (PRESET_LIST_X..PRESET_LIST_X + PRESET_LIST_W).contains(&vx)
                         && (PRESET_LIST_Y
@@ -390,7 +221,8 @@ pub async fn show_graphics(
                     }
                 }
                 GameEvent::MouseWheel(delta)
-                    if edit.working.scale_mode == TextureScaleMode::RetroArch
+                    if page == 2
+                        && edit.working.scale_mode == TextureScaleMode::RetroArch
                         && !parameter_page_effect =>
                 {
                     if delta > 0 {
@@ -407,7 +239,7 @@ pub async fn show_graphics(
                 GameEvent::KeyDown {
                     keycode: Keycode::Char(b'i'),
                     ..
-                } if edit.working.scale_mode == TextureScaleMode::RetroArch => {
+                } if page == 2 && edit.working.scale_mode == TextureScaleMode::RetroArch => {
                     match pick_retroarch_preset().await {
                         Ok(Some(path)) => {
                             let selected = path.to_string_lossy().to_string();
@@ -440,7 +272,8 @@ pub async fn show_graphics(
                     ..
                 } => done = true,
                 GameEvent::KeyDown { keycode, .. }
-                    if edit.working.scale_mode == TextureScaleMode::RetroArch
+                    if page == 2
+                        && edit.working.scale_mode == TextureScaleMode::RetroArch
                         && !parameter_page_effect =>
                 {
                     let current = preset_index(retroarch_presets, &edit.working.shader_preset)
@@ -469,12 +302,21 @@ pub async fn show_graphics(
             }
         }
 
+        for widget in frame.widgets_mut() {
+            let active = widget_page(widget.id()).is_none_or(|owner| owner == page);
+            let base = widget.base_mut();
+            base.enabled = active;
+            if !active {
+                base.state = crate::ui::UiState::Default;
+            }
+        }
         let widget_input = input_state.as_widget_input();
         let events = frame.process_input(&widget_input);
         input_state.end_frame();
 
         if let Some(id) = widget_bridge::find_activated(&events) {
             match id {
+                id if (ID_PAGE_BASE..ID_PAGE_BASE + 3).contains(&id) => page = id - ID_PAGE_BASE,
                 ID_OK => {
                     accepted = true;
                     done = true;
@@ -525,127 +367,170 @@ pub async fn show_graphics(
 
         if let Some(font) = resources.title_font_any() {
             let tw = font.text_width(&title);
-            render_text_virt_font(renderer, font, transform, &title, (490 - tw) / 2, 20);
+            render_text_virt_font(renderer, font, transform, &title, (640 - tw) / 2, 20);
         }
         if let Some(font) = resources.label_font_any() {
-            render_text_virt_font(renderer, font, transform, &res_label, 30, 80);
-            render_text_virt_font(renderer, font, transform, &fx_label, 30, 230);
-            render_text_virt_font(renderer, font, transform, "Scaling", scale_x, 80);
-            render_text_virt_font(
-                renderer,
-                font,
-                transform,
-                "Texture effect",
-                scale_x,
-                effect_y - 12,
-            );
-            if edit.working.scale_mode == TextureScaleMode::RetroArch && !parameter_page_effect {
+            if page == 0 {
+                render_text_virt_font(renderer, font, transform, &res_label, 30, 90);
+                render_text_virt_font(renderer, font, transform, &fx_label, 330, 90);
                 render_text_virt_font(
                     renderer,
                     font,
                     transform,
-                    "Preset",
-                    PRESET_LIST_X,
-                    PRESET_LIST_Y - 18,
+                    &fx_label,
+                    30,
+                    option_position(7, row_h).1 - 22,
                 );
+            } else if page == 1 {
+                render_text_virt_font(renderer, font, transform, "Scaling", 30, 90);
+            }
+            if page == 2 {
                 render_text_virt_font(
                     renderer,
                     font,
                     transform,
-                    "Press I to import a native .slangp preset",
-                    PRESET_LIST_X,
-                    PRESET_LIST_Y + PRESET_LIST_ROW_H * PRESET_LIST_ROWS as i32 + 2,
+                    "Texture effect",
+                    30,
+                    effect_y - 22,
+                );
+                if page == 2
+                    && edit.working.scale_mode == TextureScaleMode::RetroArch
+                    && !parameter_page_effect
+                {
+                    render_text_virt_font(
+                        renderer,
+                        font,
+                        transform,
+                        "Preset",
+                        PRESET_LIST_X,
+                        PRESET_LIST_Y - 18,
+                    );
+                    render_text_virt_font(
+                        renderer,
+                        font,
+                        transform,
+                        "Press I to import a preset",
+                        PRESET_LIST_X,
+                        PRESET_LIST_Y + PRESET_LIST_ROW_H * PRESET_LIST_ROWS as i32 + 2,
+                    );
+                } else {
+                    let page = if parameter_page_effect {
+                        "Effect parameters (Tab)"
+                    } else {
+                        "Upscaler parameters (Tab)"
+                    };
+                    render_text_virt_font(
+                        renderer,
+                        font,
+                        transform,
+                        page,
+                        scale_x,
+                        parameter_y - 24,
+                    );
+                }
+            }
+            if page == 2 && !parameter_status.is_empty() {
+                let status = fit_label(font, &parameter_status, 580);
+                render_text_virt_font(renderer, font, transform, &status, 30, 410);
+            }
+        }
+
+        // Render only controls owned by the active page.
+        if page == 0 {
+            for i in 0..3u32 {
+                if let Some(w) = frame.widget(ID_RES_BASE + i) {
+                    widget_bridge::draw_widget_radio(
+                        renderer,
+                        resources,
+                        transform,
+                        w,
+                        is_resolution_selected(&edit.working, i as usize),
+                    );
+                }
+            }
+            if let Some(w) = frame.widget(ID_ADAPTIVE_WIDESCREEN) {
+                widget_bridge::draw_widget_radio(
+                    renderer,
+                    resources,
+                    transform,
+                    w,
+                    edit.working.adaptive_widescreen,
+                );
+            }
+            for i in 0..OPTION_COUNT {
+                if let Some(w) = frame.widget(ID_OPT_BASE + i) {
+                    widget_bridge::draw_widget_radio(
+                        renderer,
+                        resources,
+                        transform,
+                        w,
+                        is_option_selected(&edit.working, i as usize),
+                    );
+                }
+            }
+        }
+        if page == 1 {
+            for (i, mode) in scale_modes.iter().enumerate() {
+                if let Some(w) = frame.widget(ID_SCALE_BASE + i as u32) {
+                    widget_bridge::draw_widget_radio(
+                        renderer,
+                        resources,
+                        transform,
+                        w,
+                        edit.working.scale_mode == *mode,
+                    );
+                }
+            }
+        }
+        if page == 2 {
+            for (i, effect) in TextureEffect::ALL.iter().enumerate() {
+                if let Some(w) = frame.widget(ID_EFFECT_BASE + i as u32) {
+                    widget_bridge::draw_widget_radio(
+                        renderer,
+                        resources,
+                        transform,
+                        w,
+                        edit.working.texture_effect == *effect,
+                    );
+                }
+            }
+
+            if page == 2
+                && edit.working.scale_mode == TextureScaleMode::RetroArch
+                && !parameter_page_effect
+            {
+                draw_preset_list(
+                    renderer,
+                    resources,
+                    transform,
+                    retroarch_presets,
+                    preset_scroll,
+                    &edit.working.shader_preset,
                 );
             } else {
-                let page = if parameter_page_effect {
-                    "Effect parameters (Tab)"
-                } else {
-                    "Upscaler parameters (Tab)"
-                };
-                render_text_virt_font(renderer, font, transform, page, scale_x, parameter_y - 12);
-            }
-            if !parameter_status.is_empty() {
-                render_text_virt_font(renderer, font, transform, &parameter_status, 30, 410);
-            }
-        }
-
-        // Render radio buttons with config-driven selected state.
-        for i in 0..3u32 {
-            if let Some(w) = frame.widget(ID_RES_BASE + i) {
-                widget_bridge::draw_widget_radio(
+                draw_parameter_panel(
                     renderer,
                     resources,
                     transform,
-                    w,
-                    is_resolution_selected(&edit.working, i as usize),
+                    &edit.working,
+                    parameter_page_effect,
+                    scale_x,
+                    parameter_y,
+                    scale_btn_w,
                 );
             }
         }
-        if let Some(w) = frame.widget(ID_ADAPTIVE_WIDESCREEN) {
-            widget_bridge::draw_widget_radio(
+        for i in 0..3 {
+            widget_bridge::draw_widget_button(
                 renderer,
                 resources,
                 transform,
-                w,
-                edit.working.adaptive_widescreen,
+                frame
+                    .widget(ID_PAGE_BASE + i)
+                    .expect("graphics page button"),
+                page == i,
             );
         }
-        for i in 0..OPTION_COUNT {
-            if let Some(w) = frame.widget(ID_OPT_BASE + i) {
-                widget_bridge::draw_widget_radio(
-                    renderer,
-                    resources,
-                    transform,
-                    w,
-                    is_option_selected(&edit.working, i as usize),
-                );
-            }
-        }
-        for (i, mode) in scale_modes.iter().enumerate() {
-            if let Some(w) = frame.widget(ID_SCALE_BASE + i as u32) {
-                widget_bridge::draw_widget_radio(
-                    renderer,
-                    resources,
-                    transform,
-                    w,
-                    edit.working.scale_mode == *mode,
-                );
-            }
-        }
-        for (i, effect) in TextureEffect::ALL.iter().enumerate() {
-            if let Some(w) = frame.widget(ID_EFFECT_BASE + i as u32) {
-                widget_bridge::draw_widget_radio(
-                    renderer,
-                    resources,
-                    transform,
-                    w,
-                    edit.working.texture_effect == *effect,
-                );
-            }
-        }
-
-        if edit.working.scale_mode == TextureScaleMode::RetroArch && !parameter_page_effect {
-            draw_preset_list(
-                renderer,
-                resources,
-                transform,
-                retroarch_presets,
-                preset_scroll,
-                &edit.working.shader_preset,
-            );
-        } else {
-            draw_parameter_panel(
-                renderer,
-                resources,
-                transform,
-                &edit.working,
-                parameter_page_effect,
-                scale_x,
-                parameter_y,
-                scale_btn_w,
-            );
-        }
-
         // OK / Cancel as regular buttons.
         if let Some(w) = frame.widget(ID_OK) {
             widget_bridge::draw_widget_button(renderer, resources, transform, w, false);
@@ -667,6 +552,45 @@ pub async fn show_graphics(
         renderer.apply_upscale_config(config);
     }
     outcome
+}
+
+fn widget_page(id: u32) -> Option<u32> {
+    match id {
+        ID_ADAPTIVE_WIDESCREEN | ID_RES_BASE..=102 | ID_OPT_BASE..=209 => Some(0),
+        ID_SCALE_BASE..=499 => Some(1),
+        ID_EFFECT_BASE..=599 => Some(2),
+        _ => None,
+    }
+}
+
+fn scaling_position(index: usize, count: usize, row_h: i32) -> (i32, i32) {
+    let rows = count.div_ceil(2).max(1);
+    assert!(rows <= 8, "scaling choices need another page");
+    (
+        if index < rows { 30 } else { 330 },
+        OPTION_START_Y + (index % rows) as i32 * (row_h + OPTION_SPACING),
+    )
+}
+
+fn option_position(index: usize, row_h: i32) -> (i32, i32) {
+    assert!(
+        index < OPTION_COUNT as usize,
+        "invalid graphics option index"
+    );
+    if index < 7 {
+        (
+            330,
+            OPTION_START_Y + index as i32 * (row_h + OPTION_SPACING),
+        )
+    } else {
+        (
+            30,
+            OPTION_START_Y
+                + 4 * (row_h + OPTION_SPACING)
+                + 24
+                + (index - 7) as i32 * (row_h + OPTION_SPACING),
+        )
+    }
 }
 
 fn preset_index(
@@ -807,7 +731,7 @@ fn draw_parameter_panel(
         &upscale_values
     };
     for (row, (label, value)) in values.iter().enumerate() {
-        let row_y = y + row as i32 * 12;
+        let row_y = y + row as i32 * PARAMETER_ROW_H;
         render_text_virt_font(
             renderer,
             font,
@@ -816,14 +740,15 @@ fn draw_parameter_panel(
             x,
             row_y,
         );
-        let bar_x = x + width - 72;
-        let (screen_x, screen_y) = transform.to_screen(bar_x, row_y + 2);
-        let filled = (68 * i32::from(*value)) / 100;
+        let bar_x = x;
+        let (screen_x, screen_y) = transform.to_screen(bar_x, row_y + 22);
+        let bar_w = width - 8;
+        let filled = (bar_w * i32::from(*value)) / 100;
         renderer.fill_screen(
             Some(&engine_sprite::BBox::from_coords(
                 screen_x as f32,
                 screen_y as f32,
-                (screen_x + 68) as f32,
+                (screen_x + bar_w) as f32,
                 (screen_y + 7) as f32,
             )),
             Renderer::create_color_16(25, 20, 16),
@@ -935,6 +860,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn graphics_pages_keep_all_choices_above_the_footer() {
+        let row_h = 34;
+        let modes = scale_modes();
+        for (index, _) in modes.iter().enumerate() {
+            let (x, y) = scaling_position(index, modes.len(), row_h);
+            assert!(x >= 30 && x + COLUMN_W <= 610);
+            assert!(y >= OPTION_START_Y && y + row_h <= 426);
+            for previous in 0..index {
+                let (other_x, other_y) = scaling_position(previous, modes.len(), row_h);
+                assert!(x != other_x || y - other_y >= row_h + OPTION_SPACING);
+            }
+            assert_eq!(widget_page(ID_SCALE_BASE + index as u32), Some(1));
+        }
+        for index in 0..OPTION_COUNT {
+            assert_eq!(widget_page(ID_OPT_BASE + index), Some(0));
+        }
+        for index in 0..TextureEffect::ALL.len() {
+            assert_eq!(widget_page(ID_EFFECT_BASE + index as u32), Some(2));
+        }
+        for id in [ID_OK, ID_CANCEL, ID_PAGE_BASE, ID_PAGE_BASE + 2] {
+            assert_eq!(widget_page(id), None);
+        }
+        const { assert!(PRESET_LIST_Y + 5 * PARAMETER_ROW_H < 410) };
+    }
+
+    #[test]
     fn timed_ambience_graphics_options_are_independently_reachable() {
         let mut config = GraphicConfig::default();
         let adaptive_widescreen = config.adaptive_widescreen;
@@ -961,12 +912,15 @@ mod tests {
 
     #[test]
     fn all_graphics_option_rows_fit_and_keep_stable_mappings_at_640x480() {
-        let option_h = 64_i32.clamp(1, OPTION_MAX_HEIGHT);
-        let bottom = OPTION_START_Y
-            + i32::try_from(OPTION_COUNT).unwrap() * option_h
-            + (i32::try_from(OPTION_COUNT).unwrap() - 1) * OPTION_SPACING;
-        assert_eq!(bottom, 468);
-        assert!(bottom <= super::super::layout::MENU_H);
+        let row_h = 34;
+        for index in 0..OPTION_COUNT as usize {
+            let (x, y) = option_position(index, row_h);
+            assert!(x >= 30 && x + COLUMN_W <= 610);
+            assert!(y + row_h <= 426);
+            if x == 30 {
+                assert!(y >= 296, "toggles must sit below the resolution controls");
+            }
+        }
 
         let mut config = GraphicConfig::default();
         let before = config.clone();

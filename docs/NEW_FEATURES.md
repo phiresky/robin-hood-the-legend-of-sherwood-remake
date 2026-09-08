@@ -947,6 +947,10 @@ patch policy. Target callbacks remember the animated patch group they apply;
 subsequent activations replay that group directly, bypassing script one-shot
 guards without repeating mission messages or rewards. Locks and transitions
 prevent repeated activation while a mechanism is unavailable or still moving.
+Captured controls retain their usable sprite instead of accepting a queued
+one-shot freeze pose (Lincoln's cut drawbridge rope otherwise becomes entirely
+transparent and cannot be clicked again). Other targets retain their authored
+animation behavior.
 TODO: patches applied later by delayed script commands need authored trigger
 metadata; only patch changes made during the target callback are captured.
 

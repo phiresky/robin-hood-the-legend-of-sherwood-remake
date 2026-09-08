@@ -3239,10 +3239,17 @@ impl EngineInner {
                                         }
                                         _ => None,
                                     };
+                                let preserve_trigger_visual = self.control.sim_config.reversible_background_patches
+                                    && self.script_domains.interactables.patches.iter().any(|patch| {
+                                        patch.repeat_activation.as_ref().is_some_and(|(handle, _)| {
+                                            *handle == crate::natives::ScriptHandleCodec::actor_handle(owner)
+                                        })
+                                    });
                                 let barrier = TargetAnimationContext {
                                     entities: &mut self.world.entities,
                                     sequence_manager: &mut self.orders.sequence_manager,
                                     next_order_id: &mut self.orders.next_order_id,
+                                    preserve_trigger_visual,
                                 }
                                 .dispatch_play_animation(owner, cmd, animation, seq_id, elem_idx);
                                 if barrier == OwnerActionBarrier::Skip {

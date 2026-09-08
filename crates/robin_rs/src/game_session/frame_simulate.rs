@@ -371,7 +371,7 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_trading_modal_outcome(outcome, host, &mut frame.post_commands);
+            dispatch_active_modal_outcome(outcome, host, &mut frame.post_commands);
             rendered = true;
             processed = true;
         }
@@ -384,7 +384,7 @@ async fn drive_scripted_modal_lanes(
     rendered
 }
 
-fn dispatch_trading_modal_outcome(
+fn dispatch_active_modal_outcome(
     outcome: ActiveModalOutcome,
     host: &mut Host,
     post_commands: &mut engine_player_command::FrameCommands,
@@ -405,7 +405,14 @@ fn dispatch_trading_modal_outcome(
             },
         ),
         ActiveModalOutcome::QuitMissionRequested => {
-            debug_assert!(false, "mission-state modal reached scripted modal lanes")
+            // A leave-mission prompt created after these lanes remains active
+            // into the next frame, where the shared modal driver ticks it.
+            // Preserve its Yes result just as on the prompt's first frame.
+            dispatch_local_command(
+                &host.transport,
+                post_commands,
+                &PlayerCommand::QuitMissionRequested,
+            );
         }
     }
 }
@@ -482,10 +489,7 @@ fn drive_leave_mission_prompt(
         &manager.engine,
         &assets.profile_manager,
     );
-    if outcome == ActiveModalOutcome::QuitMissionRequested {
-        let cmd = PlayerCommand::QuitMissionRequested;
-        dispatch_local_command(&host.transport, &mut frame.post_commands, &cmd);
-    }
+    dispatch_active_modal_outcome(outcome, host, &mut frame.post_commands);
     true
 }
 
@@ -1612,6 +1616,82 @@ fn manual_step_ui_block_reason(
 #[cfg(test)]
 mod tests {
     use super::{ScriptedModalMode, UiTaskKind, UiTaskModalAdmission, ui_task_modal_admission};
+
+    #[test]
+    fn shared_modal_driver_preserves_leave_mission_confirmation() {
+        use super::{ActiveModalOutcome, dispatch_active_modal_outcome};
+        use robin_engine::player_command::{FrameCommands, PlayerCommand};
+
+        let mut host = crate::host::Host::scratch(640.0, 480.0);
+        let mut commands = FrameCommands::new();
+        // Waiting or answering No must not end the mission.
+        dispatch_active_modal_outcome(ActiveModalOutcome::None, &mut host, &mut commands);
+        assert!(commands.commands.is_empty());
+
+        // A prompt carried over from the preceding frame is ticked by the
+        // shared driver. Its Yes outcome must reach the recorded transaction.
+        dispatch_active_modal_outcome(
+            ActiveModalOutcome::QuitMissionRequested,
+            &mut host,
+            &mut commands,
+        );
+        assert_eq!(commands.commands.len(), 1);
+        assert!(matches!(
+            commands.commands[0].command,
+            PlayerCommand::QuitMissionRequested
+        ));
+        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut engine = robin_engine::engine::Engine::new_for_test(
+            640.0,
+            480.0,
+            robin_engine::campaign::Campaign::default(),
+            &mut assets,
+        )
+        .expect("engine");
+        engine.test_set_mission_flags(false, false, true);
+        engine
+            .advance_frame(
+                &assets,
+                robin_engine::engine::SimulationFrameInput {
+                    post_commands: commands.commands.into_iter().map(Into::into).collect(),
+                    run_hourglass: false,
+                    ..Default::default()
+                },
+            )
+            .expect("admit the confirmation while the modal pauses simulation");
+        let next = engine
+            .advance_frame(&assets, Default::default())
+            .expect("advance after closing the victory prompt");
+        assert_eq!(
+            next.game_code(),
+            robin_engine::game_operation::GameCode::LevelSucceeded
+        );
+    }
+
+    #[test]
+    fn shared_modal_confirmation_waits_for_multiplayer_command_echo() {
+        use super::{ActiveModalOutcome, dispatch_active_modal_outcome};
+        use crate::multiplayer::{NetChannels, NetOutbound};
+        use robin_engine::player_command::{FrameCommands, PlayerCommand};
+
+        let mut host = crate::host::Host::scratch(640.0, 480.0);
+        let (channels, _incoming, outgoing, _, _) = NetChannels::new();
+        host.transport.net = Some(channels);
+        let mut commands = FrameCommands::new();
+        dispatch_active_modal_outcome(
+            ActiveModalOutcome::QuitMissionRequested,
+            &mut host,
+            &mut commands,
+        );
+        assert!(commands.commands.is_empty());
+        assert!(matches!(
+            outgoing.try_recv().expect("confirmation sent to server"),
+            NetOutbound::Input {
+                command: PlayerCommand::QuitMissionRequested,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn terminal_http_dismissals_become_reachable_after_campaign_handoff() {

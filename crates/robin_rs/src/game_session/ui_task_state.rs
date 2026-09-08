@@ -44,6 +44,7 @@ const BUTTON_GAP: i32 = 2;
 const MAX_PAGE_BUTTONS: usize = 8;
 const OPTIONS_SETTINGS_PER_PAGE: usize = 12;
 const OPTIONS_SETTING_ROW_START_Y: i32 = 112;
+const OPTIONS_SETTING_ROW_GAP: i32 = 6;
 const SPELLFORGE_CONTENT_BUTTON_Y: i32 = 350;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,6 +396,7 @@ pub(super) struct OptionsTaskState {
     original_keys: Vec<Option<KeyCode>>,
     original_amount_of_speaking: u16,
     frame: FrameWnd,
+    noise_tracker: widget_bridge::NoisyTracker,
     rows: Vec<OptionRow>,
     selected: usize,
     pager: OptionsPager,
@@ -454,6 +456,7 @@ impl OptionsTaskState {
                 custom_keys,
             ),
             frame: FrameWnd::default(),
+            noise_tracker: widget_bridge::NoisyTracker::new(),
             rows: Vec::new(),
             selected: 0,
             pager: OptionsPager::default(),
@@ -594,8 +597,7 @@ impl OptionsTaskState {
                     GameEvent::MouseWheel(delta)
                         if self.controller.page == OptionsPage::Shortcuts =>
                     {
-                        let max =
-                            REAL_KEY_COUNT as usize - MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
+                        let max = REAL_KEY_COUNT as usize - shortcut_visible_rows(resources);
                         if *delta > 0 {
                             self.shortcut_scroll = self.shortcut_scroll.saturating_sub(1);
                         } else if *delta < 0 {
@@ -617,7 +619,14 @@ impl OptionsTaskState {
             let widget_input = self.input.as_widget_input();
             let widget_events = self.frame.process_input(&widget_input);
             self.input.end_frame();
-            play_button_noise(&widget_events, sound_manager, audio_backend, sample_loader);
+            play_button_noise(
+                &widget_events,
+                &self.frame,
+                &mut self.noise_tracker,
+                sound_manager,
+                audio_backend,
+                sample_loader,
+            );
             if let Some(id) = widget_bridge::find_activated(&widget_events)
                 && let Some(outcome) = self.activate(
                     id as usize,
@@ -1001,7 +1010,7 @@ impl OptionsTaskState {
                 rows
             }
             OptionsPage::Shortcuts => {
-                let visible = MAX_PAGE_BUTTONS.min(REAL_KEY_COUNT as usize);
+                let visible = shortcut_visible_rows(resources);
                 let mut rows = (0..visible)
                     .map(|offset| {
                         let index = self.shortcut_scroll + offset;
@@ -1088,12 +1097,8 @@ impl OptionsTaskState {
         };
         self.selected = self.selected.min(self.rows.len().saturating_sub(1));
         let (button_w, button_h) = resources.button_dimensions();
-        let setting_button_w = button_w.min(290);
-        let row_h = if self.controller.page == OptionsPage::Shortcuts && self.rows.len() > 12 {
-            27
-        } else {
-            button_h.min(34)
-        };
+        let setting_button_w = 280;
+        let row_h = button_h;
         let mut frame = FrameWnd::default();
         frame.enabled = true;
         frame.input_enabled = true;
@@ -1104,18 +1109,20 @@ impl OptionsTaskState {
                     let setting = settings_seen;
                     settings_seen += 1;
                     (
-                        if setting < 6 { 30 } else { 320 },
+                        if setting < 6 { 30 } else { 330 },
                         OPTIONS_SETTING_ROW_START_Y
                             + i32::try_from(setting % 6).expect("option row fits i32")
-                                * (row_h + BUTTON_GAP),
+                                * (row_h + OPTIONS_SETTING_ROW_GAP),
                         setting_button_w,
                         row_h,
                     )
                 }
                 OptionRowAction::PreviousPage => (30, 388, button_w, row_h),
-                OptionRowAction::NextPage => (30, 388 + row_h + BUTTON_GAP, button_w, row_h),
+                OptionRowAction::NextPage => {
+                    (30, 388 + row_h + OPTIONS_SETTING_ROW_GAP, button_w, row_h)
+                }
                 OptionRowAction::ManageSpellforgeContent => {
-                    (320, SPELLFORGE_CONTENT_BUTTON_Y, setting_button_w, row_h)
+                    (330, SPELLFORGE_CONTENT_BUTTON_Y, setting_button_w, row_h)
                 }
                 OptionRowAction::AcceptPage if self.controller.page != OptionsPage::Shortcuts => {
                     (640 - button_w, 388, button_w, row_h)
@@ -1147,6 +1154,7 @@ impl OptionsTaskState {
             ));
         }
         self.frame = frame;
+        self.noise_tracker.clear();
     }
 
     fn render(
@@ -1292,6 +1300,7 @@ pub(super) struct SaveLoadTaskState {
     input: ModalInputState,
     transform: MenuTransform,
     buttons: FrameWnd,
+    noise_tracker: widget_bridge::NoisyTracker,
     confirmation: Option<(SaveConfirmation, YesNoModalState)>,
     text_input_active: bool,
     detailed_metadata: bool,
@@ -1335,6 +1344,7 @@ impl SaveLoadTaskState {
             input,
             transform,
             buttons,
+            noise_tracker: widget_bridge::NoisyTracker::new(),
             confirmation: None,
             text_input_active,
             detailed_metadata,
@@ -1501,7 +1511,14 @@ impl SaveLoadTaskState {
         let widget_input = self.input.as_widget_input();
         let widget_events = self.buttons.process_input(&widget_input);
         self.input.end_frame();
-        play_button_noise(&widget_events, sound_manager, audio_backend, sample_loader);
+        play_button_noise(
+            &widget_events,
+            &self.buttons,
+            &mut self.noise_tracker,
+            sound_manager,
+            audio_backend,
+            sample_loader,
+        );
         if let Some(id) = widget_bridge::find_activated(&widget_events) {
             activated = Some(id);
         }
@@ -1865,6 +1882,18 @@ fn mission_name(mission_id: u32, profiles: Option<&ProfileManager>) -> Option<St
         .filter(|name| !name.trim().is_empty())
 }
 
+fn shortcut_visible_rows(resources: &IngameMenuResources) -> usize {
+    // Reserve five native-height rows for presets and OK/Cancel.
+    let row_count = (480 - BUTTON_Y) / (resources.button_dimensions().1 + BUTTON_GAP);
+    assert!(
+        row_count > 5,
+        "native menu buttons leave no space for shortcut bindings"
+    );
+    ((row_count - 5) as usize)
+        .min(MAX_PAGE_BUTTONS)
+        .min(REAL_KEY_COUNT as usize)
+}
+
 fn options_footer_rows(resources: &IngameMenuResources) -> [OptionRow; 2] {
     [
         OptionRow {
@@ -1884,17 +1913,21 @@ fn options_footer_rows(resources: &IngameMenuResources) -> [OptionRow; 2] {
 
 fn play_button_noise(
     events: &[crate::ui::UiEvent],
+    frame: &FrameWnd,
+    tracker: &mut widget_bridge::NoisyTracker,
     sound_manager: Option<&mut SoundManager>,
     audio_backend: Option<&mut dyn AudioBackend>,
     sample_loader: Option<&SampleLoader>,
 ) {
     if let (Some(sound_manager), Some(sample_loader)) = (sound_manager, sample_loader) {
-        widget_bridge::play_widget_noise(
+        widget_bridge::play_frame_widget_noise(
             events,
+            frame,
             widget_bridge::WIDGET_NOISY_BUTTON,
             sound_manager,
             audio_backend,
             sample_loader,
+            tracker,
         );
     }
 }
@@ -2011,12 +2044,13 @@ mod tests {
         );
         for visible_index in 0..OPTIONS_SETTINGS_PER_PAGE {
             let column_index = visible_index % 6;
-            let x = if visible_index < 6 { 30 } else { 320 };
-            let y = OPTIONS_SETTING_ROW_START_Y + column_index as i32 * (row_height + BUTTON_GAP);
+            let x = if visible_index < 6 { 30 } else { 330 };
+            let y = OPTIONS_SETTING_ROW_START_Y
+                + column_index as i32 * (row_height + OPTIONS_SETTING_ROW_GAP);
             assert!((0..640).contains(&x));
             assert!(y >= OPTIONS_SETTING_ROW_START_Y && y + row_height < 350);
         }
-        let manage = (320, SPELLFORGE_CONTENT_BUTTON_Y, 290, row_height);
+        let manage = (330, SPELLFORGE_CONTENT_BUTTON_Y, 280, row_height);
         assert!(manage.0 + manage.2 <= 640);
         assert!(manage.1 + manage.3 < 388);
     }
