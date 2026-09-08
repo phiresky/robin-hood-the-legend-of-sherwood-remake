@@ -1,7 +1,9 @@
 //! Benchmark-only corpus rewrite: first N frames per character script initially,
-//! remaining exact VQ grids in rhs-tail/ dependencies. Authentication manifests
+//! remaining exact VQ grids in rhs-tail/ dependencies. Complete boot-dictionary
+//! opacity masks remain in initial raw metadata. Authentication manifests
 //! are deliberately not rebuilt; never distribute this as an official corpus.
 use anyhow::{Context, Result, ensure};
+use robin_assets::sprite_residency::{OpacityBatch, SpriteOpacity};
 use robin_assets::{
     shipping_datadir::{
         ShippingDatadir, ShippingMission, ShippingSpriteBank, decode_mission_compressed,
@@ -73,10 +75,11 @@ fn opacity_masks(
     bank: &ShippingSpriteBank,
     dictionaries: &[robin_assets::frame_holder::FrameDictionary],
     ids: &BTreeSet<u32>,
-) -> Result<(Vec<u8>, serde_json::Value)> {
+) -> Result<(Vec<u8>, serde_json::Value, OpacityBatch)> {
     use robin_assets::frame_holder::TRANSPARENT_COLOR_16;
     let mut bytes = Vec::new();
     let mut metadata = Vec::new();
+    let mut opacity_sprites = Vec::new();
     let mut hash = Sha256::new();
     hash.update(b"robinhood-sprite-opacity-v1\0");
     for (id, row) in bank.sprites.iter().filter(|(id, _)| ids.contains(id)) {
@@ -112,14 +115,28 @@ fn opacity_masks(
         hash.update([1]);
         hash.update(&blipped);
         metadata.push(serde_json::json!({"id":id,"width":row.width,"height":row.height,"offset":bytes.len(),"plane_bytes":ordinary.len()}));
-        bytes.extend(ordinary);
-        bytes.extend(blipped);
+        bytes.extend_from_slice(&ordinary);
+        bytes.extend_from_slice(&blipped);
+        opacity_sprites.push(SpriteOpacity {
+            bank_id: *id,
+            width: row.width,
+            height: row.height,
+            dictionary_index: row.dictionary_index,
+            ordinary,
+            blipped,
+        });
     }
     ensure!(metadata.len() == ids.len(), "opacity rows missing");
     let sha: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
     let compressed = zstd_compress_with_window(&bytes, 30)?;
     let report = serde_json::json!({"canonical_sha256":sha,"raw_bytes":bytes.len(),"zstd30_bytes":compressed.len(),"sprites":metadata,"bit_order":"row-major, least-significant bit first; ordinary then blipped for each sprite","dictionary_state":"boot"});
-    Ok((compressed, report))
+    Ok((
+        compressed,
+        report,
+        OpacityBatch {
+            sprites: opacity_sprites,
+        },
+    ))
 }
 
 fn append_tails(files: &mut Vec<String>, tails: &BTreeMap<String, String>) {
@@ -142,7 +159,19 @@ fn main() -> Result<()> {
         ensure!(!audit.exists(), "opacity audit directory exists");
     }
     let source = std::fs::canonicalize(&args[0])?;
-    let target = Path::new(&args[1]);
+    if let Some(audit) = audit {
+        let audit_absolute = std::env::current_dir()?.join(audit);
+        let ancestor = audit_absolute
+            .ancestors()
+            .find(|p| p.exists())
+            .context("audit ancestor missing")?;
+        ensure!(
+            !std::fs::canonicalize(ancestor)?.starts_with(&source),
+            "audit output cannot be inside source"
+        );
+    }
+    let target_path = std::env::current_dir()?.join(&args[1]);
+    let target = target_path.as_path();
     let first: usize = args[2].parse()?;
     ensure!(first > 0, "first N must be positive");
     ensure!(
@@ -286,6 +315,21 @@ fn main() -> Result<()> {
         if counts[1] == 0 {
             continue;
         }
+        let dictionaries = &dd
+            .sprite_bank
+            .as_ref()
+            .context("boot dictionary bank missing")?
+            .dictionaries;
+        let (mask_bytes, mask_report, opacity_batch) =
+            opacity_masks(original_bank, dictionaries, &vq_ids)?;
+        let opacity_key = format!("__startup_opacity/{name}.bin");
+        let opacity_encoded = robin_assets::sprite_residency::encode(&opacity_batch)?;
+        ensure!(
+            !head.raw.contains_key(&opacity_key),
+            "derived opacity key already exists"
+        );
+        head.raw
+            .insert(opacity_key.clone(), opacity_encoded.clone());
         let head_bytes = zstd_compress_with_window(&encode_mission_native(&head), 30)?;
         let tail_bytes = zstd_compress_with_window(&encode_mission_native(&tail), 30)?;
         // Exercise the default all-parts merge contract using serialized files.
@@ -293,6 +337,10 @@ fn main() -> Result<()> {
         merged.merge_part(decode_mission_compressed(&head_bytes)?)?;
         merged.merge_part(decode_mission_compressed(&tail_bytes)?)?;
         materialize(&mut merged)?;
+        ensure!(
+            merged.raw.remove(&opacity_key).as_ref() == Some(&opacity_encoded),
+            "derived opacity metadata changed during merge"
+        );
         ensure!(
             encode_mission_native(&merged) == encode_mission_native(&original),
             "{name}: full materialized payload parity failed"
@@ -306,12 +354,6 @@ fn main() -> Result<()> {
         std::fs::create_dir_all(tail_path.parent().context("tail parent missing")?)?;
         std::fs::write(target.join(&name), &head_bytes)?;
         std::fs::write(tail_path, &tail_bytes)?;
-        let dictionaries = &dd
-            .sprite_bank
-            .as_ref()
-            .context("boot dictionary bank missing")?
-            .dictionaries;
-        let (mask_bytes, mask_report) = opacity_masks(original_bank, dictionaries, &vq_ids)?;
         masks_raw_total += mask_report["raw_bytes"]
             .as_u64()
             .context("mask raw bytes missing")? as usize;
@@ -333,7 +375,7 @@ fn main() -> Result<()> {
         tail_total += tail_bytes.len();
         println!(
             "{}",
-            serde_json::json!({"file":name,"tail":tail_name,"before_bytes":bytes.len(),"head_bytes":head_bytes.len(),"tail_bytes":tail_bytes.len(),"head_frames":counts[0],"tail_frames":counts[1],"original_grid_sha256":before_sha,"reencoded_grid_sha256":after_sha,"full_payload_parity":true,"opacity_raw_bytes":mask_report["raw_bytes"],"opacity_zstd30_bytes":mask_bytes.len(),"opacity_sha256":mask_report["canonical_sha256"]})
+            serde_json::json!({"file":name,"tail":tail_name,"before_bytes":bytes.len(),"head_bytes":head_bytes.len(),"tail_bytes":tail_bytes.len(),"head_frames":counts[0],"tail_frames":counts[1],"original_grid_sha256":before_sha,"reencoded_grid_sha256":after_sha,"full_payload_parity":true,"derived_opacity_key":opacity_key,"derived_opacity_bytes":opacity_encoded.len(),"opacity_raw_bytes":mask_report["raw_bytes"],"opacity_zstd30_bytes":mask_bytes.len(),"opacity_sha256":mask_report["canonical_sha256"]})
         );
         tails.insert(name, tail_name);
     }
