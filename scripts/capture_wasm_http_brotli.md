@@ -35,3 +35,16 @@ The child receives SIGINT during cleanup and SIGKILL after three seconds if need
 This reproduces the **pinned local Wrangler HTTP encoder**, not a guarantee that
 an arbitrary live CDN deployment will produce identical bytes. Preserve the JSON
 provenance alongside any startup benchmark using the captured representation.
+
+The default `Accept-Encoding: br` isolates the Brotli representation. It does
+**not** prove what a browser receives with its normal encoding negotiation.
+Compare it with `--accept-encoding 'gzip, deflate, br, zstd'`; the output metadata
+records the actual encoding and requested encodings. Use an output suffix such
+as `.http` for a negotiated response, which can contain gzip instead of Brotli.
+
+`--precompressed-worker` additionally installs the experimental
+`scripts/wasm-precompressed-worker.mjs` into the temporary local server and copies
+`INPUT.wasm.br`. This tests `encodeBody: manual` sidecar serving at the canonical
+WASM URL. It changes no deployment configuration. See
+[the transport investigation](../docs/perf/replay-wasm-transport-next.md) before
+interpreting a br-only result as a browser startup improvement.
