@@ -49,6 +49,7 @@ impl TryFrom<String> for SlotName {
                     | "autosaves"
                     | "quick-save-recovery"
                     | "save-delete-recovery"
+                    | "owned-save-recovery"
                     | "con"
                     | "prn"
                     | "aux"
@@ -316,6 +317,7 @@ pub struct SaveGameManager {
     states: std::collections::HashMap<SlotName, SlotState>,
     operations: crate::save_operation::SaveOperationOwner,
     operation_error: Option<String>,
+    operation_error_reported: bool,
     owner_id: u64,
     next_generation: u64,
     generations: std::collections::HashMap<SlotName, u64>,
@@ -388,6 +390,12 @@ struct QuickSaveRecovery {
     slots: Vec<(SaveGame, [u8; 32])>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct SpecialSaveRecovery {
+    slot: SaveGame,
+    digest: [u8; 32],
+}
+
 impl SaveGameManager {
     pub fn new(save_directory: String) -> Self {
         SaveGameManager {
@@ -395,6 +403,7 @@ impl SaveGameManager {
             states: Default::default(),
             operations: Default::default(),
             operation_error: None,
+            operation_error_reported: false,
             owner_id: next_store_owner(),
             next_generation: 1,
             generations: Default::default(),
@@ -489,11 +498,21 @@ impl SaveGameManager {
     /// caller explicitly reopens the store, so failed publication cannot be
     /// mistaken for an idle successful writer on the next frame.
     pub fn poll_background(&mut self) -> Result<bool> {
+        if self.operation_error.is_some() {
+            if self.operation_error_reported {
+                return Ok(false);
+            }
+            self.operation_error_reported = true;
+            return self.check_operation_error().map(|()| false);
+        }
         self.check_operation_error()?;
         if !self.operations.is_finished() {
             return Ok(false);
         }
-        self.finish_background()?;
+        if let Err(error) = self.finish_background() {
+            self.operation_error_reported = true;
+            return Err(error);
+        }
         Ok(true)
     }
 
@@ -510,7 +529,8 @@ impl SaveGameManager {
             metadata.validate_published_metadata()?;
             self.saves[index] = metadata;
             self.states.insert(name, SlotState::Published);
-            self.save_index_anyhow()
+            self.publish_index().map_err(anyhow::Error::msg)?;
+            self.retire_owned_receipt()
         })();
         if let Err(error) = &result {
             self.operation_error = Some(format!(
@@ -525,6 +545,55 @@ impl SaveGameManager {
             anyhow::bail!("{error}");
         }
         Ok(())
+    }
+
+    fn owned_recovery_path(&self) -> PathBuf {
+        Path::new(&self.save_directory).join("owned-save-recovery.json")
+    }
+
+    fn retire_owned_receipt(&self) -> Result<()> {
+        match std::fs::remove_file(self.owned_recovery_path()) {
+            Ok(()) => sync_save_directory(&self.save_directory),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).context("retire owned save recovery receipt"),
+        }
+    }
+
+    fn reconcile_owned_save(&mut self) -> Result<()> {
+        let bytes = match std::fs::read(self.owned_recovery_path()) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error).context("read owned save recovery receipt"),
+        };
+        let receipt: SpecialSaveRecovery =
+            serde_json::from_slice(&bytes).context("decode owned save recovery receipt")?;
+        receipt.slot.validate_published_metadata()?;
+        anyhow::ensure!(
+            matches!(
+                receipt.slot.filename.as_str(),
+                save_file::special_slots::CONTINUE | save_file::special_slots::RESTART
+            ),
+            "owned recovery receipt names a non-background slot"
+        );
+        let path = Path::new(&self.save_directory).join(format!("{}.json", receipt.slot.filename));
+        let payload = match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error).context("read owned recovery payload"),
+        };
+        if payload
+            .as_ref()
+            .is_some_and(|bytes| <[u8; 32]>::from(Sha256::digest(bytes)) == receipt.digest)
+        {
+            self.mark_state(&receipt.slot.filename, SlotState::Published);
+            if let Some(index) = self.find_by_filename(&receipt.slot.filename) {
+                self.saves[index] = receipt.slot;
+            } else {
+                self.saves.push(receipt.slot);
+            }
+            self.publish_index().map_err(anyhow::Error::msg)?;
+        }
+        self.retire_owned_receipt()
     }
 
     #[cfg(test)]
@@ -546,8 +615,18 @@ impl SaveGameManager {
     /// Find the slot for one of the well-known special filenames, or
     /// create a new slot if none exists yet.  Used to manage the
     /// Continue / Restart / Sherwood / QuickSave auto-slots.
-    pub fn ensure_special_slot(&mut self, filename: &str, display_text: &str) -> usize {
-        self.find_or_create_by_filename(filename, display_text)
+    fn ensure_special_slot(&mut self, filename: &str, display_text: &str) -> Result<usize> {
+        self.finish_background()?;
+        self.ensure_no_pending_delete()?;
+        anyhow::ensure!(
+            SpecialSlot::from_filename(filename).is_some(),
+            "special-save API requires a special slot"
+        );
+        if let Some(index) = self.find_by_filename(filename) {
+            Ok(index)
+        } else {
+            self.allocate_named_draft(filename.into(), display_text.into(), 0)
+        }
     }
 
     /// Save the current engine state to the "Continue" auto-save slot.
@@ -574,7 +653,7 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        let idx = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue");
+        let idx = self.ensure_special_slot(save_file::special_slots::CONTINUE, "Continue")?;
         self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
         self.save_index_anyhow()
     }
@@ -675,13 +754,13 @@ impl SaveGameManager {
             && self.slot_file_exists(quick_idx)
         {
             // Ensure an ExQuickSave slot exists, then copy the file.
-            let ex_idx =
-                self.ensure_special_slot(save_file::special_slots::EX_QUICK, "Previous Quick Save");
+            let ex_idx = self
+                .ensure_special_slot(save_file::special_slots::EX_QUICK, "Previous Quick Save")?;
             self.copy_files(quick_idx, ex_idx)
                 .map_err(|e| anyhow::anyhow!(e))?;
             self.copy_display_metadata(quick_idx, ex_idx)?;
         }
-        let idx = self.ensure_special_slot(save_file::special_slots::QUICK, "Quick Save");
+        let idx = self.ensure_special_slot(save_file::special_slots::QUICK, "Quick Save")?;
         save_file::atomic_write(&self.save_path(idx), &bytes)?;
         self.publish_thumbnail(idx, thumbnail);
         self.sync_slot_metadata_from_save(idx, &save, profiles)?;
@@ -709,7 +788,8 @@ impl SaveGameManager {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let idx = self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point");
+            let idx =
+                self.ensure_special_slot(save_file::special_slots::RESTART, "Restart Point")?;
             self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
             self.save_index_anyhow()
         }
@@ -786,7 +866,8 @@ impl SaveGameManager {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let idx = self.ensure_special_slot(filename, display_text);
+            self.reconcile_quick_slots()?;
+            let idx = self.ensure_special_slot(filename, display_text)?;
             let display_text = self.saves[idx].text.clone();
             let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
             // Capture (clone) on the main thread — fast.
@@ -811,8 +892,17 @@ impl SaveGameManager {
             );
             metadata.validate_published_metadata()?;
             let name = self.slot_name(idx).map_err(anyhow::Error::msg)?;
+            let recovery_path = self.owned_recovery_path();
             self.operations.start(name, move || {
-                save.write_to(&path)?;
+                save.validate_current_schema()?;
+                let bytes =
+                    serde_json::to_vec_pretty(&save).context("serialize owned save payload")?;
+                let receipt = SpecialSaveRecovery {
+                    slot: metadata.clone(),
+                    digest: Sha256::digest(&bytes).into(),
+                };
+                save_file::atomic_write(&recovery_path, &serde_json::to_vec(&receipt)?)?;
+                save_file::atomic_write(&path, &bytes)?;
                 if let Some(thumb) = thumb_data
                     && let Err(err) = thumb.write_to(&thumb_path)
                 {
@@ -914,7 +1004,7 @@ impl SaveGameManager {
         profiles: Option<&ProfileManager>,
         thumbnail: Option<&Thumbnail>,
     ) -> Result<()> {
-        let idx = self.ensure_special_slot(save_file::special_slots::SHERWOOD, "Sherwood");
+        let idx = self.ensure_special_slot(save_file::special_slots::SHERWOOD, "Sherwood")?;
         self.write_save_from_engine(host, game, idx, engine, mission_id, profiles, thumbnail)?;
         self.save_index_anyhow()
     }
@@ -1001,43 +1091,59 @@ impl SaveGameManager {
         self.save_index().map_err(|e| anyhow::anyhow!(e))
     }
 
-    /// Create a new save game slot with auto-generated filename. Returns its index.
-    pub fn create(&mut self, text: String, mission_id: u32) -> usize {
-        self.finish_background()
-            .expect("previous save failed; reopen store before creating another slot");
-        self.ensure_no_pending_delete()
-            .expect("save store requires deletion recovery before creating slots");
-        let filename = self.next_filename();
+    /// Allocate a draft and return its stable owner-bound identity.
+    pub fn create_draft(&mut self, text: String, mission_id: u32) -> Result<SlotHandle> {
+        self.finish_background()?;
+        self.ensure_no_pending_delete()?;
+        let filename = self.next_filename()?;
         let save = SaveGame::new(filename, text, mission_id);
         self.mark_state(&save.filename, SlotState::Draft);
         self.saves.push(save);
-        self.saves.len() - 1
+        self.slot_handle(self.saves.len() - 1)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn create(&mut self, text: String, mission_id: u32) -> usize {
+        let handle = self
+            .create_draft(text, mission_id)
+            .expect("test draft allocation");
+        self.resolve_handle(&handle).expect("new test slot")
     }
 
     /// Create a save with a specific filename.
-    pub fn create_with_filename(
+    fn allocate_named_draft(
         &mut self,
         filename: String,
         text: String,
         mission_id: u32,
-    ) -> usize {
-        self.finish_background()
-            .expect("previous save failed; reopen store before creating another slot");
-        self.ensure_no_pending_delete()
-            .expect("save store requires deletion recovery before creating slots");
-        SlotName::new(filename.clone()).expect("caller supplied an invalid save basename");
-        assert!(
+    ) -> Result<usize> {
+        self.finish_background()?;
+        self.ensure_no_pending_delete()?;
+        SlotName::new(filename.clone()).map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(
             self.find_by_filename(&filename).is_none(),
             "duplicate save slot {filename}"
         );
         let save = SaveGame::new(filename, text, mission_id);
         self.mark_state(&save.filename, SlotState::Draft);
         self.saves.push(save);
-        self.saves.len() - 1
+        Ok(self.saves.len() - 1)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn create_with_filename(
+        &mut self,
+        filename: String,
+        text: String,
+        mission_id: u32,
+    ) -> usize {
+        self.allocate_named_draft(filename, text, mission_id)
+            .expect("test named slot")
     }
 
     /// Find by filename, or create if not found. Updates text either way.
-    pub fn find_or_create_by_filename(&mut self, filename: &str, text: &str) -> usize {
+    #[cfg(test)]
+    fn find_or_create_by_filename(&mut self, filename: &str, text: &str) -> usize {
         self.finish_background()
             .expect("previous save failed; reopen store before updating slots");
         if let Some(idx) = self.find_by_filename(filename) {
@@ -1180,6 +1286,14 @@ impl SaveGameManager {
 
     fn ensure_no_pending_delete(&self) -> Result<()> {
         self.check_operation_error()?;
+        #[cfg(not(target_arch = "wasm32"))]
+        match std::fs::symlink_metadata(self.owned_recovery_path()) {
+            Ok(_) => anyhow::bail!(
+                "owned save recovery is pending; reopen the store before further writes"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error).context("checking owned save recovery"),
+        }
         #[cfg(target_arch = "wasm32")]
         return Ok(()); // Desktop deletion receipts do not exist in the memory backend.
         #[cfg(not(target_arch = "wasm32"))]
@@ -1572,6 +1686,15 @@ impl SaveGameManager {
                 "save publication still running; finish it before publishing an index".into(),
             );
         }
+        match std::fs::symlink_metadata(self.owned_recovery_path()) {
+            Ok(_) => {
+                return Err(
+                    "owned save recovery is pending; reopen before index publication".into(),
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("checking owned save recovery: {error}")),
+        }
         self.ensure_no_pending_delete()
             .map_err(|error| format!("{error:#}"))?;
         match std::fs::symlink_metadata(self.quick_recovery_path()) {
@@ -1590,6 +1713,11 @@ impl SaveGameManager {
         let path = Path::new(&self.save_directory).join("saves.json");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+        }
+        validate_slot_names(&self.saves).map_err(|error| format!("validate: {error:#}"))?;
+        for slot in &self.saves {
+            self.slot_state(&SlotName::new(slot.filename.clone())?)
+                .map_err(|error| format!("validate runtime slot state: {error:#}"))?;
         }
         let index = SaveIndex {
             // Drafts are runtime retry state, not published save metadata.
@@ -1660,6 +1788,9 @@ impl SaveGameManager {
             .reconcile_quick_slots()
             .map_err(|error| format!("recover quick saves: {error:#}"))?;
         manager
+            .reconcile_owned_save()
+            .map_err(|error| format!("recover owned save: {error:#}"))?;
+        manager
             .reconcile_delete()
             .map_err(|error| format!("recover deletion: {error:#}"))?;
         for save in &manager.saves {
@@ -1724,13 +1855,13 @@ impl SaveGameManager {
         self.publish_index().map_err(anyhow::Error::msg)
     }
 
-    fn next_filename(&mut self) -> String {
+    fn next_filename(&mut self) -> Result<String> {
         loop {
             let name = format!("Savegame_{:03}", self.next_id);
             self.next_id = self
                 .next_id
                 .checked_add(1)
-                .expect("save slot identifier space exhausted");
+                .context("save slot identifier space exhausted")?;
             #[cfg(not(target_arch = "wasm32"))]
             let root = Path::new(&self.save_directory);
             // symlink_metadata counts broken symlinks as occupied too; access
@@ -1738,17 +1869,21 @@ impl SaveGameManager {
             #[cfg(target_arch = "wasm32")]
             let occupied = false; // Browser manual slots are memory-only until an explicit unsupported write.
             #[cfg(not(target_arch = "wasm32"))]
-            let occupied = [format!("{name}.json"), format!("{name}_thumb.png")]
-                .iter()
-                .any(
-                    |filename| match std::fs::symlink_metadata(root.join(filename)) {
-                        Ok(_) => true,
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
-                        Err(error) => panic!("cannot safely allocate save slot: {error}"),
-                    },
-                );
+            let occupied = {
+                let mut occupied = false;
+                for filename in [format!("{name}.json"), format!("{name}_thumb.png")] {
+                    match std::fs::symlink_metadata(root.join(filename)) {
+                        Ok(_) => occupied = true,
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => {
+                            return Err(error).context("cannot safely allocate save slot");
+                        }
+                    }
+                }
+                occupied
+            };
             if !occupied && self.find_by_filename(&name).is_none() {
-                return name;
+                return Ok(name);
             }
         }
     }
@@ -2786,8 +2921,12 @@ mod tests {
     fn missing_rotation_source_preserves_previous_payload() {
         let tmp = tempfile::tempdir().unwrap();
         let mut manager = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
-        let quick = manager.ensure_special_slot(special_slots::QUICK, "Quick Save");
-        let previous = manager.ensure_special_slot(special_slots::EX_QUICK, "Previous Quick Save");
+        let quick = manager
+            .ensure_special_slot(special_slots::QUICK, "Quick Save")
+            .unwrap();
+        let previous = manager
+            .ensure_special_slot(special_slots::EX_QUICK, "Previous Quick Save")
+            .unwrap();
         let previous_path = manager.save_path(previous);
         std::fs::write(&previous_path, b"previous save payload").unwrap();
         assert!(manager.copy_files(quick, previous).is_err());

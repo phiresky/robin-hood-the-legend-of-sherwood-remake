@@ -1561,12 +1561,14 @@ impl SaveLoadTaskState {
                 } else {
                     self.name.trim().to_string()
                 };
-                let slot = save_manager.create(text, self.mission_id);
-                let filename = save_manager
-                    .get(slot)
-                    .expect("new save slot exists")
-                    .filename
-                    .clone();
+                let handle = match save_manager.create_draft(text, self.mission_id) {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        tracing::error!("Cannot create save draft: {error:#}");
+                        return None;
+                    }
+                };
+                let filename = handle.name().as_str().to_owned();
                 Some(UiTaskOutcome::SaveLoadSelected {
                     mode: self.mode,
                     filename,
