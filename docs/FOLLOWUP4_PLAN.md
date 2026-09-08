@@ -17,7 +17,9 @@ Implement the four follow-ups approved after audit3:
 
 - `followup4-save-owner`: coupled save ownership/API work and minimal consumers.
 - `followup4-recovery-ui`: recovery and picker UX, integrated after API agreement.
+- `followup4-slot-handles`: queued identity/provenance consumers and regressions.
 - `followup4-backup-owner`: independent server lifecycle work and service tests.
+- `followup4-browser`: isolated browser compilation and Chrome acceptance.
 - `followup4-integration`: source review, integration, final acceptance and report.
 
 Keep the user's performance/deployment branches and `original-code/` untouched.
@@ -41,3 +43,11 @@ Build separately from bounded execution and retain exact artifact hashes outside
 worktrees. Reuse the existing validation gates; no all-features or licensed-corpus
 claims. Record actual outcomes and scope limits before merge and owned-worktree
 cleanup.
+
+## Implementation outcome
+
+All four implementation tracks are integrated. The final source checkpoint and
+actual validation outcomes are recorded in
+[FOLLOWUP4_ACCEPTANCE.md](FOLLOWUP4_ACCEPTANCE.md). That report also records the
+concurrent main changes preserved, defects found during integration, retained
+runtime evidence and the remaining intentional limits.
