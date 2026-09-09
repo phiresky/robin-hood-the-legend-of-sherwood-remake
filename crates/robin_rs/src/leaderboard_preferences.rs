@@ -332,13 +332,7 @@ fn persist_store(encoded: &[u8]) -> Result<(), LeaderboardPreferencesError> {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Result<web_sys::Storage, LeaderboardPreferencesError> {
-    web_sys::window()
-        .ok_or_else(|| LeaderboardPreferencesError::BrowserStorage("window is absent".to_owned()))?
-        .local_storage()
-        .map_err(|error| LeaderboardPreferencesError::BrowserStorage(format!("{error:?}")))?
-        .ok_or_else(|| {
-            LeaderboardPreferencesError::BrowserStorage("localStorage is disabled".to_owned())
-        })
+    crate::browser_storage::local_storage().map_err(LeaderboardPreferencesError::BrowserStorage)
 }
 
 #[cfg(test)]

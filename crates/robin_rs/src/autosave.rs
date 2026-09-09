@@ -1064,11 +1064,7 @@ struct BrowserBlob {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Result<web_sys::Storage> {
-    web_sys::window()
-        .context("browser window is unavailable")?
-        .local_storage()
-        .map_err(|error| anyhow::anyhow!("accessing localStorage failed: {error:?}"))?
-        .context("browser localStorage is disabled")
+    crate::browser_storage::local_storage().map_err(anyhow::Error::msg)
 }
 
 #[cfg(target_arch = "wasm32")]

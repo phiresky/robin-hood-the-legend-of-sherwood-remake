@@ -328,13 +328,7 @@ fn persist_store(encoded: &[u8]) -> Result<(), CampaignChainStoreError> {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Result<web_sys::Storage, CampaignChainStoreError> {
-    web_sys::window()
-        .ok_or_else(|| CampaignChainStoreError::BrowserStorage("window is absent".to_owned()))?
-        .local_storage()
-        .map_err(|error| CampaignChainStoreError::BrowserStorage(format!("{error:?}")))?
-        .ok_or_else(|| {
-            CampaignChainStoreError::BrowserStorage("localStorage is disabled".to_owned())
-        })
+    crate::browser_storage::local_storage().map_err(CampaignChainStoreError::BrowserStorage)
 }
 
 #[cfg(test)]

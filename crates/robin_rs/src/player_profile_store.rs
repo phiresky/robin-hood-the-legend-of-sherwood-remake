@@ -441,6 +441,12 @@ mod tests {
         manager.create_profile("Robin".into(), DifficultyLevel::Medium);
         manager.set_active(0);
         let encoded = encode_browser_profile_archive(&manager).unwrap();
+        let legacy = serde_json::to_string(&BrowserProfileEnvelope {
+            schema_version: BROWSER_PROFILE_SCHEMA_VERSION,
+            manager: manager.clone(),
+        })
+        .unwrap();
+        assert_eq!(encoded, legacy);
         let decoded = decode_browser_profile_archive(&encoded, "selected").unwrap();
         assert_eq!(decoded.save_directory, "selected");
         assert_eq!(decoded.profiles[0].name, "Robin");
@@ -526,9 +532,9 @@ const BROWSER_PROFILE_STORE_KEY: &str = "robin-hood-player-profiles-v1";
 #[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BrowserProfileEnvelope {
+struct BrowserProfileEnvelope<T = PlayerProfileManager> {
     schema_version: u32,
-    manager: PlayerProfileManager,
+    manager: T,
 }
 
 #[cfg(any(test, target_arch = "wasm32"))]
@@ -538,7 +544,7 @@ fn encode_browser_profile_archive(manager: &PlayerProfileManager) -> std::io::Re
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     let serialized = serde_json::to_string(&BrowserProfileEnvelope {
         schema_version: BROWSER_PROFILE_SCHEMA_VERSION,
-        manager: manager.clone(),
+        manager,
     })
     .map_err(std::io::Error::other)?;
     if serialized.len() > BROWSER_PROFILE_BYTE_LIMIT {
@@ -552,11 +558,7 @@ fn encode_browser_profile_archive(manager: &PlayerProfileManager) -> std::io::Re
 
 #[cfg(target_arch = "wasm32")]
 fn browser_profile_storage() -> std::io::Result<web_sys::Storage> {
-    web_sys::window()
-        .ok_or_else(|| std::io::Error::other("browser window is unavailable"))?
-        .local_storage()
-        .map_err(|error| browser_profile_io("open browser localStorage", error))?
-        .ok_or_else(|| std::io::Error::other("browser localStorage is unavailable"))
+    crate::browser_storage::local_storage().map_err(std::io::Error::other)
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -244,6 +244,8 @@ pub use host::Host;
 pub mod audio_backend;
 #[cfg(any(test, all(target_arch = "wasm32", feature = "audio")))]
 pub mod audio_bundle_cache;
+#[cfg(target_arch = "wasm32")]
+pub mod browser_storage;
 pub mod cache_maintenance;
 pub mod combat_gesture_overlay;
 #[cfg(not(target_arch = "wasm32"))]

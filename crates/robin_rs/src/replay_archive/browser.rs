@@ -90,11 +90,9 @@ fn db_error(error: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("browser replay IndexedDB: {error}")
 }
 fn storage() -> Result<web_sys::Storage> {
-    web_sys::window()
-        .context("replay journal requires a browser window")?
-        .local_storage()
-        .map_err(|e| anyhow::anyhow!("replay journal unavailable: {e:?}"))?
-        .context("replay journal storage is disabled")
+    crate::browser_storage::local_storage()
+        .map_err(anyhow::Error::msg)
+        .context("replay journal unavailable")
 }
 fn with_session<T>(f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
     SESSION.with(|slot| {

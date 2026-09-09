@@ -343,11 +343,7 @@ fn save_serialized(directory: &str, serialized: &str) -> Result<(), String> {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Result<web_sys::Storage, String> {
-    web_sys::window()
-        .ok_or_else(|| "browser window is unavailable".to_owned())?
-        .local_storage()
-        .map_err(|error| format!("open browser localStorage: {error:?}"))?
-        .ok_or_else(|| "browser localStorage is unavailable".to_owned())
+    crate::browser_storage::local_storage()
 }
 
 #[cfg(target_arch = "wasm32")]

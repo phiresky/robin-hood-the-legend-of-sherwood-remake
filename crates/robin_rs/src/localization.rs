@@ -822,13 +822,8 @@ fn persist_preferences(
         PreferenceStore::Native(path) => persist_native(path, encoded.as_bytes()),
         #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => {
-            let storage = web_sys::window()
-                .ok_or_else(|| LocalizationError::BrowserStorage("window is absent".to_owned()))?
-                .local_storage()
-                .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))?
-                .ok_or_else(|| {
-                    LocalizationError::BrowserStorage("localStorage is disabled".to_owned())
-                })?;
+            let storage = crate::browser_storage::local_storage()
+                .map_err(LocalizationError::BrowserStorage)?;
             storage
                 .set_item(BROWSER_PREFERENCES_KEY, &encoded)
                 .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))
@@ -851,13 +846,8 @@ fn read_store(store: &PreferenceStore) -> Result<Option<String>, LocalizationErr
         },
         #[cfg(target_arch = "wasm32")]
         PreferenceStore::Browser => {
-            let storage = web_sys::window()
-                .ok_or_else(|| LocalizationError::BrowserStorage("window is absent".to_owned()))?
-                .local_storage()
-                .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))?
-                .ok_or_else(|| {
-                    LocalizationError::BrowserStorage("localStorage is disabled".to_owned())
-                })?;
+            let storage = crate::browser_storage::local_storage()
+                .map_err(LocalizationError::BrowserStorage)?;
             storage
                 .get_item(BROWSER_PREFERENCES_KEY)
                 .map_err(|error| LocalizationError::BrowserStorage(format!("{error:?}")))

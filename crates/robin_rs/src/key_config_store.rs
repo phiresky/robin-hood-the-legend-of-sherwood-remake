@@ -20,9 +20,9 @@ use serde::{Deserialize, Serialize};
 const KEY_CONFIG_PROFILE_LIMIT: usize = 10;
 const KEY_CONFIG_BINDING_LIMIT: usize = 64;
 const KEY_CONFIG_ACTION_BYTE_LIMIT: usize = 256;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
 const BROWSER_KEY_CONFIG_SCHEMA_VERSION: u32 = 1;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
 const BROWSER_KEY_CONFIG_BYTE_LIMIT: usize = 512 * 1024;
 #[cfg(target_arch = "wasm32")]
 const BROWSER_KEY_CONFIG_STORE_KEY: &str = "robin-hood-key-configs-v1";
@@ -63,12 +63,12 @@ pub struct KeyConfigStore {
     pub save_directory: String,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BrowserKeyConfigEnvelope {
+struct BrowserKeyConfigEnvelope<T = KeyConfigStore> {
     schema_version: u32,
-    store: KeyConfigStore,
+    store: T,
 }
 
 impl KeyConfigStore {
@@ -126,18 +126,7 @@ impl KeyConfigStore {
 
     #[cfg(target_arch = "wasm32")]
     pub fn save(&self) -> std::io::Result<()> {
-        self.validate_archive()?;
-        let serialized = serde_json::to_string(&BrowserKeyConfigEnvelope {
-            schema_version: BROWSER_KEY_CONFIG_SCHEMA_VERSION,
-            store: self.clone(),
-        })
-        .map_err(std::io::Error::other)?;
-        if serialized.len() > BROWSER_KEY_CONFIG_BYTE_LIMIT {
-            return Err(std::io::Error::other(format!(
-                "browser key-config archive is {} bytes; limit is {BROWSER_KEY_CONFIG_BYTE_LIMIT}",
-                serialized.len()
-            )));
-        }
+        let serialized = encode_browser_key_config_archive(self)?;
         browser_key_config_storage()?
             .set_item(BROWSER_KEY_CONFIG_STORE_KEY, &serialized)
             .map_err(|error| browser_key_config_io("persist browser key configs", error))
@@ -215,11 +204,7 @@ impl KeyConfigStore {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_key_config_storage() -> std::io::Result<web_sys::Storage> {
-    web_sys::window()
-        .ok_or_else(|| std::io::Error::other("browser window is unavailable"))?
-        .local_storage()
-        .map_err(|error| browser_key_config_io("open browser localStorage", error))?
-        .ok_or_else(|| std::io::Error::other("browser localStorage is unavailable"))
+    crate::browser_storage::local_storage().map_err(std::io::Error::other)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -227,7 +212,24 @@ fn browser_key_config_io(operation: &str, error: impl std::fmt::Debug) -> std::i
     std::io::Error::other(format!("{operation}: {error:?}"))
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(test, target_arch = "wasm32"))]
+fn encode_browser_key_config_archive(store: &KeyConfigStore) -> std::io::Result<String> {
+    store.validate_archive()?;
+    let serialized = serde_json::to_string(&BrowserKeyConfigEnvelope {
+        schema_version: BROWSER_KEY_CONFIG_SCHEMA_VERSION,
+        store,
+    })
+    .map_err(std::io::Error::other)?;
+    if serialized.len() > BROWSER_KEY_CONFIG_BYTE_LIMIT {
+        return Err(std::io::Error::other(format!(
+            "browser key-config archive is {} bytes; limit is {BROWSER_KEY_CONFIG_BYTE_LIMIT}",
+            serialized.len()
+        )));
+    }
+    Ok(serialized)
+}
+
+#[cfg(any(test, target_arch = "wasm32"))]
 fn decode_browser_key_config_archive(
     serialized: &str,
     directory: &str,
@@ -267,6 +269,55 @@ fn decode_browser_key_config_archive(
 mod tests {
     use super::*;
     use winit::keyboard::KeyCode;
+
+    #[test]
+    fn browser_archive_preserves_wire_format_and_rejects_invalid_documents() {
+        let mut store = KeyConfigStore::new("old-directory".into());
+        store
+            .entry_or_default(7)
+            .active
+            .set_binding("ZoomIn", Some(KeyCode::Backspace), None);
+        let encoded = encode_browser_key_config_archive(&store).unwrap();
+        let legacy = serde_json::to_string(&BrowserKeyConfigEnvelope {
+            schema_version: BROWSER_KEY_CONFIG_SCHEMA_VERSION,
+            store: store.clone(),
+        })
+        .unwrap();
+        assert_eq!(encoded, legacy);
+        let decoded = decode_browser_key_config_archive(&encoded, "selected").unwrap();
+        assert_eq!(decoded.save_directory, "selected");
+        assert_eq!(
+            serde_json::to_value(&decoded).unwrap(),
+            serde_json::to_value(&store).unwrap()
+        );
+        let document: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        for (field, value) in [
+            ("schema_version", serde_json::json!(999)),
+            ("unexpected", serde_json::json!(true)),
+            ("store", serde_json::json!({})),
+        ] {
+            let mut corrupt = document.clone();
+            corrupt[field] = value;
+            assert_eq!(
+                decode_browser_key_config_archive(&corrupt.to_string(), "selected")
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidData
+            );
+        }
+        assert!(decode_browser_key_config_archive("not JSON", "selected").is_err());
+        assert!(
+            decode_browser_key_config_archive(
+                &"x".repeat(BROWSER_KEY_CONFIG_BYTE_LIMIT + 1),
+                "selected"
+            )
+            .is_err()
+        );
+        for id in 0..=KEY_CONFIG_PROFILE_LIMIT as u32 {
+            store.entry_or_default(id);
+        }
+        assert!(encode_browser_key_config_archive(&store).is_err());
+    }
 
     #[test]
     fn restart_ignores_incomplete_staging_and_preserves_selected_directory() {

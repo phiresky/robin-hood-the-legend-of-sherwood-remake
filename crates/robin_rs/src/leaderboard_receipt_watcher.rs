@@ -1248,11 +1248,7 @@ fn write_pending_store(encoded: &[u8]) -> Result<(), ReceiptWatcherError> {
 
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Result<web_sys::Storage, ReceiptWatcherError> {
-    web_sys::window()
-        .ok_or_else(|| ReceiptWatcherError::BrowserStorage("window is absent".to_owned()))?
-        .local_storage()
-        .map_err(|error| ReceiptWatcherError::BrowserStorage(format!("{error:?}")))?
-        .ok_or_else(|| ReceiptWatcherError::BrowserStorage("localStorage is disabled".to_owned()))
+    crate::browser_storage::local_storage().map_err(ReceiptWatcherError::BrowserStorage)
 }
 
 #[cfg(test)]
