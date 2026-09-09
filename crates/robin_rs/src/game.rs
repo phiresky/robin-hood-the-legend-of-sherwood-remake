@@ -5,6 +5,7 @@
 //! gameplay, and level results. This module covers the **state
 //! management** and **transition logic** for those flows.
 
+#[cfg(test)]
 use crate::host::Host;
 use crate::host::{ApplicationContext, HostSignal};
 use robin_engine::engine as engine_api;

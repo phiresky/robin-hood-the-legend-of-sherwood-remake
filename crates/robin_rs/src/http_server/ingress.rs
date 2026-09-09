@@ -42,7 +42,7 @@ impl RequestRouter {
 /// restored from saves: replacing a mission cancels its outstanding replies.
 #[derive(Serialize)]
 pub struct SessionIngress {
-    replay_capabilities: Option<(
+    pub(super) replay_capabilities: Option<(
         crate::replay_service::ReplayExports,
         crate::replay_service::ReplayLaunches,
     )>,
