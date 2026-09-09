@@ -57,6 +57,13 @@ fn failure(stage: PublicationStage, error: io::Error) -> io::Error {
     )
 }
 
+/// Atomically publish an already encoded archive using the same durability and
+/// failure-stage contract as [`write_json`].
+pub fn write_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+    publish(path, |file| file.write_all(bytes), |_| Ok(()))
+}
+
 pub fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
     publish(
         path,
@@ -145,6 +152,27 @@ mod tests {
                 "new"
             );
         }
+    }
+
+    #[test]
+    fn encoded_bytes_are_preserved_and_failed_replacement_cleans_staging() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("datadir.txt");
+        write_bytes(&path, b"old\n").unwrap();
+        write_bytes(&path, b"/game/data\n").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"/game/data\n");
+        let blocked = dir.path().join("directory");
+        fs::create_dir(&blocked).unwrap();
+        let error = write_bytes(&blocked, b"must not replace directory").unwrap_err();
+        let failure = error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<PublicationFailure>()
+            .unwrap();
+        assert_eq!(failure.stage, PublicationStage::Replace);
+        assert!(!failure.published());
+        assert!(blocked.is_dir());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
     }
 
     #[test]

@@ -8,8 +8,8 @@
 //! saves and can be changed later from the Options menu.
 //!
 //! A directory counts as a game installation if and only if it contains
-//! `Data/robinhood.bks` in any capitalization — the sprite-bank index that
-//! every release ships and nothing else plausibly provides.
+//! `Data/robinhood.bks` in any capitalization, or the converted replacement
+//! `Data/datadir.bin`. A marker must be a file, not merely a directory with that name.
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +19,7 @@ pub const GOG_STORE_URL: &str = "https://www.gog.com/game/robin_hood_the_legend_
 /// Marker file identifying a correct datadir, looked up case-insensitively
 /// inside the installation's `Data/` folder.
 const MARKER_FILE: &str = "robinhood.bks";
+const DATA_MARKERS: &[&str] = &[MARKER_FILE, "datadir.bin"];
 
 /// Install folder names used by the known Windows distributions. These are
 /// joined onto every searched root, so each spelling only needs to be
@@ -41,8 +42,21 @@ const INSTALL_FOLDER_NAMES: &[&str] = &[
 /// Case-insensitive single-component lookup: the entry of `dir` whose name
 /// matches `name` ignoring ASCII case.
 fn entry_case_insensitive(dir: &Path, name: &str) -> Option<PathBuf> {
-    std::fs::read_dir(dir).ok()?.find_map(|entry| {
-        let entry = entry.ok()?;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(path = %dir.display(), "Could not inspect game installation directory: {error}");
+            return None;
+        }
+    };
+    entries.filter_map(|entry| match entry {
+        Ok(entry) => Some(entry),
+        Err(error) => {
+            tracing::warn!(path = %dir.display(), "Could not inspect game installation entry: {error}");
+            None
+        }
+    }).find_map(|entry| {
         entry
             .file_name()
             .to_str()?
@@ -58,8 +72,16 @@ fn entry_case_insensitive(dir: &Path, name: &str) -> Option<PathBuf> {
 pub fn is_valid_install_dir(dir: &Path) -> bool {
     entry_case_insensitive(dir, "Data")
         .map(|data| {
-            entry_case_insensitive(&data, MARKER_FILE).is_some()
-                || entry_case_insensitive(&data, "datadir.bin").is_some()
+            DATA_MARKERS.iter().any(|marker| {
+                let Some(path) = entry_case_insensitive(&data, marker) else { return false; };
+                match path.metadata() {
+                    Ok(metadata) => metadata.is_file(),
+                    Err(error) => {
+                        tracing::warn!(path = %path.display(), "Could not inspect game data marker: {error}");
+                        false
+                    }
+                }
+            })
         })
         .unwrap_or(false)
 }
@@ -139,15 +161,17 @@ pub fn find_installed_datadir() -> Option<PathBuf> {
 
 /// Accept a picked folder as either the installation root or its `Data`
 /// subfolder (players often select `Data` itself), returning the root.
-#[cfg(feature = "dialogs")]
+#[cfg(any(feature = "dialogs", all(test, not(target_arch = "wasm32"))))]
 fn normalize_selection(path: &Path) -> Option<PathBuf> {
     if is_valid_install_dir(path) {
         return Some(path.to_owned());
     }
-    if entry_case_insensitive(path, MARKER_FILE).is_some() {
-        return path.parent().map(Path::to_owned);
+    if !path.file_name()?.to_str()?.eq_ignore_ascii_case("Data") {
+        return None;
     }
-    None
+    path.parent()
+        .filter(|parent| is_valid_install_dir(parent))
+        .map(Path::to_owned)
 }
 
 /// Whether a native dialog can appear at all. Prevents headless runs
@@ -176,7 +200,18 @@ fn config_path() -> Option<PathBuf> {
 
 /// Previously confirmed datadir, if it is still a valid installation.
 pub fn load_saved_datadir() -> Option<PathBuf> {
-    let content = std::fs::read_to_string(config_path()?).ok()?;
+    load_saved_datadir_from(&config_path()?)
+}
+
+fn load_saved_datadir_from(path: &Path) -> Option<PathBuf> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), "Could not read remembered game datadir: {error}");
+            return None;
+        }
+    };
     let dir = PathBuf::from(content.trim());
     if dir.as_os_str().is_empty() {
         return None;
@@ -193,23 +228,47 @@ pub fn load_saved_datadir() -> Option<PathBuf> {
 }
 
 /// Remember a confirmed datadir so the startup dialog only asks once.
-pub fn save_datadir(dir: &Path) {
-    let Some(path) = config_path() else {
-        return;
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+pub fn save_datadir(dir: &Path) -> std::io::Result<()> {
+    let path = config_path().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "remembering a game datadir requires an OS data directory",
+        )
+    })?;
+    persist_datadir(&path, dir)?;
+    tracing::info!(
+        "Remembered game datadir {} in {}",
+        dir.display(),
+        path.display()
+    );
+    Ok(())
+}
+
+fn persist_datadir(path: &Path, dir: &Path) -> std::io::Result<()> {
+    // The existing text format cannot round-trip non-UTF-8 names or newlines.
+    // Reject these explicitly instead of remembering a different path.
+    let text = dir
+        .to_str()
+        .filter(|value| {
+            !value.is_empty() && value.trim() == *value && !value.contains(['\n', '\r'])
+        })
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "game datadir cannot be represented in datadir.txt",
+            )
+        })?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        crate::desktop_persistence::write_bytes(path, format!("{text}\n").as_bytes())
     }
-    match std::fs::write(&path, format!("{}\n", dir.display())) {
-        Ok(()) => tracing::info!(
-            "Remembered game datadir {} in {}",
-            dir.display(),
-            path.display()
-        ),
-        Err(error) => tracing::warn!(
-            "Failed to remember game datadir in {}: {error}",
-            path.display()
-        ),
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (path, text);
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "native datadir preferences are unavailable in the browser",
+        ))
     }
 }
 
@@ -353,7 +412,9 @@ pub fn resolve_datadir(exe_dir: Option<&Path>) -> Option<PathBuf> {
                 }
             }
         }?;
-        save_datadir(&chosen);
+        if let Err(error) = save_datadir(&chosen) {
+            tracing::warn!("Could not remember selected game datadir: {error}");
+        }
         Some(chosen)
     }
 }
@@ -367,7 +428,18 @@ pub fn change_datadir_interactive() -> Option<PathBuf> {
         return None;
     }
     let chosen = pick_folder_loop()?;
-    save_datadir(&chosen);
+    if let Err(error) = save_datadir(&chosen) {
+        tracing::warn!("Could not remember selected game datadir: {error}");
+        pollster::block_on(
+            rfd::AsyncMessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("Game data folder could not be saved")
+                .set_description(format!("Could not remember the selected folder:\n{error}"))
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show(),
+        );
+        return None;
+    }
     pollster::block_on(
         rfd::AsyncMessageDialog::new()
             .set_level(rfd::MessageLevel::Info)
@@ -381,4 +453,79 @@ pub fn change_datadir_interactive() -> Option<PathBuf> {
             .show(),
     );
     Some(chosen)
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_uses_the_same_file_markers_for_roots_and_data_subfolders() {
+        for marker in ["ROBINHOOD.BKS", "DATADIR.BIN"] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            let data = root.join("dAtA");
+            std::fs::create_dir(&data).unwrap();
+            assert!(!is_valid_install_dir(root));
+            std::fs::write(data.join(marker), "fixture").unwrap();
+            assert!(is_valid_install_dir(root));
+            assert_eq!(normalize_selection(root).as_deref(), Some(root));
+            assert_eq!(normalize_selection(&data).as_deref(), Some(root));
+        }
+    }
+
+    #[test]
+    fn marker_directories_and_unrelated_subfolders_are_not_installations() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("Data/robinhood.bks")).unwrap();
+        std::fs::create_dir_all(root.join("Data/datadir.bin")).unwrap();
+        assert!(!is_valid_install_dir(root));
+        assert!(normalize_selection(&root.join("Data")).is_none());
+        let unrelated = root.join("Other");
+        std::fs::create_dir(&unrelated).unwrap();
+        std::fs::write(unrelated.join(MARKER_FILE), "fixture").unwrap();
+        assert!(normalize_selection(&unrelated).is_none());
+    }
+
+    #[test]
+    fn remembered_directory_roundtrips_and_invalid_paths_preserve_the_previous_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let install = directory.path().join("Unicode 雪");
+        std::fs::create_dir_all(install.join("Data")).unwrap();
+        std::fs::write(install.join("Data/datadir.bin"), "fixture").unwrap();
+        let config = directory.path().join("preferences/datadir.txt");
+        assert!(load_saved_datadir_from(&config).is_none());
+        persist_datadir(&config, &install).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            format!("{}\n", install.display())
+        );
+        assert_eq!(load_saved_datadir_from(&config), Some(install));
+        let before = std::fs::read(&config).unwrap();
+        for invalid in ["", " leading", "trailing ", "line\nbreak", "line\rbreak"] {
+            assert_eq!(
+                persist_datadir(&config, Path::new(invalid))
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidInput
+            );
+            assert_eq!(std::fs::read(&config).unwrap(), before);
+        }
+        assert!(persist_datadir(&config.join("child"), Path::new("game")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_directory_is_not_silently_rewritten() {
+        use std::os::unix::ffi::OsStrExt;
+        let directory = tempfile::tempdir().unwrap();
+        let invalid = Path::new(std::ffi::OsStr::from_bytes(b"/game/\xff"));
+        assert_eq!(
+            persist_datadir(&directory.path().join("datadir.txt"), invalid)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::InvalidInput
+        );
+    }
 }
