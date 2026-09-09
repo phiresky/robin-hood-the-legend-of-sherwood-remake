@@ -1781,7 +1781,7 @@ pub fn resolve_swordfight(
         }
 
         let pc_screen = host.frontend.viewport.map_to_screen_unclamped(pos_map);
-        let evaluation = host.frontend.mouse_way.evaluate_detailed(
+        let evaluation = host.frontend.mouse_way().evaluate_detailed(
             pc_screen,
             facing_dir,
             combat_rules.more_combat_gestures,
@@ -1791,7 +1791,7 @@ pub fn resolve_swordfight(
             "resolve_swordfight: pc={pc_id:?} pattern={pattern:?} quality={} similarity={} mw_pts={}",
             evaluation.quality.permille(),
             evaluation.similarity,
-            host.frontend.mouse_way.len(),
+            host.frontend.mouse_way().len(),
         );
 
         if host
@@ -1801,7 +1801,7 @@ pub fn resolve_swordfight(
             .combat_gesture_coach
             && !feedback_recorded
             && !matches!(pattern, MouseWayPattern::None)
-            && let Some(bounds) = host.frontend.mouse_way.bounds()
+            && let Some(bounds) = host.frontend.mouse_way().bounds()
         {
             let feedback_pattern = if combat_rules.more_combat_gestures
                 && matches!(pattern, MouseWayPattern::Attempt)
@@ -3522,8 +3522,7 @@ mod tests {
             (320.0, 290.0),
         ] {
             host.frontend
-                .mouse_way
-                .add_point(engine_coordinates::ScreenPoint::new(x, y));
+                .add_gesture_point(engine_coordinates::ScreenPoint::new(x, y));
         }
         assert_cmds!(
             resolve_swordfight(&mut host, &engine, &assets, MapPoint::new(0.0, 0.0), true,),
@@ -3538,7 +3537,7 @@ mod tests {
             }]
         );
 
-        host.frontend.mouse_way.clear();
+        host.frontend.clear_gesture();
         apply(
             &mut engine,
             &assets,
@@ -3549,8 +3548,7 @@ mod tests {
         );
         for &(x, y) in crate::mouse_way::composite_template(CompositeSwordTechnique::Vortex) {
             host.frontend
-                .mouse_way
-                .add_point(engine_coordinates::ScreenPoint::new(
+                .add_gesture_point(engine_coordinates::ScreenPoint::new(
                     320.0 + x * 90.0,
                     320.0 + y * 90.0,
                 ));

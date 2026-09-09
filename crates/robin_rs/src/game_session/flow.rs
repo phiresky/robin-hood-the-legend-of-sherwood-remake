@@ -598,10 +598,10 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             }
             if host.frontend.input.is_dragging()
                 && crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat)
-                && !host.frontend.mouse_way.is_empty()
+                && !host.frontend.mouse_way().is_empty()
                 && let Some(trail) = presentation.sprites.mouse_trail_renderer.as_ref()
             {
-                trail.advance(&mut host.frontend.mouse_way);
+                host.frontend.advance_gesture_trail(trail);
             }
             host.frontend.input.marked_pc_ids.clear();
             if let Some(mut fade) = host.frontend.fade_to_black {

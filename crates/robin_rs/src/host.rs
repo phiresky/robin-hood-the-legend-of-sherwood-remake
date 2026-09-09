@@ -38,7 +38,6 @@ use crate::localization::{
     LanguageChange, LanguagePack, LanguageSelection, LocalizationPreferences, LocalizationService,
     PortTextKey,
 };
-use crate::mouse_way::MouseWay;
 use crate::pc_info_overlay::PcInfoOverlay;
 use crate::sound::SoundManager;
 use crate::spellforge_trust::{
@@ -1616,10 +1615,15 @@ pub struct HostFrontend {
     pub engine_display: engine_api::HostDisplayState,
 
     // ── Input ────────────────────────────────────────────────────
+    /// Sampled input and cursor/selection presentation shared with the engine.
+    /// Pointer lifecycle changes belong to the named frontend operations below,
+    /// which also retire capture and gesture state.
+    // TODO: separate the remaining sampled-input and cursor-feedback domains;
+    // hiding these behind unrestricted mutable getters would not enforce that boundary.
     pub input: InputState,
 
     /// Paired pointer-event ownership, retired together at interaction resets.
-    pointer_capture: crate::frontend_input::FrontendPointerCapture,
+    pointer_sequence: crate::frontend_input::FrontendPointerSequence,
 
     /// Atomic host-local profile projection. Resolved commands, not preferences,
     /// cross replay and multiplayer boundaries.
@@ -1683,9 +1687,6 @@ pub struct HostFrontend {
     /// PC info hover popup (HP, equipment). Populated from sim's
     /// `SideEffects.overlay`.
     pub pc_info_overlay: PcInfoOverlay,
-    /// Mouse gesture / way-point tracker for "draw-path-to-target"
-    /// movement. Pure host UI state.
-    pub mouse_way: MouseWay,
 
     // ── Pixel-level fade (script opcode `FADE_TO_BLACK`) ─────────
     /// Active fade-to-black ramp driven by the `FADE_TO_BLACK` script
@@ -1941,10 +1942,56 @@ impl HostFrontend {
         self.planning.cancel_touch();
     }
     pub fn pointer_capture(&self) -> &crate::frontend_input::FrontendPointerCapture {
-        &self.pointer_capture
+        self.pointer_sequence.capture()
     }
-    pub fn pointer_capture_mut(&mut self) -> &mut crate::frontend_input::FrontendPointerCapture {
-        &mut self.pointer_capture
+    pub fn mouse_way(&self) -> &crate::mouse_way::MouseWay {
+        self.pointer_sequence.mouse_way()
+    }
+    pub fn add_gesture_point(&mut self, point: ScreenPoint) {
+        self.pointer_sequence.add_point(point);
+    }
+    pub fn clear_gesture(&mut self) {
+        self.pointer_sequence.clear_gesture();
+    }
+    pub fn advance_gesture_trail(&mut self, trail: &crate::mouse_trail::MouseTrailRenderer) {
+        self.pointer_sequence.advance_trail(trail);
+    }
+    pub fn begin_left_pointer(&mut self, point: ScreenPoint, clicks: u8) {
+        self.pointer_sequence
+            .begin_left(&mut self.input, point, clicks);
+    }
+    pub fn release_left_pointer(&mut self) -> bool {
+        self.pointer_sequence.release_left(&mut self.input)
+    }
+    pub fn begin_right_pointer(&mut self, clicks: u8) {
+        self.pointer_sequence.begin_right(&mut self.input, clicks);
+    }
+    pub fn release_right_pointer(&mut self) -> bool {
+        self.pointer_sequence.release_right(&mut self.input)
+    }
+    pub fn cancel_left_pointer(&mut self) {
+        self.pointer_sequence.cancel_left(&mut self.input);
+    }
+    pub fn begin_minimap_drag(&mut self, camera: bool) {
+        self.pointer_sequence.begin_minimap_drag(camera);
+    }
+    pub fn end_minimap_drag(&mut self) {
+        self.pointer_sequence.end_minimap_drag();
+    }
+    pub fn route_hud_event(&mut self, event: &crate::gfx_types::GameEvent, hit: bool) -> bool {
+        self.pointer_sequence.route_hud_event(event, hit)
+    }
+    /// Modal entry disarms the current drag without inventing a release.
+    pub fn reset_modal_input(&mut self) {
+        self.pointer_sequence.reset_modal(&mut self.input);
+        self.viewport.cancel_touch_motion();
+        self.ui_focus = false;
+    }
+    pub fn lose_pointer_focus(&mut self) {
+        self.reset_pointer_sequence();
+        // Unlike modal closure, focus loss abandons any pending release.
+        self.input.cancel_left_pointer();
+        self.interaction.invalidate_action();
     }
     /// Route a paired touch gesture against the current session planning policy.
     /// Keeping both owners borrowed here prevents a caller replacing that policy
@@ -1955,7 +2002,7 @@ impl HostFrontend {
         admit_touch: bool,
         hit_test: impl FnOnce(i32, i32) -> bool,
     ) -> crate::frontend_input::TouchPlanRoute {
-        self.pointer_capture.route_touch_plan_event(
+        self.pointer_sequence.route_touch_plan_event(
             &mut self.planning,
             event,
             admit_touch,
@@ -1975,11 +2022,9 @@ impl HostFrontend {
     }
 
     fn reset_pointer_sequence(&mut self) {
-        self.input.reset_pointer_sequence();
-        self.pointer_capture.cancel_sequence();
+        self.pointer_sequence.reset(&mut self.input);
         self.input.portrait_action_countdown = 0;
         self.input.portrait_action_pc = None;
-        self.mouse_way.clear();
         self.viewport.cancel_touch_motion();
         self.ui_focus = false;
     }
@@ -2963,7 +3008,7 @@ impl Host {
             // the game-loop site that owns `&mut DevState` to apply.
             self.effects.request_signal(HostSignal::PromoteFpsCheat);
             self.frontend.ui_focus = false;
-            self.frontend.mouse_way.clear();
+            self.frontend.clear_gesture();
             // Zero the no-mouse-move accumulator so the
             // hover-trajectory gate (`TIME_TRAJECTORY_DISPLAY`)
             // doesn't re-arm immediately after a modal dialog or task
@@ -3492,6 +3537,44 @@ mod interaction_reset_tests {
     use super::*;
 
     #[test]
+    fn focus_loss_retires_both_buttons_captures_and_path_without_changing_planning() {
+        let mut frontend = HostFrontend::default();
+        frontend.planning.update_preference(true);
+        frontend.planning.toggle_touch();
+        frontend.begin_left_pointer(Default::default(), 2);
+        frontend.begin_right_pointer(2);
+        frontend.begin_minimap_drag(true);
+        frontend.add_gesture_point(Default::default());
+        frontend.route_hud_event(&crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1), true);
+        frontend.lose_pointer_focus();
+        assert!(!frontend.input.left_mouse_down());
+        assert!(!frontend.input.right_mouse_down);
+        assert!(!frontend.release_left_pointer());
+        assert!(!frontend.release_right_pointer());
+        assert!(!frontend.pointer_capture().minimap_drag_active());
+        assert!(frontend.mouse_way().is_empty());
+        assert!(!frontend.route_hud_event(&crate::gfx_types::GameEvent::MouseUp(0, 0, 1), false));
+        assert!(frontend.planning.touch_latched());
+    }
+
+    #[test]
+    fn modal_entry_cancels_captures_and_gesture_but_preserves_held_button_semantics() {
+        let mut frontend = HostFrontend::default();
+        frontend.begin_left_pointer(Default::default(), 1);
+        frontend.begin_right_pointer(2);
+        frontend.begin_minimap_drag(true);
+        frontend.add_gesture_point(Default::default());
+        frontend.input.is_alt = true;
+        frontend.reset_modal_input();
+        assert!(frontend.input.left_mouse_down());
+        assert!(!frontend.input.is_dragging());
+        assert!(!frontend.input.is_alt);
+        assert!(!frontend.pointer_capture().minimap_drag_active());
+        assert!(!frontend.release_right_pointer());
+        assert!(frontend.mouse_way().is_empty());
+    }
+
+    #[test]
     fn modal_reset_preserves_view_target_but_snapshot_reset_retires_it() {
         let mut frontend = HostFrontend::default();
         let selected = EntityId::Soldier(robin_engine::entity_id::SoldierId(7));
@@ -3551,10 +3634,13 @@ mod interaction_reset_tests {
         host.frontend
             .input
             .press_left_pointer(Default::default(), 1);
-        host.frontend.pointer_capture.capture_touch_plan();
-        host.frontend.pointer_capture.right_button_down(2);
+        host.frontend.begin_right_pointer(2);
         host.frontend.planning.update_preference(true);
-        host.frontend.planning.toggle_touch();
+        host.frontend.route_touch_plan_event(
+            &crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1),
+            true,
+            |_, _| true,
+        );
         host.frontend
             .interaction
             .trajectory_preview
@@ -3577,8 +3663,8 @@ mod interaction_reset_tests {
         host.post_load_reset();
 
         assert!(!host.frontend.input.is_dragging());
-        assert!(!host.frontend.pointer_capture.touch_plan_captured());
-        assert!(!host.frontend.pointer_capture.take_right_double_click());
+        assert!(!host.frontend.pointer_capture().touch_plan_captured());
+        assert!(!host.frontend.release_right_pointer());
         assert!(!host.frontend.planning.touch_latched());
         assert!(!host.frontend.interaction.trajectory_preview.is_valid());
         assert!(!host.frontend.interaction.tactical_targeting.is_armed());
@@ -3600,15 +3686,18 @@ mod interaction_reset_tests {
         ] {
             let mut host = Host::scratch(640.0, 480.0);
             host.frontend.planning.update_preference(true);
-            host.frontend.planning.toggle_touch();
-            host.frontend.pointer_capture.capture_touch_plan();
+            host.frontend.route_touch_plan_event(
+                &crate::gfx_types::GameEvent::MouseDown(0, 0, 1, 1),
+                true,
+                |_, _| true,
+            );
             host.frontend
                 .input
                 .press_left_pointer(Default::default(), 1);
             host.frontend.viewport.begin_touch_transform(true);
             host.frontend.reset_interaction(reason);
             assert!(host.frontend.planning.touch_latched());
-            assert!(!host.frontend.pointer_capture.touch_plan_captured());
+            assert!(!host.frontend.pointer_capture().touch_plan_captured());
             assert!(!host.frontend.input.left_mouse_down());
             assert!(!host.frontend.viewport.advance_touch_inertia(100));
         }
