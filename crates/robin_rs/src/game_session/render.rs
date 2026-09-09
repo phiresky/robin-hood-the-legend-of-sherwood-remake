@@ -2088,9 +2088,31 @@ mod tests {
     use super::*;
     use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
 
+    fn presentation_host() -> Host {
+        use crate::host::ApplicationContext;
+        use crate::key_config_store::KeyConfigStore;
+        use robin_engine::player_profile::{DifficultyLevel, PlayerProfileManager};
+
+        // Like the application-context fixtures, initialize real in-memory
+        // profile authority without reading or persisting the directory.
+        let directory = "/tmp/draw-capability-context";
+        let mut profiles = PlayerProfileManager::new(directory.into());
+        let active = profiles.create_profile("Draw capability".into(), DifficultyLevel::Medium);
+        profiles.set_active(active);
+        let context = ApplicationContext::complete(
+            crate::player_profile_store::PlayerProfileStore::for_directory(directory),
+            engine_api::GlobalOptions::default(),
+            profiles,
+            KeyConfigStore::new(directory.into()),
+            None,
+        )
+        .unwrap();
+        Host::new(context.try_into().unwrap(), 800.0, 600.0).unwrap()
+    }
+
     #[test]
     fn draw_capability_reads_do_not_sample_live_diagnostics() {
-        let mut host = Host::scratch(800.0, 600.0);
+        let mut host = presentation_host();
         prepare_display_info(&mut host.presentation(), 100);
         let samples = host.frontend.display_info_frame_samples;
         let cursor = host.frontend.display_info_sample_cursor;
@@ -2109,7 +2131,7 @@ mod tests {
 
     #[test]
     fn draw_capability_serialization_cannot_reconstruct_authority() {
-        let mut host = Host::scratch(800.0, 600.0);
+        let mut host = presentation_host();
         let presentation = host.presentation();
         let encoded = serde_json::to_string(&presentation.draw()).unwrap();
         assert_eq!(encoded, "null");
