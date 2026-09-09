@@ -527,6 +527,18 @@ impl SaveGameManager {
         result
     }
 
+    /// Nonblocking completion fence for bootstrap. Unlike notification polling,
+    /// this reports a failed publication every time: consuming an error banner
+    /// must never turn a failed Restart save into a completed frame-zero save.
+    pub(crate) fn try_finish_background(&mut self) -> Result<SaveWriteStatus> {
+        self.check_operation_error()?;
+        if self.operations.pending_name().is_some() && !self.operations.is_finished() {
+            return Ok(SaveWriteStatus::Queued);
+        }
+        self.finish_background()?;
+        Ok(SaveWriteStatus::Completed)
+    }
+
     fn check_operation_error(&self) -> Result<()> {
         if let Some(error) = &self.operation_error {
             anyhow::bail!("{error}");
@@ -2223,6 +2235,44 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn bootstrap_completion_fence_is_nonblocking_and_failure_stays_failed() {
+        let root = tempfile::tempdir().unwrap();
+        let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        manager
+            .operations
+            .start(SlotName::new("Restart").unwrap(), move || {
+                release_rx.recv_timeout(std::time::Duration::from_secs(10))?;
+                anyhow::bail!("injected Restart publication failure")
+            })
+            .unwrap();
+        assert_eq!(
+            manager.try_finish_background().unwrap(),
+            SaveWriteStatus::Queued
+        );
+        release_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !manager.operations.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "save worker did not finish"
+            );
+            std::thread::yield_now();
+        }
+        assert!(
+            manager
+                .try_finish_background()
+                .unwrap_err()
+                .to_string()
+                .contains("injected Restart")
+        );
+        assert!(manager.poll_background().is_err());
+        assert!(!manager.poll_background().unwrap());
+        assert!(manager.try_finish_background().is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn queued_special_save_publishes_payload_then_owned_metadata_and_index() {
         let root = tempfile::tempdir().unwrap();
         let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
@@ -2251,6 +2301,10 @@ mod tests {
         assert!(manager.preflight_exact_slot(slot).is_err());
         assert!(manager.save_index().is_err());
         manager.finish_background().unwrap();
+        assert_eq!(
+            manager.try_finish_background().unwrap(),
+            SaveWriteStatus::Completed
+        );
         assert_eq!(
             manager
                 .slot_state(&SlotName::new("Continue").unwrap())
