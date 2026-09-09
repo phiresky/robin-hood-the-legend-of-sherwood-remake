@@ -1,7 +1,14 @@
 //! Archive acquisition boundary.
 use super::error::ResourcePreparationError;
+use super::{
+    extract_ground_mark_sprite_data, extract_minimap_widget_setup, extract_titbit_row_frame_counts,
+    init_audio_backend, localization,
+};
+use crate::{audio_backend::KiraAudioBackend, game::Game, host::Host};
+use robin_assets::res_descr as assets_res_descr;
 use robin_assets::{resource_manager::ResourceManager, shipping_datadir::ShippingDatadir};
 use robin_engine::sbfile::SbFileSystem;
+use robin_engine::{engine as engine_api, sbfile as engine_sbfile};
 
 /// Preserve archive identity and the decoder's full table/entry error chain.
 /// The caller, not this shared diagnostic boundary, decides optionality.
@@ -47,14 +54,6 @@ pub(super) fn attach_mission_archive(
         }
     }
 }
-
-use super::{
-    extract_ground_mark_sprite_data, extract_minimap_widget_setup, extract_titbit_row_frame_counts,
-    init_audio_backend, localization,
-};
-use crate::{audio_backend::KiraAudioBackend, game::Game, host::Host};
-use robin_assets::res_descr as assets_res_descr;
-use robin_engine::{engine as engine_api, sbfile as engine_sbfile};
 
 /// Process-only resources acquired before the deterministic engine is built.
 ///
