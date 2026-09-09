@@ -10,4 +10,3 @@
 This dated news item reports that Spellbound opened an official website for its forthcoming Robin Hood game. It describes a medieval tactical game and lists promotional material available on the website, including screenshots, music, and screensavers.
 
 The report provides a lead for investigating the original promotional assets and their archived availability. It does not establish that those downloads remain accessible, and no files from the original website were recovered or inspected in this pass.
-

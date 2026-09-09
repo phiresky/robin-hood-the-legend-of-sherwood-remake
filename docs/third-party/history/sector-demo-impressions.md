@@ -10,4 +10,3 @@
 After playing the demo, saver describes an improvement over Desperados while judging its presentation below Commandos 2. The report singles out automatic self-defense when characters are attacked and the use of indistinct silhouettes for enemies beyond clear sight; approaching them reveals their type.
 
 These observations make the item useful for comparing prerelease behavior with the finished game. It also highlights the complementary abilities of the familiar outlaw team. The observations apply to the demo the writer played; the article does not identify its exact build, and this record does not infer behavior across all released versions.
-

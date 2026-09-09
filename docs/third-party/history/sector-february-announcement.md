@@ -10,4 +10,3 @@
 An early announcement positions the forthcoming game as a tactical strategy from the makers of Desperados, set around Sherwood Forest. It advertises forty missions and names several familiar heroes and Guy of Gisborne.
 
 This is a dated record of the project’s early publicity. The mission count is a prerelease claim, not a verified count of unique maps or mandatory campaign stages. The item provides neither a detailed production history nor evidence of the final release schedule.
-
