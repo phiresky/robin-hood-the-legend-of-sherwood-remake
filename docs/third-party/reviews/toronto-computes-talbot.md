@@ -1,21 +1,34 @@
-# Toronto Computes! — Chris Talbot’s review (original unavailable)
+# Robin Hood on the PC
 
-- Reported original title: Robin Hood on the PC
-- Source citation: [Original publication](https://www.scribd.com/document/488631632/2003-05-Toronto-Computes)
-- Reported author / publication: Chris Talbot; Toronto Computes!, May 2003, page 51; digitized copy on Scribd
-- Language / date: English; May 2003
-- Access: Not retrievable: Scribd served a bot-challenge placeholder instead of the document
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09 (placeholder only)
-- Archived copy: [Wayback Machine, 2026-05-12](https://web.archive.org/web/20260512145214/https://www.scribd.com/document/488631632/2003-05-Toronto-Computes)
-- Original text status: unavailable; the mapped HTML and text files contain only a Scribd client-challenge page
+- Source citation: [Toronto Computes!](https://www.scribd.com/document/488631632/2003-05-Toronto-Computes), reported May 2003, page 51; the supplied screenshot does not show the issue date or page number
+- Author: Chris Talbot
+- Language: English
+- Manual source: `originals/reviews__toronto-computes-talbot-manual.png`, supplied 2026-09-09
+- Original text status: full article text available in the supplied screenshot; the screenshot is a crop and does not independently verify the reported issue date or page number
 
-## Editorial research note (not original source text)
+## Original text
 
-Talbot describes a mixture of tactical strategy and role-playing adventure, with optional money-making missions alongside plot progression. The brief review judges the adaptation successful and the game enjoyable overall.
+### Robin Hood on the PC
 
-Its presentation assessment is restrained: animations are smooth, but graphics sometimes look dated; music and effects work well, while voices sound melodramatic. Earlier research described scan OCR that interleaved columns and neighboring advertisements, so this note uses only the clearly legible review passages from that research. Garbled system requirements and advertisement numerals are not treated as game specifications or a review score.
+*By CHRIS TALBOT*
 
-## Access record
+Rob from the rich, give to the poor. Repeat. In a sense, that is the life of history’s most notorious legendary character, and Montreal’s Strategy First has brought Robin Hood to life on PC in what has been billed as a tactical strategy game.
 
-The request to the Scribd document URL on 2026-09-09 returned only a Scribd bot-challenge placeholder: “A required part of this site couldn’t load. This may be due to a browser extension, network issues, or browser settings. Please check your connection, disable any ad blockers, or try using a different browser.” No document text, OCR content, page images, or metadata (issue date, page number, or author byline) were received from the mapped originals. The magazine is a 2003 print publication, so no free licence applies in any case. The editorial note above rests on earlier OCR inspection and remains unverified: the attribution to Chris Talbot, the May 2003 issue, page 51, and the judgements on animation, graphics, music, and voices are all unconfirmed against a retrieved copy.
+In truth, *Robin Hood: The Legend of Sherwood* is part tactical strategy game and part role-playing adventure game. From there, the game becomes more strategy-oriented, with Robin (the player) deciding which missions to take on. The goal is to gather enough money to pay the ransom to free King Richard, who has been imprisoned by Duke Leopold. As in the legends, paying the ransom will bring back King Richard, who will fix all of the problems in jolly ol’ England his brother Prince John has created.
+
+To do that, players will have to guide Robin and the Merry Men through missions involving simple robbery, infiltrating Nottingham, attacking castles and ambushing wealthy oppressors along the king’s roads. Some missions exist to help Robin add to his treasury so he can later pay the ransom, while others further the plot itself.
+
+Graphically, *Robin Hood: The Legend of Sherwood* is good, but not great. The graphics are decent and the in-game character animations are smooth, but the game does look like it’s about two years old at times. The sound is actually fairly good, though. A light score plays in the background and the sound effects are well-timed. Voice acting is mediocre, however, and the characters usually come off as melodramatic when they’re conversing. It doesn’t detract from the gameplay, though.
+
+Overall, *Robin Hood: The Legend of Sherwood* is a good interpretation of the legends and a decent game.
+
+### More info
+
+*Robin Hood: The Legend of Sherwood* — $69.99
+
+**Publisher:** Strategy First
+**Website:** [www.strategyfirst.com](http://www.strategyfirst.com)
+
+**Requirements:** Windows 98/ME/2000/XP, Pentium II 233 MHz processor or better, 64 MB of RAM, 900 MB hard disk space, 4 MB video card, DirectX-compatible soundcard, 4x CD-ROM drive
+
+**ESRB:** Teen
