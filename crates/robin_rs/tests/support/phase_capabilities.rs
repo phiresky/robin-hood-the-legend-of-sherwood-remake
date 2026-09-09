@@ -5,6 +5,49 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn deferred_http_work_is_owned_by_the_mission_not_process_statics() {
+    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let owner = runtime
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "MissionRuntime" => Some(item),
+            _ => None,
+        })
+        .expect("mission runtime");
+    let ingress = owner
+        .fields
+        .iter()
+        .find(|field| field.ident.as_ref().is_some_and(|ident| ident == "http"))
+        .expect("mission owns HTTP ingress");
+    assert!(
+        matches!(&ingress.ty, syn::Type::Path(path) if path.path.segments.last().is_some_and(|segment| segment.ident == "SessionIngress"))
+    );
+
+    for source in [
+        include_str!("../../src/http_server.rs"),
+        include_str!("../../src/http_server/ingress.rs"),
+    ] {
+        let syntax = syn::parse_file(source).unwrap();
+        for item in syntax.items {
+            if let syn::Item::Static(item) = item {
+                let name = item.ident.to_string();
+                assert!(
+                    ![
+                        "PENDING_STEPS",
+                        "PENDING_SCREENSHOTS",
+                        "PENDING_REPLAY_TAINTS",
+                        "REPLAY_STATUS"
+                    ]
+                    .contains(&name.as_str()),
+                    "{name} must not outlive the mission"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn frontend_policy_and_observation_owners_remain_private() {
     let host = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
     let structure = |name: &str| {
