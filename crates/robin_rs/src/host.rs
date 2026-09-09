@@ -1866,7 +1866,11 @@ impl HostFrontend {
     pub fn tactical_targeting(&self) -> &crate::frontend_targeting::TacticalTargeting {
         &self.interaction.tactical_targeting
     }
-    pub fn arm_tactical_patrol(&mut self, soldiers: Vec<EntityId>, formation: TacticalFormation) {
+    pub fn arm_tactical_patrol(
+        &mut self,
+        soldiers: Vec<EntityId>,
+        formation: robin_engine::tactical_control::TacticalFormation,
+    ) {
         self.interaction
             .tactical_targeting
             .arm_patrol(soldiers, formation);
