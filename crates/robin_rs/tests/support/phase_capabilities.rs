@@ -5,6 +5,44 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn timeline_reconciliation_and_history_are_private_owners() {
+    let runtime = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let owner = runtime
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "TimelineRuntime" => Some(item),
+            _ => None,
+        })
+        .expect("timeline runtime");
+    for name in ["network", "history", "mp_admission"] {
+        let field = owner
+            .fields
+            .iter()
+            .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+            .unwrap_or_else(|| panic!("missing timeline owner {name}"));
+        assert!(
+            matches!(field.vis, syn::Visibility::Inherited),
+            "{name} must not be mutated directly by sibling frame drivers"
+        );
+    }
+    for field in &owner.fields {
+        assert!(
+            ![
+                "pending_inputs",
+                "peer_hashes",
+                "local_mp_hashes",
+                "rewind_buffer",
+                "rollback_checker"
+            ]
+            .iter()
+            .any(|name| field.ident.as_ref().is_some_and(|ident| ident == name)),
+            "timeline collections belong inside their lifecycle owners"
+        );
+    }
+}
+
+#[test]
 fn http_transport_does_not_own_replay_storage() {
     struct StorageDeclarations;
     impl<'ast> Visit<'ast> for StorageDeclarations {
