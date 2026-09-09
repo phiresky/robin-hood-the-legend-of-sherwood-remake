@@ -1005,14 +1005,56 @@ async fn process_job(
 ) -> anyhow::Result<()> {
     let request = build_verification_request(&job, worker.limits.clone())?;
     let route = VerifierJobRouteV1::from_request(&request);
-    let template = job_catalog
+    let ranked = &request
+        .submission
+        .submission
+        .offer
+        .session_genesis
+        .claim
+        .ranked_session;
+    let mut template = job_catalog
         .entries
         .iter()
-        .find(|entry| entry.route == route)
+        .find(|entry| {
+            let mut candidate_route = entry.route.clone();
+            if entry.ruleset_manifest.rules_config_constraint
+                == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig
+            {
+                candidate_route.rules_config_sha256 = route.rules_config_sha256;
+            }
+            candidate_route == route
+        })
         .ok_or_else(|| {
             anyhow::anyhow!("authenticated job route is absent from the pinned catalog")
         })?
         .clone();
+    if template.ruleset_manifest.rules_config_constraint
+        == robin_run_protocol::RulesConfigConstraintV1::AnyCanonicalSimConfig
+    {
+        let custom = ranked.custom_rules_config.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("open-ruleset job is missing its signed configuration")
+        })?;
+        anyhow::ensure!(
+            custom.rules == template.rules_config.rules
+                && custom.replay_schema_version == template.rules_config.replay_schema_version,
+            "custom configuration changes the immutable ranking policy"
+        );
+        robin_engine::simulation_inputs::validate_ranked_simulation_policy_rules_config_v1(custom)?;
+        anyhow::ensure!(
+            custom.canonical_digest()? == route.rules_config_sha256,
+            "signed custom configuration digest differs from job route"
+        );
+        template.rules_config = custom.clone();
+        template.route = route.clone();
+        template
+            .canonical_campaign_state
+            .requirement
+            .rules_config_sha256 = route.rules_config_sha256;
+        template.canonical_campaign_state.artifact =
+            ranked.custom_canonical_campaign.clone().ok_or_else(|| {
+                anyhow::anyhow!("custom job is missing its canonical campaign proposal")
+            })?;
+    }
     let published_ruleset = server
         .manifests
         .rulesets
@@ -1025,7 +1067,12 @@ async fn process_job(
         .ok_or_else(|| anyhow::anyhow!("authenticated job verifier policy is unavailable"))?
         .clone();
     let campaign_authority = database
-        .campaign_authority_for_verification(&job.submission_id, &worker.worker_id, &request)
+        .campaign_authority_for_verification(
+            &job.submission_id,
+            &worker.worker_id,
+            &request,
+            &published_ruleset.manifest,
+        )
         .await?;
     anyhow::ensure!(
         campaign_authority.canonical_campaign_state == template.canonical_campaign_state,

@@ -1117,6 +1117,8 @@ mod tests {
 
     fn ranked_config() -> RankedSessionConfigV1 {
         RankedSessionConfigV1 {
+            custom_rules_config: None,
+            custom_canonical_campaign: None,
             schema_version: SCHEMA_VERSION_V1,
             mission_id: "Dem_Lei_MP".to_string(),
             content_edition: OfficialContentEditionV1::Demo,

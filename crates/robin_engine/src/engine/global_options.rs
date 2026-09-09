@@ -202,6 +202,10 @@ pub struct RankedSimulationPolicy {
 pub enum RankedSimulationPolicyError {
     #[error("unsupported ranked simulation-policy document: {0}")]
     InvalidIdentity(robin_run_protocol::ValidationError),
+    #[error("custom ranked policies require their complete validated simulation configuration")]
+    MissingCustomConfiguration,
+    #[error("invalid custom ranked simulation configuration: {0}")]
+    InvalidCustomConfiguration(String),
     #[error("ranked simulation policy config differs at {field}")]
     ConfigMismatch { field: RankedSimulationConfigField },
 }
@@ -217,8 +221,14 @@ impl RankedSimulationPolicy {
             RankedSimulationDifficultyV1::Easy => DifficultyLevel::Easy,
             RankedSimulationDifficultyV1::Medium => DifficultyLevel::Medium,
             RankedSimulationDifficultyV1::Hard => DifficultyLevel::Hard,
+            RankedSimulationDifficultyV1::Legendary | RankedSimulationDifficultyV1::Custom => {
+                return Err(RankedSimulationPolicyError::MissingCustomConfiguration);
+            }
         };
         let expected_config = match identity.preset {
+            RankedSimulationPresetV1::Custom => {
+                return Err(RankedSimulationPolicyError::MissingCustomConfiguration);
+            }
             RankedSimulationPresetV1::Standard => SimConfig::standard_ranked(difficulty),
             RankedSimulationPresetV1::OriginalParity => {
                 SimConfig::original_parity_ranked(difficulty)
@@ -227,6 +237,39 @@ impl RankedSimulationPolicy {
         Ok(Self {
             identity,
             expected_config,
+        })
+    }
+
+    pub fn from_config(
+        identity: RankedSimulationPolicyV1,
+        config: SimConfig,
+    ) -> Result<Self, RankedSimulationPolicyError> {
+        identity
+            .validate()
+            .map_err(RankedSimulationPolicyError::InvalidIdentity)?;
+        if identity.preset != RankedSimulationPresetV1::Custom {
+            let policy = Self::from_identity(identity)?;
+            policy.validate_config(config)?;
+            return Ok(policy);
+        }
+        config.validate().map_err(|error| {
+            RankedSimulationPolicyError::InvalidCustomConfiguration(error.to_string())
+        })?;
+        let difficulty = match config.difficulty {
+            DifficultyLevel::Easy => RankedSimulationDifficultyV1::Easy,
+            DifficultyLevel::Medium => RankedSimulationDifficultyV1::Medium,
+            DifficultyLevel::Hard => RankedSimulationDifficultyV1::Hard,
+            DifficultyLevel::Legendary => RankedSimulationDifficultyV1::Legendary,
+            DifficultyLevel::Custom(_) => RankedSimulationDifficultyV1::Custom,
+        };
+        if identity.difficulty != difficulty {
+            return Err(RankedSimulationPolicyError::ConfigMismatch {
+                field: RankedSimulationConfigField::Difficulty,
+            });
+        }
+        Ok(Self {
+            identity,
+            expected_config: config,
         })
     }
 

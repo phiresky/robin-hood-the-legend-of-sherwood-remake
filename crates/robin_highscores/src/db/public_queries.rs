@@ -3,19 +3,60 @@
 use super::*;
 
 impl Database {
+    /// Serve custom settings only after a verifier accepted the signed offer.
+    pub async fn public_custom_rules_config(
+        &self,
+        digest: robin_run_protocol::Digest32,
+    ) -> Result<Option<robin_run_protocol::RulesConfigIdentityV1>, DbError> {
+        let offer: Option<String> = sqlx::query_scalar(
+            "SELECT s.offer_json FROM submissions s JOIN verified_runs r ON r.submission_id = s.id \
+             WHERE s.status = 'accepted' AND s.tombstoned_at_ms IS NULL AND r.config_id = ? LIMIT 1",
+        ).bind(digest.into_bytes().to_vec()).fetch_optional(&self.pool).await?;
+        let Some(offer) = offer else {
+            return Ok(None);
+        };
+        let offer: robin_run_protocol::SubmissionOfferV1 = serde_json::from_str(&offer)
+            .map_err(|error| DbError::Corrupt(format!("accepted custom rules offer: {error}")))?;
+        let rules = offer
+            .session_genesis
+            .claim
+            .ranked_session
+            .custom_rules_config
+            .ok_or_else(|| {
+                DbError::Corrupt("accepted custom rules offer has no configuration".into())
+            })?;
+        if rules
+            .canonical_digest()
+            .map_err(|error| DbError::Corrupt(error.to_string()))?
+            != digest
+        {
+            return Err(DbError::Corrupt(
+                "accepted custom rules configuration digest differs".into(),
+            ));
+        }
+        Ok(Some(rules))
+    }
+
     pub async fn leaderboard_rows(
         &self,
         filter: &robin_run_protocol::RunFilterV1,
         cursor: Option<&BoardCursor>,
         limit: u32,
         accepted_sequence_watermark: u64,
+        allowed_rulesets: &[robin_run_protocol::Digest32],
     ) -> Result<Vec<BoardRow>, DbError> {
         if matches!(
             filter.subject,
             robin_run_protocol::LeaderboardSubjectV1::FullCampaign
         ) {
             return self
-                .full_campaign_leaderboard_rows(filter, cursor, limit, accepted_sequence_watermark)
+                .full_campaign_leaderboard_rows(
+                    filter,
+                    cursor,
+                    limit,
+                    accepted_sequence_watermark,
+                    allowed_rulesets,
+                )
                 .await;
         }
         let metric = match filter.metric {
@@ -55,14 +96,44 @@ impl Database {
             .push_bind(mission_id)
             .push(" AND r.content_manifest_id = ")
             .push_bind(content_digest.as_bytes().as_slice())
-            .push(" AND r.config_id = ")
-            .push_bind(filter.rules_config_sha256.as_bytes().as_slice())
-            .push(" AND r.ruleset_id = ")
-            .push_bind(filter.ruleset_manifest_sha256.as_bytes().as_slice())
+            .push(" AND (")
+            .push_bind(
+                filter
+                    .rules_config_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(" IS NULL OR r.config_id = ")
+            .push_bind(
+                filter
+                    .rules_config_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(")")
+            .push(" AND (")
+            .push_bind(
+                filter
+                    .ruleset_manifest_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(" IS NULL OR r.ruleset_id = ")
+            .push_bind(
+                filter
+                    .ruleset_manifest_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(")")
             .push(" AND r.accepted_sequence <= ")
             .push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| {
                 DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned())
             })?);
+        query.push(" AND r.ruleset_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for ruleset in allowed_rulesets {
+                separated.push_bind(ruleset.into_bytes().to_vec());
+            }
+        }
+        query.push(")");
         match &filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -128,7 +199,12 @@ impl Database {
             .map(|row| row.get::<i64, _>("value"))
             .collect::<Vec<_>>();
         let ranks = self
-            .mission_ranks(filter, &metric_values, accepted_sequence_watermark)
+            .mission_ranks(
+                filter,
+                &metric_values,
+                accepted_sequence_watermark,
+                allowed_rulesets,
+            )
             .await?;
         let mut output = Vec::with_capacity(rows.len());
         for row in rows {
@@ -181,6 +257,7 @@ impl Database {
         cursor: Option<&BoardCursor>,
         limit: u32,
         accepted_sequence_watermark: u64,
+        allowed_rulesets: &[robin_run_protocol::Digest32],
     ) -> Result<Vec<BoardRow>, DbError> {
         let metric = match filter.metric {
             robin_run_protocol::BoardMetricV1::OriginalScore => "original_score",
@@ -200,10 +277,32 @@ impl Database {
             .push_bind(metric)
             .push(" AND fc.campaign_content_manifest_id = ")
             .push_bind(content_digest.as_bytes().as_slice())
-            .push(" AND fc.config_id = ")
-            .push_bind(filter.rules_config_sha256.as_bytes().as_slice())
-            .push(" AND fc.ruleset_id = ")
-            .push_bind(filter.ruleset_manifest_sha256.as_bytes().as_slice())
+            .push(" AND (")
+            .push_bind(
+                filter
+                    .rules_config_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(" IS NULL OR fc.config_id = ")
+            .push_bind(
+                filter
+                    .rules_config_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(")")
+            .push(" AND (")
+            .push_bind(
+                filter
+                    .ruleset_manifest_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(" IS NULL OR fc.ruleset_id = ")
+            .push_bind(
+                filter
+                    .ruleset_manifest_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(")")
             .push(" AND fc.accepted_sequence <= ")
             .push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| {
                 DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned())
@@ -215,6 +314,14 @@ impl Database {
                    WHERE fcs.full_campaign_run_id = fc.id \
                      AND s.tombstoned_at_ms IS NOT NULL)",
             );
+        query.push(" AND fc.ruleset_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for ruleset in allowed_rulesets {
+                separated.push_bind(ruleset.into_bytes().to_vec());
+            }
+        }
+        query.push(")");
         match &filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -282,7 +389,12 @@ impl Database {
             .map(|row| row.get::<i64, _>("value"))
             .collect::<Vec<_>>();
         let ranks = self
-            .full_campaign_ranks(filter, &metric_values, accepted_sequence_watermark)
+            .full_campaign_ranks(
+                filter,
+                &metric_values,
+                accepted_sequence_watermark,
+                allowed_rulesets,
+            )
             .await?;
         let mut output = Vec::with_capacity(rows.len());
         for row in rows {
@@ -337,6 +449,7 @@ impl Database {
         filter: &robin_run_protocol::RunFilterV1,
         values: &[i64],
         accepted_sequence_watermark: u64,
+        allowed_rulesets: &[robin_run_protocol::Digest32],
     ) -> Result<BTreeMap<i64, u64>, DbError> {
         let unique = values.iter().copied().collect::<BTreeSet<_>>();
         if unique.is_empty() {
@@ -391,14 +504,44 @@ impl Database {
             .push_bind(mission_id)
             .push(" AND run.content_manifest_id = ")
             .push_bind(content_digest.as_bytes().as_slice())
-            .push(" AND run.config_id = ")
-            .push_bind(filter.rules_config_sha256.as_bytes().as_slice())
-            .push(" AND run.ruleset_id = ")
-            .push_bind(filter.ruleset_manifest_sha256.as_bytes().as_slice())
+            .push(" AND (")
+            .push_bind(
+                filter
+                    .rules_config_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(" IS NULL OR run.config_id = ")
+            .push_bind(
+                filter
+                    .rules_config_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(")")
+            .push(" AND (")
+            .push_bind(
+                filter
+                    .ruleset_manifest_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(" IS NULL OR run.ruleset_id = ")
+            .push_bind(
+                filter
+                    .ruleset_manifest_sha256
+                    .map(|digest| digest.into_bytes().to_vec()),
+            )
+            .push(")")
             .push(" AND run.accepted_sequence <= ")
             .push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| {
                 DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned())
             })?);
+        query.push(" AND run.ruleset_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for ruleset in allowed_rulesets {
+                separated.push_bind(ruleset.into_bytes().to_vec());
+            }
+        }
+        query.push(")");
         match filter.competition_manifest_sha256 {
             Some(competition) => {
                 query
@@ -439,6 +582,7 @@ impl Database {
         filter: &robin_run_protocol::RunFilterV1,
         values: &[i64],
         accepted_sequence_watermark: u64,
+        allowed_rulesets: &[robin_run_protocol::Digest32],
     ) -> Result<BTreeMap<i64, u64>, DbError> {
         let unique = values.iter().copied().collect::<BTreeSet<_>>();
         if unique.is_empty() {
@@ -467,10 +611,18 @@ impl Database {
         query
             .push_bind(metric)
             .push(" AND run.campaign_content_manifest_id = ").push_bind(content_digest.as_bytes().as_slice())
-            .push(" AND run.config_id = ").push_bind(filter.rules_config_sha256.as_bytes().as_slice())
-            .push(" AND run.ruleset_id = ").push_bind(filter.ruleset_manifest_sha256.as_bytes().as_slice())
+            .push(" AND (").push_bind(filter.rules_config_sha256.map(|digest| digest.into_bytes().to_vec())).push(" IS NULL OR run.config_id = ").push_bind(filter.rules_config_sha256.map(|digest| digest.into_bytes().to_vec())).push(")")
+            .push(" AND (").push_bind(filter.ruleset_manifest_sha256.map(|digest| digest.into_bytes().to_vec())).push(" IS NULL OR run.ruleset_id = ").push_bind(filter.ruleset_manifest_sha256.map(|digest| digest.into_bytes().to_vec())).push(")")
             .push(" AND run.accepted_sequence <= ").push_bind(i64::try_from(accepted_sequence_watermark).map_err(|_| DbError::ResultInvariant("acceptance watermark exceeds i64".to_owned()))?)
             .push(" AND NOT EXISTS (SELECT 1 FROM full_campaign_sessions session JOIN verified_runs child ON child.id = session.run_id JOIN submissions submission ON submission.id = child.submission_id WHERE session.full_campaign_run_id = run.id AND submission.tombstoned_at_ms IS NOT NULL)");
+        query.push(" AND run.ruleset_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for ruleset in allowed_rulesets {
+                separated.push_bind(ruleset.into_bytes().to_vec());
+            }
+        }
+        query.push(")");
         match filter.competition_manifest_sha256 {
             Some(competition) => {
                 query

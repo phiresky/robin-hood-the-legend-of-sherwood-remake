@@ -3831,7 +3831,9 @@ impl Engine {
                     );
                     FrameAdvanceError::RankedSimulationConfigViolation { field }
                 }
-                super::RankedSimulationPolicyError::InvalidIdentity(error) => {
+                error @ (super::RankedSimulationPolicyError::InvalidIdentity(_)
+                | super::RankedSimulationPolicyError::MissingCustomConfiguration
+                | super::RankedSimulationPolicyError::InvalidCustomConfiguration(_)) => {
                     unreachable!("installed ranked policy was already validated: {error}")
                 }
             })

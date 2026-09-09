@@ -1895,8 +1895,8 @@ mod tests {
             mission_scope: Some(BoardCategoryV1::IndividualLevel),
             metric,
             content_identity_sha256: Digest32::from_bytes([5; 32]),
-            rules_config_sha256: Digest32::from_bytes([6; 32]),
-            ruleset_manifest_sha256: Digest32::from_bytes([7; 32]),
+            rules_config_sha256: Some(Digest32::from_bytes([6; 32])),
+            ruleset_manifest_sha256: Some(Digest32::from_bytes([7; 32])),
             competition_manifest_sha256: None,
             max_concurrent_players: Some(1),
             player_public_key: None,
@@ -1930,6 +1930,8 @@ mod tests {
         let campaign_bytes = bitcode::encode(&campaign);
         let mission_id = "Dem_Lei_MP".to_owned();
         let ranked = RankedSessionConfigV1 {
+            custom_rules_config: None,
+            custom_canonical_campaign: None,
             schema_version: SCHEMA_VERSION_V1,
             mission_id: mission_id.clone(),
             content_edition: OfficialContentEditionV1::Demo,

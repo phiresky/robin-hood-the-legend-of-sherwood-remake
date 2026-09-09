@@ -2659,6 +2659,21 @@ impl Campaign {
         profiles: &ProfileManager,
         difficulty: DifficultyLevel,
     ) {
+        self.create_gang_from_pcs_with_file_exists(
+            pcs,
+            profiles,
+            difficulty,
+            crate::sbfile::SbFile::exists,
+        );
+    }
+
+    pub(crate) fn create_gang_from_pcs_with_file_exists(
+        &mut self,
+        pcs: &str,
+        profiles: &ProfileManager,
+        difficulty: DifficultyLevel,
+        mut file_exists: impl FnMut(&str) -> bool,
+    ) {
         let char_names: Vec<&str> = pcs
             .chars()
             .filter_map(|c| match c.to_ascii_uppercase() {
@@ -2698,7 +2713,7 @@ impl Campaign {
                 .iter()
                 .find(|(_, cp)| {
                     let path = format!("Data/Characters/{}.rhs", cp.filename);
-                    crate::sbfile::SbFile::exists(&path)
+                    file_exists(&path)
                 })
                 .or_else(|| candidates.first())
                 .map(|&(idx, cp)| (idx, cp));

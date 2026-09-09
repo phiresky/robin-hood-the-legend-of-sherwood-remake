@@ -212,7 +212,7 @@ impl robin_run_protocol::Validate for ReleaseAdmissionIndexV1 {
             || !plausible_public_key(self.run_preflight_grant_public_key)
             || !plausible_public_key(self.competition_run_grant_public_key)
             || self.run_preflight_grant_public_key == self.competition_run_grant_public_key
-            || self.rulesets.len() != 12
+            || !matches!(self.rulesets.len(), 12 | 14)
             || self.policies.len() != 4
             || self.competitions.len() > MAX_COMPETITIONS
         {
@@ -487,7 +487,7 @@ fn validate_loaded_policy_inputs(inputs: &LoadedPolicyInputs) -> Result<()> {
     let expected_rules = rules_config_specs();
     ensure!(
         inputs.rules_configs.len() == expected_rules.len(),
-        "policy inputs omit or substitute one of the six ranked rules configs"
+        "policy inputs omit or substitute an authored ranked rules config"
     );
     for (loaded, (name, identity)) in inputs.rules_configs.iter().zip(expected_rules) {
         ensure!(
@@ -528,14 +528,14 @@ fn author_documents(
         .map(|policy| policy.identity.clone())
         .collect::<Vec<_>>();
     let mut published_rulesets = BTreeMap::new();
-    let mut ruleset_index = Vec::with_capacity(12);
+    let mut ruleset_index = Vec::with_capacity(14);
     for (edition, simulation_policy) in ruleset_order() {
         let config = prepared
             .policy_inputs
             .rules_configs
             .iter()
             .find(|config| config.document.ranked_simulation_policy == simulation_policy)
-            .context("one of the six rules configs is absent")?;
+            .context("one of the seven rules configs is absent")?;
         let manifest = official_ruleset(
             edition,
             config,
@@ -568,8 +568,8 @@ fn author_documents(
         });
     }
     ensure!(
-        published_rulesets.len() == 12,
-        "official release admission must author exactly 12 rulesets"
+        published_rulesets.len() == 14,
+        "official release admission must author exactly 14 rulesets"
     );
 
     let mut competitions = BTreeMap::new();
@@ -581,7 +581,7 @@ fn author_documents(
                 entry.edition == competition_plan.edition
                     && entry.ranked_simulation_policy == competition_plan.ranked_simulation_policy
             })
-            .context("competition does not select one of the 12 official rulesets")?;
+            .context("competition does not select an authored official ruleset")?;
         let ruleset = published_rulesets
             .get(&ruleset_entry.ruleset_manifest_sha256)
             .expect("ruleset index is internal authority");
@@ -668,6 +668,7 @@ fn official_ruleset(
         ),
         OfficialContentEditionV1::Full => (
             vec![
+                RulesetBoardScopeV1::IndividualLevel,
                 RulesetBoardScopeV1::CampaignMission,
                 RulesetBoardScopeV1::FullCampaign,
             ],
@@ -682,7 +683,8 @@ fn official_ruleset(
         OfficialContentEditionV1::Demo => "Demo",
         OfficialContentEditionV1::Full => "Full",
     };
-    let manifest = RulesetManifestV1 {
+    let any = policy.preset == robin_run_protocol::RankedSimulationPresetV1::Custom;
+    let mut manifest = RulesetManifestV1 {
         schema_version: 1,
         display_name: format!(
             "{edition_name} / {} / {}",
@@ -707,7 +709,7 @@ fn official_ruleset(
         ],
         achievement_policies: official_achievement_policies_v1(),
         canonical_start_policy:
-            CanonicalStartPolicyV1::RulesConfigBoundOperatorStateAndVerifiedPredecessor,
+            CanonicalStartPolicyV1::RulesConfigBoundMissionSetupAndVerifiedPredecessor,
         canonical_campaign_state: CanonicalCampaignStateRequirementV1 {
             edition,
             kind: state_kind,
@@ -761,6 +763,14 @@ fn official_ruleset(
         allow_state_load: false,
         allow_mission_restart: false,
     };
+    if any {
+        manifest.display_name = format!("{edition_name} / Any ruleset");
+        manifest.preset_id = OpaqueId::new("any")?;
+        manifest.preset_name = "Any ruleset".into();
+        manifest.difficulty_id = OpaqueId::new("any")?;
+        manifest.difficulty_name = "Any difficulty".into();
+        manifest.rules_config_constraint = RulesConfigConstraintV1::AnyCanonicalSimConfig;
+    }
     manifest.validate()?;
     Ok(manifest)
 }
@@ -964,7 +974,7 @@ fn expected_policy_input_paths() -> Vec<String> {
     paths
 }
 
-fn rules_config_specs() -> [(&'static str, RankedSimulationPolicyV1); 6] {
+fn rules_config_specs() -> [(&'static str, RankedSimulationPolicyV1); 7] {
     [
         (
             "standard-easy",
@@ -990,18 +1000,26 @@ fn rules_config_specs() -> [(&'static str, RankedSimulationPolicyV1); 6] {
             "original-parity-hard",
             RankedSimulationPolicyV1::original_parity(RankedSimulationDifficultyV1::Hard),
         ),
+        (
+            "any",
+            RankedSimulationPolicyV1 {
+                version: 1,
+                preset: robin_run_protocol::RankedSimulationPresetV1::Custom,
+                difficulty: RankedSimulationDifficultyV1::Medium,
+            },
+        ),
     ]
 }
 
-fn ruleset_order() -> [(OfficialContentEditionV1, RankedSimulationPolicyV1); 12] {
+fn ruleset_order() -> [(OfficialContentEditionV1, RankedSimulationPolicyV1); 14] {
     let specs = rules_config_specs();
     std::array::from_fn(|index| {
-        let edition = if index < 6 {
+        let edition = if index < 7 {
             OfficialContentEditionV1::Demo
         } else {
             OfficialContentEditionV1::Full
         };
-        (edition, specs[index % 6].1)
+        (edition, specs[index % 7].1)
     })
 }
 
@@ -1022,7 +1040,14 @@ fn policy_kind_order() -> [ImmutablePolicyKindV1; 4] {
 }
 
 fn official_rules_config(identity: RankedSimulationPolicyV1) -> Result<RulesConfigIdentityV1> {
-    let policy = RankedSimulationPolicy::from_identity(identity)?;
+    let policy = if identity.preset == robin_run_protocol::RankedSimulationPresetV1::Custom {
+        RankedSimulationPolicy::from_config(
+            identity,
+            RankedSimulationPolicy::standard_medium().expected_config(),
+        )?
+    } else {
+        RankedSimulationPolicy::from_identity(identity)?
+    };
     let sim_config = match CanonicalValue::from_serializable(&policy.expected_config())? {
         CanonicalValue::Object(values) => values,
         _ => bail!("SimConfig did not serialize as an object"),
@@ -1273,10 +1298,10 @@ mod tests {
     }
 
     #[test]
-    fn authors_exactly_twelve_complete_rulesets() {
+    fn authors_preset_and_open_rulesets_for_both_editions() {
         let authored = author_documents(&test_plan(), &prepared()).unwrap();
-        assert_eq!(authored.published_rulesets.len(), 12);
-        assert_eq!(authored.index.rulesets.len(), 12);
+        assert_eq!(authored.published_rulesets.len(), 14);
+        assert_eq!(authored.index.rulesets.len(), 14);
         for published in authored.published_rulesets.values() {
             published.validate().unwrap();
             assert_eq!(
@@ -1298,6 +1323,7 @@ mod tests {
                     assert_eq!(
                         published.manifest.board_scopes,
                         [
+                            RulesetBoardScopeV1::IndividualLevel,
                             RulesetBoardScopeV1::CampaignMission,
                             RulesetBoardScopeV1::FullCampaign,
                         ]
@@ -1387,14 +1413,14 @@ mod tests {
                 .keys()
                 .filter(|path| path.starts_with("published-rulesets/"))
                 .count(),
-            12
+            14
         );
         assert_eq!(
             first
                 .keys()
                 .filter(|path| path.starts_with("rules-configs/"))
                 .count(),
-            6
+            7
         );
         assert_eq!(
             first

@@ -4,6 +4,15 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Combined leaderboards and custom gameplay settings.** Mission and full-campaign
+  boards default to all admitted rulesets, with stable ranking and pagination across
+  difficulties. Exact Standard/Original boards remain selectable. Published metadata
+  retains every mission/ruleset pair, and Full-game field missions support individual
+  runs. Open rulesets accept the complete recorded simulation configuration, including
+  Legendary and Custom difficulty. The existing signed session digest fixes the settings
+  before play; verification checks the replay against those settings and independently
+  reconstructs the canonical fresh campaign. Each run exposes its exact gameplay settings.
+
 - **Earlier browser replay downloads.** Admitted replay URLs prepare their exact
   mission selection once and start a bounded batch of required files before the
   normal mission loader, which reuses those requests. Five 16 Mbit/s pairs saved
@@ -188,8 +197,9 @@ A list of which additional features we have added, which ones we might still wan
   125% view-cone width, and 150% noise sensitivity. Those perception rules
   are independently editable in Custom; Easy, Medium, and Hard remain at
   their original 100% perception. Original-RNG parity maps Legendary/Custom
-  back to their explicit retail compatibility preset, and V1 ranked boards
-  accept only immutable Easy/Medium/Hard identities. Story mode is
+  back to their explicit retail compatibility preset. Exact Standard/Original boards
+  retain immutable Easy/Medium/Hard identities; open boards also accept Legendary
+  and Custom settings. Story mode is
   intentionally absent.
   - TODO: what can we do to make legendary harder without being boring?
     - just increasing health is boring

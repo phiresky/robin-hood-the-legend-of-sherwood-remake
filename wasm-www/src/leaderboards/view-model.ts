@@ -8,7 +8,9 @@ export function assertRulesetBinding(
     filters: BoardFilters,
     metadata: BoardMetadata,
 ): void {
-    const facet = metadata.rulesets.find(item => item.id === filters.rulesetId);
+    const facet = metadata.rulesets.find(item => item.id === filters.rulesetId
+        && item.content.kind === (filters.subject === 'full_campaign' ? 'full_campaign' : 'mission')
+        && runContentDigest(item.content) === filters.contentIdentitySha256);
     if (facet === undefined) throw new Error('The selected ruleset facet is no longer published.');
     const expectedScopes = [
         ...(facet.categories.includes('individual_level') ? ['individual_level' as const] : []),
@@ -37,7 +39,7 @@ export function assertRunRulesetBinding(
     ruleset: RulesetManifest,
     rulesConfig: RulesConfigIdentity,
 ): void {
-    if (ruleset.rulesConfigSha256 !== run.rulesConfigSha256
+    if ((ruleset.rulesConfigConstraint === 'exact_canonical_digest_only' && ruleset.rulesConfigSha256 !== run.rulesConfigSha256)
         || !rulesetAllowsContent(ruleset, run.content)
         || !ruleset.metrics.includes(run.metricValue.metric)
         || !ruleset.boardScopes.includes(subjectRulesetScope(
@@ -141,9 +143,15 @@ export function subjectMatchesFilters(subject: Competition['subject'], filters: 
 }
 
 export function validateBoardView(page: BoardPage, filters: BoardFilters, metadata: BoardMetadata,
-    ruleset: RulesetManifest, rulesConfig: RulesConfigIdentity): void {
-    assertRulesetBinding(ruleset, filters, metadata);
-    validateRulesetRulesConfigBinding(ruleset, rulesConfig);
+    ruleset: RulesetManifest | null, rulesConfig: RulesConfigIdentity | null): void {
+    if (filters.rulesetId === null) {
+        if (ruleset !== null || rulesConfig !== null || filters.rulesConfigSha256 !== null
+            || filters.competitionManifestSha256 !== null) throw new Error('Invalid combined board contract.');
+    } else {
+        if (ruleset === null || rulesConfig === null) throw new Error('Missing exact board contract.');
+        assertRulesetBinding(ruleset, filters, metadata);
+        validateRulesetRulesConfigBinding(ruleset, rulesConfig);
+    }
     if (!subjectMatchesFilters(page.filter.subject, filters)
         || page.filter.metric !== filters.metric
         || page.filter.content.kind !== (filters.subject === 'full_campaign' ? 'full_campaign' : 'mission')
@@ -158,7 +166,7 @@ export function validateBoardView(page: BoardPage, filters: BoardFilters, metada
         if (entry.metricValue.metric !== filters.metric) {
             throw new Error('The server returned an entry for a different leaderboard metric.');
         }
-        assertRankedCompositionBinding(
+        if (ruleset !== null) assertRankedCompositionBinding(
             ruleset,
             entry.maxConcurrentPlayers,
             entry.participantInstanceCount,

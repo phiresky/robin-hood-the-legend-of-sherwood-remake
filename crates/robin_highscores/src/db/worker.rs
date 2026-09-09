@@ -141,6 +141,7 @@ impl Database {
         submission_id: &str,
         worker_id: &str,
         request: &VerificationRequestV1,
+        ruleset: &robin_run_protocol::RulesetManifestV1,
     ) -> Result<VerificationCampaignAuthority, DbError> {
         request
             .validate()
@@ -177,21 +178,34 @@ impl Database {
         canonical_campaign_state
             .validate()
             .map_err(|error| DbError::Corrupt(format!("canonical campaign-state pin: {error}")))?;
+        if ruleset
+            .canonical_digest()
+            .map_err(|error| DbError::ResultInvariant(error.to_string()))?
+            != offer.ruleset_manifest_sha256
+        {
+            return Err(DbError::ResultInvariant(
+                "campaign authority received a different ruleset".into(),
+            ));
+        }
         let signed_requirement = offer.starting_state.campaign_state_requirement();
         let ranked = &offer.session_genesis.claim.ranked_session;
         if canonical_campaign_state.requirement != signed_requirement
             || canonical_campaign_state.requirement.rules_config_sha256 != offer.rules_config_sha256
             || canonical_campaign_state.requirement.edition != ranked.content_edition
-            || (matches!(
-                offer.starting_state,
-                InitialStateExpectationV1::IndividualLevel { .. }
-                    | InitialStateExpectationV1::CampaignGenesis { .. }
-            ) && (canonical_campaign_state.artifact
-                != request.submission.submission.artifacts.starting_campaign
-                || canonical_campaign_state.artifact.sha256
-                    != offer.starting_state.campaign_sha256()
-                || canonical_campaign_state.artifact.byte_length
-                    != offer.starting_state.starting_campaign_byte_length()))
+            || (ruleset
+                .canonical_start_policy
+                .requires_exact_operator_artifact()
+                && matches!(
+                    offer.starting_state,
+                    InitialStateExpectationV1::IndividualLevel { .. }
+                        | InitialStateExpectationV1::CampaignGenesis { .. }
+                )
+                && (canonical_campaign_state.artifact
+                    != request.submission.submission.artifacts.starting_campaign
+                    || canonical_campaign_state.artifact.sha256
+                        != offer.starting_state.campaign_sha256()
+                    || canonical_campaign_state.artifact.byte_length
+                        != offer.starting_state.starting_campaign_byte_length()))
         {
             return Err(DbError::Corrupt(
                 "persisted campaign-state pin differs from the signed starting-state authority"

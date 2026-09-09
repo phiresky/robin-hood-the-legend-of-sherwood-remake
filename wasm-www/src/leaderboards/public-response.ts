@@ -137,7 +137,7 @@ export function parseBoardMetadata(value: unknown): BoardMetadata {
         parseCompetition(item, `metadata.competitions[${index}]`));
     if (missions.length > 4096 || rulesets.length > 1024 || competitions.length > 1024
         || !strictlySorted(missions.map(mission => mission.id))
-        || !strictlySorted(rulesets.map(ruleset => ruleset.id))
+        || !strictlySorted(rulesets.map(ruleset => `${ruleset.id}:${ruleset.content.kind === 'mission' ? '0' : '1'}:${runContentDigest(ruleset.content)}`))
         || !strictlySorted(competitions.map(competition => competition.manifestSha256))) {
         throw new Error('metadata collections exceed protocol limits or are not canonically ordered');
     }
@@ -610,12 +610,12 @@ export function parseRunFilter(value: unknown, path: string): BoardPage['filter'
         'ruleset_manifest_sha256', 'competition_manifest_sha256', 'max_concurrent_players',
     ]);
     const subject = parseSubject(obj.subject, `${path}.subject`);
-    return {
+    const filter = {
         subject,
         metric: enumeration(obj.metric, METRIC_ORDER, `${path}.metric`),
         content: parseRunContentIdentity(obj.content, `${path}.content`, subject),
-        rulesConfigSha256: nonzeroSha256(obj.rules_config_sha256, `${path}.rules_config_sha256`),
-        rulesetManifestSha256: nonzeroSha256(obj.ruleset_manifest_sha256, `${path}.ruleset_manifest_sha256`),
+        rulesConfigSha256: nullableSha256(obj.rules_config_sha256, `${path}.rules_config_sha256`),
+        rulesetManifestSha256: nullableSha256(obj.ruleset_manifest_sha256, `${path}.ruleset_manifest_sha256`),
         competitionManifestSha256: nullableSha256(
             obj.competition_manifest_sha256,
             `${path}.competition_manifest_sha256`,
@@ -624,6 +624,11 @@ export function parseRunFilter(value: unknown, path: string): BoardPage['filter'
             ? null
             : replaySeatCount(obj.max_concurrent_players, `${path}.max_concurrent_players`),
     };
+    if ((filter.rulesConfigSha256 === null) !== (filter.rulesetManifestSha256 === null)
+        || (filter.competitionManifestSha256 !== null && filter.rulesetManifestSha256 === null)) {
+        throw new Error(`${path} must select both rules digests or a non-competition combined board`);
+    }
+    return filter;
 }
 
 export function parseRunSummary(value: unknown, path: string): RunSummary {

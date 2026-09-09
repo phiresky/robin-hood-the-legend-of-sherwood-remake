@@ -60,16 +60,22 @@ impl Database {
             .map_err(|error| DbError::Corrupt(format!("canonical campaign-state pin: {error}")))?;
         if canonical_campaign_state.requirement
             != signed_offer.starting_state.campaign_state_requirement()
-            || canonical_campaign_state.requirement
-                != published_ruleset.manifest.canonical_campaign_state
+            || !published_ruleset
+                .manifest
+                .admits_campaign_state_requirement(canonical_campaign_state.requirement)
             || canonical_campaign_state.requirement.rules_config_sha256
                 != signed_offer.rules_config_sha256
-            || (matches!(
-                signed_offer.starting_state,
-                InitialStateExpectationV1::IndividualLevel { .. }
-                    | InitialStateExpectationV1::CampaignGenesis { .. }
-            ) && canonical_campaign_state.artifact
-                != stored_signed.submission.artifacts.starting_campaign)
+            || (published_ruleset
+                .manifest
+                .canonical_start_policy
+                .requires_exact_operator_artifact()
+                && matches!(
+                    signed_offer.starting_state,
+                    InitialStateExpectationV1::IndividualLevel { .. }
+                        | InitialStateExpectationV1::CampaignGenesis { .. }
+                )
+                && canonical_campaign_state.artifact
+                    != stored_signed.submission.artifacts.starting_campaign)
         {
             return Err(DbError::ResultInvariant(
                 "submission does not reference its exact canonical campaign-state pin".to_owned(),

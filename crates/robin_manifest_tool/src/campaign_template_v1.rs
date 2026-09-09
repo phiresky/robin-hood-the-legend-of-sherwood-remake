@@ -720,8 +720,9 @@ fn decode_complete_rules_config(rules_config: &RulesConfigIdentityV1) -> Result<
         canonical_round_trip == canonical_input,
         "campaign-template SimConfig contains missing, unknown, defaulted, or noncanonical fields"
     );
-    let policy = robin_engine::engine::RankedSimulationPolicy::from_identity(
+    let policy = robin_engine::engine::RankedSimulationPolicy::from_config(
         rules_config.ranked_simulation_policy,
+        sim_config,
     )
     .context("decode campaign-template ranked simulation policy")?;
     policy
@@ -817,6 +818,38 @@ mod tests {
             },
             rules_config_sha256: rules.canonical_digest()?,
         })
+    }
+
+    #[test]
+    fn custom_difficulty_campaign_matches_independent_runtime_reconstruction() -> Result<()> {
+        let profiles = profiles();
+        let baseline = rules_config(DifficultyLevel::Medium)?;
+        let mut sim = SimConfig::standard_ranked(DifficultyLevel::Medium);
+        sim.difficulty = DifficultyLevel::Legendary;
+        sim.enable_unbinding = false;
+        let custom = robin_engine::simulation_inputs::custom_rules_config_v1(&baseline, sim)?;
+        let requirement = requirement(OfficialContentEditionV1::Full, &custom)?;
+        let (bytes, artifact) =
+            author_canonical_campaign_template_v1(requirement, &custom, &profiles)?;
+        let document = robin_engine::simulation_inputs::profiles_component_document_v1(&profiles)?;
+        assert_eq!(
+            artifact,
+            robin_engine::simulation_inputs::canonical_fresh_campaign_artifact_v1(
+                &custom, &document
+            )?
+        );
+        assert_eq!(
+            validate_canonical_campaign_template_v1(&bytes, requirement, &custom, &profiles)?,
+            artifact
+        );
+        let mut modified = Campaign::from_profiles(&profiles, sim.difficulty);
+        modified.characters[0].status.life_points += 1;
+        let modified = bitcode::encode(&modified);
+        assert!(
+            validate_canonical_campaign_template_v1(&modified, requirement, &custom, &profiles)
+                .is_err()
+        );
+        Ok(())
     }
 
     #[test]

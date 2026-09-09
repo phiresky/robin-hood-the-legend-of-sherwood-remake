@@ -16,7 +16,7 @@ const metadata: BoardMetadata = {
 };
 
 test('board normalization derives exact published content/configuration instead of trusting URL identity fields', () => {
-    const selected = normalizeFilters({ ...defaults, contentIdentitySha256: digest('d'), rulesConfigSha256: digest('e') }, metadata);
+    const selected = normalizeFilters({ ...defaults, presetId: 'standard', contentIdentitySha256: digest('d'), rulesConfigSha256: digest('e') }, metadata);
     assert.equal(selected.missionId, 'm01'); assert.equal(selected.presetId, 'standard');
     assert.equal(selected.rulesetId, digest('b')); assert.equal(selected.contentIdentitySha256, digest('a'));
     assert.equal(selected.rulesConfigSha256, digest('c'));
@@ -42,4 +42,13 @@ test('published competition fixes subject, ruleset and player count and rejects 
     const selected = normalizeFilters(input, { ...metadata, competitions: [competition] });
     assert.equal(selected.subject, 'individual_level'); assert.equal(selected.missionId, 'm01'); assert.equal(selected.maxConcurrentPlayers, 3);
     assert.throws(() => normalizeFilters(input, { ...metadata, competitions: [{ ...competition, rulesConfigSha256: digest('d') }] }), /does not match/u);
+});
+
+ test('boards default to all rulesets while deriving the published mission identity', () => {
+    const selected = normalizeFilters({ ...defaults, contentIdentitySha256: digest('d'), rulesConfigSha256: digest('e') }, metadata);
+    assert.equal(selected.missionId, 'm01');
+    assert.equal(selected.contentIdentitySha256, digest('a'));
+    assert.equal(selected.presetId, null);
+    assert.equal(selected.rulesetId, null);
+    assert.equal(selected.rulesConfigSha256, null);
 });

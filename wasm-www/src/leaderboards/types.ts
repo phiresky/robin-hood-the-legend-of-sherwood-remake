@@ -116,8 +116,8 @@ export type BoardPage = {
         readonly subject: LeaderboardSubject;
         readonly metric: BoardMetric;
         readonly content: RunContentIdentity;
-        readonly rulesConfigSha256: string;
-        readonly rulesetManifestSha256: string;
+        readonly rulesConfigSha256: string | null;
+        readonly rulesetManifestSha256: string | null;
         readonly competitionManifestSha256: string | null;
         readonly maxConcurrentPlayers: number | null;
     };
@@ -516,8 +516,8 @@ export type CanonicalValue = null | boolean | number | string | readonly Canonic
 
 export type RankedSimulationPolicy = {
     readonly version: 1;
-    readonly preset: 'standard' | 'original_parity';
-    readonly difficulty: 'easy' | 'medium' | 'hard';
+    readonly preset: 'standard' | 'original_parity' | 'custom';
+    readonly difficulty: 'easy' | 'medium' | 'hard' | 'legendary' | 'custom';
 };
 
 export type RulesConfigIdentity = {
@@ -566,7 +566,7 @@ export type RulesetManifest = {
     readonly difficultyId: string;
     readonly difficultyName: string;
     readonly rulesConfigSha256: string;
-    readonly rulesConfigConstraint: 'exact_canonical_digest_only';
+    readonly rulesConfigConstraint: 'exact_canonical_digest_only' | 'any_canonical_sim_config';
     readonly allowedBuildManifestSha256: readonly string[];
     readonly allowedContentManifestSha256: readonly string[];
     readonly allowedCampaignContentManifestSha256: readonly string[];
@@ -578,7 +578,7 @@ export type RulesetManifest = {
         readonly achievementId: string;
         readonly mode: 'required' | 'reported';
     }[];
-    readonly canonicalStartPolicy: 'rules_config_bound_operator_state_and_verified_predecessor';
+    readonly canonicalStartPolicy: 'rules_config_bound_operator_state_and_verified_predecessor' | 'rules_config_bound_mission_setup_and_verified_predecessor';
     readonly canonicalCampaignState: CanonicalCampaignStateRequirement;
     readonly runPreflightGrantPublicKey: string;
     readonly fullCampaignChainPolicy: 'canonical_genesis_every_field_and_headquarters_session_independent_completion';

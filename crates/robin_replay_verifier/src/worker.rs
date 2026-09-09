@@ -466,6 +466,19 @@ fn admit_authenticated_job(
         }
     }
 
+    if let Err(error) = validate_canonical_campaign_start(&validated_config, request) {
+        tracing::warn!(%error, "run canonical campaign proposal was rejected");
+        return authenticated_output_with_provenance(
+            authenticated,
+            replay.sha256,
+            Some(input_provenance),
+            rejection(
+                VerificationRejectionCodeV1::ConfigMismatch,
+                "canonical_campaign_start_mismatch",
+            ),
+        );
+    }
+
     let preparation = match prepare_ranked_replay_mission(
         &validated_config,
         request,
@@ -783,6 +796,71 @@ fn verifier_output_after_campaign_write_failure(
     );
     assert!(result.validate().is_ok());
     output
+}
+
+fn validate_canonical_campaign_start(
+    config: &ValidatedJobConfig,
+    request: &VerificationRequestV1,
+) -> anyhow::Result<()> {
+    use robin_run_protocol::{
+        InitialStateExpectationV1, RulesConfigConstraintV1, SimulationContentComponentKindV1,
+    };
+    let template = &config.config().template;
+    let custom = template.ruleset_manifest.rules_config_constraint
+        == RulesConfigConstraintV1::AnyCanonicalSimConfig;
+    let mission_setup = !template
+        .ruleset_manifest
+        .canonical_start_policy
+        .requires_exact_operator_artifact();
+    if !custom && !mission_setup {
+        return Ok(());
+    }
+    let documents = config.content().ordered_documents();
+    let profiles_document = documents
+        .iter()
+        .find(|document| document.kind == SimulationContentComponentKindV1::Profiles)
+        .ok_or_else(|| anyhow::anyhow!("verified content has no Profiles component"))?;
+    if custom {
+        let actual = robin_engine::simulation_inputs::canonical_fresh_campaign_artifact_v1(
+            &template.rules_config,
+            profiles_document,
+        )?;
+        anyhow::ensure!(
+            actual == template.canonical_campaign_state.artifact,
+            "custom genesis differs from independently reconstructed fresh campaign"
+        );
+    }
+    let submitted = &request.submission.submission;
+    let ranked = &submitted.offer.session_genesis.claim.ranked_session;
+    if mission_setup
+        && matches!(
+            submitted.offer.starting_state,
+            InitialStateExpectationV1::IndividualLevel { .. }
+                | InitialStateExpectationV1::CampaignGenesis { .. }
+        )
+    {
+        let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        ));
+        let status = files.lock_ranked_verifier_primary_path_with_locale(
+            config.raw_content().root(),
+            template.content_manifest.resource_locale_root.as_str(),
+        );
+        anyhow::ensure!(
+            status == robin_engine::sbfile::SBFILE_NO_ERROR,
+            "cannot confine mission setup data resolver: {status}"
+        );
+        robin_engine::simulation_inputs::validate_canonical_mission_start_v1(
+            &template.rules_config,
+            profiles_document,
+            ranked.content_edition,
+            &ranked.content_subject,
+            ranked.simulation_seed.get(),
+            &submitted.artifacts.starting_campaign,
+            &files,
+        )?;
+    }
+    Ok(())
 }
 
 fn prepare_ranked_replay_mission(

@@ -522,6 +522,7 @@ fn validate_profile_scopes(
     let required_boards: &[RulesetBoardScopeV1] = match edition {
         OfficialContentEditionV1::Demo => &[RulesetBoardScopeV1::IndividualLevel],
         OfficialContentEditionV1::Full => &[
+            RulesetBoardScopeV1::IndividualLevel,
             RulesetBoardScopeV1::CampaignMission,
             RulesetBoardScopeV1::FullCampaign,
         ],
@@ -705,9 +706,18 @@ fn expected_scopes(
         (OfficialContentEditionV1::Full, OfficialContentSubjectV1::FieldMission { mission_id })
             if mission_id == OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1 =>
         {
-            &["campaign_genesis", "campaign_continuation"]
+            &[
+                "individual_level",
+                "campaign_genesis",
+                "campaign_continuation",
+            ]
         }
-        (OfficialContentEditionV1::Full, _) => &["campaign_continuation"],
+        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::FieldMission { .. }) => {
+            &["individual_level", "campaign_continuation"]
+        }
+        (OfficialContentEditionV1::Full, OfficialContentSubjectV1::Headquarters { .. }) => {
+            &["campaign_continuation"]
+        }
         (OfficialContentEditionV1::Demo, OfficialContentSubjectV1::Headquarters { .. }) => {
             bail!("Demo headquarters is not an official verifier lane")
         }
@@ -1242,7 +1252,11 @@ mod tests {
         let genesis = OfficialContentSubjectV1::FieldMission {
             mission_id: OFFICIAL_FULL_CAMPAIGN_GENESIS_MISSION_ID_V1.into(),
         };
-        let scopes = vec!["campaign_genesis".into(), "campaign_continuation".into()];
+        let scopes = vec![
+            "individual_level".into(),
+            "campaign_genesis".into(),
+            "campaign_continuation".into(),
+        ];
         validate_exact_scope_strings(&scopes, OfficialContentEditionV1::Full, &genesis)?;
         let profile = CatalogAdmissionProfileV1 {
             id: "full-genesis".into(),
@@ -1282,7 +1296,7 @@ mod tests {
         };
         assert_eq!(
             canonical_scope_kinds(&profile, OfficialContentEditionV1::Full, &genesis)?,
-            [RunScopeKindV1::Campaign]
+            [RunScopeKindV1::IndividualLevel, RunScopeKindV1::Campaign]
         );
         for invalid in [
             vec!["campaign_continuation".into(), "campaign_genesis".into()],

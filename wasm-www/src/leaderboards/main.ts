@@ -1,5 +1,5 @@
 import { renderUsernameForm, renderDeletionForm, renderReportForm } from './account-forms.js';
-import { normalizeFilters, requireMission, requireCompetition, requireFilterIdentity } from './board-filters.js';
+import { normalizeFilters, requireMission, requireCompetition } from './board-filters.js';
 import { participantView, aggregateParticipantView, appendAchievements, playerTables, campaignCompositionLabel } from './public-components.js';
 import { loadVerifiedRunView, loadVerifiedCampaignSession } from './run-controller.js';
 import { runContentDigest } from './subject-contract.js';
@@ -110,19 +110,20 @@ async function renderLeaderboard(
     if (normalizedUrl !== window.location.href) window.history.replaceState(null, '', normalizedUrl);
     const [page, ruleset, rulesConfig] = await Promise.all([
         api.board(filters, signal),
-        api.rulesetManifest(requireFilterIdentity(filters.rulesetId, 'ruleset manifest'), signal),
-        api.rulesConfig(requireFilterIdentity(filters.rulesConfigSha256, 'rules configuration'), signal),
+        filters.rulesetId === null ? Promise.resolve(null) : api.rulesetManifest(filters.rulesetId, signal),
+        filters.rulesConfigSha256 === null ? Promise.resolve(null) : api.rulesConfig(filters.rulesConfigSha256, signal),
     ]);
     signal.throwIfAborted();
     validateBoardView(page, filters, metadata, ruleset, rulesConfig);
 
     const heading = pageHeading('Verified leaderboards', boardIntro());
     const controls = renderFilters(metadata, filters);
-    controls.append(renderRulesetPolicy(ruleset, rulesConfig));
+    if (ruleset !== null && rulesConfig !== null) controls.append(renderRulesetPolicy(ruleset, rulesConfig));
+    else controls.append(element('p', { className: 'notice', text: 'All rulesets combined. Runs with different gameplay settings and difficulties compete here; open a record to see its exact settings.' }));
     if (page.entries.length === 0) {
         replace(app, heading, controls, statePanel(
             'No verified runs on this board',
-            'No complete replay chain has passed this exact subject, ruleset, competition, and maximum-concurrent-player contract.',
+            'No verified runs match the selected mission, ruleset, competition, and player count.',
         ));
         return;
     }
@@ -177,7 +178,7 @@ function renderFilters(metadata: BoardMetadata, filters: BoardFilters): HTMLElem
                 && ruleset.content.kind === 'mission'
                 && ruleset.content.contentManifestSha256 === mission.contentManifestSha256
                 && ruleset.categories.includes(filters.subject)));
-    const presets = uniqueOptions(compatible.map(item => ({ id: item.presetId, label: item.presetName })));
+    const presets = uniqueOptions(compatible.filter(item => item.presetId !== 'any').map(item => ({ id: item.presetId, label: item.presetName })));
     const presetRules = compatible.filter(item => item.presetId === filters.presetId);
     const difficulties = uniqueOptions(presetRules.map(item => ({ id: item.difficultyId, label: item.difficultyName })));
     const exactRules = presetRules.filter(item => item.difficultyId === filters.difficultyId);
@@ -192,17 +193,19 @@ function renderFilters(metadata: BoardMetadata, filters: BoardFilters): HTMLElem
         }),
     );
     fields.append(
-        optionSelect('Preset', presets, filters.presetId, value => {
-            navigateFilters({ ...filters, presetId: value, difficultyId: null, rulesetId: null, competitionManifestSha256: null, cursor: null });
+        optionSelect('Preset', [{ id: '', label: 'Any ruleset (combined)' }, ...presets], filters.presetId ?? '', value => {
+            navigateFilters({ ...filters, presetId: value === '' ? null : value, difficultyId: null, rulesetId: null, competitionManifestSha256: null, cursor: null });
         }),
+    );
+    if (filters.presetId !== null) fields.append(
         optionSelect('Difficulty', difficulties, filters.difficultyId, value => {
             navigateFilters({ ...filters, difficultyId: value, rulesetId: null, competitionManifestSha256: null, cursor: null });
         }),
         optionSelect('Ruleset / season', exactRules, filters.rulesetId, value => {
             navigateFilters({ ...filters, rulesetId: value, competitionManifestSha256: null, cursor: null });
         }),
-        maxConcurrentPlayersInput(filters, competition !== null),
     );
+    fields.append(maxConcurrentPlayersInput(filters, competition !== null));
     panel.append(categories, tabs, fields);
     if (competition !== null) panel.append(element('p', { className: 'notice', text: competition.description }));
     else if (filters.subject === 'full_campaign' && metadata.fullCampaign !== null) {
@@ -787,6 +790,14 @@ function renderRulesetPolicy(
             ['Exact config', `${Object.keys(rulesConfig.simConfig).length} simulation fields · ${Object.keys(rulesConfig.rules).length} ranking rules`],
         ]),
     );
+    const settings = element('details');
+    settings.append(element('summary', { text: 'Exact gameplay settings' }));
+    settings.append(definitionList(Object.entries(rulesConfig.simConfig).map(([name, value]) => [
+        name.replaceAll('_', ' '),
+        typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled')
+            : typeof value === 'object' ? JSON.stringify(value) : String(value),
+    ])));
+    section.append(settings);
     return section;
 }
 

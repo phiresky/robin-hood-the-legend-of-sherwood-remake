@@ -708,8 +708,8 @@ fn query(
         mission_scope,
         metric,
         content_identity_sha256,
-        rules_config_sha256,
-        ruleset_manifest_sha256,
+        rules_config_sha256: Some(rules_config_sha256),
+        ruleset_manifest_sha256: Some(ruleset_manifest_sha256),
         competition_manifest_sha256,
         max_concurrent_players,
         player_public_key: None,
@@ -915,6 +915,8 @@ mod tests {
     fn test_ranked_config(campaign_bytes: &[u8]) -> RankedSessionConfigV1 {
         let mission_id = "Dem_Lei_MP";
         RankedSessionConfigV1 {
+            custom_rules_config: None,
+            custom_canonical_campaign: None,
             schema_version: SCHEMA_VERSION_V1,
             mission_id: mission_id.to_owned(),
             content_edition: OfficialContentEditionV1::Demo,

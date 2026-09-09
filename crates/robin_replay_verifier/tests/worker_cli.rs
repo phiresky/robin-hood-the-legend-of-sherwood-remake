@@ -98,6 +98,8 @@ fn authenticated_request(replay: &[u8], max_input_bytes: u64) -> Vec<u8> {
     let replay_session_id = Digest32::from_bytes([11; 32]);
     let host_nonce = ChallengeNonce32::from_bytes([13; 32]);
     let ranked_session = RankedSessionConfigV1 {
+        custom_rules_config: None,
+        custom_canonical_campaign: None,
         schema_version: 1,
         mission_id: "Dem_Lei_MP".into(),
         content_edition: OfficialContentEditionV1::Demo,

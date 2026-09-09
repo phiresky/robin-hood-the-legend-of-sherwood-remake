@@ -6158,6 +6158,7 @@ dependencies = [
  "robin_ranked_verification",
  "robin_replay_format",
  "robin_run_protocol",
+ "robin_util",
  "serde",
  "serde_json",
  "sha2 0.11.0",
