@@ -188,6 +188,19 @@ impl ReplayLifecycle {
             .write_load_back(ordinal.number(), target.number(), is_continue);
     }
 
+    pub(super) fn record_load_snapshot(
+        &mut self,
+        ordinal: ReplayFrameOrdinal,
+        snapshot: Vec<u8>,
+        timeline: TimelineFrame,
+        is_continue: bool,
+    ) {
+        self.recorder
+            .as_mut()
+            .expect("snapshot load requires an active recording")
+            .write_load_snapshot(ordinal.number(), snapshot, timeline.number(), is_continue);
+    }
+
     pub(super) fn record_taints(
         &mut self,
         ordinal: ReplayFrameOrdinal,
@@ -238,27 +251,35 @@ impl ReplayLifecycle {
         self.validity = RecordingValidity::Invalid { reason };
     }
 
-    /// Only the original, successfully persisted bootstrap boundary can open
-    /// a new linear attempt after a terminal record or foreign-save load.
-    pub(super) fn reopen_after_restore(&mut self, identity: ReplaySaveIdentity) -> bool {
+    /// Start a new attempt after a terminal record using a bootstrap marker
+    /// or an embedded save captured before restoration.
+    pub(super) fn reopen_after_restore(
+        &mut self,
+        identity: ReplaySaveIdentity,
+        has_snapshot: bool,
+    ) -> bool {
         let Some(header) = self.sealed_header.as_ref() else {
             return false;
         };
-        let Some((_, marker)) = self.bootstrap_save.filter(|(saved, _)| *saved == identity) else {
-            // TODO(replay): arbitrary saves need an embedded initial snapshot.
-            self.invalidate("replay unavailable after post-terminal load of a non-bootstrap save");
+        let bootstrap = self.bootstrap_save.filter(|(saved, _)| *saved == identity);
+        if bootstrap.is_none() && !has_snapshot {
+            self.invalidate("replay unavailable after post-terminal load without a save payload");
             return false;
-        };
+        }
         match crate::game_session::replay_init::restart_recording(&self.control, header.clone()) {
             Ok(mut recorder) => {
-                recorder.write_save_marker(0, marker);
+                if let Some((_, marker)) = bootstrap {
+                    recorder.write_save_marker(0, marker);
+                }
                 self.recorder = Some(recorder);
                 self.validity = RecordingValidity::Linear;
                 self.sealed_header = None;
                 self.saved_frames.clear();
-                self.saved_frames
-                    .insert(identity, (ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO));
-                tracing::info!("Recording restarted mission from its bootstrap save boundary");
+                if bootstrap.is_some() {
+                    self.saved_frames
+                        .insert(identity, (ReplayFrameOrdinal::ZERO, TimelineFrame::ZERO));
+                }
+                tracing::info!("Recording restarted at save restore boundary");
                 true
             }
             Err(error) => {
@@ -420,8 +441,8 @@ mod tests {
         assert!(lifecycle.saved_frames.is_empty());
         assert!(lifecycle.sealed_header.is_some());
         assert!(service.exports().snapshot().is_err());
-        assert!(!lifecycle.reopen_after_restore(later));
-        assert!(lifecycle.reopen_after_restore(bootstrap));
+        assert!(!lifecycle.reopen_after_restore(later, false));
+        assert!(lifecycle.reopen_after_restore(bootstrap, false));
         assert!(lifecycle.is_recording());
         assert_eq!(lifecycle.validity, RecordingValidity::Linear);
         assert!(lifecycle.sealed_header.is_none());

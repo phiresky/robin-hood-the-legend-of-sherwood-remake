@@ -170,7 +170,7 @@ struct OperationRequest {
 /// Consumed by `TimelineRuntime::note_save_load_event`, which turns saves
 /// into replay save markers and same-session loads into linear load-back
 /// records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum SaveLoadEvent {
     /// A save payload capturing the current engine state was written.
     SaveWritten {
@@ -178,6 +178,8 @@ pub(crate) enum SaveLoadEvent {
     },
     /// A save payload was applied to the live engine, replacing its state.
     LoadApplied {
+        /// Decoded save before post-load fixups; absent for marker-only fixtures.
+        snapshot: Option<Vec<u8>>,
         /// Identity computed from the decoded payload before post-load fixups
         /// mutate the live engine.
         identity: crate::save_file::ReplaySaveIdentity,

@@ -1042,3 +1042,15 @@ metadata; only patch changes made during the target callback are captured.
 This state changes the native formats to save 73, replay 31 and multiplayer
 protocol 40. Earlier Rust saves/replays retain their original files but are
 rejected by the existing strict schema checks; they are not silently migrated.
+
+
+### Replay recording across arbitrary save loads
+
+Replay schema 33 embeds the exact serde JSON save before post-load fixups when
+loading a save without a reproducible timeline marker. This includes saves from
+earlier sessions, asynchronous autosaves, and saves captured after commands in
+the current frame. Playback restores engine, sound, and persistent game state
+through the normal load path, without depending on the original save file.
+Clean same-session saves still use compact load-back markers. Loading after a
+terminal recording starts a new recording with the embedded restore boundary.
+Save loads remain ineligible for ranked submissions.

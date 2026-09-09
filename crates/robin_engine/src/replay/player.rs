@@ -97,7 +97,7 @@ impl ReplayPlayer {
 
     /// Load-back at `frame`: the earlier save-marker frame whose captured
     /// state replaced the engine at that frame's boundary, if recorded.
-    pub fn load_back_for_frame(&self, frame: u32) -> Option<ReplayLoadBack> {
+    pub fn load_back_for_frame(&self, frame: u32) -> Option<&ReplayLoadBack> {
         self.data.load_back_for_frame(frame)
     }
 

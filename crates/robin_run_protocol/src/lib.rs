@@ -160,7 +160,7 @@ pub const CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1: u32 = 74;
 /// submitted, verifier-resimulated, retained, and publicly downloadable
 /// artifact. Older Rust schemas are intentionally outside the service
 /// contract and must be rejected rather than normalized.
-pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 32;
+pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 33;
 
 /// Exact multiplayer wire protocol carried by current ranked session genesis,
 /// build manifests, and immutable ruleset allowlists. A current replay schema

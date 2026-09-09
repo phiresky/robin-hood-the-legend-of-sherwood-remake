@@ -291,7 +291,7 @@ pub(super) async fn process_operation_and_save(
         if save_load.processed() {
             runtime.reset_rollback_checker();
         }
-        if let Some(event) = save_load.event {
+        if let Some(event) = save_load.event.take() {
             runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
         }
         if let Some(transition) = save_load.take_transition() {
@@ -330,7 +330,7 @@ pub(super) async fn process_operation_and_save(
     if save_load.processed() {
         runtime.reset_rollback_checker();
     }
-    if let Some(event) = save_load.event {
+    if let Some(event) = save_load.event.take() {
         runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
     }
 

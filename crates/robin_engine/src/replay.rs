@@ -89,7 +89,9 @@ pub struct ReplayHeader {
     pub campaign: Vec<u8>,
 }
 
-/// On-disk replay schema version. Version 31 adds the opt-in reversible
+/// On-disk replay schema version. Version 33 embeds serde JSON saves in load
+/// records when a pinned timeline marker cannot reproduce the loaded state.
+/// Version 31 adds the opt-in reversible
 /// background-patch configuration and remembered activation targets to
 /// deterministic state. Version 30 makes vector fog part of the
 /// deterministic state-hash contract; the replay JSONL record shape itself is
@@ -128,7 +130,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 32;
+pub const REPLAY_SCHEMA_VERSION: u32 = 33;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -193,7 +195,6 @@ impl ReplayFrameOrdinal {
 /// must be reproduced after restoring its earlier save marker.
 #[derive(
     Clone,
-    Copy,
     Debug,
     PartialEq,
     Eq,
@@ -204,11 +205,32 @@ impl ReplayFrameOrdinal {
     bitcode::Decode,
 )]
 pub struct ReplayLoadBack {
+    /// Complete serde JSON save captured before load fixups, instead of a pinned marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<ReplaySaveSnapshot>,
     /// Earlier save-marker frame whose captured state must be restored. A
     /// pristine Restart may pin and restore marker 0 at ordinal 0 itself.
+    /// Embedded restores set this to their own ordinal and need no marker.
     pub to_frame: u32,
     /// Whether the source slot was the Continue auto-save.
     pub is_continue: bool,
+}
+
+/// Exact persisted save payload and the recording's adopted timeline boundary.
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct ReplaySaveSnapshot {
+    pub payload: Vec<u8>,
+    pub timeline_frame: u32,
 }
 
 /// State pinned by an in-mission save at one replay host ordinal.
@@ -302,8 +324,8 @@ struct FrameRecord {
     /// Load-back record: at this frame's pre-command boundary the engine
     /// state was replaced with the state captured by the save marker at the
     /// referenced earlier frame (or frame 0 itself for a pristine Restart).
-    /// Keeps the replay linear across
-    /// in-mission loads instead of embedding save payloads.
+    /// Unknown saves carry an embedded payload instead of a marker reference.
+    /// Both forms keep the recording linear across in-mission loads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lb: Option<ReplayLoadBack>,
     /// First observations of ranked-ineligible input paths. These records do
@@ -546,6 +568,12 @@ impl ReplayData {
             }
         }
         for (&frame, load_back) in self.load_backs.iter() {
+            if let Some(snapshot) = &load_back.snapshot {
+                if snapshot.payload.is_empty() || load_back.to_frame != frame {
+                    return Err(format!("invalid embedded save at frame {frame}"));
+                }
+                continue;
+            }
             let pristine_restart = frame == 0
                 && load_back.to_frame == 0
                 && self
@@ -576,6 +604,15 @@ impl ReplayData {
                 ));
             }
             if let Some(load_back) = self.load_backs.get(&ordinal) {
+                if let Some(snapshot) = &load_back.snapshot {
+                    if frame.timeline_before != snapshot.timeline_frame {
+                        return Err(format!(
+                            "embedded save at ordinal {ordinal} has inconsistent timeline"
+                        ));
+                    }
+                    previous_after = Some(frame.timeline_after);
+                    continue;
+                }
                 let marker = self
                     .save_markers
                     .get(&load_back.to_frame)
@@ -628,8 +665,8 @@ impl ReplayData {
 
     /// Earlier save-marker frame whose captured state replaced the engine
     /// at the pre-command boundary of `frame`, if a load-back was recorded.
-    pub fn load_back_for_frame(&self, frame: u32) -> Option<ReplayLoadBack> {
-        self.load_backs.get(&frame).copied()
+    pub fn load_back_for_frame(&self, frame: u32) -> Option<&ReplayLoadBack> {
+        self.load_backs.get(&frame)
     }
 
     /// Load a replay from a JSONL reader.
@@ -693,7 +730,7 @@ impl ReplayData {
                     && save_markers
                         .get(&0)
                         .is_some_and(|marker| marker.timeline_frame == 0);
-                if lb.to_frame >= rec.f && !pristine_restart {
+                if lb.snapshot.is_none() && lb.to_frame >= rec.f && !pristine_restart {
                     return Err(format!(
                         "bad line {}: load-back target {} is not before frame {}",
                         i + 2,
@@ -720,7 +757,7 @@ impl ReplayData {
         // this same file — playback pins engine state at marker frames and
         // has nothing to jump to otherwise.
         for (&frame, load_back) in &load_backs {
-            if !save_markers.contains_key(&load_back.to_frame) {
+            if load_back.snapshot.is_none() && !save_markers.contains_key(&load_back.to_frame) {
                 return Err(format!(
                     "load-back at frame {frame} references frame {}, which has no save marker",
                     load_back.to_frame
@@ -794,8 +831,8 @@ mod tests {
     use crate::player_command::{PlayerCommand, PlayerInput};
 
     #[test]
-    fn replay_schema_version_includes_reversible_background_patches() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 32);
+    fn replay_schema_version_includes_embedded_save_loads() {
+        assert_eq!(REPLAY_SCHEMA_VERSION, 33);
     }
 
     #[test]
@@ -884,6 +921,7 @@ mod tests {
                     outside.load_backs.insert(
                         0,
                         ReplayLoadBack {
+                            snapshot: None,
                             to_frame: 0,
                             is_continue: false,
                         },
@@ -1820,7 +1858,7 @@ mod tests {
         let data = ReplayData::from_file(&path).unwrap();
         data.validate_layout().unwrap();
         assert_eq!(data.frame_count(), 1);
-        assert_eq!(data.load_back_for_frame(0).unwrap().to_frame, 0);
+        assert_eq!(data.load_back_for_frame(0).cloned().unwrap().to_frame, 0);
 
         let jsonl = std::fs::read_to_string(&path).unwrap();
         // The JSONL parser and the shared compact-layout validator must both
@@ -1831,6 +1869,7 @@ mod tests {
             std::sync::Arc::make_mut(&mut invalid.load_backs).insert(
                 ordinal,
                 ReplayLoadBack {
+                    snapshot: None,
                     to_frame: target,
                     is_continue: false,
                 },
@@ -1911,13 +1950,14 @@ mod tests {
         );
         assert_eq!(data.save_marker_for_frame(9), None);
         assert_eq!(
-            data.load_back_for_frame(30),
+            data.load_back_for_frame(30).cloned(),
             Some(ReplayLoadBack {
+                snapshot: None,
                 to_frame: 10,
                 is_continue: true,
             })
         );
-        assert_eq!(data.load_back_for_frame(29), None);
+        assert_eq!(data.load_back_for_frame(29).cloned(), None);
         assert_eq!(data.frame(30).expect("frame 30").input.commands.len(), 1);
         assert_eq!(data.frame_count(), 31);
 
@@ -1961,8 +2001,9 @@ mod tests {
             })
         );
         assert_eq!(
-            back.load_back_for_frame(30),
+            back.load_back_for_frame(30).cloned(),
             Some(ReplayLoadBack {
+                snapshot: None,
                 to_frame: 10,
                 is_continue: true,
             })

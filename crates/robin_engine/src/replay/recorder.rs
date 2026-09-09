@@ -260,7 +260,36 @@ impl ReplayRecorder {
             h: None,
             sv: None,
             lb: Some(ReplayLoadBack {
+                snapshot: None,
                 to_frame,
+                is_continue,
+            }),
+            t: Vec::new(),
+        });
+    }
+
+    /// Restore an external save at this boundary without a timeline marker.
+    pub fn write_load_snapshot(
+        &mut self,
+        ordinal: u32,
+        snapshot: Vec<u8>,
+        timeline_frame: u32,
+        is_continue: bool,
+    ) {
+        assert_eq!(ordinal, self.next_expected_ordinal);
+        assert!(!snapshot.is_empty(), "embedded save must not be empty");
+        self.boundary_metadata_pending = true;
+        self.write_record(&FrameRecord {
+            f: ordinal,
+            i: None,
+            h: None,
+            sv: None,
+            lb: Some(ReplayLoadBack {
+                snapshot: Some(ReplaySaveSnapshot {
+                    payload: snapshot,
+                    timeline_frame,
+                }),
+                to_frame: ordinal,
                 is_continue,
             }),
             t: Vec::new(),
