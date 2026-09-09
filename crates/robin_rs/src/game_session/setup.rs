@@ -3273,13 +3273,13 @@ pub(super) fn setup_input_and_camera(
         || args.mission_start_legacy_save.is_some()
         || args.mission_start_viewport_capture
     {
-        host.frontend.planning.force_off_for_session();
+        host.frontend.force_planning_off_for_session();
     }
 
     // Host construction snapshots the active profile's bindings from the
     // ApplicationContext. The Original copies that active config at this
     // exact input-translator boundary (`ReflectActiveKeyConfig`).
-    input_translator.load_bindings_from_keyconfig(&host.frontend.key_config);
+    input_translator.load_bindings_from_keyconfig(host.frontend.preferences().key_config());
 
     // The `DisplayMap` minimap accelerator is stored host-side on
     // `host.frontend.minimap_fast_key` — the game loop reads it out to emit a
