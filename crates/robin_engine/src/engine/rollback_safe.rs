@@ -555,14 +555,12 @@ impl HostConsoleDispatch<'_> {
 
 impl Engine {
     /// Complete fresh mission bootstrap exactly once. Only pre-hourglass setup
-    /// admissions may precede this boundary. Cloning, decoding, or restoring a
-    /// running engine never recreates bootstrap authority.
+    /// admissions may precede this boundary. Original save capture may import
+    /// a nonzero initial frame before entry; the authority tracks this process'
+    /// lifecycle, not the imported absolute frame number. Cloning, decoding,
+    /// or restoring a running engine never recreates bootstrap authority.
     pub fn finish_mission_bootstrap(&mut self) {
         assert!(self.bootstrap_open, "mission bootstrap authority is closed");
-        assert_eq!(
-            self.inner.control.frame_counter, 0,
-            "mission bootstrap requires frame zero"
-        );
         self.bootstrap_open = false;
         self.campaign_reset_mission_length();
     }
@@ -3044,6 +3042,10 @@ impl Engine {
     /// This remains crate-internal until every authoritative v48 section is
     /// represented by the coordinator.
     pub(crate) fn install_legacy_adoption_inner(&mut self, inner: EngineInner) {
+        // Preserve, never mint, the receiving process' bootstrap authority.
+        // Original viewport capture imports its initial save before mission
+        // entry, whereas a live replay/save replacement has already closed
+        // this authority at bootstrap completion or its first hourglass.
         self.inner = inner;
     }
 
@@ -4995,10 +4997,31 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "mission bootstrap requires frame zero")]
-    fn bootstrap_requires_frame_zero_even_for_test_mutation() {
+    fn bootstrap_accepts_an_imported_nonzero_initial_frame() {
         let (mut engine, _) = frame_api_fixture();
-        engine.inner.control.frame_counter = 1;
+        let mut imported = engine.inner.clone_authoritative_state();
+        imported.control.frame_counter = 98_765;
+        imported
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::MissionLength, 23);
+        engine.install_legacy_adoption_inner(imported);
+        engine.finish_mission_bootstrap();
+        assert_eq!(engine.frame_counter(), 98_765);
+        assert_eq!(
+            engine.campaign().values[crate::campaign::CampaignValue::MissionLength],
+            0
+        );
+        assert!(!engine.bootstrap_open);
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn legacy_adoption_cannot_reopen_finished_bootstrap() {
+        let (mut engine, _) = frame_api_fixture();
+        engine.finish_mission_bootstrap();
+        let (fresh, _) = frame_api_fixture();
+        engine.install_legacy_adoption_inner(fresh.inner);
         engine.finish_mission_bootstrap();
     }
 
