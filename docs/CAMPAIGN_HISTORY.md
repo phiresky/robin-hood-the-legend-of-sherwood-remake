@@ -85,13 +85,34 @@ menu. Viewing the campaign does not start a mission or apply a save.
 
 The campaign manager uses a fixed **1024×768** canvas. Both entry points and
 the Sherwood history screen share its renderer. The tree keeps fixed-size cards
-and follows the selected stage/row; Hall of Deeds shows twelve missions per page.
+and follows the selected stage. A primary prerequisite route runs across the top
+and stays visible while paging through branches underneath. Other story missions,
+ambushes, and optional tactical missions are grouped by their prerequisite stage.
+Training, campaign events, and the epilogue have distinct labels; the scripted
+epilogue follows the finale. Gallery order follows those same story stages.
+Unused `Impossible_mission` field slots are omitted unless they have prior
+results, which remain inspectable without offering a nonexistent map. Field
+mission completion totals exclude campaign events and the epilogue.
+These are presentation rules, not new campaign prerequisites or unlock rules.
+TODO: Replace legacy filename conventions for tutorial/outro/unused slots with
+content-authored presentation metadata when available.
+
+Hall of Deeds shows twelve entries per page.
 Click once to select and read details. Enter, the Inspect button, or a double-click
 opens an available mission in Sherwood; the main-menu and pause-menu views remain
 browse-only. Arrow keys navigate, Page Up/Down or the mouse wheel change pages,
 and the Previous/Next buttons work with mouse or touch. Tab switches tree/gallery;
 A or the Achievements tab shows permanent awards and current campaign progress. Back/Escape
 returns to the originating screen.
+
+**R / Requirements** opens the selected mission's unmet entry conditions with
+actual ransom and gang thresholds, named prerequisite missions, exclusions,
+expiry, and story-state restrictions. Requirements met but not currently offered
+is reported separately: campaign selection has additional filters. Up/Down,
+Page Up/Down, mouse wheel, or Previous/Next page through longer explanations;
+Left/Right selects another mission and R returns to the mission cards. This view
+cannot launch a mission. Achievement cards explain their actual mission
+conditions and whether one completed campaign or a single mission is required.
 
 An opt-in screenshot test uses the real production renderer with an offscreen
 wgpu texture. It creates no window and needs neither a display server nor Xvfb.
@@ -105,12 +126,12 @@ absolute datadir paths in this test setup). From the worktree root:
 
 Run this capture test alone: it sets its process working directory to the worktree
 root for install-resource lookup. The PNG matrix includes the first, middle, and
-last selections plus an archived-record example in tree/gallery/achievement views at 1024×768.
-Names, fonts, and graph structure come from the supplied data; mission statuses
-are a presentation-only fixture covering all five states, archived mission
-records, permanent awards after an older save is loaded, and incomplete evidence.
-No save is applied or
-written. A wgpu adapter is required; Vulkan software rendering also works when
+last selections, an archived-record example, and the most crowded branch in
+tree/gallery/achievement/requirements views at 1024×768. Names, fonts, graph
+structure, current availability, and lock reasons come from the supplied data;
+archived records and achievement summaries are presentation-only fixtures.
+The tool also writes mission-profiles.json and campaign-graph.json for inspecting
+layout metadata. No save is applied or written. A wgpu adapter is required; Vulkan software rendering also works when
 provided by the host. Captures fail explicitly if data, fonts, or the adapter are
 missing. The ordinary tests check all 62 selections for non-overlapping cards,
 viewport visibility, and matching pointer hit targets.

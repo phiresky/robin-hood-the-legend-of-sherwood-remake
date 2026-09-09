@@ -6,7 +6,7 @@ use robin_engine::achievement::{AchievementAggregationSummary, AchievementSet};
 use robin_engine::campaign::Campaign;
 use robin_engine::campaign_history::{MissionAttempt, MissionAttemptOutcome};
 use robin_engine::mission::MissionStatus;
-use robin_engine::profiles::{MissionLocation, ProfileManager};
+use robin_engine::profiles::{MissionLocation, MissionProfile, MissionType, ProfileManager};
 use serde::{Deserialize, Serialize};
 
 /// Effective per-mission badge row shown by every campaign presentation.
@@ -29,6 +29,160 @@ pub enum MissionProgressState {
     Completed,
     Lost,
     Expired,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MissionKind {
+    Story,
+    Optional,
+    Ambush,
+    Training,
+    CampaignEvent,
+    Epilogue,
+    Unavailable,
+}
+
+impl MissionKind {
+    fn for_profile(profile: &MissionProfile) -> Self {
+        if profile
+            .mission_filename
+            .eq_ignore_ascii_case("SherwoodOutro")
+        {
+            Self::Epilogue
+        } else if profile
+            .mission_filename
+            .eq_ignore_ascii_case("EmbTut_FoC_EC")
+        {
+            Self::Training
+        } else if profile.mission_type == MissionType::Pseudo {
+            Self::CampaignEvent
+        } else if profile
+            .mission_filename
+            .eq_ignore_ascii_case("Impossible_mission")
+        {
+            Self::Unavailable
+        } else {
+            match profile.mission_type {
+                MissionType::Historical | MissionType::Attack => Self::Story,
+                MissionType::Ambush => Self::Ambush,
+                MissionType::Rescue | MissionType::Tactical => Self::Optional,
+                MissionType::Hq | MissionType::End | MissionType::Pseudo => Self::CampaignEvent,
+            }
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Story => "Story",
+            Self::Optional => "Optional",
+            Self::Ambush => "Ambush",
+            Self::Training => "Training",
+            Self::CampaignEvent => "Campaign event",
+            Self::Epilogue => "Epilogue",
+            Self::Unavailable => "Archived / unavailable",
+        }
+    }
+
+    pub fn is_field_mission(self) -> bool {
+        matches!(
+            self,
+            Self::Story | Self::Optional | Self::Ambush | Self::Training
+        )
+    }
+}
+
+/// Explain unmet conditions with the same values used by mission accessibility.
+/// TODO: Share a typed condition list with Mission::is_accessible_why instead
+/// of maintaining its player-facing formatting alongside the engine checks.
+fn availability_notes(
+    campaign: &Campaign,
+    profiles: &ProfileManager,
+    mission_idx: usize,
+) -> Vec<String> {
+    use robin_engine::campaign::CampaignValue;
+    let mission = &campaign.missions[mission_idx];
+    let profile = mission.profile(profiles);
+    let money = campaign.get_value(CampaignValue::Ransom);
+    let gang = campaign.get_size_of_gang();
+    let mut notes = Vec::new();
+    match MissionKind::for_profile(profile) {
+        MissionKind::Epilogue => notes.push("Ending scene after The Sheriff of Nottingham.".into()),
+        MissionKind::CampaignEvent => notes.push(
+            "Campaign event, resolved through campaign progression rather than a field mission."
+                .into(),
+        ),
+        MissionKind::Unavailable => {
+            notes.push("This archived mission has no playable map in this content.".into())
+        }
+        _ => {}
+    }
+    if money < profile.min_ransom as i32 {
+        notes.push(format!(
+            "Need at least {} ransom money (currently {money}).",
+            profile.min_ransom
+        ));
+    }
+    if profile.max_ransom != 200000 && profile.max_ransom < money as u32 {
+        notes.push(format!(
+            "Requires no more than {} ransom money (currently {money}).",
+            profile.max_ransom
+        ));
+    }
+    if gang < usize::from(profile.min_gang_size) {
+        notes.push(format!(
+            "Need at least {} gang members (currently {gang}).",
+            profile.min_gang_size
+        ));
+    }
+    if gang > usize::from(profile.max_gang_size) {
+        notes.push(format!(
+            "Requires no more than {} gang members (currently {gang}).",
+            profile.max_gang_size
+        ));
+    }
+    if mission.age >= profile.life_time {
+        notes.push("This mission's availability window has expired.".into());
+    }
+    let ares = campaign.get_ares();
+    if profile.ares_sensible && ares != -1 {
+        let stage = usize::try_from(ares).expect("negative campaign story state");
+        if !profile.available_in_ares_state[stage] {
+            notes.push("Not available at the current point in the story.".into());
+        }
+    }
+    for (&id, must_be_done) in profile
+        .missions_required_to_be_done
+        .iter()
+        .map(|id| (id, true))
+        .chain(
+            profile
+                .missions_required_not_to_be_done
+                .iter()
+                .map(|id| (id, false)),
+        )
+    {
+        let required = campaign
+            .get_mission(id, profiles)
+            .expect("campaign mission prerequisite is missing");
+        if required.is_done() != must_be_done {
+            let name = &required.profile(profiles).mission_name;
+            notes.push(if must_be_done {
+                format!("Finish {name} first.")
+            } else if id == profile.id {
+                "This mission has already been resolved in this campaign.".into()
+            } else {
+                format!("Only offered before {name} is resolved.")
+            });
+        }
+    }
+    if notes.is_empty() && !campaign.accessible_mission_indices.contains(&mission_idx) {
+        notes.push(if campaign.pending_accessible_mission_indices.contains(&mission_idx) {
+            "This mission is pending the next mission selection.".into()
+        } else {
+            "Entry conditions met; this mission is not currently offered. Sherwood selects from eligible missions.".into()
+        });
+    }
+    notes
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,6 +230,10 @@ pub struct CampaignProgressNode {
     pub name: String,
     pub location: MissionLocation,
     pub state: MissionProgressState,
+    pub kind: MissionKind,
+    /// Primary route stays visible while browsing the side branches.
+    pub on_spine: bool,
+    pub availability_notes: Vec<String>,
     /// Display connections, including the finale-to-epilogue story transition.
     /// Mission launch eligibility still comes from the campaign itself.
     pub prerequisite_nodes: Vec<usize>,
@@ -158,6 +316,12 @@ impl CampaignProgressGraph {
             }
             let profile = mission.profile(profiles);
             let attempts = mission.attempt_history().attempts();
+            let kind = MissionKind::for_profile(profile);
+            // These descriptor slots have no playable map. Preserve any old
+            // recorded results, but don't fill the tree with unused content.
+            if kind == MissionKind::Unavailable && attempts.is_empty() && !mission.is_done() {
+                continue;
+            }
             let current_has_win = attempts
                 .iter()
                 .any(|attempt| attempt.outcome() == MissionAttemptOutcome::Won)
@@ -230,6 +394,9 @@ impl CampaignProgressGraph {
                 },
                 location: profile.location,
                 state,
+                kind,
+                on_spine: false,
+                availability_notes: availability_notes(campaign, profiles, mission_idx),
                 prerequisite_nodes: Vec::new(),
                 depth: 0,
                 lane: 0,
@@ -247,8 +414,8 @@ impl CampaignProgressGraph {
                 badge_count: badges.len(),
                 lifetime_attempt_count,
                 lifetime_win_count,
-                selectable: accessible || current_has_win,
-                history_replay: !accessible && current_has_win,
+                selectable: kind != MissionKind::Unavailable && (accessible || current_has_win),
+                history_replay: kind != MissionKind::Unavailable && !accessible && current_has_win,
             });
         }
 
@@ -337,17 +504,88 @@ impl CampaignProgressGraph {
                 node.depth = node.depth.max(last_mission_depth + 1);
             }
         }
+        // Trace the longest prerequisite route backwards from the story finale.
+        // Other required missions remain genuine branches, not invented linear
+        // prerequisites. Partial/demo content uses its deepest story endpoint.
+        let mut cursor = nodes
+            .iter()
+            .position(|node| node.kind == MissionKind::Epilogue)
+            .or(finale)
+            .or_else(|| {
+                nodes
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, node)| node.kind == MissionKind::Story)
+                    .max_by_key(|(_, node)| node.depth)
+                    .map(|(index, _)| index)
+            });
+        while let Some(index) = cursor {
+            if nodes[index].on_spine {
+                break;
+            }
+            nodes[index].on_spine = true;
+            cursor = nodes[index]
+                .prerequisite_nodes
+                .iter()
+                .copied()
+                .filter(|&parent| nodes[parent].depth < nodes[index].depth)
+                .max_by_key(|&parent| {
+                    (
+                        nodes[parent].depth,
+                        nodes[parent].kind == MissionKind::Story,
+                    )
+                });
+        }
+        let mut branch_order: Vec<_> = (0..nodes.len()).collect();
+        branch_order.sort_by_key(|&index| {
+            let node = &nodes[index];
+            (
+                node.depth,
+                !node.on_spine,
+                match node.kind {
+                    MissionKind::Story => 0,
+                    MissionKind::Training => 1,
+                    MissionKind::CampaignEvent => 2,
+                    MissionKind::Ambush => 3,
+                    MissionKind::Optional => 4,
+                    MissionKind::Epilogue => 5,
+                    MissionKind::Unavailable => 6,
+                },
+            )
+        });
         let mut next_lane_by_depth: HashMap<usize, usize> = HashMap::new();
+        for &index in &branch_order {
+            let node = &mut nodes[index];
+            if node.on_spine {
+                node.lane = 0;
+            } else {
+                let lane = next_lane_by_depth.entry(node.depth).or_insert(1);
+                node.lane = *lane;
+                *lane += 1;
+            }
+        }
+        // Gallery order follows story stages too. Remap every display edge;
+        // mission_idx continues to identify the original campaign mission.
+        let mut remap = vec![0; nodes.len()];
+        for (new, &old) in branch_order.iter().enumerate() {
+            remap[old] = new;
+        }
+        nodes = branch_order.iter().map(|&old| nodes[old].clone()).collect();
         for node in &mut nodes {
-            let lane = next_lane_by_depth.entry(node.depth).or_default();
-            node.lane = *lane;
-            *lane += 1;
+            for parent in &mut node.prerequisite_nodes {
+                *parent = remap[*parent];
+            }
         }
         let completed_missions = nodes
             .iter()
-            .filter(|node| node.state == MissionProgressState::Completed)
+            .filter(|node| {
+                node.kind.is_field_mission() && node.state == MissionProgressState::Completed
+            })
             .count();
-        let known_missions = nodes.len();
+        let known_missions = nodes
+            .iter()
+            .filter(|node| node.kind.is_field_mission())
+            .count();
         Self {
             nodes,
             completed_missions,
@@ -416,6 +654,153 @@ mod tests {
     use super::*;
     use robin_engine::mission::Mission;
     use robin_engine::profiles::MissionProfile;
+
+    #[test]
+    fn story_route_and_branches_keep_real_edges_and_hide_unused_slots() {
+        let mut profiles = ProfileManager::new();
+        for (id, filename, kind, parents) in [
+            (1, "Sherwood", MissionType::Hq, vec![]),
+            (10, "Opening", MissionType::Historical, vec![]),
+            (20, "Next", MissionType::Historical, vec![10]),
+            (30, "Side", MissionType::Tactical, vec![10]),
+            (40, "EmbTut_FoC_EC", MissionType::Ambush, vec![10]),
+            (50, "H12_Not_MP", MissionType::Historical, vec![20]),
+            (60, "Impossible_mission", MissionType::Ambush, vec![10]),
+            (70, "SherwoodOutro", MissionType::Ambush, vec![]),
+        ] {
+            profiles.missions.push(MissionProfile {
+                id,
+                mission_filename: filename.into(),
+                mission_name: filename.into(),
+                mission_type: kind,
+                missions_required_to_be_done: parents,
+                max_ransom: 200000,
+                max_gang_size: u16::MAX,
+                life_time: u16::MAX,
+                location: if id == 1 {
+                    MissionLocation::Sherwood
+                } else {
+                    MissionLocation::Nottingham
+                },
+                ..Default::default()
+            });
+        }
+        let mut campaign = Campaign::default();
+        for idx in 0..profiles.missions.len() {
+            campaign.missions.push(Mission {
+                profile_idx: Some(idx as u32),
+                ..Mission::new()
+            });
+        }
+        let graph = CampaignProgressGraph::build(&campaign, &profiles, None);
+        assert_eq!(graph.nodes.len(), 6);
+        assert_eq!(graph.known_missions, 5);
+        for node in &graph.nodes {
+            assert_eq!(profiles.missions[node.mission_idx].id, node.mission_id);
+            assert_eq!(node.on_spine, [10, 20, 50, 70].contains(&node.mission_id));
+            if node.on_spine {
+                assert_eq!(node.lane, 0);
+            } else {
+                assert!(node.lane > 0);
+            }
+            for &parent in &node.prerequisite_nodes {
+                assert!(graph.nodes[parent].depth < node.depth);
+            }
+        }
+        let training = graph
+            .nodes
+            .iter()
+            .find(|node| node.mission_id == 40)
+            .unwrap();
+        assert_eq!(training.kind, MissionKind::Training);
+        let side = graph
+            .nodes
+            .iter()
+            .find(|node| node.mission_id == 30)
+            .unwrap();
+        assert_eq!(side.depth, training.depth);
+        assert_ne!(side.lane, training.lane);
+        assert_eq!(graph.nodes.last().unwrap().kind, MissionKind::Epilogue);
+        assert_eq!(campaign.missions.len(), 8);
+        campaign.missions[6].status = MissionStatus::Won;
+        let with_archive = CampaignProgressGraph::build(&campaign, &profiles, None);
+        let archived = with_archive
+            .nodes
+            .iter()
+            .find(|node| node.mission_id == 60)
+            .unwrap();
+        assert_eq!(archived.kind, MissionKind::Unavailable);
+        assert!(!archived.selectable);
+        assert!(!archived.history_replay);
+    }
+
+    #[test]
+    fn availability_explains_resource_story_and_mission_conditions() {
+        use robin_engine::campaign::CampaignValue;
+        let mut profiles = ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            id: 1,
+            mission_name: "First mission".into(),
+            mission_type: MissionType::Historical,
+            max_ransom: 200000,
+            max_gang_size: u16::MAX,
+            life_time: 10,
+            ..Default::default()
+        });
+        profiles.missions.push(MissionProfile {
+            id: 2,
+            mission_name: "Next mission".into(),
+            mission_type: MissionType::Historical,
+            min_ransom: 100,
+            max_ransom: 200000,
+            min_gang_size: 2,
+            max_gang_size: u16::MAX,
+            life_time: 10,
+            ares_sensible: true,
+            available_in_ares_state: [false; 10],
+            missions_required_to_be_done: vec![1],
+            ..Default::default()
+        });
+        let mut campaign = Campaign::default();
+        campaign.missions = (0..2)
+            .map(|idx| Mission {
+                profile_idx: Some(idx),
+                ..Mission::new()
+            })
+            .collect();
+        campaign.set_value(CampaignValue::Ransom, 50);
+        campaign.set_ares(1);
+        let notes = availability_notes(&campaign, &profiles, 1);
+        assert_eq!(notes.len(), 4);
+        assert!(notes[0].contains("100 ransom money (currently 50)"));
+        assert!(notes[1].contains("2 gang members (currently 0)"));
+        assert!(notes[2].contains("point in the story"));
+        assert_eq!(notes[3], "Finish First mission first.");
+        assert!(
+            campaign.missions[1]
+                .is_accessible_why(&campaign, &profiles)
+                .is_err()
+        );
+        campaign.set_value(CampaignValue::Ransom, 100);
+        profiles.missions[1].min_gang_size = 0;
+        profiles.missions[1].available_in_ares_state[1] = true;
+        campaign.missions[0].status = MissionStatus::Lost; // Engine prerequisites require resolved, not necessarily won.
+        assert!(
+            campaign.missions[1]
+                .is_accessible_why(&campaign, &profiles)
+                .is_ok()
+        );
+        let notes = availability_notes(&campaign, &profiles, 1);
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("not currently offered"));
+        campaign.accessible_mission_indices.push(1);
+        assert!(availability_notes(&campaign, &profiles, 1).is_empty());
+        profiles.missions[1].missions_required_not_to_be_done = vec![1];
+        assert_eq!(
+            availability_notes(&campaign, &profiles, 1),
+            ["Only offered before First mission is resolved."]
+        );
+    }
 
     #[test]
     fn epilogue_follows_finale_without_changing_mission_access() {
@@ -671,6 +1056,9 @@ mod tests {
             name: "The Rescue".into(),
             location: MissionLocation::Nottingham,
             state: MissionProgressState::Completed,
+            kind: MissionKind::Story,
+            on_spine: true,
+            availability_notes: Vec::new(),
             prerequisite_nodes: Vec::new(),
             depth: 0,
             lane: 0,

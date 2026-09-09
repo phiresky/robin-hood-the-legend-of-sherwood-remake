@@ -4,6 +4,14 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Campaign story navigation:** the main prerequisite route stays visible above
+  stage-grouped story branches, optional missions, and ambushes. Training and
+  campaign events are labeled separately; unused map placeholders are omitted
+  unless they hold archived results. R / Requirements explains actual money,
+  gang, mission, expiry, and story restrictions, with keyboard and mouse paging.
+  Achievement cards describe exact conditions and campaign-versus-mission scope.
+  These presentation changes preserve campaign selection and award eligibility.
+
 - **Campaign manager layout:** fixed 1024×768 presentation with twelve-card
   gallery pages, a navigable progress-tree viewport, wrapped mission titles,
   separate mission details, and three distinct views: Campaign for the current
