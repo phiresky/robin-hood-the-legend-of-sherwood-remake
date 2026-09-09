@@ -594,82 +594,54 @@ impl EngineInner {
             let chief_position = chief_view.position;
             let chief_ground_z = chief_view.elevation;
             let obstacles = sight_obstacles.list();
-            let mut patrol = Vec::new();
-            let mut missed = Vec::new();
-
-            for &member in &theoretical_patrol {
-                let member_view = entity_views.get(&member.index()).unwrap_or_else(|| {
-                    panic!(
-                        "patrol chief {} references missing authored member {}",
-                        npc_id.index(),
-                        member.index()
+            let (sorted_patrol, missed) = patrol_assembly::assemble_patrol(
+                theoretical_patrol.iter().copied(),
+                |&member| {
+                    let member_view = entity_views.get(&member.index()).unwrap_or_else(|| {
+                        panic!(
+                            "patrol chief {} references missing authored member {}",
+                            npc_id.index(),
+                            member.index()
+                        )
+                    });
+                    // Bootstrap uses its captured initialization views and
+                    // gates state before LOS. Do not substitute the runtime
+                    // visibility-first predicate: that changes query timing.
+                    let admitted = member_view.active
+                        && !member_view.is_dead
+                        && member_view.ai_state == crate::ai::AiState::Default
+                        && (member_view.is_civilian() || member_view.is_able_to_fight)
+                        && crate::ai_enemy::soldier_detects_target_360(
+                            chief_position,
+                            chief_ground_z,
+                            chief_view.is_rider,
+                            standard_view_radius,
+                            chief_view.in_building,
+                            member_view.position,
+                            member_view.elevation,
+                            member_view.posture,
+                            member_view.is_rider,
+                            member_view.direction as i16,
+                            member_view.in_building,
+                            obstacles,
+                        );
+                    (admitted, !member_view.is_dead)
+                },
+                |&member| {
+                    let view = entity_views.get(&member.index()).unwrap_or_else(|| {
+                        panic!(
+                            "patrol member {} disappeared from the AI initialization view map",
+                            member.index()
+                        )
+                    });
+                    (
+                        patrol_assembly::projected_patrol_world(view.position, view.elevation),
+                        view.position,
                     )
-                });
-                let admitted = member_view.active
-                    && !member_view.is_dead
-                    && member_view.ai_state == crate::ai::AiState::Default
-                    && (member_view.is_civilian() || member_view.is_able_to_fight)
-                    && crate::ai_enemy::soldier_detects_target_360(
-                        chief_position,
-                        chief_ground_z,
-                        chief_view.is_rider,
-                        standard_view_radius,
-                        chief_view.in_building,
-                        member_view.position,
-                        member_view.elevation,
-                        member_view.posture,
-                        member_view.is_rider,
-                        member_view.direction as i16,
-                        member_view.in_building,
-                        obstacles,
-                    );
-                if admitted {
-                    patrol.push(member);
-                } else if !member_view.is_dead {
-                    missed.push(member);
-                }
-            }
-
-            // Patrol initialization inserts by increasing 3-D square distance;
-            // ties insert before the existing member.
-            let patrol_distance = |member: EntityId| {
-                let view = entity_views.get(&member.index()).unwrap_or_else(|| {
-                    panic!(
-                        "patrol member {} disappeared from the AI initialization view map",
-                        member.index()
-                    )
-                });
-                let dx = view.position.x - chief_position.x;
-                let dy_world =
-                    (view.position.y + view.elevation) - (chief_position.y + chief_ground_z);
-                let dy = dy_world * crate::position_interface::INVERSE_ASPECT_RATIO;
-                let dz = view.elevation - chief_ground_z;
-                dx * dx + dy * dy + dz * dz
-            };
-            let mut sorted_patrol = Vec::with_capacity(patrol.len());
-            for member in patrol {
-                let distance = patrol_distance(member);
-                let insert_at = sorted_patrol
-                    .iter()
-                    .position(|&existing| {
-                        patrol_distance_inserts_before(distance, patrol_distance(existing))
-                    })
-                    .unwrap_or(sorted_patrol.len());
-                sorted_patrol.insert(insert_at, member);
-            }
-
-            // Arrange each pair left/right relative to the chief.
-            for i in (1..sorted_patrol.len()).step_by(2) {
-                let even = &entity_views[&sorted_patrol[i - 1].index()].position;
-                let odd = &entity_views[&sorted_patrol[i].index()].position;
-                let ex = even.x - chief_position.x;
-                let ey = even.y - chief_position.y;
-                let ox = odd.x - chief_position.x;
-                let oy = odd.y - chief_position.y;
-                if ex * oy - ey * ox < 0.0 {
-                    sorted_patrol.swap(i - 1, i);
-                }
-            }
+                },
+                patrol_assembly::projected_patrol_world(chief_position, chief_ground_z),
+                chief_position,
+            );
 
             {
                 let chief = self.world.entities.get_mut(npc_id).unwrap_or_else(|| {
