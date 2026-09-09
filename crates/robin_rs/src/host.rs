@@ -230,6 +230,12 @@ impl std::ops::Deref for ReadyApplicationContext {
 }
 
 impl ReadyApplicationContext {
+    pub fn with_replay_service(
+        self,
+        replay: Arc<crate::replay_service::ReplayService>,
+    ) -> Result<Self, String> {
+        self.0.with_replay_service(replay).map(Self)
+    }
     pub fn with_options(self, options: engine_api::GlobalOptions) -> Self {
         Self(self.0.with_options(options))
     }

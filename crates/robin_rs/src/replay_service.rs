@@ -186,6 +186,17 @@ replay_capability!(ReplayRecordingControl);
 replay_capability!(ReplayExports);
 replay_capability!(ReplayLaunches);
 
+/// Recording authority does not include export or replay admission.
+/// ```compile_fail
+/// fn export(control: robin_rs::replay_service::ReplayRecordingControl) {
+///     control.snapshot_bytes();
+/// }
+/// ```
+/// ```compile_fail
+/// fn escalate(control: robin_rs::replay_service::ReplayRecordingControl) {
+///     let root = control.0;
+/// }
+/// ```
 impl ReplayRecordingControl {
     pub fn begin_recording(&self) -> ReplaySpoolWriter {
         self.0.begin_recording()
@@ -478,6 +489,53 @@ impl ReplaySnapshot {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn injected_capabilities_share_only_their_application_lifecycle() {
+        let first = Arc::new(ReplayService::default());
+        let second = Arc::new(ReplayService::default());
+        let recording = first.recording();
+        let exports = first.exports();
+        let launches = first.launches();
+        let mut writer = recording.begin_recording();
+        writer.write_all(b"isolated\n").unwrap();
+        writer.flush().unwrap();
+        launches.admit_pending(pending("first", true)).unwrap();
+        assert_eq!(exports.snapshot_bytes().unwrap(), b"isolated\n");
+        assert!(second.exports().snapshot_bytes().unwrap().is_empty());
+        assert!(second.launches().take_pending().is_none());
+        drop(first);
+        assert_eq!(
+            launches.take_pending().unwrap().data.header().mission_id,
+            "first"
+        );
+        recording.invalidate("retired");
+        assert!(exports.snapshot_bytes().unwrap_err().contains("retired"));
+        assert!(writer.flush().is_err());
+    }
+
+    #[test]
+    fn capability_diagnostics_cannot_reconstitute_authority() {
+        let service = Arc::new(ReplayService::default());
+        assert!(
+            serde_json::from_value::<ReplayRecordingControl>(
+                serde_json::to_value(service.recording()).unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ReplayExports>(
+                serde_json::to_value(service.exports()).unwrap()
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ReplayLaunches>(
+                serde_json::to_value(service.launches()).unwrap()
+            )
+            .is_err()
+        );
+    }
 
     fn pending(mission: &str, paused: bool) -> PendingReplay {
         let spool = ReplaySpool::new(2 * 1024 * 1024);
