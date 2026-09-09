@@ -259,6 +259,16 @@ fn read_picture_collection(
     Ok((flags, pics))
 }
 
+fn flagged_picture_count(tag: &[u8; 4]) -> Option<usize> {
+    match tag {
+        b"BTTN" => Some(4),
+        b"TOGL" => Some(5),
+        b"NPTF" | b"SLID" => Some(6),
+        b"RDO " => Some(7),
+        _ => None,
+    }
+}
+
 /// Read a "flagged" picture resource (BTTN, TOGL, NPTF, SLID, RDO).
 /// `count` is the fixed number of sub-pictures for this widget type.
 /// A bitmask controls which sub-pictures are actually present in the stream.
@@ -694,16 +704,9 @@ impl ResourceManager {
                 let (_, pics) = read_picture_collection(reader, &context)?;
                 self.data.pictures.insert(id, pics);
             }
-            b"BTTN" => {
-                let (_, pics) = read_flagged_pictures(reader, 4, &context)?;
-                self.data.pictures.insert(id, pics);
-            }
-            b"TOGL" => {
-                let (_, pics) = read_flagged_pictures(reader, 5, &context)?;
-                self.data.pictures.insert(id, pics);
-            }
-            b"NPTF" => {
-                let (_, pics) = read_flagged_pictures(reader, 6, &context)?;
+            b"BTTN" | b"TOGL" | b"NPTF" | b"SLID" | b"RDO " => {
+                let count = flagged_picture_count(type_tag).expect("matched flagged picture tag");
+                let (_, pics) = read_flagged_pictures(reader, count, &context)?;
                 self.data.pictures.insert(id, pics);
             }
             b"CUR " => {
@@ -718,14 +721,6 @@ impl ResourceManager {
             b"WAVE" => {
                 let w = read_wave_table(reader, &context)?;
                 self.data.waves.insert(id, w);
-            }
-            b"SLID" => {
-                let (_, pics) = read_flagged_pictures(reader, 6, &context)?;
-                self.data.pictures.insert(id, pics);
-            }
-            b"RDO " => {
-                let (_, pics) = read_flagged_pictures(reader, 7, &context)?;
-                self.data.pictures.insert(id, pics);
             }
             _ => bail!(
                 "unsupported resource type: {:?}",
@@ -1336,7 +1331,11 @@ impl ResourceManager {
         let mut out: Vec<u8> = Vec::new();
         out.extend_from_slice(b"SRES");
         out.extend_from_slice(&RES_VERSION_100.to_le_bytes());
-        out.extend_from_slice(&(ids.len() as u32).to_le_bytes());
+        out.extend_from_slice(
+            &u32::try_from(ids.len())
+                .context("resource count exceeds u32")?
+                .to_le_bytes(),
+        );
 
         for (id, tag) in &ids {
             out.extend_from_slice(tag);
@@ -1360,7 +1359,11 @@ impl ResourceManager {
                         .get(id)
                         .ok_or_else(|| anyhow!("PICC {id}: missing"))?;
                     out.extend_from_slice(&0u32.to_le_bytes());
-                    out.extend_from_slice(&(pics.len() as u32).to_le_bytes());
+                    out.extend_from_slice(
+                        &u32::try_from(pics.len())
+                            .with_context(|| format!("resource {id}: picture count exceeds u32"))?
+                            .to_le_bytes(),
+                    );
                     for slot in pics {
                         let pic = slot
                             .as_ref()
@@ -1374,6 +1377,13 @@ impl ResourceManager {
                         .pictures
                         .get(id)
                         .ok_or_else(|| anyhow!("{tag:?} {id}: missing"))?;
+                    let count = flagged_picture_count(tag).expect("matched flagged picture tag");
+                    if pics.len() > count {
+                        bail!(
+                            "{tag:?} {id}: {} picture slots exceed the supported {count}",
+                            pics.len()
+                        );
+                    }
                     let mut bitmask: u32 = 0;
                     for (i, slot) in pics.iter().enumerate() {
                         if slot.is_some() {
@@ -1404,7 +1414,11 @@ impl ResourceManager {
                     out.extend_from_slice(&(mouse.hotspot.x as u16).to_le_bytes());
                     out.extend_from_slice(&(mouse.hotspot.y as u16).to_le_bytes());
                     out.extend_from_slice(&mouse.frame_length.to_le_bytes());
-                    out.extend_from_slice(&(pics.len() as u32).to_le_bytes());
+                    out.extend_from_slice(
+                        &u32::try_from(pics.len())
+                            .with_context(|| format!("resource {id}: picture count exceeds u32"))?
+                            .to_le_bytes(),
+                    );
                     for slot in pics {
                         let pic = slot
                             .as_ref()
@@ -1419,10 +1433,20 @@ impl ResourceManager {
                         .get(id)
                         .ok_or_else(|| anyhow!("TEXT {id}: missing"))?;
                     out.extend_from_slice(&0u32.to_le_bytes()); // flags
-                    out.extend_from_slice(&(strs.len() as u16).to_le_bytes());
+                    out.extend_from_slice(
+                        &u16::try_from(strs.len())
+                            .with_context(|| format!("TEXT {id}: string count exceeds u16"))?
+                            .to_le_bytes(),
+                    );
                     for s in strs {
                         let utf16: Vec<u16> = s.encode_utf16().collect();
-                        out.extend_from_slice(&(utf16.len() as u16).to_le_bytes());
+                        out.extend_from_slice(
+                            &u16::try_from(utf16.len())
+                                .with_context(|| {
+                                    format!("TEXT {id}: UTF-16 string length exceeds u16")
+                                })?
+                                .to_le_bytes(),
+                        );
                         for c in &utf16 {
                             out.extend_from_slice(&c.to_le_bytes());
                         }
@@ -1435,12 +1459,22 @@ impl ResourceManager {
                         .get(id)
                         .ok_or_else(|| anyhow!("WAVE {id}: missing"))?;
                     out.extend_from_slice(&0u32.to_le_bytes()); // flags
-                    out.extend_from_slice(&(waves.len() as u16).to_le_bytes());
+                    out.extend_from_slice(
+                        &u16::try_from(waves.len())
+                            .with_context(|| format!("WAVE {id}: path count exceeds u16"))?
+                            .to_le_bytes(),
+                    );
                     for w in waves {
                         // Original on-disk size includes the trailing NUL byte
                         // when the C side stored it; emit raw ASCII bytes
                         // verbatim. Length-prefixed, no NUL terminator added.
-                        out.extend_from_slice(&(w.len() as u16).to_le_bytes());
+                        out.extend_from_slice(
+                            &u16::try_from(w.len())
+                                .with_context(|| {
+                                    format!("WAVE {id}: path byte length exceeds u16")
+                                })?
+                                .to_le_bytes(),
+                        );
                         out.extend_from_slice(w.as_bytes());
                     }
                 }
@@ -1581,6 +1615,91 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_writer_rejects_unrepresentable_lengths_and_widget_slots() {
+        fn manager(tag: &[u8; 4]) -> ResourceManager {
+            let mut manager = ResourceManager::new();
+            manager.lifetime.file_entries.insert(
+                42,
+                ResourceFileEntry {
+                    file_path: String::new(),
+                    file_offset: 0,
+                    resource_type: *tag,
+                },
+            );
+            manager
+        }
+        let packing = crate::picture::SixteenPacking::None;
+        let mut text = manager(b"TEXT");
+        text.data.strings.insert(42, vec![String::new(); 65_536]);
+        assert!(
+            text.write_to_res_bytes(packing)
+                .unwrap_err()
+                .to_string()
+                .contains("string count")
+        );
+        // Count UTF-16 code units, not UTF-8 bytes or Unicode scalar values.
+        text.data.strings.insert(42, vec!["😀".repeat(32_768)]);
+        assert!(
+            text.write_to_res_bytes(packing)
+                .unwrap_err()
+                .to_string()
+                .contains("UTF-16 string length")
+        );
+        let boundary = format!("{}a", "😀".repeat(32_767));
+        text.data.strings.insert(42, vec![boundary.clone()]);
+        let bytes = text.write_to_res_bytes(packing).unwrap();
+        assert_eq!(
+            read_string_table(&mut Reader::new(&bytes[20..]), "fixture").unwrap(),
+            vec![boundary]
+        );
+
+        let mut waves = manager(b"WAVE");
+        waves.data.waves.insert(42, vec![String::new(); 65_536]);
+        assert!(
+            waves
+                .write_to_res_bytes(packing)
+                .unwrap_err()
+                .to_string()
+                .contains("path count")
+        );
+        waves.data.waves.insert(42, vec!["é".repeat(32_768)]);
+        assert!(
+            waves
+                .write_to_res_bytes(packing)
+                .unwrap_err()
+                .to_string()
+                .contains("path byte length")
+        );
+        waves.data.waves.insert(42, vec!["a".repeat(65_535)]);
+        assert!(waves.write_to_res_bytes(packing).is_ok());
+
+        for (tag, count) in [
+            (b"BTTN", 4),
+            (b"TOGL", 5),
+            (b"NPTF", 6),
+            (b"SLID", 6),
+            (b"RDO ", 7),
+        ] {
+            let mut pictures = manager(tag);
+            pictures.data.pictures.insert(42, vec![None; count + 1]);
+            assert!(
+                pictures
+                    .write_to_res_bytes(packing)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("picture slots")
+            );
+            pictures.data.pictures.insert(42, vec![None; count]);
+            let bytes = pictures.write_to_res_bytes(packing).unwrap();
+            let mut restored = ResourceManager::new();
+            restored
+                .load_resource_data(&mut Reader::new(&bytes[20..]), 42, tag)
+                .unwrap();
+            assert_eq!(restored.pictures_raw(42).unwrap().len(), count);
+        }
+    }
 
     #[test]
     fn merging_picture_collections_replaces_all_old_representations() {
