@@ -523,6 +523,16 @@ impl MissionBootstrap {
     fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
         self.loaded.engine.into_campaign_and_simulation()
     }
+
+    /// Frontend resources may be consumed on failure, but mission ownership
+    /// must remain available for the caller's campaign recovery path.
+    async fn retain_during_frontend_assembly(
+        mut self,
+        assemble: impl AsyncFnOnce(&mut Self) -> Result<InteractiveFrontendAssembly, String>,
+    ) -> (Self, Result<InteractiveFrontendAssembly, String>) {
+        let result = assemble(&mut self).await;
+        (self, result)
+    }
 }
 
 /// Diagnostic control for same-package startup measurements.
@@ -891,20 +901,16 @@ impl LoadedInteractiveStage {
         Result<InteractiveFrontendAssembly, String>,
     ) {
         let Self {
-            mut bootstrap,
+            bootstrap,
             process,
             loading,
         } = self;
-        let result = Self::assemble_process_frontend(
-            &mut bootstrap,
-            process,
-            loading,
-            window,
-            profiles,
-            args,
-        )
-        .await;
-        (bootstrap, result)
+        bootstrap
+            .retain_during_frontend_assembly(async |bootstrap| {
+                Self::assemble_process_frontend(bootstrap, process, loading, window, profiles, args)
+                    .await
+            })
+            .await
     }
 
     async fn assemble_process_frontend(
@@ -1767,6 +1773,36 @@ mod tests {
             },
             &crate::main_entry::CliArgs::default(),
         )
+    }
+
+    #[test]
+    fn consuming_frontend_failure_retains_the_original_campaign_and_simulation() {
+        let bootstrap = scratch_bootstrap_fixture();
+        let expected_campaign = serde_json::to_value(bootstrap.loaded.engine.campaign()).unwrap();
+        let original_allocation = bootstrap.loaded.engine.campaign().missions.as_ptr();
+        let expected_config = bootstrap.loaded.engine_sim_config;
+        let expected_seed = bootstrap.loaded.engine_rng_seed;
+        let (bootstrap, result) = futures::executor::block_on(
+            bootstrap.retain_during_frontend_assembly(async |bootstrap| {
+                // Exercise the real non-GPU preparation failure: a scratch
+                // host cannot borrow application-owned resource readers.
+                let error = match bootstrap.host.preparation_files() {
+                    Err(error) => error,
+                    Ok(_) => panic!("scratch fixture unexpectedly has resource authority"),
+                };
+                Err(error)
+            }),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            bootstrap.loaded.engine.campaign().missions.as_ptr(),
+            original_allocation
+        );
+        let (campaign, seed, config) = bootstrap.into_campaign_and_simulation();
+        assert_eq!(campaign.missions.as_ptr(), original_allocation);
+        assert_eq!(serde_json::to_value(campaign).unwrap(), expected_campaign);
+        assert_eq!(seed, expected_seed);
+        assert_eq!(config, expected_config);
     }
 
     #[test]
