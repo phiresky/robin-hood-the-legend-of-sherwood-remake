@@ -36,7 +36,6 @@ impl RequestRouter {
     pub(super) fn is_retired(&self) -> bool {
         self.retired
     }
-    #[cfg(target_arch = "wasm32")]
     pub(super) fn retirement_receiver(&self) -> async_channel::Receiver<()> {
         self.retirement.1.clone()
     }
@@ -161,6 +160,7 @@ impl SessionIngress {
             .lock()
             .expect("session RPC queue poisoned")
             .drain(..)
+            .filter(|request| request.response_tx.eligible())
             .collect()
     }
 
@@ -220,6 +220,9 @@ impl SessionIngress {
     pub fn take_pending_steps(&mut self) -> Vec<PendingStep> {
         self.cancel_stopped_work();
         std::mem::take(&mut self.steps)
+            .into_iter()
+            .filter(|step| step.response_tx.admit())
+            .collect()
     }
 
     pub fn take_pending_screenshots(&mut self, sim_frame: u32) -> Vec<PendingScreenshot> {
@@ -240,15 +243,19 @@ impl SessionIngress {
         predicate: impl Fn(&ScreenshotRequest) -> bool,
     ) -> Vec<PendingScreenshot> {
         self.cancel_stopped_work();
-        let (ready, waiting) =
-            std::mem::take(&mut self.screenshots)
-                .into_iter()
-                .partition(|pending| {
-                    pending.request.frame.is_none_or(|frame| sim_frame >= frame)
-                        && predicate(&pending.request)
-                });
+        let (ready, waiting) = std::mem::take(&mut self.screenshots)
+            .into_iter()
+            .filter(|pending| pending.response_tx.eligible())
+            .partition(|pending| {
+                pending.request.frame.is_none_or(|frame| sim_frame >= frame)
+                    && predicate(&pending.request)
+            });
         self.screenshots = waiting;
+        let ready: Vec<PendingScreenshot> = ready;
         ready
+            .into_iter()
+            .filter(|pending| pending.response_tx.admit())
+            .collect()
     }
 
     fn cancel_stopped_work(&mut self) {
@@ -291,22 +298,10 @@ impl Drop for SessionIngress {
 mod tests {
     use super::*;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    type ReplyReceiver = mpsc::Receiver<Reply>;
-    #[cfg(target_arch = "wasm32")]
-    type ReplyReceiver = async_channel::Receiver<Reply>;
+    type ReplyReceiver = request_lifetime::ReplyWait;
 
     fn request(payload: HttpPayload) -> (HttpRequest, ReplyReceiver) {
-        #[cfg(not(target_arch = "wasm32"))]
-        let (response_tx, rx) = {
-            let (tx, rx) = mpsc::sync_channel(1);
-            (Responder::Channel(tx), rx)
-        };
-        #[cfg(target_arch = "wasm32")]
-        let (response_tx, rx) = {
-            let (tx, rx) = async_channel::bounded(1);
-            (Responder::Wasm(tx), rx)
-        };
+        let (response_tx, rx) = Responder::channel();
         (
             HttpRequest {
                 payload,
@@ -325,6 +320,96 @@ mod tests {
 
     fn router() -> Queue {
         Arc::new(Mutex::new(RequestRouter::default()))
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn disconnected_callers_cannot_admit_queued_or_deferred_mutations() {
+        let router = router();
+        let mut session = SessionIngress::with_router(Some(router.clone()));
+        let (raw, raw_reply) = request(HttpPayload::Console("cheat".into()));
+        router.lock().unwrap().push_back(raw);
+        drop(raw_reply);
+        assert!(session.take_requests().is_empty());
+        let (step, reply) = request(HttpPayload::SetPaused { paused: true });
+        session.defer(step, true);
+        drop(reply);
+        assert!(session.take_pending_steps().is_empty());
+        let (shot, reply) = request(HttpPayload::Screenshot(ScreenshotRequest {
+            frame: Some(900),
+            ..Default::default()
+        }));
+        session.defer(shot, true);
+        drop(reply);
+        assert!(session.take_pending_screenshots(900).is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn expiration_is_checked_at_dispatch_and_deferred_admission() {
+        let router = router();
+        let mut session = SessionIngress::with_router(Some(router.clone()));
+        let (raw, reply) = request(HttpPayload::Console("cheat".into()));
+        router.lock().unwrap().push_back(raw);
+        // Model the interval between inbox extraction and command execution.
+        let raw = session.take_requests().pop().unwrap();
+        reply.expire();
+        assert!(!raw.admit_unless_deferred());
+        let (mut step, reply) = request(HttpPayload::SetPaused { paused: true });
+        step.response_tx = step.response_tx.with_deadline(std::time::Instant::now());
+        session.defer(step, true);
+        assert!(session.take_pending_steps().is_empty());
+        assert!(reply.is_expired());
+        let (shot, reply) = request(HttpPayload::Screenshot(ScreenshotRequest::default()));
+        session.defer(shot, true);
+        reply.expire();
+        assert!(session.take_pending_screenshots(0).is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn dropping_native_relay_future_cancels_its_queued_request() {
+        use futures::FutureExt as _;
+        let router = router();
+        let mut session = SessionIngress::with_router(Some(router.clone()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            assert!(
+                relay(&router, HttpPayload::Console("cheat".into()))
+                    .now_or_never()
+                    .is_none()
+            );
+        });
+        assert!(session.take_requests().is_empty());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn timeout_does_not_revoke_an_admitted_operation() {
+        let (request, reply) = request(HttpPayload::Console("cheat".into()));
+        assert!(request.admit_unless_deferred());
+        reply.expire();
+        assert!(!reply.is_expired());
+        request
+            .response_tx
+            .send(Ok(serde_json::json!({"ok": true}).into()));
+        assert!(reply.try_recv().unwrap().is_ok());
+    }
+
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    fn admitted_work_survives_disconnect_without_reopening_admission() {
+        let (request, reply) = request(HttpPayload::Console("cheat".into()));
+        assert!(request.admit_unless_deferred());
+        drop(reply);
+        assert!(!request.admit_unless_deferred());
+        // Accepted work is not rolled back when its consumer disappears.
+        request
+            .response_tx
+            .send(Ok(serde_json::json!({"ok": true}).into()));
     }
 
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

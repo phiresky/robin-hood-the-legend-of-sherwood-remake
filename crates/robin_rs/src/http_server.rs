@@ -86,8 +86,6 @@ use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::mpsc::{self, SyncSender};
-#[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -153,6 +151,23 @@ impl Default for StepRequest {
 pub struct HttpRequest {
     pub payload: HttpPayload,
     pub response_tx: Responder,
+}
+
+impl HttpRequest {
+    fn admit_unless_deferred(&self) -> bool {
+        if matches!(
+            self.payload,
+            HttpPayload::Screenshot(_)
+                | HttpPayload::StepForward { .. }
+                | HttpPayload::StepBack { .. }
+                | HttpPayload::GoToFrame { .. }
+                | HttpPayload::SetPaused { .. }
+        ) {
+            self.response_tx.eligible()
+        } else {
+            self.response_tx.admit()
+        }
+    }
 }
 
 /// Per-request payload — the transport layer parses each endpoint
@@ -390,34 +405,8 @@ impl From<serde_json::Value> for ReplyBody {
 /// becomes a 400 with `{"error": msg}` (always JSON).
 pub type Reply = Result<ReplyBody, String>;
 
-/// One-shot reply channel.  Native uses a `mpsc::sync_channel` so the
-/// listener thread can block on recv; wasm uses an async one-shot
-/// channel that resolves the Promise returned by `rh_rpc`.
-pub enum Responder {
-    #[cfg(not(target_arch = "wasm32"))]
-    Channel(SyncSender<Reply>),
-    #[cfg(target_arch = "wasm32")]
-    Wasm(async_channel::Sender<Reply>),
-}
-
-impl Responder {
-    pub fn send(self, reply: Reply) {
-        match self {
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Channel(tx) => {
-                if let Err(e) = tx.send(reply) {
-                    tracing::debug!("script RPC: response dropped (listener gone): {e}");
-                }
-            }
-            #[cfg(target_arch = "wasm32")]
-            Self::Wasm(tx) => {
-                if let Err(e) = tx.try_send(reply) {
-                    tracing::debug!("script RPC: response dropped (wasm promise gone): {e}");
-                }
-            }
-        }
-    }
-}
+mod request_lifetime;
+pub use request_lifetime::Responder;
 
 mod ingress;
 #[cfg(not(target_arch = "wasm32"))]
@@ -580,13 +569,13 @@ mod browser_transport_tests {
         let queue = BROWSER_QUEUE
             .with(|binding| binding.borrow().upgrade())
             .unwrap();
-        let (tx, _rx) = async_channel::bounded(1);
+        let (response_tx, _rx) = Responder::channel();
         queue.lock().unwrap().push_back(HttpRequest {
             payload: HttpPayload::LoadReplay {
                 data: "early replay".into(),
                 paused: true,
             },
-            response_tx: Responder::Wasm(tx),
+            response_tx,
         });
         let mut application = early;
         // Native port options are irrelevant to the browser bridge binding.
@@ -1076,38 +1065,36 @@ fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
 /// wait at 60 s so a wedged game doesn't hang the client forever.
 #[cfg(not(target_arch = "wasm32"))]
 async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
-    let (tx, rx) = mpsc::sync_channel::<Reply>(1);
+    let (response_tx, rx) = Responder::channel();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let retirement = queue
+        .lock()
+        .expect("RPC router poisoned")
+        .retirement_receiver();
     queue
         .lock()
         .expect("queue mutex poisoned")
         .push_back(HttpRequest {
             payload,
-            response_tx: Responder::Channel(tx),
+            response_tx: response_tx.with_deadline(deadline),
         });
-    let deadline = std::time::Instant::now() + Duration::from_secs(60);
-    let reply = loop {
-        if queue.lock().expect("RPC router poisoned").is_retired() {
-            break Ok(Err("HTTP transport stopped".into()));
-        }
-        match rx.try_recv() {
-            Err(mpsc::TryRecvError::Empty) if std::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            Err(mpsc::TryRecvError::Empty) => break Err(mpsc::RecvTimeoutError::Timeout),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                break Err(mpsc::RecvTimeoutError::Disconnected);
-            }
-            Ok(reply) => break Ok(reply),
-        }
+    let reply = tokio::select! {
+        biased;
+        _ = retirement.recv() => return (400, serde_json::json!({"error": "HTTP transport stopped"}).into()),
+        reply = rx.recv() => reply,
+        _ = tokio::time::sleep_until(deadline.into()) => {
+            rx.expire();
+            return (504, serde_json::json!({"error": "game loop did not process the request within 60s; already-admitted work may complete"}).into());
+        },
     };
     match reply {
         Ok(Ok(body)) => (200, body),
         Ok(Err(msg)) => (400, serde_json::json!({"error": msg}).into()),
-        Err(mpsc::RecvTimeoutError::Timeout) => (
+        Err(_) if rx.is_expired() => (
             504,
-            serde_json::json!({"error": "game loop did not process the request within 60s"}).into(),
+            serde_json::json!({"error": "request expired before admission"}).into(),
         ),
-        Err(mpsc::RecvTimeoutError::Disconnected) => (
+        Err(_) => (
             500,
             serde_json::json!({"error": "game loop dropped the response channel"}).into(),
         ),
@@ -1200,6 +1187,9 @@ fn drain_pre_engine(server: &HttpServer) {
         q.take_idle()
     };
     for req in pending {
+        if !req.response_tx.admit() {
+            continue;
+        }
         match req.payload {
             HttpPayload::GetReplay => start_replay_export(&server.replay_exports, req.response_tx),
             HttpPayload::LoadReplay { data, paused } => {
@@ -1254,6 +1244,9 @@ impl SessionIngress {
     ) -> Vec<engine_api::ExternalAction> {
         let mut external_actions = Vec::new();
         for req in self.take_requests() {
+            if !req.admit_unless_deferred() {
+                continue;
+            }
             self.observe_ranked_input_taint(&req.payload);
             match req.payload.classify() {
                 RoutedRequest::HostDebug => {
@@ -1305,6 +1298,9 @@ impl SessionIngress {
         let mut commands = FrameCommands::new();
         let mut external_actions = Vec::new();
         for req in self.take_requests() {
+            if !req.admit_unless_deferred() {
+                continue;
+            }
             self.observe_ranked_input_taint(&req.payload);
             match req.payload.classify() {
                 RoutedRequest::HostDebug => {
@@ -2767,13 +2763,13 @@ pub mod wasm_rpc {
             .lock()
             .expect("queue mutex poisoned")
             .retirement_receiver();
-        let (tx, rx) = async_channel::bounded(1);
+        let (response_tx, rx) = Responder::channel();
         queue
             .lock()
             .expect("queue mutex poisoned")
             .push_back(HttpRequest {
                 payload,
-                response_tx: Responder::Wasm(tx),
+                response_tx,
             });
         use futures::FutureExt as _;
         let reply = futures::select_biased! {
