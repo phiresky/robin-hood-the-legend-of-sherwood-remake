@@ -45,7 +45,6 @@ futures = "0.3"
 libc = "0.2"
 bytemuck = { workspace = true, features = ["derive"] }
 clap = { version = "4", features = ["derive"] }
-dirs = { version = "7", optional = true }
 ffmpeg-next = { version = "9", optional = true }
 png = "0.18"
 bitcode.workspace = true
@@ -79,6 +78,8 @@ unicode-segmentation.workspace = true
 # Native-only runtime integrations (Lua, filesystem/process services, and
 # networking). Browser equivalents live behind wasm-bindgen APIs.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# OS data directories are standard for every native build.
+dirs = "7"
 robin_official_content = { workspace = true, optional = true }
 robin_lua = { workspace = true, optional = true }
 mlua = { workspace = true, optional = true }
@@ -247,7 +248,7 @@ sha2.workspace = true
 # Bare builds are intentionally dependency-minimal. Opt into the normal native
 # game with `desktop`, or select individual integrations as needed.
 default = []
-desktop = ["native-fs", "audio", "dialogs", "gamepad", "hardware-info"]
+desktop = ["audio", "dialogs", "gamepad", "hardware-info"]
 # Packaged desktop builds retain the integrations they can currently ship.
 release = ["desktop", "lua", "multiplayer", "auto-update"]
 # Every supported native integration. FFmpeg packaging is not yet available on
@@ -277,13 +278,9 @@ video = ["dep:ffmpeg-next", "audio"]
 # Legacy native Luau tools/tests and the native host-session compatibility surface.
 # Gameplay Spellforge execution always uses robin_spellforge, with or without this feature.
 lua = ["dep:robin_lua", "dep:mlua"]
-# Standard filesystem-backed save / replay directory resolution via the
-# `dirs` crate.  Disabled on wasm where saves/replays go through a
-# browser-side mechanism instead of OS data dirs.
-native-fs = ["dep:dirs"]
 # Closed, native-only feature for the reproducible official-content projection
 # executable. It intentionally stays out of every shipping client graph.
-projection-export = ["dep:dirs", "dep:robin_official_content"]
+projection-export = ["dep:robin_official_content"]
 # Installed desktop builds can opt into Velopack startup and background update
 # checks. Developer builds do not need its HTTP and packaging dependency graph.
 auto-update = ["dep:semver", "dep:velopack"]

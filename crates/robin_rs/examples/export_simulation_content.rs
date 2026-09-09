@@ -600,9 +600,8 @@ mod tests {
     use clap::Parser as _;
 
     #[test]
-    fn private_exporter_feature_is_storage_and_presentation_minimal() {
+    fn private_exporter_feature_is_presentation_minimal() {
         assert!(cfg!(feature = "projection-export"));
-        assert!(!cfg!(feature = "native-fs"));
         assert!(!cfg!(feature = "audio"));
         assert!(!cfg!(feature = "video"));
         let parsed = Args::try_parse_from([

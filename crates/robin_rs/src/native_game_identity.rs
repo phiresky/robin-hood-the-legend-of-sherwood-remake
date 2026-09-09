@@ -20,7 +20,6 @@ fn identity_key_path() -> Result<PathBuf, String> {
     if let Ok(dir) = std::env::var("ROBINHOOD_SAVE_DIR") {
         return Ok(PathBuf::from(dir).join(IDENTITY_KEY_FILE));
     }
-    #[cfg(feature = "native-fs")]
     if let Some(data_dir) = dirs::data_dir() {
         return Ok(data_dir.join("robin_hood").join(IDENTITY_KEY_FILE));
     }

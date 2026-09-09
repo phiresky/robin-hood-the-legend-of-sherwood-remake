@@ -1051,7 +1051,7 @@ pub fn default_save_directory() -> PathBuf {
     if let Ok(override_dir) = std::env::var("ROBINHOOD_SAVE_DIR") {
         return PathBuf::from(override_dir);
     }
-    #[cfg(feature = "native-fs")]
+    #[cfg(not(target_arch = "wasm32"))]
     if let Some(data_dir) = dirs::data_dir() {
         return data_dir.join("robin_hood").join("saves");
     }

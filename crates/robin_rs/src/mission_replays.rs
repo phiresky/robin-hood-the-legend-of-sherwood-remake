@@ -292,7 +292,6 @@ struct RecordingLink {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn default_directory() -> PathBuf {
-    #[cfg(feature = "native-fs")]
     if let Some(dir) = dirs::data_dir() {
         return dir.join("robin_hood/replays/attempts");
     }
