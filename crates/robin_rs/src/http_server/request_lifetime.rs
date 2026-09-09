@@ -68,7 +68,7 @@ impl Responder {
         self
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn cancellation_observer(&self) -> Box<dyn Fn() -> bool> {
         let phase = self.phase.clone();
         Box::new(move || *phase.lock().expect("RPC lifetime poisoned") == Phase::Cancelled)
