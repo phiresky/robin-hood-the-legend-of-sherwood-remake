@@ -2711,14 +2711,14 @@ fn load_progress_font(files: &robin_engine::sbfile::SbFileSystem, key: &str) -> 
     let config = native_font::load_font_config(files)
         .unwrap_or_else(|error| panic!("campaign font configuration unavailable: {error}"));
     Some(
-        native_font::load_font_by_name_for_active_locale(&config, key, files)
+        native_font::load_font_by_name_for_locale(&config, key, files)
             .unwrap_or_else(|error| panic!("campaign font {key} unavailable: {error}")),
     )
 }
 
 fn load_campaign_font(files: &robin_engine::sbfile::SbFileSystem) -> Option<Font> {
     let config = native_font::load_font_config(files).ok()?;
-    native_font::load_font_by_name_for_active_locale(&config, "Default", files).ok()
+    native_font::load_font_by_name_for_locale(&config, "Default", files).ok()
 }
 
 fn draw_marker(renderer: &mut Renderer, transform: MenuTransform, x: i32, y: i32, blinking: bool) {

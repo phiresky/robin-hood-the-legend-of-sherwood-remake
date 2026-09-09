@@ -83,7 +83,7 @@ impl HudFonts {
             .ok()?;
 
         let load = |name: &str| -> Option<Font> {
-            match native_font::load_font_by_name_for_active_locale(&config, name, files) {
+            match native_font::load_font_by_name_for_locale(&config, name, files) {
                 Ok(font) if font.is_renderable() => Some(font),
                 Ok(_) => {
                     tracing::info!("HUD font '{name}' is not renderable");

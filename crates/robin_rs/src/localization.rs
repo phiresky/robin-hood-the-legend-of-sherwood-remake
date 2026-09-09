@@ -8,7 +8,7 @@
 //! commands.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use robin_assets::resource_manager::ResourceManager;
 use robin_assets::shipping_datadir::{ShippingDatadir, ShippingLocale};
@@ -23,7 +23,6 @@ const PREFERENCES_FILE: &str = "language.json";
 const BROWSER_PREFERENCES_KEY: &str = "robin_hood.language.v1";
 const MENU_TEXT_TABLES: [i32; 3] = [1_000_507, 1_000_040, 1_000_034];
 const MINIMUM_CORE_MENU_STRINGS: usize = 32;
-static ACTIVE_PROCESS_LOCALE: RwLock<Option<String>> = RwLock::new(None);
 
 /// Stable, application-global language choice.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -711,7 +710,8 @@ fn install_file_lookup(
             .map(|pack| pack.data_root.as_str())
             .filter(|root| *root != selected)
     });
-    let status = files.set_locale_paths(selected, fallback);
+    let status =
+        files.set_presentation_locale(selected, fallback, active.map(|pack| pack.locale.as_str()));
     if status != robin_engine::sbfile::SBFILE_NO_ERROR {
         return Err(LocalizationError::FileLookup(status));
     }
@@ -728,21 +728,14 @@ fn install_file_lookup(
             .select_locale(None, None)
             .map_err(|error| LocalizationError::Shipping(error.into()))?;
     }
-    // TODO: pass the application locale into native-font selection too; this
-    // presentation-only compatibility signal is not resource lookup authority.
-    *ACTIVE_PROCESS_LOCALE
-        .write()
-        .expect("active process locale lock poisoned") = active.map(|pack| pack.locale.clone());
     Ok(())
 }
 
 /// The original font manager selected its TrueType family for international
 /// builds whose bitmap fonts cannot cover the locale's script. Keep that
-/// decision host-global alongside SbFile's active locale generation.
-pub fn active_locale_prefers_truetype() -> bool {
-    let locale = ACTIVE_PROCESS_LOCALE
-        .read()
-        .expect("active process locale lock poisoned");
+/// decision tied to the same prepared reader as font resource lookup.
+pub fn locale_prefers_truetype(files: &SbFileSystem) -> bool {
+    let locale = files.presentation_locale();
     matches!(
         locale.as_deref().map(locale_primary).as_deref(),
         Some("ja" | "zh" | "ko" | "th" | "ru" | "pl" | "cs")
@@ -1560,12 +1553,61 @@ mod tests {
     }
 
     #[test]
+    fn installing_locale_lookup_publishes_font_policy_only_to_its_reader() {
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let other = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let pack = LanguagePack {
+            locale: "ja-JP".to_owned(),
+            native_name: "日本語".to_owned(),
+            data_root: "1041".to_owned(),
+            has_voice: false,
+            has_cinematics: false,
+            voice_uses_english_fallback: false,
+            cinematics_use_english_fallback: false,
+            mission_names: Default::default(),
+        };
+        install_file_lookup(Some(&pack), std::slice::from_ref(&pack), None, &files).unwrap();
+        assert_eq!(files.locale_paths(), (Some("1041".to_owned()), None));
+        assert!(locale_prefers_truetype(&files));
+        let prepared = files.snapshot();
+        install_file_lookup(None, &[], None, &other).unwrap();
+        assert!(locale_prefers_truetype(&files));
+        install_file_lookup(None, &[], None, &files).unwrap();
+        assert!(!locale_prefers_truetype(&files));
+        assert!(locale_prefers_truetype(&prepared));
+    }
+
+    #[test]
+    fn font_policy_uses_each_readers_selected_language_not_its_root_spelling() {
+        let files = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        for language in [
+            "ja-JP", "zh-CN", "ko-KR", "th-TH", "ru-RU", "pl-PL", "cs-CZ",
+        ] {
+            assert_eq!(
+                files.set_presentation_locale(Some("1033"), None, Some(language)),
+                0
+            );
+            assert!(locale_prefers_truetype(&files), "{language}");
+        }
+        for language in [None, Some("en-US"), Some("de-DE"), Some("und")] {
+            assert_eq!(
+                files.set_presentation_locale(Some("1041"), None, language),
+                0
+            );
+            assert!(!locale_prefers_truetype(&files), "{language:?}");
+        }
+    }
+
+    #[test]
     fn localization_retains_live_application_reader_without_touching_other_readers() {
         let files = Arc::new(SbFileSystem::new(Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
         )));
         let other = SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
-        assert_eq!(other.set_locale_paths(Some("other-locale"), None), 0);
+        assert_eq!(
+            other.set_presentation_locale(Some("other-locale"), None, Some("en-US")),
+            0
+        );
         let mut service = LocalizationService::initialize_with_store(
             None,
             PreferenceStore::Memory,
@@ -1573,12 +1615,18 @@ mod tests {
         )
         .unwrap();
         assert!(Arc::ptr_eq(service.files.as_ref().unwrap(), &files));
-        assert_eq!(files.set_locale_paths(Some("application-locale"), None), 0);
+        assert_eq!(
+            files.set_presentation_locale(Some("application-locale"), None, Some("ja-JP")),
+            0
+        );
         let mission = files.snapshot();
         service
             .set_selection(LanguageSelection::Auto, None)
             .unwrap();
         assert_eq!(files.locale_paths(), (None, None));
+        assert_eq!(files.presentation_locale(), None);
+        assert_eq!(mission.presentation_locale().as_deref(), Some("ja-JP"));
+        assert_eq!(other.presentation_locale().as_deref(), Some("en-US"));
         assert_eq!(
             mission.locale_paths(),
             (Some("application-locale".to_owned()), None)
