@@ -875,6 +875,10 @@ struct SpriteBank {
 }
 
 impl SpriteBank {
+    fn dimensions(&self) -> Option<(i32, i32)> {
+        (self.width > 0 && self.height > 0).then_some((self.width, self.height))
+    }
+
     fn frame(&self, state: usize) -> Option<SurfaceHandle> {
         self.frames
             .get(state)
@@ -1411,11 +1415,9 @@ impl IngameMenuResources {
     }
 
     pub fn radio_dimensions(&self) -> (i32, i32) {
-        if self.radio.width > 0 && self.radio.height > 0 {
-            (self.radio.width, self.radio.height)
-        } else {
-            self.button_dimensions()
-        }
+        self.radio
+            .dimensions()
+            .unwrap_or_else(|| self.button_dimensions())
     }
 
     pub fn button_surface(&self, state: usize) -> Option<SurfaceHandle> {
@@ -1425,11 +1427,9 @@ impl IngameMenuResources {
     /// Dimensions of the `RHID_OK` seal button.  Falls back to the
     /// rectangular menu-button size if the pack didn't load.
     pub fn ok_button_dimensions(&self) -> (i32, i32) {
-        if self.ok_button.width > 0 && self.ok_button.height > 0 {
-            (self.ok_button.width, self.ok_button.height)
-        } else {
-            self.button_dimensions()
-        }
+        self.ok_button
+            .dimensions()
+            .unwrap_or_else(|| self.button_dimensions())
     }
 
     /// Sprite for a given state of the `RHID_OK` seal button.  Falls back
@@ -1444,11 +1444,9 @@ impl IngameMenuResources {
     /// `RHID_OK` then the rectangular menu-button size if the pack
     /// didn't load.
     pub fn cancel_button_dimensions(&self) -> (i32, i32) {
-        if self.cancel_button.width > 0 && self.cancel_button.height > 0 {
-            (self.cancel_button.width, self.cancel_button.height)
-        } else {
-            self.ok_button_dimensions()
-        }
+        self.cancel_button
+            .dimensions()
+            .unwrap_or_else(|| self.ok_button_dimensions())
     }
 
     /// Sprite for a given state of the `RHID_CANCEL` seal button.  Falls
@@ -1460,11 +1458,9 @@ impl IngameMenuResources {
     }
 
     pub fn restart_button_dimensions(&self) -> (i32, i32) {
-        if self.restart_button.width > 0 && self.restart_button.height > 0 {
-            (self.restart_button.width, self.restart_button.height)
-        } else {
-            self.ok_button_dimensions()
-        }
+        self.restart_button
+            .dimensions()
+            .unwrap_or_else(|| self.ok_button_dimensions())
     }
 
     /// Sprite for a given state of the `RHID_RESTART` seal button.
@@ -1476,11 +1472,9 @@ impl IngameMenuResources {
     }
 
     pub fn load_button_dimensions(&self) -> (i32, i32) {
-        if self.load_button.width > 0 && self.load_button.height > 0 {
-            (self.load_button.width, self.load_button.height)
-        } else {
-            self.ok_button_dimensions()
-        }
+        self.load_button
+            .dimensions()
+            .unwrap_or_else(|| self.ok_button_dimensions())
     }
 
     /// Sprite for a given state of the `RHID_LOAD` seal button.  Falls
@@ -1630,20 +1624,6 @@ impl IngameMenuResources {
             self.fonts.list_default.as_ref()
         }
         .or(self.fonts.list_fallback.as_ref())
-    }
-
-    /// 6-state-compatible list font lookup that preserves the `Font` enum so
-    /// callers can render via either the native bitmap or TrueType path. The
-    /// current font table has no separate alternate rows, so `alternate`
-    /// intentionally shares the normal focus/selection fallback.
-    pub fn list_font_with_style(
-        &self,
-        focused: bool,
-        selected: bool,
-        alternate: bool,
-    ) -> Option<&Font> {
-        let _ = alternate;
-        self.list_font(focused, selected)
     }
 
     /// Test-only constructor: build a resources struct with empty
@@ -2158,6 +2138,34 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
 mod tests {
     use super::*;
     use crate::font::TrueTypeFont;
+
+    #[test]
+    fn sprite_dimensions_preserve_control_specific_fallbacks() {
+        let mut resources = IngameMenuResources::stub();
+        resources.button.width = 200;
+        resources.button.height = 40;
+        resources.ok_button.width = 60;
+        resources.ok_button.height = 70;
+        for (width, height) in [(0, 10), (10, 0), (-1, 10), (10, -1)] {
+            resources.cancel_button.width = width;
+            resources.cancel_button.height = height;
+            assert_eq!(resources.cancel_button.dimensions(), None);
+            assert_eq!(resources.cancel_button_dimensions(), (60, 70));
+        }
+        resources.cancel_button.width = 80;
+        resources.cancel_button.height = 90;
+        assert_eq!(resources.cancel_button_dimensions(), (80, 90));
+        assert_eq!(resources.restart_button_dimensions(), (60, 70));
+        assert_eq!(resources.load_button_dimensions(), (60, 70));
+        assert_eq!(resources.radio_dimensions(), (200, 40));
+
+        resources.ok_button.height = 0;
+        assert_eq!(resources.ok_button_dimensions(), (200, 40));
+        assert_eq!(resources.restart_button_dimensions(), (200, 40));
+        assert_eq!(resources.load_button_dimensions(), (200, 40));
+        // A valid cancel sprite remains authoritative even when OK is absent.
+        assert_eq!(resources.cancel_button_dimensions(), (80, 90));
+    }
 
     #[test]
     fn sparse_sprite_bank_preserves_state_positions_and_first_slot_fallback() {

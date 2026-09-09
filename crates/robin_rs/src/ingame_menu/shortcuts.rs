@@ -143,7 +143,7 @@ pub async fn show_shortcuts(
 
     // Row height from the default list font.
     let row_height = resources
-        .list_font_with_style(false, false, false)
+        .list_font(false, false)
         .map(|f| f.height() as i32)
         .unwrap_or(FALLBACK_ROW_HEIGHT)
         .max(1);
@@ -351,7 +351,7 @@ pub async fn show_shortcuts(
             let is_rebinding = rebinding_row == Some(row_index);
             // `alternate=false` — shortcuts never flags rows as alternate
             // (see note on the const block above).
-            let font = resources.list_font_with_style(is_focused, is_rebinding, false);
+            let font = resources.list_font(is_focused, is_rebinding);
             let Some(font) = font else { continue };
 
             // Vertically centre the glyphs inside the row box.
