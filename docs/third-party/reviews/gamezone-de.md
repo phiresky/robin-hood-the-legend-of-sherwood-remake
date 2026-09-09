@@ -31,3 +31,10 @@ The opening places the game in the medieval struggle against Prince John and fra
 _Source: `originals/reviews__gamezone-de.html`._
 
 Enable JavaScript and cookies to continue
+
+
+### reviews__gamezone-de.txt
+
+_Source: `originals/reviews__gamezone-de.txt`._
+
+Enable JavaScript and cookies to continue

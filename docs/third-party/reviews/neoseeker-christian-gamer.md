@@ -21,3 +21,23 @@ The review values patient observation and learning changing behavior patterns. I
 _Source: `originals/reviews__neoseeker-christian-gamer.html`._
 
 Enable JavaScript and cookies to continue
+
+
+### reviews__neoseeker-christian-gamer.txt
+
+_Source: `originals/reviews__neoseeker-christian-gamer.txt`._
+
+[DONATE](http://archive.org/donate/?origin=wbwww-CalndrDonateButton)
+
+[](/)
+
+Latest Show All
+
+The Wayback Machine has not archived that URL.
+
+Click here to search for all archived pages under [https://www.neoseeker.com/robinhood-sherwood/user_reviews/21253/](https://web.archive.org/web/*/https://www.neoseeker.com/robinhood-sherwood/user_reviews/21253/*). 
+
+The Wayback Machine is an initiative of the [Internet Archive](//archive.org/), a 501(c)(3) non-profit, building a digital library of Internet sites and other cultural artifacts in digital form.   
+Other [projects](//archive.org/projects/) include [Open Library](https://openlibrary.org/) & [archive-it.org](https://archive-it.org). 
+
+Your use of the Wayback Machine is subject to the Internet Archive's [Terms of Use](//archive.org/about/terms.php).

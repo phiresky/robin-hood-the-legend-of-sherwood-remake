@@ -42,3 +42,10 @@ Continue with [part 2](../guides/idnes-part-2.md). A [third installment](https:/
 _Source: `originals/reference__idnes-walkthrough.html`._
 
 [93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.
+
+
+### reference__idnes-walkthrough.txt
+
+_Source: `originals/reference__idnes-walkthrough.txt`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

@@ -35,3 +35,10 @@ Retrieved from the Wayback Machine capture of 2024-12-08 (the live page returns 
 _Source: `originals/reviews__mobygames-reception.html`._
 
 [93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.
+
+
+### reviews__mobygames-reception.txt
+
+_Source: `originals/reviews__mobygames-reception.txt`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

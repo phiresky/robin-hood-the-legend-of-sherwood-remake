@@ -30,3 +30,10 @@ Day-by-day flow described: breakfast at camp, archery training with Will Scarlet
 _Source: `originals/related-games__mogelpower-longbow.html`._
 
 [93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.
+
+
+### related-games__mogelpower-longbow.txt
+
+_Source: `originals/related-games__mogelpower-longbow.txt`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

@@ -21,3 +21,23 @@ The page provides a version history and says manual installation is required. It
 _Source: `originals/technical__codeweavers-crossover.html`._
 
 Enable JavaScript and cookies to continue
+
+
+### technical__codeweavers-crossover.txt
+
+_Source: `originals/technical__codeweavers-crossover.txt`._
+
+[DONATE](http://archive.org/donate/?origin=wbwww-CalndrDonateButton)
+
+[](/)
+
+Latest Show All
+
+The Wayback Machine has not archived that URL.
+
+Click here to search for all archived pages under [https://www.codeweavers.com/compatibility/crossover/](https://web.archive.org/web/*/https://www.codeweavers.com/compatibility/crossover/*). 
+
+The Wayback Machine is an initiative of the [Internet Archive](//archive.org/), a 501(c)(3) non-profit, building a digital library of Internet sites and other cultural artifacts in digital form.   
+Other [projects](//archive.org/projects/) include [Open Library](https://openlibrary.org/) & [archive-it.org](https://archive-it.org). 
+
+Your use of the Wayback Machine is subject to the Internet Archive's [Terms of Use](//archive.org/about/terms.php).
