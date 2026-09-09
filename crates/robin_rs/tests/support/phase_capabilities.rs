@@ -94,6 +94,7 @@ fn frontend_policy_and_observation_owners_remain_private() {
         "planning",
         "pointer_capture",
         "queue_strip_animations",
+        "interaction",
     ] {
         let field = frontend
             .fields
@@ -105,7 +106,11 @@ fn frontend_policy_and_observation_owners_remain_private() {
             "{name} must be private"
         );
     }
-    for name in ["FrontendPreferences", "QueueStripAnimations"] {
+    for name in [
+        "FrontendPreferences",
+        "QueueStripAnimations",
+        "FrontendInteraction",
+    ] {
         assert!(
             structure(name)
                 .fields
