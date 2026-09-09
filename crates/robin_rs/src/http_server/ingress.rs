@@ -118,29 +118,15 @@ impl SessionIngress {
     }
 
     /// Shared graphical/headless deferral preserves the same ordered step queue.
-    pub(super) fn defer(&mut self, request: HttpRequest, graphical: bool) -> Option<HttpRequest> {
-        let HttpRequest {
-            payload,
-            response_tx,
-        } = request;
-        let kind = match payload {
-            HttpPayload::StepForward { request } => StepKind::Forward {
-                n: request.n,
-                modal_policy: request.modal_policy,
-            },
-            HttpPayload::StepBack { request } => StepKind::Back {
-                n: request.n,
-                modal_policy: request.modal_policy,
-            },
-            HttpPayload::GoToFrame {
-                target,
-                modal_policy,
-            } => StepKind::GoToFrame {
-                target,
-                modal_policy,
-            },
-            HttpPayload::SetPaused { paused } => StepKind::SetPaused { paused },
-            HttpPayload::Screenshot(request) => {
+    pub(super) fn defer_request(
+        &mut self,
+        request: DeferredRequest,
+        response_tx: Responder,
+        graphical: bool,
+    ) {
+        let kind = match request {
+            DeferredRequest::Step(kind) => kind,
+            DeferredRequest::Screenshot(request) => {
                 if graphical {
                     self.screenshots.push(PendingScreenshot {
                         request,
@@ -151,16 +137,19 @@ impl SessionIngress {
                         "screenshots are unavailable in a headless runner".into()
                     ));
                 }
-                return None;
-            }
-            payload => {
-                return Some(HttpRequest {
-                    payload,
-                    response_tx,
-                });
+                return;
             }
         };
         self.steps.push(PendingStep { response_tx, kind });
+    }
+
+    #[cfg(test)]
+    fn defer(&mut self, request: HttpRequest, graphical: bool) -> Option<HttpRequest> {
+        // Test adapter exercises the same exhaustive classification as production.
+        let RoutedRequest::Deferred(deferred) = request.payload.classify() else {
+            panic!("deferral test supplied a non-deferred operation");
+        };
+        self.defer_request(deferred, request.response_tx, graphical);
         None
     }
 
