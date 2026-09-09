@@ -212,10 +212,6 @@ struct ResourceFileEntry {
 
 const RES_VERSION_100: u32 = 0x0100;
 
-fn merge_resource_manager(dst: &mut ResourceManager, src: &ResourceManager) {
-    dst.extend_from(src);
-}
-
 // ---------------------------------------------------------------------------
 // Free reader functions — parse resource payloads from a checked byte reader
 // ---------------------------------------------------------------------------
@@ -582,7 +578,7 @@ impl ResourceManager {
                     locale = dd.active_locale_name().as_deref().unwrap_or("base"),
                     "Resource file {rel}: loaded from active shipping locale"
                 );
-                merge_resource_manager(self, src);
+                self.extend_from(src);
                 return Ok(());
             }
             if let Some(locale) = dd.active_locale_name()
@@ -594,7 +590,7 @@ impl ResourceManager {
                     locale,
                     "Resource file {rel}: using optional English fallback"
                 );
-                merge_resource_manager(self, src);
+                self.extend_from(src);
                 return Ok(());
             }
             if dd.active_locale_name().is_some()
@@ -609,7 +605,7 @@ impl ResourceManager {
             let rel = path.strip_prefix("Data/").unwrap_or(path);
             if let Some(src) = dd.res_files.get(rel) {
                 tracing::info!("Resource file {rel}: loaded from shipping datadir");
-                merge_resource_manager(self, src);
+                self.extend_from(src);
                 return Ok(());
             }
         }
@@ -1457,19 +1453,20 @@ impl ResourceManager {
         Ok(out)
     }
 
-    /// Take ownership of the internal maps so a shipping-datadir source
-    /// can be spliced in wholesale. Only used by the shipping loader; the
-    /// runtime doesn't otherwise need to reach past the accessors above.
+    /// Merge a borrowed shipping resource manager, replacing matching collections.
+    /// Decoded, encoded, and geometry caches must follow the same source generation.
     pub(crate) fn extend_from(&mut self, src: &ResourceManager) {
         self.invalidate_picture_cache();
-        // Entries from `src` overwrite any existing ids with the same key.
+        // A new collection replaces every old representation, even when the
+        // source only carries encoded bytes or only carries decoded pixels.
+        for id in src.picture_resource_ids() {
+            self.data.pictures.remove(&id);
+            self.data.encoded_pictures.remove(&id);
+            self.data.picture_opacity.remove(&id);
+        }
         self.data
             .pictures
             .extend(src.data.pictures.iter().map(|(k, v)| (*k, v.clone())));
-        // Replacing a collection must also replace (or invalidate) its geometry.
-        for id in src.picture_resource_ids() {
-            self.data.picture_opacity.remove(&id);
-        }
         self.data.picture_opacity.extend(
             src.data
                 .picture_opacity
@@ -1584,6 +1581,39 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merging_picture_collections_replaces_all_old_representations() {
+        let mut destination = ResourceManager::new();
+        destination
+            .data
+            .pictures
+            .insert(42, vec![Some(Picture::default())]);
+        destination.data.picture_opacity.insert(42, vec![None]);
+        destination.data.pictures.insert(99, vec![None; 3]);
+
+        let mut encoded = ResourceManager::new();
+        encoded.data.encoded_pictures.insert(42, vec![None; 2]);
+        destination.extend_from(&encoded);
+        assert!(destination.pictures_raw(42).is_none());
+        assert!(!destination.data.picture_opacity.contains_key(&42));
+        assert_eq!(destination.get_picture_count(42).unwrap(), 2);
+        assert!(destination.find_picture(42, 0).unwrap().is_none());
+        assert_eq!(destination.pictures_raw(42).unwrap().len(), 2);
+        assert_eq!(destination.get_picture_count(99).unwrap(), 3);
+
+        let mut decoded = ResourceManager::new();
+        decoded.data.pictures.insert(42, vec![None]);
+        decoded.data.picture_opacity.insert(42, vec![None]);
+        destination.extend_from(&decoded);
+        assert!(!destination.data.encoded_pictures.contains_key(&42));
+        assert_eq!(destination.get_picture_count(42).unwrap(), 1);
+        assert_eq!(destination.data.picture_opacity[&42], vec![None]);
+        assert_eq!(destination.get_picture_count(99).unwrap(), 3);
+        // The source is borrowed, not consumed or warmed as a side effect.
+        assert!(encoded.pictures_raw(42).is_none());
+        assert_eq!(encoded.data.encoded_pictures[&42].len(), 2);
+    }
 
     #[test]
     fn picture_metadata_preserves_holes_zero_sizes_and_decoded_precedence() {
