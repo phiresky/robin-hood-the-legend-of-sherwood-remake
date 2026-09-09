@@ -624,6 +624,71 @@ mod transport_lifecycle_tests {
     }
 
     #[test]
+    fn socket_disconnect_cancels_queued_and_deferred_requests() {
+        for deferred in [false, true] {
+            let (mut transport, _) = running();
+            let port = transport.port.unwrap();
+            let mut ingress = transport.attach();
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = r#"{"paused":true}"#;
+            write!(client, "POST /set-paused HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let request = loop {
+                if let Some(request) = ingress.take_requests().pop() {
+                    break request;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "socket request was not queued"
+                );
+                thread::yield_now();
+            };
+            let cancelled = request.response_tx.cancellation_observer();
+            let queued = if deferred {
+                ingress.defer_request(
+                    DeferredRequest::Step(StepKind::SetPaused { paused: true }),
+                    request.response_tx,
+                    true,
+                );
+                None
+            } else {
+                Some(request)
+            };
+            client.shutdown(std::net::Shutdown::Both).unwrap();
+            drop(client);
+            // Observe transport cancellation itself, without driving a mission
+            // tick or asking admission to notice a disconnected fixture.
+            while !cancelled() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Hyper retained the disconnected caller's reply future"
+                );
+                thread::yield_now();
+            }
+            if let Some(request) = queued {
+                assert!(!request.response_tx.admit());
+            }
+            assert!(ingress.take_pending_steps().is_empty());
+            transport.stop();
+        }
+    }
+
+    #[test]
+    fn stop_prevents_admission_after_inbox_extraction() {
+        let (mut transport, _) = running();
+        let queue = transport.server.as_ref().unwrap().queue.clone();
+        let mut ingress = transport.attach();
+        let (response_tx, _reply) = Responder::channel();
+        queue.lock().unwrap().push_back(HttpRequest {
+            payload: HttpPayload::Console("cheat".into()),
+            response_tx: response_tx.with_router(&queue),
+        });
+        let request = ingress.take_requests().pop().unwrap();
+        transport.stop();
+        assert!(!request.admit_unless_deferred());
+    }
+
+    #[test]
     fn repeated_binding_checks_port_and_replay_authority_and_stop_releases_port() {
         let (mut transport, replay) = running();
         let port = transport.port.unwrap();
@@ -1077,7 +1142,7 @@ async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
         .expect("queue mutex poisoned")
         .push_back(HttpRequest {
             payload,
-            response_tx: response_tx.with_deadline(deadline),
+            response_tx: response_tx.with_router(queue).with_deadline(deadline),
         });
     let reply = tokio::select! {
         biased;
@@ -2767,7 +2832,7 @@ pub mod wasm_rpc {
             .expect("queue mutex poisoned")
             .push_back(HttpRequest {
                 payload,
-                response_tx,
+                response_tx: response_tx.with_router(&queue),
             });
         use futures::FutureExt as _;
         let reply = futures::select_biased! {

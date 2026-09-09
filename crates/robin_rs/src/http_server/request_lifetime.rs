@@ -16,6 +16,8 @@ enum Phase {
 #[derive(Serialize)]
 pub struct Responder {
     #[serde(skip)]
+    router: Option<std::sync::Weak<Mutex<super::RequestRouter>>>,
+    #[serde(skip)]
     tx: async_channel::Sender<Reply>,
     phase: Arc<Mutex<Phase>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -51,6 +53,7 @@ impl Responder {
         let phase = Arc::new(Mutex::new(Phase::Queued));
         (
             Self {
+                router: None,
                 tx,
                 phase: phase.clone(),
                 #[cfg(not(target_arch = "wasm32"))]
@@ -58,6 +61,17 @@ impl Responder {
             },
             ReplyWait { rx, phase },
         )
+    }
+
+    pub(super) fn with_router(mut self, router: &super::Queue) -> Self {
+        self.router = Some(Arc::downgrade(router));
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn cancellation_observer(&self) -> Box<dyn Fn() -> bool> {
+        let phase = self.phase.clone();
+        Box::new(move || *phase.lock().expect("RPC lifetime poisoned") == Phase::Cancelled)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -91,7 +105,19 @@ impl Responder {
 
     /// Linearization point before work leaves cancellable ingress ownership.
     pub(super) fn admit(&self) -> bool {
+        // Retirement and admission linearize on the router lock. Keep the
+        // guard until the phase transition, in router -> lifetime lock order.
+        let router = self.router.as_ref().and_then(std::sync::Weak::upgrade);
+        let route = router
+            .as_ref()
+            .map(|router| router.lock().expect("RPC router poisoned"));
         let mut phase = self.phase.lock().expect("RPC lifetime poisoned");
+        if self.router.is_some() && route.as_ref().is_none_or(|route| route.is_retired()) {
+            if *phase == Phase::Queued {
+                *phase = Phase::Cancelled;
+            }
+            return false;
+        }
         self.refresh(&mut phase);
         if *phase != Phase::Queued {
             return false;
