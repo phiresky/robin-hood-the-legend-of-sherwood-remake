@@ -462,7 +462,7 @@ pub(super) async fn collect_input_and_menus(
     // Recorded commands are injected at the tick boundary instead
     // (replay), or suppressed entirely (rewind — live input
     // shouldn't perturb a state reconstructed from the past).
-    if runtime.replay_player.is_none() && !rewind_active {
+    if runtime.playback().is_none() && !rewind_active {
         match drive_live_gameplay_input(
             LiveGameplayContext {
                 host,

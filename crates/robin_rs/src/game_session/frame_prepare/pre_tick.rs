@@ -177,12 +177,12 @@ fn prepare_pre_tick_timeline(
     mut paused: bool,
     replay_cursor_paused: bool,
 ) -> Result<PreTickTimelineOutput, String> {
-    if runtime.replay_player.is_some() && !replay_cursor_paused {
+    if runtime.playback().is_some() && !replay_cursor_paused {
         // Recorded save markers pin the boundary state and load-back
         // records swap a pinned state in, before this frame's commands.
         runtime.apply_playback_timeline_events(host, game, manager, assets)?;
     }
-    if let Some(ref mut player) = runtime.replay_player
+    if let Some(player) = runtime.playback()
         && !replay_cursor_paused
     {
         if player.is_finished() {
@@ -194,7 +194,7 @@ fn prepare_pre_tick_timeline(
             paused = true;
         } else {
             runtime.replay_finished_logged = false;
-            frame.inject_replay_input(player);
+            runtime.inject_replay_input(frame);
             frame.assert_replay_timeline_before(runtime.current_frame());
         }
     }
@@ -209,7 +209,7 @@ fn prepare_pre_tick_timeline(
                 runtime.retained_history().oldest_cmd_frame()
             ));
         };
-        if runtime.replay_player.is_some() && frame.external_actions().is_empty() {
+        if runtime.playback().is_some() && frame.external_actions().is_empty() {
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Replay reused rewind-buffer frame {}", current_frame);
@@ -243,7 +243,7 @@ fn dispatch_pre_tick_pointer_commands(
     rewind_active: bool,
     paused: bool,
 ) {
-    if runtime.replay_player.is_some() || rewind_active || paused {
+    if runtime.playback().is_some() || rewind_active || paused {
         return;
     }
     let Some(mouse_map) = host

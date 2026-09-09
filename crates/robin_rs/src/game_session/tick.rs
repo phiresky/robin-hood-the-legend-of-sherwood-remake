@@ -317,7 +317,7 @@ pub(super) fn drain_steps(
             ));
             continue;
         }
-        let strict_session_replay = session_modals.is_some() && timeline.replay_player.is_some();
+        let strict_session_replay = session_modals.is_some() && timeline.playback().is_some();
         let mut accepted_dismissals = if strict_session_replay {
             Vec::new()
         } else if let Some(policy) = modal_policy.as_mut() {
@@ -667,11 +667,10 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // Stepping into a save-marker / load-back frame must pin or swap
         // state exactly like the normal playback admission path.
         if timeline
-            .replay_player
-            .as_ref()
+            .playback()
             .is_some_and(|player| !player.is_finished())
         {
-            let player = timeline.replay_player.as_ref().expect("active replay");
+            let player = timeline.playback().expect("active replay");
             let ordinal = player.current_frame();
             let loads_state = player.load_back_for_frame(ordinal).is_some();
             if let Some(scheduler) = session_modals.as_deref_mut() {
@@ -846,10 +845,9 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // executed the tick. Persist it before returning that error.
         timeline.finish_recording(&mut transaction);
         dismissed.extend(modal_result?);
-        if let (Some(scheduler), Some(player)) = (
-            session_modals.as_deref_mut(),
-            timeline.replay_player.as_ref(),
-        ) {
+        if let (Some(scheduler), Some(player)) =
+            (session_modals.as_deref_mut(), timeline.playback())
+        {
             scheduler.checkpoint(player.current_frame(), &host.effects);
         }
     }
@@ -867,29 +865,22 @@ fn rewind_with_session_modals(
     target: u32,
     session_modals: Option<&mut super::session_policy::SessionModalScheduler>,
 ) -> Result<u32, String> {
-    // Resolve the player's exact dense ordinal before changing Engine or Host.
-    // seek_timeline_frame itself has no side effects beyond its cursor, which
-    // is restored immediately even when checkpoint validation fails.
-    let restore_ordinal = if let (Some(scheduler), Some(player)) =
-        (session_modals.as_ref(), timeline.replay_player.as_mut())
-    {
-        let original = player.current_frame();
-        let resolved = player.seek_timeline_frame(super::runtime::TimelineFrame::from_wire(target));
-        player.seek_ordinal(super::runtime::ReplayFrameOrdinal::from_wire(original));
-        let ordinal = resolved?.number();
-        scheduler.validate_restore(ordinal)?;
-        Some(ordinal)
+    // Resolve without leaving the playback cursor changed, before mutating Engine or Host.
+    let restore_ordinal = if let Some(scheduler) = session_modals.as_ref() {
+        let ordinal = timeline
+            .resolve_replay_ordinal(super::runtime::TimelineFrame::from_wire(target))?
+            .map(|ordinal| ordinal.number());
+        if let Some(ordinal) = ordinal {
+            scheduler.validate_restore(ordinal)?;
+        }
+        ordinal
     } else {
         None
     };
     let from = rewind_to_frame(manager, host, assets, timeline, target)?;
     if let (Some(ordinal), Some(scheduler)) = (restore_ordinal, session_modals) {
         assert_eq!(
-            timeline
-                .replay_player
-                .as_ref()
-                .expect("seek replay")
-                .current_frame(),
+            timeline.playback().expect("seek replay").current_frame(),
             ordinal
         );
         scheduler.restore(ordinal, &mut host.effects);
@@ -1554,7 +1545,7 @@ mod tests {
         .unwrap();
         assert_eq!(forward.0, 1);
         assert!(forward.1.is_empty());
-        assert_eq!(timeline.replay_player.as_ref().unwrap().current_frame(), 2);
+        assert_eq!(timeline.playback().unwrap().current_frame(), 2);
         let mut missing = SessionModalScheduler::default();
         let tick_before_failed_seek = manager.engine.simulation_tick();
         assert!(
@@ -1571,7 +1562,7 @@ mod tests {
         );
         assert_eq!(timeline.frame_number(), 1);
         assert_eq!(manager.engine.simulation_tick(), tick_before_failed_seek);
-        assert_eq!(timeline.replay_player.as_ref().unwrap().current_frame(), 2);
+        assert_eq!(timeline.playback().unwrap().current_frame(), 2);
 
         // A future captured same-ID popup must not replace the earlier batch,
         // and a newly queued future dialogue must not survive the seek.
@@ -1591,7 +1582,7 @@ mod tests {
             Some(&mut scheduler),
         )
         .unwrap();
-        assert_eq!(timeline.replay_player.as_ref().unwrap().current_frame(), 0);
+        assert_eq!(timeline.playback().unwrap().current_frame(), 0);
         assert!(scheduler.is_active());
         assert!(host.effects.pending_modal_kinds().is_empty());
         let repeated = run_forward_ticks_with_session_modals(
@@ -1652,7 +1643,7 @@ mod tests {
         assert_eq!(result.0, 1);
         assert_eq!(timeline.frame_number(), 1);
         assert_eq!(timeline.retained_history().next_record_frame(), 1);
-        assert_eq!(timeline.replay_player.as_ref().unwrap().current_frame(), 2);
+        assert_eq!(timeline.playback().unwrap().current_frame(), 2);
         assert!(
             timeline
                 .retained_history()
@@ -1955,10 +1946,7 @@ mod tests {
         assert_eq!(timeline.frame_number(), 1);
         assert_eq!(timeline.retained_history().next_record_frame(), 1);
         assert!(timeline.retained_history().frame_for(1).is_none());
-        let player = timeline
-            .replay_player
-            .as_ref()
-            .expect("active replay remains");
+        let player = timeline.playback().expect("active replay remains");
         assert!(player.is_finished());
         assert_eq!(player.current_frame(), 1);
     }

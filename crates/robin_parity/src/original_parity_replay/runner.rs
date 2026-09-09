@@ -439,9 +439,14 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
 
     #[cfg(feature = "client")]
     if let Some(port) = http_server {
-        let replay_service = std::sync::Arc::new(robin_rs::replay_service::ReplayService::default());
-        robin_rs::http_server::start_global(port, replay_service.exports(), replay_service.launches())
-            .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
+        let replay_service =
+            std::sync::Arc::new(robin_rs::replay_service::ReplayService::default());
+        robin_rs::http_server::start_global(
+            port,
+            replay_service.exports(),
+            replay_service.launches(),
+        )
+        .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
         eprintln!(
             "parity replay HTTP server ready on http://127.0.0.1:{port} (frame {})",
             engine.frame_counter()

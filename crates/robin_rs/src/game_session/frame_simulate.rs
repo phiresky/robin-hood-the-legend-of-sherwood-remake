@@ -1325,7 +1325,7 @@ impl InteractiveFrameSimulation {
 
         let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
-            playing_back: runtime.replay_player.is_some(),
+            playing_back: runtime.playback().is_some(),
             host,
             game,
             manager,
@@ -1583,13 +1583,15 @@ impl InteractiveFrameSimulation {
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        http.set_replay_status(runtime.replay_player.as_ref().map(|p| {
-            crate::http_server::ReplayStatus {
-                frame: p.current_frame(),
-                total: p.total_frames(),
-                paused: *manual_pause,
-            }
-        }));
+        http.set_replay_status(
+            runtime
+                .playback()
+                .map(|p| crate::http_server::ReplayStatus {
+                    frame: p.current_frame(),
+                    total: p.total_frames(),
+                    paused: *manual_pause,
+                }),
+        );
 
         // ── Keyboard-driven single-frame step (`.` / `,`) ──
         // Same bookkeeping as the HTTP `/step-forward` / `/step-back`

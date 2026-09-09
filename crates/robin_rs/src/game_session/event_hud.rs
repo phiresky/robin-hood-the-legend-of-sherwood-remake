@@ -240,7 +240,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     let gamepad_gameplay_allowed = !modal_input_active
         && ui.pause_menu.is_none()
         && !ui.console_overlay.is_visible()
-        && runtime.replay_player.is_none()
+        && runtime.playback().is_none()
         && !rewind_active;
     handle_gamepad_events(
         host,
@@ -275,7 +275,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         control => return EventHudOutcome::Control(control),
     }
 
-    let input_suppressed = runtime.replay_player.is_some() || rewind_active;
+    let input_suppressed = runtime.playback().is_some() || rewind_active;
     let admit_touch = !input_suppressed && crate::touch_plan_hud::platform_has_touch_planning_hud();
     let screen_width = presentation.renderer.screen_width();
     events.retain(|event| {
