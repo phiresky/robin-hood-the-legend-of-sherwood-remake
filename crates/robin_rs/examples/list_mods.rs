@@ -25,7 +25,18 @@ fn main() {
         );
     }
     println!();
-    let entries = enumerate_missions(&mods);
+    let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+        robin_util::asset_fs::AssetVfs::new(),
+    ));
+    for m in &mods {
+        assert_eq!(
+            files.add_overlay_path(m.mod_dir.to_str().expect("mod directory must be UTF-8")),
+            robin_engine::sbfile::SBFILE_NO_ERROR,
+            "failed to mount mod directory {}",
+            m.mod_dir.display()
+        );
+    }
+    let entries = enumerate_missions(&mods, &files);
     println!("{} mission entries:", entries.len());
     for e in &entries {
         match &e.status {

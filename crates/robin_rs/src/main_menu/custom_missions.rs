@@ -92,6 +92,7 @@ pub(crate) async fn show_custom_missions(
     resources: &IngameMenuResources,
     cursor: ModalCursor<'_>,
     mods_root: &Path,
+    files: &robin_engine::sbfile::SbFileSystem,
 ) -> Option<CustomMissionChoice> {
     let mut mods = scan_mods_dir(mods_root);
     // Overlay-shipped mods (repo `mods/`, e.g. hackable levels) may also
@@ -102,7 +103,7 @@ pub(crate) async fn show_custom_missions(
         mods.extend(scan_mods_dir(&overlay_root));
         mods.sort_by(|a, b| a.details.title.cmp(&b.details.title));
     }
-    let entries = enumerate_missions(&mods);
+    let entries = enumerate_missions(&mods, files);
     if entries.is_empty() {
         tracing::info!(
             "Custom missions: no mods discovered under {} — picker would be empty, returning to main menu",

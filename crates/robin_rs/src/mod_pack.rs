@@ -255,22 +255,23 @@ impl MissionStatus {
 /// Broken entries are still included so the picker can grey them out
 /// with an explanation — silently hiding mods makes "why doesn't my
 /// mod show up" undebuggable.
-pub fn enumerate_missions(mods: &[DiscoveredMod]) -> Vec<MissionEntry> {
+pub fn enumerate_missions(mods: &[DiscoveredMod], files: &SbFileSystem) -> Vec<MissionEntry> {
     let mut out = Vec::new();
     for m in mods {
         let preview = m.preview_image_path();
         if !m.details.hackable_missions.is_empty() {
             for mission in &m.details.hackable_missions {
-                let status = if robin_engine::level_data::hackable_level_exists(mission) {
-                    MissionStatus::Ok {
+                let descriptor = robin_engine::level_data::hackable_level_descriptor_path(mission);
+                let status = match files.try_exists(&descriptor) {
+                    Ok(true) => MissionStatus::Ok {
                         map_filename: mission.clone(),
-                    }
-                } else {
-                    MissionStatus::Broken {
-                        reason: format!(
-                            "Data/Levels/{mission}.level.json not found in any overlay datadir"
-                        ),
-                    }
+                    },
+                    Ok(false) => MissionStatus::Broken {
+                        reason: format!("{descriptor} not found in any overlay datadir"),
+                    },
+                    Err(error) => MissionStatus::Broken {
+                        reason: format!("{descriptor} lookup failed with file error {error}"),
+                    },
                 };
                 out.push(MissionEntry {
                     mod_slug: m.details.slug.clone(),
@@ -753,6 +754,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bundled_demos_use_the_supplied_overlay_filesystem() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mods");
+        let demos = scan_mods_dir(&root)
+            .into_iter()
+            .find(|entry| entry.details.slug == "multi-team-demos")
+            .expect("bundled multi-team demos must be discoverable");
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let mods = [demos];
+        let missing = enumerate_missions(&mods, &files);
+        assert_eq!(missing.len(), 10);
+        assert!(missing.iter().all(|entry| !entry.status.is_ok()));
+
+        assert_eq!(
+            files.add_overlay_path(mods[0].mod_dir.to_str().unwrap()),
+            SBFILE_NO_ERROR
+        );
+        let available = enumerate_missions(&mods, &files);
+        assert_eq!(available.len(), 10);
+        for entry in available {
+            assert!(entry.hackable);
+            assert!(
+                entry.status.is_ok(),
+                "{}: {:?}",
+                entry.rhm_basename,
+                entry.status
+            );
+        }
+    }
+
+    #[test]
     fn mount_guards_remove_only_their_own_preparation_overlays() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("mission.zip");
@@ -980,7 +1011,8 @@ mod tests {
             mod_dir: tmp.path().to_owned(),
         };
 
-        let rows = enumerate_missions(&[discovered]);
+        let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let rows = enumerate_missions(&[discovered], &files);
         assert_eq!(rows.len(), 3);
         assert!(rows.iter().all(|row| row.status.is_ok()));
         assert_eq!(
