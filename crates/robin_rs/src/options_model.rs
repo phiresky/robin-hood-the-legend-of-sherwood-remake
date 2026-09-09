@@ -301,11 +301,8 @@ impl OptionsController {
                 effects.profile_changed = reapply || !sound_eq(original, &self.sound.working)
             }
             PageSnapshot::Shortcuts(original, custom) => {
-                effects.keys_changed = reapply
-                    || shortcut_keys(original) != shortcut_keys(&self.keys)
-                    || original.key_type != self.keys.key_type
-                    || shortcut_keys(custom) != shortcut_keys(&self.custom_keys)
-                    || custom.key_type != self.custom_keys.key_type;
+                effects.keys_changed =
+                    reapply || original != &self.keys || custom != &self.custom_keys;
             }
             PageSnapshot::Gameplay(original) => {
                 effects.profile_changed = reapply || *original != self.gameplay
@@ -338,6 +335,7 @@ impl OptionsController {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn shortcut_keys(
     config: &crate::key_config::KeyConfig,
 ) -> Vec<Option<winit::keyboard::KeyCode>> {

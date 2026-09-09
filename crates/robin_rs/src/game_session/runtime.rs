@@ -3934,6 +3934,25 @@ mod tests {
         // directory survive; the next recorder starts with an empty marker map.
         drop(live);
         drop(service);
+        {
+            let archive = MissionArchive::open(&mission).unwrap();
+            let (prefix, parsed, root) = archive.assembled_replay().unwrap();
+            assert_eq!(parsed.frame_count(), 9);
+            assert_eq!(parsed.load_back_for_frame(7).unwrap().to_frame, 2);
+            let stored: serde_json::Value =
+                serde_json::from_slice(root_bytes.split(|byte| *byte == b'\n').next().unwrap())
+                    .unwrap();
+            assert_eq!(serde_json::to_value(&root).unwrap(), stored["recording"]);
+            assert_eq!(
+                root.total_frames, 0,
+                "continuation needs the original header"
+            );
+            assert_eq!(
+                prefix.split(|byte| *byte == b'\n').next().unwrap(),
+                serde_json::to_vec(&root).unwrap(),
+                "mirror prefix and continuation header must share the same source"
+            );
+        }
         let (mut resumed, service) = recording(&directory.path().join("provisional"), &initial);
         load(
             &mut resumed,

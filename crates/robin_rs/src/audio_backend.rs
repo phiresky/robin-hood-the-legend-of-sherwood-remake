@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use robin_assets::shipping_datadir::ShippingDatadir;
-use robin_engine::sbfile::{SbFile, SbFileSystem};
+#[cfg(all(feature = "audio", not(target_arch = "wasm32")))]
+use robin_engine::sbfile::SbFile;
+use robin_engine::sbfile::SbFileSystem;
 
 #[cfg(any(not(feature = "audio"), not(target_arch = "wasm32")))]
 use crate::sound::AudioBackend;
@@ -873,9 +875,7 @@ enum LocatedSample {
 
 /// Resolve a sample name against the loader's candidate paths and read it.
 ///
-/// Single source of truth for the candidate order used by
-/// [`create_sample_loader`] and [`sample_duration_ms`] — the two must
-/// resolve identically or cached durations could diverge from loads.
+/// Candidate order for the explicitly owned playback loader.
 fn locate_sample(
     base_dir: &Path,
     file_name: &str,
@@ -917,17 +917,6 @@ fn locate_sample(
     Some(LocatedSample::Bytes { data, source_path })
 }
 
-/// Legacy application/tool boundary: capture the current process reader and
-/// shipping installation. Mission preparation must supply its explicit owners
-/// through [`create_sample_loader_with_files`].
-pub fn create_sample_loader(base_dir: PathBuf) -> Box<SampleLoader> {
-    create_sample_loader_with_files(
-        base_dir,
-        Arc::new(SbFile::snapshot_legacy_file_system()),
-        robin_assets::shipping_datadir::global().cloned(),
-    )
-}
-
 /// Build a sample loader using only the supplied preparation authority.
 /// The shipping handle must belong to the same prepared installation/selection
 /// as `files`; neither reader nor metadata is resolved from process globals.
@@ -955,98 +944,6 @@ pub fn create_sample_loader_with_files(
                 Some((data, size, duration_ms))
             }
         }
-    })
-}
-
-/// Duration of a sample in milliseconds, resolved and derived exactly like
-/// [`create_sample_loader`] but without handing out the encoded bytes.
-/// TODO(performance): expose a borrowed/shared read in SbFileSystem if profiling
-/// shows its owned buffer matters for cold-cache duration probes.
-/// `Send + Sync` closure material — mission setup fans the cold-cache
-/// duration probes out across a thread pool.
-pub fn sample_duration_ms(base_dir: &Path, file_name: &str) -> Option<u32> {
-    sample_duration_ms_with_files(
-        base_dir,
-        file_name,
-        &SbFile::snapshot_legacy_file_system(),
-        robin_assets::shipping_datadir::global().map(Arc::as_ref),
-    )
-}
-
-/// Probe duration under explicit authority, using exactly the loader's
-/// candidate and duration precedence. The legacy [`sample_duration_ms`] wrapper
-/// captures process configuration and is not a concurrent preparation API.
-pub fn sample_duration_ms_with_files(
-    base_dir: &Path,
-    file_name: &str,
-    files: &SbFileSystem,
-    shipping: Option<&ShippingDatadir>,
-) -> Option<u32> {
-    match locate_sample(base_dir, file_name, files, shipping)? {
-        LocatedSample::Metadata { duration_ms, .. } => Some(duration_ms),
-        LocatedSample::Bytes { data, source_path } => shipping
-            .and_then(|shipping| shipping.active_audio_duration_ms(&source_path))
-            .or_else(|| wav_duration_ms(&data))
-            .or_else(|| {
-                tracing::warn!(path = %source_path.display(), "audio duration unavailable");
-                None
-            }),
-    }
-}
-
-/// Build the authoritative speech-duration loader for one installed pack.
-/// Playback continues through [`create_sample_loader`] and therefore follows
-/// the player's active locale; this loader is used only for simulation timing.
-pub fn create_language_pack_sample_loader(
-    base_dir: PathBuf,
-    pack: crate::localization::LanguagePack,
-    shipping: Option<std::sync::Arc<robin_assets::shipping_datadir::ShippingDatadir>>,
-) -> Box<SampleLoader> {
-    create_language_pack_sample_loader_with_files(
-        base_dir,
-        pack,
-        Arc::new(SbFile::snapshot_legacy_file_system()),
-        shipping,
-    )
-}
-
-/// Explicit-reader counterpart of the legacy language-pack loader. Canonical
-/// speech timing does not change the player's selected playback locale.
-pub fn create_language_pack_sample_loader_with_files(
-    base_dir: PathBuf,
-    pack: crate::localization::LanguagePack,
-    files: Arc<SbFileSystem>,
-    shipping: Option<Arc<ShippingDatadir>>,
-) -> Box<SampleLoader> {
-    let absolute_loader =
-        create_sample_loader_with_files(base_dir.clone(), files.clone(), shipping.clone());
-    Box::new(move |file_name: &str| {
-        let normalised = file_name.replace('\\', "/");
-        if std::path::Path::new(&normalised).is_absolute() {
-            return absolute_loader(&normalised);
-        }
-        let candidates = [
-            base_dir.join(&normalised),
-            base_dir.join("Exclamations").join(&normalised),
-        ];
-        let data = if pack.data_root.is_empty() {
-            let shipping = shipping.as_deref()?;
-            candidates.iter().find_map(|candidate| {
-                shipping
-                    .locale_raw(&pack.locale, &candidate.to_string_lossy())
-                    .ok()
-                    .flatten()
-                    .map(<[u8]>::to_vec)
-            })
-        } else {
-            candidates.iter().find_map(|candidate| {
-                let rooted = PathBuf::from(&pack.data_root).join(candidate);
-                files.read_all(&rooted.to_string_lossy()).ok()
-            })
-        }?;
-        let size = data.len() as u32;
-        let duration_ms = wav_duration_ms(&data)?;
-        Some((data, size, duration_ms))
     })
 }
 
@@ -1280,10 +1177,6 @@ mod tests {
             let (bytes, size, duration) = loader("isolated-audio.wav").unwrap();
             assert_eq!(duration, expected);
             assert_eq!(size as usize, bytes.len());
-            assert_eq!(
-                sample_duration_ms_with_files(base, "isolated-audio.wav", &files, None),
-                Some(expected)
-            );
         }
     }
 
@@ -1311,10 +1204,6 @@ mod tests {
             ("voice.wav", 4000),
         ] {
             assert_eq!(loader(name).unwrap().2, expected);
-            assert_eq!(
-                sample_duration_ms_with_files(base, name, &files, None),
-                Some(expected)
-            );
         }
     }
 
@@ -1341,10 +1230,6 @@ mod tests {
             create_sample_loader_with_files(base.to_owned(), files.clone(), Some(shipping.clone()));
         let (bytes, size, duration) = loader("metadata.wav").unwrap();
         assert_eq!(duration, 2345);
-        assert_eq!(
-            sample_duration_ms_with_files(base, "metadata.wav", &files, Some(&shipping)),
-            Some(duration)
-        );
         #[cfg(not(target_arch = "wasm32"))]
         {
             assert_eq!(bytes, one_second_wav());
@@ -1376,41 +1261,6 @@ mod tests {
         assert_eq!(loader("sample.wav").unwrap().2, 1000);
         assert!(loader(path.to_str().unwrap()).is_none());
         assert!(loader("../sample.wav").is_none());
-        assert_eq!(
-            sample_duration_ms_with_files(Path::new(""), path.to_str().unwrap(), &files, None),
-            None
-        );
-    }
-
-    #[test]
-    fn canonical_language_loader_reads_its_pack_without_switching_global_locale() {
-        let root = tempfile::tempdir().unwrap();
-        let directory = root.path().join("Data/Sounds/Exclamations");
-        std::fs::create_dir_all(&directory).unwrap();
-        std::fs::write(directory.join("robin.wav"), one_second_wav()).unwrap();
-        let pack = crate::localization::LanguagePack {
-            locale: "de-DE".to_owned(),
-            native_name: "Deutsch".to_owned(),
-            data_root: root.path().to_string_lossy().into_owned(),
-            has_voice: true,
-            has_cinematics: false,
-            voice_uses_english_fallback: false,
-            cinematics_use_english_fallback: false,
-            mission_names: Default::default(),
-        };
-
-        let files = Arc::new(SbFileSystem::new(Arc::new(
-            robin_util::asset_fs::AssetVfs::new(),
-        )));
-        files.set_locale_paths(Some("missing-playback-locale"), None);
-        let loader = create_language_pack_sample_loader_with_files(
-            PathBuf::from("Data/Sounds"),
-            pack,
-            files,
-            None,
-        );
-        let (_, _, duration_ms) = loader("robin.wav").expect("canonical sample");
-        assert_eq!(duration_ms, 1_000);
     }
 
     #[test]
@@ -1420,11 +1270,15 @@ mod tests {
     }
 
     #[test]
-    fn audio_unknown_duration_is_absent_in_both_loader_paths() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("invalid.wav"), b"not an audio file").unwrap();
-        assert_eq!(sample_duration_ms(root.path(), "invalid.wav"), None);
-        assert!(create_sample_loader(root.path().to_owned())("invalid.wav").is_none());
+    fn audio_unknown_duration_is_absent_from_playback() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        assets
+            .install_preloaded_asset("invalid.wav", b"not an audio file".to_vec())
+            .unwrap();
+        let files = Arc::new(SbFileSystem::new(assets));
+        assert!(
+            create_sample_loader_with_files(PathBuf::new(), files, None)("invalid.wav").is_none()
+        );
     }
 
     #[test]

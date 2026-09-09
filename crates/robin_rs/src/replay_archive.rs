@@ -190,8 +190,10 @@ impl MissionArchive {
         Ok(())
     }
 
-    pub(crate) fn assembled_bytes(&self) -> Result<Vec<u8>> {
-        assemble_bytes(&self.directory, &self.manifest)
+    /// Return the validated export prefix, parsed history, and exact construction
+    /// header together. The parser's derived header is not a continuation header.
+    pub(crate) fn assembled_replay(&self) -> Result<(Vec<u8>, ReplayData, ReplayHeader)> {
+        assemble_replay(&self.directory, &self.manifest)
     }
 
     pub(crate) fn validate_link(
@@ -282,9 +284,12 @@ fn write_manifest(directory: &Path, manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
-fn assemble_bytes(directory: &Path, manifest: &Manifest) -> Result<Vec<u8>> {
+fn assemble_replay(
+    directory: &Path,
+    manifest: &Manifest,
+) -> Result<(Vec<u8>, ReplayData, ReplayHeader)> {
     let mut bytes = Vec::new();
-    let mut root_header: Option<serde_json::Value> = None;
+    let mut root_header: Option<ReplayHeader> = None;
     for (index, chunk) in manifest.chunks.iter().enumerate() {
         let raw = read_bounded(&directory.join(&chunk.file), MAX_BYTES - bytes.len())?;
         // A freshly opened child can be empty before the recorder writes its
@@ -300,12 +305,13 @@ fn assemble_bytes(directory: &Path, manifest: &Manifest) -> Result<Vec<u8>> {
         );
         let header = serde_json::to_value(&stored.recording)?;
         if index == 0 {
-            root_header = Some(header);
             serde_json::to_writer(&mut bytes, &stored.recording)?;
             bytes.push(b'\n');
+            root_header = Some(stored.recording);
         } else {
             ensure!(
-                Some(&header) == root_header.as_ref(),
+                header
+                    == serde_json::to_value(root_header.as_ref().context("missing root header")?)?,
                 "replay chunks have different construction headers"
             );
         }
@@ -362,7 +368,11 @@ fn assemble_bytes(directory: &Path, manifest: &Manifest) -> Result<Vec<u8>> {
             );
         }
     }
-    Ok(bytes)
+    Ok((
+        bytes,
+        data,
+        root_header.context("mission recording has no root header")?,
+    ))
 }
 
 /// Freeze an earlier attempt's chronology at its immutable terminal chunk.
@@ -383,18 +393,16 @@ pub(crate) fn load_through_chunk(path: &Path) -> Result<ReplayData> {
         .position(|chunk| chunk.file == filename)
         .context("file is not a chunk in this mission recording")?;
     manifest.chunks.truncate(index + 1);
-    let bytes = assemble_bytes(directory, &manifest)?;
-    ReplayData::from_reader(std::io::Cursor::new(bytes))
-        .map_err(|error| anyhow::anyhow!("parse mission recording: {error}"))
+    let (_, data, _) = assemble_replay(directory, &manifest)?;
+    Ok(data)
 }
 
 /// Assemble all chronological chunks into the same self-contained replay used
 /// by compact exports and verification. No dependency on original save files.
 pub fn load_directory(directory: &Path) -> Result<ReplayData> {
     let manifest = read_manifest(directory)?;
-    let bytes = assemble_bytes(directory, &manifest)?;
-    ReplayData::from_reader(std::io::Cursor::new(bytes))
-        .map_err(|error| anyhow::anyhow!("parse mission recording: {error}"))
+    let (_, data, _) = assemble_replay(directory, &manifest)?;
+    Ok(data)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

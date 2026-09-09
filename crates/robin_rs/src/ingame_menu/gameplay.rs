@@ -336,7 +336,7 @@ impl LocalizedGameplayText {
     }
 
     #[cfg(test)]
-    fn for_locale(locale: &str) -> Self {
+    pub(crate) fn for_locale(locale: &str) -> Self {
         Self {
             spellforge_label: crate::localization::port_text(
                 Some(locale),
