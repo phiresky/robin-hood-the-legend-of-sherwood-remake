@@ -8,6 +8,7 @@ type Requests = Arc<Mutex<VecDeque<HttpRequest>>>;
 /// Deserializing diagnostics never restores live request authority.
 #[derive(Default, Serialize, Deserialize)]
 pub struct RequestRouter {
+    retired: bool,
     #[serde(skip)]
     active: Weak<Mutex<VecDeque<HttpRequest>>>,
     #[serde(skip)]
@@ -15,11 +16,35 @@ pub struct RequestRouter {
 }
 
 impl RequestRouter {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(super) fn is_retired(&self) -> bool {
+        self.retired
+    }
+    pub(super) fn retire(&mut self) {
+        self.retired = true;
+        for request in self.idle.drain(..) {
+            request
+                .response_tx
+                .send(Err("HTTP transport stopped".into()));
+        }
+        if let Some(active) = self.active.upgrade() {
+            for request in active.lock().expect("session RPC queue poisoned").drain(..) {
+                request
+                    .response_tx
+                    .send(Err("HTTP transport stopped".into()));
+            }
+        }
+    }
+
     pub(super) fn take_idle(&mut self) -> Vec<HttpRequest> {
         self.idle.drain(..).collect()
     }
     pub(super) fn push_back(&mut self, request: HttpRequest) {
-        if let Some(active) = self.active.upgrade() {
+        if self.retired {
+            request
+                .response_tx
+                .send(Err("HTTP transport stopped".into()));
+        } else if let Some(active) = self.active.upgrade() {
             active
                 .lock()
                 .expect("session RPC queue poisoned")
@@ -67,9 +92,9 @@ impl<'de> Deserialize<'de> for SessionIngress {
 }
 
 impl SessionIngress {
-    pub fn attach() -> Self {
-        let mut ingress = Self::with_router(GLOBAL.get().map(|server| server.queue.clone()));
-        ingress.replay_capabilities = GLOBAL.get().map(|server| {
+    pub(super) fn attach(server: Option<&HttpServer>) -> Self {
+        let mut ingress = Self::with_router(server.map(|server| server.queue.clone()));
+        ingress.replay_capabilities = server.map(|server| {
             (
                 server.replay_exports.clone(),
                 server.replay_launches.clone(),
