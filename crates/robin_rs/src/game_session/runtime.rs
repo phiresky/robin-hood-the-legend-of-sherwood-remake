@@ -651,7 +651,7 @@ impl MissionRuntime {
         }
         self.timeline.trace(FrameContractStage::Simulation);
         self.timeline.run_simulation(|| {
-            let mut display = std::mem::take(&mut self.world.host.frontend.engine_display);
+            let application_context = self.world.host.application_context().clone();
             let mission_transitioning = !self
                 .world
                 .game
@@ -665,8 +665,11 @@ impl MissionRuntime {
                 );
             let frame = mission_frame.hourglass_input();
             let result = self.world.game.run_engine_tick(
-                &mut self.world.host,
-                &mut display,
+                &mut self.world.host.frontend,
+                &mut self.world.host.audio,
+                &mut self.world.host.effects,
+                &application_context,
+                self.world.host.transport.local_seat(),
                 self.world.assets.as_ref(),
                 &mut self.world.manager.engine,
                 &mut self.world.dev,
@@ -674,7 +677,7 @@ impl MissionRuntime {
                 false,
                 policy.paused,
             );
-            self.world.host.frontend.engine_display = display;
+
             result
         })
     }
@@ -708,10 +711,13 @@ impl MissionRuntime {
             world, timeline, ..
         } = self;
         let initialized = timeline.cross_post_initialize(|| {
-            let mut display = std::mem::take(&mut world.host.frontend.engine_display);
+            let application_context = world.host.application_context().clone();
             let initialized = crate::sim_timeline::run_post_initialize_stage_with_actions(
-                &mut world.host,
-                &mut display,
+                &mut world.host.frontend,
+                &mut world.host.audio,
+                &mut world.host.effects,
+                &application_context,
+                world.host.transport.local_seat(),
                 &world.assets,
                 &mut world.manager.engine,
                 &mut world.dev,
@@ -719,7 +725,7 @@ impl MissionRuntime {
                 &frame.post_commands.commands,
                 frame.run_post_initialize,
             );
-            world.host.frontend.engine_display = display;
+
             initialized
         });
         frame.run_post_initialize = initialized;
