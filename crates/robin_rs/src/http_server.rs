@@ -413,6 +413,7 @@ mod ingress;
 mod native_routes;
 #[cfg(not(target_arch = "wasm32"))]
 mod native_transport;
+mod request_decode;
 use ingress::RequestRouter;
 pub use ingress::SessionIngress;
 #[cfg(not(target_arch = "wasm32"))]
@@ -2698,10 +2699,7 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_rpc {
-    use super::{
-        BROWSER_QUEUE, HttpPayload, HttpRequest, NativeCall, PlayerCommand, Reply, ReplyBody,
-        Responder, ScreenshotRequest, StepModalPolicy, StepRequest,
-    };
+    use super::{BROWSER_QUEUE, HttpPayload, HttpRequest, Reply, ReplyBody, Responder};
     use wasm_bindgen::JsValue;
 
     fn reply_to_js(reply: Reply) -> Result<JsValue, JsValue> {
@@ -2780,126 +2778,6 @@ pub mod wasm_rpc {
     }
 
     fn decode_request(method: &str, params: serde_json::Value) -> Result<HttpPayload, String> {
-        match method {
-            "script" => Ok(HttpPayload::Script),
-            "state" => Ok(HttpPayload::State),
-            "host-debug" => Ok(HttpPayload::HostDebug),
-            "level-assets" => Ok(HttpPayload::LevelAssets),
-            "decompile" => {
-                #[derive(serde::Deserialize, Default)]
-                #[serde(default)]
-                struct D {
-                    class: Option<String>,
-                }
-                let d: D = if params.is_null() {
-                    D::default()
-                } else {
-                    serde_json::from_value(params).map_err(|e| format!("decompile params: {e}"))?
-                };
-                Ok(HttpPayload::Decompile { class: d.class })
-            }
-            "native" => {
-                let c: NativeCall =
-                    serde_json::from_value(params).map_err(|e| format!("native params: {e}"))?;
-                Ok(HttpPayload::Native {
-                    name: c.op,
-                    args: c.args,
-                    this: c.this,
-                })
-            }
-            "batch" => {
-                #[derive(serde::Deserialize)]
-                struct B {
-                    calls: Vec<NativeCall>,
-                }
-                let b: B =
-                    serde_json::from_value(params).map_err(|e| format!("batch params: {e}"))?;
-                Ok(HttpPayload::Batch(b.calls))
-            }
-            "console" => {
-                #[derive(serde::Deserialize)]
-                struct C {
-                    command: String,
-                }
-                let c: C =
-                    serde_json::from_value(params).map_err(|e| format!("console params: {e}"))?;
-                Ok(HttpPayload::Console(c.command))
-            }
-            "command" => {
-                let cmd: PlayerCommand =
-                    serde_json::from_value(params).map_err(|e| format!("command params: {e}"))?;
-                Ok(HttpPayload::Command(cmd))
-            }
-            "screenshot" => {
-                let ss: ScreenshotRequest = if params.is_null() {
-                    ScreenshotRequest::default()
-                } else {
-                    serde_json::from_value(params).map_err(|e| format!("screenshot params: {e}"))?
-                };
-                Ok(HttpPayload::Screenshot(ss))
-            }
-            "step-forward" => {
-                let s: StepRequest = if params.is_null() {
-                    StepRequest::default()
-                } else {
-                    serde_json::from_value(params)
-                        .map_err(|e| format!("step-forward params: {e}"))?
-                };
-                if s.n == 0 {
-                    return Err("n must be >= 1".into());
-                }
-                Ok(HttpPayload::StepForward { request: s })
-            }
-            "step-back" => {
-                let s: StepRequest = if params.is_null() {
-                    StepRequest::default()
-                } else {
-                    serde_json::from_value(params).map_err(|e| format!("step-back params: {e}"))?
-                };
-                if s.n == 0 {
-                    return Err("n must be >= 1".into());
-                }
-                Ok(HttpPayload::StepBack { request: s })
-            }
-            "go-to-frame" => {
-                #[derive(serde::Deserialize)]
-                struct G {
-                    frame: u32,
-                    #[serde(flatten)]
-                    modal_policy: StepModalPolicy,
-                }
-                let g: G = serde_json::from_value(params)
-                    .map_err(|e| format!("go-to-frame params: {e}"))?;
-                Ok(HttpPayload::GoToFrame {
-                    target: g.frame,
-                    modal_policy: g.modal_policy,
-                })
-            }
-            "set-paused" => {
-                #[derive(serde::Deserialize)]
-                struct P {
-                    paused: bool,
-                }
-                let p: P = serde_json::from_value(params)
-                    .map_err(|e| format!("set-paused params: {e}"))?;
-                Ok(HttpPayload::SetPaused { paused: p.paused })
-            }
-            "get-replay" => Ok(HttpPayload::GetReplay),
-            "load-replay" => {
-                #[derive(serde::Deserialize)]
-                struct L {
-                    data: String,
-                    #[serde(default)]
-                    paused: bool,
-                }
-                let l: L = serde_json::from_value(params)
-                    .map_err(|e| format!("load-replay params: {e}"))?;
-                Ok(HttpPayload::LoadReplay {
-                    data: l.data,
-                    paused: l.paused,
-                })
-            }
-            other => Err(format!("unknown method: {other}")),
-        }
+        super::request_decode::decode_browser(method, params)
     }
 }
