@@ -179,7 +179,7 @@ impl Drop for ApplicationServices {
         match self.http.get_mut() {
             Ok(http) => http.stop(),
             Err(error) => {
-                log::error!("application HTTP transport poisoned during shutdown");
+                tracing::error!("application HTTP transport poisoned during shutdown");
                 error.into_inner().stop();
             }
         }
