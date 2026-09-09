@@ -7,6 +7,27 @@
 use super::{NetEvent, NetMsg};
 use std::sync::mpsc::Sender;
 
+/// Local lifecycle delivery is required while the owner exists. A closed
+/// receiver means that owner is gone: callers must stop, not reconnect a
+/// network session that can no longer publish its admission or readiness.
+pub(super) fn deliver(incoming: &Sender<NetEvent>, event: NetEvent) -> Result<(), String> {
+    incoming
+        .send(event)
+        .map_err(|_| "client network event channel is closed".to_owned())
+}
+
+/// Publish lifecycle notifications in protocol order, stopping at the first
+/// lost receiver. This is deliberately not an atomic batch: the receiver owns
+/// any prefix it consumed, and dropping it terminates the entire transport.
+pub(super) fn deliver_lifecycle(
+    incoming: &Sender<NetEvent>,
+    events: impl IntoIterator<Item = NetEvent>,
+) -> Result<(), String> {
+    events
+        .into_iter()
+        .try_for_each(|event| deliver(incoming, event))
+}
+
 /// Decode only messages whose meaning is independent of transport and rank.
 /// Other messages retain their ownership for the adapter's lifecycle handler.
 pub(super) fn decode(message: NetMsg) -> Result<NetEvent, NetMsg> {
@@ -69,9 +90,7 @@ pub(super) fn forward(
 ) -> Result<Option<NetMsg>, String> {
     match decode(message) {
         Ok(event) => {
-            incoming
-                .send(event)
-                .map_err(|_| "client network event channel is closed".to_string())?;
+            deliver(incoming, event)?;
             Ok(None)
         }
         Err(message) => Ok(Some(message)),
@@ -82,6 +101,61 @@ pub(super) fn forward(
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn lifecycle_delivery_preserves_reconnect_order() {
+        let (tx, rx) = mpsc::channel();
+        deliver_lifecycle(
+            &tx,
+            [
+                NetEvent::Disconnected,
+                NetEvent::Reconnected,
+                NetEvent::AssignedLocalSeat(robin_engine::player_command::PlayerId(2)),
+                NetEvent::BeginSim {
+                    frame: 17,
+                    start_epoch_ms: 31,
+                },
+            ],
+        )
+        .unwrap();
+        assert!(matches!(rx.try_recv().unwrap(), NetEvent::Disconnected));
+        assert!(matches!(rx.try_recv().unwrap(), NetEvent::Reconnected));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            NetEvent::AssignedLocalSeat(robin_engine::player_command::PlayerId(2))
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            NetEvent::BeginSim {
+                frame: 17,
+                start_epoch_ms: 31
+            }
+        ));
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn lost_lifecycle_receiver_stops_before_advancing_to_readiness() {
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        let attempted = std::cell::Cell::new(0);
+        let events = [
+            NetEvent::Reconnected,
+            NetEvent::BeginSim {
+                frame: 17,
+                start_epoch_ms: 31,
+            },
+        ]
+        .into_iter()
+        .inspect(|_| attempted.set(attempted.get() + 1));
+        assert!(deliver_lifecycle(&tx, events).is_err());
+        assert_eq!(attempted.get(), 1);
+        assert!(
+            deliver(&tx, NetEvent::Disconnected).is_err(),
+            "closed owner must not enter reconnect backoff"
+        );
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

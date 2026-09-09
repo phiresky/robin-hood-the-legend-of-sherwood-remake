@@ -1429,7 +1429,14 @@ async fn run_server(
         }
     }
     *context.relay_url.lock() = endpoint.addr().relay_urls().next().cloned();
-    let _ = startup_tx.send(Ok((endpoint.id(), endpoint.addr())));
+    if startup_tx
+        .send(Ok((endpoint.id(), endpoint.addr())))
+        .is_err()
+    {
+        // Startup's owner was dropped; there is nobody to own an accept loop.
+        endpoint.close().await;
+        return;
+    }
 
     let mut pump = tokio::spawn(run_server_outgoing_pump(
         Arc::clone(&context),
@@ -1579,10 +1586,7 @@ fn finish_ranked_seat_connections(context: &ServerContext, seats: &[u8]) {
         start_epoch_ms
     };
     for sender in senders {
-        let _ = sender.send(NetMsg::BeginSim {
-            frame: begin_frame,
-            start_epoch_ms: begin_start_epoch_ms,
-        });
+        server_dispatch::queue_cached_begin(&sender, begin_frame, begin_start_epoch_ms);
     }
 }
 
@@ -1637,9 +1641,21 @@ fn downgrade_ranked_session(
                 reason: wire_reason,
             },
         );
-        let _ = context.incoming_tx.send(NetEvent::RankedBrowseOnly {
-            reason: wire_reason,
-        });
+        if context
+            .incoming_tx
+            .send(NetEvent::RankedBrowseOnly {
+                reason: wire_reason,
+            })
+            .is_err()
+        {
+            // The authoritative game loop is gone. Do not release provisional
+            // peers into simulation after losing its admission notification.
+            fail_server(
+                context,
+                "host event receiver closed during ranked downgrade".into(),
+            );
+            return;
+        }
     }
     connect_all_provisional_seats(context);
 }
@@ -2230,10 +2246,12 @@ fn prepare_peer_session(
                     bytes = bytes.len(),
                     "sending initial snapshot to peer"
                 );
-                let _ = sender.send(NetMsg::InitialSnapshot {
-                    frame,
-                    engine_bytes: bytes,
-                });
+                sender
+                    .send(NetMsg::InitialSnapshot {
+                        frame,
+                        engine_bytes: bytes,
+                    })
+                    .map_err(|_| "writer queue closed before InitialSnapshot")?;
                 Some(frame)
             } else {
                 None
@@ -3442,12 +3460,15 @@ async fn complete_content_admission(
                 offer.encoded_bytes
             ));
         }
-        let _ = incoming_tx.send(NetEvent::ContentChunk {
-            full_mod_sha256,
-            offset,
-            total_bytes,
-            bytes,
-        });
+        super::client_gameplay::deliver(
+            incoming_tx,
+            NetEvent::ContentChunk {
+                full_mod_sha256,
+                offset,
+                total_bytes,
+                bytes,
+            },
+        )?;
         received = end;
     }
 
@@ -3651,10 +3672,19 @@ async fn run_client_io_inner(
         HandshakePrelude::Welcome { session, welcome } => (session, welcome, None),
         HandshakePrelude::Content { session, offer } => {
             *content_offer_shared.lock() = Some(offer.clone());
-            let _ = incoming_tx.send(NetEvent::ContentOffer(offer.clone()));
-            let _ = initial_handshake_tx.send(Ok(InitialHandshake::ContentOffered {
-                full_mod_sha256: offer.full_mod_sha256,
-            }));
+            if super::client_gameplay::deliver(&incoming_tx, NetEvent::ContentOffer(offer.clone()))
+                .is_err()
+            {
+                return;
+            }
+            if initial_handshake_tx
+                .send(Ok(InitialHandshake::ContentOffered {
+                    full_mod_sha256: offer.full_mod_sha256,
+                }))
+                .is_err()
+            {
+                return;
+            }
             match complete_content_admission(
                 session,
                 &offer,
@@ -3704,18 +3734,32 @@ async fn run_client_io_inner(
     *session_metadata.lock() = Some(admitted_session);
     *content_offer_shared.lock() = admitted_offer.clone();
     if admitted_offer.is_none() {
-        let _ = initial_handshake_tx.send(Ok(InitialHandshake::Welcomed {
-            seat: your_seat,
-            mission_seed,
-        }));
+        if initial_handshake_tx
+            .send(Ok(InitialHandshake::Welcomed {
+                seat: your_seat,
+                mission_seed,
+            }))
+            .is_err()
+        {
+            return;
+        }
     }
-    let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(your_seat));
-    let _ = incoming_tx.send(NetEvent::MissionConfig {
-        mission_id: mission_id.clone(),
-        rng_seed: mission_seed,
-        sim_config,
-        speech_timing_locale: speech_timing_locale.clone(),
-    });
+    if super::client_gameplay::deliver_lifecycle(
+        &incoming_tx,
+        [
+            NetEvent::AssignedLocalSeat(your_seat),
+            NetEvent::MissionConfig {
+                mission_id: mission_id.clone(),
+                rng_seed: mission_seed,
+                sim_config,
+                speech_timing_locale: speech_timing_locale.clone(),
+            },
+        ],
+    )
+    .is_err()
+    {
+        return;
+    }
     let leaderboard_cosign_state: SharedClientLeaderboardCoSignState = Arc::new(Default::default());
     let ranked_join_state: SharedClientRankedJoinState = Arc::new(Default::default());
     let ranked_setup_state = Arc::new(AtomicU8::new(RANKED_SETUP_AWAITING));
@@ -3757,10 +3801,17 @@ async fn run_client_io_inner(
                         "multiplayer: discarded outbound commands from abandoned prediction session"
                     );
                 }
-                let _ = incoming_tx.send(NetEvent::Note(format!(
-                    "disconnected: {reason}; reconnecting..."
-                )));
-                let _ = incoming_tx.send(NetEvent::Disconnected);
+                if super::client_gameplay::deliver_lifecycle(
+                    &incoming_tx,
+                    [
+                        NetEvent::Note(format!("disconnected: {reason}; reconnecting...")),
+                        NetEvent::Disconnected,
+                    ],
+                )
+                .is_err()
+                {
+                    return;
+                }
             }
             SessionEnd::Fatal(error) => {
                 let _ = incoming_tx.send(NetEvent::Fatal(error));
@@ -3835,14 +3886,23 @@ async fn run_client_io_inner(
                     }
                     tracing::info!(?new_seat, seed = new_seed, "client reconnected");
                     // Reconnect validation proved the published identity is unchanged.
-                    let _ = incoming_tx.send(NetEvent::Reconnected);
-                    let _ = incoming_tx.send(NetEvent::AssignedLocalSeat(new_seat));
-                    let _ = incoming_tx.send(NetEvent::MissionConfig {
-                        mission_id: new_mission_id,
-                        rng_seed: new_seed,
-                        sim_config: new_config,
-                        speech_timing_locale: new_speech_timing_locale,
-                    });
+                    if super::client_gameplay::deliver_lifecycle(
+                        &incoming_tx,
+                        [
+                            NetEvent::Reconnected,
+                            NetEvent::AssignedLocalSeat(new_seat),
+                            NetEvent::MissionConfig {
+                                mission_id: new_mission_id,
+                                rng_seed: new_seed,
+                                sim_config: new_config,
+                                speech_timing_locale: new_speech_timing_locale,
+                            },
+                        ],
+                    )
+                    .is_err()
+                    {
+                        return;
+                    }
                     let discarded = discard_session_outbound(outgoing_async_rx);
                     if discarded != 0 {
                         tracing::warn!(
@@ -4316,29 +4376,41 @@ fn handle_client_wire_msg(
                         .browse_only_reason()
                         .is_none();
                 if unresolved {
-                    let _ = queue_client_ranked_response(
+                    if let Err(error) = queue_client_ranked_response(
                         context,
                         RankedJoinResponse::Unavailable(
                             super::RankedJoinUnavailableReason::LocalRankedSessionMismatch,
                         ),
-                    );
-                    let _ = context
+                    ) {
+                        // Native permits browse-only play even if no ranked
+                        // challenge was issued, so an unavailable response may
+                        // not be authorized. The local downgrade below remains
+                        // required; it cannot be lost along with this response.
+                        tracing::warn!(%error, "could not notify host of premature ranked BeginSim");
+                    }
+                    context
                         .join_state
-                        .mark_browse_only(RankedBrowseOnlyReason::RankedProtocolViolation);
+                        .mark_browse_only(RankedBrowseOnlyReason::RankedProtocolViolation)?;
                     downgrade_client_ranked(
                         context,
                         RankedBrowseOnlyReason::RankedProtocolViolation,
                         "host released simulation before ranked admission or browse-only resolution",
                     );
-                    let _ = incoming_tx.send(NetEvent::RankedBrowseOnly {
-                        reason: RankedBrowseOnlyReason::RankedProtocolViolation,
-                    });
+                    super::client_gameplay::deliver(
+                        incoming_tx,
+                        NetEvent::RankedBrowseOnly {
+                            reason: RankedBrowseOnlyReason::RankedProtocolViolation,
+                        },
+                    )?;
                 }
             }
-            let _ = incoming_tx.send(NetEvent::BeginSim {
-                frame,
-                start_epoch_ms,
-            });
+            super::client_gameplay::deliver(
+                incoming_tx,
+                NetEvent::BeginSim {
+                    frame,
+                    start_epoch_ms,
+                },
+            )?;
         }
         NetMsg::ModalProposal { .. } => {
             return Err("server sent a client-only modal proposal".to_string());
@@ -4822,6 +4894,30 @@ fn client_gameplay_wire_msg(outgoing: NetOutbound) -> Result<NetMsg, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn begin_sim_requires_a_live_local_receiver() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let state = std::sync::Arc::new(Default::default());
+        let begin = || super::NetMsg::BeginSim {
+            frame: 9,
+            start_epoch_ms: 12,
+        };
+        super::handle_client_wire_msg(&tx, &state, None, begin()).unwrap();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            super::NetEvent::BeginSim {
+                frame: 9,
+                start_epoch_ms: 12
+            }
+        ));
+        drop(rx);
+        assert!(
+            super::handle_client_wire_msg(&tx, &state, None, begin())
+                .unwrap_err()
+                .contains("channel is closed")
+        );
+    }
+
     use super::{
         HostSessionContinuation, PeerOwner, PendingSnapshotTransition, SeatClaimKind, ServerPeers,
         SharedClientLeaderboardCoSignState, checked_epoch_ms, client_gameplay_wire_msg,
