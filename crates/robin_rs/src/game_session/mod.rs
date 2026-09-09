@@ -708,7 +708,7 @@ pub(super) fn required_menu_resources<'a>(
 }
 
 pub(super) fn selected_pc_profile_indices(
-    engine: &engine_api::EngineInner,
+    engine: &engine_api::PresentationView<'_>,
     seat: engine_player_command::PlayerId,
 ) -> Vec<engine_profiles::CharacterProfileIdx> {
     engine

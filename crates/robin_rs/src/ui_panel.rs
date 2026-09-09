@@ -18,7 +18,7 @@ use robin_assets::picture::Picture;
 use robin_engine::character_kind::CharacterKind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::coordinates::{ScreenBBox, ScreenPoint};
-use robin_engine::engine::EngineInner;
+use robin_engine::engine::PresentationView;
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::sprite::BBox;
@@ -1348,7 +1348,7 @@ impl PortraitBarItem {
 }
 
 pub(crate) fn portrait_bar_items(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     screen_width: u16,
 ) -> (Vec<PortraitBarItem>, bool) {
@@ -1442,7 +1442,7 @@ fn blit_to_screen_widget(
 /// life_points=5 (set by wound handling). They render as burned portraits
 /// with the health gauge visible. Fully dead PCs have life_points<=0
 /// and are NOT in coma — their scrolls are hidden entirely.
-fn is_pc_in_coma(engine: &EngineInner, entity: &Entity) -> bool {
+fn is_pc_in_coma(engine: &PresentationView<'_>, entity: &Entity) -> bool {
     let profile_idx = match entity.pc_data() {
         Some(pc) => pc.profile_index,
         None => return false,
@@ -1592,7 +1592,7 @@ fn render_allied_portrait_layer(
 /// or physical-display refresh. This is presentation-only animation state.
 pub(crate) fn prepare_auto_queue_animations(
     frontend: &mut HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     screen_width: u16,
 ) {
@@ -1626,7 +1626,7 @@ pub(crate) fn prepare_auto_queue_animations(
 fn render_auto_queue_ticks(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: PlayerId,
     identity: crate::host::QueueStripIdentity,
     members: &[EntityId],
@@ -1672,7 +1672,7 @@ fn render_allied_portrait(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     profiles: &engine_profiles::ProfileManager,
     seat: PlayerId,
     item: &PortraitBarItem,
@@ -1846,7 +1846,7 @@ fn render_allied_portrait(
 }
 
 fn allied_visage_kind(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     profiles: &engine_profiles::ProfileManager,
     members: &[EntityId],
 ) -> AlliedVisageKind {
@@ -2058,7 +2058,7 @@ fn blit_centered_between_scrolls(
 #[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
     frontend: &HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
@@ -2257,7 +2257,7 @@ pub fn draw_panel(
 
                 // Guard indicator (centered between scrolls).
                 if is_guarded {
-                    let guard_visible = if engine.mission().mission_won {
+                    let guard_visible = if engine.mission_won() {
                         (frame / 25).is_multiple_of(2)
                     } else {
                         true
@@ -3340,7 +3340,7 @@ pub fn draw_screen_tooltip(
 /// itself to the screen bounds each frame.
 pub fn draw_pc_info_overlay(
     frontend: &HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     profiles: &engine_profiles::ProfileManager,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
@@ -3431,7 +3431,7 @@ pub fn draw_pc_info_overlay(
 /// single field (`TitbitManager::dotted_start`) shared across all PCs.
 pub fn render_macro_dotted_chains(
     frontend: &HostFrontend,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     renderer: &mut Renderer,
 ) {
     use robin_engine::macro_store::DISTANCE_DOT;
@@ -3457,7 +3457,7 @@ pub fn render_macro_dotted_chains(
     // re-advance the canonical phase.
     let mut phase = engine.titbit_dotted_start();
     for (pc_id, pc_pos) in per_pc {
-        let Some(state) = engine.macro_store().get(pc_id) else {
+        let Some(state) = engine.portrait_macro(pc_id) else {
             continue;
         };
         if state.slots().iter().all(|s| s.is_empty()) {
@@ -3576,7 +3576,7 @@ pub fn hit_test_portrait(
 /// Uses engine state to determine burned/selected per slot, and maps
 /// the click Y to the appropriate sub-area.
 pub fn hit_test_portrait_detailed(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     portraits: &PortraitCache,
     screen_width: u16,

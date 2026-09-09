@@ -34,7 +34,7 @@ use robin_engine::element as engine_element;
 use robin_engine::element::Posture;
 use robin_engine::engine as engine_api;
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
-use robin_engine::engine::{Engine, EngineInner};
+use robin_engine::engine::{Engine, PresentationView};
 use robin_engine::profiles as engine_profiles;
 use robin_engine::resource_ids as engine_resource_ids;
 use robin_engine::sprite as engine_sprite;
@@ -119,7 +119,7 @@ impl HudTooltipUpdate {
 /// not keyed by the engine frame: paused frames must still age hover timers
 /// and animate the console. Save thumbnails do not call it.
 pub(super) fn prepare_fixed_tick_hud(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     game: &Game,
@@ -299,7 +299,7 @@ fn authored_patrol_route(
 }
 
 fn selected_allied_patrol_routes(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &engine_api::LevelAssets,
     seat: robin_engine::player_command::PlayerId,
 ) -> Vec<PatrolRouteOverlay> {
@@ -341,7 +341,7 @@ fn selected_allied_patrol_routes(
 
 fn render_selected_allied_patrol_routes(
     host: &HostDraw<'_>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &engine_api::LevelAssets,
     seat: robin_engine::player_command::PlayerId,
     renderer: &mut crate::renderer::Renderer,
@@ -394,7 +394,7 @@ fn render_selected_allied_patrol_routes(
 }
 
 fn allied_portrait_tooltip(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     seat: robin_engine::player_command::PlayerId,
     hit: PortraitHit,
 ) -> String {
@@ -462,7 +462,7 @@ fn allied_portrait_tooltip(
 /// - Tooltip focus/timer state advances before display.
 /// - The Zoom+ and Zoom- widgets receive their localized tooltips.
 pub(super) fn prepare_zoom_presentation(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &HostPresentation<'_>,
     renderer: &mut Renderer,
@@ -490,7 +490,7 @@ pub(super) fn prepare_zoom_presentation(
 pub(super) fn drain_screenshots(
     http: &mut crate::http_server::SessionIngress,
     sim_frame: u32,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -506,7 +506,7 @@ pub(super) fn drain_screenshots(
 /// fulfilling ordinary screenshots from the presented UI framebuffer.
 pub(super) fn drain_screenshot_requests(
     pending: Vec<crate::http_server::PendingScreenshot>,
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -558,7 +558,7 @@ pub(super) fn drain_presented_ui_screenshots(
 /// Render either the current viewport or the complete level according to the
 /// same request used by the HTTP screenshot endpoint.
 fn render_screenshot_rgba(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -595,7 +595,7 @@ pub(crate) type PendingThumbnail =
 /// back immediately, then clear the renderer queue so the live frame
 /// later in the loop starts clean.
 pub(super) fn begin_save_thumbnail(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -730,7 +730,7 @@ fn write_rgba_png(path: &std::path::Path, w: u32, h: u32, rgba: &[u8]) -> Result
 }
 
 pub(super) fn drain_wide_print_screen(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -755,7 +755,7 @@ pub(super) fn drain_wide_print_screen(
 /// frame renderer observes its usual geometry; the returned PNG is cropped
 /// to the level bounds and therefore contains the map scene only.
 pub(super) fn capture_screenshot_to_path(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -769,7 +769,7 @@ pub(super) fn capture_screenshot_to_path(
 }
 
 fn capture_wide_map_rgba(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
@@ -998,7 +998,7 @@ fn fill_rect(renderer: &mut crate::renderer::Renderer, x: i32, y: i32, w: i32, h
 }
 
 /// Per-frame mouse/cursor update hoisted out of `render_frame` so that
-/// pass can observe an immutable `&EngineInner`.
+/// pass can observe an immutable `&PresentationView<'_>`.
 ///
 /// `host_mouse::update_mouse` updates host-side per-frame state
 /// (`focused_entity_id`, `selected_sector_idx`, cursor shadow/opacity,
@@ -1031,7 +1031,7 @@ pub(super) fn update_mouse_and_cursor(
         mouse_screen.x,
         mouse_screen.y,
     );
-    // RHGame keeps widget-owned mouse handling outside EngineInner::UpdateMouse.
+    // RHGame keeps widget-owned mouse handling outside PresentationView::UpdateMouse.
     // The minimap (including its folded button and active drag) must not ask
     // the occluded world cell which movement/action cursor to display.
     let over_minimap = host
@@ -1205,7 +1205,7 @@ impl RenderContext<'_> {
 /// bars, HUD, minimap, Sherwood/zoom buttons, tooltips, pause overlay,
 /// console, cursor, rewind icon, fade-to-black).
 ///
-/// **EngineInner is read-only.** The `dev` argument is also read-only —
+/// **PresentationView is read-only.** The `dev` argument is also read-only —
 /// pass a clone with overrides applied (e.g. `&scratch_dev`) if you
 /// want the frame to render with alternate debug flags without
 /// touching the live sim state.
@@ -1219,7 +1219,7 @@ impl RenderContext<'_> {
 /// - running `post_render_engine_cleanup` to clear one-shot NPC flags;
 /// - skipping the whole trio in fast-forward (`host.frontend.skip_render`).
 pub(super) fn render_frame(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     display: &engine_api::HostDisplayState,
     host: &HostDraw<'_>,
     assets: &engine_api::LevelAssets,
@@ -1275,9 +1275,9 @@ pub(super) fn render_frame(
             || (engine.get_entity(id).is_some() && engine.fog_entity_visible(id))
     });
     // Queue the GPU background texture for the current camera view.
-    // EngineInner-mutating pre-render bookkeeping (background blits, display sorting)
+    // PresentationView-mutating pre-render bookkeeping (background blits, display sorting)
     // is hoisted to the main loop so `render_frame` itself observes an
-    // immutable `&EngineInner` / `&DevState` — this lets
+    // immutable `&PresentationView<'_>` / `&DevState` — this lets
     // the `/screenshot` HTTP endpoint render with dev-flag overrides
     // without disturbing the live sim state.
     // Drop any modal snapshot once gameplay owns the frame again.  While the
@@ -1396,7 +1396,7 @@ pub(super) fn render_frame(
     render_combat_status_bars(host, engine, renderer);
     // The one-shot "display double status bar" NPC flag is cleared in
     // `post_render_engine_cleanup` (main loop) — `render_frame` is
-    // read-only on EngineInner.
+    // read-only on PresentationView.
 
     // ── GPU phase: trajectory preview ──
     // Draws dots along projectile arcs every 7 world units.
@@ -1739,7 +1739,7 @@ pub(super) fn render_frame(
         );
 
         // Stature (up/down arrow) widgets on the lower panel.  Driven
-        // live off `EngineInner::retrieve_stature(None)` — we poll the
+        // live off `PresentationView::retrieve_stature(None)` — we poll the
         // sim directly each frame.
         //
         // The focus-latch overlay (`with_focus_latch`) keeps the
@@ -1858,13 +1858,13 @@ pub(super) fn render_frame(
                             if let Some((_key, extension)) =
                                 crate::ui_panel::item_action_tooltip_extension(
                                     action,
-                                    engine.sim_config().item_gameplay,
+                                    engine.item_gameplay(),
                                     host.frontend
                                         .preferences()
                                         .gameplay_config()
                                         .item_previews
                                         .effective_for_original_parity(
-                                            engine.original_rng_replay_cursor().is_some(),
+                                            engine.uses_original_rng_replay(),
                                         ),
                                 )
                             {
@@ -1976,7 +1976,7 @@ pub(super) fn render_frame(
 
     // Mouse cursor selection + `PerformOrientation` dispatch is hoisted
     // into `update_mouse_and_cursor` (main loop, pre-render) so this
-    // pass keeps `&EngineInner` immutable.  The cursor texture has already
+    // pass keeps `&PresentationView<'_>` immutable.  The cursor texture has already
     // been loaded by that point; `last_cursor_id` is the live id.
 
     // ── GPU phase: cursor on top of everything ──

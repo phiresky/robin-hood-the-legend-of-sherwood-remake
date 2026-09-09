@@ -229,7 +229,7 @@ pub fn resolve_left_click_with_planning(
         return vec![];
     }
 
-    let is_swordfighting = is_selected_unit_swordfighting(engine, local_seat);
+    let is_swordfighting = is_selected_unit_swordfighting(&engine.presentation_view(), local_seat);
 
     // Unselected PC → select it
     if let Some(pc_id) = engine.find_focusable_pc(assets, map_pt, Focus::Select)
@@ -1296,7 +1296,7 @@ pub fn resolve_action_drag(
     // Swordfighting PCs feed the mouse-way gesture recognizer on
     // drag, not the action arm.  The drag path already filters in the
     // caller; this defensive check is a safety net.
-    if is_selected_unit_swordfighting(engine, local_seat) {
+    if is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         return vec![];
     }
 
@@ -1460,7 +1460,7 @@ fn resolve_double_click_repeat(
     };
 
     let selected_pcs = engine.hero_selection(local_seat).to_vec();
-    let selected_combatants = selected_units(engine, local_seat);
+    let selected_combatants = selected_units(&engine.presentation_view(), local_seat);
     if selected_combatants.is_empty() {
         return vec![];
     }
@@ -1541,7 +1541,7 @@ fn resolve_double_click_repeat(
 
 /// Resolve a right-click into player commands.
 pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerCommand> {
-    let selected_combatants = selected_units(engine, local_seat);
+    let selected_combatants = selected_units(&engine.presentation_view(), local_seat);
     let clear_tactical = !engine.tactical_selection(local_seat).is_empty();
     let finish = |mut commands: Vec<PlayerCommand>| {
         if clear_tactical {
@@ -1551,7 +1551,7 @@ pub fn resolve_right_click(engine: &Engine, local_seat: PlayerId) -> Vec<PlayerC
     };
 
     // Swordfighting → parry
-    if is_selected_unit_swordfighting(engine, local_seat) {
+    if is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         let mut cmds = Vec::new();
         for &pc_id in &selected_combatants {
             let is_fighting = engine
@@ -1747,7 +1747,7 @@ pub fn resolve_swordfight(
     is_left_button: bool,
 ) -> Vec<PlayerCommand> {
     let local_seat = host.transport.local_seat();
-    if !is_selected_unit_swordfighting(engine, local_seat) {
+    if !is_selected_unit_swordfighting(&engine.presentation_view(), local_seat) {
         return vec![];
     }
 
@@ -1756,7 +1756,7 @@ pub fn resolve_swordfight(
     let mut feedback_recorded = false;
     let combat_rules = engine.sim_config();
 
-    for pc_id in selected_units(engine, local_seat) {
+    for pc_id in selected_units(&engine.presentation_view(), local_seat) {
         let Some((is_sword, pos_map, facing_dir)) = engine.get_entity(pc_id).and_then(|entity| {
             let h = entity.human_data()?;
             let is_sword = !h.opponents.is_empty();
@@ -1937,7 +1937,10 @@ pub fn resolve_swordfight(
     cmds
 }
 
-fn selected_units(engine: &engine_api::EngineInner, local_seat: PlayerId) -> Vec<EntityId> {
+fn selected_units(
+    engine: &engine_api::PresentationView<'_>,
+    local_seat: PlayerId,
+) -> Vec<EntityId> {
     engine
         .hero_selection(local_seat)
         .iter()
@@ -1950,7 +1953,7 @@ fn selected_units(engine: &engine_api::EngineInner, local_seat: PlayerId) -> Vec
 /// engaged in melee. The original engine query intentionally remains PC-only;
 /// UI input uses this broader query for the optional allied-control layer.
 pub fn is_selected_unit_swordfighting(
-    engine: &engine_api::EngineInner,
+    engine: &engine_api::PresentationView<'_>,
     local_seat: PlayerId,
 ) -> bool {
     selected_units(engine, local_seat).into_iter().any(|id| {
@@ -3523,7 +3526,10 @@ mod tests {
         let soldier = add_fighting_allied_soldier(&mut engine, 10.0, 10.0, opponent);
         select_allied(&mut engine, &assets, soldier);
 
-        assert!(is_selected_unit_swordfighting(&engine, PlayerId(0)));
+        assert!(is_selected_unit_swordfighting(
+            &engine.presentation_view(),
+            PlayerId(0)
+        ));
         assert_cmds!(
             resolve_right_click(&engine, PlayerId(0)),
             vec![

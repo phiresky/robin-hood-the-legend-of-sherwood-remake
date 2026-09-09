@@ -14,7 +14,7 @@ use crate::ui_panel::{
 use robin_engine::character_kind as engine_character_kind;
 use robin_engine::coordinates as engine_coordinates;
 use robin_engine::element::{Entity, EntityId};
-use robin_engine::engine::{EngineInner, LevelAssets};
+use robin_engine::engine::{LevelAssets, PresentationView};
 use robin_engine::player_command::PlayerId;
 use robin_engine::profiles;
 
@@ -132,7 +132,7 @@ impl HudFonts {
 /// localised peasant name pool — so each civilian keeps the same name
 /// across frames without needing mutable state on the civilian.
 fn entity_display_name(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &LevelAssets,
     portraits: &PortraitCache,
     id: EntityId,
@@ -393,7 +393,7 @@ fn render_text_centered_gpu(
 /// 3. Floating counter titbits (coin pickups, etc.)
 #[allow(clippy::too_many_arguments)]
 pub fn render_hud_text(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     camera: &ViewportState,
     assets: &LevelAssets,
@@ -489,13 +489,17 @@ pub fn render_transient_message(renderer: &mut Renderer, fonts: &HudFonts, text:
 /// `DisplayInfo` / `RequestInfo` key). The timer-decrement + eviction
 /// half lives in engine `tick_screen_remarks` so the list shrinks even
 /// when the overlay is hidden.
-pub fn render_screen_remarks(engine: &EngineInner, renderer: &mut Renderer, fonts: &HudFonts) {
+pub fn render_screen_remarks(
+    engine: &PresentationView<'_>,
+    renderer: &mut Renderer,
+    fonts: &HudFonts,
+) {
     debug_assert!(
         renderer.is_gpu_phase(),
         "render_screen_remarks runs after flush_base_layer"
     );
 
-    let remarks = &engine.ai_global().screen_remarks;
+    let remarks = engine.screen_remarks();
     if remarks.is_empty() {
         return;
     }
@@ -531,7 +535,7 @@ pub fn render_screen_remarks(engine: &EngineInner, renderer: &mut Renderer, font
 /// blit it back.  Cost is only paid when the flag is active, so this
 /// is safe to call unconditionally from the render path.
 pub fn render_entity_id_overlay(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     camera: &ViewportState,
     renderer: &mut Renderer,
     fonts: &HudFonts,
@@ -561,7 +565,7 @@ pub fn render_entity_id_overlay(
 }
 
 fn render_counter_titbits_gpu(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     camera: &ViewportState,
     renderer: &mut Renderer,
     fonts: &HudFonts,
@@ -609,7 +613,7 @@ fn render_counter_titbits_gpu(
 }
 
 fn render_portrait_text_gpu(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     assets: &LevelAssets,
     portraits: &PortraitCache,
@@ -696,21 +700,21 @@ fn render_portrait_text_gpu(
 
 /// Collect comma-joined nicknames of every active seat that currently
 /// has `pc_id` in its selection.
-fn collect_peer_label(engine: &EngineInner, pc_id: EntityId) -> Option<String> {
+fn collect_peer_label(engine: &PresentationView<'_>, pc_id: EntityId) -> Option<String> {
     let mut names = Vec::new();
     let mut active_count = 0usize;
-    for (player_id, seat) in engine.active_seats() {
+    for (player_id, selection, peer_nickname) in engine.active_peer_selections() {
         active_count += 1;
-        if !seat.selection.contains(&pc_id) {
+        if !selection.contains(&pc_id) {
             continue;
         }
-        let nickname = if seat.nickname.is_empty() {
+        let nickname = if peer_nickname.is_empty() {
             // Fall back to "P{id}" when a peer joined without a
             // nickname (shouldn't happen in normal flow, but keeps
             // the label visible if a transport bug ever lets it).
             format!("P{}", player_id.0)
         } else {
-            seat.nickname.clone()
+            peer_nickname.to_owned()
         };
         names.push(nickname);
     }
@@ -760,7 +764,7 @@ fn is_two_button_mode(assets: &LevelAssets, pc: &robin_engine::element::ActorPc)
 /// Returns `[Option<u16>; 3]` — `None` means that action has no ammo display
 /// (e.g. melee actions). Reads from campaign PcStatus via profile matching.
 fn pc_ammo_quantities(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     assets: &LevelAssets,
     pc: &robin_engine::element::ActorPc,
 ) -> [Option<u16>; 3] {
@@ -791,7 +795,7 @@ fn pc_ammo_quantities(
 }
 
 fn render_ammo_counts_gpu(
-    engine: &EngineInner,
+    engine: &PresentationView<'_>,
     local_seat: PlayerId,
     assets: &LevelAssets,
     renderer: &mut Renderer,
