@@ -2552,12 +2552,14 @@ pub fn draw_panel(
                 // offset by `shift_phase` along +X to produce the slide.
                 let slot_idx_usz = slot_idx as usize;
                 let shift_phase = frontend
+                    .presentation
                     .engine_display
                     .macro_shift_phase(pc_id, slot_idx_usz);
                 // Fizzle-blink visibility: the QA strobe toggles the per-slot
                 // titbit on/off after a macro fizzles.  When blink-hidden,
                 // skip the titbit blit.
                 let blink_hidden = frontend
+                    .presentation
                     .engine_display
                     .macro_titbit_blink_hidden(pc_id, slot_idx_usz);
                 if has_macro && !blink_hidden {
@@ -3348,7 +3350,7 @@ pub fn draw_pc_info_overlay(
 ) {
     use crate::pc_info_overlay::{LEVEL_NUMBER, PcInfoOverlay};
 
-    let ov = &frontend.pc_info_overlay;
+    let ov = &frontend.presentation.pc_info_overlay;
     if !ov.visible {
         return;
     }
@@ -3472,7 +3474,7 @@ pub fn render_macro_dotted_chains(
         for slot in state.slots() {
             for step in &slot.steps {
                 let to = step.position;
-                frontend.draw_manager.draw_dotted_line(
+                frontend.presentation.draw_manager.draw_dotted_line(
                     renderer,
                     from,
                     to,

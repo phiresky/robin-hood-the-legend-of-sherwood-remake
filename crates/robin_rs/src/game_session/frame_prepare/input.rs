@@ -74,7 +74,7 @@ fn begin_interactive_frame(
     // handlers (hit-test via `find_focusable_entity`), render loop,
     // and titbit Z flush. This is the interactive-only driver; true
     // headless construction never reaches this presentation stage.
-    host.frontend.draw_order = manager.engine.compute_display_order();
+    host.frontend.presentation.draw_order = manager.engine.compute_display_order();
 
     FrameStart {
         frame,
@@ -103,14 +103,18 @@ fn apply_host_view_input(
     }
     if !view_suppressed {
         for action in keyboard_actions.iter().chain(mouse_actions) {
-            let scroll_suppressed_by_minimap =
-                matches!(
-                    action,
-                    GameAction::ScrollUp
-                        | GameAction::ScrollDown
-                        | GameAction::ScrollLeft
-                        | GameAction::ScrollRight
-                ) && host.frontend.engine_display.minimap().drag_start();
+            let scroll_suppressed_by_minimap = matches!(
+                action,
+                GameAction::ScrollUp
+                    | GameAction::ScrollDown
+                    | GameAction::ScrollLeft
+                    | GameAction::ScrollRight
+            ) && host
+                .frontend
+                .presentation
+                .engine_display
+                .minimap()
+                .drag_start();
             if scroll_suppressed_by_minimap {
                 continue;
             }
@@ -201,7 +205,12 @@ fn touch_point_is_world(
         || point.y < 0.0
         || point.x >= host.frontend.viewport.screen_size.x
         || point.y >= host.frontend.viewport.screen_size.y - engine_api::PANNEL_HEIGHT
-        || host.frontend.engine_display.minimap().is_over_widget(point)
+        || host
+            .frontend
+            .presentation
+            .engine_display
+            .minimap()
+            .is_over_widget(point)
     {
         return false;
     }

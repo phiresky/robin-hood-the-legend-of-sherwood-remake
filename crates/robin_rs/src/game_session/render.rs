@@ -359,14 +359,26 @@ fn render_selected_allied_patrol_routes(
     // Advancing the phase makes the dots flow along the route without adding
     // presentation state to the deterministic simulation.
     let mut phase = (engine.frame_counter() % 18) as f32 * 0.5;
-    let route_color = host.frontend.draw_manager.pack_color(ROUTE_COLOR);
-    let waypoint_color = host.frontend.draw_manager.pack_color(WAYPOINT_COLOR);
-    let active_color = host.frontend.draw_manager.pack_color(ACTIVE_COLOR);
+    let route_color = host
+        .frontend
+        .presentation
+        .draw_manager
+        .pack_color(ROUTE_COLOR);
+    let waypoint_color = host
+        .frontend
+        .presentation
+        .draw_manager
+        .pack_color(WAYPOINT_COLOR);
+    let active_color = host
+        .frontend
+        .presentation
+        .draw_manager
+        .pack_color(ACTIVE_COLOR);
     let pulse_radius = 6 + ((engine.frame_counter() / 4) % 3) as u16;
 
     for route in routes {
         for segment in route.points.windows(2) {
-            host.frontend.draw_manager.draw_dotted_line(
+            host.frontend.presentation.draw_manager.draw_dotted_line(
                 renderer,
                 segment[0],
                 segment[1],
@@ -378,16 +390,19 @@ fn render_selected_allied_patrol_routes(
         }
         for (index, &point) in route.points.iter().enumerate() {
             if index == route.active_waypoint {
-                host.frontend.draw_manager.draw_ellipse(
+                host.frontend.presentation.draw_manager.draw_ellipse(
                     renderer,
                     point,
                     pulse_radius,
                     active_color,
                 );
             } else {
-                host.frontend
-                    .draw_manager
-                    .draw_ellipse(renderer, point, 4, waypoint_color);
+                host.frontend.presentation.draw_manager.draw_ellipse(
+                    renderer,
+                    point,
+                    4,
+                    waypoint_color,
+                );
             }
         }
     }
@@ -1036,6 +1051,7 @@ pub(super) fn update_mouse_and_cursor(
     // the occluded world cell which movement/action cursor to display.
     let over_minimap = host
         .frontend
+        .presentation
         .engine_display
         .minimap()
         .is_over_widget(mouse_screen)
@@ -1217,7 +1233,7 @@ impl RenderContext<'_> {
 ///   update boundary before drawing;
 /// - calling `renderer.present()` after this function returns;
 /// - running `post_render_engine_cleanup` to clear one-shot NPC flags;
-/// - skipping the whole trio in fast-forward (`host.frontend.skip_render`).
+/// - skipping the whole trio in fast-forward (`host.frontend.presentation.skip_render`).
 pub(super) fn render_frame(
     engine: &EngineInner,
     display: &engine_api::HostDisplayState,
@@ -1346,7 +1362,7 @@ pub(super) fn render_frame(
         let in_combat = entity.human_data().is_some_and(|h| !h.opponents.is_empty());
         selection_mark_renderer.draw(
             renderer,
-            host.frontend.selection_mark.animation_frame(),
+            host.frontend.presentation.selection_mark.animation_frame(),
             in_combat,
             screen_pt.x as i32,
             screen_pt.y as i32,
@@ -1901,7 +1917,7 @@ pub(super) fn render_frame(
             local_seat,
             &host.frontend.viewport,
             assets,
-            &host.frontend.draw_order.ids,
+            &host.frontend.presentation.draw_order.ids,
             portrait_cache,
             renderer,
             fonts,
@@ -2024,7 +2040,7 @@ pub(super) fn render_frame(
     // ellipsis effect used by cutscenes. Advancement happens only
     // after the live `present()`; this function is also used for
     // throwaway screenshot and thumbnail renders.
-    if let Some(fade) = host.frontend.fade_to_black {
+    if let Some(fade) = host.frontend.presentation.fade_to_black {
         let alpha = fade.current_alpha();
         if alpha > 0 {
             let sw = renderer.screen_width() as i32;

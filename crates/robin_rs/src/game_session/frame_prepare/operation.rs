@@ -165,7 +165,7 @@ pub(super) async fn process_operation_and_save(
         .pending_request()
         .is_some_and(|request| request.writes_save_payload())
         || autosave_reason.is_some())
-        && !host.frontend.skip_render
+        && !host.frontend.presentation.skip_render
         && !modal_rendered_this_frame
     {
         pre_render_engine_setup(host);
@@ -183,7 +183,7 @@ pub(super) async fn process_operation_and_save(
             shift_held,
             &mut hud.last_cursor_id,
         );
-        let display_snapshot = host.frontend.engine_display.clone();
+        let display_snapshot = host.frontend.presentation.engine_display.clone();
         presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
         let mut render_ctx = presentation.render_context(
             resources,

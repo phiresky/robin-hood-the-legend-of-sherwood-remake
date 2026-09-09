@@ -32,7 +32,7 @@ pub fn drain_pending_bg_blits(frontend: &mut HostFrontend, effects: &mut HostEff
 /// `Renderer::flush_base_layer`, so these sprites live in the same visual
 /// layer as the old baked map pixels.
 pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::renderer::Renderer) {
-    if frontend.background_decals.is_empty() {
+    if frontend.resources.background_decals.is_empty() {
         return;
     }
 
@@ -42,7 +42,7 @@ pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::r
     let screen_h = frontend.viewport.screen_size.y as i32;
     let margin = 256;
 
-    for decal in frontend.background_decals.in_draw_order() {
+    for decal in frontend.resources.background_decals.in_draw_order() {
         let dst_x = ((decal.dst_x as f32 - view.x) * zoom) as i32;
         let dst_y = ((decal.dst_y as f32 - view.y) * zoom) as i32;
         let dst_w = (decal.width as f32 * zoom).ceil().max(1.0) as u32;
@@ -57,7 +57,7 @@ pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::r
         }
 
         let Some((_sw, _sh)) = renderer.ensure_sprite_cached(
-            frontend.frame_holder(),
+            frontend.resources.frame_holder(),
             decal.bank_id,
             SpriteVariant::Day,
             decal.shadow_color,
@@ -80,13 +80,20 @@ pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::r
 /// changed.
 fn apply_bg_blit(frontend: &mut HostFrontend, blit: PendingBgBlit) -> bool {
     if blit.restore_only {
-        return frontend.background_decals.remove(blit.entity_id).is_some();
+        return frontend
+            .resources
+            .background_decals
+            .remove(blit.entity_id)
+            .is_some();
     }
 
     let Some(decal) = build_background_decal(frontend, blit.entity_id, blit.decal) else {
         return false;
     };
-    frontend.background_decals.insert(blit.entity_id, decal);
+    frontend
+        .resources
+        .background_decals
+        .insert(blit.entity_id, decal);
     true
 }
 
@@ -96,8 +103,14 @@ fn build_background_decal(
     snapshot: Option<PendingBgBlitDecal>,
 ) -> Option<BackgroundDecal> {
     if let Some(snapshot) = snapshot {
-        let width = frontend.frame_holder().sprite_width(snapshot.bank_id) as u32;
-        let height = frontend.frame_holder().sprite_height(snapshot.bank_id) as u32;
+        let width = frontend
+            .resources
+            .frame_holder()
+            .sprite_width(snapshot.bank_id) as u32;
+        let height = frontend
+            .resources
+            .frame_holder()
+            .sprite_height(snapshot.bank_id) as u32;
         if width == 0 || height == 0 || (width == 1 && height == 1) {
             tracing::warn!(
                 ?entity_id,
@@ -114,7 +127,7 @@ fn build_background_decal(
             width,
             height,
             shadow_color: snapshot.shadow_color,
-            shadow_level: frontend.frame_holder().global_shadow(),
+            shadow_level: frontend.resources.frame_holder().global_shadow(),
         });
     }
 
@@ -130,7 +143,7 @@ mod tests {
     fn restore_reports_absence_without_reordering_surviving_patches() {
         let mut frontend = HostFrontend::default();
         for bank_id in 1..=4 {
-            frontend.background_decals.insert(
+            frontend.resources.background_decals.insert(
                 engine_element::EntityId::Fx(engine_element::FxId(bank_id)),
                 BackgroundDecal {
                     bank_id,
@@ -158,6 +171,7 @@ mod tests {
             );
             assert_eq!(
                 frontend
+                    .resources
                     .background_decals
                     .in_draw_order()
                     .map(|decal| decal.bank_id)
@@ -172,7 +186,7 @@ mod tests {
         let mut frontend = HostFrontend::default();
         let mut effects = HostEffectBatches::default();
         let id = engine_element::EntityId::Fx(engine_element::FxId(7));
-        frontend.background_decals.insert(
+        frontend.resources.background_decals.insert(
             id,
             BackgroundDecal {
                 bank_id: 1,
@@ -193,7 +207,7 @@ mod tests {
 
         drain_pending_bg_blits(&mut frontend, &mut effects);
 
-        assert!(frontend.background_decals.is_empty());
+        assert!(frontend.resources.background_decals.is_empty());
         assert!(effects.background_blits.is_empty());
         assert!(effects.has_sherwood_report(), "unrelated effects survive");
     }

@@ -79,7 +79,7 @@ fn toggle_pause_menu(context: &mut LiveGameplayContext<'_>, pause_closed: &mut b
         };
         let fallback = IngameMenuResources::new(
             &mut presentation.renderer,
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
             files,
         );
         let menu_resources =
@@ -200,7 +200,7 @@ fn dispatch_gameplay_action(
             dispatch_local_command(&host.transport, commands, &command);
         }
         GameAction::QuickSave => {
-            if !engine.is_zoom_possible(&host.frontend.engine_display) {
+            if !engine.is_zoom_possible(&host.frontend.presentation.engine_display) {
                 game.quick_save_after_zoom = true;
             } else {
                 let mission_id = current_mission_id(engine.campaign(), &assets.profile_manager);
@@ -216,7 +216,7 @@ fn dispatch_gameplay_action(
                 );
                 return;
             }
-            if !engine.is_zoom_possible(&host.frontend.engine_display) {
+            if !engine.is_zoom_possible(&host.frontend.presentation.engine_display) {
                 game.quick_load_after_zoom = true;
             } else {
                 callbacks.queue_operation(SaveLoadRequest::QuickLoad {
@@ -324,8 +324,8 @@ fn dispatch_gameplay_action(
             }
         }
         GameAction::PrintScreen => {
-            host.frontend.pending_print_screen =
-                Some(print_screen_request_from_modifiers(ctrl_held, shift_held));
+            host.frontend
+                .request_print_screen(print_screen_request_from_modifiers(ctrl_held, shift_held));
         }
         _ => tracing::trace!("Game action: {:?}", action),
     }

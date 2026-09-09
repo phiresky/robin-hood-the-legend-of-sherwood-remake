@@ -514,7 +514,7 @@ impl InteractiveRendererAssembly {
             self.ambience_minimaps.push((initial_ambiance, decoded));
             map
         }) {
-            host.frontend.engine_display.setup_minimap_map(
+            host.frontend.presentation.engine_display.setup_minimap_map(
                 map.hit_mask,
                 map.map_size,
                 map.saved_position,
@@ -551,7 +551,7 @@ impl InteractiveRendererAssembly {
             {
                 let map =
                     crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded);
-                host.frontend.engine_display.setup_minimap_map(
+                host.frontend.presentation.engine_display.setup_minimap_map(
                     map.hit_mask,
                     map.map_size,
                     map.saved_position,
@@ -600,7 +600,7 @@ impl InteractiveRendererAssembly {
         let sample_loader = crate::audio_backend::create_sample_loader_with_files(
             std::path::PathBuf::from(&game.global_options.sound_directory),
             host.preparation_files()?.clone(),
-            host.frontend.shipping.clone(),
+            host.frontend.resources.shipping.clone(),
         );
         let sound_rng = fastrand::Rng::new();
         let (threaded_input, input_translator) = setup_input_and_camera(
@@ -617,7 +617,7 @@ impl InteractiveRendererAssembly {
 
         let menu = IngameMenuResources::from_manager(
             &mut self.renderer,
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
             menu_res,
             host.preparation_files()?.clone(),
         );
@@ -783,7 +783,7 @@ impl MissionPresentation {
             .find(|(candidate, _)| *candidate == ambiance)
         {
             let map = crate::level_loading_host::apply_minimap(host, &mut self.renderer, decoded);
-            host.frontend.engine_display.setup_minimap_map(
+            host.frontend.presentation.engine_display.setup_minimap_map(
                 map.hit_mask,
                 map.map_size,
                 map.saved_position,
@@ -804,7 +804,7 @@ impl MissionPresentation {
     ) {
         super::render::prepare_zoom_presentation(
             engine,
-            &host.frontend.engine_display,
+            &host.frontend.presentation.engine_display,
             host,
             &mut self.renderer,
             &mut hud.zoom_tooltip,
@@ -869,7 +869,7 @@ impl MissionPresentation {
         ambiance: robin_engine::engine::Ambiance,
         bypass_fog_sprites_crash: bool,
     ) {
-        host.frontend.rebind_frame_holder_ambiance(
+        host.frontend.resources.rebind_frame_holder_ambiance(
             ambiance,
             bypass_fog_sprites_crash,
             shadow_color,

@@ -111,7 +111,7 @@ pub(super) fn drive_lost_sherwood_gate(
 
         let pseudo_red = crate::mission_descriptors::for_presentation(
             host.application_context(),
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
             last_id,
         );
         let per_mission_text = pseudo_red.as_ref().and_then(|descriptor| {

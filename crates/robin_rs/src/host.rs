@@ -1788,126 +1788,121 @@ impl Default for ViewportState {
 /// ```
 #[derive(Default)]
 pub struct HostFrontend {
-    // ── Rendering / GPU surfaces ─────────────────────────────────
-    pub(crate) mission_surfaces: crate::mission_render_resources::MissionRenderResources,
+    /// Mission assets survive snapshot replacement, but retire with the mission.
+    pub resources: FrontendResources,
+    /// Host-local render state, advanced by named tick/render phases.
+    pub presentation: FrontendPresentation,
     pub viewport: ViewportState,
-    pub engine_display: engine_api::HostDisplayState,
 
-    // ── Input ────────────────────────────────────────────────────
     /// Independently owned controls, gestures, spatial hits, and cursor feedback.
-    /// Pointer lifecycle changes belong to the named frontend operations below,
-    /// which also retire capture and gesture state.
-    /// Spatial queries publish whole snapshots; readers cannot mutate hit fields.
     pub input: InputState,
-
-    /// Paired pointer-event ownership, retired together at interaction resets.
+    /// Paired pointer events and gesture trail retire together.
     pointer_sequence: crate::frontend_input::FrontendPointerSequence,
-
-    /// Atomic host-local profile projection. Resolved commands, not preferences,
-    /// cross replay and multiplayer boundaries.
+    /// Atomic profile projection, never a simulation or replay input.
     preferences: FrontendPreferences,
-
-    /// Planning preference, sticky touch mode and non-overridable session policy.
+    /// Preference plus sticky touch mode and non-overridable session policy.
     planning: crate::frontend_input::FrontendPlanning,
-
-    /// Per-portrait cosmetic easing for the independent automatic queue strip.
+    /// Cosmetic fixed-tick easing, invalidated when the entity timeline changes.
     queue_strip_animations: QueueStripAnimations,
-
-    /// Entity-bound feedback is retired atomically at interaction boundaries.
+    /// Entity-bound targeting/hover feedback, invalidated at interaction boundaries.
     interaction: FrontendInteraction,
-
-    /// Live frame observations and deferred diagnostic output. Drawing borrows
-    /// these immutably; explicit update operations own sampling and consumption.
+    /// Observations survive snapshot loads; pending console output does not.
     diagnostics: crate::frontend_diagnostics::FrontendDiagnostics,
-
-    /// Back-to-front entity draw order.  Host-cached derived state —
-    /// recomputed from [`Engine::compute_display_order`] once per frame
-    /// after the tick, before the input-dispatch and render passes.
-    /// Consumed by the render loop (iteration), input hit-test
-    /// (`find_focusable_entity`), and titbit Z flush (depth lookup).
-    /// Not sim state: never serialized, never hashed.
-    pub draw_order: DrawOrder,
-
-    /// Ping-pong animation phase for the PC selection ring.  Advanced
-    /// once per frame inside `Game::run_engine_tick`, gated on the same
-    /// `should_run_hourglass` check as the sim tick (so pause / console
-    /// freeze the ring).  Only `SelectionMarkRenderer` reads it —
-    /// purely cosmetic, lives host-side.
-    pub selection_mark: engine_markers::SelectionMark,
-
-    // ── Assets that live only on the host side ───────────────────
-    /// Decoded sprite frame bank. Host-only because `FrameHolder`
-    /// lives in `robin_assets`, which depends on `robin_engine` — so
-    /// engine's `LevelAssets` can't carry it. Shared via `Arc` so
-    /// `Engine::clone` stays cheap.
-    frame_holder: Arc<FrameHolder>,
-
-    /// Engine-side opacity view of [`Self::frame_holder`]. Installed only after
-    /// variant generation and the initial Arno-law bind are complete. Runtime
-    /// ambiance rebinds publish a new immutable generation through this shared
-    /// handle so cloned `LevelAssets` never retain a detached COW dictionary.
-    frame_holder_opacity: Option<Arc<PublishedFrameHolder>>,
-
-    /// Shipping-datadir handle. Host-only (asset-layer type). Holds the
-    /// path/resource layout for the currently-loaded shipping build so
-    /// the resource manager can resolve relative lookups.
-    pub shipping: Option<Arc<ShippingDatadir>>,
-
-    /// Physical key bound to the `DisplayMap` shortcut.  The game loop
-    /// reads this on each frame and emits a minimap-toggle command on
-    /// key release.  `None` means no accelerator bound.  Lives host-side
-    /// — the engine has no reason to know which key the UI is bound to.
+    /// Single-slot deferred capture. Drained after render_frame, before present,
+    /// to write the composited frame as screen%03u.png in the save directory.
+    /// Ctrl requests a wide snapshot; Shift applies the historical 3x3 median
+    /// filter. Only named queue/consume operations expose this pending request.
+    pending_print_screen: Option<PrintScreenRequest>,
+    /// Physical DisplayMap shortcut, retained with the host's local preferences.
     pub minimap_fast_key: Option<winit::keyboard::KeyCode>,
-
-    // ── Host-side managers ───────────────────────────────────────
-    /// Immediate-mode draw helper (line segments, ellipses, gauges).
-    pub draw_manager: DrawManager,
-    /// PC info hover popup (HP, equipment). Populated from sim's
-    /// `SideEffects.overlay`.
-    pub pc_info_overlay: PcInfoOverlay,
-
-    // ── Pixel-level fade (script opcode `FADE_TO_BLACK`) ─────────
-    /// Active fade-to-black ramp driven by the `FADE_TO_BLACK` script
-    /// opcode.  When set, the renderer draws a black overlay with a
-    /// per-frame alpha ramp — alpha climbs from 0→255 over `speed`
-    /// frames (fade out), then falls 255→0 over the next `speed`
-    /// frames (fade back in).
-    pub fade_to_black: Option<FadeToBlack>,
-
-    /// Last tick's `SideEffects.skip_render` decision. Read by the
-    /// per-frame render loop in `game_session` to short-circuit the
-    /// GPU pass when fast-forward mode wants to skip.
-    pub skip_render: bool,
-
-    /// Set when the PrintScreen keybind fires.  Drained in the render
-    /// loop after `render_frame` (before `present()`) which reads back
-    /// the composited frame and writes it to disk as `screen%03u.png`
-    /// in the save directory. Ctrl requests a wide snapshot; Shift
-    /// applies the historical 3x3 median filter to the captured frame.
-    pub pending_print_screen: Option<PrintScreenRequest>,
-
-    /// Slow-motion pacing toggle. Toggled by `MSG_SLOW_MOTION` (the
-    /// bound SlowMotion key — Pause by default).  Consumed by the
-    /// frame pacing block at the bottom of `run_mission`: when set
-    /// (and neither console nor engine fast-forward are active), the
-    /// 40 ms frame target is multiplied by 10.
+    /// Local MSG_SLOW_MOTION pacing toggle (Pause by default). Multiplies the
+    /// 40 ms frame target by ten unless console or engine fast-forward is active.
+    /// Neither snapshot state nor deterministic input; survives save restoration.
     pub slow_motion: bool,
-
-    /// One-frame "a UI widget stole input focus" latch.  Set by
-    /// `MSG_UI_HAS_FOCUS` during the frame's message dispatch and
-    /// cleared every frame during input-state reset. The sole consumer
-    /// (`RHDISPLAY_INITZOOM`) is itself unported, so this field
-    /// currently only tracks the flag for future consumers.  Not sim
-    /// state — purely transient per-frame input gating.
+    /// One-frame MSG_UI_HAS_FOCUS latch; cleared during input-state reset.
+    /// Its original RHDISPLAY_INITZOOM consumer remains unported, so this tracks
+    /// transient input gating for future consumers, never simulation state.
     pub ui_focus: bool,
+}
 
-    // ── Persistent background decals ─
-    /// Per-FX-entity persistent background decals replacing the legacy
-    /// map-patch bake/restore surface pipeline. A queued map-patch insertion
-    /// inserts or replaces the entity's decal; a queued restore removes it.
-    /// Draw order is owned by the collection: replacement keeps its position,
-    /// removal preserves survivor order, and reinsertion appends.
+/// Mission-owned decoded and uploaded resources. Snapshot restoration deliberately
+/// leaves these intact. GPU retirement requires the originating renderer; a new
+/// mission receives a fresh owner rather than reusing the previous mission's banks.
+#[derive(Default, Serialize)]
+pub struct FrontendResources {
+    pub(crate) mission_surfaces: crate::mission_render_resources::MissionRenderResources,
+    /// Decoded sprite bank, host-only because FrameHolder is an asset-layer type.
+    /// Immutable Arc generations keep clones cheap and synchronize sprite drawing
+    /// with the engine's pixel-opacity reader.
+    #[serde(skip)]
+    frame_holder: Arc<FrameHolder>,
+    /// Published only after variant generation and the initial Arno-law bind.
+    /// Runtime ambiance changes publish a new immutable generation through this
+    /// handle so cloned LevelAssets never retain a detached COW dictionary.
+    #[serde(skip)]
+    frame_holder_opacity: Option<Arc<PublishedFrameHolder>>,
+    /// Resource layout bound at Host construction; snapshots cannot replace it.
+    #[serde(skip)]
+    pub shipping: Option<Arc<ShippingDatadir>>,
+    /// Persistent FX-entity decals replacing map-patch bake/restore surfaces.
+    /// Replacement keeps draw position; removal preserves survivor order;
+    /// reinsertion appends. Level loading explicitly clears the previous level.
     pub(crate) background_decals: BackgroundDecals,
+}
+
+impl<'de> Deserialize<'de> for FrontendResources {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "frontend resources require mission preparation",
+        ))
+    }
+}
+
+/// Presentation state is not simulation state. Save restoration updates the
+/// display machine through Engine::restore_from_snapshot and retires only the
+/// selection animation here; camera, overlays and script fades retain their
+/// historical lifetimes instead of being blanket-defaulted.
+#[derive(Default, Serialize)]
+pub struct FrontendPresentation {
+    pub engine_display: engine_api::HostDisplayState,
+    /// Back-to-front entity order, computed from Engine::compute_display_order
+    /// once per frame after the tick and before input dispatch and rendering.
+    /// Render iteration, focus hit-testing and titbit Z-flush share this cache.
+    /// Derived host state: never serialized or included in simulation hashes.
+    #[serde(skip)]
+    pub draw_order: DrawOrder,
+    /// PC-selection-ring ping-pong animation. Advanced once per fixed tick under
+    /// the same should_run_hourglass gate as simulation, so pause and console
+    /// freeze it. Only SelectionMarkRenderer reads this cosmetic phase.
+    #[serde(skip)]
+    pub selection_mark: engine_markers::SelectionMark,
+    /// Immediate drawing helper synchronized from the viewport before rendering.
+    pub draw_manager: DrawManager,
+    pub pc_info_overlay: PcInfoOverlay,
+    /// FADE_TO_BLACK pixel ramp: alpha rises from 0 to 255 over speed frames,
+    /// then falls back over the next speed frames. Advanced only at the live
+    /// presentation boundary, never by screenshot or thumbnail drawing.
+    pub fade_to_black: Option<FadeToBlack>,
+    /// Last tick's SideEffects.skip_render; fast-forward can skip the GPU pass.
+    pub skip_render: bool,
+}
+
+impl<'de> Deserialize<'de> for FrontendPresentation {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "frontend presentation is rebuilt by live phases",
+        ))
+    }
+}
+
+impl FrontendPresentation {
+    fn restore_snapshot(&mut self) {
+        // The restored display machine is installed by the snapshot adapter.
+        // Draw order is recomputed by frame preparation before input/rendering.
+        // Preserve overlay/fade and draw-helper state, as the historical load
+        // path does; only selection's cosmetic phase restarts at this boundary.
+        self.selection_mark = engine_markers::SelectionMark::default();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1988,6 +1983,41 @@ impl FrontendInteraction {
 }
 
 impl HostFrontend {
+    /// Queue one capture of this live mission; a newer shortcut replaces the
+    /// previous unconsumed request, matching the original single-slot behavior.
+    pub fn request_print_screen(&mut self, request: PrintScreenRequest) {
+        self.pending_print_screen = Some(request);
+    }
+
+    pub fn take_print_screen(&mut self) -> Option<PrintScreenRequest> {
+        self.pending_print_screen.take()
+    }
+
+    pub fn take_wide_snapshot_request(&mut self) -> bool {
+        if self.pending_print_screen == Some(PrintScreenRequest::WideSnapshot) {
+            self.pending_print_screen = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// One snapshot boundary for input and deferred frontend requests. Resource
+    /// handles, camera pose, preferences and diagnostics history remain live.
+    fn restore_snapshot(&mut self) {
+        self.reset_interaction(InteractionReset::SnapshotRestored);
+        self.diagnostics.clear_console_output();
+        self.pending_print_screen = None;
+    }
+
+    /// Called on both success and failure when leaving an interactive mission.
+    /// The owning Host is then consumed; only renderer uploads need explicit
+    /// retirement, while input and pending output can no longer cross missions.
+    pub(crate) fn retire_mission(&mut self, renderer: &mut crate::renderer::Renderer) {
+        self.resources.retire(renderer);
+        self.restore_snapshot();
+    }
+
     pub fn selected_view_element(&self) -> Option<EntityId> {
         self.interaction.selected_view_element
     }
@@ -2195,7 +2225,7 @@ impl HostFrontend {
             self.input = InputState::default();
             self.planning.cancel_touch();
             self.queue_strip_animations.clear();
-            self.selection_mark = engine_markers::SelectionMark::default();
+            self.presentation.restore_snapshot();
         }
     }
 
@@ -2924,7 +2954,7 @@ pub struct HostScripting {
 /// let mut host = Host::scratch(1024.0, 768.0);
 /// let frontend = &mut host.frontend;
 /// let effects = &mut host.effects;
-/// frontend.clear_background_decals();
+/// frontend.resources.clear_background_decals();
 /// robin_rs::blit_to_map::drain_pending_bg_blits(frontend, effects);
 /// ```
 ///
@@ -3092,7 +3122,10 @@ impl Host {
         let mut frontend = HostFrontend {
             viewport: ViewportState::new(screen_width, screen_height),
             input: InputState::focused(),
-            shipping: snapshot.shipping,
+            resources: FrontendResources {
+                shipping: snapshot.shipping,
+                ..Default::default()
+            },
             ..Default::default()
         };
         // Startup has no pending world commands or attached presentation window.
@@ -3136,15 +3169,12 @@ impl Host {
         // quick-load would leave the rubber-band box active with stale
         // screen coordinates, or keep a stale `focused_entity_id` that
         // no longer exists in the reloaded entity array.
-        self.frontend
-            .reset_interaction(InteractionReset::SnapshotRestored);
+        self.frontend.restore_snapshot();
 
         // Drop any UI-request queues that were in flight before the
         // load.  They live host-side now — accumulated from per-tick
         // `SideEffects.pending_*` by `Host::apply_side_effects`.
         self.effects.clear();
-        self.frontend.diagnostics_mut().clear_console_output();
-        self.frontend.pending_print_screen = None;
     }
 
     /// Apply engine outputs using only the frontend, audio and effect queues.
@@ -3180,7 +3210,7 @@ impl HostFrontend {
         local_seat: engine_player_command::PlayerId,
     ) -> GameCode {
         if let Some(fade) = fx.fade_to_black {
-            self.fade_to_black = fade;
+            self.presentation.fade_to_black = fade;
         }
         if let Some(show) = fx.set_draw_hidden {
             self.input.feedback.draw_hidden = show;
@@ -3247,7 +3277,7 @@ impl HostFrontend {
             // subsequent double-click.
             self.input.ignore_mouse_event(true, true, true);
         }
-        self.skip_render = fx.skip_render;
+        self.presentation.skip_render = fx.skip_render;
         // Dispatch sim-emitted sound commands onto the SoundManager.
         // Most variants queue into `SoundManager::pending_sounds` and
         // are played out by `SoundManager::hourglass`; the two that
@@ -3404,20 +3434,26 @@ impl HostFrontend {
         effects.background_blits.extend(fx.bg_blits);
         fx.code
     }
+}
 
+impl FrontendResources {
+    fn retire(&mut self, renderer: &mut crate::renderer::Renderer) {
+        self.mission_surfaces.retire(renderer);
+        self.background_decals.clear();
+    }
     /// Current immutable rendering generation. Retaining a clone preserves that
     /// generation, but cannot replace either the renderer or opacity publisher.
     ///
     /// ```compile_fail,E0616
-    /// use robin_rs::host::HostFrontend;
-    /// fn replace(frontend: &mut HostFrontend) {
+    /// use robin_rs::host::FrontendResources;
+    /// fn replace(frontend: &mut FrontendResources) {
     ///     frontend.frame_holder = Default::default();
     /// }
     /// ```
     ///
     /// ```compile_fail,E0596
-    /// use robin_rs::host::HostFrontend;
-    /// fn mutate(frontend: &mut HostFrontend) {
+    /// use robin_rs::host::FrontendResources;
+    /// fn mutate(frontend: &mut FrontendResources) {
     ///     frontend.frame_holder().apply_arno_law(0);
     /// }
     /// ```
@@ -3450,8 +3486,8 @@ impl HostFrontend {
     /// replace the engine generation independently of the renderer.
     ///
     /// ```compile_fail,E0599
-    /// use robin_rs::host::HostFrontend;
-    /// fn replace_opacity(frontend: &mut HostFrontend) {
+    /// use robin_rs::host::FrontendResources;
+    /// fn replace_opacity(frontend: &mut FrontendResources) {
     ///     let reader = frontend.publish_frame_holder_opacity();
     ///     reader.publish(frontend.frame_holder().clone());
     /// }
@@ -3526,7 +3562,9 @@ impl HostFrontend {
     pub fn clear_background_decals(&mut self) {
         self.background_decals.clear();
     }
+}
 
+impl HostFrontend {
     pub fn install_trajectory_ground_mark_sprite(&mut self, data: &GroundMarkSpriteData) {
         self.interaction
             .trajectory_preview
@@ -3844,6 +3882,95 @@ mod interaction_reset_tests {
     }
 
     #[test]
+    fn frontend_snapshot_boundary_retires_requests_but_preserves_live_resources_and_presentation() {
+        let mut host = Host::scratch(640.0, 480.0);
+        let sprites = Arc::clone(host.frontend.resources.frame_holder());
+        host.frontend
+            .request_print_screen(PrintScreenRequest::Median3x3);
+        host.frontend
+            .diagnostics_mut()
+            .queue_console_output("old mission output".into());
+        host.frontend.diagnostics_mut().record_frame(100, 7);
+        host.frontend.diagnostics_mut().observe_present_cost(42);
+        host.frontend.presentation.fade_to_black = Some(FadeToBlack {
+            speed: 20,
+            frames_remaining: 13,
+        });
+        host.frontend.presentation.pc_info_overlay.visible = true;
+        host.frontend.presentation.skip_render = true;
+        host.frontend.slow_motion = true;
+        let before = serde_json::to_value(&host.frontend.presentation).unwrap();
+
+        host.post_load_reset();
+        host.post_load_reset(); // Retirement is idempotent, not a second rebuild.
+
+        assert!(host.frontend.take_print_screen().is_none());
+        assert!(
+            host.frontend
+                .diagnostics_mut()
+                .take_console_output()
+                .is_empty()
+        );
+        assert_eq!(host.frontend.diagnostics().max_pending_sounds(), 7);
+        assert_eq!(
+            host.frontend.diagnostics().native_refresh_present_cost_us(),
+            42
+        );
+        assert!(Arc::ptr_eq(
+            &sprites,
+            host.frontend.resources.frame_holder()
+        ));
+        assert_eq!(
+            serde_json::to_value(&host.frontend.presentation).unwrap(),
+            before
+        );
+        assert!(host.frontend.slow_motion);
+
+        // Mission replacement constructs a fresh Host instead of resetting the
+        // old mission's resources in place. Camera/preferences are then bound
+        // explicitly by startup, and no pending output crosses that boundary.
+        let next = Host::scratch(640.0, 480.0);
+        assert!(!Arc::ptr_eq(
+            &sprites,
+            next.frontend.resources.frame_holder()
+        ));
+        assert!(next.frontend.presentation.fade_to_black.is_none());
+        assert!(!next.frontend.presentation.pc_info_overlay.visible);
+        assert!(!next.frontend.slow_motion);
+    }
+
+    #[test]
+    fn capture_slot_preserves_wide_branch_and_latest_request_wins() {
+        let mut frontend = HostFrontend::default();
+        frontend.request_print_screen(PrintScreenRequest::Median3x3);
+        assert!(!frontend.take_wide_snapshot_request());
+        assert_eq!(
+            frontend.take_print_screen(),
+            Some(PrintScreenRequest::Median3x3)
+        );
+        assert!(frontend.take_print_screen().is_none());
+        frontend.request_print_screen(PrintScreenRequest::Plain);
+        frontend.request_print_screen(PrintScreenRequest::WideSnapshot);
+        assert!(frontend.take_wide_snapshot_request());
+        assert!(!frontend.take_wide_snapshot_request());
+        assert!(frontend.take_print_screen().is_none());
+        frontend.request_print_screen(PrintScreenRequest::Plain);
+        frontend.reset_interaction(InteractionReset::ModalClosed);
+        assert_eq!(
+            frontend.take_print_screen(),
+            Some(PrintScreenRequest::Plain)
+        );
+    }
+
+    #[test]
+    fn lifecycle_owner_diagnostics_cannot_restore_runtime_authority() {
+        let resources = serde_json::to_value(FrontendResources::default()).unwrap();
+        assert!(serde_json::from_value::<FrontendResources>(resources).is_err());
+        let presentation = serde_json::to_value(FrontendPresentation::default()).unwrap();
+        assert!(serde_json::from_value::<FrontendPresentation>(presentation).is_err());
+    }
+
+    #[test]
     fn ready_context_rejects_bootstrap_and_its_serialized_form() {
         let bootstrap = ApplicationContext::default();
         let bytes = serde_json::to_vec(&bootstrap).unwrap();
@@ -3898,7 +4025,7 @@ mod interaction_reset_tests {
         );
         assert_eq!(host.frontend.viewport.zoom_factor, 2.0);
         assert!(host.frontend.planning.enabled());
-        assert!(host.frontend.mission_surfaces.map().is_none());
+        assert!(host.frontend.resources.mission_surfaces.map().is_none());
     }
 
     #[test]
@@ -4187,6 +4314,7 @@ mod application_context_tests {
         assert!(
             easy_host
                 .frontend
+                .resources
                 .shipping
                 .as_ref()
                 .unwrap()
@@ -4196,6 +4324,7 @@ mod application_context_tests {
         assert!(
             !easy_host
                 .frontend
+                .resources
                 .shipping
                 .as_ref()
                 .unwrap()
@@ -4205,6 +4334,7 @@ mod application_context_tests {
         assert!(
             hard_host
                 .frontend
+                .resources
                 .shipping
                 .as_ref()
                 .unwrap()
@@ -4980,10 +5110,17 @@ mod application_context_tests {
 
         let mut host = Host::scratch(1024.0, 768.0);
         host.frontend
+            .resources
             .install_frame_holder_before_publication(dictionary_frame_holder(INITIAL_NIGHT_COLOR));
-        let reader = host.frontend.publish_frame_holder_opacity();
-        let published = host.frontend.frame_holder_opacity.as_ref().unwrap().clone();
-        let old_renderer = Arc::clone(host.frontend.frame_holder());
+        let reader = host.frontend.resources.publish_frame_holder_opacity();
+        let published = host
+            .frontend
+            .resources
+            .frame_holder_opacity
+            .as_ref()
+            .unwrap()
+            .clone();
+        let old_renderer = Arc::clone(host.frontend.resources.frame_holder());
         let old_opacity_snapshot = published.snapshot();
 
         let mut assets = engine_api::LevelAssets::new();
@@ -4996,11 +5133,11 @@ mod application_context_tests {
         let solid_point = MapPoint::new(101.0, 100.0);
 
         assert!(Arc::ptr_eq(
-            &host.frontend.frame_holder,
+            &host.frontend.resources.frame_holder,
             &published.snapshot()
         ));
         assert!(!rendered_dictionary_pixel_is_opaque(
-            &host.frontend.frame_holder,
+            &host.frontend.resources.frame_holder,
             SpriteVariant::Day,
             INITIAL_NIGHT_COLOR,
             0,
@@ -5014,28 +5151,32 @@ mod application_context_tests {
         // publish that exact Arc to the original and cloned LevelAssets
         // opacity handles.
         host.frontend
+            .resources
             .rebind_frame_holder_shadow_color(REBOUND_NIGHT_COLOR);
 
         // Retained readers are immutable snapshots. Live engine handles follow
         // publication, while an old render generation stays byte-for-byte old.
         assert!(Arc::ptr_eq(&old_renderer, &old_opacity_snapshot));
-        assert!(!Arc::ptr_eq(&old_renderer, host.frontend.frame_holder()));
+        assert!(!Arc::ptr_eq(
+            &old_renderer,
+            host.frontend.resources.frame_holder()
+        ));
         assert_eq!(
             old_renderer.dictionaries()[0].shadow_color(),
             INITIAL_NIGHT_COLOR
         );
         assert_eq!(
-            host.frontend.frame_holder().dictionaries()[0].shadow_color(),
+            host.frontend.resources.frame_holder().dictionaries()[0].shadow_color(),
             REBOUND_NIGHT_COLOR
         );
 
         assert!(Arc::ptr_eq(
-            &host.frontend.frame_holder,
+            &host.frontend.resources.frame_holder,
             &published.snapshot()
         ));
         for variant in [SpriteVariant::Day, SpriteVariant::Night] {
             let renderer_shadow = rendered_dictionary_pixel_is_opaque(
-                &host.frontend.frame_holder,
+                &host.frontend.resources.frame_holder,
                 variant,
                 REBOUND_NIGHT_COLOR,
                 0,
@@ -5049,7 +5190,7 @@ mod application_context_tests {
             assert!(!renderer_shadow);
         }
         assert!(rendered_dictionary_pixel_is_opaque(
-            &host.frontend.frame_holder,
+            &host.frontend.resources.frame_holder,
             SpriteVariant::Day,
             REBOUND_NIGHT_COLOR,
             1,
@@ -5062,38 +5203,55 @@ mod application_context_tests {
     #[should_panic(expected = "published frame holder cannot be mutated")]
     fn published_sprite_bank_cannot_reopen_loading_mutation() {
         let mut frontend = HostFrontend::default();
-        frontend.publish_frame_holder_opacity();
-        frontend.frame_holder_before_publication_mut();
+        frontend.resources.publish_frame_holder_opacity();
+        frontend.resources.frame_holder_before_publication_mut();
     }
 
     #[test]
     #[should_panic(expected = "frame-holder opacity was already published")]
     fn sprite_publication_cannot_replace_the_live_reader() {
         let mut frontend = HostFrontend::default();
-        frontend.publish_frame_holder_opacity();
-        frontend.publish_frame_holder_opacity();
+        frontend.resources.publish_frame_holder_opacity();
+        frontend.resources.publish_frame_holder_opacity();
     }
 
     #[test]
     #[should_panic(expected = "published frame holder cannot be mutated")]
     fn sprite_bank_installation_cannot_replace_a_published_generation() {
         let mut frontend = HostFrontend::default();
-        frontend.publish_frame_holder_opacity();
-        frontend.install_frame_holder_before_publication(FrameHolder::new());
+        frontend.resources.publish_frame_holder_opacity();
+        frontend
+            .resources
+            .install_frame_holder_before_publication(FrameHolder::new());
     }
 
     #[test]
     fn ambiance_variant_rebind_publishes_one_new_generation_and_keeps_old_snapshot() {
         let mut frontend = HostFrontend::default();
-        frontend.install_frame_holder_before_publication(dictionary_frame_holder(0x0040));
-        frontend.publish_frame_holder_opacity();
-        let old_renderer = Arc::clone(frontend.frame_holder());
-        let published = frontend.frame_holder_opacity.as_ref().unwrap().clone();
+        frontend
+            .resources
+            .install_frame_holder_before_publication(dictionary_frame_holder(0x0040));
+        frontend.resources.publish_frame_holder_opacity();
+        let old_renderer = Arc::clone(frontend.resources.frame_holder());
+        let published = frontend
+            .resources
+            .frame_holder_opacity
+            .as_ref()
+            .unwrap()
+            .clone();
 
-        frontend.rebind_frame_holder_ambiance(engine_api::Ambiance::Fog, false, 0x1234);
+        frontend
+            .resources
+            .rebind_frame_holder_ambiance(engine_api::Ambiance::Fog, false, 0x1234);
 
-        assert!(!Arc::ptr_eq(&old_renderer, frontend.frame_holder()));
-        assert!(Arc::ptr_eq(frontend.frame_holder(), &published.snapshot()));
+        assert!(!Arc::ptr_eq(
+            &old_renderer,
+            frontend.resources.frame_holder()
+        ));
+        assert!(Arc::ptr_eq(
+            frontend.resources.frame_holder(),
+            &published.snapshot()
+        ));
         assert!(
             !old_renderer
                 .variant_dictionaries(SpriteVariant::Night)
@@ -5106,17 +5264,19 @@ mod application_context_tests {
         );
         assert!(
             frontend
+                .resources
                 .frame_holder()
                 .variant_dictionaries(SpriteVariant::Night)
                 .is_empty()
         );
         assert!(
             !frontend
+                .resources
                 .frame_holder()
                 .variant_dictionaries(SpriteVariant::Fog)
                 .is_empty()
         );
-        assert_eq!(frontend.frame_holder().global_shadow(), 10);
+        assert_eq!(frontend.resources.frame_holder().global_shadow(), 10);
         assert_eq!(old_renderer.dictionaries()[0].shadow_color(), 0x0040);
         assert_eq!(
             published.snapshot().dictionaries()[0].shadow_color(),

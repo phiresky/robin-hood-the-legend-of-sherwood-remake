@@ -68,12 +68,13 @@ fn main() {
     let mut host = Host::scratch(1024.0, 768.0);
     if let Err(e) = host
         .frontend
+        .resources
         .frame_holder_before_publication_mut()
         .initialize_sprite_bank(".")
     {
         tracing::warn!("sprite bank: {e}");
     }
-    assets.bank_signature = host.frontend.frame_holder().signature();
+    assets.bank_signature = host.frontend.resources.frame_holder().signature();
 
     // Load the mission script before level init so the level loader can
     // resolve `current_mission_idx`'s script from LevelAssets.

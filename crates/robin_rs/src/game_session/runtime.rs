@@ -2596,7 +2596,7 @@ mod tests {
             let MissionPresentationPhase {
                 host, game, engine, ..
             } = world.presentation_phase();
-            host.frontend.draw_order = engine.compute_display_order();
+            host.frontend.presentation.draw_order = engine.compute_display_order();
             game.display_message("presentation only".into(), 2);
             assert_eq!(robin_engine::replay::state_hash(engine), original);
         }

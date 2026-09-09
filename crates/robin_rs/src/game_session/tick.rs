@@ -153,7 +153,7 @@ pub(super) fn tick_audio(
 ///
 /// - Drain deferred patch-effect background decal updates.
 ///
-/// The back-to-front draw order (`host.frontend.draw_order`) is refreshed at the
+/// The back-to-front draw order (`host.frontend.presentation.draw_order`) is refreshed at the
 /// top of the main loop via `engine.compute_display_order()` — it's host-
 /// cache derived state, not sim state, and lives outside the command
 /// pipeline.
@@ -173,16 +173,19 @@ pub(super) fn sync_render_camera(frontend: &mut crate::host::HostFrontend) {
         // The original game's refresh updates
         // the draw manager from the current camera before any world-space
         // overlay uses it.
-        frontend.draw_manager.update_drawing_parameters(
-            0,
-            MapBBox::from_coords(
-                view.x,
-                view.y,
-                view.x + (screen.x - 1.0) / zoom,
-                view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
-            ),
-            zoom,
-        );
+        frontend
+            .presentation
+            .draw_manager
+            .update_drawing_parameters(
+                0,
+                MapBBox::from_coords(
+                    view.x,
+                    view.y,
+                    view.x + (screen.x - 1.0) / zoom,
+                    view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
+                ),
+                zoom,
+            );
     }
 }
 
