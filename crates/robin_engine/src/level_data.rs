@@ -5258,7 +5258,8 @@ mod tests {
             repo.join("mods/multi-team-demos/Data/Levels/MultiTeamFourArmies.level.json");
         let armies = LoadedLevel::hackable_from_json(&fs::read(armies_path).unwrap()).unwrap();
         assert_eq!(armies.mission.header.map_filename, "OpenBattlefield");
-        for asset in ["OpenBattlefield.map.png", "OpenBattlefield.min.png"] {
+        // Packaged terrain is JPEG XL; the optional .map.png is an editor override.
+        for asset in ["OpenBattlefield.map", "OpenBattlefield.min.png"] {
             assert!(
                 repo.join("mods/multi-team-demos/Data/Levels/Day")
                     .join(asset)
@@ -5295,7 +5296,7 @@ mod tests {
             repo.join("mods/multi-team-demos/Data/Levels/MultiTeamFourGrades.level.json");
         let grades = LoadedLevel::hackable_from_json(&fs::read(grades_path).unwrap()).unwrap();
         assert_eq!(grades.mission.header.map_filename, "OpenBattlefield");
-        for asset in ["OpenBattlefield.map.png", "OpenBattlefield.min.png"] {
+        for asset in ["OpenBattlefield.map", "OpenBattlefield.min.png"] {
             assert!(
                 repo.join("mods/multi-team-demos/Data/Levels/Day")
                     .join(asset)
