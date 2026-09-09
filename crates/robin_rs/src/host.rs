@@ -168,12 +168,22 @@ struct ApplicationServices {
     leaderboard_receipts: Mutex<crate::leaderboard_receipt_watcher::ApplicationReceiptWatcher>,
 }
 
-#[cfg(all(target_arch = "wasm32", feature = "audio"))]
 impl Drop for ApplicationServices {
     fn drop(&mut self) {
+        #[cfg(all(target_arch = "wasm32", feature = "audio"))]
         if let Some(audio) = self.browser_audio.get_mut().as_ref() {
             audio.retire();
         }
+        // Stop admission before releasing the application's replay owner. Its
+        // Drop drains native work even when normal async shutdown was skipped.
+        match self.http.get_mut() {
+            Ok(http) => http.stop(),
+            Err(error) => {
+                log::error!("application HTTP transport poisoned during shutdown");
+                error.into_inner().stop();
+            }
+        }
+        self.replay.shutdown_on_drop();
     }
 }
 
@@ -395,6 +405,18 @@ impl FrontendPreferences {
 }
 
 impl ApplicationContext {
+    /// Final application exit only. Mission retirement must not cancel frozen
+    /// exports belonging to the previous recording generation.
+    pub async fn shutdown(&self) -> Result<(), String> {
+        let transport = self.stop_http_transport();
+        let exports = self.required_services()?.replay.shutdown().await;
+        match (transport, exports) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(transport), Err(exports)) => Err(format!("{transport}; {exports}")),
+        }
+    }
+
     pub fn start_http_transport(&self, port: u16) -> Result<(), String> {
         self.required_services()?
             .http

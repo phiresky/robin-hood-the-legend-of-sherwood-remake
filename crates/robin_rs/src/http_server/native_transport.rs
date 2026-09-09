@@ -212,6 +212,9 @@ async fn acquire(
 
 fn response(status: u16, body: ReplyBody) -> Response {
     let (content_type, data) = match body {
+        ReplyBody::ReplayExport(_) => {
+            panic!("deferred replay export must be resolved before HTTP encoding")
+        }
         ReplyBody::Json(value) => (
             "application/json",
             serde_json::to_vec(&value).expect("RPC JSON values serialize"),
