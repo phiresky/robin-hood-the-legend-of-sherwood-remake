@@ -511,6 +511,20 @@ impl DistributedModCache {
             .checked_add(partials.len())
             .and_then(|count| count.checked_add(usize::from(!current_seen)))
             .ok_or_else(|| "distributed-mod cache entry count overflow".to_owned())?;
+        // Most chunks need no eviction: avoid sorting candidates or cloning
+        // the complete index until capacity actually has to be reclaimed.
+        if entry_count <= DISTRIBUTED_MOD_CACHE_ENTRY_LIMIT
+            && complete_bytes
+                .checked_add(staged_after)
+                .ok_or_else(|| "distributed-mod cache byte accounting overflow".to_owned())?
+                <= DISTRIBUTED_MOD_CACHE_BYTE_LIMIT
+        {
+            return Ok(());
+        }
+        partials.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
+        let mut partial_candidates = partials
+            .into_iter()
+            .filter(|(path, _, _)| path != current_path);
         let mut partial_evictions = Vec::new();
         let mut complete_evictions = Vec::new();
         let prior_index = self.index.clone();
@@ -527,13 +541,7 @@ impl DistributedModCache {
 
             // Incomplete transfers are disposable and use filesystem mtime as
             // their durable LRU stamp. Preserve the transfer being appended.
-            if let Some((index, _)) = partials
-                .iter()
-                .enumerate()
-                .filter(|(_, (path, _, _))| path != current_path)
-                .min_by(|(_, a), (_, b)| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)))
-            {
-                let (path, bytes, _) = partials.remove(index);
+            if let Some((path, bytes, _)) = partial_candidates.next() {
                 staged_after = staged_after.checked_sub(bytes).ok_or_else(|| {
                     "distributed-mod partial byte accounting underflow".to_owned()
                 })?;
@@ -784,6 +792,7 @@ impl DistributedModCache {
             ));
         }
         partials.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.0.cmp(&b.0)));
+        let mut partials = partials.into_iter();
         while self
             .index
             .entries
@@ -796,13 +805,9 @@ impl DistributedModCache {
                 .ok_or_else(|| "distributed-mod cache byte accounting overflow".to_owned())?
                 > DISTRIBUTED_MOD_CACHE_BYTE_LIMIT
         {
-            if partials.is_empty() {
-                return Err(
-                    "distributed-mod cache exceeds limits without a disposable partial entry"
-                        .to_owned(),
-                );
-            }
-            let (path, bytes, _) = partials.remove(0);
+            let (path, bytes, _) = partials.next().ok_or_else(|| {
+                "distributed-mod cache exceeds limits without a disposable partial entry".to_owned()
+            })?;
             discard_partial_path(&path).map_err(|error| {
                 format!("remove stale partial cache {}: {error}", path.display())
             })?;
@@ -1142,6 +1147,50 @@ mod tests {
             .expect("new transfer evicts an older partial to stay under the byte cap");
         assert!(!full.exists());
         assert!(bytes_cache.partial_path(&[2; 32]).exists());
+    }
+
+    #[test]
+    fn staging_orders_multiple_evictions_and_preserves_the_active_partial() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_string_lossy();
+        let mut cache = DistributedModCache::open(&root).unwrap();
+        let active = cache.partial_path(&[0; 32]);
+        for value in 0..4u8 {
+            let path = cache.partial_path(&[value; 32]);
+            let file = std::fs::File::create(&path).unwrap();
+            file.set_len(if value == 0 {
+                1
+            } else {
+                DISTRIBUTED_MOD_CACHE_BYTE_LIMIT / 2
+            })
+            .unwrap();
+            file.set_modified(std::time::UNIX_EPOCH).unwrap();
+        }
+        cache.append_chunk([0; 32], 2, 1, &[8]).unwrap();
+        assert_eq!(std::fs::read(active).unwrap(), [0, 8]);
+        assert!(!cache.partial_path(&[1; 32]).exists());
+        assert!(!cache.partial_path(&[2; 32]).exists());
+        assert!(cache.partial_path(&[3; 32]).exists());
+    }
+
+    #[test]
+    fn reopening_prunes_multiple_partials_in_stable_path_order_on_timestamp_ties() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().to_string_lossy();
+        let cache = DistributedModCache::open(&root).unwrap();
+        let paths: Vec<_> = (0..DISTRIBUTED_MOD_CACHE_ENTRY_LIMIT + 3)
+            .map(|index| cache.root.join(format!("{index:064x}.part")))
+            .collect();
+        for path in &paths {
+            let file = std::fs::File::create(path).unwrap();
+            file.set_len(1).unwrap();
+            file.set_modified(std::time::UNIX_EPOCH).unwrap();
+        }
+        drop(cache);
+        let _reopened = DistributedModCache::open(&root).unwrap();
+        for (index, path) in paths.iter().enumerate() {
+            assert_eq!(path.exists(), index >= 3, "{}", path.display());
+        }
     }
 
     #[test]
