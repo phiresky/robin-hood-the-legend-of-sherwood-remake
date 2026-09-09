@@ -2107,7 +2107,7 @@ pub(crate) fn verify_menu_gpu_ownership(renderer: &mut Renderer, other: &mut Ren
         manager
     }
     let mut external = picture_manager(42, &picture);
-    let mut duplicate = external.duplicate();
+    let mut duplicate = external.clone();
     let external_surface = cache.picture_from(renderer, &mut external, 42).unwrap();
     let duplicate_surface = cache.picture_from(renderer, &mut duplicate, 42).unwrap();
     assert_ne!(external_surface.id, duplicate_surface.id);

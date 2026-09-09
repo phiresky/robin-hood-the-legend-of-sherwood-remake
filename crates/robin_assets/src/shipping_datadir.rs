@@ -2983,7 +2983,7 @@ mod tests {
         let mut text = datadir
             .active_resource("Data/Text/Level.res")
             .unwrap()
-            .duplicate();
+            .clone();
         assert!(
             !text
                 .get_string(descriptor.popup_text.text_table_id, 0)

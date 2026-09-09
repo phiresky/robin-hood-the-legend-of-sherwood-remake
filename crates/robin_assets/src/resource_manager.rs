@@ -458,6 +458,9 @@ pub struct ResourceManager {
     cache_identity: ResourceCacheIdentity,
 }
 
+/// Copy resident payloads and recovery metadata while sharing the bound file
+/// reader. The new owner receives a fresh cache identity so renderer uploads
+/// cannot be mistaken for those belonging to the source manager.
 impl Clone for ResourceManager {
     fn clone(&self) -> Self {
         Self {
@@ -887,16 +890,6 @@ impl ResourceManager {
             && self.data.strings.is_empty()
             && self.data.waves.is_empty()
             && self.data.mouse_entries.is_empty()
-    }
-
-    /// Deep-copy this manager. Used to hand an identical (ideally already
-    /// eagerly-decoded) view of a shared archive like `DEFAULT.RES` to a
-    /// second owner without re-attaching and re-decoding it.
-    pub fn duplicate(&self) -> Self {
-        // A duplicate has the same recovery origin as its source. Merging a
-        // shipping payload deliberately preserves the destination authority,
-        // but duplicating an owner must retain it along with the value maps.
-        self.clone()
     }
 
     /// Ensure a string resource is loaded (recover if missing).
@@ -1735,9 +1728,6 @@ mod tests {
         let mut clone = manager.clone();
         assert!(Arc::ptr_eq(clone.files.as_ref().unwrap(), &files));
         clone.recover_resource(42).unwrap();
-        let mut duplicate = manager.duplicate();
-        assert!(Arc::ptr_eq(duplicate.files.as_ref().unwrap(), &files));
-        duplicate.recover_resource(42).unwrap();
         // TODO: flattened integer-key resource maps do not currently support
         // JSON deserialization. Exercise authority omission with empty maps;
         // the historical bitcode contract below covers populated resources.
@@ -1891,7 +1881,7 @@ mod cache_lookup_tests {
     #[test]
     fn identities_separate_sources_clones_and_deserialization() {
         let source = ResourceManager::new();
-        let duplicate = source.duplicate();
+        let duplicate = source.clone();
         let decoded: ResourceManager =
             serde_json::from_value(serde_json::to_value(&source).unwrap()).unwrap();
         let binary: ResourceManager = bitcode::decode(&bitcode::encode(&source)).unwrap();

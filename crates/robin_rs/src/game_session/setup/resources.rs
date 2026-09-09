@@ -89,7 +89,7 @@ pub(in crate::game_session) enum DecodingInterfaceResources {
 fn decode_interface_managers(mut cursor: ResourceManager) -> (ResourceManager, ResourceManager) {
     let started = web_time::Instant::now();
     let decoded = cursor.decode_all_encoded_pictures();
-    let menu = cursor.duplicate();
+    let menu = cursor.clone();
     tracing::info!(
         resources = decoded,
         elapsed_ms = started.elapsed().as_millis() as u64,
@@ -241,7 +241,7 @@ impl DecodingInterfaceResources {
             Self::Ready { cursor } => {
                 // No worker ran: hand the menus their own lazily-decoded
                 // copy, exactly like the old second attach.
-                let menu = cursor.duplicate();
+                let menu = cursor.clone();
                 (cursor, menu)
             }
             #[cfg(not(target_arch = "wasm32"))]
@@ -469,7 +469,7 @@ mod tests {
         let cursor = interface_stage_fixture();
         let mut graphical = MissionProcessResources {
             text: ResourceManager::new(),
-            interface: cursor.duplicate(),
+            interface: cursor.clone(),
             audio_backend: None,
         };
         let mut headless = MissionEngineResources {
