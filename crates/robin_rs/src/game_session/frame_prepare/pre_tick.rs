@@ -270,7 +270,7 @@ fn dispatch_pre_tick_pointer_commands(
         .engine
         .selected_action_for_seat(host.transport.local_seat())
         == engine_profiles::Action::Bow;
-    if host.frontend.trajectory_preview.hover_ticks() != 0 || bow_armed {
+    if host.frontend.trajectory_preview().hover_ticks() != 0 || bow_armed {
         let cmd = PlayerCommand::PerformOrientation { mouse_map };
         dispatch_local_command(&host.transport, &mut frame.commands, &cmd);
     }

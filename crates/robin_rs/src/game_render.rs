@@ -1044,7 +1044,7 @@ pub(crate) fn render_ground_marks(
     render_ground_mark_set(
         host,
         presentation,
-        host.frontend.trajectory_preview.ground_marks(),
+        host.frontend.trajectory_preview().ground_marks(),
         engine,
         renderer,
     );

@@ -475,24 +475,24 @@ impl ConsoleOverlay {
         } else if let Some(command) = parse_with_final(trimmed, dev.console.use_final) {
             dev.console.push_history(trimmed);
             if command.is_host_only() {
-                FrameConsoleResponse::from(engine.host_console().dispatch(
-                    assets,
-                    dev,
-                    &mut host.frontend.selected_view_element,
-                    &command,
-                ))
+                let mut selected = host.frontend.selected_view_element();
+                let response = engine
+                    .host_console()
+                    .dispatch(assets, dev, &mut selected, &command);
+                host.frontend.set_selected_view_element(selected);
+                FrameConsoleResponse::from(response)
             } else {
                 // HONOLULU's remembered actor is a host UI latch. Resolve it
                 // to the concrete authoritative target before admission.
                 let selected_view_element = if matches!(command, ConsoleCommand::Honolulu) {
-                    if let Some(selected) = host.frontend.selected_view_element {
+                    if let Some(selected) = host.frontend.selected_view_element() {
                         dev.last_actor_in_honolulu = Some(selected);
                     }
                     host.frontend
-                        .selected_view_element
+                        .selected_view_element()
                         .or(dev.last_actor_in_honolulu)
                 } else {
-                    host.frontend.selected_view_element
+                    host.frontend.selected_view_element()
                 };
                 let action = ExternalAction::ConsoleCommand {
                     command,
@@ -510,7 +510,8 @@ impl ConsoleOverlay {
                         response,
                         selected_view_element,
                     }) => {
-                        host.frontend.selected_view_element = selected_view_element;
+                        host.frontend
+                            .set_selected_view_element(selected_view_element);
                         response
                     }
                     _ => panic!("console action admission returned no console result"),

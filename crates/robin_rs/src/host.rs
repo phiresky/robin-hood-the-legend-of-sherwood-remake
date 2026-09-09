@@ -1631,8 +1631,8 @@ pub struct HostFrontend {
     /// Per-portrait cosmetic easing for the independent automatic queue strip.
     queue_strip_animations: QueueStripAnimations,
 
-    /// Host-local targeting prompt armed by the tactical patrol portrait button.
-    pub tactical_targeting: crate::frontend_targeting::TacticalTargeting,
+    /// Entity-bound feedback is retired atomically at interaction boundaries.
+    interaction: FrontendInteraction,
 
     /// Live frame observations and deferred diagnostic output. Drawing borrows
     /// these immutably; explicit update operations own sampling and consumption.
@@ -1652,25 +1652,6 @@ pub struct HostFrontend {
     /// freeze the ring).  Only `SelectionMarkRenderer` reads it —
     /// purely cosmetic, lives host-side.
     pub selection_mark: engine_markers::SelectionMark,
-
-    /// Entity whose vision cone is currently displayed as an overlay.
-    /// Set when the player alt-hovers an NPC (or an ally via a cheat).
-    ///
-    /// UI-mode state: read by the render-phase vision-cone overlay,
-    /// the alt-key UI handler, and the console cheats that target
-    /// "the NPC you're currently looking at" (Honolulu, Morpheus,
-    /// Hades, LastManStanding).  Not sim state: nothing inside the
-    /// tick reads it, so it's excluded from the rollback hash by
-    /// virtue of living on Host.
-    pub selected_view_element: Option<EntityId>,
-
-    // ── Trajectory preview (transient) ───────────────────────────
-    pub trajectory_preview: crate::frontend_preview::FrontendTrajectoryPreview,
-    /// Host-only explanation rendered at the current item target.
-    pub item_effect_preview: Option<ItemEffectPreview>,
-    /// Host-local titbit-like hover preview.  Currently only the
-    /// helper-needed jump ghost from the original mouse-hover path.
-    pub host_titbit_preview: Option<HostTitbitPreview>,
 
     // ── Assets that live only on the host side ───────────────────
     /// Decoded sprite frame bank. Host-only because `FrameHolder`
@@ -1705,9 +1686,6 @@ pub struct HostFrontend {
     /// Mouse gesture / way-point tracker for "draw-path-to-target"
     /// movement. Pure host UI state.
     pub mouse_way: MouseWay,
-
-    /// Last released sword gesture for the optional, host-only coach overlay.
-    pub gesture_coach_feedback: Option<crate::mouse_way::GestureCoachFeedback>,
 
     // ── Pixel-level fade (script opcode `FADE_TO_BLACK`) ─────────
     /// Active fade-to-black ramp driven by the `FADE_TO_BLACK` script
@@ -1772,7 +1750,159 @@ pub enum InteractionReset {
     SnapshotRestored,
 }
 
+/// Private owner of entity-bound, transient interaction feedback. No mutable
+/// projection exposes the collection: callers must use the matching operation.
+/// Diagnostic serialization is allowed, but restoring feedback without its
+/// live input sequence and mission entity identities would be invalid.
+#[derive(Default)]
+struct FrontendInteraction {
+    tactical_targeting: crate::frontend_targeting::TacticalTargeting,
+    trajectory_preview: crate::frontend_preview::FrontendTrajectoryPreview,
+    /// Alt-hover vision cone and console target; never simulation state.
+    selected_view_element: Option<EntityId>,
+    item_effect_preview: Option<ItemEffectPreview>,
+    host_titbit_preview: Option<HostTitbitPreview>,
+    gesture_coach_feedback: Option<crate::mouse_way::GestureCoachFeedback>,
+}
+
+impl Serialize for FrontendInteraction {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("FrontendInteraction", 6)?;
+        state.serialize_field("tactical_targeting", &self.tactical_targeting)?;
+        state.serialize_field("trajectory_preview", &self.trajectory_preview)?;
+        state.serialize_field("selected_view_element", &self.selected_view_element)?;
+        state.serialize_field("has_item_effect", &self.item_effect_preview.is_some())?;
+        state.serialize_field("has_titbit", &self.host_titbit_preview.is_some())?;
+        state.serialize_field(
+            "has_gesture_feedback",
+            &self.gesture_coach_feedback.is_some(),
+        )?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for FrontendInteraction {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "interaction feedback requires a live mission/input sequence",
+        ))
+    }
+}
+
+impl FrontendInteraction {
+    fn reset(&mut self, reason: InteractionReset) {
+        self.tactical_targeting.cancel();
+        self.trajectory_preview.reset_after_restore();
+        self.item_effect_preview = None;
+        self.host_titbit_preview = None;
+        self.gesture_coach_feedback = None;
+        if reason == InteractionReset::SnapshotRestored {
+            self.selected_view_element = None;
+        }
+    }
+
+    fn invalidate_action(&mut self) {
+        self.trajectory_preview.invalidate_action();
+        self.host_titbit_preview = None;
+    }
+}
+
 impl HostFrontend {
+    pub fn selected_view_element(&self) -> Option<EntityId> {
+        self.interaction.selected_view_element
+    }
+    pub fn set_selected_view_element(&mut self, selected: Option<EntityId>) {
+        self.interaction.selected_view_element = selected;
+    }
+    pub fn trajectory_preview(&self) -> &crate::frontend_preview::FrontendTrajectoryPreview {
+        &self.interaction.trajectory_preview
+    }
+    pub(crate) fn apply_trajectory_preview(
+        &mut self,
+        preview: engine_api::input::TrajectoryPreview,
+    ) {
+        self.interaction.trajectory_preview.apply(preview);
+    }
+    pub(crate) fn reject_trajectory_hit(&mut self) {
+        self.interaction.trajectory_preview.reject_hit();
+    }
+    pub(crate) fn apply_trajectory_crumple_prediction(&mut self, predicted: bool) {
+        self.interaction
+            .trajectory_preview
+            .apply_crumple_prediction(predicted);
+    }
+    /// Begin a hover observation by retiring last frame's explanations. Geometry
+    /// and the hover timer retain their original, independently scoped lifetime.
+    pub(crate) fn observe_hover_feedback(
+        &mut self,
+        shift: bool,
+        action: robin_engine::profiles::Action,
+        mouse: MapPoint,
+    ) {
+        self.interaction.host_titbit_preview = None;
+        self.interaction.item_effect_preview = None;
+        self.interaction
+            .trajectory_preview
+            .observe_hover(shift, action, mouse);
+    }
+    pub(crate) fn advance_hover_markers(&mut self, display_delay: u32) {
+        self.interaction
+            .trajectory_preview
+            .advance_hover_markers(display_delay);
+    }
+    pub(crate) fn tick_trajectory_marks(
+        &mut self,
+        view: geo::Coord<f32>,
+        zoom: f32,
+        width: i32,
+        height: i32,
+        frame: u32,
+    ) {
+        self.interaction
+            .trajectory_preview
+            .tick_marks(view, zoom, width, height, frame);
+    }
+    pub fn tactical_targeting(&self) -> &crate::frontend_targeting::TacticalTargeting {
+        &self.interaction.tactical_targeting
+    }
+    pub fn arm_tactical_patrol(&mut self, soldiers: Vec<EntityId>, formation: TacticalFormation) {
+        self.interaction
+            .tactical_targeting
+            .arm_patrol(soldiers, formation);
+    }
+    pub fn resolve_tactical_target(
+        &mut self,
+        destination: MapPoint,
+    ) -> Option<engine_player_command::PlayerCommand> {
+        self.interaction
+            .tactical_targeting
+            .resolve_world_click(destination)
+    }
+    pub fn cancel_tactical_target(&mut self) -> bool {
+        self.interaction.tactical_targeting.cancel()
+    }
+    pub fn item_effect_preview(&self) -> Option<ItemEffectPreview> {
+        self.interaction.item_effect_preview
+    }
+    pub fn set_item_effect_preview(&mut self, preview: Option<ItemEffectPreview>) {
+        self.interaction.item_effect_preview = preview;
+    }
+    pub fn host_titbit_preview(&self) -> Option<HostTitbitPreview> {
+        self.interaction.host_titbit_preview
+    }
+    pub fn set_host_titbit_preview(&mut self, preview: Option<HostTitbitPreview>) {
+        self.interaction.host_titbit_preview = preview;
+    }
+    pub fn gesture_coach_feedback(&self) -> Option<crate::mouse_way::GestureCoachFeedback> {
+        self.interaction.gesture_coach_feedback
+    }
+    pub fn set_gesture_coach_feedback(
+        &mut self,
+        feedback: Option<crate::mouse_way::GestureCoachFeedback>,
+    ) {
+        self.interaction.gesture_coach_feedback = feedback;
+    }
     pub(crate) fn queue_strip_animations(&self) -> &QueueStripAnimations {
         &self.queue_strip_animations
     }
@@ -1831,12 +1961,11 @@ impl HostFrontend {
 
     pub fn reset_interaction(&mut self, reason: InteractionReset) {
         self.reset_pointer_sequence();
-        self.reset_targeting_preview();
+        self.interaction.reset(reason);
         if reason == InteractionReset::SnapshotRestored {
             self.input = InputState::default();
             self.planning.cancel_touch();
             self.queue_strip_animations.clear();
-            self.selected_view_element = None;
             self.selection_mark = engine_markers::SelectionMark::default();
         }
     }
@@ -1849,14 +1978,6 @@ impl HostFrontend {
         self.mouse_way.clear();
         self.viewport.cancel_touch_motion();
         self.ui_focus = false;
-    }
-
-    fn reset_targeting_preview(&mut self) {
-        self.tactical_targeting.cancel();
-        self.trajectory_preview.reset_after_restore();
-        self.item_effect_preview = None;
-        self.host_titbit_preview = None;
-        self.gesture_coach_feedback = None;
     }
 }
 
@@ -2818,8 +2939,7 @@ impl Host {
             // into the single host-side preview since there is only
             // ever one visible arc; clearing them together here is an
             // immediate wipe before the next mouse-update frame.
-            self.frontend.trajectory_preview.invalidate_action();
-            self.frontend.host_titbit_preview = None;
+            self.frontend.interaction.invalidate_action();
         }
         if fx.reset_input {
             // MSG_RESET_INPUT clears the rubber-band selection flags
@@ -2844,7 +2964,10 @@ impl Host {
             // hover-trajectory gate (`TIME_TRAJECTORY_DISPLAY`)
             // doesn't re-arm immediately after a modal dialog or task
             // switch.
-            self.frontend.trajectory_preview.interrupt_hover();
+            self.frontend
+                .interaction
+                .trajectory_preview
+                .interrupt_hover();
         }
         if fx.cancel_multi_selection {
             self.frontend.input.cancel_selection_gestures();
@@ -3133,7 +3256,9 @@ impl HostFrontend {
     }
 
     pub fn install_trajectory_ground_mark_sprite(&mut self, data: &GroundMarkSpriteData) {
-        self.trajectory_preview.install_mark_sprite(data);
+        self.interaction
+            .trajectory_preview
+            .install_mark_sprite(data);
     }
 }
 
@@ -3363,6 +3488,52 @@ mod interaction_reset_tests {
     use super::*;
 
     #[test]
+    fn modal_reset_preserves_view_target_but_snapshot_reset_retires_it() {
+        let mut frontend = HostFrontend::default();
+        let selected = EntityId::Soldier(robin_engine::entity_id::SoldierId(7));
+        frontend.set_selected_view_element(Some(selected));
+        frontend.arm_tactical_patrol(vec![selected], TacticalFormation::Line);
+        frontend.apply_trajectory_preview(engine_api::input::TrajectoryPreview::HitNoArc);
+        frontend.reset_interaction(InteractionReset::ModalClosed);
+        assert_eq!(frontend.selected_view_element(), Some(selected));
+        assert!(!frontend.tactical_targeting().is_armed());
+        assert!(!frontend.trajectory_preview().is_valid());
+        frontend.reset_interaction(InteractionReset::SnapshotRestored);
+        assert_eq!(frontend.selected_view_element(), None);
+    }
+
+    #[test]
+    fn hover_observation_retires_explanations_without_cancelling_targeting() {
+        let mut frontend = HostFrontend::default();
+        frontend.arm_tactical_patrol(Vec::new(), TacticalFormation::Line);
+        frontend.set_item_effect_preview(Some(ItemEffectPreview {
+            center: MapPoint::ZERO,
+            radius: None,
+            localization_key: "test",
+            fallback_text: "test",
+            blocked: false,
+        }));
+        frontend.set_host_titbit_preview(Some(HostTitbitPreview::JumpHelperGhost {
+            position: WorldPoint3D::new(0.0, 0.0, 0.0),
+            layer: 0,
+            sector_dir: 0,
+            display_order: 0.0,
+        }));
+        frontend.observe_hover_feedback(false, Default::default(), MapPoint::ZERO);
+        assert!(frontend.item_effect_preview().is_none());
+        assert!(frontend.host_titbit_preview().is_none());
+        assert!(frontend.tactical_targeting().is_armed());
+        assert_eq!(frontend.trajectory_preview().hover_ticks(), 1);
+    }
+
+    #[test]
+    fn interaction_diagnostics_cannot_restore_live_feedback() {
+        let feedback = FrontendInteraction::default();
+        let diagnostic = serde_json::to_vec(&feedback).unwrap();
+        assert!(serde_json::from_slice::<FrontendInteraction>(&diagnostic).is_err());
+    }
+
+    #[test]
     fn ready_context_rejects_bootstrap_and_its_serialized_form() {
         let bootstrap = ApplicationContext::default();
         let bytes = serde_json::to_vec(&bootstrap).unwrap();
@@ -3381,9 +3552,10 @@ mod interaction_reset_tests {
         host.frontend.planning.update_preference(true);
         host.frontend.planning.toggle_touch();
         host.frontend
+            .interaction
             .trajectory_preview
             .apply(robin_engine::engine::input::TrajectoryPreview::HitNoArc);
-        host.frontend.item_effect_preview = Some(ItemEffectPreview {
+        host.frontend.interaction.item_effect_preview = Some(ItemEffectPreview {
             center: MapPoint::ZERO,
             radius: Some(20),
             localization_key: "test",
@@ -3391,6 +3563,7 @@ mod interaction_reset_tests {
             blocked: false,
         });
         host.frontend
+            .interaction
             .tactical_targeting
             .arm_patrol(Vec::new(), TacticalFormation::default());
         host.frontend.viewport.view_position = MapPoint::new(100.0, 200.0);
@@ -3403,9 +3576,9 @@ mod interaction_reset_tests {
         assert!(!host.frontend.pointer_capture.touch_plan_captured());
         assert!(!host.frontend.pointer_capture.take_right_double_click());
         assert!(!host.frontend.planning.touch_latched());
-        assert!(!host.frontend.trajectory_preview.is_valid());
-        assert!(!host.frontend.tactical_targeting.is_armed());
-        assert!(host.frontend.item_effect_preview.is_none());
+        assert!(!host.frontend.interaction.trajectory_preview.is_valid());
+        assert!(!host.frontend.interaction.tactical_targeting.is_armed());
+        assert!(host.frontend.interaction.item_effect_preview.is_none());
         assert_eq!(
             host.frontend.viewport.view_position,
             MapPoint::new(100.0, 200.0)
@@ -3441,38 +3614,51 @@ mod interaction_reset_tests {
     fn action_and_input_effects_keep_their_distinct_preview_reset_scopes() {
         use robin_engine::engine::input::TrajectoryPreview;
         let mut host = Host::scratch(640.0, 480.0);
+        host.frontend.interaction.trajectory_preview.observe_hover(
+            false,
+            Default::default(),
+            MapPoint::ZERO,
+        );
+        host.frontend.interaction.trajectory_preview.observe_hover(
+            false,
+            Default::default(),
+            MapPoint::ZERO,
+        );
         host.frontend
-            .trajectory_preview
-            .observe_hover(false, Default::default(), MapPoint::ZERO);
-        host.frontend
-            .trajectory_preview
-            .observe_hover(false, Default::default(), MapPoint::ZERO);
-        host.frontend
+            .interaction
             .trajectory_preview
             .apply(TrajectoryPreview::HitNoArc);
         host.frontend
+            .interaction
             .tactical_targeting
             .arm_patrol(Vec::new(), TacticalFormation::Line);
         host.apply_side_effects(SideEffects {
             invalidate_trajectory_preview: true,
             ..Default::default()
         });
-        assert!(!host.frontend.trajectory_preview.is_valid());
-        assert_eq!(host.frontend.trajectory_preview.hover_ticks(), 2);
-        assert!(host.frontend.tactical_targeting.is_armed());
+        assert!(!host.frontend.interaction.trajectory_preview.is_valid());
+        assert_eq!(
+            host.frontend.interaction.trajectory_preview.hover_ticks(),
+            2
+        );
+        assert!(host.frontend.interaction.tactical_targeting.is_armed());
         host.frontend
+            .interaction
             .trajectory_preview
             .apply(TrajectoryPreview::HitNoArc);
         host.apply_side_effects(SideEffects {
             reset_input: true,
             ..Default::default()
         });
-        assert_eq!(host.frontend.trajectory_preview.hover_ticks(), 0);
-        assert!(host.frontend.trajectory_preview.is_valid());
-        assert!(host.frontend.tactical_targeting.is_armed());
+        assert_eq!(
+            host.frontend.interaction.trajectory_preview.hover_ticks(),
+            0
+        );
+        assert!(host.frontend.interaction.trajectory_preview.is_valid());
+        assert!(host.frontend.interaction.tactical_targeting.is_armed());
         host.post_load_reset();
-        assert!(!host.frontend.trajectory_preview.is_valid());
-        assert!(!host.frontend.tactical_targeting.is_armed());
+        assert!(!host.frontend.interaction.trajectory_preview.is_valid());
+        assert!(!host.frontend.interaction.tactical_targeting.is_armed());
     }
 }
 

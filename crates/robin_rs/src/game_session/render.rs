@@ -150,10 +150,10 @@ pub(super) fn prepare_fixed_tick_hud(
     if !host.frontend.input.draw_hidden
         && host
             .frontend
-            .selected_view_element
+            .selected_view_element()
             .is_some_and(|id| engine.get_entity(id).is_none() || !engine.fog_entity_visible(id))
     {
-        host.frontend.selected_view_element = None;
+        host.frontend.set_selected_view_element(None);
     }
 
     if let Some(bb) = blazon_bar::build_blazon_bar_state(
@@ -228,7 +228,7 @@ pub(super) fn prepare_fixed_tick_hud(
     if has_hud_fonts {
         // Logging is independent of draws/captures, like the rest of this
         // once-per-tick presentation work.
-        engine.display_ai_log_for_selected(host.frontend.selected_view_element);
+        engine.display_ai_log_for_selected(host.frontend.selected_view_element());
     }
     ui.console_overlay
         .consume_pending_output(host.frontend.diagnostics_mut().take_console_output());
@@ -1270,7 +1270,7 @@ pub(super) fn render_frame(
     let local_seat = host.local_seat;
     // Pre-update captures may still hold a stale selection. Filter their
     // presentation without committing live selected-view state.
-    let selected_view_element = host.frontend.selected_view_element.filter(|&id| {
+    let selected_view_element = host.frontend.selected_view_element().filter(|&id| {
         host.frontend.input.draw_hidden
             || (engine.get_entity(id).is_some() && engine.fog_entity_visible(id))
     });
