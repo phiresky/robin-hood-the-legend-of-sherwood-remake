@@ -18,7 +18,7 @@ pub(super) fn read_optional_json<T: serde::de::DeserializeOwned>(
         return Ok(None);
     }
     let bytes = files
-        .read_all(path)
+        .read_shared(path)
         .map_err(|status| ResourcePreparationError::unavailable(path, status))?;
     serde_json::from_slice(&bytes)
         .map(Some)

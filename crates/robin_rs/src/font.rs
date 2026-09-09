@@ -123,7 +123,7 @@ impl TrueTypeFont {
         let mut font = Self::new_invalid();
 
         let path = sbf_path.to_string_lossy();
-        let data = match files.read_all(&path) {
+        let data = match files.read_shared(&path) {
             Ok(data) => data,
             Err(status) => {
                 tracing::error!(

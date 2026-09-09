@@ -144,7 +144,7 @@ fn prepare_menu_sound(
     let shipping = application_context.shipping_arc()?;
     let path = "Data/Sounds/Menu/menu.fxg";
     let data = files
-        .read_all(path)
+        .read_shared(path)
         .map_err(|error| format!("menu sound bank unreadable at {path}: {error}"))?;
     let entries = robin_engine::sound_cache::parse_menu_bank(&data)
         .map_err(|error| format!("menu sound bank parse failed: {error}"))?;

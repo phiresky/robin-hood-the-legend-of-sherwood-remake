@@ -29,7 +29,7 @@ pub(super) fn attach_mission_archive(
             if present {
                 // Presence alone does not prove the bytes could be acquired
                 // (permissions, truncated backing files, or VFS failures).
-                files.read_all(path).map_err(|status| {
+                files.read_shared(path).map_err(|status| {
                     ResourcePreparationError::unavailable(
                         path,
                         format!("file error {status}; {error:#}"),

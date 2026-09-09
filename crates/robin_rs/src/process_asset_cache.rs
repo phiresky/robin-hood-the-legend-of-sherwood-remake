@@ -836,7 +836,7 @@ fn build(
         }
 
         let fx_bank_path = "Data/Sounds/robin hood.fxg";
-        let fx_bank = match files.read_all(fx_bank_path) {
+        let fx_bank = match files.read_shared(fx_bank_path) {
             Ok(data) => match robin_engine::sound_cache::parse_fx_bank(&data) {
                 Ok(elements) => Some(elements),
                 Err(e) => {
@@ -861,7 +861,7 @@ fn build(
     }
 
     let menu_bank_path = "Data/Sounds/Menu/menu.fxg";
-    let menu_bank = match files.read_all(menu_bank_path) {
+    let menu_bank = match files.read_shared(menu_bank_path) {
         Ok(data) => match robin_engine::sound_cache::parse_menu_bank(&data) {
             Ok(entries) => Some(entries),
             Err(e) => {

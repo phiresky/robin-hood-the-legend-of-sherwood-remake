@@ -1217,9 +1217,9 @@ pub(crate) fn pic_to_surface(renderer: &mut Renderer, pic: &Picture) -> OwnedSur
 fn read_ui_asset(
     name: &str,
     files: &robin_engine::sbfile::SbFileSystem,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<robin_util::asset_fs::AssetBytes> {
     let path = format!("Data/Interface/UI/{name}");
-    files.read_all(&path).map_err(|error| {
+    files.read_shared(&path).map_err(|error| {
         anyhow::anyhow!(
             "required UI asset {path} could not be read (error {error}); \
              is the core overlay datadir (assets/core-datadir/) missing?"

@@ -130,7 +130,7 @@ fn load_terrain_candidate(
         .map_err(|error| format!("failed to probe terrain PNG '{png_path}': {error}"))?
     {
         let bytes = files
-            .read_all(&png_path)
+            .read_shared(&png_path)
             .map_err(|error| format!("failed to read terrain PNG '{png_path}': {error}"))?;
         tracing::info!("Loading hackable terrain PNG: {png_path}");
         return decode_hackable_terrain_png(&bytes, &png_path).map(Some);
@@ -374,7 +374,7 @@ fn finish_background_picture(
             continue;
         }
         let bytes = files
-            .read_all(path)
+            .read_shared(path)
             .map_err(|error| format!("failed to read occlusion depth '{path}': {error}"))?;
         occlusion_depth = Some(decode_occlusion_depth_png(
             &bytes,
@@ -433,7 +433,7 @@ pub fn probe_background_map_dims_with_files(
         // their pixel dimensions come straight from the PNG header.
         let png_path = format!("{path}.png");
         if files.try_exists(&png_path).ok()? {
-            let bytes = files.read_all(&png_path).ok()?;
+            let bytes = files.read_shared(&png_path).ok()?;
             let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
             let reader = decoder.read_info().ok()?;
             let info = reader.info();
@@ -442,7 +442,7 @@ pub fn probe_background_map_dims_with_files(
                 u16::try_from(info.height).ok()?,
             ));
         }
-        if let Ok(bytes) = files.read_all(path) {
+        if let Ok(bytes) = files.read_shared(path) {
             return Picture::terrain_dimensions(&bytes).ok();
         }
     }

@@ -199,8 +199,10 @@ impl EarlyTerrainDecode {
         if files.try_exists(&png).map_err(|error| error.to_string())? {
             return Ok(false);
         }
-        let bytes = files.read_all(&path).map_err(|error| error.to_string())?;
-        Ok(bytes.as_slice() == self.source.as_slice())
+        let bytes = files
+            .read_shared(&path)
+            .map_err(|error| error.to_string())?;
+        Ok(bytes.as_ref() == self.source.as_slice())
     }
 
     pub(super) async fn finish(

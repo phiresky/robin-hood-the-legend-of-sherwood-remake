@@ -106,7 +106,7 @@ pub async fn play_video(
         None => {
             use std::io::Write as _;
 
-            let bytes = files.read_all(path).map_err(|status| {
+            let bytes = files.read_shared(path).map_err(|status| {
                 format!("Video file {path} is unavailable (file error {status})")
             })?;
             let mut temporary = tempfile::Builder::new()
