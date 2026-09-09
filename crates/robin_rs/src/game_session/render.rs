@@ -17,7 +17,7 @@ use crate::game_render::{
 use crate::host::PrintScreenRequest;
 use crate::host::{Host, HostDraw, HostPresentation};
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
-use crate::level_loading_host::EngineLevelLoadExt;
+use crate::level_loading_host::draw_background;
 use crate::presentation::{PresentationFrameId, ZoomPresentationUpdate};
 use crate::renderer::Renderer;
 use crate::save_file::{THUMB_HEIGHT, THUMB_WIDTH, Thumbnail};
@@ -1288,7 +1288,7 @@ pub(super) fn render_frame(
         renderer.clear_frozen_scene();
     }
 
-    engine.draw_background(&host.frontend.viewport, renderer);
+    draw_background(&host.frontend.viewport, renderer);
     crate::blit_to_map::render_background_decals(host.frontend, renderer);
 
     // ═══════════════════════════════════════════════════════════
