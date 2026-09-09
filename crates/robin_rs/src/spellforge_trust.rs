@@ -173,7 +173,7 @@ impl SpellforgeTrustStore {
     ) -> Result<(), String> {
         self.require_available()?;
         metadata.validate()?;
-        let before = self.grants.clone();
+        let before = self.grants.get(&profile_id).cloned();
         let grants = self.grants.entry(profile_id).or_default();
         match grants.binary_search_by_key(&key, |grant| grant.key) {
             Ok(index) => {
@@ -198,7 +198,7 @@ impl SpellforgeTrustStore {
             }
         }
         if let Err(error) = self.save() {
-            self.grants = before;
+            self.restore_profile_grants(profile_id, before);
             return Err(error);
         }
         Ok(())
@@ -206,7 +206,7 @@ impl SpellforgeTrustStore {
 
     pub fn revoke(&mut self, profile_id: u32, key: SpellforgeTrustKey) -> Result<bool, String> {
         self.require_available()?;
-        let before = self.grants.clone();
+        let before = self.grants.get(&profile_id).cloned();
         let removed = self.grants.get_mut(&profile_id).is_some_and(|grants| {
             grants
                 .binary_search_by_key(&key, |grant| grant.key)
@@ -219,7 +219,7 @@ impl SpellforgeTrustStore {
             self.grants.remove(&profile_id);
         }
         if removed && let Err(error) = self.save() {
-            self.grants = before;
+            self.restore_profile_grants(profile_id, before);
             return Err(error);
         }
         Ok(removed)
@@ -227,18 +227,32 @@ impl SpellforgeTrustStore {
 
     pub fn revoke_all(&mut self, profile_id: u32) -> Result<usize, String> {
         self.require_available()?;
-        let before = self.grants.clone();
-        let removed = self
-            .grants
-            .remove(&profile_id)
-            .map_or(0, |grants| grants.len());
+        let Some(grants) = self.grants.remove(&profile_id) else {
+            return Ok(0);
+        };
+        let removed = grants.len();
         if removed != 0
             && let Err(error) = self.save()
         {
-            self.grants = before;
+            self.grants.insert(profile_id, grants);
             return Err(error);
         }
         Ok(removed)
+    }
+
+    fn restore_profile_grants(
+        &mut self,
+        profile_id: u32,
+        before: Option<Vec<SpellforgeTrustGrant>>,
+    ) {
+        match before {
+            Some(grants) => {
+                self.grants.insert(profile_id, grants);
+            }
+            None => {
+                self.grants.remove(&profile_id);
+            }
+        }
     }
 
     pub fn remove_profile(&mut self, profile_id: u32) -> Result<(), String> {
@@ -248,10 +262,8 @@ impl SpellforgeTrustStore {
     /// Explicit recovery used by settings UI after warning the user. This is
     /// the only operation allowed to replace a corrupt store.
     pub fn reset(&mut self) -> Result<(), String> {
-        let before = self.clone();
-        self.schema_version = SPELLFORGE_TRUST_SCHEMA_VERSION;
-        self.grants.clear();
-        self.persistence_error = None;
+        let empty = Self::new(self.save_directory.clone());
+        let before = std::mem::replace(self, empty);
         if let Err(error) = self.save() {
             *self = before;
             return Err(error);
@@ -425,6 +437,68 @@ mod tests {
         assert_eq!(grants[0].metadata.title, "Renamed");
         assert_eq!(grants[0].first_approved_unix_seconds, 10);
         assert_eq!(grants[0].last_approved_unix_seconds, 20);
+    }
+
+    #[test]
+    fn failed_trust_mutations_restore_exact_state_without_touching_other_profiles() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_str().unwrap();
+        let mut saved = SpellforgeTrustStore::new(root.into());
+        saved.grant(1, key(1), metadata("One"), 1).unwrap();
+        saved.grant(1, key(2), metadata("Two"), 2).unwrap();
+        saved
+            .grant(2, key(3), metadata("Other profile"), 3)
+            .unwrap();
+        let before = serde_json::to_value(&saved).unwrap();
+        let disk_before = std::fs::read(SpellforgeTrustStore::store_path(root)).unwrap();
+        let blocked = directory.path().join("not-a-directory");
+        std::fs::write(&blocked, "block publication").unwrap();
+
+        for operation in 0..6 {
+            let mut store = saved.clone();
+            store.save_directory = blocked.to_str().unwrap().into();
+            let result = match operation {
+                0 => store.grant(1, key(4), metadata("New grant"), 4),
+                1 => store.grant(1, key(1), metadata("Updated grant"), 4),
+                2 => store.grant(9, key(4), metadata("New profile"), 4),
+                3 => store.revoke(1, key(1)).map(|_| ()),
+                4 => store.revoke_all(1).map(|_| ()),
+                5 => {
+                    store.persistence_error = Some("previous load error".into());
+                    store.reset()
+                }
+                _ => unreachable!(),
+            };
+            assert!(
+                result.is_err(),
+                "operation {operation} unexpectedly succeeded"
+            );
+            assert_eq!(
+                serde_json::to_value(&store).unwrap(),
+                before,
+                "operation {operation}"
+            );
+            assert_eq!(store.save_directory, blocked.to_str().unwrap());
+            assert_eq!(
+                store.persistence_error.as_deref(),
+                if operation == 5 {
+                    Some("previous load error")
+                } else {
+                    None
+                }
+            );
+            assert_eq!(
+                std::fs::read(SpellforgeTrustStore::store_path(root)).unwrap(),
+                disk_before
+            );
+        }
+
+        // No-op revocations require no publication and leave the archive untouched.
+        saved.save_directory = blocked.to_str().unwrap().into();
+        assert!(!saved.revoke(1, key(99)).unwrap());
+        assert!(!saved.revoke(99, key(1)).unwrap());
+        assert_eq!(saved.revoke_all(99).unwrap(), 0);
+        assert_eq!(serde_json::to_value(&saved).unwrap(), before);
     }
 
     #[test]
