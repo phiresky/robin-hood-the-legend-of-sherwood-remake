@@ -25,7 +25,7 @@ pub(super) async fn dispatch(
     };
     let method = req.method().clone();
 
-    match (&method, path.as_str()) {
+    match (method, path.as_str()) {
         (Method::GET, "/") | (Method::GET, "/info") => (200, info_json().into()),
         (Method::GET, "/natives") => (200, list_natives_json().into()),
         (Method::GET, "/state") => relay(queue, HttpPayload::State).await,
