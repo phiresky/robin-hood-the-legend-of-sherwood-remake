@@ -1359,7 +1359,7 @@ async fn resolve_cold_save_mission_assets(
     }
 }
 
-fn install_and_validate_saved_profile(
+pub(crate) fn install_and_validate_saved_profile(
     profiles: &mut engine_profiles::ProfileManager,
     save: &crate::save_file::GameSaveFile,
 ) -> Result<usize, String> {

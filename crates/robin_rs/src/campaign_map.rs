@@ -278,6 +278,85 @@ impl CampaignMapModalState {
         }
     }
 
+    /// A local, read-only view, with no campaign-map flags or mission timers.
+    pub(crate) fn new_browser(
+        application_context: &ApplicationContext,
+        renderer: &mut Renderer,
+        campaign: &Campaign,
+        profiles: &engine_profiles::ProfileManager,
+        resources: &mut IngameMenuResources,
+    ) -> Self {
+        let profile = application_context
+            .active_profile_snapshot()
+            .expect("campaign manager requires an active profile");
+        let mut graph =
+            CampaignProgressGraph::build(campaign, profiles, Some(&profile.campaign_history));
+        for node in &mut graph.nodes {
+            node.name = application_context.localized_mission_name(node.mission_id, &node.name);
+        }
+        let selected_progress = graph.first_selectable().unwrap_or(0);
+        let assets = CampaignMapAssets::load(
+            renderer,
+            Some(resources),
+            application_context
+                .preparation_files()
+                .expect("campaign manager requires prepared resources"),
+        );
+        Self {
+            items: Vec::new(),
+            assets,
+            frame: FrameWnd::default(),
+            exhibit_grid: ExhibitGridNavigator::new(graph.nodes.len(), selected_progress),
+            graph,
+            presentation: match profile.gameplay_config.campaign_presentation {
+                CampaignPresentationMode::ClassicMap => CampaignPresentationMode::ProgressTree,
+                mode => mode,
+            },
+            input: ModalInputState::new(),
+            pseudo_debrief_at_ms: None,
+            selected_classic: 0,
+            selected_progress,
+            show_achievement_badges: profile.gameplay_config.show_achievement_badges,
+            lifetime_totals: profile.campaign_history.totals(),
+            lifetime_achievements: profile.campaign_history.achievement_aggregation(),
+        }
+    }
+
+    /// Returns whether the application should exit when the browser closes.
+    pub(crate) fn tick_browser(
+        &mut self,
+        window: &mut crate::window::GameWindow,
+        renderer: &mut Renderer,
+        cursor: Option<&ModalCursor<'_>>,
+    ) -> Option<bool> {
+        let (events, transform) = layout::poll_events_with_transform(window, renderer);
+        let exit_requested = events.iter().any(|event| matches!(event, GameEvent::Quit));
+        let choice = self.handle_events(events, transform, true);
+        layout::enter_modal_gpu_phase(renderer);
+        render_campaign_progress(
+            renderer,
+            transform,
+            &self.graph,
+            self.selected_progress,
+            self.presentation,
+            &self.assets,
+            self.show_achievement_badges,
+            self.lifetime_totals,
+            true,
+        );
+        if let Some(cursor) = cursor {
+            cursor.draw(renderer, transform, &self.input);
+        }
+        renderer.present();
+        choice.map(|choice| {
+            assert!(
+                matches!(choice, CampaignMapChoice::Quit),
+                "campaign browser cannot launch missions"
+            );
+            exit_requested
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn tick(
         &mut self,
@@ -299,6 +378,59 @@ impl CampaignMapModalState {
         }
 
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
+        let final_choice = self.handle_events(events, transform, false);
+
+        layout::enter_modal_gpu_phase(renderer);
+        match self.presentation {
+            CampaignPresentationMode::ClassicMap => render_campaign_map(
+                renderer,
+                transform,
+                campaign,
+                profiles,
+                campaign_map,
+                &self.items,
+                self.selected_classic,
+                &self.assets,
+                menu_resources,
+                &self.input,
+                &self.frame,
+                self.show_achievement_badges,
+                campaign.achievement_aggregation(profiles),
+                self.lifetime_achievements,
+            ),
+            CampaignPresentationMode::ProgressTree | CampaignPresentationMode::SherwoodMuseum => {
+                render_campaign_progress(
+                    renderer,
+                    transform,
+                    &self.graph,
+                    self.selected_progress,
+                    self.presentation,
+                    &self.assets,
+                    self.show_achievement_badges,
+                    self.lifetime_totals,
+                    false,
+                )
+            }
+        }
+        if let Some(cursor) = &cursor {
+            cursor.draw(renderer, transform, &self.input);
+        }
+        renderer.present();
+
+        if final_choice.is_some() {
+            return final_choice;
+        }
+        self.pseudo_debrief_at_ms
+            .is_some_and(|at| crate::window::process_uptime_ms() >= at)
+            .then_some(CampaignMapChoice::PseudoDebriefTimer)
+    }
+
+    fn handle_events(
+        &mut self,
+        events: Vec<GameEvent>,
+        transform: MenuTransform,
+        browsing: bool,
+    ) -> Option<CampaignMapChoice> {
         let mut final_choice = None;
         let input_enabled = self
             .pseudo_debrief_at_ms
@@ -376,8 +508,8 @@ impl CampaignMapModalState {
                 } if self.presentation != CampaignPresentationMode::ClassicMap => {
                     match self.presentation {
                         CampaignPresentationMode::ProgressTree => {
-                            self.selected_progress =
-                                (self.selected_progress + 1).min(self.graph.nodes.len() - 1)
+                            self.selected_progress = (self.selected_progress + 1)
+                                .min(self.graph.nodes.len().saturating_sub(1))
                         }
                         CampaignPresentationMode::SherwoodMuseum => {
                             self.exhibit_grid.navigate(0, 1);
@@ -424,6 +556,8 @@ impl CampaignMapModalState {
                     keycode: Keycode::Return | Keycode::KpEnter | Keycode::Space,
                     ..
                 } if self.presentation != CampaignPresentationMode::ClassicMap
+                    && !browsing
+                    && !self.graph.nodes.is_empty()
                     && self.graph.nodes[self.selected_progress].selectable =>
                 {
                     final_choice = Some(CampaignMapChoice::SelectMission(
@@ -452,7 +586,7 @@ impl CampaignMapModalState {
                         self.selected_progress = index;
                         self.exhibit_grid =
                             ExhibitGridNavigator::new(self.graph.nodes.len(), index);
-                        if self.graph.nodes[index].selectable {
+                        if !browsing && self.graph.nodes[index].selectable {
                             final_choice = Some(CampaignMapChoice::SelectMission(
                                 self.graph.nodes[index].mission_idx,
                             ));
@@ -493,48 +627,7 @@ impl CampaignMapModalState {
             }
         }
 
-        layout::enter_modal_gpu_phase(renderer);
-        match self.presentation {
-            CampaignPresentationMode::ClassicMap => render_campaign_map(
-                renderer,
-                transform,
-                campaign,
-                profiles,
-                campaign_map,
-                &self.items,
-                self.selected_classic,
-                &self.assets,
-                menu_resources,
-                &self.input,
-                &self.frame,
-                self.show_achievement_badges,
-                campaign.achievement_aggregation(profiles),
-                self.lifetime_achievements,
-            ),
-            CampaignPresentationMode::ProgressTree | CampaignPresentationMode::SherwoodMuseum => {
-                render_campaign_progress(
-                    renderer,
-                    transform,
-                    &self.graph,
-                    self.selected_progress,
-                    self.presentation,
-                    &self.assets,
-                    self.show_achievement_badges,
-                    self.lifetime_totals,
-                )
-            }
-        }
-        if let Some(cursor) = &cursor {
-            cursor.draw(renderer, transform, &self.input);
-        }
-        renderer.present();
-
-        if final_choice.is_some() {
-            return final_choice;
-        }
-        self.pseudo_debrief_at_ms
-            .is_some_and(|at| crate::window::process_uptime_ms() >= at)
-            .then_some(CampaignMapChoice::PseudoDebriefTimer)
+        final_choice
     }
 }
 
@@ -601,6 +694,7 @@ fn render_campaign_progress(
     assets: &CampaignMapAssets,
     show_achievement_badges: bool,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
+    browsing: bool,
 ) {
     if let Some(background) = assets.background.as_ref() {
         layout::draw_background(renderer, transform, background, 0, 0, MAP_W, MAP_H);
@@ -708,6 +802,7 @@ fn render_campaign_progress(
 
     // Existing flag art marks the selected exhibit in the modal grid.
     if presentation == CampaignPresentationMode::SherwoodMuseum
+        && !graph.nodes.is_empty()
         && let Some(flag) = assets.flag.as_ref()
     {
         let (x, y, _, h) = progress_node_rect(graph, presentation, selected);
@@ -768,8 +863,22 @@ fn render_campaign_progress(
                 90,
             );
         }
+        if graph.nodes.is_empty() {
+            layout::render_text_virt_font(
+                renderer,
+                font,
+                transform,
+                "No campaign missions in this content",
+                25,
+                160,
+            );
+            return;
+        }
         let node = &graph.nodes[selected];
-        let action = if node.history_replay {
+        // TODO: Localize campaign history controls and the unavailable-action reason.
+        let action = if browsing {
+            "Mission launch unavailable here - return to Sherwood"
+        } else if node.history_replay {
             "Enter: replay (campaign changes discarded)"
         } else if node.selectable {
             "Enter: inspect and launch"
@@ -1519,4 +1628,126 @@ fn blink_on() -> bool {
         .map(|d| d.as_millis())
         .unwrap_or(0);
     (ms / 350).is_multiple_of(2)
+}
+
+#[cfg(test)]
+mod browser_tests {
+    use super::*;
+    use robin_engine::{mission::Mission, profiles::MissionProfile};
+
+    fn browser() -> CampaignMapModalState {
+        let mut profiles = engine_profiles::ProfileManager::new();
+        profiles.missions.push(MissionProfile {
+            id: 1,
+            mission_name: "Sherwood".into(),
+            location: MissionLocation::Sherwood,
+            ..Default::default()
+        });
+        for id in [10, 20] {
+            profiles.missions.push(MissionProfile {
+                id,
+                mission_name: format!("Mission {id}"),
+                ..Default::default()
+            });
+        }
+        let mut campaign = Campaign::default();
+        for idx in 0..3 {
+            campaign.missions.push(Mission {
+                profile_idx: Some(idx),
+                ..Mission::new()
+            });
+            campaign.accessible_mission_indices.push(idx as usize);
+        }
+        let graph = CampaignProgressGraph::build(&campaign, &profiles, None);
+        assert_eq!(graph.nodes.len(), 2);
+        assert!(graph.nodes.iter().all(|node| node.selectable));
+        let history = robin_engine::campaign_history::ProfileCampaignHistory::default();
+        CampaignMapModalState {
+            items: Vec::new(),
+            assets: CampaignMapAssets::default(),
+            frame: FrameWnd::default(),
+            exhibit_grid: ExhibitGridNavigator::new(graph.nodes.len(), 0),
+            graph,
+            presentation: CampaignPresentationMode::ProgressTree,
+            input: ModalInputState::new(),
+            pseudo_debrief_at_ms: None,
+            selected_classic: 0,
+            selected_progress: 0,
+            show_achievement_badges: true,
+            lifetime_totals: history.totals(),
+            lifetime_achievements: history.achievement_aggregation(),
+        }
+    }
+
+    fn key(keycode: Keycode) -> GameEvent {
+        GameEvent::KeyDown {
+            keycode,
+            physical_key: None,
+        }
+    }
+
+    #[test]
+    fn browser_navigates_same_views_but_cannot_launch() {
+        let mut state = browser();
+        let transform = MenuTransform::centered(640, 480);
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Down)], transform, true),
+            None
+        );
+        assert_eq!(state.selected_progress, 1);
+        for presentation in [
+            CampaignPresentationMode::ProgressTree,
+            CampaignPresentationMode::SherwoodMuseum,
+        ] {
+            state.presentation = presentation;
+            for code in [Keycode::Return, Keycode::KpEnter, Keycode::Space] {
+                assert_eq!(state.handle_events(vec![key(code)], transform, true), None);
+            }
+            let (x, y, _, _) = progress_node_rect(&state.graph, presentation, 0);
+            assert_eq!(
+                state.handle_events(
+                    vec![GameEvent::MouseDown(x + 5, y + 5, 1, 0)],
+                    transform,
+                    true
+                ),
+                None
+            );
+            assert_eq!(state.selected_progress, 0);
+            // The same selection still launches normally from Sherwood.
+            assert_eq!(
+                state.handle_events(vec![key(Keycode::Return)], transform, false),
+                Some(CampaignMapChoice::SelectMission(1))
+            );
+        }
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Tab)], transform, true),
+            None
+        );
+        assert_eq!(state.presentation, CampaignPresentationMode::ProgressTree);
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Escape)], transform, true),
+            Some(CampaignMapChoice::Quit)
+        );
+    }
+
+    #[test]
+    fn browser_with_no_missions_still_navigates_and_closes() {
+        let mut state = browser();
+        state.graph.nodes.clear();
+        state.exhibit_grid = ExhibitGridNavigator::new(0, 0);
+        let transform = MenuTransform::centered(640, 480);
+        for code in [
+            Keycode::Down,
+            Keycode::Return,
+            Keycode::Tab,
+            Keycode::Right,
+            Keycode::Return,
+        ] {
+            assert_eq!(state.handle_events(vec![key(code)], transform, true), None);
+        }
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Escape)], transform, true),
+            Some(CampaignMapChoice::Quit)
+        );
+    }
 }

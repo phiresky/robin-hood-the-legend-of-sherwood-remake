@@ -56,3 +56,14 @@ between exhibits; Enter inspects/launches an available mission or starts an
 isolated replay of a completed one. Classic Map exposes the same history and
 practice flow through its History & Practice action. The freely walkable,
 world-space Hall remains deferred.
+
+During any mission, including before reaching Sherwood, **Escape → Campaign
+Manager** opens the same progress tree and Hall of Deeds. Tab switches views;
+arrows or a click select a mission and display its history and badges. Mission
+launching is disabled in this pause-side view. Escape returns to the pause
+menu; the active mission, campaign checkpoint, and rewards are unchanged.
+
+The main menu also has a **Campaign Manager** entry, using the same browse-only
+UI. It reads the selected player's latest resumable checkpoint; players without
+one see a fresh campaign and their lifetime history. Escape returns to the main
+menu. Viewing the campaign does not start a mission or apply a save.

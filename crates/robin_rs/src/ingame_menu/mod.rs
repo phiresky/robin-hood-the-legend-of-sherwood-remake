@@ -9,7 +9,7 @@
 //!   string table.
 //! - [`layout`] — virtual 640x480 coordinate helpers, button/widget layout,
 //!   text rendering and wrapping / pagination helpers.
-//! - [`pause`] — the six-button in-game pause menu.
+//! - [`pause`] — the in-game pause menu, including campaign history access.
 //! - [`briefings`] — renders the primary/secondary objective list in the
 //!   left half of the pause window.
 //! - [`yesno`] — the 400x200 modal confirmation.

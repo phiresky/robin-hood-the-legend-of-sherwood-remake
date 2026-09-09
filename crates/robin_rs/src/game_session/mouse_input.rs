@@ -1434,7 +1434,7 @@ pub(super) fn handle_pause_menu_events(
     callbacks: &mut RustCallbacks,
     event_pump: &mut GameWindow,
     renderer: &mut Renderer,
-    menu_resources: &Option<IngameMenuResources>,
+    menu_resources: &mut Option<IngameMenuResources>,
     audio_backend: &mut Option<KiraAudioBackend>,
     sample_loader: &SampleLoader,
     threaded_input: &mut ThreadedInput,
@@ -1514,6 +1514,20 @@ pub(super) fn handle_pause_menu_events(
                         }
                     }
                 }
+            }
+            PauseMenuOutcome::OpenCampaignManager => {
+                let resources = menu_resources
+                    .as_mut()
+                    .expect("campaign manager requires menu resources");
+                *active_ui_task = Some(ActiveUiTask::CampaignManager(
+                    campaign_map::CampaignMapModalState::new_browser(
+                        host.application_context(),
+                        renderer,
+                        engine.campaign(),
+                        &assets.profile_manager,
+                        resources,
+                    ),
+                ));
             }
             PauseMenuOutcome::OpenOptions => {
                 // Opening options from the in-game menu displays the options menu.

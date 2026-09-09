@@ -4,6 +4,15 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Campaign manager from menus:** Campaign Manager on the main menu or
+  Escape → Campaign Manager during any mission opens the existing progress
+  tree / Hall of Deeds, including before reaching Sherwood. The main menu
+  reads the selected player's latest resumable save, or a fresh campaign if
+  there is no save. Navigation, history, and badge details use the same UI;
+  mission launching is unavailable in this pause-side view. Escape returns to
+  the originating menu without changing the active mission or campaign.
+
+
 - **Combined leaderboards and custom gameplay settings.** Mission and full-campaign
   boards default to all admitted rulesets, with stable ranking and pagination across
   difficulties. Exact Standard/Original boards remain selectable. Published metadata
