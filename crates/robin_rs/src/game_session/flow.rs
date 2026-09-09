@@ -275,6 +275,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let MissionRuntime {
             world,
             timeline: runtime,
+            http,
             ..
         } = runtime;
         let mut startup_timer = (runtime.frame_number() <= 1)
@@ -383,6 +384,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             // frame so `present()` still blits the real frame last.
             let display_snapshot = host.frontend.engine_display.clone();
             drain_screenshots(
+                http,
                 runtime.frame_number(),
                 engine,
                 &display_snapshot,
@@ -700,6 +702,7 @@ impl InteractiveMission {
                     world,
                     timeline,
                     control,
+                    http,
                     ..
                 } = &mut self.runtime;
                 let MissionMutation {
@@ -711,6 +714,7 @@ impl InteractiveMission {
                 } = world.mutation();
                 let terminal_pending = self.frontend.ui.terminal_flow_active();
                 InteractiveFrameSimulation::drive_manual_steps(
+                    http,
                     timeline,
                     &services.callbacks.save_manager,
                     host,

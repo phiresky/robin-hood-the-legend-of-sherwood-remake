@@ -560,6 +560,7 @@ impl MissionFrame {
 /// fields; the graphical driver keeps native process resources in a separate
 /// `InteractiveFrontend` owner.
 pub(super) struct MissionRuntime {
+    pub(super) http: crate::http_server::SessionIngress,
     pub(super) world: MissionWorld,
     pub(super) timeline: TimelineRuntime,
     pub(super) control: MissionControl,
@@ -576,6 +577,7 @@ impl MissionRuntime {
         leaderboard: Option<super::leaderboard_runtime::MissionLeaderboardRuntime>,
     ) -> Self {
         Self {
+            http: crate::http_server::SessionIngress::attach(),
             world,
             timeline,
             control,
@@ -689,14 +691,16 @@ impl MissionRuntime {
             self.world.host.frontend.engine_display = display;
             frame.mark_post_external_actions_applied();
         }
-        let actions = crate::http_server::drain_global(
-            &mut self.world.manager,
-            &mut self.world.host,
+        let actions = self.http.drain(
+            &mut self.world.manager.engine,
+            &mut self.world.host.frontend,
+            self.world.host.transport.local_seat(),
+            self.world.host.transport.net(),
             &self.world.assets,
             &mut frame.post_commands,
         );
         self.timeline
-            .record_input_taints(crate::http_server::take_pending_replay_taints());
+            .record_input_taints(self.http.take_pending_replay_taints());
         frame.record_applied_post_external_actions(actions);
         self.timeline
             .trace(FrameContractStage::HostRpcAndTimelineCommit);

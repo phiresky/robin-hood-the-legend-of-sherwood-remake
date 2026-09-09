@@ -488,6 +488,7 @@ pub(super) fn prepare_zoom_presentation(
 /// no transient state rollback. Viewport captures borrow an immutable frontend;
 /// the full-map adapter alone temporarily changes and restores camera geometry.
 pub(super) fn drain_screenshots(
+    http: &mut crate::http_server::SessionIngress,
     sim_frame: u32,
     engine: &Engine,
     display: &engine_api::HostDisplayState,
@@ -496,7 +497,7 @@ pub(super) fn drain_screenshots(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
-    let pending = crate::http_server::take_pending_screenshots(sim_frame);
+    let pending = http.take_pending_screenshots(sim_frame);
     drain_screenshot_requests(pending, engine, display, host, assets, dev, ctx);
 }
 
@@ -529,8 +530,12 @@ pub(super) fn drain_screenshot_requests(
 
 /// Fulfil ordinary viewport screenshots from the already-presented topmost
 /// pause-side UI. Specialized requests remain queued for `drain_screenshots`.
-pub(super) fn drain_presented_ui_screenshots(sim_frame: u32, renderer: &Renderer) {
-    let pending = crate::http_server::take_pending_ui_screenshots(sim_frame);
+pub(super) fn drain_presented_ui_screenshots(
+    http: &mut crate::http_server::SessionIngress,
+    sim_frame: u32,
+    renderer: &Renderer,
+) {
+    let pending = http.take_pending_ui_screenshots(sim_frame);
     if pending.is_empty() {
         return;
     }

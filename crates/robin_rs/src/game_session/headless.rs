@@ -360,6 +360,7 @@ impl HeadlessMission {
             world,
             timeline,
             control,
+            http,
             leaderboard: _,
         } = &mut self.runtime;
         let MissionMutation {
@@ -371,6 +372,7 @@ impl HeadlessMission {
         } = world.mutation();
         let mut active_modal: Option<ActiveModal> = None;
         drain_steps(
+            http.take_pending_steps(),
             manager,
             host,
             assets,

@@ -567,6 +567,7 @@ impl InteractiveFrameSimulation {
             world,
             timeline: runtime,
             control,
+            http,
             leaderboard: _,
         } = runtime;
         let MissionMutation {
@@ -593,6 +594,7 @@ impl InteractiveFrameSimulation {
         } = flags;
 
         let tick_exit_code = Self::advance_timeline(
+            http,
             runtime,
             host,
             game,
@@ -645,6 +647,7 @@ impl InteractiveFrameSimulation {
             world,
             timeline: runtime,
             leaderboard,
+            http,
             ..
         } = runtime;
         let MissionMutation {
@@ -707,8 +710,7 @@ impl InteractiveFrameSimulation {
             }
         } else if let Some(mut task) = ui.active_ui_task.take() {
             let task_owned_presentation = task.owns_presentation();
-            let scene_screenshots =
-                crate::http_server::take_pending_scene_screenshots(runtime.frame_number());
+            let scene_screenshots = http.take_pending_scene_screenshots(runtime.frame_number());
             if !scene_screenshots.is_empty() {
                 pre_render_engine_setup(host);
                 update_mouse_and_cursor(
@@ -779,7 +781,11 @@ impl InteractiveFrameSimulation {
             );
             if task_owned_presentation {
                 modal_rendered_this_frame = true;
-                drain_presented_ui_screenshots(runtime.frame_number(), &presentation.renderer);
+                drain_presented_ui_screenshots(
+                    http,
+                    runtime.frame_number(),
+                    &presentation.renderer,
+                );
             }
 
             if let Some(outcome) = task_outcome {
@@ -1329,6 +1335,7 @@ impl InteractiveFrameSimulation {
     /// Record commands, advance the engine, service script RPC, and commit
     /// the resulting deterministic history before any manual stepping.
     fn advance_timeline(
+        http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
         host: &mut Host,
         game: &mut crate::game::Game,
@@ -1404,9 +1411,15 @@ impl InteractiveFrameSimulation {
             host.frontend.engine_display = display;
             frame.mark_post_external_actions_applied();
         }
-        let actions =
-            crate::http_server::drain_global(manager, host, assets, &mut frame.post_commands);
-        runtime.record_input_taints(crate::http_server::take_pending_replay_taints());
+        let actions = http.drain(
+            &mut manager.engine,
+            &mut host.frontend,
+            host.transport.local_seat(),
+            host.transport.net(),
+            assets,
+            &mut frame.post_commands,
+        );
+        runtime.record_input_taints(http.take_pending_replay_taints());
         frame.record_applied_post_external_actions(actions);
 
         // ── Rollback check + rewind buffer commit ──
@@ -1433,6 +1446,7 @@ impl InteractiveFrameSimulation {
     /// This stays after the normal history commit: step-forward owns its own
     /// tick/PostInitialize boundary, while step-back replaces the live engine.
     pub(super) fn drive_manual_steps(
+        http: &mut crate::http_server::SessionIngress,
         runtime: &mut super::runtime::TimelineRuntime,
         save_manager: &crate::savegame::SaveGameManager,
         host: &mut Host,
@@ -1469,6 +1483,7 @@ impl InteractiveFrameSimulation {
         let pause_menu = &mut ui.pause_menu;
         let mut dismissed_ui_task = false;
         drain_steps(
+            http.take_pending_steps(),
             manager,
             host,
             assets.as_ref(),
@@ -1517,7 +1532,7 @@ impl InteractiveFrameSimulation {
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        crate::http_server::set_replay_status(runtime.replay_player.as_ref().map(|p| {
+        http.set_replay_status(runtime.replay_player.as_ref().map(|p| {
             crate::http_server::ReplayStatus {
                 frame: p.current_frame(),
                 total: p.total_frames(),
