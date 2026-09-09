@@ -762,7 +762,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // top of `run_mission`'s tick block, minus the paused /
         // rewind_active gating — stepping while paused is the whole
         // point of the endpoint.
-        let mut display = std::mem::take(&mut host.frontend.engine_display);
+        let application_context = host.application_context().clone();
         let record_live_input = source.records_live_input();
         let append_history = source.history() == ManualHistory::Append;
         let replay_timeline_after = source.replay_after();
@@ -774,8 +774,11 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // raw-checkpoint transition, not the save/load projection protocol.
         timeline.begin_recording(&mut transaction, record_live_input);
         game.run_engine_tick(
-            host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             assets,
             engine,
             dev,
@@ -783,7 +786,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
             false,
             false,
         );
-        host.frontend.engine_display = display;
+
         let after = replay_timeline_after.unwrap_or_else(|| timeline.current_frame().next());
         if append_history && after.number() > frame {
             timeline.commit_history_frame(simulation_frame, host, engine);
@@ -1248,11 +1251,14 @@ mod tests {
             PlayerId::HOST,
             PlayerCommand::SetLockAlt(true),
         ));
-        let mut display = std::mem::take(&mut host.frontend.engine_display);
+        let application_context = host.application_context().clone();
         timeline.run_simulation(|| {
             game.run_engine_tick(
-                &mut host,
-                &mut display,
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                host.transport.local_seat(),
                 &assets,
                 &mut manager.engine,
                 &mut dev,
@@ -1261,7 +1267,7 @@ mod tests {
                 false,
             )
         });
-        host.frontend.engine_display = display;
+
         timeline.advance_frame();
         normal.commit_timeline_after(timeline.current_frame());
         timeline.commit_simulation_history(

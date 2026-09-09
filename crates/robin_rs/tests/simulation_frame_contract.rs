@@ -12,8 +12,8 @@
 
 use robin_engine::campaign::Campaign;
 use robin_engine::engine::{
-    DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, HostDisplayState,
-    HostEvent, LevelAssets, SimConfig, SimulationFrameInput,
+    DevState, Engine, ExternalAction, ExternalActionResult, FrameConsoleResponse, HostEvent,
+    LevelAssets, SimConfig, SimulationFrameInput,
 };
 use robin_engine::player_command::{PlayerCommand, PlayerInput};
 use robin_engine::replay::state_hash;
@@ -214,11 +214,14 @@ fn admitted_host_action_is_replayable() {
     ]);
     let mut live = SimSnapshot::new(0, &initial);
     let mut host = Host::default();
-    let mut display = HostDisplayState::default();
+    let application_context = host.application_context().clone();
     let mut dev = DevState::default();
     let output = run_engine_frame_core(
-        &mut host,
-        &mut display,
+        &mut host.frontend,
+        &mut host.audio,
+        &mut host.effects,
+        &application_context,
+        host.transport.local_seat(),
         &assets,
         &mut live.engine,
         &mut dev,
@@ -270,14 +273,17 @@ fn command_frames() -> Vec<Vec<PlayerInput>> {
 fn advance_authoritative_frame(
     snapshot: &mut SimSnapshot,
     host: &mut Host,
-    display: &mut HostDisplayState,
     assets: &LevelAssets,
     dev: &mut DevState,
     frame_input: SimulationFrameInput,
 ) {
+    let application_context = host.application_context().clone();
     let output = run_engine_frame_core(
-        host,
-        display,
+        &mut host.frontend,
+        &mut host.audio,
+        &mut host.effects,
+        &application_context,
+        host.transport.local_seat(),
         assets,
         &mut snapshot.engine,
         dev,
@@ -308,8 +314,10 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
     // It may change host output, but it must not change authoritative state.
     let mut facade = SimSnapshot::new(0, &initial);
     let mut facade_host = Host::scratch(1024.0, 768.0);
-    let mut facade_display = HostDisplayState::default();
-    facade_display.display_minimap(true, false);
+    facade_host
+        .frontend
+        .engine_display
+        .display_minimap(true, false);
     let mut facade_dev = DevState::default();
 
     let mut checkpoint = None;
@@ -318,7 +326,6 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
         advance_authoritative_frame(
             &mut facade,
             &mut facade_host,
-            &mut facade_display,
             &assets,
             &mut facade_dev,
             input.clone(),
@@ -398,12 +405,11 @@ fn post_hourglass_quit_command_cannot_be_replayed_as_a_pre_hourglass_command() {
 
     let mut before_hourglass = SimSnapshot::new(0, &initial);
     let mut before_host = Host::default();
-    let mut before_display = HostDisplayState::default();
+
     let mut before_dev = DevState::default();
     advance_authoritative_frame(
         &mut before_hourglass,
         &mut before_host,
-        &mut before_display,
         &assets,
         &mut before_dev,
         SimulationFrameInput::from_player_inputs(vec![quit.clone()]).with_post_initialize(true),
@@ -411,12 +417,11 @@ fn post_hourglass_quit_command_cannot_be_replayed_as_a_pre_hourglass_command() {
 
     let mut after_hourglass = SimSnapshot::new(0, &initial);
     let mut after_host = Host::default();
-    let mut after_display = HostDisplayState::default();
+
     let mut after_dev = DevState::default();
     advance_authoritative_frame(
         &mut after_hourglass,
         &mut after_host,
-        &mut after_display,
         &assets,
         &mut after_dev,
         SimulationFrameInput::default()
