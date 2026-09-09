@@ -2503,16 +2503,14 @@ pub fn draw_panel(
             let qa_strip_y = upper_top.saturating_sub(QA_ICON_HEIGHT);
             let recording_slot = if engine.is_qa_recording_for(pc_id) {
                 engine
-                    .macro_store()
-                    .get(pc_id)
+                    .portrait_macro(pc_id)
                     .and_then(|m| m.recording_slot())
             } else {
                 None
             };
             for slot_idx in 0..NUMBER_OF_QA_MEMORY_U16 {
                 let has_macro = engine
-                    .macro_store()
-                    .get(pc_id)
+                    .portrait_macro(pc_id)
                     .map(|m| m.has_macro(slot_idx as usize))
                     .unwrap_or(false);
                 let is_recording_slot = recording_slot == Some(slot_idx as u8);
@@ -2575,8 +2573,7 @@ pub fn draw_panel(
                     // interact-only flows (`LaunchInteraction`) keep their
                     // player/NPC interaction fallback from `commands.rs`.
                     let frame_from_last_step = engine
-                        .macro_store()
-                        .get(pc_id)
+                        .portrait_macro(pc_id)
                         .and_then(|m| m.slot(slot_idx as usize))
                         .and_then(|s| s.steps.last())
                         .and_then(|step| {
@@ -2584,8 +2581,7 @@ pub fn draw_panel(
                         });
                     let phase_from_slot_titbit = || {
                         engine
-                            .macro_store()
-                            .get(pc_id)
+                            .portrait_macro(pc_id)
                             .and_then(|m| m.get_slot_titbit(slot_idx as usize))
                             .and_then(|id| engine.titbit_manager().get_phase(id))
                     };
@@ -2599,8 +2595,7 @@ pub fn draw_panel(
                     // driven by `is_running_for_qa(...)` on the slot's
                     // titbit id.
                     let run = engine
-                        .macro_store()
-                        .get(pc_id)
+                        .portrait_macro(pc_id)
                         .and_then(|m| m.get_slot_titbit(slot_idx as usize))
                         .map(|id| engine.titbit_manager().is_running_for_qa(id))
                         .unwrap_or(false);
