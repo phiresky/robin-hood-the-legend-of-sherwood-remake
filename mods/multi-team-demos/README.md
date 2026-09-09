@@ -14,3 +14,11 @@ Ten custom missions sharing battlefield assets. Select a mission from the custom
 | `MultiTeamTenWay` | Ten mutually hostile allegiances, one soldier in each team. |
 | `MultiTeamThreeWay` | Diplomacy test arena: allegiances 2 and 3 are allied, 3 and 4 are neutral, and all unspecified pairs remain hostile. |
 | `MultiTeamTwentyRobins` | Ten forest Robins and ten town-disguise Robins meet twenty advanced Black Knights in two compact, inward-facing formations on open ground. |
+
+The shared terrain is stored as JPEG XL in `Data/Levels/Day/OpenBattlefield.map`
+(the terrain loader detects the format from its signature). It was converted
+from the original 2508 × 2508 PNG with `cjxl -q 90 -e 7`, reducing the map
+from 12.1 MB to 1.7 MB. The minimap remains PNG. To edit the terrain, decode
+the map with `djxl OpenBattlefield.map OpenBattlefield.map.png`; a sibling
+`.map.png` takes precedence during loading. Remove that editing copy before
+packaging so it does not ship alongside the compressed map.

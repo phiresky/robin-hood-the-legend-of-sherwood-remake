@@ -186,6 +186,7 @@ jobs:
         shell: bash
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [[ -n "${REQUESTED_VERSION}" ]]; then
             version="${REQUESTED_VERSION}"
@@ -193,10 +194,11 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
           elif [[ "${GITHUB_EVENT_NAME}" == schedule || "${GITHUB_EVENT_NAME}" == workflow_dispatch ]]; then
             base_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "robin_rs") | .version')"
-            version="${base_version}-nightly.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+            timestamp="$(PYTHONPATH=scripts/release python3 -c 'import os; from publish_native_release import run_timestamp; print(run_timestamp(os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_RUN_ID"]))')"
+            version="${base_version}-nightly.${timestamp}+${GITHUB_SHA:0:12}"
           else
-            base_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "robin_rs") | .version')"
-            version="${base_version}-ci.${GITHUB_RUN_NUMBER}+${GITHUB_SHA:0:12}"
+            echo "Unsupported release event: ${GITHUB_EVENT_NAME}" >&2
+            exit 1
           fi
 
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then

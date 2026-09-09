@@ -57,20 +57,22 @@ def gh(*args: str, binary: bool = False):
     return result.stdout if binary else result.stdout.decode()
 
 
-def release_tag(event: str, ref: str, run_id: str, date: str) -> tuple[str, bool]:
+def release_tag(event: str, ref: str, timestamp: str, commit: str) -> tuple[str, bool]:
     if event in ("schedule", "workflow_dispatch"):
-        if not run_id.isdecimal():
-            raise ValueError("GITHUB_RUN_ID must be numeric")
-        return f"nightly-{date}-{run_id}", True
+        return f"nightly-{timestamp}-{commit[:12]}", True
     if not ref.startswith("v"):
         raise ValueError("stable releases require a version tag")
     return ref, False
 
 
-def run_date(repo: str, run_id: str) -> str:
-    # A rerun tomorrow must resume today's draft, not choose a new tag.
+def run_timestamp(repo: str, run_id: str) -> str:
+    # Packaging and publication use the original UTC run time, even on retries.
+    # One numeric SemVer identifier avoids leading-zero hour/minute identifiers.
     run = json.loads(gh("api", f"repos/{repo}/actions/runs/{run_id}"))
-    return datetime.datetime.fromisoformat(run["created_at"]).date().isoformat()
+    created = datetime.datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+    if created.tzinfo is None:
+        raise ValueError("workflow created_at must include a timezone")
+    return created.astimezone(datetime.timezone.utc).strftime("%Y%m%d%H%M")
 
 
 def find_release(repo: str, tag: str):
@@ -138,7 +140,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     repo = os.environ["GITHUB_REPOSITORY"]
     event = os.environ["GITHUB_EVENT_NAME"]
-    created_date = run_date(repo, os.environ["GITHUB_RUN_ID"]) if event in ("schedule", "workflow_dispatch") else ""
+    timestamp = run_timestamp(repo, os.environ["GITHUB_RUN_ID"]) if event in ("schedule", "workflow_dispatch") else ""
     tag, prerelease = release_tag(os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF_NAME"],
-                                  os.environ["GITHUB_RUN_ID"], created_date)
+                                  timestamp, os.environ["GITHUB_SHA"])
     publish(args.assets, repo, tag, os.environ["GITHUB_SHA"], prerelease)
