@@ -76,6 +76,8 @@ pub struct CampaignProgressNode {
     pub name: String,
     pub location: MissionLocation,
     pub state: MissionProgressState,
+    /// Display connections, including the finale-to-epilogue story transition.
+    /// Mission launch eligibility still comes from the campaign itself.
     pub prerequisite_nodes: Vec<usize>,
     pub depth: usize,
     pub lane: usize,
@@ -186,8 +188,6 @@ impl CampaignProgressGraph {
                     best.include(entry.attempt());
                 }
             }
-            let node_idx = nodes.len();
-            mission_to_node.insert(profile.id, node_idx);
             let lifetime_attempt_count = lifetime
                 .map(|history| {
                     history
@@ -219,7 +219,15 @@ impl CampaignProgressGraph {
             nodes.push(CampaignProgressNode {
                 mission_idx,
                 mission_id: profile.id,
-                name: profile.mission_name.clone(),
+                name: if profile
+                    .mission_filename
+                    .eq_ignore_ascii_case("SherwoodOutro")
+                {
+                    // TODO: Localize the epilogue label with the other campaign manager text.
+                    "Epilogue".to_owned()
+                } else {
+                    profile.mission_name.clone()
+                },
                 location: profile.location,
                 state,
                 prerequisite_nodes: Vec::new(),
@@ -244,6 +252,24 @@ impl CampaignProgressGraph {
             });
         }
 
+        let is_epilogue = |node: &CampaignProgressNode| {
+            campaign.missions[node.mission_idx]
+                .profile(profiles)
+                .mission_filename
+                .eq_ignore_ascii_case("SherwoodOutro")
+        };
+        // The outro is a scripted story transition rather than a normal
+        // prerequisite-gated mission. Keep it last in the gallery as well.
+        nodes.sort_by_key(is_epilogue);
+        for (index, node) in nodes.iter().enumerate() {
+            mission_to_node.insert(node.mission_id, index);
+        }
+        let finale = nodes.iter().position(|node| {
+            campaign.missions[node.mission_idx]
+                .profile(profiles)
+                .mission_filename
+                .eq_ignore_ascii_case("H12_Not_MP")
+        });
         for node in &mut nodes {
             let profile = campaign.missions[node.mission_idx].profile(profiles);
             node.prerequisite_nodes = profile
@@ -251,6 +277,16 @@ impl CampaignProgressGraph {
                 .iter()
                 .filter_map(|mission_id| mission_to_node.get(mission_id).copied())
                 .collect();
+            if is_epilogue(node) {
+                if let Some(finale) = finale {
+                    node.prerequisite_nodes.push(finale);
+                } else {
+                    // TODO: Resolve story transitions from content metadata when available.
+                    tracing::warn!(
+                        "Epilogue has no H12_Not_MP finale in this content; placing it after the mission tree without a story connection"
+                    );
+                }
+            }
             node.prerequisite_nodes.sort_unstable();
             node.prerequisite_nodes.dedup();
         }
@@ -291,6 +327,16 @@ impl CampaignProgressGraph {
             }
         }
 
+        if let Some(last_mission_depth) = nodes
+            .iter()
+            .filter(|node| !is_epilogue(node))
+            .map(|node| node.depth)
+            .max()
+        {
+            for node in nodes.iter_mut().filter(|node| is_epilogue(node)) {
+                node.depth = node.depth.max(last_mission_depth + 1);
+            }
+        }
         let mut next_lane_by_depth: HashMap<usize, usize> = HashMap::new();
         for node in &mut nodes {
             let lane = next_lane_by_depth.entry(node.depth).or_default();
@@ -370,6 +416,62 @@ mod tests {
     use super::*;
     use robin_engine::mission::Mission;
     use robin_engine::profiles::MissionProfile;
+
+    #[test]
+    fn epilogue_follows_finale_without_changing_mission_access() {
+        let mut profiles = ProfileManager::new();
+        for (id, filename, required) in [
+            (1, "Sherwood", vec![]),
+            (10, "Godfather", vec![]),
+            (20, "SherwoodOutro", vec![]),
+            (30, "H12_Not_MP", vec![10]),
+        ] {
+            profiles.missions.push(MissionProfile {
+                id,
+                mission_filename: filename.into(),
+                mission_name: filename.into(),
+                location: if id == 1 {
+                    MissionLocation::Sherwood
+                } else {
+                    MissionLocation::Nottingham
+                },
+                missions_required_to_be_done: required,
+                ..Default::default()
+            });
+        }
+        let mut campaign = Campaign::default();
+        for idx in 0..4 {
+            campaign.missions.push(Mission {
+                profile_idx: Some(idx),
+                ..Mission::new()
+            });
+        }
+        campaign.accessible_mission_indices.push(1);
+        let graph = CampaignProgressGraph::build(&campaign, &profiles, None);
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .map(|node| node.mission_id)
+                .collect::<Vec<_>>(),
+            [10, 30, 20]
+        );
+        let epilogue = &graph.nodes[2];
+        assert_eq!(epilogue.name, "Epilogue");
+        assert_eq!(epilogue.mission_idx, 2);
+        assert_eq!(epilogue.prerequisite_nodes, [1]);
+        assert_eq!(graph.nodes[1].prerequisite_nodes, [0]);
+        assert!(epilogue.depth > graph.nodes[1].depth);
+        assert!(!epilogue.selectable);
+        assert!(profiles.missions[2].missions_required_to_be_done.is_empty());
+        assert_eq!(campaign.accessible_mission_indices, [1]);
+
+        campaign.missions.pop();
+        let partial = CampaignProgressGraph::build(&campaign, &profiles, None);
+        assert_eq!(partial.nodes[1].name, "Epilogue");
+        assert!(partial.nodes[1].depth > partial.nodes[0].depth);
+        assert!(partial.nodes[1].prerequisite_nodes.is_empty());
+    }
 
     #[test]
     fn graph_uses_required_mission_ids_for_depth() {
