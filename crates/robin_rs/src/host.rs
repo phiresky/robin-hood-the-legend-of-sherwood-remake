@@ -459,9 +459,20 @@ impl ApplicationContext {
         let services = self.services.as_mut().ok_or_else(|| {
             "replay injection requires initialized application services".to_owned()
         })?;
-        Arc::get_mut(services)
-            .ok_or_else(|| "replay injection must precede sharing application services".to_owned())?
-            .replay = replay;
+        let services = Arc::get_mut(services).ok_or_else(|| {
+            "replay injection must precede sharing application services".to_owned()
+        })?;
+        if services
+            .http
+            .get_mut()
+            .map_err(|_| "application HTTP transport lock poisoned".to_owned())?
+            .is_started()
+        {
+            return Err(
+                "replay injection must precede starting application HTTP transport".to_owned(),
+            );
+        }
+        services.replay = replay;
         Ok(self)
     }
     pub(crate) fn replay_recording(&self) -> crate::replay_service::ReplayRecordingControl {
@@ -4263,6 +4274,19 @@ mod application_context_tests {
         assert!(serde_json::from_slice::<ReadyApplicationContext>(&bytes).is_err());
         assert!(serde_json::from_slice::<ApplicationContext>(&bytes).is_err());
         assert!(Host::new(ready, 800.0, 600.0).is_ok());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn replay_authority_cannot_change_after_transport_configuration() {
+        let application = context(0, DifficultyLevel::Medium, KeyCode::F2, "transport.marker");
+        // Port zero configures the disabled native endpoint without opening a
+        // socket. Even that endpoint owns the original ingress capabilities.
+        application.start_http_transport(0).unwrap();
+        let error = application
+            .with_replay_service(Arc::new(Default::default()))
+            .unwrap_err();
+        assert!(error.contains("precede starting"), "{error}");
     }
 
     #[test]
