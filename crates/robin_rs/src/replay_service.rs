@@ -63,13 +63,13 @@ impl ReplayService {
         match self.export_worker.lock() {
             Ok(mut worker) => {
                 if let Err(error) = worker.shutdown() {
-                    log::error!("{error}");
+                    tracing::error!("{error}");
                 }
             }
             Err(error) => {
-                log::error!("replay export worker poisoned during application drop");
+                tracing::error!("replay export worker poisoned during application drop");
                 if let Err(error) = error.into_inner().shutdown() {
-                    log::error!("{error}");
+                    tracing::error!("{error}");
                 }
             }
         }
@@ -372,13 +372,13 @@ impl Drop for ReplayService {
         match self.export_worker.get_mut() {
             Ok(worker) => {
                 if let Err(error) = worker.shutdown() {
-                    log::error!("{error}");
+                    tracing::error!("{error}");
                 }
             }
             Err(error) => {
-                log::error!("replay export worker lock poisoned during shutdown");
+                tracing::error!("replay export worker lock poisoned during shutdown");
                 if let Err(error) = error.into_inner().shutdown() {
-                    log::error!("{error}");
+                    tracing::error!("{error}");
                 }
             }
         }

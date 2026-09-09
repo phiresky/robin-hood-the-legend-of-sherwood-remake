@@ -1489,8 +1489,13 @@ impl ActiveMissionReplayExporter {
     }
 }
 
-#[derive(Serialize)]
-struct ReplayExportTask(#[serde(skip)] crate::replay_service::ExportResult);
+struct ReplayExportTask(crate::replay_service::ExportResult);
+
+impl Serialize for ReplayExportTask {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str("live replay export task")
+    }
+}
 
 impl<'de> Deserialize<'de> for ReplayExportTask {
     fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
