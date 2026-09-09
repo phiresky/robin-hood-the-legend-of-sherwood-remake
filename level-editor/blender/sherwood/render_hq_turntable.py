@@ -3,6 +3,7 @@
 Load with __name__='hq', then call setup() once and render_batch(side, mode,
 start, count). Linked scene geometry preserves the original/refined comparison.
 Set SIDE_BY_SIDE=True in the execution scope for matched full 960x1080 panels.
+Set CLOSE_UP=True as well for twice the magnification in separate scenes/files.
 Native time remapping evaluates camera, atlas drivers and wind at subframes;
 this does not duplicate or interpolate already-rendered video frames.
 """
@@ -11,8 +12,12 @@ from pathlib import Path
 import bpy
 
 SIDE_BY_SIDE = globals().get('SIDE_BY_SIDE', False)
-OUT = Path(bpy.data.filepath).parent/('turntable-side-by-side' if SIDE_BY_SIDE else 'turntable-hq')
-NAMES = ({'refined':'Sherwood Side by Side Refined', 'original':'Sherwood Side by Side Original'}
+CLOSE_UP = globals().get('CLOSE_UP', False)
+if CLOSE_UP and not SIDE_BY_SIDE:
+    raise ValueError('CLOSE_UP requires SIDE_BY_SIDE')
+OUT = Path(bpy.data.filepath).parent/('turntable-close-up' if CLOSE_UP else 'turntable-side-by-side' if SIDE_BY_SIDE else 'turntable-hq')
+NAMES = ({'refined':'Sherwood Close Up Refined', 'original':'Sherwood Close Up Original'} if CLOSE_UP else
+         {'refined':'Sherwood Side by Side Refined', 'original':'Sherwood Side by Side Original'}
          if SIDE_BY_SIDE else {'refined':'Sherwood HQ Turntable', 'original':'Sherwood HQ Original'})
 FRAMES = range(5,1445)
 
@@ -62,7 +67,7 @@ def setup():
         scene.render.resolution_x = 960 if SIDE_BY_SIDE else 1920
         scene.render.resolution_y = 1080 if SIDE_BY_SIDE else 1280
         if SIDE_BY_SIDE:
-            camera.data.ortho_scale = 2200
+            camera.data.ortho_scale = 1100 if CLOSE_UP else 2200
         scene.render.resolution_percentage = 100
         scene.render.fps = 60
         scene.render.frame_map_old = 5
@@ -169,7 +174,7 @@ def finish():
     bpy.ops.file.pack_all()
     bpy.ops.wm.save_as_mainfile(filepath=bpy.data.filepath)
     report = {'rendered_pass_frames':count,'camera_matrix_error':camera_error,
-              'side_by_side':SIDE_BY_SIDE,'ortho_scale':after.camera.data.ortho_scale,
+              'side_by_side':SIDE_BY_SIDE,'close_up':CLOSE_UP,'ortho_scale':after.camera.data.ortho_scale,
               'panel_resolution':[after.render.resolution_x,after.render.resolution_y],
               'wind_rotations':wind_values,'native_scene_saved':bpy.data.filepath}
     (OUT/'scene-validation.json').write_text(json.dumps(report,indent=2))

@@ -146,6 +146,15 @@ and **Sherwood Side by Side Refined** scenes, with render borders disabled.
 Compose with `compose_turntable.py --hq --side-by-side`. The older split-screen
 scenes and outputs remain available.
 
+`turntable-close-up/sherwood-before-after.mp4` is the detail-focused version:
+the same 1920 × 1080, 60 fps, 24-second matched comparison with orthographic
+scale 1100, exactly twice the previous magnification. It deliberately crops
+the map around the orbit center to expose trees, platforms and nearby structures.
+This is a fresh Blender render at the closer camera scale, not an enlargement
+of the previous video. Load the renderer with both `SIDE_BY_SIDE=True` and
+`CLOSE_UP=True`; use the same setup/render/finish workflow. Compose with
+`compose_turntable.py --hq --side-by-side --output-dir level-editor/work/sherwood-refinement/turntable-close-up`.
+
 ## Ground texture reprojection
 
 The terrain originally retained the pipeline's old filled texture, leaving
