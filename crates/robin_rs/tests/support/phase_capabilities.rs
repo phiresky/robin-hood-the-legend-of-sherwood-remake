@@ -181,6 +181,21 @@ fn frontend_policy_and_observation_owners_remain_private() {
             .unwrap_or_else(|| panic!("missing owner {name}"))
     };
     let frontend = structure("HostFrontend");
+    let input = syn::parse_file(include_str!("../../src/frontend_input.rs")).unwrap();
+    let pointer_sequence = input
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "FrontendPointerSequence" => Some(item),
+            _ => None,
+        })
+        .expect("pointer sequence owns capture and gesture together");
+    assert!(
+        pointer_sequence
+            .fields
+            .iter()
+            .all(|field| matches!(field.vis, syn::Visibility::Inherited))
+    );
     for name in [
         "preferences",
         "diagnostics",

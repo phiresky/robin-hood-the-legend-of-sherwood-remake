@@ -725,7 +725,8 @@ impl MissionRuntime {
 
 /// Shared post-tick effect/RPC boundary. Neither driver grants access to Game,
 /// EngineManager (snapshot replacement), or the aggregate Host here. Only
-/// presentation/audio effect domains and read-only transport identity are admitted.
+/// presentation/audio effect domains and shared transport access without session
+/// replacement authority are admitted.
 /// Recorded effects must precede new requests; taints and applied actions must
 /// enter this same frame before its timeline or recording is committed.
 pub(super) fn drain_post_tick_rpc(
