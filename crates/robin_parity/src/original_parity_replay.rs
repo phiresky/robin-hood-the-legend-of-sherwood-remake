@@ -65,6 +65,8 @@ use robin_rs::Host;
 #[cfg(feature = "client")]
 use robin_rs::gfx_types::BlendMode;
 #[cfg(feature = "client")]
+use robin_rs::http_server::RpcError;
+#[cfg(feature = "client")]
 use robin_rs::level_loading_host::draw_background;
 #[cfg(feature = "client")]
 use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
@@ -5056,7 +5058,9 @@ fn drain_headless_http(
                         "parity": "matched",
                     }));
                 } else if active_step.is_some() {
-                    request.respond_err("another parity replay step is already active");
+                    request.respond_err(RpcError::capacity(
+                        "another parity replay step is already active",
+                    ));
                 } else {
                     *active_step = Some(ActiveHttpStep {
                         request,
@@ -5068,16 +5072,16 @@ fn drain_headless_http(
                 }
             }
             robin_rs::http_server::StepKind::Back { .. } => {
-                request.respond_err(
+                request.respond_err(RpcError::unavailable_capability(
                     "step-back is unavailable for Original parity traces; restart and go-to-frame",
-                );
+                ));
             }
             robin_rs::http_server::StepKind::GoToFrame { target, .. } => {
                 let current = engine.frame_counter();
                 if target < current {
-                    request.respond_err(
+                    request.respond_err(RpcError::unavailable_capability(
                         "backward go-to-frame is unavailable for Original parity traces; restart the runner",
-                    );
+                    ));
                 } else if target == current {
                     request.respond_ok(serde_json::json!({
                         "direction": "go-to-frame",
@@ -5087,7 +5091,9 @@ fn drain_headless_http(
                         "parity": "matched",
                     }));
                 } else if active_step.is_some() {
-                    request.respond_err("another parity replay step is already active");
+                    request.respond_err(RpcError::capacity(
+                        "another parity replay step is already active",
+                    ));
                 } else {
                     *active_step = Some(ActiveHttpStep {
                         request,
@@ -5120,10 +5126,10 @@ fn serve_halted_http(
     loop {
         let _ = http.drain_headless(engine, assets, selected_view_element);
         for request in http.take_pending_steps() {
-            request.respond_err(format!(
+            request.respond_err(RpcError::internal(format!(
                 "parity replay is halted at divergent frame {}",
                 engine.frame_counter()
-            ));
+            )));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
