@@ -81,7 +81,7 @@ impl Default for LeaderboardPreferences {
 }
 
 impl LeaderboardPreferences {
-    pub fn validate(self) -> Result<Self, LeaderboardPreferencesError> {
+    pub fn validate(&self) -> Result<(), LeaderboardPreferencesError> {
         if self.schema_version != PREFERENCES_SCHEMA_VERSION {
             return Err(LeaderboardPreferencesError::UnsupportedSchema {
                 found: self.schema_version,
@@ -103,7 +103,7 @@ impl LeaderboardPreferences {
         {
             return Err(LeaderboardPreferencesError::InvalidPlayerCount);
         }
-        Ok(self)
+        Ok(())
     }
 
     pub fn automatically_submit(&self, run_is_eligible_and_won: bool) -> bool {
@@ -274,17 +274,20 @@ pub fn load() -> Result<LeaderboardPreferences, LeaderboardPreferencesError> {
     let Some(encoded) = read_store()? else {
         return Ok(LeaderboardPreferences::default());
     };
-    serde_json::from_str::<LeaderboardPreferences>(&encoded)
-        .map_err(|source| LeaderboardPreferencesError::Decode {
-            path: display_path(),
-            source,
-        })?
-        .validate()
+    let preferences =
+        serde_json::from_str::<LeaderboardPreferences>(&encoded).map_err(|source| {
+            LeaderboardPreferencesError::Decode {
+                path: display_path(),
+                source,
+            }
+        })?;
+    preferences.validate()?;
+    Ok(preferences)
 }
 
 pub fn persist(preferences: &LeaderboardPreferences) -> Result<(), LeaderboardPreferencesError> {
-    let preferences = preferences.clone().validate()?;
-    let encoded = serde_json::to_vec_pretty(&preferences)
+    preferences.validate()?;
+    let encoded = serde_json::to_vec_pretty(preferences)
         .expect("LeaderboardPreferences serialization cannot fail");
     persist_store(&encoded)
 }
@@ -393,6 +396,45 @@ mod tests {
         );
         assert!(base.route("/attacker.example").is_err());
         assert!(base.route("runs/ok#fragment").is_err());
+    }
+
+    #[test]
+    fn validation_borrows_preferences_and_rejects_every_invalid_facet() {
+        let valid = LeaderboardPreferences {
+            preferred_preset_id: Some("custom".into()),
+            preferred_difficulty_id: Some("hard".into()),
+            preferred_competition_id: Some("season".into()),
+            ..LeaderboardPreferences::default()
+        };
+        let before = serde_json::to_value(&valid).unwrap();
+        valid.validate().unwrap();
+        valid.validate().unwrap();
+        assert_eq!(serde_json::to_value(&valid).unwrap(), before);
+        for field in [
+            "preferred_preset_id",
+            "preferred_difficulty_id",
+            "preferred_competition_id",
+        ] {
+            for invalid in [String::new(), "x".repeat(129), "invalid\nfacet".into()] {
+                let mut document = before.clone();
+                document[field] = invalid.into();
+                let preferences: LeaderboardPreferences =
+                    serde_json::from_value(document.clone()).unwrap();
+                assert!(matches!(preferences.validate(),
+                    Err(LeaderboardPreferencesError::InvalidFacet { field: actual }) if actual == field));
+                assert_eq!(serde_json::to_value(&preferences).unwrap(), document);
+            }
+        }
+        for count in [0, robin_run_protocol::MAX_REPLAY_SEATS_V1 + 1] {
+            let invalid = LeaderboardPreferences {
+                preferred_max_concurrent_players: Some(count),
+                ..valid.clone()
+            };
+            assert!(matches!(
+                invalid.validate(),
+                Err(LeaderboardPreferencesError::InvalidPlayerCount)
+            ));
+        }
     }
 
     #[test]

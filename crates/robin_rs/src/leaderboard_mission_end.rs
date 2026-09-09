@@ -691,7 +691,7 @@ impl MissionEndLeaderboardController {
         replay_exporter: Box<dyn MissionEndReplayExporter>,
     ) -> Result<Self, MissionEndLeaderboardError> {
         run.validate()?;
-        let preferences = preferences
+        preferences
             .validate()
             .map_err(|error| MissionEndLeaderboardError::Preferences(error.to_string()))?;
         let selected_tab = run
