@@ -1802,7 +1802,7 @@ mod tests {
         };
         let (_, replay) =
             robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
-        assert_eq!(replay.header.mission_id, "injected-export");
+        assert_eq!(replay.header().mission_id, "injected-export");
         drop(recorder);
     }
 
