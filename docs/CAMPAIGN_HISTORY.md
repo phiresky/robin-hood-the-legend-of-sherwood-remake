@@ -105,14 +105,30 @@ and the Previous/Next buttons work with mouse or touch. Tab switches tree/galler
 A or the Achievements tab shows permanent awards and current campaign progress. Back/Escape
 returns to the originating screen.
 
-**R / Requirements** opens the selected mission's unmet entry conditions with
-actual ransom and gang thresholds, named prerequisite missions, exclusions,
-expiry, and story-state restrictions. Requirements met but not currently offered
-is reported separately: campaign selection has additional filters. Up/Down,
-Page Up/Down, mouse wheel, or Previous/Next page through longer explanations;
-Left/Right selects another mission and R returns to the mission cards. This view
-cannot launch a mission. Achievement cards explain their actual mission
-conditions and whether one completed campaign or a single mission is required.
+**D / Mission Details** replaces the Requirements tab. It combines original
+localized mission text (the same short description and full briefing used by the
+game) with actual entry restrictions and the complete recorded play history.
+Missing briefings are explicitly identified. Page Up/Down, the mouse wheel, and
+the left Previous/Next buttons page through briefing and requirements; Left/Right
+selects another mission. Back/Escape returns to the mission cards.
+
+The right-hand list contains distinct plays from both the active save and the
+player's permanent archive, newest first. Every play retains its outcome,
+recorded date, duration, and campaign/practice designation; unavailable imported
+values remain unknown. Up/Down or the Newer/Older buttons reach every play.
+Click selects a play; double-click, Enter, or Watch selected replay opens its
+recording in a separate desktop game window, preserving the paused live session.
+The viewer uses the normal replay loader and disables its RPC listener.
+
+Native terminal recordings acquire an atomic host-only link under
+`robin_hood/replays/attempts/`, keyed by campaign run and attempt sequence.
+A background scan also indexes compatible older local JSONL recordings using
+the embedded campaign and terminal command. Results appear without reopening
+the screen. Missing, deleted, or unrecorded plays stay in history
+with Recording unavailable. Unsupported recordings report the replay loader's
+compatibility error. Browser recording persistence/viewer handoff and
+indexing compact imports are not implemented; the browser still displays history.
+Watching a recording uses normal playback eligibility and cannot earn awards.
 
 An opt-in screenshot test uses the real production renderer with an offscreen
 wgpu texture. It creates no window and needs neither a display server nor Xvfb.
@@ -127,7 +143,7 @@ absolute datadir paths in this test setup). From the worktree root:
 Run this capture test alone: it sets its process working directory to the worktree
 root for install-resource lookup. The PNG matrix includes the first, middle, and
 last selections, an archived-record example, and the most crowded branch in
-tree/gallery/achievement/requirements views at 1024×768. Names, fonts, graph
+tree/gallery/achievement/mission-details views at 1024×768. Names, fonts, graph
 structure, current availability, and lock reasons come from the supplied data;
 archived records and achievement summaries are presentation-only fixtures.
 The tool also writes mission-profiles.json and campaign-graph.json for inspecting

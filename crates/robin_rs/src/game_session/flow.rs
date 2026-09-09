@@ -532,7 +532,22 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         // pair instead of inferring it from hourglass admission.
         let phase_start = super::frame_perf::start(profiling);
         finalize_interactive_recording(runtime, &mut frame);
-        runtime.seal_terminal_recording(&frame);
+        let was_recording = runtime.replay_recorder.is_some();
+        if runtime.seal_terminal_recording(&frame) && was_recording {
+            if let Some(key) = manager.engine.campaign().latest_mission_attempt_key() {
+                crate::mission_replays::recording_finished(
+                    key,
+                    manager
+                        .engine
+                        .campaign()
+                        .latest_mission_attempt()
+                        .expect("attempt key requires an attempt")
+                        .completed_at_unix_seconds(),
+                );
+            } else {
+                tracing::warn!("Terminal recording has no mission attempt identity");
+            }
+        }
         super::frame_perf::record(super::frame_perf::Phase::Recording, phase_start);
         if let Some(timer) = startup_timer.as_mut() {
             timer.step("history and replay");
