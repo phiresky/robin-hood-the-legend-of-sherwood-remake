@@ -1631,7 +1631,7 @@ fn downgrade_ranked_session(
     if transitioned {
         *context.ranked_browse_reason.lock() = Some(wire_reason);
         tracing::warn!(reason = ?wire_reason, %detail, "ranked multiplayer downgraded; gameplay remains available");
-        broadcast_msg(
+        server_dispatch::broadcast_recoverable(
             context,
             NetMsg::RankedBrowseOnly {
                 reason: wire_reason,

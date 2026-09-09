@@ -24,6 +24,9 @@ impl Delivery {
             NetMsg::InitialSnapshot { .. }
             | NetMsg::BeginSim { .. }
             | NetMsg::BroadcastInput { .. } => Self::ReconnectRecoverable,
+            // The irreversible downgrade is retained in ranked_browse_reason
+            // and replayed by prepare_peer_session before cached BeginSim.
+            NetMsg::RankedBrowseOnly { .. } => Self::ReconnectRecoverable,
             // New control messages default to required until their owner
             // explicitly establishes a recovery protocol.
             _ => Self::Required,
@@ -671,6 +674,12 @@ mod tests {
         assert_eq!(
             Delivery::for_message(&NetMsg::Note("diagnostic".into())),
             Delivery::Diagnostic
+        );
+        assert_eq!(
+            Delivery::for_message(&NetMsg::RankedBrowseOnly {
+                reason: RankedBrowseOnlyReason::RankedProtocolViolation,
+            }),
+            Delivery::ReconnectRecoverable
         );
         assert_eq!(
             Delivery::for_message(&NetMsg::CommitSnapshotTransition {
