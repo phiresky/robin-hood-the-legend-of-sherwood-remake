@@ -34,9 +34,9 @@
 //! A dedicated listener thread owns a Tokio runtime and at most eight HTTP
 //! connection tasks. Shutdown cancels and joins every connection task.
 //! Each request is decoded into a [`HttpRequest`] and pushed onto a
-//! shared FIFO with a one-shot `SyncSender` for the reply. The game
-//! mission owner drains its queue once per tick, executes each request inline, and
-//! sends the reply back. The listener serialises it to JSON (or raw
+//! shared FIFO with a single-owner asynchronous reply channel. The game
+//! mission owner drains its queue once per tick and admits eligible requests
+//! before execution. The listener awaits replies without polling and serialises them to JSON (or raw
 //! image/png bytes for `/screenshot`).
 //!
 //! Requests requiring an engine fail immediately between missions. A busy
