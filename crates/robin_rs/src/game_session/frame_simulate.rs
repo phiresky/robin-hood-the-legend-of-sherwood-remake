@@ -1679,12 +1679,24 @@ mod tests {
                 );
             }
         }
-        for (rewind, paused) in [(true, false), (false, true), (true, true)] {
-            assert!(
-                std::panic::catch_unwind(|| { FrameExecutionMode::admitted(rewind, paused, true) })
-                    .is_err()
-            );
-        }
+    }
+
+    #[test]
+    #[should_panic(expected = "buffered input requires a running forward frame")]
+    fn buffered_execution_rejects_rewind() {
+        super::FrameExecutionMode::admitted(true, false, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "buffered input requires a running forward frame")]
+    fn buffered_execution_rejects_pause() {
+        super::FrameExecutionMode::admitted(false, true, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "buffered input requires a running forward frame")]
+    fn buffered_execution_rejects_paused_rewind() {
+        super::FrameExecutionMode::admitted(true, true, true);
     }
 
     #[test]
