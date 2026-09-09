@@ -3,9 +3,11 @@
 
 use super::{ListRow, PickerModel};
 use crate::gfx_types::{GameEvent, Keycode};
+use crate::ingame_menu::IngameMenuResources;
 use crate::ingame_menu::layout::{MenuRect, MenuTransform};
 use crate::ingame_menu::widget_bridge::{self, ModalInputState};
 use crate::savegame::SlotName;
+use crate::scroll_view::ScrollView;
 use crate::ui::{MouseButtons, UiEvent};
 use crate::widget::FrameWnd;
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,7 @@ pub(crate) struct PickerController {
     pub input: ModalInputState,
     frame: FrameWnd,
     pending: Option<PickerAction>,
+    pub scroll_view: Option<ScrollView>,
 }
 
 impl PickerController {
@@ -40,7 +43,35 @@ impl PickerController {
             input,
             frame: FrameWnd::default(),
             pending: None,
+            scroll_view: None,
         }
+    }
+
+    pub fn configure_list(
+        &mut self,
+        model: &mut PickerModel,
+        list: MenuRect,
+        row_height: i32,
+        resources: &IngameMenuResources,
+    ) {
+        let view = self.scroll_view.get_or_insert_with(|| {
+            let mut view = ScrollView::new(
+                [list.x, list.y + 4, list.w, list.h - 8],
+                row_height,
+                resources,
+            );
+            view.set_wheel_step(1);
+            view
+        });
+        view.set_total(model.total_rows());
+        view.set_offset(model.scroll_offset());
+        model.set_viewport(view.visible_count(), view.offset());
+    }
+
+    pub fn view(&self) -> &ScrollView {
+        self.scroll_view
+            .as_ref()
+            .expect("picker scroll view must be configured")
     }
 
     pub fn begin_frame(
@@ -95,8 +126,6 @@ impl PickerController {
         model: &mut PickerModel,
         event: &GameEvent,
         transform: MenuTransform,
-        list: MenuRect,
-        row_height: i32,
     ) -> bool {
         self.input.update_from_event(event, transform);
         if matches!(
@@ -111,6 +140,22 @@ impl PickerController {
             return false;
         }
         if self.pending.is_some() {
+            return false;
+        }
+        let view = self
+            .scroll_view
+            .as_mut()
+            .expect("picker scroll view must be configured");
+        view.set_total(model.total_rows());
+        view.set_offset(model.scroll_offset());
+        if self.input.capture().is_none()
+            && view.handle_event(
+                event,
+                transform,
+                (self.input.virt_x as i32, self.input.virt_y as i32),
+            )
+        {
+            model.set_viewport(view.visible_count(), view.offset());
             return false;
         }
         let before = model.selected_row();
@@ -131,12 +176,18 @@ impl PickerController {
                 keycode: Keycode::Return | Keycode::KpEnter,
                 ..
             } => self.activate(model, ID_LOAD_SAVE),
-            GameEvent::MouseWheel(dy) if *dy != 0 => model.scroll(*dy < 0),
+            GameEvent::KeyDown {
+                keycode: key @ (Keycode::PageUp | Keycode::PageDown),
+                ..
+            } => {
+                let view = self.scroll_view.as_mut().expect("configured scroll view");
+                view.navigate(*key);
+                model.set_viewport(view.visible_count(), view.offset());
+            }
             GameEvent::MouseUp(x, y, 1) if self.input.capture().is_none() => {
                 let (x, y) = transform.from_screen(*x, *y);
-                if list.contains_virt(x, y) {
-                    let offset = ((y - list.y - 4) / row_height).max(0) as usize;
-                    model.select(model.row_at(model.scroll_offset() + offset));
+                if let Some(row) = self.view().row_at(x, y) {
+                    model.select(model.row_at(row));
                     if self.input.buttons.contains(MouseButtons::LEFT_DOUBLE_CLICK) {
                         self.activate(model, ID_LOAD_SAVE);
                     }
@@ -144,6 +195,10 @@ impl PickerController {
             }
             _ => {}
         }
+        self.scroll_view
+            .as_mut()
+            .expect("configured scroll view")
+            .set_offset(model.scroll_offset());
         before != model.selected_row()
     }
 
@@ -241,13 +296,66 @@ mod tests {
         model: &mut PickerModel,
         events: &[GameEvent],
     ) -> Option<PickerAction> {
+        controller.scroll_view.get_or_insert_with(|| {
+            ScrollView::with_geometry([LIST.x, LIST.y + 4, LIST.w, 40], 20, 16, 16, false)
+        });
         controller.begin_frame(model, &BUTTONS, 150, 40);
         for event in events {
-            controller.handle_event(model, event, MenuTransform::centered(640, 480), LIST, 20);
+            controller.handle_event(model, event, MenuTransform::centered(640, 480));
         }
         controller.process_widgets(model);
         controller.input.end_frame();
         controller.take_action()
+    }
+
+    #[test]
+    fn scrollbar_drag_and_wheel_preserve_save_selection() {
+        let mut model = model();
+        model.navigate(true);
+        let selected = model.selected_slot().cloned();
+        let mut controller = PickerController::new(ModalInputState::new());
+        frame(
+            &mut controller,
+            &mut model,
+            &[
+                GameEvent::MouseMove {
+                    x: 40,
+                    y: 20,
+                    xrel: 0,
+                    yrel: 0,
+                },
+                GameEvent::MouseWheel(-1),
+            ],
+        );
+        assert_eq!(model.scroll_offset(), 1);
+        assert_eq!(model.selected_slot(), selected.as_ref());
+        frame(
+            &mut controller,
+            &mut model,
+            &[GameEvent::MouseDown(440, 25, 1, 1)],
+        );
+        assert_eq!(
+            frame(
+                &mut controller,
+                &mut model,
+                &[
+                    GameEvent::MouseMove {
+                        x: 440,
+                        y: 500,
+                        xrel: 0,
+                        yrel: 0
+                    },
+                    GameEvent::MouseUp(40, 20, 1)
+                ]
+            ),
+            None
+        );
+        assert_eq!(model.scroll_offset(), 2);
+        assert_eq!(
+            model.selected_slot(),
+            selected.as_ref(),
+            "releasing a scrollbar over a row must not select it"
+        );
     }
 
     #[test]

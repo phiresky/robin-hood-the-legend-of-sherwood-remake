@@ -7,6 +7,7 @@
 //! rendering rather than going through the standard listbox widget.
 
 use crate::gfx_types::Keycode;
+use crate::scroll_view::ScrollView;
 use robin_engine::sound_cache::SampleLoader;
 
 use crate::gfx_types::GameEvent;
@@ -140,7 +141,6 @@ pub async fn show_shortcuts(
     let mut keyboard_button_activation: Option<u32> = None;
     let mut input_state = ModalInputState::new();
     input_state.seed_mouse_from_window(event_pump, transform);
-    let mut scroll_offset: usize = 0;
 
     // Row height from the default list font.
     let row_height = resources
@@ -148,22 +148,25 @@ pub async fn show_shortcuts(
         .map(|f| f.height() as i32)
         .unwrap_or(FALLBACK_ROW_HEIGHT)
         .max(1);
-    // Scrollbar track width from sub-picture 0 of the listbox bitmap
-    // (the SLIDER_BACK_START slice).  The row width is shrunk by this
-    // to leave room for the scrollbar, and all three back slices share
-    // the same width.
-    let scrollbar_w = resources.list_scrollbar[0]
-        .map(|s| s.width)
-        .unwrap_or(0)
-        .max(0);
-    let visible_rows = (LIST_RECT.h / row_height).max(1) as usize;
-    let total_rows = REAL_KEY_COUNT as usize;
-    let needs_scrollbar = total_rows > visible_rows && scrollbar_w > 0;
+    let mut scroll_view = ScrollView::new(
+        [LIST_RECT.x, LIST_RECT.y + 4, LIST_RECT.w, LIST_RECT.h - 8],
+        row_height,
+        resources,
+    );
+    scroll_view.set_wheel_step(1);
+    scroll_view.set_total(REAL_KEY_COUNT as usize);
 
     while !done {
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
             input_state.update_from_event(&event, transform);
+            if scroll_view.handle_event(
+                &event,
+                transform,
+                (input_state.virt_x as i32, input_state.virt_y as i32),
+            ) {
+                continue;
+            }
             match event {
                 GameEvent::Quit => done = true,
                 GameEvent::KeyDown {
@@ -234,26 +237,22 @@ pub async fn show_shortcuts(
                             }
                             (Keycode::Up, None) => {
                                 focused_row = Some(focused_row.map_or(0, |f| f.saturating_sub(1)));
+                                scroll_view.reveal(focused_row.expect("focused row was set"));
                             }
                             (Keycode::Down, None) => {
                                 let max = (REAL_KEY_COUNT as usize).saturating_sub(1);
                                 focused_row =
                                     Some(focused_row.map(|f| (f + 1).min(max)).unwrap_or(0));
+                                scroll_view.reveal(focused_row.expect("focused row was set"));
                             }
-                            (Keycode::PageUp, None) => {
-                                scroll_offset = scroll_offset.saturating_sub(visible_rows);
-                            }
-                            (Keycode::PageDown, None) => {
-                                let max_scroll =
-                                    (REAL_KEY_COUNT as usize).saturating_sub(visible_rows);
-                                scroll_offset = (scroll_offset + visible_rows).min(max_scroll);
-                            }
-                            (Keycode::Home, None) => {
-                                scroll_offset = 0;
-                            }
-                            (Keycode::End, None) => {
-                                scroll_offset =
-                                    (REAL_KEY_COUNT as usize).saturating_sub(visible_rows);
+                            (
+                                key @ (Keycode::PageUp
+                                | Keycode::PageDown
+                                | Keycode::Home
+                                | Keycode::End),
+                                None,
+                            ) => {
+                                scroll_view.navigate(key);
                             }
                             _ => {}
                         }
@@ -262,22 +261,10 @@ pub async fn show_shortcuts(
                 // List row click handling (not through widgets).
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if LIST_RECT.contains_virt(vx, vy) {
-                        let row_offset = ((vy - LIST_RECT.y - 4) / row_height).max(0) as usize;
-                        let row = scroll_offset + row_offset;
-                        if row < total_rows {
-                            focused_row = Some(row);
-                            rebinding_row = Some(row);
-                            reserved_overlay = false;
-                        }
-                    }
-                }
-                GameEvent::MouseWheel(dy) => {
-                    let max_scroll = (REAL_KEY_COUNT as usize).saturating_sub(visible_rows);
-                    if dy > 0 {
-                        scroll_offset = scroll_offset.saturating_sub(1);
-                    } else if dy < 0 {
-                        scroll_offset = (scroll_offset + 1).min(max_scroll);
+                    if let Some(row) = scroll_view.row_at(vx, vy) {
+                        focused_row = Some(row);
+                        rebinding_row = Some(row);
+                        reserved_overlay = false;
                     }
                 }
                 _ => {}
@@ -328,19 +315,14 @@ pub async fn show_shortcuts(
         // (left-aligned, " : " suffix) and a 30% key-value column
         // (centered).  The row width subtracts the scrollbar gutter so
         // text doesn't run under the scrollbar.
-        let gutter = if needs_scrollbar { scrollbar_w } else { 0 };
         let text_x = LIST_RECT.x + 10;
-        let text_w = (LIST_RECT.w - 20 - gutter).max(0);
+        let text_w = (scroll_view.content_width() - 20).max(0);
         let split = (text_w as f32 * COLUMN_SPLIT_RATIO) as i32;
         let key_name_x = text_x;
         let key_value_x = text_x + split;
         let key_value_w = text_w - split;
-        for row_offset in 0..visible_rows {
-            let row_index = scroll_offset + row_offset;
-            if row_index >= total_rows {
-                break;
-            }
-            let row_top = LIST_RECT.y + 4 + row_offset as i32 * row_height;
+        for row_index in scroll_view.visible_range() {
+            let row_top = scroll_view.row_y(row_index);
             let action_label = match u16::try_from(row_index).expect("shortcut row fits u16") {
                 PLAN_QUICK_ACTIONS_INDEX => "Plan Quick Actions".to_owned(),
                 TOGGLE_CLOAK_INDEX => "Toggle Cloak".to_owned(),
@@ -388,21 +370,7 @@ pub async fn show_shortcuts(
             render_text_virt_font(renderer, font, transform, &display, val_x, text_y);
         }
 
-        // Scrollbar on the right edge.
-        if needs_scrollbar {
-            widget_bridge::draw_listbox_scrollbar(
-                renderer,
-                transform,
-                resources,
-                LIST_RECT.x + LIST_RECT.w - scrollbar_w,
-                LIST_RECT.y,
-                scrollbar_w,
-                LIST_RECT.h,
-                scroll_offset,
-                visible_rows,
-                total_rows,
-            );
-        }
+        scroll_view.draw_scrollbar(renderer, transform, resources);
 
         // Buttons via widget bridge.
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);

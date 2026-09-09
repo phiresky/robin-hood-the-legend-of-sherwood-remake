@@ -11,7 +11,6 @@ use crate::host::Host;
 use crate::save_file::{GameSaveFile, SaveProvenance, Thumbnail};
 use crate::savegame::{SaveGame, SaveGameManager};
 use anyhow::{Context, Result, bail};
-use robin_engine::campaign::CampaignValue;
 use robin_engine::engine::Engine;
 use robin_engine::profiles::ProfileManager;
 use serde::{Deserialize, Serialize};
@@ -715,13 +714,7 @@ fn metadata_from_payload(
     metadata.mission_name = mission_name;
     metadata.player_profile_id = Some(provenance.player_profile_id);
     metadata.player_name = provenance.player_name.clone();
-    metadata.missions_done = Some(campaign.get_number_of_missions_done());
-    metadata.missions_total = Some(campaign.missions.len());
-    metadata.gang_size = Some(campaign.gang_indices.len());
-    metadata.ransom = Some(campaign.values[CampaignValue::Ransom]);
-    metadata.blazons = Some(campaign.values[CampaignValue::Blazon]);
-    metadata.amulets = Some(campaign.values[CampaignValue::Amulets]);
-    metadata.campaign_progress = Some(campaign.get_progression(profiles));
+    SaveGameManager::sync_slot_campaign_metadata(&mut metadata, campaign, profiles);
     if !metadata.is_autosave() {
         bail!("generated autosave filename was not classified as an autosave");
     }

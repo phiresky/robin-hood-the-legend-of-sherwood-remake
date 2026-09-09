@@ -111,6 +111,10 @@ pub struct SaveGame {
     pub player_name: String,
     /// Campaign progression percentage at time of save.
     pub campaign_progress: Option<u32>,
+    /// Elapsed simulation seconds; absent for Sherwood and older catalog entries.
+    // TODO: Backfill older catalogs from payloads without blocking the save picker.
+    #[serde(default)]
+    pub mission_elapsed_seconds: Option<u32>,
     /// Number of completed missions at time of save.
     pub missions_done: Option<usize>,
     /// Total missions known to the campaign at time of save.
@@ -183,6 +187,7 @@ impl SaveGame {
             player_profile_id: None,
             player_name: String::new(),
             campaign_progress: None,
+            mission_elapsed_seconds: None,
             missions_done: None,
             missions_total: None,
             gang_size: None,
@@ -1386,6 +1391,7 @@ impl SaveGameManager {
         dst.player_profile_id = src.player_profile_id;
         dst.player_name = src.player_name;
         dst.campaign_progress = src.campaign_progress;
+        dst.mission_elapsed_seconds = src.mission_elapsed_seconds;
         dst.missions_done = src.missions_done;
         dst.missions_total = src.missions_total;
         dst.gang_size = src.gang_size;
@@ -1610,11 +1616,17 @@ impl SaveGameManager {
         Ok(())
     }
 
-    fn sync_slot_campaign_metadata(
+    pub(crate) fn sync_slot_campaign_metadata(
         slot: &mut SaveGame,
         campaign: &engine_campaign::Campaign,
         profiles: &ProfileManager,
     ) {
+        let mission = campaign
+            .get_mission(slot.mission_id, profiles)
+            .expect("saved mission must exist in the campaign");
+        slot.mission_elapsed_seconds = (mission.profile(profiles).location
+            != robin_engine::profiles::MissionLocation::Sherwood)
+            .then(|| campaign.get_value(CampaignValue::MissionLength).max(0) as u32);
         slot.missions_done = Some(campaign.get_number_of_missions_done());
         slot.missions_total = Some(campaign.missions.len());
         slot.gang_size = Some(campaign.gang_indices.len());
@@ -3041,6 +3053,42 @@ mod tests {
         .expect("complete test application context");
         let host = Host::new(application_context.try_into().unwrap(), 800.0, 600.0).unwrap();
         (engine, assets, profiles, host)
+    }
+
+    #[test]
+    fn mission_clock_metadata_excludes_sherwood_and_survives_catalog_roundtrip() {
+        let (engine, _, mut profiles, _) = fresh_save_session("clock-metadata");
+        let mut campaign = engine.campaign().clone();
+        campaign.set_value(CampaignValue::MissionLength, 3903);
+        profiles.missions[0].location = robin_engine::profiles::MissionLocation::Nottingham;
+        let mut slot = SaveGame::new("Savegame_000".into(), "Mission".into(), 1);
+        SaveGameManager::sync_slot_campaign_metadata(&mut slot, &campaign, &profiles);
+        assert_eq!(slot.mission_elapsed_seconds, Some(3903));
+        let encoded = serde_json::to_value(&slot).unwrap();
+        assert_eq!(
+            serde_json::from_value::<SaveGame>(encoded.clone()).unwrap(),
+            slot
+        );
+        let mut legacy = encoded;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("mission_elapsed_seconds");
+        assert_eq!(
+            serde_json::from_value::<SaveGame>(legacy)
+                .unwrap()
+                .mission_elapsed_seconds,
+            None
+        );
+        campaign.set_value(CampaignValue::MissionLength, 0);
+        SaveGameManager::sync_slot_campaign_metadata(&mut slot, &campaign, &profiles);
+        assert_eq!(slot.mission_elapsed_seconds, Some(0));
+        profiles.missions[0].location = robin_engine::profiles::MissionLocation::Sherwood;
+        SaveGameManager::sync_slot_campaign_metadata(&mut slot, &campaign, &profiles);
+        assert_eq!(
+            slot.mission_elapsed_seconds, None,
+            "ordinary Sherwood saves omit the clock too"
+        );
     }
 
     fn game_for_save(profiles: &ProfileManager, mission_id: u32) -> Game {

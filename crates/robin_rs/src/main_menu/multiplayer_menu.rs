@@ -16,6 +16,7 @@ use crate::main_menu::custom_missions::CustomMissionLaunch;
 use crate::multiplayer::matchmaking::{self, GameListing, JoinedGame};
 use crate::native_font::Font;
 use crate::renderer::Renderer;
+use crate::scroll_view::ScrollView;
 use crate::widget::{ColumnAlign, ColumnLayout, FrameWnd};
 use robin_engine::engine::input::MOUSE_OPACITY_DEFAULT;
 use robin_engine::profiles as engine_profiles;
@@ -163,7 +164,17 @@ pub(crate) async fn show_multiplayer_menu(
     let mut status = initial_direct_error.unwrap_or_else(|| matchmaking_label.clone());
     let mut mode = MenuMode::Games;
     let mut selected: usize = 0;
-    let mut scroll_offset: usize = 0;
+    let mut scroll_view = ScrollView::new(
+        [
+            LIST_RECT.x + 4,
+            LIST_RECT.y + 4,
+            LIST_RECT.w - 8,
+            LIST_RECT.h - 8,
+        ],
+        ROW_HEIGHT,
+        resources,
+    );
+    scroll_view.set_wheel_step(1);
     let mut input_state = ModalInputState::new();
     let (btn_w, btn_h) = resources.button_dimensions();
     let btn_x = MENU_W - btn_w - 10;
@@ -191,12 +202,11 @@ pub(crate) async fn show_multiplayer_menu(
         };
         if rows_len == 0 {
             selected = 0;
-            scroll_offset = 0;
+            scroll_view.reset();
         } else if selected >= rows_len {
             selected = rows_len - 1;
         }
-        scroll_offset = clamp_scroll_offset(scroll_offset, rows_len);
-        ensure_selected_visible(selected, &mut scroll_offset, rows_len);
+        scroll_view.set_total(rows_len);
 
         while let Some(event) =
             matchmaking_client
@@ -370,7 +380,7 @@ pub(crate) async fn show_multiplayer_menu(
                     // actionable. Signed direct invites use a different transport.
                     discard_disconnected_matchmaking_state(&mut games, &mut mode);
                     selected = 0;
-                    scroll_offset = 0;
+                    scroll_view.reset();
                     prepared_host_content = None;
                 }
             }
@@ -395,11 +405,25 @@ pub(crate) async fn show_multiplayer_menu(
         set_button(&mut frame, ID_START, "Start", can_start);
         set_button(&mut frame, ID_BACK, "Back", true);
 
+        let rows_len = match &mode {
+            MenuMode::Games => games.len(),
+            MenuMode::Missions => missions.len(),
+            MenuMode::Hosted { .. } | MenuMode::Joined { .. } => 1,
+        };
+        scroll_view.set_total(rows_len);
+        selected = selected.min(rows_len.saturating_sub(1));
         let mut activated: Option<u32> = None;
         let (events, transform) =
             crate::ingame_menu::layout::poll_events_with_transform(event_pump, renderer);
         for event in events {
             input_state.update_from_event(&event, transform);
+            if scroll_view.handle_event(
+                &event,
+                transform,
+                (input_state.virt_x as i32, input_state.virt_y as i32),
+            ) {
+                continue;
+            }
             match event {
                 GameEvent::Quit
                 | GameEvent::KeyDown {
@@ -411,7 +435,9 @@ pub(crate) async fn show_multiplayer_menu(
                     ..
                 } => {
                     selected = selected.saturating_sub(1);
-                    ensure_selected_visible(selected, &mut scroll_offset, rows_len);
+                    if rows_len > 0 {
+                        scroll_view.reveal(selected);
+                    }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Down,
@@ -419,25 +445,27 @@ pub(crate) async fn show_multiplayer_menu(
                 } => {
                     if rows_len > 0 {
                         selected = (selected + 1).min(rows_len - 1);
-                        ensure_selected_visible(selected, &mut scroll_offset, rows_len);
+                        scroll_view.reveal(selected);
                     }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::PageUp,
                     ..
                 } => {
-                    let step = visible_row_count().saturating_sub(1).max(1);
+                    let step = scroll_view.visible_count().saturating_sub(1).max(1);
                     selected = selected.saturating_sub(step);
-                    ensure_selected_visible(selected, &mut scroll_offset, rows_len);
+                    if rows_len > 0 {
+                        scroll_view.reveal(selected);
+                    }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::PageDown,
                     ..
                 } => {
                     if rows_len > 0 {
-                        let step = visible_row_count().saturating_sub(1).max(1);
+                        let step = scroll_view.visible_count().saturating_sub(1).max(1);
                         selected = (selected + step).min(rows_len - 1);
-                        ensure_selected_visible(selected, &mut scroll_offset, rows_len);
+                        scroll_view.reveal(selected);
                     }
                 }
                 GameEvent::KeyDown {
@@ -445,7 +473,9 @@ pub(crate) async fn show_multiplayer_menu(
                     ..
                 } => {
                     selected = 0;
-                    ensure_selected_visible(selected, &mut scroll_offset, rows_len);
+                    if rows_len > 0 {
+                        scroll_view.reveal(selected);
+                    }
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::End,
@@ -453,22 +483,7 @@ pub(crate) async fn show_multiplayer_menu(
                 } => {
                     if rows_len > 0 {
                         selected = rows_len - 1;
-                        ensure_selected_visible(selected, &mut scroll_offset, rows_len);
-                    }
-                }
-                GameEvent::MouseWheel(delta) => {
-                    if rows_len > visible_row_count() {
-                        let amount = delta.unsigned_abs() as usize;
-                        if delta > 0 {
-                            scroll_offset = scroll_offset.saturating_sub(amount);
-                        } else if delta < 0 {
-                            scroll_offset += amount;
-                        }
-                        scroll_offset = clamp_scroll_offset(scroll_offset, rows_len);
-                        selected = selected.clamp(
-                            scroll_offset,
-                            (scroll_offset + visible_row_count() - 1).min(rows_len - 1),
-                        );
+                        scroll_view.reveal(selected);
                     }
                 }
                 GameEvent::KeyDown {
@@ -488,28 +503,20 @@ pub(crate) async fn show_multiplayer_menu(
                 }
                 GameEvent::MouseUp(x, y, 1) => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if LIST_RECT.contains_virt(vx, vy) {
-                        let row =
-                            scroll_offset + ((vy - LIST_RECT.y - 4) / ROW_HEIGHT).max(0) as usize;
-                        if row < rows_len {
-                            selected = row;
-                        }
+                    if let Some(row) = scroll_view.row_at(vx, vy) {
+                        selected = row;
                     }
                 }
                 GameEvent::MouseDown(x, y, 1, clicks) if clicks >= 2 => {
                     let (vx, vy) = transform.from_screen(x, y);
-                    if LIST_RECT.contains_virt(vx, vy) {
-                        let row =
-                            scroll_offset + ((vy - LIST_RECT.y - 4) / ROW_HEIGHT).max(0) as usize;
-                        if row < rows_len {
-                            selected = row;
-                            activated = match mode {
-                                MenuMode::Games => Some(ID_JOIN),
-                                MenuMode::Missions => Some(ID_CREATE),
-                                MenuMode::Hosted { .. } => Some(ID_START),
-                                MenuMode::Joined { .. } => None,
-                            };
-                        }
+                    if let Some(row) = scroll_view.row_at(vx, vy) {
+                        selected = row;
+                        activated = match mode {
+                            MenuMode::Games => Some(ID_JOIN),
+                            MenuMode::Missions => Some(ID_CREATE),
+                            MenuMode::Hosted { .. } => Some(ID_START),
+                            MenuMode::Joined { .. } => None,
+                        };
                     }
                 }
                 _ => {}
@@ -536,7 +543,7 @@ pub(crate) async fn show_multiplayer_menu(
                         }
                         mode = MenuMode::Games;
                         selected = 0;
-                        scroll_offset = 0;
+                        scroll_view.reset();
                         status = matchmaking_label.clone();
                     }
                 },
@@ -577,7 +584,7 @@ pub(crate) async fn show_multiplayer_menu(
                     } else {
                         mode = MenuMode::Missions;
                         selected = 0;
-                        scroll_offset = 0;
+                        scroll_view.reset();
                         status = "Select a mission for the hosted game".to_string();
                     }
                 }
@@ -719,6 +726,11 @@ pub(crate) async fn show_multiplayer_menu(
         if let Some(bg) = resources.menu_bg[2] {
             draw_screen_background(renderer, &bg);
         }
+        scroll_view.set_total(match &mode {
+            MenuMode::Games => games.len(),
+            MenuMode::Missions => missions.len(),
+            MenuMode::Hosted { .. } | MenuMode::Joined { .. } => 1,
+        });
         render_menu(
             renderer,
             resources,
@@ -728,7 +740,7 @@ pub(crate) async fn show_multiplayer_menu(
             &games,
             &missions,
             selected,
-            scroll_offset,
+            &scroll_view,
             &status,
         );
         widget_bridge::draw_frame_buttons(renderer, resources, transform, &frame);
@@ -1179,7 +1191,7 @@ fn render_menu(
     games: &[GameListing],
     missions: &[MissionChoice],
     selected: usize,
-    scroll_offset: usize,
+    scroll_view: &ScrollView,
     status: &str,
 ) {
     if let Some(font) = resources.title_font_any() {
@@ -1226,8 +1238,8 @@ fn render_menu(
     for (visible_i, (row_idx, row)) in rows
         .iter()
         .enumerate()
-        .skip(scroll_offset)
-        .take(visible_row_count())
+        .skip(scroll_view.offset())
+        .take(scroll_view.visible_count())
         .enumerate()
     {
         let is_selected = row_idx == selected
@@ -1242,7 +1254,7 @@ fn render_menu(
                 transform,
                 LIST_RECT.x + 4,
                 LIST_RECT.y + 4 + visible_i as i32 * ROW_HEIGHT,
-                LIST_RECT.w - 8,
+                scroll_view.content_width(),
                 ROW_HEIGHT,
                 Renderer::create_color_16(72, 62, 34),
             );
@@ -1250,7 +1262,7 @@ fn render_menu(
         if let Some(font) = resources.list_font(is_selected, is_selected) {
             let column_layout = menu_column_layout(mode);
             let row_area_x = (LIST_RECT.x + 10) as f32;
-            let row_area_w = (LIST_RECT.w - 20) as f32;
+            let row_area_w = (scroll_view.content_width() - 12) as f32;
             for cell in column_layout.layout_row(row, row_area_x, row_area_w) {
                 let fitted = truncate_to_pixel_width(font, cell.text.trim(), cell.span_w as i32);
                 if fitted.is_empty() {
@@ -1274,9 +1286,7 @@ fn render_menu(
         }
     }
 
-    if rows.len() > visible_row_count() {
-        draw_scrollbar(renderer, transform, rows.len(), scroll_offset);
-    }
+    scroll_view.draw_scrollbar(renderer, transform, resources);
 
     if let Some(font) = resources.menu_text_font_any() {
         render_text_virt_font(
@@ -1288,69 +1298,6 @@ fn render_menu(
             LIST_RECT.y + LIST_RECT.h + 16,
         );
     }
-}
-
-fn visible_row_count() -> usize {
-    ((LIST_RECT.h - 8) / ROW_HEIGHT).max(1) as usize
-}
-
-fn clamp_scroll_offset(offset: usize, rows_len: usize) -> usize {
-    let visible = visible_row_count();
-    offset.min(rows_len.saturating_sub(visible))
-}
-
-fn ensure_selected_visible(selected: usize, offset: &mut usize, rows_len: usize) {
-    if rows_len == 0 {
-        *offset = 0;
-        return;
-    }
-    let visible = visible_row_count();
-    if selected < *offset {
-        *offset = selected;
-    } else if selected >= *offset + visible {
-        *offset = selected + 1 - visible;
-    }
-    *offset = clamp_scroll_offset(*offset, rows_len);
-}
-
-fn draw_scrollbar(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    rows_len: usize,
-    scroll_offset: usize,
-) {
-    let track_x = LIST_RECT.x + LIST_RECT.w - 10;
-    let track_y = LIST_RECT.y + 4;
-    let track_w = 4;
-    let track_h = LIST_RECT.h - 8;
-    fill_virtual_rect(
-        renderer,
-        transform,
-        track_x,
-        track_y,
-        track_w,
-        track_h,
-        Renderer::create_color_16(55, 47, 30),
-    );
-
-    let visible = visible_row_count().min(rows_len).max(1);
-    let thumb_h = ((track_h as f32 * visible as f32 / rows_len as f32).round() as i32).max(12);
-    let max_offset = rows_len.saturating_sub(visible);
-    let travel = (track_h - thumb_h).max(0);
-    let thumb_y = if max_offset == 0 {
-        track_y
-    } else {
-        track_y + (travel as f32 * scroll_offset as f32 / max_offset as f32).round() as i32
-    };
-    fill_virtual_rect(
-        renderer,
-        transform,
-        track_x,
-        thumb_y,
-        track_w,
-        thumb_h,
-        Renderer::create_color_16(172, 146, 84),
-    );
 }
 
 fn mission_choices(

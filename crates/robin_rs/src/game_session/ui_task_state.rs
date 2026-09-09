@@ -31,6 +31,7 @@ use crate::options_model::{SoundSetting, sound_eq};
 use crate::options_model::{graphic_eq, graphics_settings_for_retroarch_availability};
 use crate::renderer::Renderer;
 use crate::savegame::SaveGameManager;
+use crate::scroll_view::ScrollView;
 use crate::sound::{AudioBackend, SoundManager};
 use crate::widget::FrameWnd;
 use robin_engine::gameplay_config::GameplayConfig;
@@ -424,7 +425,7 @@ pub(super) struct OptionsTaskState {
     pager: OptionsPager,
     input: ModalInputState,
     transform: MenuTransform,
-    shortcut_scroll: usize,
+    shortcut_scroll: Option<ScrollView>,
     rebinding: Option<u16>,
     shortcut_dirty: bool,
     shortcut_reserved: bool,
@@ -484,7 +485,7 @@ impl OptionsTaskState {
             pager: OptionsPager::default(),
             input,
             transform,
-            shortcut_scroll: 0,
+            shortcut_scroll: None,
             rebinding: None,
             shortcut_dirty: false,
             shortcut_reserved: false,
@@ -573,6 +574,22 @@ impl OptionsTaskState {
         } else {
             for event in &events {
                 self.input.update_from_event(event, self.transform);
+                if self.controller.page == OptionsPage::Shortcuts {
+                    let view = self
+                        .shortcut_scroll
+                        .as_mut()
+                        .expect("shortcut scroll view configured");
+                    let consumed = view.handle_event(
+                        event,
+                        self.transform,
+                        (self.input.virt_x as i32, self.input.virt_y as i32),
+                    ) || matches!(event, GameEvent::KeyDown { keycode, .. }
+                            if matches!(keycode, Keycode::PageUp | Keycode::PageDown | Keycode::Home | Keycode::End) && view.navigate(*keycode));
+                    if consumed {
+                        self.rebuild_frame(resources);
+                        continue;
+                    }
+                }
                 match event {
                     GameEvent::KeyDown {
                         keycode: Keycode::Escape,
@@ -617,17 +634,11 @@ impl OptionsTaskState {
                         }
                     }
                     GameEvent::MouseWheel(delta)
-                        if self.controller.page == OptionsPage::Shortcuts =>
+                        if !matches!(
+                            self.controller.page,
+                            OptionsPage::Hub | OptionsPage::Shortcuts
+                        ) =>
                     {
-                        let max = REAL_KEY_COUNT as usize - shortcut_visible_rows(resources);
-                        if *delta > 0 {
-                            self.shortcut_scroll = self.shortcut_scroll.saturating_sub(1);
-                        } else if *delta < 0 {
-                            self.shortcut_scroll = (self.shortcut_scroll + 1).min(max);
-                        }
-                        self.rebuild_frame(resources);
-                    }
-                    GameEvent::MouseWheel(delta) if self.controller.page != OptionsPage::Hub => {
                         if *delta > 0 {
                             self.change_options_page(-1, resources);
                         } else if *delta < 0 {
@@ -1032,10 +1043,13 @@ impl OptionsTaskState {
                 rows
             }
             OptionsPage::Shortcuts => {
-                let visible = shortcut_visible_rows(resources);
-                let mut rows = (0..visible)
-                    .map(|offset| {
-                        let index = self.shortcut_scroll + offset;
+                let view = self
+                    .shortcut_scroll
+                    .as_ref()
+                    .expect("shortcut scroll view configured");
+                let mut rows = view
+                    .visible_range()
+                    .map(|index| {
                         let action = KEY_ACTIONS.get(index).copied().unwrap_or("Unknown");
                         let key = self.controller.keys.get_key_by_index(index as u16);
                         let label = if self.rebinding == Some(index as u16) {
@@ -1086,6 +1100,25 @@ impl OptionsTaskState {
     }
 
     fn rebuild_frame(&mut self, resources: &IngameMenuResources) {
+        if self.controller.page == OptionsPage::Shortcuts {
+            let visible = shortcut_visible_rows(resources);
+            let row_height = resources.button_dimensions().1 + BUTTON_GAP;
+            let view = self.shortcut_scroll.get_or_insert_with(|| {
+                ScrollView::new(
+                    [
+                        BUTTON_X,
+                        BUTTON_Y,
+                        640 - BUTTON_X - 4,
+                        visible as i32 * row_height,
+                    ],
+                    row_height,
+                    resources,
+                )
+            });
+            view.set_total(REAL_KEY_COUNT as usize);
+            view.set_wheel_step(1);
+        }
+
         let all_rows = self.all_rows(resources);
         self.rows = if matches!(
             self.controller.page,
@@ -1127,6 +1160,18 @@ impl OptionsTaskState {
         let mut settings_seen = 0usize;
         for (index, row) in self.rows.iter().enumerate() {
             let (x, y, width, height) = match row.action {
+                OptionRowAction::Rebind(_) => (
+                    BUTTON_X,
+                    BUTTON_Y + index as i32 * (row_h + BUTTON_GAP),
+                    button_w.min(
+                        self.shortcut_scroll
+                            .as_ref()
+                            .expect("shortcut scroll view")
+                            .content_width(),
+                    ),
+                    row_h,
+                ),
+
                 action if action.is_adjustment() => {
                     let setting = settings_seen;
                     settings_seen += 1;
@@ -1243,6 +1288,12 @@ impl OptionsTaskState {
                 widget,
                 index == self.selected,
             );
+        }
+        if self.controller.page == OptionsPage::Shortcuts {
+            self.shortcut_scroll
+                .as_ref()
+                .expect("shortcut scroll view")
+                .draw_scrollbar(renderer, self.transform, resources);
         }
         if let Some(cursor) = cursor {
             cursor.draw(renderer, self.transform, &self.input);
@@ -1417,6 +1468,19 @@ impl SaveLoadTaskState {
     }
 
     fn begin_frame(&mut self, resources: &IngameMenuResources) {
+        let row_height = self.row_height();
+        self.controller.configure_list(
+            &mut self.model,
+            crate::ingame_menu::layout::MenuRect {
+                x: 30,
+                y: 38,
+                w: 420,
+                h: 372,
+            },
+            row_height,
+            resources,
+        );
+
         let labels = [
             resources.menu_text.get(if self.mode == SaveLoadMode::Save {
                 MT_BTN_SAVE
@@ -1439,20 +1503,10 @@ impl SaveLoadTaskState {
     }
 
     fn handle_event(&mut self, event: &GameEvent, manager: &SaveGameManager) {
-        let row_height = self.row_height();
-        let list_height = row_height * self.visible_rows() as i32;
-        if self.controller.handle_event(
-            &mut self.model,
-            event,
-            self.transform,
-            crate::ingame_menu::layout::MenuRect {
-                x: 30,
-                y: 38,
-                w: 420,
-                h: list_height,
-            },
-            row_height,
-        ) {
+        if self
+            .controller
+            .handle_event(&mut self.model, event, self.transform)
+        {
             self.sync_name(manager);
         }
         if self.mode == SaveLoadMode::Save {
@@ -1697,8 +1751,7 @@ impl SaveLoadTaskState {
         }
         if let Some(font) = resources.label_font_any() {
             let visible = self.model.visible();
-            let total = self.model.total_rows();
-            let row_height = self.row_height();
+            let view = self.controller.view();
             let now_unix = if self.detailed_metadata {
                 match crate::save_file::unix_timestamp_now() {
                     Ok(now) => Some(now),
@@ -1713,11 +1766,7 @@ impl SaveLoadTaskState {
             } else {
                 None
             };
-            for offset in 0..self.visible_rows() {
-                let row = self.model.scroll_offset() + offset;
-                if row >= total {
-                    break;
-                }
+            for row in view.visible_range() {
                 let (selected, label, details) = if self.mode == SaveLoadMode::Save && row == 0 {
                     (
                         self.model.selected_row() == Some(ListRow::New),
@@ -1747,12 +1796,16 @@ impl SaveLoadTaskState {
                     )
                 };
                 let prefix = if selected { "> " } else { "  " };
-                let row_y = 42 + offset as i32 * row_height;
+                let row_y = view.row_y(row);
                 render_text_virt_font(
                     renderer,
                     font,
                     self.transform,
-                    &format!("{prefix}{label}"),
+                    &crate::ingame_menu::save_load::truncate_to_pixel_width(
+                        font,
+                        &format!("{prefix}{label}"),
+                        view.content_width() - 20,
+                    ),
                     40,
                     row_y,
                 );
@@ -1763,12 +1816,17 @@ impl SaveLoadTaskState {
                         renderer,
                         font,
                         self.transform,
-                        detail,
+                        &crate::ingame_menu::save_load::truncate_to_pixel_width(
+                            font,
+                            detail,
+                            view.content_width() - 34,
+                        ),
                         54,
                         row_y + 16 * (line_index as i32 + 1),
                     );
                 }
             }
+            view.draw_scrollbar(renderer, self.transform, resources);
             if self.mode == SaveLoadMode::Save {
                 render_text_virt_font(
                     renderer,
@@ -1812,10 +1870,6 @@ impl SaveLoadTaskState {
 
     fn row_height(&self) -> i32 {
         if self.detailed_metadata { 52 } else { 36 }
-    }
-
-    fn visible_rows(&self) -> usize {
-        if self.detailed_metadata { 7 } else { 10 }
     }
 }
 
@@ -2225,6 +2279,116 @@ mod tests {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    #[ignore = "requires game data and an offscreen wgpu adapter"]
+    fn capture_save_scroll_view() {
+        // Run this opt-in capture alone: resource initialization uses the install root.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        std::env::set_current_dir(root).unwrap();
+        let data = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        let (_, _, context) =
+            crate::main_entry::rust_init_with_data_dir(Some(std::path::Path::new(&data)))
+                .expect("capture content");
+        let gpu = pollster::block_on(async {
+            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+            descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::VULKAN);
+            let instance = std::sync::Arc::new(wgpu::Instance::new(descriptor));
+            let options = wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            };
+            let adapter = instance
+                .request_adapter(&options)
+                .await
+                .expect("offscreen adapter");
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("save UI capture"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                        .using_resolution(adapter.limits()),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+                .expect("offscreen device");
+            crate::window::GpuContext {
+                instance,
+                adapter: std::sync::Arc::new(adapter),
+                device: std::sync::Arc::new(device),
+                queue: std::sync::Arc::new(queue),
+                surface_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            }
+        });
+
+        let mut renderer = Renderer::offscreen(gpu, 1024, 768);
+        let resources = IngameMenuResources::new(
+            &mut renderer,
+            context.shipping().unwrap(),
+            context.preparation_files().unwrap().clone(),
+        )
+        .expect("menu resources");
+        let mut manager = SaveGameManager::new("unused-capture-saves".into());
+        for index in 0..30 {
+            let mut save = crate::savegame::SaveGame::new(
+                format!("Savegame_{index:03}"),
+                format!("Save {index:02}"),
+                1,
+            );
+            save.timestamp = "1788940800".into();
+            save.mission_name = "The Silver Arrow".into();
+            save.player_profile_id = Some(12);
+            save.player_name = "Robin".into();
+            save.mission_elapsed_seconds = Some(65 * 60 + index);
+            manager.insert_test_slot(save, crate::savegame::SlotState::Published);
+        }
+        let output = std::path::Path::new("target/save-ui");
+        std::fs::create_dir_all(output).unwrap();
+        for detailed in [false, true] {
+            let mut state = SaveLoadTaskState::with_input(
+                &manager,
+                1,
+                detailed,
+                SaveLoadMode::Load,
+                false,
+                MenuTransform::centered(1024, 768),
+                ModalInputState::new(),
+            );
+            state.begin_frame(&resources);
+            for _ in 0..30 {
+                state.model.navigate(true);
+            }
+            state.begin_frame(&resources);
+            renderer.begin_gpu_frame_clear();
+            renderer.begin_ui_only_frame();
+            state.render(&mut renderer, &resources, None, &manager);
+            let (width, height, pixels) = renderer.try_capture_frame_rgba().unwrap();
+            let path = output.join(if detailed {
+                "detailed.png"
+            } else {
+                "compact.png"
+            });
+            let mut encoder =
+                png::Encoder::new(std::fs::File::create(&path).unwrap(), width, height);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&pixels)
+                .unwrap();
+            eprintln!("Captured {}", path.display());
+        }
+    }
+
     fn picker_fixture(manager: &mut SaveGameManager, name: &str) {
         let mut save = crate::savegame::SaveGame::new(name.into(), name.into(), 1);
         save.timestamp = "123".into();
@@ -2247,6 +2411,9 @@ mod tests {
         manager: &SaveGameManager,
         events: &[GameEvent],
     ) -> Option<PickerAction> {
+        state.controller.scroll_view.get_or_insert_with(|| {
+            ScrollView::with_geometry([30, 42, 420, 360], 36, 16, 16, false)
+        });
         state.refresh(manager);
         state.controller.begin_frame(
             &state.model,
@@ -2336,6 +2503,13 @@ mod tests {
         let mut standalone =
             PickerModel::new(SaveLoadMode::Save, false, 10, picker_slots(&manager));
         let mut controller = PickerController::new(ModalInputState::new());
+        controller.scroll_view = Some(ScrollView::with_geometry(
+            [30, 42, 420, 360],
+            36,
+            16,
+            16,
+            false,
+        ));
         let traces = [
             vec![GameEvent::TextInput {
                 text: "é雪".into()
@@ -2362,18 +2536,7 @@ mod tests {
                 40,
             );
             for event in &events {
-                controller.handle_event(
-                    &mut standalone,
-                    event,
-                    MenuTransform::centered(640, 480),
-                    crate::ingame_menu::layout::MenuRect {
-                        x: 30,
-                        y: 38,
-                        w: 420,
-                        h: 360,
-                    },
-                    36,
-                );
+                controller.handle_event(&mut standalone, event, MenuTransform::centered(640, 480));
             }
             controller.process_widgets(&standalone);
             controller.input.end_frame();
@@ -2476,6 +2639,13 @@ mod tests {
         let mut pause = pause_picker(&manager, SaveLoadMode::Load);
         let mut model = pause.model.clone();
         let mut controller = PickerController::new(ModalInputState::new());
+        controller.scroll_view = Some(ScrollView::with_geometry(
+            [30, 42, 420, 360],
+            36,
+            16,
+            16,
+            false,
+        ));
         let mut actions = Vec::new();
         for events in [
             vec![
@@ -2505,18 +2675,7 @@ mod tests {
                 40,
             );
             for event in &events {
-                controller.handle_event(
-                    &mut model,
-                    event,
-                    MenuTransform::centered(640, 480),
-                    crate::ingame_menu::layout::MenuRect {
-                        x: 30,
-                        y: 38,
-                        w: 420,
-                        h: 360,
-                    },
-                    36,
-                );
+                controller.handle_event(&mut model, event, MenuTransform::centered(640, 480));
             }
             controller.process_widgets(&model);
             controller.input.end_frame();

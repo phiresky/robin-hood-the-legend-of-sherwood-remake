@@ -10,7 +10,13 @@ A list of which additional features we have added, which ones we might still wan
   A shared scroll view also powers Campaign Manager’s Hall of Deeds, Achievements,
   mission details, and Previous Plays, with a horizontal scrollbar for Campaign.
   Scrolling preserves selection; keyboard navigation reveals the selected mission.
+  The same component handles multiplayer mission browsing, save/load lists,
+  shortcut bindings, and debriefing text, including the in-mission UI paths.
   All scrollbars reuse the original menu artwork.
+
+- **Save mission time:** In-mission save info includes elapsed simulation time
+  as minutes and seconds, including autosaves. Sherwood saves omit it; older
+  catalog entries without a recorded timer remain readable.
 
 - **Language-independent audio timing.** The required core-datadir
   `Data/AudioDurations.json` supplies English speech variants and sample
