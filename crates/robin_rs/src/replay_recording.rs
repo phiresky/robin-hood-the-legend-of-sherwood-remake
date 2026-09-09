@@ -170,9 +170,7 @@ impl SharedReplayRecorder {
             .map(|link| MissionArchive::open(std::path::Path::new(&link.mission_directory)))
             .transpose()?;
         let archive = opened.as_ref().unwrap_or(current);
-        let prefix = archive.assembled_bytes()?;
-        let data = robin_engine::replay::ReplayData::from_reader(std::io::Cursor::new(&prefix))
-            .map_err(|error| anyhow::anyhow!("parse mission history: {error}"))?;
+        let (prefix, data, root) = archive.assembled_replay()?;
         ensure!(
             data.header().mission_assets == save.header.mission_assets,
             "loaded replay requires different mission assets"
@@ -192,18 +190,6 @@ impl SharedReplayRecorder {
             (recording.timeline, None)
         };
         let ordinal = data.frame_count();
-        let mut header = data.header().clone();
-        header.total_frames = 0;
-        // Keep the exact root header. Derived taints are already in the prefix.
-        let newline = prefix
-            .iter()
-            .position(|byte| *byte == b'\n')
-            .context("replay root has no header")?;
-        let root: ReplayHeader = serde_json::from_slice(&prefix[..newline])?;
-        ensure!(
-            root.mission_assets == header.mission_assets,
-            "replay root differs from parsed mission"
-        );
         if let Some(opened) = opened {
             recording.archive = Some(opened);
         }

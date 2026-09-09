@@ -71,6 +71,14 @@ fn default_dependency_closure_excludes_optional_integrations() {
             "native RPC transport requires {required} without enabling multiplayer"
         );
     }
+    // OS data/save directories are standard native functionality, not an
+    // optional desktop integration. Metadata includes target-specific edges.
+    assert!(
+        direct_dependencies
+            .iter()
+            .any(|id| package_names.get(id).is_some_and(|name| name == "dirs")),
+        "native builds require standard OS data directories"
+    );
     let mut queue = VecDeque::from([root]);
     let mut closure = BTreeSet::new();
     while let Some(id) = queue.pop_front() {
@@ -86,7 +94,6 @@ fn default_dependency_closure_excludes_optional_integrations() {
         .collect::<BTreeSet<_>>();
     let forbidden = [
         "cpal",
-        "dirs",
         "ffmpeg-next",
         "ffmpeg-sys-next",
         "gilrs",

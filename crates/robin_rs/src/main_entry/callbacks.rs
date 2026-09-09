@@ -299,6 +299,53 @@ impl OperationOutcome {
 }
 
 impl RustCallbacks {
+    /// Resolve browser history before the synchronous load transaction mutates
+    /// the engine. The existing load boundary still owns admission and reports
+    /// unavailable history by invalidating recording, not by losing the save.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn prepare_browser_replay_load(&mut self) {
+        let result: anyhow::Result<()> = async {
+            let load = match self.pending_request() {
+                Some(SaveLoadRequest::Load { slot, .. }) => {
+                    PreparedLoad::preflight(&self.save_manager, slot.clone())?
+                }
+                Some(SaveLoadRequest::ApplyLoad(load)) => Some(load.clone()),
+                Some(SaveLoadRequest::LoadRestart) => PreparedLoad::restart(&self.save_manager)?,
+                Some(SaveLoadRequest::QuickLoad { use_backup }) => {
+                    let name = if *use_backup {
+                        special_slots::EX_QUICK
+                    } else {
+                        special_slots::QUICK
+                    };
+                    match self.save_manager.find_by_filename(name) {
+                        Some(index) => PreparedLoad::preflight(
+                            &self.save_manager,
+                            Some(self.save_manager.slot_handle(index)?),
+                        )?,
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(load) = load
+                && let Some(link) = &load.save().header.replay
+            {
+                crate::replay_archive::prepare_browser_directory(std::path::Path::new(
+                    &link.mission_directory,
+                ))
+                .await?;
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::error!("Browser replay load preflight failed: {error:#}");
+            // Keep the original request: its payload is self-contained. The
+            // existing executor/replay boundary reports any failed admission
+            // or unavailable history after applying the valid save.
+        }
+    }
+
     /// A host iteration has one operation slot. The last request before the
     /// flush replaces an earlier request, preserving the existing UI/script
     /// precedence; these are choices, not a FIFO of disk writes.
@@ -608,12 +655,6 @@ impl crate::game::GameCallbacks for RustCallbacks {
     }
     fn send_script_message(&mut self, target: u32, message: u32) {
         tracing::debug!("Script message: target={} msg={}", target, message);
-    }
-    fn display_ingame_menu(&mut self) {
-        tracing::warn!("display_ingame_menu: stub");
-    }
-    fn display_debriefing(&mut self, won: bool) {
-        tracing::info!("Debriefing (won={}): stub", won);
     }
     fn get_current_playing_time(&self, campaign: &Campaign) -> u32 {
         // Returns deterministic simulation seconds. Downstream consumers

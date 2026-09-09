@@ -182,6 +182,8 @@ impl MissionArchive {
     }
 
     pub(crate) fn sync_current(&self) -> Result<()> {
+        #[cfg(target_arch = "wasm32")]
+        browser::checkpoint()?;
         #[cfg(not(target_arch = "wasm32"))]
         std::fs::OpenOptions::new()
             .write(true)
@@ -190,8 +192,10 @@ impl MissionArchive {
         Ok(())
     }
 
-    pub(crate) fn assembled_bytes(&self) -> Result<Vec<u8>> {
-        assemble_bytes(&self.directory, &self.manifest)
+    /// Return the validated export prefix, parsed history, and exact construction
+    /// header together. The parser's derived header is not a continuation header.
+    pub(crate) fn assembled_replay(&self) -> Result<(Vec<u8>, ReplayData, ReplayHeader)> {
+        assemble_replay(&self.directory, &self.manifest)
     }
 
     pub(crate) fn validate_link(
@@ -282,9 +286,12 @@ fn write_manifest(directory: &Path, manifest: &Manifest) -> Result<()> {
     Ok(())
 }
 
-fn assemble_bytes(directory: &Path, manifest: &Manifest) -> Result<Vec<u8>> {
+fn assemble_replay(
+    directory: &Path,
+    manifest: &Manifest,
+) -> Result<(Vec<u8>, ReplayData, ReplayHeader)> {
     let mut bytes = Vec::new();
-    let mut root_header: Option<serde_json::Value> = None;
+    let mut root_header: Option<ReplayHeader> = None;
     for (index, chunk) in manifest.chunks.iter().enumerate() {
         let raw = read_bounded(&directory.join(&chunk.file), MAX_BYTES - bytes.len())?;
         // A freshly opened child can be empty before the recorder writes its
@@ -300,12 +307,13 @@ fn assemble_bytes(directory: &Path, manifest: &Manifest) -> Result<Vec<u8>> {
         );
         let header = serde_json::to_value(&stored.recording)?;
         if index == 0 {
-            root_header = Some(header);
             serde_json::to_writer(&mut bytes, &stored.recording)?;
             bytes.push(b'\n');
+            root_header = Some(stored.recording);
         } else {
             ensure!(
-                Some(&header) == root_header.as_ref(),
+                header
+                    == serde_json::to_value(root_header.as_ref().context("missing root header")?)?,
                 "replay chunks have different construction headers"
             );
         }
@@ -362,7 +370,11 @@ fn assemble_bytes(directory: &Path, manifest: &Manifest) -> Result<Vec<u8>> {
             );
         }
     }
-    Ok(bytes)
+    Ok((
+        bytes,
+        data,
+        root_header.context("mission recording has no root header")?,
+    ))
 }
 
 /// Freeze an earlier attempt's chronology at its immutable terminal chunk.
@@ -383,18 +395,16 @@ pub(crate) fn load_through_chunk(path: &Path) -> Result<ReplayData> {
         .position(|chunk| chunk.file == filename)
         .context("file is not a chunk in this mission recording")?;
     manifest.chunks.truncate(index + 1);
-    let bytes = assemble_bytes(directory, &manifest)?;
-    ReplayData::from_reader(std::io::Cursor::new(bytes))
-        .map_err(|error| anyhow::anyhow!("parse mission recording: {error}"))
+    let (_, data, _) = assemble_replay(directory, &manifest)?;
+    Ok(data)
 }
 
 /// Assemble all chronological chunks into the same self-contained replay used
 /// by compact exports and verification. No dependency on original save files.
 pub fn load_directory(directory: &Path) -> Result<ReplayData> {
     let manifest = read_manifest(directory)?;
-    let bytes = assemble_bytes(directory, &manifest)?;
-    ReplayData::from_reader(std::io::Cursor::new(bytes))
-        .map_err(|error| anyhow::anyhow!("parse mission recording: {error}"))
+    let (_, data, _) = assemble_replay(directory, &manifest)?;
+    Ok(data)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -508,77 +518,16 @@ fn canonical_directory(path: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage> {
-    web_sys::window()
-        .context("replay storage requires a browser window")?
-        .local_storage()
-        .map_err(|error| anyhow::anyhow!("replay storage unavailable: {error:?}"))?
-        .context("replay storage unavailable")
-}
-
+mod browser;
 #[cfg(target_arch = "wasm32")]
-fn browser_key(path: &Path) -> String {
-    format!("robin:replay:{}", path.display())
-}
-
+pub(crate) use browser::next_directory as browser_recording_directory;
 #[cfg(target_arch = "wasm32")]
-fn browser_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    browser_storage()?
-        .set_item(&browser_key(path), std::str::from_utf8(bytes)?)
-        .map_err(|error| anyhow::anyhow!("persist replay chunk: {error:?}"))
-}
-
+use browser::{create_chunk, open_chunk_writer, read_bounded, write as browser_write};
 #[cfg(target_arch = "wasm32")]
-fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let value = browser_storage()?
-        .get_item(&browser_key(path))
-        .map_err(|error| anyhow::anyhow!("read replay chunk: {error:?}"))?
-        .context("missing replay chunk")?;
-    ensure!(
-        value.len() <= limit,
-        "mission recording exceeds {MAX_BYTES} bytes"
-    );
-    Ok(value.into_bytes())
-}
-
+pub use browser::{
+    flush_pending as flush_browser_storage, initialize as initialize_browser_storage,
+};
 #[cfg(target_arch = "wasm32")]
-fn create_chunk(path: &Path) -> Result<()> {
-    ensure!(
-        browser_storage()?
-            .get_item(&browser_key(path))
-            .map_err(|error| anyhow::anyhow!("read replay storage: {error:?}"))?
-            .is_none(),
-        "replay chunk already exists"
-    );
-    browser_write(path, b"")
-}
-
-#[cfg(target_arch = "wasm32")]
-fn open_chunk_writer(path: &Path) -> Result<Box<dyn Write + Send>> {
-    Ok(Box::new(BrowserChunk {
-        path: path.to_owned(),
-        bytes: read_bounded(path, MAX_BYTES)?,
-    }))
-}
-
-#[cfg(target_arch = "wasm32")]
-struct BrowserChunk {
-    path: PathBuf,
-    bytes: Vec<u8>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl Write for BrowserChunk {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if self.bytes.len().saturating_add(bytes.len()) > MAX_BYTES {
-            return Err(std::io::Error::other("replay chunk capacity exceeded"));
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        // TODO: move browser chunk persistence to IndexedDB transactions to
-        // avoid rewriting the active chunk and localStorage's small quota.
-        browser_write(&self.path, &self.bytes).map_err(std::io::Error::other)
-    }
-}
+pub(crate) use browser::{
+    prepare_directory as prepare_browser_directory, retire_mission as retire_browser_mission,
+};

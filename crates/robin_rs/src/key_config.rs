@@ -19,7 +19,7 @@
 use winit::keyboard::KeyCode;
 
 /// A single action‐to‐key mapping.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyBinding {
     pub action: String,
     pub primary_key: Option<KeyCode>,
@@ -27,7 +27,7 @@ pub struct KeyBinding {
 }
 
 /// The full set of key bindings.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyConfig {
     pub bindings: Vec<KeyBinding>,
     /// Config type: `0` = Unknown, `1` = UserDefined, `2+` = PresetBase+index.

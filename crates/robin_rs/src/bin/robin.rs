@@ -417,6 +417,8 @@ async fn wasm_main(
 ) -> anyhow::Result<()> {
     use futures::FutureExt as _;
 
+    robin_rs::replay_archive::initialize_browser_storage().await?;
+
     // Start worker creation before synchronous initialization and async GPU
     // bring-up. Poll once here so the browser can load workers while the main
     // thread prepares the window; merely constructing a future starts no work.

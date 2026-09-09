@@ -2086,7 +2086,7 @@ the map even though it cannot defer to frontend assembly.
   finish inside the ~700 ms of overlap it was given. Running the job serially
   on one worker (the pool exists to keep it off the main thread, not to split
   it) should close that gap; the change is a one-line flag at the wasm
-  dispatch site in `PendingTerrainDecode::start`. It is *not* in this branch:
+  dispatch site in `PendingTerrainDecode::start_with_files`. It is *not* in this branch:
   the machine's btrfs metadata filled up (8.20/8.72 GiB with zero unallocated
   space, so every build failed with ENOSPC despite ~50 GiB free), and shipping
   an unmeasured perf change would have broken the code/measurement pairing.

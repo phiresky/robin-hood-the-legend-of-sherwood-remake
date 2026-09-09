@@ -61,11 +61,20 @@ impl InteractiveMission {
         &mut self,
         services: &mut MissionServices<'_>,
     ) -> Result<GameCode, String> {
+        #[cfg(target_arch = "wasm32")]
+        crate::replay_archive::flush_browser_storage()
+            .await
+            .map_err(|error| format!("persist initial replay: {error:#}"))?;
         if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
             return Ok(code);
         }
         loop {
-            let control = self.run_frame(services).await?;
+            let control = self.run_frame(services).await;
+            #[cfg(target_arch = "wasm32")]
+            crate::replay_archive::flush_browser_storage()
+                .await
+                .map_err(|error| format!("persist replay frame: {error:#}"))?;
+            let control = control?;
             if let Some(code) = self.capture_requested_screenshot_if_ready(services).await? {
                 return Ok(code);
             }

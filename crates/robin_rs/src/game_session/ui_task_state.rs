@@ -41,7 +41,6 @@ use robin_engine::profiles::ProfileManager;
 use robin_engine::sound_cache::SampleLoader;
 use robin_engine::sound_config::SoundConfig;
 use serde::{Deserialize, Serialize};
-use winit::keyboard::KeyCode;
 
 const BUTTON_X: i32 = 330;
 const BUTTON_Y: i32 = 36;
@@ -416,7 +415,7 @@ pub(super) struct OptionsTaskState {
     original_profile_gameplay: GameplayConfig,
     original_multiplayer: MultiplayerConfig,
     original_profile_sound: SoundConfig,
-    original_keys: Vec<Option<KeyCode>>,
+    original_keys: (KeyConfig, KeyConfig),
     original_amount_of_speaking: u16,
     frame: FrameWnd,
     noise_tracker: widget_bridge::NoisyTracker,
@@ -461,7 +460,7 @@ impl OptionsTaskState {
         );
         let mut input = ModalInputState::new();
         input.seed_mouse_from_window(window, transform);
-        let original_keys = key_vec(&keys);
+        let original_keys = (keys.clone(), custom_keys.clone());
         let mut state = Self {
             profile_id,
             original_gameplay: gameplay,
@@ -563,7 +562,6 @@ impl OptionsTaskState {
                     } => {
                         let row = self.rebinding.take().expect("rebind row must exist");
                         assign_key(&mut self.controller.keys, row, *key);
-                        self.controller.keys.key_type = 1;
                         self.shortcut_dirty = true;
                         self.shortcut_reserved = false;
                         self.rebuild_frame(resources);
@@ -706,9 +704,7 @@ impl OptionsTaskState {
                 self.rebuild_frame(resources);
             }
             OptionRowAction::ShortcutPreset(preset) => {
-                use crate::options_model::{
-                    ShortcutPolicy, ShortcutPreset, select_shortcut_preset,
-                };
+                use crate::options_model::{ShortcutPreset, select_shortcut_preset};
                 let preset = match preset {
                     0 => ShortcutPreset::Default,
                     1 => ShortcutPreset::Alternate,
@@ -720,7 +716,6 @@ impl OptionsTaskState {
                     &mut self.controller.custom_keys,
                     &mut self.shortcut_dirty,
                     preset,
-                    ShortcutPolicy::Cooperative,
                 );
                 self.shortcut_reserved = false;
                 self.rebuild_frame(resources);
@@ -847,7 +842,8 @@ impl OptionsTaskState {
 
     fn finish(&self) -> UiTaskOutcome {
         let resolution_changed = self.controller.graphic.resolution_changed();
-        let key_config_changed = key_vec(&self.controller.keys) != self.original_keys;
+        let key_config_changed = self.controller.keys != self.original_keys.0
+            || self.controller.custom_keys != self.original_keys.1;
         let profile_gameplay = profile_gameplay_after_options(
             self.controller.gameplay,
             self.original_profile_gameplay,
@@ -1957,29 +1953,10 @@ fn play_button_noise(
     }
 }
 
-fn key_vec(config: &KeyConfig) -> Vec<Option<KeyCode>> {
-    let mut keys = vec![None; REAL_KEY_COUNT as usize];
-    config.get_keys_array(&mut keys);
-    keys
-}
-
-fn assign_key(config: &mut KeyConfig, target: u16, key: KeyCode) {
-    crate::options_model::assign_shortcut(
-        config,
-        target,
-        key,
-        crate::options_model::ShortcutPolicy::Cooperative,
-    );
-}
-fn promote_shortcut_edits(active: &KeyConfig, custom: &mut KeyConfig, dirty: &mut bool) {
-    crate::options_model::promote_shortcut_edits(
-        active,
-        custom,
-        dirty,
-        crate::options_model::ShortcutPolicy::Cooperative,
-    );
-}
-use crate::options_model::is_reserved_shortcut_key as is_reserved_key;
+use crate::options_model::{
+    assign_shortcut as assign_key, is_reserved_shortcut_key as is_reserved_key,
+    promote_shortcut_edits,
+};
 
 const KEY_ACTIONS: &[&str] = &[
     "Zoom In",
@@ -2015,6 +1992,94 @@ const KEY_ACTIONS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::options_model::shortcut_keys as key_vec;
+    use winit::keyboard::KeyCode;
+
+    fn options_fixture() -> OptionsTaskState {
+        let keys = KeyConfig::default_preset();
+        OptionsTaskState {
+            profile_id: 1,
+            controller: crate::options_model::OptionsController::new(
+                GraphicConfig::default(),
+                SoundConfig::default(),
+                GameplayConfig::default(),
+                MultiplayerConfig::default(),
+                keys.clone(),
+                keys.clone(),
+            ),
+            original_gameplay: GameplayConfig::default(),
+            original_profile_gameplay: GameplayConfig::default(),
+            original_multiplayer: MultiplayerConfig::default(),
+            original_profile_sound: SoundConfig::default(),
+            original_keys: (keys.clone(), keys),
+            original_amount_of_speaking: SoundConfig::default().amount_of_speaking,
+            frame: FrameWnd::default(),
+            noise_tracker: widget_bridge::NoisyTracker::new(),
+            rows: Vec::new(),
+            selected: 0,
+            pager: OptionsPager::default(),
+            input: ModalInputState::new(),
+            transform: MenuTransform::centered(640, 480),
+            shortcut_scroll: 0,
+            rebinding: None,
+            shortcut_dirty: false,
+            shortcut_reserved: false,
+            can_3d_sound: false,
+            host_gameplay_rules_editable: true,
+            localized_gameplay: crate::ingame_menu::gameplay::LocalizedGameplayText::for_locale(
+                "en-GB",
+            ),
+            spellforge_content: None,
+        }
+    }
+
+    #[test]
+    fn options_final_outcome_persists_custom_only_and_type_only_edits() {
+        for change in 0..3 {
+            let mut state = options_fixture();
+            state.controller.enter_page(OptionsPage::Shortcuts);
+            match change {
+                0 => state
+                    .controller
+                    .custom_keys
+                    .set_binding("ZoomIn", Some(KeyCode::F6), None),
+                1 => state.controller.keys.key_type += 1,
+                2 => state.controller.custom_keys.key_type += 1,
+                _ => unreachable!(),
+            }
+            state.controller.accept_page(false);
+            let UiTaskOutcome::OptionsAccepted(result) = state.finish() else {
+                panic!("options must produce their final persistence outcome");
+            };
+            assert!(
+                result.key_config_changed,
+                "edit {change} must reach persistence"
+            );
+            assert_eq!(result.key_config, state.controller.keys);
+            assert_eq!(result.custom_key_config, state.controller.custom_keys);
+        }
+    }
+
+    #[test]
+    fn options_final_outcome_does_not_persist_cancelled_or_reverted_edits() {
+        for cancel in [false, true] {
+            let mut state = options_fixture();
+            state.controller.enter_page(OptionsPage::Shortcuts);
+            state.controller.custom_keys.key_type += 1;
+            if cancel {
+                state.controller.cancel_page();
+            } else {
+                state.controller.accept_page(false);
+                state.controller.enter_page(OptionsPage::Shortcuts);
+                state.controller.custom_keys = state.original_keys.1.clone();
+                state.controller.accept_page(false);
+            }
+            let UiTaskOutcome::OptionsAccepted(result) = state.finish() else {
+                panic!("options must produce their final persistence outcome");
+            };
+            assert!(!result.key_config_changed);
+        }
+    }
 
     #[test]
     fn options_pager_covers_large_setting_sets_exactly_once() {
@@ -2703,6 +2768,28 @@ mod tests {
         assign_key(&mut keys, 18, key);
         assert_eq!(keys.get_key_by_index(0), None);
         assert_eq!(keys.get_key_by_index(18), Some(key));
+    }
+
+    #[test]
+    fn cooperative_shortcuts_share_shift_and_clear_all_other_conflicts() {
+        use crate::key_config::PLAN_QUICK_ACTIONS_INDEX;
+        let mut keys = KeyConfig::default_preset();
+        keys.set_key_by_index(16, Some(KeyCode::ShiftLeft));
+        assign_key(&mut keys, PLAN_QUICK_ACTIONS_INDEX, KeyCode::ShiftLeft);
+        assert_eq!(keys.get_key_by_index(16), Some(KeyCode::ShiftLeft));
+        assert_eq!(
+            keys.get_key_by_index(PLAN_QUICK_ACTIONS_INDEX),
+            Some(KeyCode::ShiftLeft)
+        );
+        for index in [0, 1, 2] {
+            keys.set_key_by_index(index, Some(KeyCode::F6));
+        }
+        assign_key(&mut keys, 18, KeyCode::F6);
+        for index in [0, 1, 2] {
+            assert_eq!(keys.get_key_by_index(index), None);
+        }
+        assert_eq!(keys.get_key_by_index(18), Some(KeyCode::F6));
+        assert_eq!(keys.key_type, 1);
     }
 
     #[test]

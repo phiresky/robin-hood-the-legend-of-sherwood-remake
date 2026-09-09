@@ -190,11 +190,17 @@ pub(super) fn init_recording(
         Some(args.record.clone().unwrap_or_else(default_replay_path))
     };
     #[cfg(target_arch = "wasm32")]
-    let replay_path = Some(format!(
-        "mission-{}",
-        crate::save_file::unix_timestamp_now().expect("valid clock") * 1000
-            + (js_sys::Date::now() as u64 % 1000)
-    ));
+    let replay_path = if is_playing_back {
+        None
+    } else {
+        match crate::replay_archive::browser_recording_directory() {
+            Ok(path) => Some(path),
+            Err(error) => {
+                tracing::error!("Browser replay storage is unavailable: {error:#}");
+                return None;
+            }
+        }
+    };
     // A fresh mission gets a fresh generation of the bounded spool. The
     // returned sole writer publishes only complete recorder flush boundaries.
     let rpc_spool = args.global_options.replay_recording().begin_recording();

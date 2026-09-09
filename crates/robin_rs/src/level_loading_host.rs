@@ -228,24 +228,6 @@ pub fn initialize_sprite_variants_for_ambiance(
 ///
 /// `map_name` + `ambiance_dir` come from the mission header parsed by
 /// [`robin_engine::engine::level_loading::load_mission_for_campaign`].
-pub fn pre_decode_background_map(
-    map_name: &str,
-    ambiance_dir: &str,
-    level_directory: &str,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-    progress: &mut dyn FnMut(assets_frame_holder::ProgressUpdate),
-) -> Result<Option<PreDecodedBackground>, String> {
-    // Legacy compatibility boundary: capture once before any reads.
-    pre_decode_background_map_with_files(
-        map_name,
-        ambiance_dir,
-        level_directory,
-        shipping,
-        progress,
-        &sbfile::SbFile::snapshot_legacy_file_system(),
-    )
-}
-
 /// Decode terrain using only the supplied preparation reader.
 pub fn pre_decode_background_map_with_files(
     map_name: &str,
@@ -266,7 +248,7 @@ pub fn pre_decode_background_map_with_files(
     )
 }
 
-/// [`pre_decode_background_map`] with `parallel` selecting rayon-parallel
+/// [`pre_decode_background_map_with_files`] with `parallel` selecting rayon-parallel
 /// JXL section decoding (see [`Picture::load_jxl_rgb565_parallel`] for the
 /// threading contract — on wasm, parallel decode must run on a worker).
 fn pre_decode_background_map_impl(
@@ -418,22 +400,6 @@ fn finish_background_picture(
 /// `None` means the probe can't say (missing map, unreadable header, or an
 /// empty map name); the caller must then wait for the full decode before
 /// engine construction so the existing error path reports the failure.
-pub fn probe_background_map_dims(
-    map_name: &str,
-    ambiance_dir: &str,
-    level_directory: &str,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-) -> Option<(u16, u16)> {
-    // Legacy compatibility boundary; production preparation passes its reader.
-    probe_background_map_dims_with_files(
-        map_name,
-        ambiance_dir,
-        level_directory,
-        shipping,
-        &sbfile::SbFile::snapshot_legacy_file_system(),
-    )
-}
-
 /// Probe dimensions with the same reader used by the associated decode job.
 pub fn probe_background_map_dims_with_files(
     map_name: &str,
@@ -590,22 +556,6 @@ impl PendingTerrainDecode {
     /// wasm when the `wasm-threads` pool is up, and the [`Self::Inline`]
     /// marker otherwise (single-threaded wasm decodes later, at the caller's
     /// pre-engine join point, exactly like the old synchronous branch).
-    pub fn start(
-        map_name: &str,
-        ambiance_dir: &str,
-        level_directory: &str,
-        shipping: Option<std::sync::Arc<assets_shipping_datadir::ShippingDatadir>>,
-    ) -> Self {
-        // Legacy compatibility boundary: workers must never capture globals.
-        Self::start_with_files(
-            map_name,
-            ambiance_dir,
-            level_directory,
-            shipping,
-            Arc::new(sbfile::SbFile::snapshot_legacy_file_system()),
-        )
-    }
-
     /// Start a terrain job retaining the exact preparation reader for every
     /// worker, inline fallback, and probe-failure redecode path.
     pub fn start_with_files(
@@ -875,24 +825,6 @@ pub fn apply_background_map(
 
 /// Decode the minimap bitmap from disk (or the shipping bundle).
 /// Free function — runs before `Engine::new`.
-pub fn pre_decode_minimap(
-    map_name: &str,
-    ambiance_dir: &str,
-    level_directory: &str,
-    shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
-    progress: &mut dyn FnMut(f32),
-) -> Option<PreDecodedMinimap> {
-    // Legacy compatibility boundary: capture once before any reads.
-    pre_decode_minimap_with_files(
-        map_name,
-        ambiance_dir,
-        level_directory,
-        shipping,
-        progress,
-        &sbfile::SbFile::snapshot_legacy_file_system(),
-    )
-}
-
 /// Decode the minimap using the background job's preparation reader.
 pub fn pre_decode_minimap_with_files(
     map_name: &str,
@@ -1107,6 +1039,10 @@ mod tests {
                 }
                 std::fs::write(directory.join("shared.map.png"), &bytes).unwrap();
                 std::fs::write(directory.join("shared.min.png"), &bytes).unwrap();
+                let night = root.path().join("Levels/Night");
+                std::fs::create_dir_all(&night).unwrap();
+                std::fs::write(night.join("shared.map.png"), &bytes).unwrap();
+                std::fs::write(night.join("shared.min.png"), &bytes).unwrap();
                 let files =
                     sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
                 assert_eq!(
@@ -1144,6 +1080,29 @@ mod tests {
             );
             assert_eq!(background.pixels, expected);
             assert_eq!(minimap.pixels, expected);
+            // Scheduled ambience preparation uses the same reader after the
+            // initial background job finishes, including its synchronous path.
+            let night = pre_decode_background_map_with_files(
+                "shared",
+                "Night",
+                "Levels",
+                None,
+                &mut |_| {},
+                &readers[index],
+            )
+            .unwrap()
+            .unwrap();
+            let night_minimap = pre_decode_minimap_with_files(
+                "shared",
+                "Night",
+                "Levels",
+                None,
+                &mut |_| {},
+                &readers[index],
+            )
+            .unwrap();
+            assert_eq!(night.pixels, expected);
+            assert_eq!(night_minimap.pixels, expected);
         }
     }
 
@@ -1184,12 +1143,14 @@ mod tests {
     #[test]
     fn pre_decode_background_map_reports_missing_map() {
         let mut progress_updates = 0;
-        let err = match pre_decode_background_map(
+        let files = sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let err = match pre_decode_background_map_with_files(
             "definitely_missing_map_for_test",
             "Day",
             "definitely_missing_level_dir_for_test",
             None,
             &mut |_| progress_updates += 1,
+            &files,
         ) {
             Ok(_) => panic!("missing background map should be a load error"),
             Err(err) => err,
@@ -1202,9 +1163,17 @@ mod tests {
     #[test]
     fn pre_decode_background_map_allows_empty_map_name() {
         let mut progress_updates = 0;
-        let decoded = pre_decode_background_map("", "Day", "Levels", None, &mut |_| {
-            progress_updates += 1;
-        })
+        let files = sbfile::SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()));
+        let decoded = pre_decode_background_map_with_files(
+            "",
+            "Day",
+            "Levels",
+            None,
+            &mut |_| {
+                progress_updates += 1;
+            },
+            &files,
+        )
         .expect("empty map name is intentionally skipped");
 
         assert!(decoded.is_none());

@@ -1225,6 +1225,17 @@ async fn prepare_cold_save_mission(
 > {
     save.validate_current_schema()
         .map_err(|error| format!("invalid current save schema: {error:#}"))?;
+    #[cfg(target_arch = "wasm32")]
+    if let Some(link) = &save.header.replay
+        && let Err(error) = crate::replay_archive::prepare_browser_directory(std::path::Path::new(
+            &link.mission_directory,
+        ))
+        .await
+    {
+        // Preserve the existing self-contained save load. The recording owner
+        // will explicitly invalidate continuation if its history is missing.
+        tracing::warn!("Saved replay history could not be prepared: {error:#}");
+    }
     validate_cold_save_spellforge_enabled(application_context, save)?;
     let resolved = resolve_cold_save_mission_assets(application_context, save).await?;
     assert_eq!(
@@ -1695,7 +1706,7 @@ async fn run_mission_with_seed(
     sim_config: engine_api::SimConfig,
     multiplayer_setup_failure_policy: MultiplayerSetupFailurePolicy,
 ) -> MissionOutcome {
-    let mut mission = match InteractiveMissionBuilder::build(
+    let outcome = match InteractiveMissionBuilder::build(
         window,
         callbacks,
         campaign,
@@ -1709,11 +1720,22 @@ async fn run_mission_with_seed(
     )
     .await
     {
-        InteractiveBuildOutcome::Ready(mission) => mission,
-        InteractiveBuildOutcome::Finished(outcome) => return outcome,
+        InteractiveBuildOutcome::Ready(mut mission) => {
+            let result = mission.run(window, callbacks, profiles, args).await;
+            mission.finish(result)
+        }
+        InteractiveBuildOutcome::Finished(outcome) => outcome,
     };
-    let outcome = mission.run(window, callbacks, profiles, args).await;
-    mission.finish(outcome)
+    #[cfg(target_arch = "wasm32")]
+    let outcome = {
+        let mut outcome = outcome;
+        if let Err(error) = crate::replay_archive::retire_browser_mission().await {
+            outcome.result = Err(format!("retire browser replay: {error:#}"));
+            outcome.transition = None;
+        }
+        outcome
+    };
+    outcome
 }
 
 async fn ensure_shipping_mission<F>(

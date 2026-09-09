@@ -1561,12 +1561,13 @@ pub(super) fn prepare_mission(
                 }
             }
         };
-        let decoded = crate::level_loading_host::pre_decode_background_map(
+        let decoded = crate::level_loading_host::pre_decode_background_map_with_files(
             &map_name,
             dir,
             &level_directory,
             host.frontend.resources.shipping.as_deref(),
             &mut update,
+            &files,
         )
         .map_err(|error| {
             MissionLoadError::new(
@@ -1591,12 +1592,13 @@ pub(super) fn prepare_mission(
         let mut progress = |delta: f32| {
             tick_progress(loading_screen, event_pump.as_deref_mut(), delta);
         };
-        if let Some(decoded) = crate::level_loading_host::pre_decode_minimap(
+        if let Some(decoded) = crate::level_loading_host::pre_decode_minimap_with_files(
             &map_name,
             dir,
             &level_directory,
             host.frontend.resources.shipping.as_deref(),
             &mut progress,
+            &files,
         ) {
             pre_decoded_ambience_minimaps.push((ambiance, decoded));
         }
