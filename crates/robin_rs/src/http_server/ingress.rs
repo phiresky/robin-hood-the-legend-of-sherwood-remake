@@ -42,6 +42,10 @@ impl RequestRouter {
 /// restored from saves: replacing a mission cancels its outstanding replies.
 #[derive(Serialize)]
 pub struct SessionIngress {
+    replay_capabilities: Option<(
+        crate::replay_service::ReplayExports,
+        crate::replay_service::ReplayLaunches,
+    )>,
     #[serde(skip)]
     router: Option<Queue>,
     #[serde(skip)]
@@ -64,7 +68,14 @@ impl<'de> Deserialize<'de> for SessionIngress {
 
 impl SessionIngress {
     pub fn attach() -> Self {
-        Self::with_router(GLOBAL.get().map(|server| server.queue.clone()))
+        let mut ingress = Self::with_router(GLOBAL.get().map(|server| server.queue.clone()));
+        ingress.replay_capabilities = GLOBAL.get().map(|server| {
+            (
+                server.replay_exports.clone(),
+                server.replay_launches.clone(),
+            )
+        });
+        ingress
     }
 
     #[cfg(test)]
@@ -88,6 +99,7 @@ impl SessionIngress {
                 .extend(route.idle.drain(..));
         }
         Self {
+            replay_capabilities: None,
             router,
             requests,
             steps: Vec::new(),

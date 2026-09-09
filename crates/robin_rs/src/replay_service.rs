@@ -47,16 +47,22 @@ impl<'de> Deserialize<'de> for ReplayService {
     }
 }
 
-/// The application composition root's process-lived service. Domain consumers
-/// depend on this service, never on HTTP's transport or responder types.
-/// TODO: inject scoped service references through startup/session ownership so
-/// independently hosted clients can coexist without this singleton adapter.
-pub fn process() -> &'static ReplayService {
-    static SERVICE: OnceLock<ReplayService> = OnceLock::new();
-    SERVICE.get_or_init(ReplayService::default)
+impl std::fmt::Debug for ReplayService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ReplayService { live authority }")
+    }
 }
 
 impl ReplayService {
+    pub fn recording(self: &Arc<Self>) -> ReplayRecordingControl {
+        ReplayRecordingControl(self.clone())
+    }
+    pub fn exports(self: &Arc<Self>) -> ReplayExports {
+        ReplayExports(self.clone())
+    }
+    pub fn launches(self: &Arc<Self>) -> ReplayLaunches {
+        ReplayLaunches(self.clone())
+    }
     /// Single-slot admission is first-accepted-wins until the launch is consumed.
     /// A rejected request never displaces an already acknowledged launch.
     pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
@@ -155,6 +161,59 @@ impl ReplayService {
             gloo_timers::future::TimeoutFuture::new(0).await;
             complete(snapshot.compact_sync());
         });
+    }
+}
+
+macro_rules! replay_capability {
+    ($name:ident) => {
+        #[derive(Clone, Debug)]
+        pub struct $name(Arc<ReplayService>);
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(concat!("live ", stringify!($name)))
+            }
+        }
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+                Err(serde::de::Error::custom(
+                    "replay capabilities must be injected by their application owner",
+                ))
+            }
+        }
+    };
+}
+replay_capability!(ReplayRecordingControl);
+replay_capability!(ReplayExports);
+replay_capability!(ReplayLaunches);
+
+impl ReplayRecordingControl {
+    pub fn begin_recording(&self) -> ReplaySpoolWriter {
+        self.0.begin_recording()
+    }
+    pub(crate) fn invalidate(&self, reason: impl Into<String>) {
+        self.0.invalidate(reason);
+    }
+}
+impl ReplayExports {
+    pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
+        self.0.snapshot_bytes()
+    }
+    pub(crate) fn snapshot(&self) -> Result<ReplaySnapshot, String> {
+        self.0.snapshot()
+    }
+    pub(crate) fn export(&self, complete: ExportCompletion) {
+        self.0.export(complete);
+    }
+}
+impl ReplayLaunches {
+    pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
+        self.0.admit_pending(replay)
+    }
+    pub fn take_pending(&self) -> Option<PendingReplay> {
+        self.0.take_pending()
+    }
+    pub fn pending_mission(&self) -> Option<String> {
+        self.0.pending_mission()
     }
 }
 

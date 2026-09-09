@@ -138,6 +138,8 @@ impl QueueStripAnimation {
 /// independent instead of routing through process-wide singletons.
 #[derive(Debug, Serialize, Deserialize)]
 struct ApplicationServices {
+    #[serde(skip)]
+    replay: Option<Arc<crate::replay_service::ReplayService>>,
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     #[serde(skip)]
     browser_audio: std::cell::RefCell<Option<crate::web_audio_backend::BrowserAudioSession>>,
@@ -323,6 +325,44 @@ impl FrontendPreferences {
 }
 
 impl ApplicationContext {
+    /// Composition-only injection before this application's services are shared.
+    /// Browser boot uses this to share the authority installed before async startup.
+    pub fn with_replay_service(
+        mut self,
+        replay: Arc<crate::replay_service::ReplayService>,
+    ) -> Result<Self, String> {
+        let services = self.services.as_mut().ok_or_else(|| {
+            "replay injection requires initialized application services".to_owned()
+        })?;
+        Arc::get_mut(services)
+            .ok_or_else(|| "replay injection must precede sharing application services".to_owned())?
+            .replay = Some(replay);
+        Ok(self)
+    }
+    pub(crate) fn replay_recording(&self) -> crate::replay_service::ReplayRecordingControl {
+        self.required_services()
+            .expect("replay requires initialized application authority")
+            .replay
+            .as_ref()
+            .expect("deserialized application has no replay authority")
+            .recording()
+    }
+    pub(crate) fn replay_exports(&self) -> crate::replay_service::ReplayExports {
+        self.required_services()
+            .expect("replay requires initialized application authority")
+            .replay
+            .as_ref()
+            .expect("deserialized application has no replay authority")
+            .exports()
+    }
+    pub(crate) fn replay_launches(&self) -> crate::replay_service::ReplayLaunches {
+        self.required_services()
+            .expect("replay requires initialized application authority")
+            .replay
+            .as_ref()
+            .expect("deserialized application has no replay authority")
+            .launches()
+    }
     /// Create the pre-initialization context used while parsing launcher
     /// arguments. Accessing profiles, keys, or shipping before completion is
     /// an error rather than a fabricated empty service.
@@ -428,6 +468,7 @@ impl ApplicationContext {
             options,
             sim_config: Arc::new(Mutex::new(sim_config)),
             services: Some(Arc::new(ApplicationServices {
+                replay: Some(Arc::new(Default::default())),
                 asset_cache: Some(Default::default()),
                 cache_maintenance: Default::default(),
                 #[cfg(all(target_arch = "wasm32", feature = "audio"))]
@@ -530,6 +571,7 @@ impl ApplicationContext {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
             services: Some(Arc::new(ApplicationServices {
+                replay: Some(Arc::new(Default::default())),
                 asset_cache: Some(Default::default()),
                 cache_maintenance: crate::cache_maintenance::CacheMaintenance::new(),
                 #[cfg(all(target_arch = "wasm32", feature = "audio"))]

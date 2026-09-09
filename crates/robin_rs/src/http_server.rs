@@ -425,6 +425,8 @@ pub use ingress::SessionIngress;
 pub type Queue = Arc<Mutex<RequestRouter>>;
 
 pub struct HttpServer {
+    replay_exports: crate::replay_service::ReplayExports,
+    replay_launches: crate::replay_service::ReplayLaunches,
     pub queue: Queue,
     #[cfg(not(target_arch = "wasm32"))]
     pub bind_addr: std::net::SocketAddr,
@@ -460,7 +462,11 @@ fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
 /// Native: binds a loopback HTTP listener on `port` (0 disables).
 /// Wasm: ignores `port`; just installs the empty queue so `rh_rpc`
 /// has somewhere to push.
-pub fn start_global(port: u16) -> Result<(), String> {
+pub fn start_global(
+    port: u16,
+    replay_exports: crate::replay_service::ReplayExports,
+    replay_launches: crate::replay_service::ReplayLaunches,
+) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = port;
@@ -468,6 +474,8 @@ pub fn start_global(port: u16) -> Result<(), String> {
             return Ok(());
         }
         let _ = GLOBAL.set(HttpServer {
+            replay_exports,
+            replay_launches,
             queue: Arc::new(Mutex::new(RequestRouter::default())),
         });
         tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
@@ -482,14 +490,18 @@ pub fn start_global(port: u16) -> Result<(), String> {
         if GLOBAL.get().is_some() {
             return Ok(());
         }
-        let server = start(port)?;
+        let server = start(port, replay_exports, replay_launches)?;
         let _ = GLOBAL.set(server);
         Ok(())
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn start(port: u16) -> Result<HttpServer, String> {
+fn start(
+    port: u16,
+    replay_exports: crate::replay_service::ReplayExports,
+    replay_launches: crate::replay_service::ReplayLaunches,
+) -> Result<HttpServer, String> {
     let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| {
         format!(
             "script HTTP server failed to bind 127.0.0.1:{port}: {e} \
@@ -509,7 +521,12 @@ fn start(port: u16) -> Result<HttpServer, String> {
         .name("robin-http-server".into())
         .spawn(move || run_listener(server, queue_for_thread))
         .map_err(|e| format!("script HTTP server: failed to spawn listener thread: {e}"))?;
-    Ok(HttpServer { queue, bind_addr })
+    Ok(HttpServer {
+        queue,
+        bind_addr,
+        replay_exports,
+        replay_launches,
+    })
 }
 
 /// Reject requests a browser could have issued cross-origin.
@@ -969,9 +986,9 @@ pub fn drain_pre_engine() {
     };
     for req in pending {
         match req.payload {
-            HttpPayload::GetReplay => start_replay_export(req.response_tx),
+            HttpPayload::GetReplay => start_replay_export(&server.replay_exports, req.response_tx),
             HttpPayload::LoadReplay { data, paused } => {
-                let reply = decode_load_replay(&data, paused);
+                let reply = decode_load_replay(&server.replay_launches, &data, paused);
                 req.response_tx.send(reply);
             }
             _ => req.response_tx.send(Err(
@@ -984,7 +1001,11 @@ pub fn drain_pre_engine() {
 
 /// Parse a production replay payload and admit it to the pending slot. Both
 /// browser and native RPC accept exactly the canonical compact envelope.
-fn decode_load_replay(data: &str, paused: bool) -> Reply {
+fn decode_load_replay(
+    launches: &crate::replay_service::ReplayLaunches,
+    data: &str,
+    paused: bool,
+) -> Reply {
     // Compact admission is byte-canonical: whitespace is not discarded.
     // Local JSONL tooling likewise emits its header at byte zero.
     let trimmed = data;
@@ -993,7 +1014,7 @@ fn decode_load_replay(data: &str, paused: bool) -> Reply {
         .map_err(|e| format!("decode compact replay: {e}"))?;
     let frame_count = replay.frame_count();
     let seed = replay.header().rng_seed;
-    crate::replay_service::process().admit_pending(crate::replay_service::PendingReplay {
+    launches.admit_pending(crate::replay_service::PendingReplay {
         data: replay,
         paused,
     })?;
@@ -1034,7 +1055,7 @@ impl SessionIngress {
                 RoutedRequest::Deferred(request) => {
                     self.defer_request(request, req.response_tx, true)
                 }
-                RoutedRequest::Process(request) => dispatch_process(request, req.response_tx),
+                RoutedRequest::Process(request) => self.dispatch_process(request, req.response_tx),
                 RoutedRequest::Command(command) => {
                     let mut selected = frontend.selected_view_element();
                     let reply = dispatch_command(
@@ -1091,7 +1112,7 @@ impl SessionIngress {
                 RoutedRequest::Deferred(request) => {
                     self.defer_request(request, req.response_tx, false)
                 }
-                RoutedRequest::Process(request) => dispatch_process(request, req.response_tx),
+                RoutedRequest::Process(request) => self.dispatch_process(request, req.response_tx),
                 RoutedRequest::Command(command) => {
                     let reply = dispatch_command(
                         command,
@@ -1250,11 +1271,17 @@ fn dispatch_query(
     }
 }
 
-fn dispatch_process(request: ProcessRequest, response: Responder) {
-    match request {
-        ProcessRequest::ExportReplay => start_replay_export(response),
-        ProcessRequest::LoadReplay { data, paused } => {
-            response.send(decode_load_replay(&data, paused))
+impl SessionIngress {
+    fn dispatch_process(&self, request: ProcessRequest, response: Responder) {
+        let Some((exports, launches)) = &self.replay_capabilities else {
+            response.send(Err("replay transport capabilities were not attached".into()));
+            return;
+        };
+        match request {
+            ProcessRequest::ExportReplay => start_replay_export(exports, response),
+            ProcessRequest::LoadReplay { data, paused } => {
+                response.send(decode_load_replay(launches, &data, paused))
+            }
         }
     }
 }
@@ -1828,8 +1855,8 @@ where
 // Replay export transport adapter
 // ──────────────────────────────────────────────────────────────────
 
-fn start_replay_export(response_tx: Responder) {
-    crate::replay_service::process().export(Box::new(move |result| {
+fn start_replay_export(exports: &crate::replay_service::ReplayExports, response_tx: Responder) {
+    exports.export(Box::new(move |result| {
         response_tx
             .send(result.map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))));
     }));
