@@ -181,7 +181,7 @@ pub async fn run_rust_game_with_browser_preparation(
             }
             None => None,
         };
-        run_rust_game_inner(window, campaign, profiles, context, args, prepared).await
+        run_rust_game_active(window, campaign, profiles, context, args, prepared).await
     }
     .await;
     finish_application(result, owner.shutdown().await)
