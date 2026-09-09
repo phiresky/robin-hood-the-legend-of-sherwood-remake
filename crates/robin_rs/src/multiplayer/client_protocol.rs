@@ -4,7 +4,8 @@
 //! message ordering and authenticated metadata checks; it never emits simulation
 //! events or acknowledges content before the adapter has prepared it.
 //!
-//! TODO: Move later gameplay/ranked transitions here in separate slices. Native
+//! Ordinary gameplay delivery is shared in `client_gameplay`; ranked transitions
+//! remain adapter-specific. Native
 //! unresolved ranked BeginSim downgrades to browse-only; browser rejects it.
 //! Those intentional adapter policies must not be accidentally normalized.
 

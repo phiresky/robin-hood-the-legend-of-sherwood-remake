@@ -8,6 +8,8 @@
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
 #[cfg(feature = "multiplayer")]
+mod client_gameplay;
+#[cfg(feature = "multiplayer")]
 mod client_protocol;
 #[cfg(feature = "multiplayer")]
 pub use client_protocol::ClientSessionMetadata;

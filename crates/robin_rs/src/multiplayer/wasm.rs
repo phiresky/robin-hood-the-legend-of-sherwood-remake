@@ -1437,45 +1437,10 @@ fn handle_client_wire_msg(
     ranked_state: &BrowserRankedTransportState,
     message: NetMsg,
 ) -> Result<(), String> {
+    let Some(message) = super::client_gameplay::forward(message, incoming_tx)? else {
+        return Ok(());
+    };
     match message {
-        NetMsg::BroadcastInput {
-            server_frame,
-            origin_frame,
-            target_frame,
-            input,
-        } => {
-            let _ = incoming_tx.send(NetEvent::Input {
-                server_frame,
-                origin_frame,
-                target_frame,
-                input,
-            });
-        }
-        NetMsg::Note(note) => {
-            let _ = incoming_tx.send(NetEvent::Note(note));
-        }
-        NetMsg::StateHash {
-            frame,
-            hash,
-            clock_frame,
-            ms_until_next_frame,
-        } => {
-            let _ = incoming_tx.send(NetEvent::PeerStateHash {
-                frame,
-                hash,
-                clock_frame,
-                ms_until_next_frame,
-            });
-        }
-        NetMsg::InitialSnapshot {
-            frame,
-            engine_bytes,
-        } => {
-            let _ = incoming_tx.send(NetEvent::InitialSnapshot {
-                frame,
-                engine_bytes,
-            });
-        }
         NetMsg::BeginSim {
             frame,
             start_epoch_ms,
@@ -1491,33 +1456,8 @@ fn handle_client_wire_msg(
                 start_epoch_ms,
             });
         }
-        NetMsg::ModalDecision {
-            instance,
-            kind,
-            result,
-            decision_frame,
-        } => {
-            incoming_tx
-                .send(NetEvent::ModalDecision {
-                    instance,
-                    kind,
-                    result,
-                    decision_frame,
-                })
-                .map_err(|_| "browser modal decision channel is closed".to_string())?;
-        }
         NetMsg::ReconnectRequired { reason } => {
             return Err(format!("host requires a full-snapshot reconnect: {reason}"));
-        }
-        NetMsg::PrepareSnapshotTransition { id, payload } => {
-            incoming_tx
-                .send(NetEvent::PrepareSnapshotTransition { id, payload })
-                .map_err(|_| "browser snapshot transition channel is closed".to_string())?;
-        }
-        NetMsg::CommitSnapshotTransition { id } => {
-            incoming_tx
-                .send(NetEvent::CommitSnapshotTransition { id })
-                .map_err(|_| "browser snapshot transition channel is closed".to_string())?;
         }
         NetMsg::ModalProposal { .. } | NetMsg::SnapshotTransitionReady { .. } => {
             return Err("host sent a client-only multiplayer message".to_string());
