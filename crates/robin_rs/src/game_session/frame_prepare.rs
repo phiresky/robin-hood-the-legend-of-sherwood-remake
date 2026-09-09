@@ -17,14 +17,14 @@ use super::flow::{FrameControl, MissionServices};
 use super::*;
 
 /// Values produced by graphical network ingress at the frame boundary.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct FrameStart {
     pub(super) frame: MissionFrame,
     pub(super) mp_clock_pause: bool,
 }
 
 /// State handed from modal/recorder bookkeeping to presentation.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct FramePresentationState {
     pub(super) frame: MissionFrame,
     pub(super) rewind_active: bool,
@@ -35,7 +35,7 @@ pub(super) struct FramePresentationState {
 }
 
 /// Deterministic and presentation flags carried across the tick boundary.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct PreparedFrame {
     pub(super) frame: MissionFrame,
     pub(super) rewind_active: bool,
@@ -47,7 +47,7 @@ pub(super) struct PreparedFrame {
     pub(super) step_back_pressed: bool,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) enum FramePreparation {
     Ready(PreparedFrame),
     Control(FrameControl),

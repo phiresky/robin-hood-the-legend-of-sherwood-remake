@@ -65,7 +65,7 @@ use robin_rs::Host;
 #[cfg(feature = "client")]
 use robin_rs::gfx_types::BlendMode;
 #[cfg(feature = "client")]
-use robin_rs::level_loading_host::EngineLevelLoadExt;
+use robin_rs::level_loading_host::draw_background;
 #[cfg(feature = "client")]
 use robin_rs::renderer::{GpuImage, Renderer, rgb565_to_rgb8};
 use serde::{Deserialize, Serialize};
@@ -4718,7 +4718,7 @@ impl VisualReplay {
         self.host.frontend.viewport.view_position =
             MapPoint::new((focus.x - 512.0).max(0.0), (focus.y - 319.0).max(0.0));
         self.host.frontend.viewport.zoom_factor = 1.0;
-        engine.draw_background(&self.host.frontend.viewport, &mut self.renderer);
+        draw_background(&self.host.frontend.viewport, &mut self.renderer);
 
         let mut entities: Vec<_> = engine.entities_with_ids_iter().collect();
         entities.sort_by(|(_, left), (_, right)| {

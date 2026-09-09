@@ -460,7 +460,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         host.frontend.planning().touch_latched(),
         host.frontend.planning().enabled(),
     );
-    host.frontend.input.is_alt = modifiers.alt;
+    host.frontend.input.controls.is_alt = modifiers.alt;
 
     handle_console_overlay_events(
         &mut ui.console_overlay,

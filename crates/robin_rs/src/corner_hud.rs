@@ -89,7 +89,7 @@ pub struct CornerButtonEnable {
 
 impl CornerButtonEnable {
     /// Snapshot the enable / selected mask from the engine + game state.
-    pub fn from_engine(engine: &engine_api::Engine) -> Self {
+    pub fn from_engine(engine: &engine_api::EngineInner) -> Self {
         // Clock and QuickStart are always drawn, but dim to
         // semi-transparent when their click gate isn't satisfied:
         //   - Clock dims when no PC is selected.

@@ -26,11 +26,13 @@ pub(super) use robin_engine::replay::{ReplayFrameOrdinal, TimelineFrame};
 mod history;
 pub(super) mod reconciliation;
 mod recording;
+mod timing;
 use history::ReconstructionHistory;
 use reconciliation::NetworkReconciliation;
 #[cfg(test)]
 use recording::RecordingValidity;
 use recording::ReplayLifecycle;
+use timing::MultiplayerTiming;
 
 /// Result of asking the timeline for the next replay-owned debugger step.
 ///
@@ -298,7 +300,7 @@ impl MissionControl {
 ///
 /// Both mission drivers use this shell. The graphical driver additionally uses
 /// its modal-dismissal queue while the frontend owns native process resources.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug)]
 pub(super) struct MissionFrame {
     pub(super) started_at_ms: u32,
     commands: FrameCommands,
@@ -308,9 +310,7 @@ pub(super) struct MissionFrame {
     post_external_actions: Vec<robin_engine::engine::ExternalAction>,
     post_external_actions_applied: usize,
     external_facts: robin_engine::engine::ExternalFacts,
-    pub(super) run_hourglass: bool,
-    pub(super) simulation_body_allowed: bool,
-    pub(super) run_post_initialize: bool,
+    execution: FrameExecution,
     /// Recorded lockstep/history transition for a disk-replay host frame.
     pub(super) replay_timeline_transition: Option<TimelineTransition>,
     pub(super) modal_dismissals: Vec<PlayerCommand>,
@@ -320,6 +320,76 @@ pub(super) struct MissionFrame {
     timeline_after: Option<TimelineFrame>,
     replay_record_consumed: bool,
     recorder_state: RecorderFrameState,
+}
+
+/// Copyable evidence, never a runnable transaction or a recorder ownership token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MissionFrameSnapshot {
+    started_at_ms: u32,
+    input: robin_engine::engine::SimulationFrameInput,
+    modal_dismissals: Vec<PlayerCommand>,
+    recorder_hash: Option<u64>,
+    timeline_before: Option<TimelineFrame>,
+    timeline_after: Option<TimelineFrame>,
+}
+
+impl Serialize for MissionFrame {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        MissionFrameSnapshot {
+            started_at_ms: self.started_at_ms,
+            input: self.authoritative_input(),
+            modal_dismissals: self.modal_dismissals.clone(),
+            recorder_hash: self.recorder_hash,
+            timeline_before: self.timeline_before,
+            timeline_after: self.timeline_after,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for MissionFrame {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "live mission frame authority cannot be deserialized; decode MissionFrameSnapshot instead",
+        ))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FrameExecution {
+    run_hourglass: bool,
+    simulation_body_allowed: bool,
+    post_initialize: PostInitializeAdmission,
+    simulation_admitted: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum PostInitializeAdmission {
+    Pending(bool),
+    Running(bool),
+    Completed(bool),
+    /// Manual ticks execute both phases together and retain the input policy,
+    /// rather than recording a separately observed deferred initialization.
+    Inline(bool),
+}
+
+impl FrameExecution {
+    fn assert_pre_simulation(&self) {
+        assert!(
+            !self.simulation_admitted
+                && matches!(self.post_initialize, PostInitializeAdmission::Pending(_)),
+            "frame execution policy changed after execution admission"
+        );
+    }
+
+    fn post_initialize_requested_or_completed(&self) -> bool {
+        match self.post_initialize {
+            PostInitializeAdmission::Pending(value)
+            | PostInitializeAdmission::Running(value)
+            | PostInitializeAdmission::Completed(value)
+            | PostInitializeAdmission::Inline(value) => value,
+        }
+    }
 }
 
 /// Whether this host iteration owns an open replay-recorder frame.
@@ -402,6 +472,51 @@ frame_append_batch!(
 );
 
 impl MissionFrame {
+    /// Scheduling may suppress a recorded tick, never promote a suppressed tick.
+    pub(super) fn restrict_hourglass(&mut self, allowed: bool) {
+        self.execution.assert_pre_simulation();
+        self.execution.run_hourglass &= allowed;
+    }
+
+    fn host_controls_only(&mut self) {
+        self.execution.assert_pre_simulation();
+        self.execution.run_hourglass = false;
+        self.execution.simulation_body_allowed = false;
+        self.execution.post_initialize = PostInitializeAdmission::Pending(false);
+    }
+
+    /// Admit the simulation phase exactly once, separately from copying its data.
+    pub(super) fn admit_simulation(&mut self) {
+        self.execution.assert_pre_simulation();
+        self.execution.simulation_admitted = true;
+    }
+
+    pub(super) fn admit_inline_transaction(&mut self) {
+        self.admit_simulation();
+        let requested = self.execution.post_initialize_requested_or_completed();
+        self.execution.post_initialize = PostInitializeAdmission::Inline(requested);
+    }
+
+    /// A rewind or terminal frame can cross this boundary without simulation.
+    pub(super) fn begin_post_initialize(&mut self) -> bool {
+        let PostInitializeAdmission::Pending(requested) = self.execution.post_initialize else {
+            panic!("post-initialize phase admitted more than once");
+        };
+        self.execution.post_initialize = PostInitializeAdmission::Running(requested);
+        requested
+    }
+
+    pub(super) fn complete_post_initialize(&mut self, initialized: bool) {
+        let PostInitializeAdmission::Running(requested) = self.execution.post_initialize else {
+            panic!("post-initialize phase completed without admission or more than once");
+        };
+        assert!(
+            requested || !initialized,
+            "suppressed post-initialize phase reported initialization"
+        );
+        self.execution.post_initialize = PostInitializeAdmission::Completed(initialized);
+    }
+
     pub(super) fn commands(&self) -> &[robin_engine::player_command::PlayerInput] {
         &self.commands.commands
     }
@@ -462,9 +577,12 @@ impl MissionFrame {
             post_external_actions: Vec::new(),
             post_external_actions_applied: 0,
             external_facts: robin_engine::engine::ExternalFacts::default(),
-            run_hourglass: true,
-            simulation_body_allowed: true,
-            run_post_initialize: true,
+            execution: FrameExecution {
+                run_hourglass: true,
+                simulation_body_allowed: true,
+                post_initialize: PostInitializeAdmission::Pending(true),
+                simulation_admitted: false,
+            },
             replay_timeline_transition: None,
             modal_dismissals: Vec::new(),
             replay_modal_dismissals: super::modal_state::ReplayModalDismissals::default(),
@@ -488,7 +606,7 @@ impl MissionFrame {
                     .map(robin_engine::engine::SimCommand::from)
                     .collect(),
             )
-            .with_post_initialize(self.run_post_initialize)
+            .with_post_initialize(self.execution.post_initialize_requested_or_completed())
     }
 
     fn bind_timeline(&mut self, before: TimelineFrame) {
@@ -535,8 +653,8 @@ impl MissionFrame {
         )
         .with_external_facts(self.external_facts.clone())
         .with_external_actions(self.unapplied_external_actions().to_vec())
-        .with_simulation_body_allowed(self.simulation_body_allowed)
-        .with_hourglass(self.run_hourglass)
+        .with_simulation_body_allowed(self.execution.simulation_body_allowed)
+        .with_hourglass(self.execution.run_hourglass)
     }
 
     /// Replace the authoritative portion of this host frame with a recorded
@@ -546,6 +664,7 @@ impl MissionFrame {
         &mut self,
         input: robin_engine::engine::SimulationFrameInput,
     ) {
+        self.execution.assert_pre_simulation();
         self.commands.commands = input.player_inputs();
         self.post_commands.commands = input.post_player_inputs();
         self.external_actions = input.external_actions;
@@ -553,9 +672,10 @@ impl MissionFrame {
         self.post_external_actions = input.post_external_actions;
         self.post_external_actions_applied = 0;
         self.external_facts = input.external_facts;
-        self.run_hourglass = input.run_hourglass;
-        self.simulation_body_allowed = input.simulation_body_allowed;
-        self.run_post_initialize = input.run_post_initialize;
+        self.execution.run_hourglass = input.run_hourglass;
+        self.execution.simulation_body_allowed = input.simulation_body_allowed;
+        self.execution.post_initialize =
+            PostInitializeAdmission::Pending(input.run_post_initialize);
     }
 
     pub(super) fn record_applied_external_action(
@@ -603,6 +723,11 @@ impl MissionFrame {
     /// Adopt one complete replay frame, splitting presentation-only modal
     /// acknowledgements out of both command phases before engine admission.
     pub(super) fn inject_replay_input(&mut self, player: &mut ReplayPlayer) {
+        self.execution.assert_pre_simulation();
+        assert!(
+            !self.replay_record_consumed,
+            "replay input injected into the same mission frame more than once"
+        );
         assert!(
             !player.is_finished(),
             "replay injection requested after the replay finished"
@@ -698,13 +823,14 @@ pub(super) struct MissionRuntime {
 
 impl MissionRuntime {
     pub(super) fn new(
+        http: crate::http_server::SessionIngress,
         world: MissionWorld,
         timeline: TimelineRuntime,
         control: MissionControl,
         leaderboard: Option<super::leaderboard_runtime::MissionLeaderboardRuntime>,
     ) -> Self {
         Self {
-            http: crate::http_server::SessionIngress::attach(),
+            http,
             world,
             timeline,
             control,
@@ -776,13 +902,16 @@ impl MissionRuntime {
                 .game
                 .operation
                 .is(robin_engine::game_operation::GameCode::LevelInProgress);
-            mission_frame.run_hourglass &= !policy.skip_tick
-                && self.world.game.should_run_hourglass(
-                    false,
-                    mission_transitioning,
-                    policy.paused,
-                );
+            mission_frame.restrict_hourglass(
+                !policy.skip_tick
+                    && self.world.game.should_run_hourglass(
+                        false,
+                        mission_transitioning,
+                        policy.paused,
+                    ),
+            );
             let frame = mission_frame.hourglass_input();
+            mission_frame.admit_simulation();
             let result = self.world.game.run_engine_tick(
                 &mut self.world.host.frontend,
                 &mut self.world.host.audio,
@@ -829,6 +958,7 @@ impl MissionRuntime {
         let Self {
             world, timeline, ..
         } = self;
+        let requested = frame.begin_post_initialize();
         let initialized = timeline.cross_post_initialize(|| {
             let application_context = world.host.application_context().clone();
             let initialized = crate::sim_timeline::run_post_initialize_stage_with_actions(
@@ -842,12 +972,12 @@ impl MissionRuntime {
                 &mut world.dev,
                 frame.unapplied_post_external_actions(),
                 &frame.post_commands.commands,
-                frame.run_post_initialize,
+                requested,
             );
 
             initialized
         });
-        frame.run_post_initialize = initialized;
+        frame.complete_post_initialize(initialized);
         initialized
     }
 }
@@ -1091,12 +1221,8 @@ pub(super) struct TimelineRuntime {
     pub(super) replay_finished_logged: bool,
 
     mp_admission: MultiplayerAdmission,
-    pub(super) mp_host_frame_schedule: Option<(u32, u32)>,
+    multiplayer_timing: MultiplayerTiming,
     pub(super) last_mp_rollback: Option<MultiplayerRollbackTelemetry>,
-    pub(super) last_mp_clock_ahead_log_ms: u32,
-    pub(super) last_mp_sleep_correction_log_ms: u32,
-    pub(super) last_mp_state_hash_frame: Option<u32>,
-    pub(super) pending_mp_state_hash: Option<(u32, u64)>,
 }
 
 /// Network admission state for the deterministic mission timeline.
@@ -1142,17 +1268,91 @@ impl TimelineRuntime {
                 (true, true) => MultiplayerAdmission::HostWaitingForBegin,
                 (true, false) => MultiplayerAdmission::PeerWaitingForSnapshot,
             },
-            mp_host_frame_schedule: None,
+            multiplayer_timing: MultiplayerTiming::default(),
             last_mp_rollback: None,
-            last_mp_clock_ahead_log_ms: 0,
-            last_mp_sleep_correction_log_ms: 0,
-            last_mp_state_hash_frame: None,
-            pending_mp_state_hash: None,
         }
     }
 
     pub(super) fn initially_paused(&self) -> bool {
         self.start_paused
+    }
+
+    pub(super) fn host_schedule_frame(&self) -> Option<u32> {
+        self.multiplayer_timing.schedule_frame()
+    }
+
+    pub(super) fn host_frame_deadline_ms(&self) -> Option<i64> {
+        self.multiplayer_timing.deadline_ms(self.frame_number())
+    }
+
+    pub(super) fn accept_host_frame_schedule(&mut self, frame: u32, delay_ms: u32) {
+        let now_ms = crate::window::process_uptime_ms();
+        if !self
+            .multiplayer_timing
+            .accept_schedule(frame, delay_ms, now_ms)
+        {
+            tracing::trace!(
+                clock_frame = frame,
+                current_sample_frame = self.host_schedule_frame(),
+                "multiplayer: ignored stale host frame schedule"
+            );
+            return;
+        }
+        tracing::info!(
+            host_clock_frame = frame,
+            ms_until_next_frame = delay_ms,
+            local_frame_at_receive = self.frame_number(),
+            deadline_delta_ms_for_local_frame = self
+                .host_frame_deadline_ms()
+                .expect("schedule just installed")
+                - i64::from(now_ms),
+            "multiplayer: received host frame schedule"
+        );
+    }
+
+    pub(super) fn clock_ahead_log_due(&mut self, now_ms: u32) -> bool {
+        self.multiplayer_timing.clock_ahead_log_due(now_ms)
+    }
+
+    pub(super) fn sleep_correction_log_due(&mut self, now_ms: u32) -> bool {
+        self.multiplayer_timing.sleep_correction_log_due(now_ms)
+    }
+
+    pub(super) fn sample_host_state_hash(&mut self, compute: impl FnOnce() -> u64) {
+        self.multiplayer_timing
+            .sample_hash(self.frame_number(), compute);
+    }
+
+    /// Both graphical and headless drivers publish through this consuming
+    /// transition. A failed send is not retried: NetChannels latches worker
+    /// failure for the next ingress poll, just as before this extraction.
+    pub(super) fn publish_multiplayer_timing(
+        &mut self,
+        transport: &crate::host::HostTransport,
+        remaining_sleep_ms: u32,
+    ) {
+        let Some(net) = transport.net() else { return };
+        if transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
+            return;
+        }
+        let Some(sample) = self.multiplayer_timing.take_publication() else {
+            return;
+        };
+        net.publish_frame(self.frame_number());
+        tracing::info!(
+            hash_frame = sample.frame,
+            clock_frame = self.frame_number(),
+            remaining_sleep_ms,
+            "multiplayer: host sending state hash timing sample"
+        );
+        if let Err(error) = net.send_state_hash(
+            sample.frame,
+            sample.hash,
+            self.frame_number(),
+            remaining_sleep_ms,
+        ) {
+            tracing::error!(%error, "multiplayer state hash publication failed");
+        }
     }
 
     pub(super) fn playback(&self) -> Option<&ReplayPlayer> {
@@ -1366,8 +1566,7 @@ impl TimelineRuntime {
             snapshot_frame: self.frame_number(),
         };
         self.network.abandon_prediction();
-        self.last_mp_state_hash_frame = None;
-        self.pending_mp_state_hash = None;
+        self.multiplayer_timing.reset_for_resynchronization();
     }
 
     pub(super) fn remember_local_mp_hash(&mut self, frame: u32, hash: u64) {
@@ -1397,8 +1596,7 @@ impl TimelineRuntime {
         for event in events {
             if matches!(event, MultiplayerAdmissionEvent::HostResynchronizing { .. }) {
                 self.network.clear_hashes();
-                self.last_mp_state_hash_frame = None;
-                self.pending_mp_state_hash = None;
+                self.multiplayer_timing.reset_for_resynchronization();
             }
             if matches!(
                 event,
@@ -1586,7 +1784,7 @@ impl TimelineRuntime {
     ) -> Option<u64> {
         self.phase = MissionPhase::Input;
         self.clock.begin(now_ms);
-        self.pending_mp_state_hash = None;
+        self.multiplayer_timing.begin_host_frame();
         let current_frame = self.frame_number();
         self.history
             .buffer
@@ -1923,9 +2121,7 @@ impl TimelineRuntime {
         self.trace(FrameContractStage::ManualTransactionBegin);
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(self.current_frame());
-        frame.run_hourglass = false;
-        frame.simulation_body_allowed = false;
-        frame.run_post_initialize = false;
+        frame.host_controls_only();
         frame.modal_dismissals = controls;
         frame.recorder_hash = self
             .replay_ordinal
@@ -3117,7 +3313,7 @@ mod tests {
         .expect("fixture engine");
         let mut host = Host::scratch(1024.0, 768.0);
         let mut game = Game::default();
-        host.frontend.input.draw_hidden = true;
+        host.frontend.input.feedback.draw_hidden = true;
         game.persistent.campaign_map_displayed = true;
         game.persistent.campaign_map_active = false;
         engine
@@ -3211,7 +3407,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("speech command admission");
-        host.frontend.input.draw_hidden = false;
+        host.frontend.input.feedback.draw_hidden = false;
         game.persistent.campaign_map_displayed = false;
         save.apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
             .expect("restore live save");
@@ -3272,7 +3468,7 @@ mod tests {
         );
         let mut manager = robin_engine::engine_manager::EngineManager::new(marker_engine);
         let mut playback_host = Host::scratch(1024.0, 768.0);
-        playback_host.frontend.input.draw_hidden = true;
+        playback_host.frontend.input.feedback.draw_hidden = true;
         let mut playback_game = Game::default();
         playback_game.persistent.campaign_map_displayed = true;
         playback
@@ -3305,7 +3501,7 @@ mod tests {
                 .with_hourglass(false),
             )
             .expect("speech command admission");
-        playback_host.frontend.input.draw_hidden = false;
+        playback_host.frontend.input.feedback.draw_hidden = false;
         playback_game.persistent.campaign_map_displayed = false;
         playback_game.persistent.campaign_map_active = false;
         assert_ne!(
@@ -3325,7 +3521,7 @@ mod tests {
             restored_hash
         );
         assert!(!manager.engine.is_fast_forward());
-        assert!(playback_host.frontend.input.draw_hidden);
+        assert!(playback_host.frontend.input.feedback.draw_hidden);
         assert!(playback_game.persistent.campaign_map_displayed);
         assert!(playback_game.persistent.campaign_map_active);
         assert!(playback_game.continue_requested);
@@ -3550,6 +3746,30 @@ mod tests {
     }
 
     #[test]
+    fn both_driver_contracts_rearm_hash_publication_after_resynchronization() {
+        for contract in [FrameContract::Graphical, FrameContract::Headless] {
+            for from_network in [false, true] {
+                let mut timeline = timeline_for_trace_test(contract);
+                timeline.mp_admission = MultiplayerAdmission::Running;
+                timeline.adopt_frame(TimelineFrame::from_wire(25));
+                timeline.sample_host_state_hash(|| 1);
+                if from_network {
+                    timeline.apply_multiplayer_admission_events(&[
+                        MultiplayerAdmissionEvent::HostResynchronizing { frame: 25 },
+                    ]);
+                } else {
+                    timeline.begin_synchronized_step_resync();
+                }
+                assert!(timeline.multiplayer_timing.take_publication().is_none());
+                timeline.sample_host_state_hash(|| 2);
+                let sample = timeline.multiplayer_timing.take_publication().unwrap();
+                assert_eq!((sample.frame, sample.hash), (25, 2));
+                assert!(timeline.multiplayer_timing.take_publication().is_none());
+            }
+        }
+    }
+
+    #[test]
     fn host_resync_requires_explicit_adoption_and_matching_begin() {
         let mut timeline = multiplayer_timeline(true);
         timeline.mp_admission = MultiplayerAdmission::Running;
@@ -3719,24 +3939,131 @@ mod tests {
     }
 
     #[test]
-    fn mission_frame_owns_only_one_iterations_commands() {
+    fn mission_frame_snapshot_copies_data_but_cannot_restore_live_authority() {
         let mut frame = MissionFrame::new(777);
         frame.commands.push(PlayerCommand::QuitMissionRequested);
         frame.recorder_hash = Some(0x55aa);
 
         let encoded = serde_json::to_string(&frame).expect("serialize mission frame");
-        let decoded: MissionFrame =
-            serde_json::from_str(&encoded).expect("deserialize mission frame");
+        let decoded: MissionFrameSnapshot =
+            serde_json::from_str(&encoded).expect("deserialize mission frame snapshot");
 
         assert_eq!(decoded.started_at_ms, 777);
-        assert_eq!(decoded.commands.commands.len(), 1);
+        assert_eq!(decoded.input.player_inputs().len(), 1);
         assert!(matches!(
-            decoded.commands.commands[0].command,
+            decoded.input.player_inputs()[0].command,
             PlayerCommand::QuitMissionRequested
         ));
         assert_eq!(decoded.recorder_hash, Some(0x55aa));
         assert!(decoded.modal_dismissals.is_empty());
-        assert!(decoded.replay_modal_dismissals.is_empty());
+        let error = serde_json::from_str::<MissionFrame>(&encoded).unwrap_err();
+        assert!(error.to_string().contains("live mission frame authority"));
+        assert!(!encoded.contains("recorder_state"));
+        assert!(!encoded.contains("external_actions_applied"));
+    }
+
+    #[test]
+    fn mission_frame_is_not_clone() {
+        // Inference becomes ambiguous (a compile error) if Clone is ever added.
+        trait AmbiguousIfClone<A> {
+            fn marker() {}
+        }
+        impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+        impl<T: ?Sized + Clone> AmbiguousIfClone<u8> for T {}
+        let _ = <MissionFrame as AmbiguousIfClone<_>>::marker;
+    }
+
+    #[test]
+    fn mission_frame_execution_preserves_pause_and_post_initialize_outcome() {
+        let mut frame = MissionFrame::new(0);
+        frame.restrict_hourglass(false);
+        frame.restrict_hourglass(true);
+        assert!(!frame.authoritative_input().run_hourglass);
+        assert!(frame.authoritative_input().simulation_body_allowed);
+        frame.admit_simulation();
+        assert!(frame.begin_post_initialize());
+        frame.complete_post_initialize(false);
+        assert!(!frame.authoritative_input().run_post_initialize);
+    }
+
+    #[test]
+    fn mission_frame_host_only_transaction_has_no_simulation_authority() {
+        let mut frame = MissionFrame::new(0);
+        frame.host_controls_only();
+        let input = frame.authoritative_input();
+        assert!(!input.run_hourglass);
+        assert!(!input.simulation_body_allowed);
+        assert!(!frame.begin_post_initialize());
+        frame.complete_post_initialize(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "frame execution policy changed after execution admission")]
+    fn mission_frame_rejects_repeated_simulation_admission() {
+        let mut frame = MissionFrame::new(0);
+        frame.admit_simulation();
+        frame.admit_simulation();
+    }
+
+    #[test]
+    #[should_panic(expected = "frame execution policy changed after execution admission")]
+    fn mission_frame_rejects_recorded_input_replacement_after_execution() {
+        let mut frame = MissionFrame::new(0);
+        frame.admit_simulation();
+        frame.adopt_authoritative_input(Default::default());
+    }
+
+    #[test]
+    #[should_panic(expected = "post-initialize phase admitted more than once")]
+    fn mission_frame_rejects_repeated_post_initialize_admission() {
+        let mut frame = MissionFrame::new(0);
+        frame.begin_post_initialize();
+        frame.begin_post_initialize();
+    }
+
+    #[test]
+    #[should_panic(expected = "post-initialize phase admitted more than once")]
+    fn mission_frame_rejects_post_initialize_after_completion() {
+        let mut frame = MissionFrame::new(0);
+        frame.begin_post_initialize();
+        frame.complete_post_initialize(false);
+        frame.begin_post_initialize();
+    }
+
+    #[test]
+    #[should_panic(expected = "post-initialize phase admitted more than once")]
+    fn mission_frame_inline_transaction_consumes_both_phases() {
+        let mut frame = MissionFrame::new(0);
+        frame.admit_inline_transaction();
+        frame.begin_post_initialize();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "post-initialize phase completed without admission or more than once"
+    )]
+    fn mission_frame_rejects_post_initialize_completion_without_admission() {
+        MissionFrame::new(0).complete_post_initialize(true);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "post-initialize phase completed without admission or more than once"
+    )]
+    fn mission_frame_rejects_repeated_post_initialize_completion() {
+        let mut frame = MissionFrame::new(0);
+        frame.begin_post_initialize();
+        frame.complete_post_initialize(true);
+        frame.complete_post_initialize(true);
+    }
+
+    #[test]
+    #[should_panic(expected = "suppressed post-initialize phase reported initialization")]
+    fn mission_frame_rejects_initialization_after_suppression() {
+        let mut frame = MissionFrame::new(0);
+        frame.host_controls_only();
+        frame.begin_post_initialize();
+        frame.complete_post_initialize(true);
     }
 
     #[test]

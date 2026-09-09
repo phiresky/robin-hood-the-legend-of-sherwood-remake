@@ -76,7 +76,7 @@ impl ZoomButtonEnable {
     /// that's active so its widget stays visually "pressed" for the
     /// duration.
     pub fn from_engine(
-        engine: &engine_api::Engine,
+        engine: &engine_api::EngineInner,
         display: &engine_api::HostDisplayState,
     ) -> Self {
         let gated = engine.is_zoom_possible(display);

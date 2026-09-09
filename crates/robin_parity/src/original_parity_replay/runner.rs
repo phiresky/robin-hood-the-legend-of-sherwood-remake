@@ -438,15 +438,14 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     let campaign_run_id = replay_campaign_run_id(&trace_path, header.session_index);
 
     #[cfg(feature = "client")]
+    let mut http_transport = robin_rs::http_server::HttpTransport::default();
+    #[cfg(feature = "client")]
     if let Some(port) = http_server {
         let replay_service =
             std::sync::Arc::new(robin_rs::replay_service::ReplayService::default());
-        robin_rs::http_server::start_global(
-            port,
-            replay_service.exports(),
-            replay_service.launches(),
-        )
-        .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
+        http_transport
+            .start(port, replay_service.exports(), replay_service.launches())
+            .unwrap_or_else(|e| panic!("start parity replay HTTP server: {e}"));
         eprintln!(
             "parity replay HTTP server ready on http://127.0.0.1:{port} (frame {})",
             engine.frame_counter()
@@ -454,7 +453,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
     }
 
     #[cfg(feature = "client")]
-    let mut http_ingress = robin_rs::http_server::SessionIngress::attach();
+    let mut http_ingress = http_transport.attach();
 
     // Original retains path events across the full boundary between frame
     // writes. PostInitialize, sound callbacks, and resolved input can enqueue

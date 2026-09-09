@@ -2974,13 +2974,21 @@ enum SelectionGesture {
     SelectingAndUnselecting,
 }
 
-/// Per-frame mouse/input state tracked by the engine.
-/// All fields are reset on serialization or transient.
-#[derive(Debug, Clone, Default)]
-pub struct InputState {
+/// Physical controls sampled by the frontend, independent of cursor feedback.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SampledControls {
     /// The engine currently has OS focus.
     pub has_focus: bool,
+    /// Right mouse button is currently held down.
+    pub right_mouse_down: bool,
+    /// Modifier snapshot consumed by gesture and view-cone updates.
+    pub is_alt: bool,
+}
 
+/// Persistent pointer sequence and click targets. Gesture flags are changed
+/// only through `InputState`'s named transitions.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct PointerGestures {
     // Pointer lifecycle is private: callers dispatch transitions, never toggle flags.
     left_pointer: LeftPointerPhase,
     left_mouse_start_screen: ScreenPoint,
@@ -2993,12 +3001,29 @@ pub struct InputState {
     ignore_next_left_click: bool,
     next_left_double_is_simple: bool,
 
-    /// Right mouse button is currently held down.
-    pub right_mouse_down: bool,
-    /// Modifier snapshot consumed by gesture and view-cone updates.
-    pub is_alt: bool,
+    /// Previous successful click target, retained for double-click dispatch.
+    pub element_old_click: Option<crate::element::EntityId>,
+    /// Current click-and-drag action target, retired on pointer release.
+    pub target_drag: Option<crate::element::EntityId>,
+    /// Portrait right-click arms dropping ammo on the next action click.
+    pub portrait_drop_ammo_armed: bool,
+    /// Double-click acceleration window for the last portrait action.
+    pub portrait_action_countdown: u16,
+    pub portrait_action_pc: Option<crate::element::EntityId>,
+}
 
-    // Currently hovered map point/layer/sector.
+impl<'de> Deserialize<'de> for PointerGestures {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "pointer gestures are live input state; initialize and dispatch pointer transitions",
+        ))
+    }
+}
+
+/// One spatial query result. Build locally, then publish the entire result;
+/// consumers cannot mutate individual fields through `InputState`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SpatialHit {
     pub selected_map_point: MapPoint,
     pub selected_layer: u16,
     /// Index into `FastFindGrid::sectors` for the sector under the mouse.
@@ -3019,27 +3044,14 @@ pub struct InputState {
     /// command dispatched here would have somewhere to land. Updated
     /// alongside `selected_sector_idx` each frame.
     pub valid_position_for_move: bool,
+}
 
+/// Presentation feedback computed from the spatial hit and active action.
+/// Focus here is an action target, not necessarily the entity at the map point.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CursorFeedback {
     /// Entity currently under the mouse cursor.  Reset each frame.
     pub focused_entity_id: Option<crate::element::EntityId>,
-
-    /// Last element successfully clicked.  Written by `left_click_no_action`
-    /// / `perform_swordfight` whenever a click resolves against a
-    /// focusable target; read by `left_double_click_no_action` to
-    /// re-dispatch the previous click's target on a double-click, and
-    /// by `is_focusable_click_and_drag` to cache drag targets for bow
-    /// shots and click-and-drag actions.
-    ///
-    /// Zeroed at load/save resets.
-    pub element_old_click: Option<crate::element::EntityId>,
-
-    /// Current drag target for click-and-drag actions (bow, apple,
-    /// stone, strangle, heal, hit, lever).  Written by
-    /// `is_focusable_click_and_drag` when the drag target changes;
-    /// cleared when the drag ends or the cursor leaves every
-    /// focusable.  Used to keep cursor previews and action handlers
-    /// stable across individual mouse-move samples during a drag.
-    pub target_drag: Option<crate::element::EntityId>,
 
     /// Entity whose double status bar should be shown this frame.
     pub double_status_bar_entity_id: Option<crate::element::EntityId>,
@@ -3070,19 +3082,6 @@ pub struct InputState {
     /// cleared when an entity is focused.
     pub display_door: bool,
 
-    /// Set after a right-click cancels an action on the portrait.
-    /// When armed, the next action-button click drops ammo instead of
-    /// arming the action. Cleared when any action is successfully armed.
-    pub portrait_drop_ammo_armed: bool,
-
-    /// Portrait action countdown.
-    /// Starts at 5 when an action is dispatched via portrait; decrements
-    /// each frame. If a double-click lands within the window, the action
-    /// is accelerated.
-    pub portrait_action_countdown: u16,
-    /// The PC whose action was just dispatched (for double-click acceleration).
-    pub portrait_action_pc: Option<crate::element::EntityId>,
-
     /// Debug "draw hidden" toggle, flipped by the masked-display
     /// switch message. When on, titbits attached to entities the
     /// player can't currently see (inside buildings, blipped) are
@@ -3090,76 +3089,136 @@ pub struct InputState {
     pub draw_hidden: bool,
 }
 
+/// Host-local input domains. The engine's serialized authoritative state does
+/// not contain this state; snapshot restoration resets every domain to its
+/// unfocused default. Fresh host construction explicitly uses `focused()`.
+#[derive(Debug, Clone, Default)]
+pub struct InputState {
+    pub controls: SampledControls,
+    pub gestures: PointerGestures,
+    pub feedback: CursorFeedback,
+    spatial_hit: SpatialHit,
+}
+
 impl InputState {
     pub fn focused() -> Self {
         Self {
-            has_focus: true,
+            controls: SampledControls {
+                has_focus: true,
+                ..SampledControls::default()
+            },
             ..Self::default()
         }
     }
+
+    /// Read one coherent hit-test publication, never an in-progress query.
+    ///
+    /// ```compile_fail
+    /// let mut input = robin_engine::engine::InputState::default();
+    /// input.spatial_hit().selected_layer = 7;
+    /// ```
+    ///
+    /// ```compile_fail
+    /// let mut input = robin_engine::engine::InputState::default();
+    /// input.spatial_hit = robin_engine::engine::SpatialHit::default();
+    /// ```
+    pub fn spatial_hit(&self) -> &SpatialHit {
+        &self.spatial_hit
+    }
+
+    pub fn publish_spatial_hit(&mut self, hit: SpatialHit) {
+        self.spatial_hit = hit;
+    }
+
+    /// Door cursor resolution historically selects the visible door layer while
+    /// retaining the underlying patch sector and its movement eligibility.
+    pub fn select_door_cursor_layer(&mut self, layer: u16) {
+        self.spatial_hit.selected_layer = layer;
+    }
+
+    /// A rejected jump cursor retries the underlying motion sector. This is a
+    /// cursor fallback, not a new mouse sample: point/layer/patch stay unchanged.
+    pub fn select_jump_fallback_sector(
+        &mut self,
+        sector: Option<crate::fast_find_grid::SectorIndex>,
+    ) {
+        self.spatial_hit.selected_sector_idx = sector;
+    }
+
+    /// Clear only per-frame action feedback. Requirements-bar marks and the
+    /// debug toggle have separate lifetimes and deliberately survive this reset.
+    pub fn begin_cursor_feedback(&mut self, opacity: u16) {
+        self.feedback.focused_entity_id = None;
+        self.feedback.double_status_bar_entity_id = None;
+        self.feedback.mouse_opacity = opacity;
+        self.feedback.mouse_shadow_color = 0;
+        self.feedback.increment_cursor_animation = true;
+        self.feedback.display_door = false;
+    }
     pub fn left_mouse_down(&self) -> bool {
-        self.left_pointer != LeftPointerPhase::Released
+        self.gestures.left_pointer != LeftPointerPhase::Released
     }
 
     pub fn is_dragging(&self) -> bool {
-        self.left_pointer == LeftPointerPhase::Dragging
+        self.gestures.left_pointer == LeftPointerPhase::Dragging
     }
 
     pub fn multi_selection_active(&self) -> bool {
         matches!(
-            self.selection_gesture,
+            self.gestures.selection_gesture,
             SelectionGesture::Selecting | SelectionGesture::SelectingAndUnselecting
         )
     }
     pub fn multi_unselection_active(&self) -> bool {
         matches!(
-            self.selection_gesture,
+            self.gestures.selection_gesture,
             SelectionGesture::Unselecting | SelectionGesture::SelectingAndUnselecting
         )
     }
     pub fn draw_multi_selection(&self) -> bool {
-        self.draw_multi_selection
+        self.gestures.draw_multi_selection
     }
     pub fn multi_selection_pt1(&self) -> MapPoint {
-        self.multi_selection_pt1
+        self.gestures.multi_selection_pt1
     }
     pub fn multi_selection_pt2(&self) -> MapPoint {
-        self.multi_selection_pt2
+        self.gestures.multi_selection_pt2
     }
     pub fn ignore_next_drag(&self) -> bool {
-        self.ignore_next_drag
+        self.gestures.ignore_next_drag
     }
     pub fn ignore_next_left_click(&self) -> bool {
-        self.ignore_next_left_click
+        self.gestures.ignore_next_left_click
     }
 
     /// A platform press consumes double-click demotion even for a single click.
     pub fn press_left_pointer(&mut self, screen: ScreenPoint, clicks: u8) {
-        self.left_pointer = LeftPointerPhase::Dragging;
-        self.left_mouse_start_screen = screen;
-        self.left_double_click_pending = !self.next_left_double_is_simple && clicks >= 2;
-        self.next_left_double_is_simple = false;
+        self.gestures.left_pointer = LeftPointerPhase::Dragging;
+        self.gestures.left_mouse_start_screen = screen;
+        self.gestures.left_double_click_pending =
+            !self.gestures.next_left_double_is_simple && clicks >= 2;
+        self.gestures.next_left_double_is_simple = false;
     }
 
     /// Release retires drag authority but leaves selection/click suppression for dispatch.
     pub fn release_left_pointer(&mut self) -> bool {
-        self.left_pointer = LeftPointerPhase::Released;
-        self.target_drag = None;
-        self.ignore_next_drag = false;
-        std::mem::take(&mut self.left_double_click_pending)
+        self.gestures.left_pointer = LeftPointerPhase::Released;
+        self.gestures.target_drag = None;
+        self.gestures.ignore_next_drag = false;
+        std::mem::take(&mut self.gestures.left_double_click_pending)
     }
 
     /// Action re-arm/modal input reset disarms drawing without inventing a release.
     pub fn disarm_left_drag(&mut self) {
         if self.left_mouse_down() {
-            self.left_pointer = LeftPointerPhase::HeldWithoutDrag;
+            self.gestures.left_pointer = LeftPointerPhase::HeldWithoutDrag;
         }
     }
 
     /// Frontend reset preserves pending suppression, matching existing modal behavior.
     pub fn reset_pointer_sequence(&mut self) {
-        self.left_pointer = LeftPointerPhase::Released;
-        self.right_mouse_down = false;
+        self.gestures.left_pointer = LeftPointerPhase::Released;
+        self.controls.right_mouse_down = false;
         self.cancel_selection_gestures();
     }
 
@@ -3175,90 +3234,90 @@ impl InputState {
         self.cancel_selection_gestures();
         self.accept_mouse_event(true, true);
         self.disarm_left_drag();
-        self.is_alt = false;
+        self.controls.is_alt = false;
     }
 
     pub fn cancel_selection_gestures(&mut self) {
-        self.selection_gesture = SelectionGesture::Idle;
-        self.draw_multi_selection = false;
+        self.gestures.selection_gesture = SelectionGesture::Idle;
+        self.gestures.draw_multi_selection = false;
     }
 
     /// Swordfight cancellation preserves the historical draw latch until reset.
     pub fn cancel_selection_for_swordfight(&mut self) {
-        self.selection_gesture = SelectionGesture::Idle;
+        self.gestures.selection_gesture = SelectionGesture::Idle;
     }
 
     pub fn latch_selection_outline(&mut self) {
         assert!(self.multi_selection_active() || self.multi_unselection_active());
-        self.draw_multi_selection = true;
+        self.gestures.draw_multi_selection = true;
     }
 
     pub fn demote_next_double_click(&mut self) {
-        self.next_left_double_is_simple = true;
+        self.gestures.next_left_double_is_simple = true;
     }
 
     pub fn finish_click_dispatch(&mut self) {
-        self.next_left_double_is_simple = false;
+        self.gestures.next_left_double_is_simple = false;
     }
 
     /// A drag action already fired; prevent release from repeating it. Macro
     /// recording also suppresses later motion so it records exactly one step.
     pub fn drag_action_dispatched(&mut self, recording_macro: bool) {
-        self.ignore_next_left_click = true;
-        self.ignore_next_drag |= recording_macro;
+        self.gestures.ignore_next_left_click = true;
+        self.gestures.ignore_next_drag |= recording_macro;
     }
 
     pub fn consume_suppressed_click(&mut self) -> bool {
-        std::mem::take(&mut self.ignore_next_left_click)
+        std::mem::take(&mut self.gestures.ignore_next_left_click)
     }
 
     /// Start a drag-box multi-selection at the given map-space point.
     pub fn start_multi_selection(&mut self, map_pt: MapPoint) {
-        self.selection_gesture = if self.multi_unselection_active() {
+        self.gestures.selection_gesture = if self.multi_unselection_active() {
             SelectionGesture::SelectingAndUnselecting
         } else {
             SelectionGesture::Selecting
         };
-        self.draw_multi_selection = false;
-        self.multi_selection_pt1 = map_pt;
-        self.multi_selection_pt2 = map_pt;
+        self.gestures.draw_multi_selection = false;
+        self.gestures.multi_selection_pt1 = map_pt;
+        self.gestures.multi_selection_pt2 = map_pt;
     }
 
     /// Update the drag-box endpoint during a multi-selection drag.
     pub fn update_multi_selection(&mut self, map_pt: MapPoint) {
-        self.multi_selection_pt2 = map_pt;
+        self.gestures.multi_selection_pt2 = map_pt;
     }
 
     /// Cancel an in-progress multi-selection.
     pub fn cancel_multi_selection(&mut self) {
-        self.selection_gesture = if self.multi_unselection_active() {
+        self.gestures.selection_gesture = if self.multi_unselection_active() {
             SelectionGesture::Unselecting
         } else {
             SelectionGesture::Idle
         };
-        self.draw_multi_selection = false;
+        self.gestures.draw_multi_selection = false;
     }
 
     /// Start a drag-box multi-UNselection at the given map-space point.
     pub fn start_multi_unselection(&mut self, map_pt: MapPoint) {
-        self.selection_gesture = if self.multi_selection_active() {
+        self.gestures.selection_gesture = if self.multi_selection_active() {
             SelectionGesture::SelectingAndUnselecting
         } else {
             SelectionGesture::Unselecting
         };
-        self.draw_multi_selection = false;
-        self.multi_selection_pt1 = map_pt;
-        self.multi_selection_pt2 = map_pt;
+        self.gestures.draw_multi_selection = false;
+        self.gestures.multi_selection_pt1 = map_pt;
+        self.gestures.multi_selection_pt2 = map_pt;
     }
 
     /// Cancel an in-progress multi-unselection.
     pub fn cancel_multi_unselection(&mut self) {
-        self.selection_gesture = if self.multi_selection_active() {
+        self.gestures.selection_gesture = if self.multi_selection_active() {
             SelectionGesture::Selecting
         } else {
             SelectionGesture::Idle
         };
-        self.draw_multi_selection = false;
+        self.gestures.draw_multi_selection = false;
     }
 
     /// Sets the three suppression flags the host reads at the next
@@ -3279,12 +3338,12 @@ impl InputState {
         next_left_double_is_simple: bool,
     ) {
         if click {
-            self.ignore_next_left_click = true;
+            self.gestures.ignore_next_left_click = true;
         }
         if drag {
-            self.ignore_next_drag = true;
+            self.gestures.ignore_next_drag = true;
         }
-        self.next_left_double_is_simple = next_left_double_is_simple;
+        self.gestures.next_left_double_is_simple = next_left_double_is_simple;
     }
 
     /// Clears the matching suppression flags.  Used by
@@ -3293,10 +3352,10 @@ impl InputState {
     /// drop any pending ignore state.
     pub fn accept_mouse_event(&mut self, click: bool, drag: bool) {
         if click {
-            self.ignore_next_left_click = false;
+            self.gestures.ignore_next_left_click = false;
         }
         if drag {
-            self.ignore_next_drag = false;
+            self.gestures.ignore_next_drag = false;
         }
     }
 }
@@ -3307,6 +3366,90 @@ mod gesture_lifecycle_tests {
 
     fn press(input: &mut InputState, clicks: u8) {
         input.press_left_pointer(ScreenPoint::new(12.0, 34.0), clicks);
+    }
+
+    #[test]
+    fn hit_publication_replaces_all_geometry_without_resetting_gestures() {
+        let mut input = InputState::focused();
+        press(&mut input, 2);
+        input.controls.is_alt = true;
+        input.feedback.draw_hidden = true;
+        input.publish_spatial_hit(SpatialHit {
+            selected_map_point: MapPoint::new(10.0, 20.0),
+            selected_layer: 3,
+            selected_sector_idx: Some(crate::fast_find_grid::SectorIndex::new(7).unwrap()),
+            selected_patch_idx: Some(2),
+            hovered_door_idx: Some(8),
+            valid_position_for_move: true,
+        });
+        input.publish_spatial_hit(SpatialHit::default());
+        let hit = input.spatial_hit();
+        assert_eq!(hit.selected_map_point, MapPoint::default());
+        assert_eq!(hit.selected_layer, 0);
+        assert!(hit.selected_sector_idx.is_none());
+        assert!(hit.selected_patch_idx.is_none());
+        assert!(hit.hovered_door_idx.is_none());
+        assert!(!hit.valid_position_for_move);
+        assert!(input.controls.has_focus && input.controls.is_alt);
+        assert!(input.feedback.draw_hidden);
+        assert!(input.is_dragging());
+        assert!(input.release_left_pointer());
+    }
+
+    #[test]
+    fn cursor_overrides_preserve_sample_and_movement_eligibility() {
+        let mut input = InputState::default();
+        input.publish_spatial_hit(SpatialHit {
+            selected_map_point: MapPoint::new(10.0, 20.0),
+            selected_layer: 3,
+            selected_patch_idx: Some(2),
+            hovered_door_idx: Some(8),
+            valid_position_for_move: true,
+            ..SpatialHit::default()
+        });
+        let sector = crate::fast_find_grid::SectorIndex::new(7).unwrap();
+        input.select_door_cursor_layer(9);
+        input.select_jump_fallback_sector(Some(sector));
+        assert_eq!(input.spatial_hit().selected_layer, 9);
+        assert_eq!(input.spatial_hit().selected_sector_idx, Some(sector));
+        assert_eq!(
+            input.spatial_hit().selected_map_point,
+            MapPoint::new(10.0, 20.0)
+        );
+        assert_eq!(input.spatial_hit().selected_patch_idx, Some(2));
+        assert_eq!(input.spatial_hit().hovered_door_idx, Some(8));
+        assert!(input.spatial_hit().valid_position_for_move);
+    }
+
+    #[test]
+    fn cursor_frame_reset_does_not_erase_persistent_input_domains() {
+        let mut input = InputState::focused();
+        press(&mut input, 1);
+        input.gestures.portrait_action_countdown = 5;
+        input.feedback.draw_hidden = true;
+        input.feedback.mouse_shadow_color = 42;
+        input.feedback.display_door = true;
+        input.publish_spatial_hit(SpatialHit {
+            selected_layer: 4,
+            ..SpatialHit::default()
+        });
+        input.begin_cursor_feedback(40);
+        assert_eq!(input.feedback.mouse_opacity, 40);
+        assert_eq!(input.feedback.mouse_shadow_color, 0);
+        assert!(input.feedback.increment_cursor_animation);
+        assert!(!input.feedback.display_door);
+        assert!(input.feedback.draw_hidden);
+        assert!(input.controls.has_focus && input.is_dragging());
+        assert_eq!(input.gestures.portrait_action_countdown, 5);
+        assert_eq!(input.spatial_hit().selected_layer, 4);
+    }
+
+    #[test]
+    fn serialized_gestures_cannot_restore_live_pointer_authority() {
+        let mut input = InputState::focused();
+        press(&mut input, 2);
+        let diagnostic = serde_json::to_value(&input.gestures).unwrap();
+        assert!(serde_json::from_value::<PointerGestures>(diagnostic).is_err());
     }
 
     #[test]
@@ -3388,11 +3531,11 @@ mod gesture_lifecycle_tests {
         press(&mut input, 2);
         input.ignore_mouse_event(true, true, true);
         input.start_multi_selection(MapPoint::default());
-        input.is_alt = true;
+        input.controls.is_alt = true;
         input.reset_modal_input();
         assert!(input.left_mouse_down() && !input.is_dragging());
         assert!(!input.ignore_next_drag() && !input.ignore_next_left_click());
-        assert!(!input.multi_selection_active() && !input.is_alt);
+        assert!(!input.multi_selection_active() && !input.controls.is_alt);
         assert!(input.release_left_pointer());
         press(&mut input, 2);
         assert!(
@@ -3784,7 +3927,7 @@ pub struct SideEffects {
     /// Entities the sim asked to render a one-frame full-alpha outline
     /// on this tick.  Currently only populated by the
     /// `AddPCToMissionTeam` native, marking the PC after it is added.
-    /// Host merges into [`InputState::marked_pc_ids`] each frame.
+    /// Host merges into [`CursorFeedback::marked_pc_ids`] each frame.
     pub pending_mark_pc_ids: Vec<crate::element::EntityId>,
     /// Deferred patch-effect background decal inserts and
     /// removals (`RestoreBackground`).  Produced by

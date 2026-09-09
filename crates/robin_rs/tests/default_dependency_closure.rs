@@ -59,17 +59,18 @@ fn default_dependency_closure_excludes_optional_integrations() {
         .iter()
         .find_map(|(id, name)| (name == "robin_rs").then_some(id.clone()))
         .expect("robin_rs package in metadata");
-    // Native leaderboard HTTP intentionally uses reqwest::blocking, whose
-    // transport runs on Tokio internally. That transitive runtime is required
-    // even without multiplayer; only our direct, multiplayer-gated Tokio edge
-    // must stay out of the default client.
+    // Native RPC now owns cancellable Hyper connections on Tokio. These are
+    // required even without multiplayer (reqwest also uses Tokio internally).
+    // Keep the optional game integrations excluded independently below.
     let direct_dependencies = graph.get(&root).expect("robin_rs dependency node");
-    assert!(
-        !direct_dependencies
-            .iter()
-            .any(|id| package_names.get(id).is_some_and(|name| name == "tokio")),
-        "the multiplayer-only direct Tokio dependency reached the default client"
-    );
+    for required in ["tokio", "hyper", "hyper-util"] {
+        assert!(
+            direct_dependencies
+                .iter()
+                .any(|id| package_names.get(id).is_some_and(|name| name == required)),
+            "native RPC transport requires {required} without enabling multiplayer"
+        );
+    }
     let mut queue = VecDeque::from([root]);
     let mut closure = BTreeSet::new();
     while let Some(id) = queue.pop_front() {
@@ -104,6 +105,7 @@ fn default_dependency_closure_excludes_optional_integrations() {
         "robin_lua",
         "spirv-cross-sys",
         "sysinfo",
+        "tiny_http",
         "velopack",
     ];
     let present = forbidden

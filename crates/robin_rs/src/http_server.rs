@@ -5,8 +5,8 @@
 //!
 //! Two transports share the same request/reply enums + per-tick drain:
 //!
-//! - **Native:** a `tiny_http` listener on `127.0.0.1:<port>` (see
-//!   [`start_global`]).  Endpoints are:
+//! - **Native:** an application-owned Hyper listener on `127.0.0.1:<port>` (see
+//!   [`HttpTransport::start`]).  Endpoints are:
 //!
 //!   | Method | Path                | Body / Query                                 | Response                                               |
 //!   |--------|---------------------|----------------------------------------------|--------------------------------------------------------|
@@ -31,16 +31,17 @@
 //!
 //! ### Threading (native)
 //!
-//! A dedicated listener thread runs `tiny_http`'s blocking accept loop.
+//! A dedicated listener thread owns a Tokio runtime and at most eight HTTP
+//! connection tasks. Shutdown cancels and joins every connection task.
 //! Each request is decoded into a [`HttpRequest`] and pushed onto a
-//! shared FIFO with a one-shot `SyncSender` for the reply. The game
-//! mission owner drains its queue once per tick, executes each request inline, and
-//! sends the reply back. The listener serialises it to JSON (or raw
+//! shared FIFO with a single-owner asynchronous reply channel. The game
+//! mission owner drains its queue once per tick and admits eligible requests
+//! before execution. The listener awaits replies without polling and serialises them to JSON (or raw
 //! image/png bytes for `/screenshot`).
 //!
 //! Requests requiring an engine fail immediately between missions. A busy
 //! active mission can defer execution until its next RPC boundary, bounded
-//! by a 60 s recv timeout on the
+//! by a 60 s reply deadline on the
 //! listener side.  Clients that want to fail fast instead of waiting
 //! out a blocked main loop should pass a shorter HTTP timeout
 //! themselves (e.g. `curl --max-time 2`).
@@ -82,10 +83,8 @@ use robin_engine::scb as engine_scb;
 use robin_engine::weapons as engine_weapons;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, VecDeque};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::mpsc::{self, SyncSender};
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
 #[cfg(not(target_arch = "wasm32"))]
@@ -152,6 +151,23 @@ impl Default for StepRequest {
 pub struct HttpRequest {
     pub payload: HttpPayload,
     pub response_tx: Responder,
+}
+
+impl HttpRequest {
+    fn admit_unless_deferred(&self) -> bool {
+        if matches!(
+            self.payload,
+            HttpPayload::Screenshot(_)
+                | HttpPayload::StepForward { .. }
+                | HttpPayload::StepBack { .. }
+                | HttpPayload::GoToFrame { .. }
+                | HttpPayload::SetPaused { .. }
+        ) {
+            self.response_tx.eligible()
+        } else {
+            self.response_tx.admit()
+        }
+    }
 }
 
 /// Per-request payload — the transport layer parses each endpoint
@@ -354,7 +370,7 @@ pub struct ScreenshotFlags {
     pub entity_ids: Option<bool>,
 }
 
-#[derive(Clone, Debug, serde::Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NativeCall {
     pub op: String,
     #[serde(default)]
@@ -371,6 +387,9 @@ pub struct NativeCall {
 /// path doesn't pay a base64 tax.
 pub enum ReplyBody {
     Json(serde_json::Value),
+    /// Encoding is owned by the replay service; the transport awaits only the
+    /// result, under the same deadline/retirement guard as the original request.
+    ReplayExport(crate::replay_service::ExportResult),
     Binary {
         content_type: &'static str,
         data: Vec<u8>,
@@ -389,50 +408,513 @@ impl From<serde_json::Value> for ReplyBody {
 /// becomes a 400 with `{"error": msg}` (always JSON).
 pub type Reply = Result<ReplyBody, String>;
 
-/// One-shot reply channel.  Native uses a `mpsc::sync_channel` so the
-/// listener thread can block on recv; wasm uses an async one-shot
-/// channel that resolves the Promise returned by `rh_rpc`.
-pub enum Responder {
-    #[cfg(not(target_arch = "wasm32"))]
-    Channel(SyncSender<Reply>),
-    #[cfg(target_arch = "wasm32")]
-    Wasm(async_channel::Sender<Reply>),
+async fn resolve_deferred_reply(reply: Reply) -> Reply {
+    match reply? {
+        ReplyBody::ReplayExport(result) => result
+            .recv()
+            .await
+            .map_err(|error| format!("replay export worker dropped its result: {error}"))?
+            .map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))),
+        body => Ok(body),
+    }
 }
 
-impl Responder {
-    pub fn send(self, reply: Reply) {
-        match self {
+mod request_lifetime;
+pub use request_lifetime::Responder;
+
+mod ingress;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_routes;
+#[cfg(not(target_arch = "wasm32"))]
+mod native_transport;
+mod request_decode;
+use ingress::RequestRouter;
+pub use ingress::SessionIngress;
+#[cfg(not(target_arch = "wasm32"))]
+use native_transport::NativeRequest;
+
+type Queue = Arc<Mutex<RequestRouter>>;
+
+struct HttpServer {
+    replay_exports: crate::replay_service::ReplayExports,
+    replay_launches: crate::replay_service::ReplayLaunches,
+    queue: Queue,
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    bind_addr: std::net::SocketAddr,
+    #[cfg(not(target_arch = "wasm32"))]
+    listener: Option<thread::JoinHandle<()>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+/// Application-owned transport. Diagnostics cannot recreate a listener.
+/// Stopping retires the queue and cancels and joins every native connection,
+/// including stalled bodies and responses. Dropping performs the same teardown.
+#[derive(Default, serde::Serialize)]
+pub struct HttpTransport {
+    port: Option<u16>,
+    #[serde(skip)]
+    server: Option<HttpServer>,
+}
+
+impl std::fmt::Debug for HttpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpTransport")
+            .field("port", &self.port)
+            .finish()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for HttpTransport {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "live HTTP transport cannot be deserialized",
+        ))
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    // JS needs one current entry point, not ownership of an application service.
+    static BROWSER_QUEUE: std::cell::RefCell<std::sync::Weak<Mutex<RequestRouter>>> = const { std::cell::RefCell::new(std::sync::Weak::new()) };
+}
+
+impl HttpTransport {
+    pub fn is_started(&self) -> bool {
+        self.port.is_some()
+    }
+
+    pub fn matches_replay(
+        &self,
+        exports: &crate::replay_service::ReplayExports,
+        launches: &crate::replay_service::ReplayLaunches,
+    ) -> bool {
+        self.server.as_ref().is_none_or(|server| {
+            server.replay_exports.same_service(exports)
+                && server.replay_launches.same_service(launches)
+        })
+    }
+
+    pub fn attach(&self) -> SessionIngress {
+        SessionIngress::attach(self.server.as_ref())
+    }
+
+    pub fn drain_pre_engine(&self) {
+        if let Some(server) = &self.server {
+            drain_pre_engine(server);
+        }
+    }
+
+    pub fn stop(&mut self) {
+        self.port = None;
+        if let Some(server) = self.server.take() {
             #[cfg(not(target_arch = "wasm32"))]
-            Self::Channel(tx) => {
-                if let Err(e) = tx.send(reply) {
-                    tracing::debug!("script RPC: response dropped (listener gone): {e}");
-                }
-            }
+            let mut server = server;
             #[cfg(target_arch = "wasm32")]
-            Self::Wasm(tx) => {
-                if let Err(e) = tx.try_send(reply) {
-                    tracing::debug!("script RPC: response dropped (wasm promise gone): {e}");
+            BROWSER_QUEUE.with(|binding| {
+                let mut binding = binding.borrow_mut();
+                if binding.ptr_eq(&Arc::downgrade(&server.queue)) {
+                    *binding = std::sync::Weak::new();
+                }
+            });
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(stop) = server.stop.take() {
+                let _ = stop.send(());
+            }
+            server.queue.lock().expect("RPC router poisoned").retire();
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(listener) = server.listener.take() {
+                if listener.join().is_err() {
+                    tracing::error!("script HTTP listener panicked during shutdown");
                 }
             }
         }
     }
 }
 
-mod ingress;
-use ingress::RequestRouter;
-pub use ingress::SessionIngress;
-
-pub type Queue = Arc<Mutex<RequestRouter>>;
-
-pub struct HttpServer {
-    replay_exports: crate::replay_service::ReplayExports,
-    replay_launches: crate::replay_service::ReplayLaunches,
-    pub queue: Queue,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub bind_addr: std::net::SocketAddr,
+impl Drop for HttpTransport {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
-static GLOBAL: OnceLock<HttpServer> = OnceLock::new();
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_transport_tests {
+    use super::*;
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn stop_rejects_an_already_deferred_browser_promise_without_another_tick() {
+        use futures::FutureExt as _;
+        let replay = Arc::new(crate::replay_service::ReplayService::default());
+        let mut transport = HttpTransport::default();
+        transport
+            .start(0, replay.exports(), replay.launches())
+            .unwrap();
+        let mut ingress = transport.attach();
+        // Match the browser's plain JS object, not serde-wasm-bindgen's
+        // default Map representation of serde_json::Value objects.
+        let value =
+            js_sys::JSON::parse(r#"{"method":"set-paused","params":{"paused":true}}"#).unwrap();
+        let mut promise = Box::pin(wasm_rpc::rh_rpc(value));
+        if let Some(reply) = promise.as_mut().now_or_never() {
+            // wasm panic aborts without running Drop. Release the bridge before
+            // reporting a bad fixture so one failure cannot contaminate tests.
+            transport.stop();
+            panic!("deferred RPC completed before mission dispatch: {reply:?}");
+        }
+        let request = ingress.take_requests().pop().expect("queued request");
+        ingress.defer_request(
+            DeferredRequest::Step(StepKind::SetPaused { paused: true }),
+            request.response_tx,
+            true,
+        );
+        transport.stop();
+        assert_eq!(
+            promise.await.unwrap_err().as_string().as_deref(),
+            Some("HTTP transport stopped")
+        );
+        assert!(ingress.take_pending_steps().is_empty());
+    }
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn early_requests_survive_owner_transfer_and_stop_allows_rebinding() {
+        let replay = Arc::new(crate::replay_service::ReplayService::default());
+        let mut early = HttpTransport::default();
+        early.start(0, replay.exports(), replay.launches()).unwrap();
+        let queue = BROWSER_QUEUE
+            .with(|binding| binding.borrow().upgrade())
+            .unwrap();
+        let (response_tx, _rx) = Responder::channel();
+        queue.lock().unwrap().push_back(HttpRequest {
+            payload: HttpPayload::LoadReplay {
+                data: "early replay".into(),
+                paused: true,
+            },
+            response_tx,
+        });
+        let mut application = early;
+        // Native port options are irrelevant to the browser bridge binding.
+        application
+            .start(DEFAULT_PORT, replay.exports(), replay.launches())
+            .unwrap();
+        let mut mission = application.attach();
+        assert_eq!(mission.take_requests().len(), 1);
+        let mut replacement = HttpTransport::default();
+        assert!(
+            replacement
+                .start(0, replay.exports(), replay.launches())
+                .is_err()
+        );
+        application.stop();
+        // The old mission and a caller still retain the old queue, but neither
+        // can prevent a new application from taking over the JS entry point.
+        replacement
+            .start(0, replay.exports(), replay.launches())
+            .unwrap();
+        let current = BROWSER_QUEUE
+            .with(|binding| binding.borrow().upgrade())
+            .unwrap();
+        assert!(!Arc::ptr_eq(&queue, &current));
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod transport_lifecycle_tests {
+    use super::*;
+    use std::io::Write;
+
+    fn running() -> (HttpTransport, Arc<crate::replay_service::ReplayService>) {
+        let replay = Arc::new(crate::replay_service::ReplayService::default());
+        let server =
+            start(0, replay.exports(), replay.launches()).expect("ephemeral HTTP listener");
+        let port = server.bind_addr.port();
+        (
+            HttpTransport {
+                port: Some(port),
+                server: Some(server),
+            },
+            replay,
+        )
+    }
+
+    #[test]
+    fn socket_disconnect_cancels_queued_and_deferred_requests() {
+        for deferred in [false, true] {
+            let (mut transport, _) = running();
+            let port = transport.port.unwrap();
+            let mut ingress = transport.attach();
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            let body = r#"{"paused":true}"#;
+            write!(client, "POST /set-paused HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let request = loop {
+                if let Some(request) = ingress.take_requests().pop() {
+                    break request;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "socket request was not queued"
+                );
+                thread::yield_now();
+            };
+            let cancelled = request.response_tx.cancellation_observer();
+            let queued = if deferred {
+                ingress.defer_request(
+                    DeferredRequest::Step(StepKind::SetPaused { paused: true }),
+                    request.response_tx,
+                    true,
+                );
+                None
+            } else {
+                Some(request)
+            };
+            client.shutdown(std::net::Shutdown::Both).unwrap();
+            drop(client);
+            // Observe transport cancellation itself, without driving a mission
+            // tick or asking admission to notice a disconnected fixture.
+            while !cancelled() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "Hyper retained the disconnected caller's reply future"
+                );
+                thread::yield_now();
+            }
+            if let Some(request) = queued {
+                assert!(!request.response_tx.admit());
+            }
+            assert!(ingress.take_pending_steps().is_empty());
+            transport.stop();
+        }
+    }
+
+    #[test]
+    fn stop_prevents_admission_after_inbox_extraction() {
+        let (mut transport, _) = running();
+        let queue = transport.server.as_ref().unwrap().queue.clone();
+        let mut ingress = transport.attach();
+        let (response_tx, _reply) = Responder::channel();
+        queue.lock().unwrap().push_back(HttpRequest {
+            payload: HttpPayload::Console("cheat".into()),
+            response_tx: response_tx.with_router(&queue),
+        });
+        let request = ingress.take_requests().pop().unwrap();
+        transport.stop();
+        assert!(!request.admit_unless_deferred());
+    }
+
+    #[test]
+    fn repeated_binding_checks_port_and_replay_authority_and_stop_releases_port() {
+        let (mut transport, replay) = running();
+        let port = transport.port.unwrap();
+        transport
+            .start(port, replay.exports(), replay.launches())
+            .unwrap();
+        assert!(
+            transport
+                .start(0, replay.exports(), replay.launches())
+                .is_err()
+        );
+        let other = Arc::new(crate::replay_service::ReplayService::default());
+        assert!(
+            transport
+                .start(port, other.exports(), replay.launches())
+                .is_err()
+        );
+        assert!(
+            transport
+                .start(port, replay.exports(), other.launches())
+                .is_err()
+        );
+        transport.stop();
+        assert!(!transport.is_started());
+        transport
+            .start(port, other.exports(), other.launches())
+            .expect("rebind with new authority");
+        assert!(transport.matches_replay(&other.exports(), &other.launches()));
+    }
+
+    #[test]
+    fn stop_cancels_a_reply_already_deferred_by_the_mission() {
+        let (mut transport, _) = running();
+        let queue = transport.server.as_ref().unwrap().queue.clone();
+        let mut ingress = transport.attach();
+        let worker = thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(relay(&queue, HttpPayload::SetPaused { paused: true }))
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(request) = ingress.take_requests().pop() {
+                // Keep the responder alive in the mission's deferred queue.
+                ingress.defer_request(
+                    DeferredRequest::Step(StepKind::SetPaused { paused: true }),
+                    request.response_tx,
+                    true,
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "request did not reach ingress"
+            );
+            thread::yield_now();
+        }
+        transport.stop();
+        assert_eq!(worker.join().unwrap().0, 400);
+    }
+
+    #[test]
+    fn repeated_start_reports_a_listener_that_has_exited() {
+        let (mut transport, replay) = running();
+        let port = transport.port.unwrap();
+        transport
+            .server
+            .as_mut()
+            .unwrap()
+            .stop
+            .take()
+            .unwrap()
+            .send(())
+            .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !transport
+            .server
+            .as_ref()
+            .unwrap()
+            .listener
+            .as_ref()
+            .unwrap()
+            .is_finished()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "listener did not exit"
+            );
+            thread::yield_now();
+        }
+        assert!(
+            transport
+                .start(port, replay.exports(), replay.launches())
+                .unwrap_err()
+                .contains("exited")
+        );
+        transport.stop();
+        transport
+            .start(port, replay.exports(), replay.launches())
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_rebinds_after_a_completed_http_connection() {
+        use std::io::Read;
+        let (mut transport, replay) = running();
+        let port = transport.port.unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write!(
+            client,
+            "GET /info HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200"));
+        transport.stop();
+        transport
+            .start(port, replay.exports(), replay.launches())
+            .expect("rebind despite TIME_WAIT");
+    }
+
+    #[test]
+    fn shutdown_does_not_wait_forever_for_an_incomplete_request_body() {
+        let (mut transport, replay) = running();
+        let port = transport.port.unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(client, "POST /console HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 100\r\nContent-Type: application/json\r\n\r\n{{").unwrap();
+        // Allow the connection task to begin acquiring the incomplete body.
+        thread::sleep(Duration::from_millis(50));
+        let before = std::time::Instant::now();
+        transport.stop();
+        assert!(before.elapsed() < Duration::from_secs(2));
+        transport
+            .start(port, replay.exports(), replay.launches())
+            .expect("listener released after partial body");
+    }
+
+    #[test]
+    fn shutdown_cancels_a_continuously_trickled_body() {
+        let (mut transport, _) = running();
+        let port = transport.port.unwrap();
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        write!(
+            client,
+            "POST /console HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 1000000\r\n\r\n{{"
+        )
+        .unwrap();
+        let finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer_finished = finished.clone();
+        let writer = thread::spawn(move || {
+            while !writer_finished.load(std::sync::atomic::Ordering::Acquire) {
+                if client.write_all(b" ").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        });
+        thread::sleep(Duration::from_millis(50));
+        let before = std::time::Instant::now();
+        transport.stop();
+        let elapsed = before.elapsed();
+        finished.store(true, std::sync::atomic::Ordering::Release);
+        writer.join().unwrap();
+        assert!(elapsed < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn native_transport_preserves_security_and_early_replay_header_rejection() {
+        use std::io::Read;
+        let (transport, _) = running();
+        let port = transport.port.unwrap();
+        let exchange = |request: String| {
+            let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            client.write_all(request.as_bytes()).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            response
+        };
+        assert!(
+            exchange(format!(
+                "GET /info HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+            ))
+            .starts_with("HTTP/1.1 200")
+        );
+        assert!(exchange(format!("GET /info HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: https://example.com\r\nConnection: close\r\n\r\n")).starts_with("HTTP/1.1 403"));
+        assert!(
+            exchange(
+                "GET /info HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n".into()
+            )
+            .starts_with("HTTP/1.1 403")
+        );
+        // No chunk/body follows: validation must reject from headers alone.
+        let response = exchange(format!(
+            "POST /load-replay HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nTransfer-Encoding: chunked\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+        ));
+        assert!(response.starts_with("HTTP/1.1 400"));
+        assert!(response.contains("Transfer-Encoding"));
+    }
+}
 fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     match payload {
         HttpPayload::Native { .. } | HttpPayload::Batch(_) => {
@@ -456,43 +938,76 @@ fn ranked_input_taint(payload: &HttpPayload) -> Option<InputTaintKind> {
     }
 }
 
-/// Bring up the process-scoped script-RPC listener. Mission execution queues
-/// are owned by [`SessionIngress`], not by the listener. Re-calls are ignored.
+/// Start this application's script-RPC listener. Repeated starts must match
+/// both the binding and replay capabilities; stop explicitly before rebinding.
 ///
 /// Native: binds a loopback HTTP listener on `port` (0 disables).
 /// Wasm: ignores `port`; just installs the empty queue so `rh_rpc`
 /// has somewhere to push.
-pub fn start_global(
-    port: u16,
-    replay_exports: crate::replay_service::ReplayExports,
-    replay_launches: crate::replay_service::ReplayLaunches,
-) -> Result<(), String> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = port;
-        if GLOBAL.get().is_some() {
-            return Ok(());
+impl HttpTransport {
+    pub fn start(
+        &mut self,
+        port: u16,
+        replay_exports: crate::replay_service::ReplayExports,
+        replay_launches: crate::replay_service::ReplayLaunches,
+    ) -> Result<(), String> {
+        #[cfg(target_arch = "wasm32")]
+        let port = {
+            let _ = port;
+            0
+        };
+        if let Some(bound_port) = self.port {
+            #[cfg(not(target_arch = "wasm32"))]
+            if self
+                .server
+                .as_ref()
+                .and_then(|server| server.listener.as_ref())
+                .is_some_and(thread::JoinHandle::is_finished)
+            {
+                return Err("HTTP listener has exited; stop it before restarting".into());
+            }
+            return if bound_port == port && self.matches_replay(&replay_exports, &replay_launches) {
+                Ok(())
+            } else {
+                Err(
+                    "HTTP transport already initialized with a different port or replay authority"
+                        .into(),
+                )
+            };
         }
-        let _ = GLOBAL.set(HttpServer {
-            replay_exports,
-            replay_launches,
-            queue: Arc::new(Mutex::new(RequestRouter::default())),
-        });
-        tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
-        Ok(())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if port == 0 {
-            tracing::info!("script HTTP server: disabled (--http-server 0)");
-            return Ok(());
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = port;
+            let queue = Arc::new(Mutex::new(RequestRouter::default()));
+            BROWSER_QUEUE.with(|binding| {
+                let mut binding = binding.borrow_mut();
+                if binding.upgrade().is_some() {
+                    return Err("another application owns the browser RPC bridge".to_owned());
+                }
+                *binding = Arc::downgrade(&queue);
+                Ok(())
+            })?;
+            self.server = Some(HttpServer {
+                replay_exports,
+                replay_launches,
+                queue,
+            });
+            self.port = Some(port);
+            tracing::info!("script RPC: wasm bridge ready (rh_rpc)");
+            Ok(())
         }
-        if GLOBAL.get().is_some() {
-            return Ok(());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if port == 0 {
+                self.port = Some(port);
+                tracing::info!("script HTTP server: disabled (--http-server 0)");
+                return Ok(());
+            }
+            let server = start(port, replay_exports, replay_launches)?;
+            self.server = Some(server);
+            self.port = Some(port);
+            Ok(())
         }
-        let server = start(port, replay_exports, replay_launches)?;
-        let _ = GLOBAL.set(server);
-        Ok(())
     }
 }
 
@@ -502,30 +1017,53 @@ fn start(
     replay_exports: crate::replay_service::ReplayExports,
     replay_launches: crate::replay_service::ReplayLaunches,
 ) -> Result<HttpServer, String> {
-    let server = tiny_http::Server::http(("127.0.0.1", port)).map_err(|e| {
-        format!(
-            "script HTTP server failed to bind 127.0.0.1:{port}: {e} \
-             (another robin instance? pass `--http-server 0` to disable, \
-             or `--http-server <port>` to pick a different port)"
-        )
-    })?;
-    let bind_addr = server
-        .server_addr()
-        .to_ip()
-        .ok_or_else(|| "script HTTP server bound to non-IP address".to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("HTTP runtime: {e}"))?;
+    let listener = {
+        let _entered = runtime.enter();
+        let socket = tokio::net::TcpSocket::new_v4().map_err(|e| format!("HTTP socket: {e}"))?;
+        // Reuse a stopped listener's address after accepted connections enter
+        // TIME_WAIT. Do not enable Windows SO_REUSEADDR's port-sharing semantics.
+        #[cfg(unix)]
+        socket
+            .set_reuseaddr(true)
+            .map_err(|e| format!("HTTP socket reuse: {e}"))?;
+        socket.bind(std::net::SocketAddr::from(([127, 0, 0, 1], port))).map_err(|e| {
+            format!("script HTTP server failed to bind 127.0.0.1:{port}: {e} (another robin instance? pass `--http-server 0` to disable, or `--http-server <port>` to pick a different port)")
+        })?;
+        socket
+            .listen(128)
+            .map_err(|e| format!("HTTP listen: {e}"))?
+    };
+    let bind_addr = listener
+        .local_addr()
+        .map_err(|e| format!("HTTP listener address: {e}"))?;
     tracing::info!("script HTTP server listening on http://{bind_addr}");
 
     let queue: Queue = Arc::new(Mutex::new(RequestRouter::default()));
     let queue_for_thread = queue.clone();
-    thread::Builder::new()
+    let (stop, listener_stop) = tokio::sync::oneshot::channel();
+    let listener = thread::Builder::new()
         .name("robin-http-server".into())
-        .spawn(move || run_listener(server, queue_for_thread))
+        .spawn(move || {
+            runtime.block_on(native_transport::run(
+                listener,
+                queue_for_thread,
+                listener_stop,
+                bind_addr.port(),
+            ))
+        })
         .map_err(|e| format!("script HTTP server: failed to spawn listener thread: {e}"))?;
     Ok(HttpServer {
         queue,
+        #[cfg(test)]
         bind_addr,
         replay_exports,
         replay_launches,
+        listener: Some(listener),
+        stop: Some(stop),
     })
 }
 
@@ -566,209 +1104,6 @@ fn browser_rejection_reason(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_listener(server: tiny_http::Server, queue: Queue) {
-    use tiny_http::Method;
-
-    let listen_port = server
-        .server_addr()
-        .to_ip()
-        .map(|addr| addr.port())
-        .expect("script HTTP server listens on an IP address");
-
-    for mut req in server.incoming_requests() {
-        let header_value = |name: &'static str| {
-            req.headers()
-                .iter()
-                .find(|h| h.field.equiv(name))
-                .map(|h| h.value.as_str().to_string())
-        };
-        if let Some(reason) = browser_rejection_reason(
-            header_value("Origin").as_deref(),
-            header_value("Sec-Fetch-Site").as_deref(),
-            header_value("Host").as_deref(),
-            listen_port,
-        ) {
-            tracing::warn!("script HTTP server: rejected request: {reason}");
-            let response = tiny_http::Response::from_data(
-                serde_json::to_vec(&serde_json::json!({ "error": reason }))
-                    .expect("static rejection body"),
-            )
-            .with_status_code(403)
-            .with_header(
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
-                    .expect("static content-type header"),
-            );
-            if let Err(e) = req.respond(response) {
-                tracing::warn!("script HTTP response failed: {e}");
-            }
-            continue;
-        }
-
-        let path_full = req.url().to_string();
-        let (path, query) = match path_full.split_once('?') {
-            Some((p, q)) => (p.to_string(), q.to_string()),
-            None => (path_full, String::new()),
-        };
-        let method = req.method().clone();
-
-        let (code, body): (u16, ReplyBody) = match (&method, path.as_str()) {
-            (Method::Get, "/") | (Method::Get, "/info") => (200, info_json().into()),
-            (Method::Get, "/natives") => (200, list_natives_json().into()),
-            (Method::Get, "/state") => relay(&queue, HttpPayload::State),
-            (Method::Get, "/host-debug") => relay(&queue, HttpPayload::HostDebug),
-            (Method::Get, "/engine-dump") => relay(&queue, HttpPayload::EngineDump),
-            (Method::Get, "/level-assets") => relay(&queue, HttpPayload::LevelAssets),
-            (Method::Get, "/script") => relay(&queue, HttpPayload::Script),
-            (Method::Get, "/script/decompile") => {
-                let class = query_param(&query, "class").map(str::to_string);
-                relay(&queue, HttpPayload::Decompile { class })
-            }
-            (Method::Get, "/screenshot") => relay(
-                &queue,
-                HttpPayload::Screenshot(parse_screenshot_query(&query)),
-            ),
-            (Method::Post, "/native") => match read_json::<NativeCall>(&mut req) {
-                Ok(c) => relay(
-                    &queue,
-                    HttpPayload::Native {
-                        name: c.op,
-                        args: c.args,
-                        this: c.this,
-                    },
-                ),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/batch") => {
-                #[derive(serde::Deserialize)]
-                struct BatchBody {
-                    calls: Vec<NativeCall>,
-                }
-                match read_json::<BatchBody>(&mut req) {
-                    Ok(b) => relay(&queue, HttpPayload::Batch(b.calls)),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Post, "/console") => {
-                #[derive(serde::Deserialize)]
-                struct ConsoleBody {
-                    command: String,
-                }
-                match read_json::<ConsoleBody>(&mut req) {
-                    Ok(c) => relay(&queue, HttpPayload::Console(c.command)),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Post, "/command") => match read_json::<PlayerCommand>(&mut req) {
-                Ok(c) => relay(&queue, HttpPayload::Command(c)),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/step-forward") => match parse_step_body(&mut req) {
-                Ok(request) => relay(&queue, HttpPayload::StepForward { request }),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/step-back") => match parse_step_body(&mut req) {
-                Ok(request) => relay(&queue, HttpPayload::StepBack { request }),
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            },
-            (Method::Post, "/go-to-frame") => {
-                #[derive(serde::Deserialize)]
-                struct GoToBody {
-                    frame: u32,
-                    #[serde(flatten)]
-                    modal_policy: StepModalPolicy,
-                }
-                match read_json::<GoToBody>(&mut req) {
-                    Ok(b) => relay(
-                        &queue,
-                        HttpPayload::GoToFrame {
-                            target: b.frame,
-                            modal_policy: b.modal_policy,
-                        },
-                    ),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Post, "/set-paused") => {
-                #[derive(serde::Deserialize)]
-                struct SetPausedBody {
-                    paused: bool,
-                }
-                match read_json::<SetPausedBody>(&mut req) {
-                    Ok(b) => relay(&queue, HttpPayload::SetPaused { paused: b.paused }),
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            (Method::Get, "/get-replay") => relay(&queue, HttpPayload::GetReplay),
-            (Method::Post, "/load-replay") => {
-                #[derive(serde::Deserialize)]
-                struct LoadReplayBody {
-                    data: String,
-                    #[serde(default)]
-                    paused: bool,
-                }
-                match read_replay_json::<LoadReplayBody>(&mut req) {
-                    Ok(b) => match crate::replay_format::preflight_compact_transport(
-                        &b.data,
-                        &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-                    ) {
-                        Ok(_) => relay(
-                            &queue,
-                            HttpPayload::LoadReplay {
-                                data: b.data,
-                                paused: b.paused,
-                            },
-                        ),
-                        Err(error) => (
-                            400,
-                            serde_json::json!({"error": format!("invalid compact replay: {error}")})
-                                .into(),
-                        ),
-                    },
-                    Err(e) => (400, serde_json::json!({"error": e}).into()),
-                }
-            }
-            _ => (404, serde_json::json!({"error": "not found"}).into()),
-        };
-
-        let (content_type, bytes): (&[u8], Vec<u8>) = match body {
-            ReplyBody::Json(v) => (
-                &b"application/json"[..],
-                serde_json::to_vec(&v)
-                    .unwrap_or_else(|_| br#"{"error":"json encode failed"}"#.to_vec()),
-            ),
-            ReplyBody::Binary { content_type, data } => (content_type.as_bytes(), data),
-        };
-        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type)
-            .expect("static content-type header");
-        let response = tiny_http::Response::from_data(bytes)
-            .with_status_code(code)
-            .with_header(header);
-        if let Err(e) = req.respond(response) {
-            tracing::warn!("script HTTP response failed: {e}");
-        }
-    }
-}
-
-/// Parse the body of `/step-forward` / `/step-back` into a tick count.
-///
-/// Accepts either a JSON object `{"n": N}` or an empty body (defaults
-/// to `1`).  `N` must be a positive integer.
-#[cfg(not(target_arch = "wasm32"))]
-fn parse_step_body(req: &mut tiny_http::Request) -> Result<StepRequest, String> {
-    let mut body = String::new();
-    std::io::Read::read_to_string(req.as_reader(), &mut body)
-        .map_err(|e| format!("body read: {e}"))?;
-    if body.trim().is_empty() {
-        return Ok(StepRequest::default());
-    }
-    let body: StepRequest = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
-    if body.n == 0 {
-        return Err("n must be >= 1".into());
-    }
-    Ok(body)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
 fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
     ScreenshotRequest {
         frame: query_param(query, "frame").and_then(|s| s.parse().ok()),
@@ -806,92 +1141,45 @@ fn parse_screenshot_query(query: &str) -> ScreenshotRequest {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn read_json<T: serde::de::DeserializeOwned>(req: &mut tiny_http::Request) -> Result<T, String> {
-    let mut body = String::new();
-    std::io::Read::read_to_string(req.as_reader(), &mut body)
-        .map_err(|e| format!("body read: {e}"))?;
-    serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))
-}
-
-/// Bounded transport reader for the only HTTP replay-admission route.
-///
-/// This cap is applied before UTF-8/JSON/String allocation. Generic RPC bodies
-/// are small trusted automation messages; `/load-replay` can carry the bounded
-/// local-custom replay lane (including a maximum valid embedded package) and
-/// therefore has its own hostile-input acquisition path.
-#[cfg(not(target_arch = "wasm32"))]
-fn read_replay_json<T: serde::de::DeserializeOwned>(
-    req: &mut tiny_http::Request,
-) -> Result<T, String> {
-    use std::io::Read as _;
-
-    const JSON_OVERHEAD_BYTES: usize = 1024;
-    let limit = crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS
-        .max_input_bytes
-        .checked_add(JSON_OVERHEAD_BYTES)
-        .expect("replay JSON transport limit fits usize");
-
-    let header = |name: &'static str| {
-        req.headers()
-            .iter()
-            .find(|header| header.field.equiv(name))
-            .map(|header| header.value.as_str())
-    };
-    if header("Transfer-Encoding").is_some() {
-        return Err("load-replay does not accept Transfer-Encoding".into());
-    }
-    if header("Content-Encoding").is_some() {
-        return Err("load-replay does not accept Content-Encoding".into());
-    }
-    let content_type = header("Content-Type")
-        .ok_or_else(|| "load-replay requires Content-Type: application/json".to_string())?;
-    let media_type = content_type.split(';').next().unwrap_or_default().trim();
-    if !media_type.eq_ignore_ascii_case("application/json") {
-        return Err("load-replay requires Content-Type: application/json".into());
-    }
-    let declared = req
-        .body_length()
-        .ok_or_else(|| "load-replay requires a bounded Content-Length".to_string())?;
-    if declared > limit {
-        return Err(format!(
-            "load-replay JSON body observed {declared} bytes, limit is {limit}"
-        ));
-    }
-
-    let mut body = Vec::with_capacity(declared.min(limit));
-    std::io::Read::take(req.as_reader(), (limit + 1) as u64)
-        .read_to_end(&mut body)
-        .map_err(|error| format!("body read: {error}"))?;
-    if body.len() > limit {
-        return Err(format!(
-            "load-replay JSON body observed at least {} bytes, limit is {limit}",
-            body.len()
-        ));
-    }
-    serde_json::from_slice(&body).map_err(|error| format!("bad json: {error}"))
-}
-
 /// Send a payload to the game loop and wait for the reply.  Caps the
 /// wait at 60 s so a wedged game doesn't hang the client forever.
 #[cfg(not(target_arch = "wasm32"))]
-fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
-    let (tx, rx) = mpsc::sync_channel::<Reply>(1);
+async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
+    let (response_tx, rx) = Responder::channel();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let retirement = queue
+        .lock()
+        .expect("RPC router poisoned")
+        .retirement_receiver();
     queue
         .lock()
         .expect("queue mutex poisoned")
         .push_back(HttpRequest {
             payload,
-            response_tx: Responder::Channel(tx),
+            response_tx: response_tx.with_router(queue).with_deadline(deadline),
         });
-    match rx.recv_timeout(Duration::from_secs(60)) {
+    let reply = tokio::select! {
+        biased;
+        _ = retirement.recv() => return (400, serde_json::json!({"error": "HTTP transport stopped"}).into()),
+        reply = async {
+            match rx.recv().await {
+                Ok(reply) => Ok(resolve_deferred_reply(reply).await),
+                Err(error) => Err(error),
+            }
+        } => reply,
+        _ = tokio::time::sleep_until(deadline.into()) => {
+            rx.expire();
+            return (504, serde_json::json!({"error": "game loop did not process the request within 60s; already-admitted work may complete"}).into());
+        },
+    };
+    match reply {
         Ok(Ok(body)) => (200, body),
         Ok(Err(msg)) => (400, serde_json::json!({"error": msg}).into()),
-        Err(mpsc::RecvTimeoutError::Timeout) => (
+        Err(_) if rx.is_expired() => (
             504,
-            serde_json::json!({"error": "game loop did not process the request within 60s"}).into(),
+            serde_json::json!({"error": "request expired before admission"}).into(),
         ),
-        Err(mpsc::RecvTimeoutError::Disconnected) => (
+        Err(_) => (
             500,
             serde_json::json!({"error": "game loop dropped the response channel"}).into(),
         ),
@@ -978,13 +1266,15 @@ fn list_natives_json() -> serde_json::Value {
 /// Drain the RPC queue without an engine — for use during the
 /// `--wait-for-command` idle phase, where replay import/export does not need
 /// engine state. The router rejects mission requests while no session is active.
-pub fn drain_pre_engine() {
-    let Some(server) = GLOBAL.get() else { return };
+fn drain_pre_engine(server: &HttpServer) {
     let pending: Vec<HttpRequest> = {
         let mut q = server.queue.lock().expect("queue mutex poisoned");
         q.take_idle()
     };
     for req in pending {
+        if !req.response_tx.admit() {
+            continue;
+        }
         match req.payload {
             HttpPayload::GetReplay => start_replay_export(&server.replay_exports, req.response_tx),
             HttpPayload::LoadReplay { data, paused } => {
@@ -1039,6 +1329,9 @@ impl SessionIngress {
     ) -> Vec<engine_api::ExternalAction> {
         let mut external_actions = Vec::new();
         for req in self.take_requests() {
+            if !req.admit_unless_deferred() {
+                continue;
+            }
             self.observe_ranked_input_taint(&req.payload);
             match req.payload.classify() {
                 RoutedRequest::HostDebug => {
@@ -1090,6 +1383,9 @@ impl SessionIngress {
         let mut commands = FrameCommands::new();
         let mut external_actions = Vec::new();
         for req in self.take_requests() {
+            if !req.admit_unless_deferred() {
+                continue;
+            }
             self.observe_ranked_input_taint(&req.payload);
             match req.payload.classify() {
                 RoutedRequest::HostDebug => {
@@ -1333,7 +1629,7 @@ fn snapshot_host_debug(
     let bow_hover = match (
         selected_action,
         selected_pc,
-        frontend.input.focused_entity_id,
+        frontend.input.feedback.focused_entity_id,
     ) {
         (engine_profiles::Action::Bow, Some(pc_id), Some(target_id)) => {
             let (target_status, shoot_mode) =
@@ -1364,20 +1660,20 @@ fn snapshot_host_debug(
         "trajectory_mark_count": preview.mark_count(),
         "bow_hover": bow_hover,
         "input": {
-            "focused_entity_id": frontend.input.focused_entity_id,
-            "target_drag": frontend.input.target_drag,
-            "double_status_bar_entity_id": frontend.input.double_status_bar_entity_id,
-            "selected_layer": frontend.input.selected_layer,
-            "selected_sector_idx": frontend.input.selected_sector_idx,
-            "selected_patch_idx": frontend.input.selected_patch_idx,
-            "hovered_door_idx": frontend.input.hovered_door_idx,
-            "valid_position_for_move": frontend.input.valid_position_for_move,
-            "mouse_opacity": frontend.input.mouse_opacity,
-            "mouse_shadow_color": frontend.input.mouse_shadow_color,
+            "focused_entity_id": frontend.input.feedback.focused_entity_id,
+            "target_drag": frontend.input.gestures.target_drag,
+            "double_status_bar_entity_id": frontend.input.feedback.double_status_bar_entity_id,
+            "selected_layer": frontend.input.spatial_hit().selected_layer,
+            "selected_sector_idx": frontend.input.spatial_hit().selected_sector_idx,
+            "selected_patch_idx": frontend.input.spatial_hit().selected_patch_idx,
+            "hovered_door_idx": frontend.input.spatial_hit().hovered_door_idx,
+            "valid_position_for_move": frontend.input.spatial_hit().valid_position_for_move,
+            "mouse_opacity": frontend.input.feedback.mouse_opacity,
+            "mouse_shadow_color": frontend.input.feedback.mouse_shadow_color,
             "left_mouse_down": frontend.input.left_mouse_down(),
-            "right_mouse_down": frontend.input.right_mouse_down,
+            "right_mouse_down": frontend.input.controls.right_mouse_down,
             "is_dragging": frontend.input.is_dragging(),
-            "is_alt": frontend.input.is_alt,
+            "is_alt": frontend.input.controls.is_alt,
         },
     })
 }
@@ -1856,10 +2152,7 @@ where
 // ──────────────────────────────────────────────────────────────────
 
 fn start_replay_export(exports: &crate::replay_service::ReplayExports, response_tx: Responder) {
-    exports.export(Box::new(move |result| {
-        response_tx
-            .send(result.map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))));
-    }));
+    response_tx.send(Ok(ReplyBody::ReplayExport(exports.export())));
 }
 
 /// Per-frame replay-playback status surfaced to the script-RPC
@@ -2242,7 +2535,7 @@ mod tests {
                 InputTaintKind::ReplayPlayback,
             ),
         ];
-        let mut ingress = SessionIngress::attach();
+        let mut ingress = SessionIngress::detached_for_test();
         for (payload, expected) in &cases {
             assert_eq!(ranked_input_taint(payload), Some(*expected));
             ingress.observe_ranked_input_taint(payload);
@@ -2481,20 +2774,20 @@ fn decompile_script(engine: &Engine, class: Option<&str>) -> serde_json::Value {
 //
 // Browser has no loopback socket, so we expose the same request/reply
 // pipeline as a JS-callable `rh_rpc({ method, params }) -> Promise`.
-// Requests land on the same `GLOBAL.queue` as the native transport,
+// Requests land on the current application's weakly bound queue,
 // drain on the game tick, and resolve the Promise through an internal
 // one-shot channel.
 
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_rpc {
-    use super::{
-        GLOBAL, HttpPayload, HttpRequest, NativeCall, PlayerCommand, Reply, ReplyBody, Responder,
-        ScreenshotRequest, StepModalPolicy, StepRequest,
-    };
+    use super::{BROWSER_QUEUE, HttpPayload, HttpRequest, Reply, ReplyBody, Responder};
     use wasm_bindgen::JsValue;
 
     fn reply_to_js(reply: Reply) -> Result<JsValue, JsValue> {
         match reply {
+            Ok(ReplyBody::ReplayExport(_)) => {
+                panic!("deferred replay export must be resolved before JavaScript encoding")
+            }
             Ok(ReplyBody::Json(value)) => {
                 use serde::Serialize;
 
@@ -2545,146 +2838,33 @@ pub mod wasm_rpc {
             _ => {}
         }
         let payload = decode_request(&req.method, req.params).map_err(|e| JsValue::from_str(&e))?;
-        let server = GLOBAL
-            .get()
+        let queue = BROWSER_QUEUE
+            .with(|binding| binding.borrow().upgrade())
             .ok_or_else(|| JsValue::from_str("RPC bridge not initialized"))?;
-        let (tx, rx) = async_channel::bounded(1);
-        server
-            .queue
+        let retirement = queue
+            .lock()
+            .expect("queue mutex poisoned")
+            .retirement_receiver();
+        let (response_tx, rx) = Responder::channel();
+        queue
             .lock()
             .expect("queue mutex poisoned")
             .push_back(HttpRequest {
                 payload,
-                response_tx: Responder::Wasm(tx),
+                response_tx: response_tx.with_router(&queue),
             });
-        let reply = rx
-            .recv()
-            .await
-            .map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?;
+        use futures::FutureExt as _;
+        let reply = futures::select_biased! {
+            _ = retirement.recv().fuse() => return Err(JsValue::from_str("HTTP transport stopped")),
+            reply = async {
+                let reply = rx.recv().await.map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?;
+                Ok::<_, JsValue>(super::resolve_deferred_reply(reply).await)
+            }.fuse() => reply?,
+        };
         reply_to_js(reply)
     }
 
     fn decode_request(method: &str, params: serde_json::Value) -> Result<HttpPayload, String> {
-        match method {
-            "script" => Ok(HttpPayload::Script),
-            "state" => Ok(HttpPayload::State),
-            "host-debug" => Ok(HttpPayload::HostDebug),
-            "level-assets" => Ok(HttpPayload::LevelAssets),
-            "decompile" => {
-                #[derive(serde::Deserialize, Default)]
-                #[serde(default)]
-                struct D {
-                    class: Option<String>,
-                }
-                let d: D = if params.is_null() {
-                    D::default()
-                } else {
-                    serde_json::from_value(params).map_err(|e| format!("decompile params: {e}"))?
-                };
-                Ok(HttpPayload::Decompile { class: d.class })
-            }
-            "native" => {
-                let c: NativeCall =
-                    serde_json::from_value(params).map_err(|e| format!("native params: {e}"))?;
-                Ok(HttpPayload::Native {
-                    name: c.op,
-                    args: c.args,
-                    this: c.this,
-                })
-            }
-            "batch" => {
-                #[derive(serde::Deserialize)]
-                struct B {
-                    calls: Vec<NativeCall>,
-                }
-                let b: B =
-                    serde_json::from_value(params).map_err(|e| format!("batch params: {e}"))?;
-                Ok(HttpPayload::Batch(b.calls))
-            }
-            "console" => {
-                #[derive(serde::Deserialize)]
-                struct C {
-                    command: String,
-                }
-                let c: C =
-                    serde_json::from_value(params).map_err(|e| format!("console params: {e}"))?;
-                Ok(HttpPayload::Console(c.command))
-            }
-            "command" => {
-                let cmd: PlayerCommand =
-                    serde_json::from_value(params).map_err(|e| format!("command params: {e}"))?;
-                Ok(HttpPayload::Command(cmd))
-            }
-            "screenshot" => {
-                let ss: ScreenshotRequest = if params.is_null() {
-                    ScreenshotRequest::default()
-                } else {
-                    serde_json::from_value(params).map_err(|e| format!("screenshot params: {e}"))?
-                };
-                Ok(HttpPayload::Screenshot(ss))
-            }
-            "step-forward" => {
-                let s: StepRequest = if params.is_null() {
-                    StepRequest::default()
-                } else {
-                    serde_json::from_value(params)
-                        .map_err(|e| format!("step-forward params: {e}"))?
-                };
-                if s.n == 0 {
-                    return Err("n must be >= 1".into());
-                }
-                Ok(HttpPayload::StepForward { request: s })
-            }
-            "step-back" => {
-                let s: StepRequest = if params.is_null() {
-                    StepRequest::default()
-                } else {
-                    serde_json::from_value(params).map_err(|e| format!("step-back params: {e}"))?
-                };
-                if s.n == 0 {
-                    return Err("n must be >= 1".into());
-                }
-                Ok(HttpPayload::StepBack { request: s })
-            }
-            "go-to-frame" => {
-                #[derive(serde::Deserialize)]
-                struct G {
-                    frame: u32,
-                    #[serde(flatten)]
-                    modal_policy: StepModalPolicy,
-                }
-                let g: G = serde_json::from_value(params)
-                    .map_err(|e| format!("go-to-frame params: {e}"))?;
-                Ok(HttpPayload::GoToFrame {
-                    target: g.frame,
-                    modal_policy: g.modal_policy,
-                })
-            }
-            "set-paused" => {
-                #[derive(serde::Deserialize)]
-                struct P {
-                    paused: bool,
-                }
-                let p: P = serde_json::from_value(params)
-                    .map_err(|e| format!("set-paused params: {e}"))?;
-                Ok(HttpPayload::SetPaused { paused: p.paused })
-            }
-            "get-replay" => Ok(HttpPayload::GetReplay),
-            "load-replay" => {
-                #[derive(serde::Deserialize)]
-                struct L {
-                    data: String,
-                    #[serde(default)]
-                    paused: bool,
-                }
-                let l: L = serde_json::from_value(params)
-                    .map_err(|e| format!("load-replay params: {e}"))?;
-                Ok(HttpPayload::LoadReplay {
-                    data: l.data,
-                    paused: l.paused,
-                })
-            }
-            other => Err(format!("unknown method: {other}")),
-        }
+        super::request_decode::decode_browser(method, params)
     }
 }

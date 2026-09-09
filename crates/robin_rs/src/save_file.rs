@@ -73,7 +73,7 @@ impl GameRuntimeSnapshot {
         game: &crate::game::Game,
     ) -> Result<ReplaySaveIdentity> {
         let mut game_persistent = game.persistent.clone();
-        game_persistent.draw_hidden = host.frontend.input.draw_hidden;
+        game_persistent.draw_hidden = host.frontend.input.feedback.draw_hidden;
         replay_save_identity(engine, &host.audio.sound, &game_persistent)
     }
 
@@ -89,7 +89,7 @@ impl GameRuntimeSnapshot {
     /// what survives the boundary; raw engine rollback cloning stays distinct.
     pub(crate) fn capture(engine: &Engine, host: &Host, game: &crate::game::Game) -> Result<Self> {
         let mut game_persistent = game.persistent.clone();
-        game_persistent.draw_hidden = host.frontend.input.draw_hidden;
+        game_persistent.draw_hidden = host.frontend.input.feedback.draw_hidden;
         let sound = crate::sound::PersistedSoundManager::capture(&host.audio.sound);
         let snapshot = Self {
             engine: engine
@@ -140,7 +140,7 @@ fn apply_restored_mission(
     host.audio.sound.after_load(&engine.sound_sim().sources);
     host.post_load_reset();
     game.persistent = game_persistent;
-    host.frontend.input.draw_hidden = draw_hidden;
+    host.frontend.input.feedback.draw_hidden = draw_hidden;
     Ok(())
 }
 
@@ -890,7 +890,7 @@ impl GameSaveFile {
         provenance: SaveProvenance,
     ) -> Result<Self> {
         let mut game_persistent = game.persistent.clone();
-        game_persistent.draw_hidden = host.frontend.input.draw_hidden;
+        game_persistent.draw_hidden = host.frontend.input.feedback.draw_hidden;
         let save = Self {
             header: SaveHeader::new(mission_id, mission_assets, display_text, provenance)?,
             engine: engine.clone(),
@@ -1831,13 +1831,42 @@ mod tests {
         host2
             .frontend
             .apply_trajectory_preview(robin_engine::engine::input::TrajectoryPreview::HitNoArc);
+        host2.frontend.input.controls.has_focus = true;
+        host2.frontend.input.controls.is_alt = true;
+        host2.frontend.input.gestures.portrait_action_countdown = 5;
+        host2.frontend.input.feedback.mouse_shadow_color = 42;
+        host2
+            .frontend
+            .input
+            .publish_spatial_hit(robin_engine::engine::SpatialHit {
+                selected_layer: 7,
+                selected_patch_idx: Some(2),
+                valid_position_for_move: true,
+                ..Default::default()
+            });
 
         save.apply_to(&mut engine3, &mut host2, &assets3)
             .expect("apply save");
 
         assert!(!host2.frontend.input.multi_selection_active());
         assert!(!host2.frontend.input.left_mouse_down());
-        assert!(host2.frontend.input.focused_entity_id.is_none());
+        assert!(host2.frontend.input.feedback.focused_entity_id.is_none());
+        // Snapshot restoration has always used InputState::default(), not
+        // focused(): loading must not fabricate a fresh platform focus sample.
+        assert!(!host2.frontend.input.controls.has_focus);
+        assert!(!host2.frontend.input.controls.is_alt);
+        assert_eq!(host2.frontend.input.gestures.portrait_action_countdown, 0);
+        assert_eq!(host2.frontend.input.feedback.mouse_shadow_color, 0);
+        assert_eq!(host2.frontend.input.spatial_hit().selected_layer, 0);
+        assert!(
+            host2
+                .frontend
+                .input
+                .spatial_hit()
+                .selected_patch_idx
+                .is_none()
+        );
+        assert!(!host2.frontend.input.spatial_hit().valid_position_for_move);
         assert!(!host2.frontend.trajectory_preview().is_valid());
     }
 

@@ -57,7 +57,7 @@ pub struct GamePersistentState {
     /// Quit-mission transient-disable override.
     pub quit_mission_disabled_temp: bool,
     /// Debug "draw hidden" toggle.  The runtime copy lives on
-    /// [`InputState::draw_hidden`]; save/load plumbing in
+    /// [`robin_engine::engine::CursorFeedback::draw_hidden`]; save/load plumbing in
     /// [`GameSaveFile::capture_with_game`] / [`GameSaveFile::apply_to_with_game`]
     /// copies the value in and out so the toggle round-trips.
     pub draw_hidden: bool,

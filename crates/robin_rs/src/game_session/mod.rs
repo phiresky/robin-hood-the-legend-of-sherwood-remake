@@ -81,9 +81,7 @@ use mouse_input::{
     dispatch_corner_button_left_click, dispatch_corner_button_right_click, handle_mouse_input,
     handle_pause_menu_events, handle_sherwood_campaign_map_overlay, handle_sherwood_hud_buttons,
 };
-use multiplayer::{
-    drain_mission_network, host_scheduled_frame_deadline_ms, setup_multiplayer_session,
-};
+use multiplayer::{drain_mission_network, setup_multiplayer_session};
 pub use render::RenderContext;
 use render::{
     capture_screenshot_to_path, drain_presented_ui_screenshots, drain_print_screen_request,
@@ -710,7 +708,7 @@ pub(super) fn required_menu_resources<'a>(
 }
 
 pub(super) fn selected_pc_profile_indices(
-    engine: &engine_api::Engine,
+    engine: &engine_api::EngineInner,
     seat: engine_player_command::PlayerId,
 ) -> Vec<engine_profiles::CharacterProfileIdx> {
     engine

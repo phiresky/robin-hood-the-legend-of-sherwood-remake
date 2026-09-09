@@ -10,7 +10,7 @@ use crate::mouse_way::{
 };
 use crate::renderer::Renderer;
 use robin_engine::coordinates::ScreenVec;
-use robin_engine::engine::Engine;
+use robin_engine::engine::EngineInner;
 use robin_engine::player_command::{CompositeSwordTechnique, PlayerId};
 
 /// Render enabled gesture help after the world scene and mouse trail but
@@ -18,7 +18,7 @@ use robin_engine::player_command::{CompositeSwordTechnique, PlayerId};
 pub fn render(
     frontend: &HostFrontend,
     local_seat: PlayerId,
-    engine: &Engine,
+    engine: &EngineInner,
     renderer: &mut Renderer,
     fonts: Option<&HudFonts>,
 ) {
@@ -63,7 +63,7 @@ pub(crate) fn prepare_feedback(frontend: &mut HostFrontend, now: u32) {
 }
 
 fn first_selected_swordfighter_direction(
-    engine: &Engine,
+    engine: &EngineInner,
     local_seat: PlayerId,
 ) -> Option<ScreenVec> {
     engine

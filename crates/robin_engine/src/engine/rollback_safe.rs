@@ -44,7 +44,7 @@ use crate::player_command::PlayerInput;
 ///
 /// This value is deliberately detached from [`Engine`]. Reading it cannot
 /// mutate simulation state, and applying it is only supported on an owned
-/// presentation clone through [`Engine::apply_spatial_presentation`].
+/// presentation clone through [`PresentationEngine::apply_spatial_presentation`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SpatialPresentationSnapshot {
     poses: BTreeMap<EntityId, SpatialPresentationPose>,
@@ -229,14 +229,22 @@ pub enum SnapshotRestoreError {
     not(feature = "original-parity"),
     doc = "Ordinary builds cannot acquire Original reconstruction authority:\n```compile_fail,E0599\nuse robin_engine::engine::Engine;\nlet _ = Engine::parity_replay_setup;\n```"
 )]
-#[derive(serde::Serialize)]
-#[serde(transparent)]
 pub struct Engine {
     inner: EngineInner,
     /// Process-local, single-use authority minted only by fresh construction.
     /// It is deliberately absent from snapshots and the simulation hash.
-    #[serde(skip)]
     bootstrap_open: bool,
+}
+
+impl serde::Serialize for Engine {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Preserve the historical transparent wire shape without granting the
+        // read-only EngineInner projection the power to encode snapshots.
+        super::snapshot::serialize_engine_inner(&self.inner, serializer)
+    }
 }
 
 // Preserve the historical transparent facade hash exactly. Deriving StateHash
@@ -297,6 +305,91 @@ impl Engine {
                 .collect(),
         }
     }
+}
+
+/// Host-only world copy with interpolation authority, but no simulation authority.
+///
+/// The read-only projection is `EngineInner`, not `Engine`: callers cannot clone
+/// the projection into an authoritative engine or acquire snapshot/tick APIs.
+/// Serialized diagnostics deliberately have no live-state decoder.
+///
+/// ```no_run
+/// use robin_engine::engine::{Engine, EngineInner, PresentationEngine};
+/// fn render(source: &Engine) {
+///     let presentation = PresentationEngine::new(source);
+///     let view: &EngineInner = presentation.view();
+///     let _ = view.frame_counter();
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// use robin_engine::engine::Engine;
+/// let _ = Engine::apply_spatial_presentation;
+/// ```
+/// ```compile_fail,E0599
+/// use robin_engine::engine::PresentationEngine;
+/// let _ = PresentationEngine::advance_frame;
+/// ```
+/// ```compile_fail,E0599
+/// use robin_engine::engine::PresentationEngine;
+/// let _ = PresentationEngine::restore_from_snapshot;
+/// ```
+/// ```compile_fail,E0308
+/// use robin_engine::engine::{Engine, PresentationEngine};
+/// fn forbidden(view: &PresentationEngine) -> Engine { view.view().clone() }
+/// ```
+/// ```compile_fail,E0308
+/// use robin_engine::engine::{EngineInner, PresentationEngine};
+/// fn forbidden(view: &mut PresentationEngine) -> &mut EngineInner { view.view() }
+/// ```
+/// Read-only presentation state cannot be laundered through a serde snapshot:
+/// ```compile_fail,E0277
+/// use robin_engine::engine::PresentationEngine;
+/// fn forbidden(view: &PresentationEngine) {
+///     let _ = serde_json::to_value(view.view());
+/// }
+/// ```
+pub struct PresentationEngine {
+    presentation: EngineInner,
+}
+
+impl serde::Serialize for PresentationEngine {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        // Diagnostics deliberately omit persisted simulation state. Do not
+        // serialize the inner world under a tag: extracting that tag would
+        // otherwise yield a restorable engine snapshot with interpolated poses.
+        let mut diagnostic = serializer.serialize_struct("PresentationEngine", 2)?;
+        diagnostic.serialize_field("frame", &self.presentation.frame_counter())?;
+        diagnostic.serialize_field("entity_count", &self.presentation.entities_iter().count())?;
+        diagnostic.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for PresentationEngine {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom(
+            "presentation engines must be copied from an authoritative engine",
+        ))
+    }
+}
+
+impl PresentationEngine {
+    pub fn new(authoritative: &Engine) -> Self {
+        Self {
+            presentation: authoritative.inner.clone_authoritative_state(),
+        }
+    }
+
+    pub fn view(&self) -> &EngineInner {
+        &self.presentation
+    }
 
     /// Apply an absolute interpolation sample to an owned presentation clone.
     ///
@@ -345,7 +438,7 @@ impl Engine {
                 pose
             };
 
-            let entity = self.inner.get_entity_mut(id).unwrap_or_else(|| {
+            let entity = self.presentation.get_entity_mut(id).unwrap_or_else(|| {
                 panic!("presentation clone lost current entity {id:?} while sampling")
             });
             let element = entity.element_data_mut();
@@ -358,7 +451,9 @@ impl Engine {
             }
         }
     }
+}
 
+impl Engine {
     /// Encode a native engine snapshot through the bounded-stack facade codec.
     pub fn encode_native_snapshot(&self) -> Vec<u8> {
         self.try_encode_native_snapshot().expect(
@@ -3205,11 +3300,6 @@ impl Engine {
         self.inner.control.rng.replace_original_replay(draws);
     }
 
-    /// Number of original raw RNG values consumed so far, when parity replay is active.
-    pub fn original_rng_replay_cursor(&self) -> Option<usize> {
-        self.inner.control.rng.original_replay_cursor()
-    }
-
     /// Rust RNG sites which consumed a selected interval of original draws.
     pub fn original_rng_replay_sites(
         &self,
@@ -4093,11 +4183,6 @@ impl Engine {
         self.inner.mission_domain.required_campaign(context);
     }
 
-    /// Complete deterministic configuration currently owned by this Engine.
-    pub fn sim_config(&self) -> SimConfig {
-        self.inner.control.sim_config
-    }
-
     /// Attach host-only run eligibility to the exact terminal campaign
     /// attempt after its deterministic quit command has been admitted.
     pub fn promote_mission_achievement_results(
@@ -4149,14 +4234,6 @@ impl Engine {
         let sim = self.inner.control.simulation_context();
         self.inner
             .call_external_native_with_this(&sim, assets, native_name, args, this_actor)
-    }
-
-    pub fn doors(&self) -> &[crate::gate::Door] {
-        &self.inner.script_domains.interactables.doors
-    }
-
-    pub fn patches(&self) -> &[crate::patch::Patch] {
-        &self.inner.script_domains.interactables.patches
     }
 
     // ── Per-frame drains ────
@@ -4901,6 +4978,26 @@ impl ParityReplaySetup<'_> {
     }
 }
 
+impl EngineInner {
+    /// Number of original raw RNG values consumed so far, when parity replay is active.
+    pub fn original_rng_replay_cursor(&self) -> Option<usize> {
+        self.control.rng.original_replay_cursor()
+    }
+
+    /// Complete deterministic configuration of this read-only world view.
+    pub fn sim_config(&self) -> SimConfig {
+        self.control.sim_config
+    }
+
+    pub fn doors(&self) -> &[crate::gate::Door] {
+        &self.script_domains.interactables.doors
+    }
+
+    pub fn patches(&self) -> &[crate::patch::Patch] {
+        &self.script_domains.interactables.patches
+    }
+}
+
 impl Deref for Engine {
     type Target = EngineInner;
 
@@ -4920,6 +5017,23 @@ impl Deref for Engine {
 mod tests {
     use super::*;
     use crate::engine::SimCommand;
+
+    #[test]
+    fn engine_serde_facade_preserves_exact_wire_shape_and_roundtrip_hash() {
+        let (engine, assets) = frame_api_fixture();
+        let historical_bytes = serde_json::to_vec(&engine.inner).expect("historical inner codec");
+        let bytes = serde_json::to_vec(&engine).expect("authoritative facade codec");
+        assert_eq!(bytes, historical_bytes);
+        let decoded: Engine = serde_json::from_slice(&bytes).expect("decode facade snapshot");
+        assert!(!decoded.bootstrap_open);
+        let restored = Engine::adopt_authoritative_snapshot(decoded, &assets)
+            .expect("attach decoded snapshot resources");
+        assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+        assert_eq!(
+            crate::replay::state_hash(&restored),
+            crate::replay::state_hash(&engine)
+        );
+    }
 
     #[test]
     fn bootstrap_authority_is_not_snapshot_state() {
@@ -5691,11 +5805,11 @@ mod tests {
         let current_hash = crate::replay::state_hash(&current);
         let previous_spatial = previous.spatial_presentation_snapshot();
         let current_spatial = current.spatial_presentation_snapshot();
-        let mut presentation = current.clone();
+        let mut presentation = PresentationEngine::new(&current);
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
-        let first_sample_hash = crate::replay::state_hash(&presentation);
-        let sampled = presentation.get_entity(pc_id).expect("sampled PC");
+        let first_sample_hash = crate::replay::state_hash(presentation.view());
+        let sampled = presentation.view().get_entity(pc_id).expect("sampled PC");
         assert_eq!(
             sampled.element_data().position(),
             crate::coordinates::WorldPoint3D::new(10.0, 15.0, 2.5)
@@ -5711,7 +5825,7 @@ mod tests {
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.25);
         assert_eq!(
-            crate::replay::state_hash(&presentation),
+            crate::replay::state_hash(presentation.view()),
             first_sample_hash,
             "repeating one display sample must be idempotent"
         );
@@ -5751,12 +5865,13 @@ mod tests {
             .set_position_map(crate::coordinates::MapPoint::new(12.0, 34.0));
         let previous_spatial = previous.spatial_presentation_snapshot();
         let current_spatial = current.spatial_presentation_snapshot();
-        let mut presentation = current.clone();
+        let mut presentation = PresentationEngine::new(&current);
 
         presentation.apply_spatial_presentation(&previous_spatial, &current_spatial, 0.0);
 
         assert_eq!(
             presentation
+                .view()
                 .get_entity(pc_id)
                 .expect("sampled PC")
                 .element_data()
@@ -5766,6 +5881,7 @@ mod tests {
         );
         assert_eq!(
             presentation
+                .view()
                 .get_entity(spawned_id)
                 .expect("sampled spawned FX")
                 .element_data()
@@ -5773,6 +5889,17 @@ mod tests {
             crate::coordinates::MapPoint::new(12.0, 34.0),
             "spawned entity must use its current fixed-tick transform"
         );
+    }
+
+    #[test]
+    fn presentation_diagnostics_cannot_restore_live_presentation_or_simulation() {
+        let (engine, _, _, _) = selection_boundary_fixture();
+        let presentation = PresentationEngine::new(&engine);
+        let diagnostic = serde_json::to_value(&presentation).expect("presentation diagnostic");
+        assert_eq!(diagnostic["frame"], engine.frame_counter());
+        assert_eq!(diagnostic.as_object().expect("diagnostic object").len(), 2);
+        assert!(serde_json::from_value::<PresentationEngine>(diagnostic.clone()).is_err());
+        assert!(serde_json::from_value::<Engine>(diagnostic).is_err());
     }
 
     fn adjacent_select_and_cancel(pc_id: EntityId) -> Vec<SimCommand> {

@@ -1056,33 +1056,26 @@ pub fn apply_minimap(
 
 /// Draw the background map to the screen using the current view.
 ///
-/// Stays as an `Engine` extension method for historical call sites, but
-/// it reads host-local viewport state every frame.
+/// Reads only host-local viewport state and the renderer-owned background.
 ///
 /// The wgpu port draws this from the renderer-owned background texture.
 /// Patch effects ([`super::blit_to_map`]) render as separate persistent
 /// GPU decals immediately above the base map.
-pub trait EngineLevelLoadExt {
-    fn draw_background(&self, viewport: &crate::host::ViewportState, renderer: &mut Renderer);
-}
+pub fn draw_background(viewport: &crate::host::ViewportState, renderer: &mut Renderer) {
+    let view = &viewport.view_position;
+    let screen = &viewport.screen_size;
+    let zoom = viewport.zoom_factor;
 
-impl EngineLevelLoadExt for Engine {
-    fn draw_background(&self, viewport: &crate::host::ViewportState, renderer: &mut Renderer) {
-        let view = &viewport.view_position;
-        let screen = &viewport.screen_size;
-        let zoom = viewport.zoom_factor;
+    let src_min = *view;
+    let src_max = MapPoint::new(
+        view.x + (screen.x / zoom),
+        view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
+    );
+    let src = BBox::from_coords(src_min.x, src_min.y, src_max.x, src_max.y);
 
-        let src_min = *view;
-        let src_max = MapPoint::new(
-            view.x + (screen.x / zoom),
-            view.y + ((screen.y - PANNEL_HEIGHT) / zoom),
-        );
-        let src = BBox::from_coords(src_min.x, src_min.y, src_max.x, src_max.y);
+    let dst = BBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
 
-        let dst = BBox::from_coords(0.0, 0.0, screen.x, screen.y - PANNEL_HEIGHT);
-
-        renderer.render_background_texture(Some(&src), Some(&dst));
-    }
+    renderer.render_background_texture(Some(&src), Some(&dst));
 }
 
 #[cfg(test)]

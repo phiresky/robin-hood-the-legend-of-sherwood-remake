@@ -18,7 +18,7 @@ use crate::game::Game;
 use crate::host::HostSignal;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(super) struct FramePresentationHandoff {
     pub(super) frame: MissionFrame,
     pub(super) rewind_active: bool,
@@ -1298,6 +1298,7 @@ impl InteractiveFrameSimulation {
 
         if ui_task_exit_requested {
             let application_context = host.application_context().clone();
+            let requested = frame.begin_post_initialize();
             let post_initialized = runtime.cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
                     &mut host.frontend,
@@ -1310,10 +1311,10 @@ impl InteractiveFrameSimulation {
                     dev,
                     frame.unapplied_post_external_actions(),
                     frame.post_commands(),
-                    frame.run_post_initialize,
+                    requested,
                 )
             });
-            frame.run_post_initialize = post_initialized;
+            frame.complete_post_initialize(post_initialized);
 
             if history_commit_pending {
                 runtime.commit_simulation_history(
@@ -1356,6 +1357,7 @@ impl InteractiveFrameSimulation {
             || lost_sherwood_progress == LostSherwoodGateProgress::Exit
         {
             let application_context = host.application_context().clone();
+            let requested = frame.begin_post_initialize();
             let post_initialized = runtime.cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
                     &mut host.frontend,
@@ -1368,10 +1370,10 @@ impl InteractiveFrameSimulation {
                     dev,
                     frame.unapplied_post_external_actions(),
                     frame.post_commands(),
-                    frame.run_post_initialize,
+                    requested,
                 )
             });
-            frame.run_post_initialize = post_initialized;
+            frame.complete_post_initialize(post_initialized);
 
             if history_commit_pending {
                 runtime.commit_simulation_history(
@@ -1441,8 +1443,13 @@ impl InteractiveFrameSimulation {
             let mission_transitioning = !game
                 .operation
                 .is(robin_engine::game_operation::GameCode::LevelInProgress);
-            frame.run_hourglass &= game.should_run_hourglass(false, mission_transitioning, paused);
+            frame.restrict_hourglass(game.should_run_hourglass(
+                false,
+                mission_transitioning,
+                paused,
+            ));
             let simulation_frame = frame.hourglass_input();
+            frame.admit_simulation();
             let result = game.run_engine_tick(
                 &mut host.frontend,
                 &mut host.audio,

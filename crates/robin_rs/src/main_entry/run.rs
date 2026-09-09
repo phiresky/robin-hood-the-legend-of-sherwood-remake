@@ -91,7 +91,7 @@ pub fn start_browser_replay_preparation(
             // and sends load-replay. Wait for the admitted queue, not a timing
             // assumption or another parse of URL bytes.
             loop {
-                crate::http_server::drain_pre_engine();
+                context.drain_http_pre_engine()?;
                 if let Some(pending) = args.global_options.replay_launches().take_pending() {
                     let mut prepared_profiles = profiles.clone();
                     let launch = crate::game_session::prepare_replay_launch(
@@ -104,7 +104,7 @@ pub fn start_browser_replay_preparation(
                     .await?;
                     // Cold/custom resolution can yield. Respect a newer
                     // queued replay before starting any earlier one's I/O.
-                    crate::http_server::drain_pre_engine();
+                    context.drain_http_pre_engine()?;
                     if args
                         .global_options
                         .replay_launches()
@@ -160,26 +160,31 @@ pub async fn run_rust_game_with_browser_preparation(
     args: &CliArgs,
     preparation: Option<BrowserReplayPreparation>,
 ) -> Result<i32, String> {
-    let prepared = match preparation {
-        Some(preparation) => {
-            let prepared = preparation
-                .receiver
-                .recv()
-                .await
-                .map_err(|error| format!("early replay preparation dropped: {error}"))??;
-            crate::http_server::drain_pre_engine();
-            if context.replay_launches().pending_mission().is_some() {
-                // Supersession before mission construction releases and aborts
-                // the old prefix. The normal queue path takes the latest one.
-                drop(prepared);
-                None
-            } else {
-                Some(prepared)
+    let owner = (*context).clone();
+    let result = async {
+        let prepared = match preparation {
+            Some(preparation) => {
+                let prepared = preparation
+                    .receiver
+                    .recv()
+                    .await
+                    .map_err(|error| format!("early replay preparation dropped: {error}"))??;
+                context.drain_http_pre_engine()?;
+                if context.replay_launches().pending_mission().is_some() {
+                    // Supersession before mission construction releases and aborts
+                    // the old prefix. The normal queue path takes the latest one.
+                    drop(prepared);
+                    None
+                } else {
+                    Some(prepared)
+                }
             }
-        }
-        None => None,
-    };
-    run_rust_game_inner(window, campaign, profiles, context, args, prepared).await
+            None => None,
+        };
+        run_rust_game_active(window, campaign, profiles, context, args, prepared).await
+    }
+    .await;
+    finish_application(result, owner.shutdown().await)
 }
 
 /// Run the game loop: main menu -> mission selection -> game -> repeat.
@@ -197,6 +202,38 @@ pub async fn run_rust_game(
 }
 
 async fn run_rust_game_inner(
+    window: &mut GameWindow,
+    campaign: Campaign,
+    profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    application_context: crate::host::ReadyApplicationContext,
+    args: &CliArgs,
+    prepared_replay: Option<PreparedInitialReplay>,
+) -> Result<i32, String> {
+    let owner = (*application_context).clone();
+    let result = run_rust_game_active(
+        window,
+        campaign,
+        profiles,
+        application_context,
+        args,
+        prepared_replay,
+    )
+    .await;
+    finish_application(result, owner.shutdown().await)
+}
+
+fn finish_application(
+    result: Result<i32, String>,
+    shutdown: Result<(), String>,
+) -> Result<i32, String> {
+    match (result, shutdown) {
+        (result, Ok(())) => result,
+        (Ok(_), Err(error)) => Err(format!("application shutdown: {error}")),
+        (Err(error), Err(shutdown)) => Err(format!("{error}; application shutdown: {shutdown}")),
+    }
+}
+
+async fn run_rust_game_active(
     window: &mut GameWindow,
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
@@ -244,11 +281,7 @@ async fn run_rust_game_inner(
     // listener; wasm installs the in-process JS bridge queue. The
     // process-owned router binds requests to the active mission's ingress;
     // deferred work is retired when that mission ends.
-    crate::http_server::start_global(
-        args.http_server,
-        application_context.replay_exports(),
-        application_context.replay_launches(),
-    )?;
+    application_context.start_http_transport(args.http_server)?;
 
     // Warm this application's asset cache (sprite bank, sound banks,
     // exclamations) on a background thread while the menu runs, so the
@@ -307,7 +340,7 @@ async fn run_rust_game_inner(
                 }
                 prepared.launch
             } else {
-                wait_for_replay_command(window, &args.global_options.replay_launches()).await;
+                wait_for_replay_command(window, &args.global_options).await?;
                 let pending = args
                     .global_options
                     .replay_launches()
@@ -911,6 +944,17 @@ async fn run_rust_game_inner(
 }
 
 pub async fn run_rust_game_headless(
+    campaign: Campaign,
+    profiles: std::sync::Arc<engine_profiles::ProfileManager>,
+    application_context: crate::host::ReadyApplicationContext,
+    args: &CliArgs,
+) -> Result<i32, String> {
+    let owner = (*application_context).clone();
+    let result = run_rust_game_headless_active(campaign, profiles, application_context, args).await;
+    finish_application(result, owner.shutdown().await)
+}
+
+async fn run_rust_game_headless_active(
     mut campaign: Campaign,
     mut profiles: std::sync::Arc<engine_profiles::ProfileManager>,
     application_context: crate::host::ReadyApplicationContext,
@@ -925,11 +969,7 @@ pub async fn run_rust_game_headless(
     let args = &run_args;
 
     #[cfg(not(target_arch = "wasm32"))]
-    crate::http_server::start_global(
-        args.http_server,
-        application_context.replay_exports(),
-        application_context.replay_launches(),
-    )?;
+    application_context.start_http_transport(args.http_server)?;
 
     let shipping_for_warmup = application_context.shipping_arc()?;
     #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
@@ -957,7 +997,7 @@ pub async fn run_rust_game_headless(
         tracing::info!(
             "--headless --wait-for-command: data loaded, idling until load-replay RPC arrives"
         );
-        wait_for_replay_command_headless(&args.global_options.replay_launches()).await;
+        wait_for_replay_command_headless(&args.global_options).await?;
         Some(
             args.global_options
                 .replay_launches()
@@ -1064,11 +1104,11 @@ pub async fn run_rust_game_headless(
     Ok(0)
 }
 
-async fn wait_for_replay_command_headless(launches: &crate::replay_service::ReplayLaunches) {
+async fn wait_for_replay_command_headless(context: &ApplicationContext) -> Result<(), String> {
     loop {
-        crate::http_server::drain_pre_engine();
-        if launches.pending_mission().is_some() {
-            return;
+        context.drain_http_pre_engine()?;
+        if context.replay_launches().pending_mission().is_some() {
+            return Ok(());
         }
         crate::window::sleep_ms(50).await;
     }
@@ -1142,8 +1182,8 @@ fn prepare_direct_custom_mission_args(
 /// prepares all frame-0 metadata before constructing the mission Engine.
 async fn wait_for_replay_command(
     window: &mut GameWindow,
-    launches: &crate::replay_service::ReplayLaunches,
-) {
+    context: &ApplicationContext,
+) -> Result<(), String> {
     loop {
         // Pump events — winit needs the app to drain its queue every
         // frame to stay responsive.
@@ -1153,7 +1193,7 @@ async fn wait_for_replay_command(
         // exits, and the normal `drain_global` path needs an engine.
         // `drain_pre_engine` handles `load-replay` / `info` and
         // rejects everything else with an "engine not ready" reply.
-        crate::http_server::drain_pre_engine();
+        context.drain_http_pre_engine()?;
 
         window.clear_to_color(wgpu::Color {
             r: 0.01,
@@ -1162,8 +1202,8 @@ async fn wait_for_replay_command(
             a: 1.0,
         });
 
-        if launches.pending_mission().is_some() {
-            return;
+        if context.replay_launches().pending_mission().is_some() {
+            return Ok(());
         }
 
         crate::window::sleep_ms(50).await;
@@ -1172,6 +1212,23 @@ async fn wait_for_replay_command(
 
 #[cfg(test)]
 mod early_replay_tests {
+    #[test]
+    fn shutdown_failure_does_not_hide_the_original_application_failure() {
+        assert_eq!(super::finish_application(Ok(7), Ok(())), Ok(7));
+        assert_eq!(
+            super::finish_application(Err("run".into()), Ok(())),
+            Err("run".into())
+        );
+        assert_eq!(
+            super::finish_application(Ok(7), Err("drain".into())),
+            Err("application shutdown: drain".into())
+        );
+        assert_eq!(
+            super::finish_application(Err("run".into()), Err("drain".into())),
+            Err("run; application shutdown: drain".into())
+        );
+    }
+
     #[test]
     fn early_mode_is_default_and_late_ablation_rejects_typos() {
         assert_eq!(super::replay_preparation_mode(None), Ok(true));

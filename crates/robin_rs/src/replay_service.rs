@@ -4,8 +4,6 @@
 //! authority; snapshots own immutable chunks; pending launches reject duplicates.
 use robin_engine::replay as engine_replay;
 use serde::{Deserialize, Serialize};
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
 pub struct PendingReplay {
@@ -18,9 +16,11 @@ pub struct ReplayService {
     pending: Mutex<Option<PendingReplay>>,
     spool: ReplaySpool,
     #[cfg(not(target_arch = "wasm32"))]
-    export_worker: OnceLock<Result<std::sync::mpsc::SyncSender<NativeReplayExportJob>, String>>,
+    export_worker: Mutex<NativeExportWorker>,
     #[cfg(target_arch = "wasm32")]
     export_busy: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(target_arch = "wasm32")]
+    export_closed: std::sync::atomic::AtomicBool,
 }
 
 impl Default for ReplayService {
@@ -29,9 +29,11 @@ impl Default for ReplayService {
             pending: Mutex::new(None),
             spool: ReplaySpool::new(MAX_ACTIVE_REPLAY_BYTES),
             #[cfg(not(target_arch = "wasm32"))]
-            export_worker: OnceLock::new(),
+            export_worker: Mutex::new(NativeExportWorker::default()),
             #[cfg(target_arch = "wasm32")]
             export_busy: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(target_arch = "wasm32")]
+            export_closed: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -56,6 +58,26 @@ impl std::fmt::Debug for ReplayService {
 }
 
 impl ReplayService {
+    pub(crate) fn shutdown_on_drop(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        match self.export_worker.lock() {
+            Ok(mut worker) => {
+                if let Err(error) = worker.shutdown() {
+                    tracing::error!("{error}");
+                }
+            }
+            Err(error) => {
+                tracing::error!("replay export worker poisoned during application drop");
+                if let Err(error) = error.into_inner().shutdown() {
+                    tracing::error!("{error}");
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.export_closed
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
     pub fn recording(self: &Arc<Self>) -> ReplayRecordingControl {
         ReplayRecordingControl(self.clone())
     }
@@ -102,51 +124,72 @@ impl ReplayService {
         self.spool.snapshot()
     }
 
-    pub(crate) fn export(&self, complete: ExportCompletion) {
+    pub(crate) fn export(&self) -> ExportResult {
         let snapshot = match self.snapshot() {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                complete(Err(error));
-                return;
+                let (complete, result) = async_channel::bounded(1);
+                deliver_export(complete, Err(error));
+                return result;
             }
         };
+        self.export_snapshot(snapshot)
+    }
+
+    /// All consumers share this admission point, including callers that freeze
+    /// the recording before constructing an asynchronous result adapter.
+    fn export_snapshot(&self, snapshot: ReplaySnapshot) -> ExportResult {
+        let (complete, result) = async_channel::bounded(1);
         #[cfg(not(target_arch = "wasm32"))]
-        match self.native_export_worker() {
-            Ok(worker) => try_enqueue_native_replay_export(worker, snapshot, complete),
-            Err(error) => complete(Err(error)),
+        {
+            let mut worker = self
+                .export_worker
+                .lock()
+                .expect("replay export worker poisoned");
+            match worker.sender() {
+                Ok(sender) => try_enqueue_native_replay_export(sender, snapshot, complete),
+                Err(error) => deliver_export(complete, Err(error)),
+            }
         }
         #[cfg(target_arch = "wasm32")]
         self.export_browser(snapshot, complete);
+        result
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn native_export_worker(
-        &self,
-    ) -> Result<&std::sync::mpsc::SyncSender<NativeReplayExportJob>, String> {
-        self.export_worker
-            .get_or_init(|| {
-                let (tx, rx) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
-                std::thread::Builder::new()
-                    .name("robin-replay-export".into())
-                    .spawn(move || {
-                        while let Ok(job) = rx.recv() {
-                            (job.complete)(job.snapshot.compact_sync());
-                        }
-                    })
-                    .map_err(|error| format!("spawn replay export worker: {error}"))?;
-                Ok(tx)
-            })
-            .as_ref()
-            .map_err(Clone::clone)
+    /// Application shutdown, not mission retirement: reject new work and finish
+    /// every admitted immutable snapshot before returning. Consumer code never
+    /// runs on the worker, so joining cannot re-enter this service or self-join.
+    pub async fn shutdown(&self) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.export_worker
+                .lock()
+                .map_err(|_| "replay export worker poisoned".to_owned())?
+                .shutdown()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            use std::sync::atomic::Ordering;
+            self.export_closed.store(true, Ordering::Release);
+            while self.export_busy.load(Ordering::Acquire) {
+                gloo_timers::future::TimeoutFuture::new(0).await;
+            }
+            Ok(())
+        }
     }
 
     #[cfg(target_arch = "wasm32")]
     fn export_browser(&self, snapshot: ReplaySnapshot, complete: ExportCompletion) {
         use std::sync::atomic::Ordering;
+        if self.export_closed.load(Ordering::Acquire) {
+            deliver_export(complete, Err("replay export service is shut down".into()));
+            return;
+        }
         if self.export_busy.swap(true, Ordering::AcqRel) {
-            complete(Err(
-                "replay export is already running; retry after it finishes".into(),
-            ));
+            deliver_export(
+                complete,
+                Err("replay export is already running; retry after it finishes".into()),
+            );
             return;
         }
         let busy = Arc::clone(&self.export_busy);
@@ -157,11 +200,15 @@ impl ReplayService {
                     self.0.store(false, Ordering::Release);
                 }
             }
-            let _release = ReleaseBusy(busy);
+            let release = ReleaseBusy(busy);
             // Yield to rendering before encoding; block-wise encoding remains
             // a separate task, not a reason to change the canonical format.
             gloo_timers::future::TimeoutFuture::new(0).await;
-            complete(snapshot.compact_sync());
+            let result = snapshot.compact_sync();
+            // A completion may immediately submit another export. Encoding is
+            // finished, so release admission before notifying the consumer.
+            drop(release);
+            deliver_export(complete, result);
         });
     }
 }
@@ -208,17 +255,28 @@ impl ReplayRecordingControl {
     }
 }
 impl ReplayExports {
+    pub(crate) fn same_service(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     pub fn snapshot_bytes(&self) -> Result<Vec<u8>, String> {
         self.0.snapshot_bytes()
     }
     pub(crate) fn snapshot(&self) -> Result<ReplaySnapshot, String> {
         self.0.snapshot()
     }
-    pub(crate) fn export(&self, complete: ExportCompletion) {
-        self.0.export(complete);
+    pub(crate) fn export(&self) -> ExportResult {
+        self.0.export()
+    }
+    /// Enqueues an already frozen generation on the same bounded scheduler as
+    /// HTTP export. Errors (including saturation) arrive through the receiver.
+    pub(crate) fn export_snapshot(&self, snapshot: ReplaySnapshot) -> ExportResult {
+        self.0.export_snapshot(snapshot)
     }
 }
 impl ReplayLaunches {
+    pub(crate) fn same_service(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
     pub fn admit_pending(&self, replay: PendingReplay) -> Result<(), String> {
         self.0.admit_pending(replay)
     }
@@ -230,10 +288,105 @@ impl ReplayLaunches {
     }
 }
 
+pub(crate) type ExportResult = async_channel::Receiver<Result<String, String>>;
+type ExportCompletion = async_channel::Sender<Result<String, String>>;
+
+fn deliver_export(complete: ExportCompletion, result: Result<String, String>) {
+    // Each private sender has exactly one delivery. A closed receiver simply
+    // means that its UI or HTTP consumer no longer needs the frozen artifact.
+    if let Err(async_channel::TrySendError::Full(_)) = complete.try_send(result) {
+        panic!("replay export delivered more than one result");
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
-type ExportCompletion = Box<dyn FnOnce(Result<String, String>) + Send>;
-#[cfg(target_arch = "wasm32")]
-type ExportCompletion = Box<dyn FnOnce(Result<String, String>)>;
+#[derive(Default, Serialize)]
+struct NativeExportWorker {
+    #[serde(skip)]
+    sender: Option<std::sync::mpsc::SyncSender<NativeReplayExportJob>>,
+    #[serde(skip)]
+    thread: Option<std::thread::JoinHandle<()>>,
+    closed: bool,
+    failure: Option<String>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'de> Deserialize<'de> for NativeExportWorker {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "export workers must be constructed by their application owner",
+        ))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl NativeExportWorker {
+    fn sender(&mut self) -> Result<&std::sync::mpsc::SyncSender<NativeReplayExportJob>, String> {
+        if let Some(error) = &self.failure {
+            return Err(error.clone());
+        }
+        if self.closed {
+            return Err("replay export service is shut down".into());
+        }
+        if self.sender.is_none() {
+            let (sender, receiver) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
+            match std::thread::Builder::new()
+                .name("robin-replay-export".into())
+                .spawn(move || {
+                    while let Ok(job) = receiver.recv() {
+                        deliver_export(job.complete, job.snapshot.compact_sync());
+                    }
+                }) {
+                Ok(thread) => {
+                    self.thread = Some(thread);
+                    self.sender = Some(sender);
+                }
+                Err(error) => {
+                    let error = format!("spawn replay export worker: {error}");
+                    self.failure = Some(error.clone());
+                    return Err(error);
+                }
+            }
+        }
+        Ok(self
+            .sender
+            .as_ref()
+            .expect("started export worker owns sender"))
+    }
+
+    fn shutdown(&mut self) -> Result<(), String> {
+        self.closed = true;
+        drop(self.sender.take());
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            self.failure = Some("replay export worker terminated unexpectedly".into());
+        }
+        self.failure.clone().map_or(Ok(()), Err)
+    }
+}
+
+impl Drop for ReplayService {
+    fn drop(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        match self.export_worker.get_mut() {
+            Ok(worker) => {
+                if let Err(error) = worker.shutdown() {
+                    tracing::error!("{error}");
+                }
+            }
+            Err(error) => {
+                tracing::error!("replay export worker lock poisoned during shutdown");
+                if let Err(error) = error.into_inner().shutdown() {
+                    tracing::error!("{error}");
+                }
+            }
+        }
+        // Browser tasks own frozen snapshots and their completion senders. Drop
+        // cannot await: accepted work still finishes independently on the event
+        // loop. The application owner uses async shutdown before exiting.
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 struct NativeReplayExportJob {
@@ -249,12 +402,14 @@ fn try_enqueue_native_replay_export(
 ) {
     match worker.try_send(NativeReplayExportJob { snapshot, complete }) {
         Ok(()) => {}
-        Err(std::sync::mpsc::TrySendError::Full(job)) => (job.complete)(Err(
-            "replay export worker is busy; retry after the current export finishes".into(),
-        )),
-        Err(std::sync::mpsc::TrySendError::Disconnected(job)) => {
-            (job.complete)(Err("replay export worker stopped unexpectedly".into()))
-        }
+        Err(std::sync::mpsc::TrySendError::Full(job)) => deliver_export(
+            job.complete,
+            Err("replay export worker is busy; retry after the current export finishes".into()),
+        ),
+        Err(std::sync::mpsc::TrySendError::Disconnected(job)) => deliver_export(
+            job.complete,
+            Err("replay export worker stopped unexpectedly".into()),
+        ),
     }
 }
 
@@ -481,10 +636,277 @@ impl ReplaySnapshot {
     }
 }
 
+#[cfg(all(test, target_arch = "wasm32"))]
+mod browser_tests {
+    use super::*;
+    use crate::leaderboard_mission_end::{ActiveMissionReplayExporter, MissionEndReplayExporter};
+
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    async fn browser_consumers_share_backpressure_and_release_it_after_error() {
+        let service = Arc::new(ReplayService::default());
+        let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
+        let mut admitted = leaderboard.begin().unwrap();
+        assert!(admitted.try_take().is_none());
+        let rx = service.exports().export();
+        assert!(
+            rx.recv()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("already running")
+        );
+        let mut completed = false;
+        for _ in 0..100 {
+            if let Some(result) = admitted.try_take() {
+                assert!(result.unwrap_err().contains("no active replay"));
+                completed = true;
+                break;
+            }
+            gloo_timers::future::TimeoutFuture::new(1).await;
+        }
+        assert!(completed, "admitted browser export did not complete");
+        assert!(
+            !service
+                .export_busy
+                .load(std::sync::atomic::Ordering::Acquire)
+        );
+
+        // Reverse admission and re-enter after receiving completion. Encoding
+        // errors must release the scheduler before notifying either consumer.
+        let rx = service.exports().export();
+        let mut rejected = leaderboard.begin().unwrap();
+        assert!(
+            rejected
+                .try_take()
+                .unwrap()
+                .unwrap_err()
+                .contains("already running")
+        );
+        assert!(
+            rx.recv()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("no active replay")
+        );
+        let accepted = service.exports().export();
+        service.shutdown().await.unwrap();
+        assert!(
+            accepted
+                .recv()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("no active replay")
+        );
+        assert!(
+            service
+                .exports()
+                .export()
+                .recv()
+                .await
+                .unwrap()
+                .unwrap_err()
+                .contains("shut down")
+        );
+    }
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::leaderboard_mission_end::{ActiveMissionReplayExporter, MissionEndReplayExporter};
     use std::io::Write;
+
+    fn record_export_fixture(service: &ReplayService, mission: &str) {
+        let mut recorder = engine_replay::ReplayRecorder::with_writer(
+            Box::new(service.begin_recording()),
+            mission.to_owned(),
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                mission,
+                "export-map",
+                "export-map",
+            )
+            .unwrap(),
+            17,
+            robin_engine::engine::SimConfig::default(),
+            &robin_engine::campaign::Campaign::default(),
+        )
+        .unwrap();
+        assert!(recorder.write_frame(
+            0,
+            0,
+            1,
+            robin_engine::engine::SimulationFrameInput::default(),
+            Vec::new(),
+            None,
+        ));
+    }
+
+    #[test]
+    fn shutdown_drains_running_and_queued_exports_and_rejects_reentry() {
+        let service = Arc::new(ReplayService::default());
+        record_export_fixture(&service, "frozen-before-shutdown");
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let first = receiver.recv().unwrap();
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            deliver_export(first.complete, first.snapshot.compact_sync());
+            while let Ok(job) = receiver.recv() {
+                deliver_export(job.complete, job.snapshot.compact_sync());
+            }
+        });
+        *service.export_worker.lock().unwrap() = NativeExportWorker {
+            sender: Some(sender),
+            thread: Some(thread),
+            ..Default::default()
+        };
+        let running = service.exports().export();
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        let queued = service.exports().export();
+        record_export_fixture(&service, "replacement-not-exported");
+        let owner = Arc::clone(&service);
+        let shutdown = std::thread::spawn(move || futures::executor::block_on(owner.shutdown()));
+        release_tx.send(()).unwrap();
+        shutdown.join().unwrap().unwrap();
+        for result in [running, queued] {
+            let compact = result.recv_blocking().unwrap().unwrap();
+            let (_, replay) = robin_replay_format::decode_compact(&compact).unwrap();
+            assert_eq!(replay.header().mission_id, "frozen-before-shutdown");
+        }
+        assert!(
+            service
+                .exports()
+                .export()
+                .recv_blocking()
+                .unwrap()
+                .unwrap_err()
+                .contains("shut down")
+        );
+        futures::executor::block_on(service.shutdown()).unwrap();
+        assert!(service.export_worker.lock().unwrap().thread.is_none());
+    }
+
+    #[test]
+    fn owner_drop_drains_work_even_when_consumer_was_dropped() {
+        let service = Arc::new(ReplayService::default());
+        record_export_fixture(&service, "dropped-owner");
+        let accepted = service.exports().export();
+        drop(service);
+        let compact = accepted.recv_blocking().unwrap().unwrap();
+        assert!(robin_replay_format::decode_compact(&compact).is_ok());
+
+        let service = Arc::new(ReplayService::default());
+        record_export_fixture(&service, "dropped-consumer");
+        drop(service.exports().export());
+        futures::executor::block_on(service.shutdown()).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires LLVM unwinding; run explicitly with robin_rs test codegen-backend=llvm"]
+    fn llvm_export_worker_failure_is_joined_and_remains_reportable() {
+        let service = ReplayService::default();
+        service.export_worker.lock().unwrap().thread = Some(std::thread::spawn(|| {
+            panic!("injected export worker failure")
+        }));
+        let error = futures::executor::block_on(service.shutdown()).unwrap_err();
+        assert!(error.contains("terminated unexpectedly"));
+        assert_eq!(
+            futures::executor::block_on(service.shutdown()).unwrap_err(),
+            error
+        );
+        assert!(service.export_worker.lock().unwrap().thread.is_none());
+    }
+
+    #[test]
+    fn http_and_leaderboard_share_admission_and_keep_the_admitted_generation() {
+        let service = Arc::new(ReplayService::default());
+        // Hold the worker queue explicitly: scheduling and replacement order do
+        // not depend on thread timing or how quickly compact encoding finishes.
+        let (sender, worker) = std::sync::mpsc::sync_channel(1);
+        service.export_worker.lock().unwrap().sender = Some(sender);
+        record_export_fixture(&service, "first-export");
+        let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
+        let mut first = leaderboard.begin().unwrap();
+        assert!(first.try_take().is_none());
+
+        let http_rx = service.exports().export();
+        assert!(
+            http_rx
+                .recv_blocking()
+                .unwrap()
+                .unwrap_err()
+                .contains("worker is busy")
+        );
+
+        record_export_fixture(&service, "replacement-export");
+        let admitted = worker.try_recv().unwrap();
+        deliver_export(admitted.complete, admitted.snapshot.compact_sync());
+        let bytes = first.try_take().unwrap().unwrap();
+        let (_, replay) =
+            robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert_eq!(replay.header().mission_id, "first-export");
+
+        // Reverse the consumer order to prove leaderboard cannot bypass HTTP's
+        // admission either. Failed admission must leave the accepted job intact.
+        let http_rx = service.exports().export();
+        let mut rejected = leaderboard.begin().unwrap();
+        assert!(
+            rejected
+                .try_take()
+                .unwrap()
+                .unwrap_err()
+                .contains("worker is busy")
+        );
+        service.invalidate("retired during export");
+        let admitted = worker.try_recv().unwrap();
+        deliver_export(admitted.complete, admitted.snapshot.compact_sync());
+        let compact = http_rx.recv_blocking().unwrap().unwrap();
+        let (_, replay) = robin_replay_format::decode_compact(&compact).unwrap();
+        assert_eq!(replay.header().mission_id, "replacement-export");
+    }
+
+    #[test]
+    fn native_worker_recovers_after_encoding_failure_and_dropped_consumer() {
+        let service = Arc::new(ReplayService::default());
+        let mut writer = service.begin_recording();
+        writer.write_all(b"not replay json\n").unwrap();
+        writer.flush().unwrap();
+        let rx = service.exports().export();
+        assert!(
+            rx.recv_blocking()
+                .unwrap()
+                .unwrap_err()
+                .contains("parse mirrored replay")
+        );
+
+        record_export_fixture(&service, "recovered-export");
+        // Dropping a UI task must not stop the shared worker.
+        let mut leaderboard = ActiveMissionReplayExporter::new(service.exports());
+        drop(leaderboard.begin().unwrap());
+        // A callback barrier drains the single queue slot before the next job.
+        // Access to the sender here is deliberately test-only.
+        let (tx, rx) = async_channel::bounded(1);
+        service
+            .export_worker
+            .lock()
+            .unwrap()
+            .sender()
+            .unwrap()
+            .send(NativeReplayExportJob {
+                snapshot: service.snapshot().unwrap(),
+                complete: tx,
+            })
+            .unwrap();
+        let compact = rx.recv_blocking().unwrap().unwrap();
+        let (_, replay) = robin_replay_format::decode_compact(&compact).unwrap();
+        assert_eq!(replay.header().mission_id, "recovered-export");
+    }
 
     #[test]
     fn injected_capabilities_share_only_their_application_lifecycle() {
@@ -740,24 +1162,16 @@ mod tests {
             byte_length: 2,
             chunks: vec![Arc::from(&b"x\n"[..])],
         };
-        let (held_response, _held_rx) = std::sync::mpsc::sync_channel(1);
+        let (held_response, _held_rx) = async_channel::bounded(1);
         worker
             .send(NativeReplayExportJob {
                 snapshot: snapshot.clone(),
-                complete: Box::new(move |result| {
-                    let _ = held_response.send(result);
-                }),
+                complete: held_response,
             })
             .unwrap();
-        let (response, response_rx) = std::sync::mpsc::sync_channel(1);
-        try_enqueue_native_replay_export(
-            &worker,
-            snapshot,
-            Box::new(move |result| {
-                let _ = response.send(result);
-            }),
-        );
-        let error = match response_rx.recv().unwrap() {
+        let (response, response_rx) = async_channel::bounded(1);
+        try_enqueue_native_replay_export(&worker, snapshot, response);
+        let error = match response_rx.recv_blocking().unwrap() {
             Ok(_) => panic!("saturated export queue unexpectedly accepted work"),
             Err(error) => error,
         };

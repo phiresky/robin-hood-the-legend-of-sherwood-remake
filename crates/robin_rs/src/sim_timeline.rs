@@ -222,7 +222,7 @@ fn prepare_display_effects(
         side_effects.pending_minimap_position = Some(top_left);
     }
     if side_effects.ui_has_focus {
-        input.has_focus = false;
+        input.controls.has_focus = false;
     }
     for noise in side_effects.displayed_noises.drain(..) {
         dev.add_noise_to_display(noise);
@@ -319,7 +319,7 @@ mod tests {
     fn display_preparation_consumes_focus_and_preserves_queued_host_effects() {
         let mut display = HostDisplayState::default();
         let mut input = robin_engine::engine::InputState::default();
-        input.has_focus = true;
+        input.controls.has_focus = true;
         let mut dev = DevState::default();
         let prepared = prepare_display_effects(
             &mut display,
@@ -331,7 +331,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(!input.has_focus);
+        assert!(!input.controls.has_focus);
         assert!(prepared.pending_show_console);
         assert!(prepared.ui_has_focus);
         assert_eq!(dev.noise_display_start_radius, 7);

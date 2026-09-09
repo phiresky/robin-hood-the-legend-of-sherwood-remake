@@ -5,6 +5,123 @@
 use syn::visit::{self, Visit};
 
 #[test]
+fn interpolation_storage_cannot_reintroduce_authoritative_engine_ownership() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/interactive.rs")).unwrap();
+    let owner = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "NativeRefreshInterpolation" => Some(item),
+            _ => None,
+        })
+        .expect("native interpolation owner");
+    struct Storage {
+        presentation_count: usize,
+    }
+    impl<'ast> Visit<'ast> for Storage {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            for segment in &path.path.segments {
+                assert_ne!(
+                    segment.ident, "Engine",
+                    "interpolation must not own a runnable authoritative engine"
+                );
+                self.presentation_count += usize::from(segment.ident == "PresentationEngine");
+            }
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut storage = Storage {
+        presentation_count: 0,
+    };
+    storage.visit_item_struct(owner);
+    assert_eq!(
+        storage.presentation_count, 1,
+        "retain one presentation owner"
+    );
+}
+
+#[test]
+fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/runtime.rs")).unwrap();
+    let frame = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "MissionFrame" => Some(item),
+            _ => None,
+        })
+        .expect("live frame transaction");
+    for attribute in &frame.attrs {
+        if attribute.path().is_ident("derive") {
+            let derives = attribute
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                )
+                .unwrap();
+            for derive in derives {
+                assert!(
+                    !derive
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "Clone" || segment.ident == "Deserialize"),
+                    "derive data traits on the frame snapshot, not its live transaction authority"
+                );
+            }
+        }
+    }
+    for item in &syntax.items {
+        if let syn::Item::Impl(item) = item
+            && let syn::Type::Path(ty) = item.self_ty.as_ref()
+            && ty.path.is_ident("MissionFrame")
+            && let Some((trait_path, _)) = &item.trait_
+        {
+            assert!(
+                !trait_path
+                    .segments
+                    .iter()
+                    .any(|segment| segment.ident == "Clone"),
+                "applied cursors and recorder tokens must not be duplicated"
+            );
+        }
+    }
+}
+
+#[test]
+fn ready_context_is_not_a_deserializable_data_wrapper() {
+    let syntax = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    for name in [
+        "ApplicationContext",
+        "ReadyApplicationContext",
+        "ApplicationServices",
+    ] {
+        let owner = syntax
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == name => Some(item),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing live owner {name}"));
+        for attribute in &owner.attrs {
+            if attribute.path().is_ident("derive") {
+                let derives = attribute
+                    .parse_args_with(
+                        syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                    )
+                    .unwrap();
+                assert!(
+                    !derives.iter().any(|path| path
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "Deserialize")),
+                    "{name} must be composed from real services; deserialize its diagnostic DTO instead"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn mission_journals_and_sprite_publication_are_private() {
     for (source, owner_name, fields) in [
         (
@@ -124,7 +241,13 @@ fn timeline_reconciliation_and_history_are_private_owners() {
             _ => None,
         })
         .expect("timeline runtime");
-    for name in ["network", "history", "mp_admission", "replay"] {
+    for name in [
+        "network",
+        "history",
+        "mp_admission",
+        "replay",
+        "multiplayer_timing",
+    ] {
         let field = owner
             .fields
             .iter()
@@ -146,7 +269,10 @@ fn timeline_reconciliation_and_history_are_private_owners() {
                 "replay_player",
                 "replay_recorder",
                 "recording_validity",
-                "sealed_replay_header"
+                "sealed_replay_header",
+                "mp_host_frame_schedule",
+                "pending_mp_state_hash",
+                "last_mp_state_hash_frame"
             ]
             .iter()
             .any(|name| field.ident.as_ref().is_some_and(|ident| ident == name)),
