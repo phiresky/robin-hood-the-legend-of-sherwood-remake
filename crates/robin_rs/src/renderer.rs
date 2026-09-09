@@ -1628,6 +1628,25 @@ impl Renderer {
         Ok(())
     }
 
+    /// Rotate a borrowed UI surface counterclockwise inside its destination.
+    pub(crate) fn draw_surface_rotated_ccw(
+        &mut self,
+        handle: SurfaceHandle,
+        dst: &BBox,
+    ) -> Result<(), MissingSurface> {
+        let first = self.frame.queued.len();
+        self.draw_surface(handle, None, Some(dst), BLIT_SOURCE_TRANSPARENT)?;
+        for draw in &mut self.frame.queued[first..] {
+            draw.corners = Some([
+                (dst.min.x, dst.max.y),
+                (dst.min.x, dst.min.y),
+                (dst.max.x, dst.max.y),
+                (dst.max.x, dst.min.y),
+            ]);
+        }
+        Ok(())
+    }
+
     /// Alpha draw with the same renderer/lifetime checks as ordinary typed draws.
     pub fn draw_surface_alpha(
         &mut self,

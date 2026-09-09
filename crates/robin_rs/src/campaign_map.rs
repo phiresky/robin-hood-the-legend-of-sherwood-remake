@@ -15,6 +15,7 @@ use crate::ingame_menu::widget_bridge::{self, ModalCursor, ModalInputState};
 use crate::menu::{CampaignMapState, LOCATION_POSITIONS, mission_location_from_index};
 use crate::native_font::{self, Font};
 use crate::renderer::Renderer;
+use crate::scroll_view::ScrollView;
 use crate::ui::UiState;
 use crate::ui_screens::MissionDescriptionScreen;
 use crate::widget::FrameWnd;
@@ -120,6 +121,7 @@ struct CampaignMapItem {
 
 #[derive(Default)]
 struct CampaignMapAssets {
+    scrollbar: [Option<MenuSurface>; 6],
     background: Option<MenuSurface>,
     locations: [Option<MenuSurface>; 10],
     mini_blazon: Option<MenuSurface>,
@@ -156,6 +158,7 @@ impl CampaignMapAssets {
             };
         };
         Self {
+            scrollbar: resources.list_scrollbar,
             background: resources.default_picture(renderer, resource_ids::RHID_CAMPAIGN_MAP),
             locations: std::array::from_fn(|i| {
                 let id = LOCATION_RESOURCE_IDS[i];
@@ -213,8 +216,8 @@ pub(crate) struct CampaignMapModalState {
     selected_progress: usize,
     show_achievement_badges: bool,
     achievement_overview: bool,
-    details_scroll: Option<usize>,
-    history_scroll: usize,
+    details_open: bool,
+    scroll_views: [ScrollView; 5],
     selected_play: usize,
     replay_status: String,
     recording_index: std::sync::Arc<crate::mission_replays::RecordingIndex>,
@@ -283,6 +286,7 @@ impl CampaignMapModalState {
             pseudo_debrief_pending.then(|| crate::window::process_uptime_ms().saturating_add(500));
         Self {
             items,
+            scroll_views: campaign_scroll_views(&assets),
             assets,
             frame,
             graph,
@@ -294,8 +298,7 @@ impl CampaignMapModalState {
             selected_progress,
             show_achievement_badges,
             achievement_overview: false,
-            details_scroll: None,
-            history_scroll: 0,
+            details_open: false,
             selected_play: 0,
             replay_status: String::new(),
             recording_index,
@@ -353,6 +356,7 @@ impl CampaignMapModalState {
         );
         Self {
             items: Vec::new(),
+            scroll_views: campaign_scroll_views(&assets),
             assets,
             frame: FrameWnd::default(),
             exhibit_grid: ExhibitGridNavigator::new(graph.nodes.len(), selected_progress),
@@ -367,8 +371,7 @@ impl CampaignMapModalState {
             selected_progress,
             show_achievement_badges: profile.gameplay_config.show_achievement_badges,
             achievement_overview: false,
-            details_scroll: None,
-            history_scroll: 0,
+            details_open: false,
             selected_play: 0,
             replay_status: String::new(),
             recording_index,
@@ -403,10 +406,11 @@ impl CampaignMapModalState {
             self.lifetime_totals,
             true,
             self.achievement_overview,
-            self.details_scroll,
-            self.history_scroll,
+            self.details_offset(),
+            self.scroll_views[HISTORY_VIEW].offset(),
             self.selected_play,
             &self.replay_status,
+            Some(&self.scroll_views),
         );
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input);
@@ -490,10 +494,11 @@ impl CampaignMapModalState {
                     self.lifetime_totals,
                     false,
                     self.achievement_overview,
-                    self.details_scroll,
-                    self.history_scroll,
+                    self.details_offset(),
+                    self.scroll_views[HISTORY_VIEW].offset(),
                     self.selected_play,
                     &self.replay_status,
+                    Some(&self.scroll_views),
                 )
             }
         }
@@ -510,50 +515,58 @@ impl CampaignMapModalState {
             .then_some(CampaignMapChoice::PseudoDebriefTimer)
     }
 
-    fn move_progress_page(&mut self, direction: i32) {
-        if self.achievement_overview {
-            // selected_play is reset when switching between the achievement
-            // overview and mission history; here it stores the catalogue page.
-            let count =
-                crate::achievement_hud::permanent_badge_presentations(Default::default()).len();
-            self.selected_play = self
-                .selected_play
-                .saturating_add_signed(direction as isize)
-                .min(count.saturating_sub(1) / 4);
-            return;
+    fn details_offset(&self) -> Option<usize> {
+        self.details_open
+            .then(|| self.scroll_views[TEXT_VIEW].offset())
+    }
+
+    fn sync_scroll_views(&mut self, reveal: bool) {
+        let initialize = self.scroll_views[TREE_VIEW].visible_range().is_empty();
+        let total_depths = self
+            .graph
+            .nodes
+            .iter()
+            .map(|n| n.depth + 1)
+            .max()
+            .unwrap_or(0);
+        self.scroll_views[TREE_VIEW].set_total(total_depths);
+        self.scroll_views[GALLERY_VIEW].set_total(self.graph.nodes.len().div_ceil(4));
+        self.scroll_views[AWARDS_VIEW].set_total(
+            crate::achievement_hud::permanent_badge_presentations(Default::default())
+                .len()
+                .div_ceil(2),
+        );
+        if let Some(node) = self.graph.nodes.get(self.selected_progress) {
+            self.scroll_views[HISTORY_VIEW].set_total(node.plays.len());
+            if self.details_open {
+                self.scroll_views[TEXT_VIEW].set_total(detail_lines(node, &self.assets).len());
+            }
+            if reveal || initialize {
+                self.scroll_views[TREE_VIEW].reveal(node.depth);
+                self.scroll_views[GALLERY_VIEW].reveal(self.selected_progress / 4);
+            }
         }
-        let step = if self.presentation == CampaignPresentationMode::SherwoodMuseum {
-            PROGRESS_PAGE_SIZE
+    }
+
+    fn move_progress_page(&mut self, direction: i32) {
+        let id = if self.achievement_overview {
+            AWARDS_VIEW
+        } else if self.presentation == CampaignPresentationMode::SherwoodMuseum {
+            GALLERY_VIEW
         } else {
-            1
+            TREE_VIEW
         };
-        self.selected_progress = self
-            .selected_progress
-            .saturating_add_signed(direction as isize * step as isize)
-            .min(self.graph.nodes.len().saturating_sub(1));
-        self.exhibit_grid =
-            ExhibitGridNavigator::new(self.graph.nodes.len(), self.selected_progress);
+        let page = self.scroll_views[id].visible_count();
+        self.scroll_views[id].scroll_by(direction as isize * page as isize);
     }
 
     fn scroll_details(&mut self, direction: i32, history: bool) {
-        let Some(offset) = self.details_scroll else {
+        if !self.details_open {
             return;
-        };
-        let node = &self.graph.nodes[self.selected_progress];
-        if history {
-            self.history_scroll = self
-                .history_scroll
-                .saturating_add_signed(direction as isize)
-                .min(node.plays.len().saturating_sub(5));
-        } else {
-            self.details_scroll = Some(
-                offset.saturating_add_signed(direction as isize).min(
-                    detail_lines(node, &self.assets)
-                        .len()
-                        .saturating_sub(DETAIL_VISIBLE_LINES),
-                ),
-            );
         }
+        self.sync_scroll_views(false);
+        let id = if history { HISTORY_VIEW } else { TEXT_VIEW };
+        self.scroll_views[id].scroll_by(direction as isize);
     }
 
     fn watch_selected_play(&mut self) {
@@ -602,13 +615,38 @@ impl CampaignMapModalState {
             .map(|at| crate::window::process_uptime_ms() >= at)
             .unwrap_or(true);
 
+        self.sync_scroll_views(false);
         for event in events {
             let previous_selection = self.selected_progress;
             if !input_enabled {
                 self.input.update_from_event(&event, transform);
                 continue;
             }
-            if self.details_scroll.is_some() {
+            self.sync_scroll_views(false);
+            self.input.update_from_event(&event, transform);
+            let pointer = (self.input.virt_x as i32, self.input.virt_y as i32);
+            let ids: &[usize] = if self.details_open {
+                &[TEXT_VIEW, HISTORY_VIEW]
+            } else if self.achievement_overview {
+                &[AWARDS_VIEW]
+            } else if self.presentation == CampaignPresentationMode::SherwoodMuseum {
+                &[GALLERY_VIEW]
+            } else if self.presentation == CampaignPresentationMode::ProgressTree {
+                &[TREE_VIEW]
+            } else {
+                &[]
+            };
+            let mut consumed = false;
+            for &id in ids {
+                if self.scroll_views[id].handle_event(&event, transform, pointer) {
+                    consumed = true;
+                    break;
+                }
+            }
+            if consumed {
+                continue;
+            }
+            if self.details_open {
                 let history = (560.0..992.0).contains(&self.input.virt_x);
                 let step = match event {
                     GameEvent::KeyDown {
@@ -627,20 +665,7 @@ impl CampaignMapModalState {
                     } else {
                         -(DETAIL_VISIBLE_LINES as i32)
                     }),
-                    GameEvent::MouseWheel(delta) => {
-                        let over_text = (32.0..544.0).contains(&self.input.virt_x)
-                            && (254.0..662.0).contains(&self.input.virt_y);
-                        let over_history = history && (260.0..620.0).contains(&self.input.virt_y);
-                        if over_text || over_history {
-                            self.scroll_details(
-                                delta
-                                    .saturating_mul(if history { 1 } else { 3 })
-                                    .saturating_neg(),
-                                history,
-                            );
-                        }
-                        continue;
-                    }
+                    GameEvent::MouseWheel(_) => continue,
                     _ => None,
                 };
                 if let Some(step) = step {
@@ -648,7 +673,7 @@ impl CampaignMapModalState {
                     continue;
                 }
             }
-            if self.details_scroll.is_some() && !self.graph.nodes.is_empty() {
+            if self.details_open && !self.graph.nodes.is_empty() {
                 match event {
                     GameEvent::KeyDown {
                         keycode: Keycode::Left | Keycode::Right,
@@ -674,16 +699,18 @@ impl CampaignMapModalState {
                             self.selected_progress,
                         );
                         self.selected_play = 0;
-                        self.history_scroll = 0;
-                        self.details_scroll = Some(0);
+                        self.scroll_views[HISTORY_VIEW].reset();
+                        self.details_open = true;
+                        self.scroll_views[TEXT_VIEW].reset();
                         self.replay_status.clear();
+                        self.sync_scroll_views(true);
                         continue;
                     }
                     GameEvent::KeyDown {
                         keycode: Keycode::Escape,
                         ..
                     } => {
-                        self.details_scroll = None;
+                        self.details_open = false;
                         continue;
                     }
                     GameEvent::KeyDown {
@@ -710,10 +737,8 @@ impl CampaignMapModalState {
                             .selected_play
                             .saturating_add_signed(step)
                             .min(count.saturating_sub(1));
-                        if self.selected_play < self.history_scroll {
-                            self.history_scroll = self.selected_play;
-                        } else if self.selected_play >= self.history_scroll + 5 {
-                            self.history_scroll = self.selected_play - 4;
+                        if count > 0 {
+                            self.scroll_views[HISTORY_VIEW].reveal(self.selected_play);
                         }
                         self.replay_status.clear();
                         continue;
@@ -729,8 +754,7 @@ impl CampaignMapModalState {
                         let (x, y) = transform.from_screen(x, y);
                         self.input.virt_x = x as f32;
                         self.input.virt_y = y as f32;
-                        if (560..992).contains(&x) && (260..620).contains(&y) {
-                            let index = self.history_scroll + ((y - 260) / 72) as usize;
+                        if let Some(index) = self.scroll_views[HISTORY_VIEW].row_at(x, y) {
                             if index < self.graph.nodes[self.selected_progress].plays.len() {
                                 self.selected_play = index;
                                 self.replay_status.clear();
@@ -753,13 +777,10 @@ impl CampaignMapModalState {
                     keycode: Keycode::Char(b'r' | b'd' | b'b'),
                     ..
                 } if self.presentation != CampaignPresentationMode::ClassicMap => {
-                    self.details_scroll = if self.details_scroll.is_some() {
-                        None
-                    } else {
-                        Some(0)
-                    };
+                    self.details_open = !self.details_open;
+                    self.scroll_views[TEXT_VIEW].reset();
                     self.selected_play = 0;
-                    self.history_scroll = 0;
+                    self.scroll_views[HISTORY_VIEW].reset();
                     self.replay_status.clear();
                     self.achievement_overview = false;
                 }
@@ -776,9 +797,9 @@ impl CampaignMapModalState {
                     ..
                 } => {
                     self.achievement_overview = false;
-                    self.details_scroll = None;
+                    self.details_open = false;
                     self.selected_play = 0;
-                    self.history_scroll = 0;
+                    self.scroll_views[HISTORY_VIEW].reset();
                     self.replay_status.clear();
                     self.presentation = match self.presentation {
                         CampaignPresentationMode::ClassicMap => {
@@ -803,9 +824,9 @@ impl CampaignMapModalState {
                     && self.show_achievement_badges =>
                 {
                     self.achievement_overview = !self.achievement_overview;
-                    self.details_scroll = None;
+                    self.details_open = false;
                     self.selected_play = 0;
-                    self.history_scroll = 0;
+                    self.scroll_views[HISTORY_VIEW].reset();
                     self.replay_status.clear();
                 }
                 GameEvent::KeyDown {
@@ -820,11 +841,7 @@ impl CampaignMapModalState {
                 } if self.presentation != CampaignPresentationMode::ClassicMap => {
                     self.move_progress_page(-1)
                 }
-                GameEvent::MouseWheel(delta)
-                    if self.presentation != CampaignPresentationMode::ClassicMap =>
-                {
-                    self.move_progress_page(-delta.signum())
-                }
+                GameEvent::MouseWheel(_) => {}
                 GameEvent::KeyDown {
                     keycode: Keycode::Left | Keycode::Right,
                     ..
@@ -931,7 +948,7 @@ impl CampaignMapModalState {
                 } if self.presentation != CampaignPresentationMode::ClassicMap
                     && !browsing
                     && !self.achievement_overview
-                    && self.details_scroll.is_none()
+                    && !self.details_open
                     && !self.graph.nodes.is_empty()
                     && self.graph.nodes[self.selected_progress].selectable =>
                 {
@@ -955,41 +972,38 @@ impl CampaignMapModalState {
                                 32..=207 => {
                                     self.presentation = CampaignPresentationMode::ProgressTree;
                                     self.achievement_overview = false;
-                                    self.details_scroll = None;
+                                    self.details_open = false;
                                     self.selected_play = 0;
-                                    self.history_scroll = 0;
+                                    self.scroll_views[HISTORY_VIEW].reset();
                                     self.replay_status.clear();
                                 }
                                 220..=427 => {
                                     self.presentation = CampaignPresentationMode::SherwoodMuseum;
                                     self.achievement_overview = false;
-                                    self.details_scroll = None;
+                                    self.details_open = false;
                                     self.selected_play = 0;
-                                    self.history_scroll = 0;
+                                    self.scroll_views[HISTORY_VIEW].reset();
                                     self.replay_status.clear();
                                 }
                                 440..=647 if self.show_achievement_badges => {
                                     self.achievement_overview = !self.achievement_overview;
-                                    self.details_scroll = None;
+                                    self.details_open = false;
                                     self.selected_play = 0;
-                                    self.history_scroll = 0;
+                                    self.scroll_views[HISTORY_VIEW].reset();
                                     self.replay_status.clear();
                                 }
                                 884..=991 => {
-                                    if self.details_scroll.take().is_some() {
+                                    if std::mem::take(&mut self.details_open) {
                                         continue;
                                     }
                                     final_choice = Some(CampaignMapChoice::Quit);
                                     break;
                                 }
                                 660..=867 => {
-                                    self.details_scroll = if self.details_scroll.is_some() {
-                                        None
-                                    } else {
-                                        Some(0)
-                                    };
+                                    self.details_open = !self.details_open;
+                                    self.scroll_views[TEXT_VIEW].reset();
                                     self.selected_play = 0;
-                                    self.history_scroll = 0;
+                                    self.scroll_views[HISTORY_VIEW].reset();
                                     self.replay_status.clear();
                                     self.achievement_overview = false;
                                 }
@@ -1001,13 +1015,14 @@ impl CampaignMapModalState {
                             );
                             continue;
                         }
-                        if (482..518).contains(&vy)
+                        if (490..526).contains(&vy)
                             && !self.achievement_overview
-                            && self.details_scroll.is_none()
+                            && !self.details_open
                         {
                             if (588..804).contains(&vx) {
-                                self.details_scroll = Some(0);
-                                self.history_scroll = 0;
+                                self.details_open = true;
+                                self.scroll_views[TEXT_VIEW].reset();
+                                self.scroll_views[HISTORY_VIEW].reset();
                                 self.selected_play = 0;
                                 self.replay_status.clear();
                             }
@@ -1023,7 +1038,7 @@ impl CampaignMapModalState {
                             && (840..992).contains(&vx)
                             && !browsing
                             && !self.achievement_overview
-                            && self.details_scroll.is_none()
+                            && !self.details_open
                             && self
                                 .graph
                                 .nodes
@@ -1038,21 +1053,30 @@ impl CampaignMapModalState {
                     }
                     if self.presentation != CampaignPresentationMode::ClassicMap
                         && !self.achievement_overview
-                        && self.details_scroll.is_none()
-                        && let Some(index) = progress_hit_test(
+                        && !self.details_open
+                        && let Some(index) = progress_hit_test_scrolled(
                             &self.graph,
                             self.presentation,
                             self.selected_progress,
                             vx,
                             vy,
+                            self.scroll_views[if self.presentation
+                                == CampaignPresentationMode::ProgressTree
+                            {
+                                TREE_VIEW
+                            } else {
+                                GALLERY_VIEW
+                            }]
+                            .offset(),
                         )
                     {
                         self.selected_progress = index;
                         self.exhibit_grid =
                             ExhibitGridNavigator::new(self.graph.nodes.len(), index);
                         if clicks >= 2 {
-                            self.details_scroll = Some(0);
-                            self.history_scroll = 0;
+                            self.details_open = true;
+                            self.scroll_views[TEXT_VIEW].reset();
+                            self.scroll_views[HISTORY_VIEW].reset();
                             self.selected_play = 0;
                             self.replay_status.clear();
                         }
@@ -1060,14 +1084,23 @@ impl CampaignMapModalState {
                 }
                 _ => {}
             }
-            if previous_selection != self.selected_progress && self.details_scroll.is_some() {
-                self.details_scroll = Some(0);
+            if previous_selection != self.selected_progress && self.details_open {
+                self.details_open = true;
+                self.scroll_views[TEXT_VIEW].reset();
                 self.selected_play = 0;
-                self.history_scroll = 0;
+                self.scroll_views[HISTORY_VIEW].reset();
                 self.replay_status.clear();
             }
 
-            self.input.update_from_event(&event, transform);
+            if matches!(
+                event,
+                GameEvent::KeyDown {
+                    keycode: Keycode::Left | Keycode::Right | Keycode::Up | Keycode::Down,
+                    ..
+                }
+            ) {
+                self.sync_scroll_views(true);
+            }
             if self.presentation == CampaignPresentationMode::ClassicMap {
                 let widget_input = self.input.as_widget_input();
                 let events = self.frame.process_input(&widget_input);
@@ -1099,16 +1132,81 @@ impl CampaignMapModalState {
             }
         }
 
+        self.sync_scroll_views(false);
         final_choice
     }
 }
 
 // TODO: Move campaign-manager labels and status text into the localization catalog.
+const TREE_VIEW: usize = 0;
+const GALLERY_VIEW: usize = 1;
+const AWARDS_VIEW: usize = 2;
+const HISTORY_VIEW: usize = 3;
+const TEXT_VIEW: usize = 4;
+
+fn campaign_scroll_views(assets: &CampaignMapAssets) -> [ScrollView; 5] {
+    // Geometry remains available to headless input tests without GPU assets.
+    let width = assets.scrollbar[0].map_or(16, |s| s.width);
+    let min_thumb = assets.scrollbar[3]
+        .zip(assets.scrollbar[5])
+        .map_or(16, |(a, b)| a.height + b.height);
+    let make = |bounds, row, horizontal| {
+        ScrollView::with_geometry(bounds, row, width, min_thumb, horizontal)
+    };
+    let mut views = [
+        make([32, 176, 960, 310], 240, true),
+        make([32, 176, 960, 300], 100, false),
+        make([32, 176, 960, 472], 236, false),
+        make([560, 260, 432, 360], 72, false),
+        make([32, 254, 512, 408], 25, false),
+    ];
+    views[TEXT_VIEW].set_wheel_step(3);
+    views
+}
+
+#[cfg(test)]
+fn progress_node_rect(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    selected: usize,
+    index: usize,
+) -> (i32, i32, i32, i32) {
+    let offset = if presentation == CampaignPresentationMode::ProgressTree {
+        graph.nodes[selected].depth.saturating_sub(1).min(
+            graph
+                .nodes
+                .iter()
+                .map(|n| n.depth)
+                .max()
+                .unwrap_or(0)
+                .saturating_sub(3),
+        )
+    } else {
+        selected / PROGRESS_PAGE_SIZE * 3
+    };
+    progress_node_rect_scrolled(graph, presentation, selected, index, offset)
+}
+#[cfg(test)]
+fn progress_hit_test(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    selected: usize,
+    x: i32,
+    y: i32,
+) -> Option<usize> {
+    graph.nodes.iter().enumerate().find_map(|(i, _)| {
+        let rect = progress_node_rect(graph, presentation, selected, i);
+        let (rx, ry, w, h) = rect;
+        (card_visible(rect) && (rx..rx + w).contains(&x) && (ry..ry + h).contains(&y)).then_some(i)
+    })
+}
+
 const PROGRESS_W: i32 = 1024;
 const PROGRESS_H: i32 = 768;
+#[cfg(test)]
 const PROGRESS_PAGE_SIZE: usize = 12;
-const CARD_W: i32 = 228;
-const CARD_H: i32 = 88;
+const CARD_W: i32 = 216;
+const CARD_H: i32 = 84;
 
 fn progress_transform(width: i32, height: i32) -> MenuTransform {
     MenuTransform {
@@ -1151,20 +1249,17 @@ fn tree_neighbor(graph: &CampaignProgressGraph, selected: usize, dx: i32, dy: i3
         .map_or(selected, |(index, _)| index)
 }
 
-fn progress_node_rect(
+fn progress_node_rect_scrolled(
     graph: &CampaignProgressGraph,
     presentation: CampaignPresentationMode,
     selected: usize,
     index: usize,
+    offset: usize,
 ) -> (i32, i32, i32, i32) {
     let (column, row) = match presentation {
         CampaignPresentationMode::ProgressTree => {
             let focus = &graph.nodes[selected];
-            let max_depth = graph.nodes.iter().map(|n| n.depth).max().unwrap_or(0);
-            let first_depth = focus
-                .depth
-                .saturating_sub(1)
-                .min(max_depth.saturating_sub(3));
+            let first_depth = offset;
             // Keep the story route visible while paging its side branches.
             let first_branch = focus.lane.saturating_sub(1) / 2 * 2 + 1;
             let lane = graph.nodes[index].lane;
@@ -1180,13 +1275,22 @@ fn progress_node_rect(
             )
         }
         CampaignPresentationMode::SherwoodMuseum => {
-            let page_index =
-                index as i32 - (selected / PROGRESS_PAGE_SIZE * PROGRESS_PAGE_SIZE) as i32;
+            let page_index = index as i32 - (offset * 4) as i32;
             (page_index.rem_euclid(4), page_index.div_euclid(4))
         }
         CampaignPresentationMode::ClassicMap => unreachable!(),
     };
-    (32 + column * 244, 176 + row * 100, CARD_W, CARD_H)
+    (
+        32 + column
+            * if presentation == CampaignPresentationMode::SherwoodMuseum {
+                234
+            } else {
+                240
+            },
+        176 + row * 100,
+        CARD_W,
+        CARD_H,
+    )
 }
 
 fn card_visible(rect: (i32, i32, i32, i32)) -> bool {
@@ -1194,15 +1298,16 @@ fn card_visible(rect: (i32, i32, i32, i32)) -> bool {
     x >= 32 && x + w <= 992 && y >= 176 && y + h <= 464
 }
 
-fn progress_hit_test(
+fn progress_hit_test_scrolled(
     graph: &CampaignProgressGraph,
     presentation: CampaignPresentationMode,
     selected: usize,
     x: i32,
     y: i32,
+    offset: usize,
 ) -> Option<usize> {
     graph.nodes.iter().enumerate().find_map(|(index, _)| {
-        let rect = progress_node_rect(graph, presentation, selected, index);
+        let rect = progress_node_rect_scrolled(graph, presentation, selected, index, offset);
         let (rx, ry, w, h) = rect;
         (card_visible(rect) && (rx..rx + w).contains(&x) && (ry..ry + h).contains(&y))
             .then_some(index)
@@ -1337,7 +1442,39 @@ fn render_campaign_progress(
     history_scroll: usize,
     selected_play: usize,
     replay_status: &str,
+    scroll_views: Option<&[ScrollView; 5]>,
 ) {
+    let mut capture_views;
+    let views = if let Some(views) = scroll_views {
+        views
+    } else {
+        capture_views = campaign_scroll_views(assets);
+        capture_views[TREE_VIEW]
+            .set_total(graph.nodes.iter().map(|n| n.depth + 1).max().unwrap_or(0));
+        capture_views[GALLERY_VIEW].set_total(graph.nodes.len().div_ceil(4));
+        capture_views[AWARDS_VIEW].set_total(
+            crate::achievement_hud::permanent_badge_presentations(Default::default())
+                .len()
+                .div_ceil(2),
+        );
+        if let Some(node) = graph.nodes.get(selected) {
+            capture_views[TREE_VIEW].reveal(node.depth);
+            capture_views[GALLERY_VIEW].reveal(selected / 4);
+            capture_views[HISTORY_VIEW].set_total(node.plays.len());
+            capture_views[HISTORY_VIEW].set_offset(history_scroll);
+            if let Some(offset) = details_scroll {
+                capture_views[TEXT_VIEW].set_total(detail_lines(node, assets).len());
+                capture_views[TEXT_VIEW].set_offset(offset);
+            }
+        }
+        &capture_views
+    };
+    let card_offset = views[if presentation == CampaignPresentationMode::ProgressTree {
+        TREE_VIEW
+    } else {
+        GALLERY_VIEW
+    }]
+    .offset();
     // Opaque panels isolate the text from both the map artwork and the menu beneath it.
     progress_rect(
         renderer,
@@ -1449,15 +1586,16 @@ fn render_campaign_progress(
     if achievement_overview {
         let mut earned = graph.lifetime_achievements.earned();
         earned.union_with(graph.campaign_achievements.earned());
+        let card_width = (views[AWARDS_VIEW].content_width() - 48) / 2;
         for (index, badge) in crate::achievement_hud::permanent_badge_presentations(earned)
             .iter()
-            .skip(selected_play * 4)
+            .skip(views[AWARDS_VIEW].offset() * 2)
             .take(4)
             .enumerate()
         {
-            let x = 32 + index as i32 % 2 * 496;
-            let y = 176 + index as i32 / 2 * 244;
-            progress_rect(renderer, transform, (x, y, 464, 220), (12, 20, 13));
+            let x = 32 + index as i32 % 2 * (card_width + 32);
+            let y = 176 + index as i32 / 2 * 236;
+            progress_rect(renderer, transform, (x, y, card_width, 220), (12, 20, 13));
             let current = graph.campaign_achievements.get(badge.id);
             let archived = graph.lifetime_achievements.get(badge.id);
             draw_achievement_badge_icon(
@@ -1467,7 +1605,15 @@ fn render_campaign_progress(
                 transform.origin_x + x + 10,
                 transform.origin_y + y + 8,
             );
-            progress_text(renderer, font, transform, &badge.label, x + 38, y + 6, 412);
+            progress_text(
+                renderer,
+                font,
+                transform,
+                &badge.label,
+                x + 38,
+                y + 6,
+                card_width - 54,
+            );
             progress_text(
                 renderer,
                 font,
@@ -1475,7 +1621,7 @@ fn render_campaign_progress(
                 permanent_achievement_status(current, archived),
                 x + 38,
                 y + 40,
-                412,
+                card_width - 54,
             );
             use robin_engine::achievement::AchievementId;
             // TODO: Localize these descriptions with the campaign manager labels.
@@ -1491,7 +1637,7 @@ fn render_campaign_progress(
                 }
                 _ => badge.id.description(),
             };
-            let wrapped = layout::wrap_text_for_box_font(font, requirement, 432, 4);
+            let wrapped = layout::wrap_text_for_box_font(font, requirement, card_width - 32, 4);
             for (line, text) in wrapped.lines.iter().enumerate() {
                 progress_text(
                     renderer,
@@ -1500,7 +1646,7 @@ fn render_campaign_progress(
                     text,
                     x + 16,
                     y + 78 + line as i32 * 23,
-                    432,
+                    card_width - 32,
                 );
             }
             progress_text(
@@ -1510,7 +1656,7 @@ fn render_campaign_progress(
                 &current_achievement_status(current),
                 x + 16,
                 y + 190,
-                432,
+                card_width - 32,
             );
         }
         progress_text(
@@ -1535,17 +1681,12 @@ fn render_campaign_progress(
             renderer,
             font,
             transform,
-            &format!(
-                "Page {} / {}   PgUp/PgDn or wheel: browse   A: missions   Esc: back",
-                selected_play + 1,
-                crate::achievement_hud::permanent_badge_presentations(earned)
-                    .len()
-                    .div_ceil(4)
-            ),
+            "PgUp/PgDn or wheel: browse   A: missions   Esc: back",
             32,
             722,
             960,
         );
+        views[AWARDS_VIEW].draw_skin(renderer, transform, &assets.scrollbar);
         return;
     }
     if graph.nodes.is_empty() {
@@ -1561,14 +1702,13 @@ fn render_campaign_progress(
         return;
     }
     let node = &graph.nodes[selected];
-    if let Some(offset) = details_scroll {
+    if details_scroll.is_some() {
         render_mission_details(
             renderer,
             transform,
             node,
             assets,
-            offset,
-            history_scroll,
+            views,
             selected_play,
             replay_status,
         );
@@ -1576,13 +1716,15 @@ fn render_campaign_progress(
     }
     if presentation == CampaignPresentationMode::ProgressTree {
         for (index, child) in graph.nodes.iter().enumerate() {
-            let rect = progress_node_rect(graph, presentation, selected, index);
+            let rect =
+                progress_node_rect_scrolled(graph, presentation, selected, index, card_offset);
             if !card_visible(rect) {
                 continue;
             }
             let (x, y, _, h) = rect;
             for &parent in &child.prerequisite_nodes {
-                let (px, py, pw, ph) = progress_node_rect(graph, presentation, selected, parent);
+                let (px, py, pw, ph) =
+                    progress_node_rect_scrolled(graph, presentation, selected, parent, card_offset);
                 // Off-screen dependencies end at the viewport edge, never over the header/details.
                 renderer.render_gpu_line(
                     transform.origin_x + (px + pw).clamp(32, 992),
@@ -1597,7 +1739,7 @@ fn render_campaign_progress(
         }
     }
     for (index, entry) in graph.nodes.iter().enumerate() {
-        let rect = progress_node_rect(graph, presentation, selected, index);
+        let rect = progress_node_rect_scrolled(graph, presentation, selected, index, card_offset);
         if !card_visible(rect) {
             continue;
         }
@@ -1671,12 +1813,17 @@ fn render_campaign_progress(
         };
         progress_text(renderer, font, transform, &status, x + 10, y + 62, w - 20);
     }
+    views[if gallery { GALLERY_VIEW } else { TREE_VIEW }].draw_skin(
+        renderer,
+        transform,
+        &assets.scrollbar,
+    );
     progress_button(
         renderer,
         font,
         transform,
         "Previous",
-        (32, 482, 176, 36),
+        (32, 490, 176, 36),
         false,
     );
     progress_button(
@@ -1684,28 +1831,15 @@ fn render_campaign_progress(
         font,
         transform,
         "Next",
-        (816, 482, 176, 36),
+        (816, 490, 176, 36),
         false,
     );
-    let page = match presentation {
-        CampaignPresentationMode::SherwoodMuseum => format!(
-            "Gallery {} / {}",
-            selected / PROGRESS_PAGE_SIZE + 1,
-            graph.nodes.len().div_ceil(PROGRESS_PAGE_SIZE)
-        ),
-        _ => format!(
-            "Stage {} / Branch page {}",
-            node.depth + 1,
-            node.lane.saturating_sub(1) / 2 + 1
-        ),
-    };
-    progress_text(renderer, font, transform, &page, 236, 490, 340);
     progress_button(
         renderer,
         font,
         transform,
         "Details (D)",
-        (588, 482, 216, 36),
+        (588, 490, 216, 36),
         false,
     );
     progress_rect(renderer, transform, (32, 534, 960, 1), (91, 94, 67));
@@ -1956,6 +2090,7 @@ fn detail_lines(
     assets: &CampaignMapAssets,
 ) -> Vec<String> {
     let font = assets.progress_font.as_ref().expect("mission details font");
+    let width = campaign_scroll_views(assets)[TEXT_VIEW].content_width() - 32;
     let mut sections = vec!["ENTRY REQUIREMENTS".to_owned()];
     if node.availability_notes.is_empty() {
         sections.push("This mission is currently offered in Sherwood.".into());
@@ -1977,30 +2112,10 @@ fn detail_lines(
             if text.is_empty() {
                 vec![String::new()]
             } else {
-                layout::wrap_text_for_box_font(font, &text, 480, usize::MAX).lines
+                layout::wrap_text_for_box_font(font, &text, width, usize::MAX).lines
             }
         })
         .collect()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_detail_scrollbar(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    x: i32,
-    y: i32,
-    height: i32,
-    offset: usize,
-    visible: usize,
-    total: usize,
-) {
-    if total <= visible {
-        return;
-    }
-    let thumb = (height * visible as i32 / total as i32).max(16);
-    let top = (height - thumb) * offset as i32 / (total - visible) as i32;
-    progress_rect(renderer, transform, (x, y, 4, height), (43, 55, 31));
-    progress_rect(renderer, transform, (x, y + top, 4, thumb), (193, 163, 78));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2009,8 +2124,7 @@ fn render_mission_details(
     transform: MenuTransform,
     node: &crate::campaign_progress::CampaignProgressNode,
     assets: &CampaignMapAssets,
-    text_scroll: usize,
-    history_scroll: usize,
+    views: &[ScrollView; 5],
     selected_play: usize,
     status: &str,
 ) {
@@ -2027,7 +2141,8 @@ fn render_mission_details(
     );
     progress_rect(renderer, transform, (32, 254, 512, 408), (12, 20, 13));
     let lines = detail_lines(node, assets);
-    let text_scroll = text_scroll.min(lines.len().saturating_sub(DETAIL_VISIBLE_LINES));
+    let text_view = &views[TEXT_VIEW];
+    let text_scroll = text_view.offset();
     for (row, text) in lines
         .iter()
         .skip(text_scroll)
@@ -2040,20 +2155,11 @@ fn render_mission_details(
             transform,
             text,
             48,
-            264 + row as i32 * 24,
-            480,
+            text_view.row_y(text_scroll + row) + 10,
+            text_view.content_width() - 32,
         );
     }
-    render_detail_scrollbar(
-        renderer,
-        transform,
-        536,
-        254,
-        408,
-        text_scroll,
-        DETAIL_VISIBLE_LINES,
-        lines.len(),
-    );
+    text_view.draw_skin(renderer, transform, &assets.scrollbar);
     progress_text(
         renderer,
         font,
@@ -2074,13 +2180,14 @@ fn render_mission_details(
             408,
         );
     }
-    let history_scroll = history_scroll.min(node.plays.len().saturating_sub(5));
+    let history_view = &views[HISTORY_VIEW];
+    let history_scroll = history_view.offset();
     for (index, play) in node.plays.iter().enumerate().skip(history_scroll).take(5) {
         let y = 260 + (index - history_scroll) as i32 * 72;
         progress_rect(
             renderer,
             transform,
-            (560, y, 432, 66),
+            (560, y, history_view.content_width(), 66),
             if index == selected_play {
                 (43, 55, 31)
             } else {
@@ -2109,9 +2216,17 @@ fn render_mission_details(
             &format!("{:?} / {duration} / {kind}", play.attempt.outcome()),
             572,
             y + 6,
-            408,
+            history_view.content_width() - 24,
         );
-        progress_text(renderer, font, transform, &date, 572, y + 36, 408);
+        progress_text(
+            renderer,
+            font,
+            transform,
+            &date,
+            572,
+            y + 36,
+            history_view.content_width() - 24,
+        );
     }
     let can_watch = node
         .plays
@@ -2129,16 +2244,7 @@ fn render_mission_details(
         (560, 630, 432, 36),
         can_watch,
     );
-    render_detail_scrollbar(
-        renderer,
-        transform,
-        984,
-        260,
-        360,
-        history_scroll,
-        5,
-        node.plays.len(),
-    );
+    history_view.draw_skin(renderer, transform, &assets.scrollbar);
     progress_text(
         renderer,
         font,
@@ -2815,6 +2921,37 @@ mod browser_tests {
     use robin_engine::{mission::Mission, profiles::MissionProfile};
 
     #[test]
+    fn campaign_views_scroll_independently_and_hit_test_the_visible_cards() {
+        let mut state = browser();
+        let template = state.graph.nodes[0].clone();
+        state.graph.nodes = (0..40)
+            .map(|i| {
+                let mut node = template.clone();
+                node.depth = i;
+                node.lane = 0;
+                node
+            })
+            .collect();
+        let t = progress_transform(1024, 768);
+        state.input.virt_x = 100.0;
+        state.input.virt_y = 200.0;
+        state.handle_events(vec![GameEvent::MouseWheel(-2)], t, true);
+        assert_eq!(state.scroll_views[TREE_VIEW].offset(), 2);
+        assert_eq!(state.selected_progress, 0);
+        state.presentation = CampaignPresentationMode::SherwoodMuseum;
+        state.handle_events(vec![GameEvent::MouseWheel(-2)], t, true);
+        assert_eq!(state.scroll_views[GALLERY_VIEW].offset(), 2);
+        assert_eq!(state.scroll_views[TREE_VIEW].offset(), 2);
+        state.handle_events(vec![GameEvent::MouseDown(40, 185, 1, 1)], t, true);
+        assert_eq!(state.selected_progress, 8);
+        state.achievement_overview = true;
+        state.handle_events(vec![GameEvent::MouseWheel(-100)], t, true);
+        assert!(state.scroll_views[AWARDS_VIEW].offset() > 0);
+        assert_eq!(state.selected_progress, 8);
+        assert_eq!(state.scroll_views[GALLERY_VIEW].offset(), 2);
+    }
+
+    #[test]
     fn details_can_select_every_play_without_launching_the_mission() {
         let mut state = browser();
         state.graph.nodes[0].plays = fixture_plays(13);
@@ -2829,18 +2966,18 @@ mod browser_tests {
             None
         );
         assert!(state.replay_status.contains("No recording"));
-        assert_eq!(state.history_scroll, 8);
+        assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 8);
         state.input.virt_x = 580.0;
         state.input.virt_y = 300.0;
         state.handle_events(vec![GameEvent::MouseWheel(3)], transform, true);
-        assert_eq!(state.history_scroll, 5);
+        assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 5);
         assert_eq!(state.selected_play, 12);
         state.handle_events(vec![GameEvent::MouseDown(580, 265, 1, 1)], transform, true);
         assert_eq!(state.selected_play, 5);
         state.handle_events(vec![key(Keycode::Right)], transform, true);
         assert_eq!(state.selected_play, 0);
         assert_eq!(state.exhibit_grid.selected, state.selected_progress);
-        assert_eq!(state.details_scroll, Some(0));
+        assert_eq!(state.details_offset(), Some(0));
         assert!(state.replay_status.is_empty());
     }
 
@@ -2868,29 +3005,29 @@ mod browser_tests {
         state.input.virt_x = 100.0;
         state.input.virt_y = 300.0;
         state.handle_events(vec![GameEvent::MouseWheel(-1)], transform, true);
-        assert_eq!(state.details_scroll, Some(3));
-        assert_eq!(state.history_scroll, 0);
+        assert_eq!(state.details_offset(), Some(3));
+        assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 0);
         state.input.virt_x = 600.0;
         state.handle_events(vec![GameEvent::MouseWheel(-2)], transform, true);
-        assert_eq!(state.history_scroll, 2);
-        assert_eq!(state.details_scroll, Some(3));
+        assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 2);
+        assert_eq!(state.details_offset(), Some(3));
         state.handle_events(vec![GameEvent::MouseDown(580, 265, 1, 1)], transform, true);
         assert_eq!(state.selected_play, 2);
         state.handle_events(vec![GameEvent::MouseWheel(-100)], transform, true);
-        assert_eq!(state.history_scroll, 8);
+        assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 8);
         state.handle_events(vec![GameEvent::MouseWheel(100)], transform, true);
-        assert_eq!(state.history_scroll, 0);
+        assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 0);
         state.input.virt_x = 100.0;
         state.handle_events(vec![GameEvent::MouseWheel(-100)], transform, true);
         assert_eq!(
-            state.details_scroll,
+            state.details_offset(),
             Some(detail_lines(&state.graph.nodes[0], &state.assets).len() - DETAIL_VISIBLE_LINES)
         );
         state.handle_events(vec![GameEvent::MouseWheel(100)], transform, true);
-        assert_eq!(state.details_scroll, Some(0));
+        assert_eq!(state.details_offset(), Some(0));
         state.input.virt_y = 100.0;
         state.handle_events(vec![GameEvent::MouseWheel(-1)], transform, true);
-        assert_eq!(state.details_scroll, Some(0));
+        assert_eq!(state.details_offset(), Some(0));
     }
 
     #[test]
@@ -2913,8 +3050,8 @@ mod browser_tests {
                         ),
                         None
                     );
-                    assert_eq!(state.details_scroll, Some(0));
-                    assert_eq!(state.history_scroll, 0);
+                    assert_eq!(state.details_offset(), Some(0));
+                    assert_eq!(state.scroll_views[HISTORY_VIEW].offset(), 0);
                 }
             }
         }
@@ -2930,19 +3067,19 @@ mod browser_tests {
             state.handle_events(vec![key(Keycode::Char(b'r'))], transform, false),
             None
         );
-        assert_eq!(state.details_scroll, Some(0));
+        assert_eq!(state.details_offset(), Some(0));
         assert_eq!(
             state.handle_events(vec![key(Keycode::Return)], transform, false),
             None
         );
         state.handle_events(vec![key(Keycode::Down)], transform, false);
         assert_eq!(state.selected_play, 0);
-        assert_eq!(state.details_scroll, Some(0));
+        assert_eq!(state.details_offset(), Some(0));
         state.handle_events(vec![key(Keycode::Tab)], transform, false);
         state.handle_events(vec![key(Keycode::Char(b'd'))], transform, false);
-        assert_eq!(state.details_scroll, Some(0));
+        assert_eq!(state.details_offset(), Some(0));
         state.handle_events(vec![key(Keycode::Char(b'r'))], transform, false);
-        assert_eq!(state.details_scroll, None);
+        assert_eq!(state.details_offset(), None);
         assert_eq!(state.presentation, CampaignPresentationMode::SherwoodMuseum);
     }
 
@@ -3022,7 +3159,19 @@ mod browser_tests {
             std::sync::Arc::new(crate::mission_replays::RecordingIndex::disabled());
         CampaignMapModalState {
             items: Vec::new(),
-            assets: CampaignMapAssets::default(),
+            assets: CampaignMapAssets {
+                progress_font: Some(Font::TrueType(crate::font::TrueTypeFont::from_parts(
+                    &[0; 32],
+                    15,
+                    0,
+                    0,
+                    &[0; 32],
+                    0x00FFFFFF,
+                    include_bytes!("../../../assets/core-datadir/Data/Interface/Fonts/arial.ttf"),
+                ))),
+                ..CampaignMapAssets::default()
+            },
+            scroll_views: campaign_scroll_views(&CampaignMapAssets::default()),
             frame: FrameWnd::default(),
             exhibit_grid: ExhibitGridNavigator::new(graph.nodes.len(), 0),
             graph,
@@ -3033,8 +3182,7 @@ mod browser_tests {
             selected_progress: 0,
             show_achievement_badges: true,
             achievement_overview: false,
-            details_scroll: None,
-            history_scroll: 0,
+            details_open: false,
             selected_play: 0,
             replay_status: String::new(),
             recording_index,
@@ -3409,6 +3557,7 @@ mod capture_tests {
                         if name == "details-more" { 8 } else { 0 },
                         if name == "details-more" { 10 } else { 0 },
                         "",
+                        None,
                     );
                     let (w, h, pixels) = renderer.try_capture_frame_rgba().expect("read UI pixels");
                     let path = std::path::Path::new(&output)
