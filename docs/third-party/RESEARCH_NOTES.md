@@ -78,3 +78,13 @@ Further comparison targets:
 - [GameStar tips](guides/gamestar-january-2003.md): substantial opening recovered, but remaining pages still need inspection.
 
 No fixes, localization archives, or installers were executed.
+
+## Older Steam reports and community modding tools
+
+Added thirteen records, bringing the collection to 106. Three further Steam index pages exposed older discussions; eight discussions were inspected, including both pages of the sixteen-reply kidnapping thread. Five RH Mods documentation pages were then inspected by following the editor announcement.
+
+The [2019 side-mission report](guides/steam-small-missions-report.md), [2021 kidnapping thread](technical/steam-kidnapping-localization.md), [2025 update report](technical/steam-rescue-update-report.md), and [later ambush discussion](technical/steam-repeated-ambushes.md) preserve distinct symptoms and outcomes. They should not be collapsed into one proven bug: the campaign state, edition, language, and method of changing language differ. Missing-save reports establish neither deletion nor a recovery method. Some recent Steam replies omit the year; no year was inferred for those replies.
+
+The [Spellforge documentation](technical/rhmods-spellforge.md) and [Rhuce description](technical/rhmods-rhuce.md) provide complementary mission and campaign editing leads. Other inspected pages cover assets, profiles, and a developer console. No software was downloaded or executed.
+
+Remaining leads from this pass include the [resolution discussion](https://steamcommunity.com/app/46560/discussions/0/1729828401702969383/), [windowed-mode discussion](https://steamcommunity.com/app/46560/discussions/0/661593286391397444/), and the command-list PDF linked from the [developer-console page](https://rhmods.com/tools/developer-console/). Their substantive contents still need inspection.

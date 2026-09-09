@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **93 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **106 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -43,6 +43,8 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Steam — pre-existing corpses and spared-life statistics](guides/steam-spared-lives-report.md) | English | Opening and all six replies inspected through direct HTML retrieval |
 | [Steam — camp production and mission type discussion](guides/steam-camp-production-report.md) | English | Opening and sole reply inspected through direct HTML retrieval |
 | [Steam — which characters can search bodies?](guides/steam-body-search.md) | English | Opening and both replies inspected through direct HTML retrieval |
+| [Steam — castle access after rescuing Stuteley](guides/steam-second-mission-castle.md) | Opening and both replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
+| [Steam — side-mission loop reported since 2019](guides/steam-small-missions-report.md) | Opening and all six replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
 
 ## Reviews and player impressions
 
@@ -95,6 +97,16 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Steam — Naxyň's Polish localization package](technical/steam-polish-localization.md) | Polish | Guide body and visible comment excerpt inspected |
 | [Steam — Spanish selection still launches English](technical/steam-spanish-language-report.md) | Spanish | Full retrieved discussion inspected |
 | [Steam — cart-ambush completion dialog loop](technical/steam-ambush-dialog-loop.md) | English | Opening and sole reply inspected through direct HTML retrieval |
+| [Steam — repeated ambushes and language-switch outcomes](technical/steam-repeated-ambushes.md) | Opening and all ten replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
+| [Steam — rescue mission still missing after an update](technical/steam-rescue-update-report.md) | Opening and all six replies inspected through direct HTML retrieval. | Discussion text inspected through direct HTML retrieval |
+| [Steam — longstanding kidnapping progression reports](technical/steam-kidnapping-localization.md) | Opening and replies across both pages inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
+| [Steam — missing saves while using a performance fix](technical/steam-save-visibility-report.md) | Full opening inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
+| [Steam — first-level scroll crash under DxWnd](technical/steam-scroll-crash-report.md) | Full opening inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
+| [RH Mods — Spellforge Editor](technical/rhmods-spellforge.md) | English | Page description inspected |
+| [RH Mods — Asset Editor](technical/rhmods-asset-editor.md) | English | Page description inspected |
+| [RH Mods — Developer Console](technical/rhmods-developer-console.md) | English | Page description inspected |
+| [RH Mods — Profile Tool](technical/rhmods-profile-tool.md) | English | Page description inspected |
+| [RH Mods — Rhuce](technical/rhmods-rhuce.md) | English | Page description inspected |
 
 ## Releases, ports, and development
 
@@ -118,6 +130,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Games.cz — completion and regional schedule report](history/tiscali-gold.md) | Czech | Article text inspected; linked press release could not be retrieved |
 | [Games.cz — Czech distribution agreement and trailer](history/tiscali-localization-announcement.md) | Czech | Indexed article text inspected |
 | [GamingOnLinux — platform limitations of a 2013 bundle](history/gamingonlinux-bundle-rights.md) | English | Relevant article passage inspected |
+| [Steam — October 2024 community editor announcement](history/steam-spellforge-announcement.md) | Full announcement and embedded video description inspected through direct HTML retrieval | Discussion text inspected through direct HTML retrieval |
 
 ## Indexes, media, and sources awaiting access
 
