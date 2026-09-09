@@ -98,12 +98,8 @@ fn ordinary_tick_effects_do_not_receive_aggregate_host_authority() {
 fn replay_authority_has_no_process_singleton() {
     struct ReplayStatics;
     impl<'ast> Visit<'ast> for ReplayStatics {
-        fn visit_item_static(&mut self, item: &'ast syn::ItemStatic) {
-            // A test-only serialization lock carries no replay authority.
-            assert_eq!(
-                item.ident, "LOCK",
-                "replay authority must be application-owned, not static"
-            );
+        fn visit_item_static(&mut self, _: &'ast syn::ItemStatic) {
+            panic!("replay authority must be application-owned, not static");
         }
         fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
             assert_ne!(
