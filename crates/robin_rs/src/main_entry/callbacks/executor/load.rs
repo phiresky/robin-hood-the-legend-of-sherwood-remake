@@ -25,6 +25,18 @@ pub(super) struct CurrentMissionLoad {
     save: PreparedLoad,
 }
 
+#[cfg(target_arch = "wasm32")]
+impl CurrentMissionLoad {
+    pub(super) fn replay_directory(&self) -> Option<&std::path::Path> {
+        self.save
+            .save()
+            .header
+            .replay
+            .as_ref()
+            .map(|link| std::path::Path::new(&link.mission_directory))
+    }
+}
+
 impl<'de> serde::Deserialize<'de> for CurrentMissionLoad {
     fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
         Err(serde::de::Error::custom(

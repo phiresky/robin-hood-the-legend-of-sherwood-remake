@@ -12,7 +12,7 @@ use robin_engine::{engine as engine_api, game_operation::GameCode, profiles::Pro
 mod load;
 mod persistence;
 
-pub(super) fn execute(
+pub(super) async fn execute(
     request: SaveLoadRequest,
     save_manager: &mut SaveGameManager,
     notices: &mut AutosaveNotices,
@@ -172,7 +172,8 @@ pub(super) fn execute(
                         assets,
                         profiles,
                         thumb_ref,
-                    );
+                    )
+                    .await;
                 }
                 None => tracing::warn!("Load requested but no matching save slot found"),
             }
@@ -205,7 +206,8 @@ pub(super) fn execute(
                         assets,
                         profiles,
                         thumb_ref,
-                    );
+                    )
+                    .await;
                 }
                 missing => {
                     tracing::error!("Restart snapshot unavailable: {missing:?}");
@@ -329,7 +331,8 @@ pub(super) fn execute(
                                 assets,
                                 profiles,
                                 thumb_ref,
-                            );
+                            )
+                            .await;
                         }
                     }
                 }
@@ -362,7 +365,7 @@ pub(super) fn execute(
 /// Shared stages: validate local identity, publish to peers, route, apply, mirror,
 /// then construct the receipt. Completion policy preserves each caller's UI and
 /// fallback rules; no caller may mark a rejected application as restored.
-fn execute_load(
+async fn execute_load(
     save: PreparedLoad,
     mut completion: load::LoadCompletion,
     save_manager: &mut SaveGameManager,
@@ -375,7 +378,7 @@ fn execute_load(
 ) -> OperationOutcome {
     let restart = matches!(completion, load::LoadCompletion::Restart);
     let multiplayer = host.transport.net().is_some();
-    let result = (|| -> anyhow::Result<OperationOutcome> {
+    let result: anyhow::Result<OperationOutcome> = async {
         if matches!(completion, load::LoadCompletion::Selected(_)) {
             let special = save
                 .slot()
@@ -414,6 +417,16 @@ fn execute_load(
                 });
             }
         };
+        #[cfg(target_arch = "wasm32")]
+        if let Some(directory) = save.replay_directory()
+            && let Err(error) = crate::replay_archive::prepare_browser_directory(
+                directory,
+            ).await
+        {
+            // The save is self-contained. The replay boundary invalidates
+            // recording if its history is unavailable; still apply the save.
+            tracing::error!("Browser replay load preparation failed: {error:#}");
+        }
         let applied = load::apply(save, engine, host, game, assets)?;
         if completion.mirrors_continue() {
             if let Err(error) = save_manager.write_continue_save_background(
@@ -428,7 +441,7 @@ fn execute_load(
             }
         }
         Ok(applied.outcome(completion))
-    })();
+    }.await;
     match result {
         Ok(outcome) => outcome,
         Err(error) => {
