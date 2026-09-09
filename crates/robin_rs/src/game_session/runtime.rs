@@ -14,7 +14,9 @@ use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::engine_manager::EngineManager;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{FrameCommands, PlayerCommand};
-use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
+use robin_engine::replay::ReplayPlayer;
+#[cfg(test)]
+use robin_engine::replay::ReplayRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -2545,7 +2547,7 @@ mod tests {
         );
         assert_eq!(timeline.replay.validity(), &RecordingValidity::Linear);
         assert!(timeline.is_recording());
-        assert!(timeline.replay.has_sealed_header() == false);
+        assert!(!timeline.replay.has_sealed_header());
         assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
         assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
         assert_eq!(
