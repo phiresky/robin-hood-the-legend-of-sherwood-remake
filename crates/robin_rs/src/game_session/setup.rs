@@ -766,8 +766,8 @@ fn canonical_speech_timing_inputs(
     String,
 > {
     let installed_languages = host.application_context().installed_languages()?;
-    let authoritative_locale = if host.transport.net.is_some() {
-        host.transport.speech_timing_locale.clone()
+    let authoritative_locale = if host.transport.net().is_some() {
+        host.transport.speech_timing_locale().map(str::to_owned)
     } else {
         host.application_context()
             .canonical_speech_timing_locale()?
@@ -1251,11 +1251,11 @@ fn apply_custom_mission_text_patch(
 /// The text and interface archives provide both construction metadata and the
 /// later interactive frontend caches. The optional backend owns the native
 /// audio device. None of these values belongs in an engine snapshot.
-pub(super) struct MissionProcessResources {
+pub(super) struct MissionProcessResources<Interface = ResourceManager> {
     pub(super) text: ResourceManager,
-    /// The `DEFAULT.RES` interface archive; `Some` until frontend assembly
-    /// consumes it via [`Self::take_interface`].
-    interface: Option<PendingInterfaceResources>,
+    /// Only the ready stage permits engine metadata extraction. Dispatch and
+    /// collection consume their stages, so neither operation can run twice.
+    interface: Interface,
     pub(super) audio_backend: Option<KiraAudioBackend>,
 }
 
@@ -1264,10 +1264,9 @@ pub(super) struct MissionProcessResources {
 /// [`MissionProcessResources::start_interface_decode`]). The joined pair is
 /// `(cursor, menu)` — two identical fully-decoded `DEFAULT.RES` views, one
 /// for the mission sprite caches and one owned by the in-game menus.
-enum PendingInterfaceResources {
-    Ready {
-        cursor: ResourceManager,
-    },
+pub(super) enum DecodingInterfaceResources {
+    #[cfg(target_arch = "wasm32")]
+    Ready { cursor: ResourceManager },
     #[cfg(not(target_arch = "wasm32"))]
     Thread(std::thread::JoinHandle<(ResourceManager, ResourceManager)>),
     #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
@@ -1290,30 +1289,39 @@ fn decode_interface_managers(mut cursor: ResourceManager) -> (ResourceManager, R
     (cursor, menu)
 }
 
-/// Engine-construction resources for true headless mode. This owner contains
+/// Shared engine-construction resources for graphical and headless missions.
+/// This owner contains
 /// no renderer, input device, HUD, menu, font, or native audio backend.
-pub(super) struct HeadlessEngineResources {
+pub(super) struct MissionEngineResources {
     pub(super) text: ResourceManager,
     cursor: ResourceManager,
 }
 
-impl HeadlessEngineResources {
+impl MissionEngineResources {
     pub(super) fn load(host: &Host) -> Result<Self, String> {
-        let mut text = ResourceManager::with_files(host.preparation_files()?.clone());
-        if let Err(error) =
-            text.attach_or_from_shipping("Data/Text/Level.res", host.frontend.shipping.as_deref())
-        {
+        Ok(Self::load_archives(
+            host.preparation_files()?.clone(),
+            host.frontend.shipping.as_deref(),
+        ))
+    }
+
+    fn load_archives(
+        files: std::sync::Arc<engine_sbfile::SbFileSystem>,
+        shipping: Option<&robin_assets::shipping_datadir::ShippingDatadir>,
+    ) -> Self {
+        // These archives are optional for hackable/headless missions. Preserve
+        // diagnostics for malformed archives as well as missing ones; required
+        // mission data is still rejected by the later preparation stages.
+        let mut text = ResourceManager::with_files(files.clone());
+        if let Err(error) = text.attach_or_from_shipping("Data/Text/Level.res", shipping) {
             tracing::warn!("Failed to load text resource file: {error}");
         }
 
-        let mut cursor = ResourceManager::with_files(host.preparation_files()?.clone());
-        if let Err(error) = cursor.attach_or_from_shipping(
-            "Data/Interface/DEFAULT.RES",
-            host.frontend.shipping.as_deref(),
-        ) {
+        let mut cursor = ResourceManager::with_files(files);
+        if let Err(error) = cursor.attach_or_from_shipping("Data/Interface/DEFAULT.RES", shipping) {
             tracing::warn!("Failed to load cursor resource file: {error}");
         }
-        Ok(Self { text, cursor })
+        Self { text, cursor }
     }
 
     pub(super) fn engine_setup_resources(
@@ -1324,16 +1332,27 @@ impl HeadlessEngineResources {
         Vec<u16>,
         Option<engine_api::MinimapWidgetSetup>,
     ) {
-        let ground_mark_sprite = extract_ground_mark_sprite_data(&mut self.cursor);
-        if let Some(data) = ground_mark_sprite.as_ref() {
-            host.frontend.install_trajectory_ground_mark_sprite(data);
-        }
-        (
-            ground_mark_sprite,
-            extract_titbit_row_frame_counts(&mut self.cursor),
-            extract_minimap_widget_setup(&mut self.cursor),
-        )
+        engine_setup_resources(&mut self.cursor, host)
     }
+}
+
+fn engine_setup_resources(
+    cursor: &mut ResourceManager,
+    host: &mut Host,
+) -> (
+    Option<engine_api::GroundMarkSpriteData>,
+    Vec<u16>,
+    Option<engine_api::MinimapWidgetSetup>,
+) {
+    let ground_mark_sprite = extract_ground_mark_sprite_data(cursor);
+    if let Some(data) = ground_mark_sprite.as_ref() {
+        host.frontend.install_trajectory_ground_mark_sprite(data);
+    }
+    (
+        ground_mark_sprite,
+        extract_titbit_row_frame_counts(cursor),
+        extract_minimap_widget_setup(cursor),
+    )
 }
 
 impl MissionProcessResources {
@@ -1344,35 +1363,13 @@ impl MissionProcessResources {
     ) -> Result<Self, String> {
         let audio_backend = init_audio_backend(host, game, play_loading_menu_music);
 
-        let mut text = ResourceManager::with_files(host.preparation_files()?.clone());
-        if let Err(error) =
-            text.attach_or_from_shipping("Data/Text/Level.res", host.frontend.shipping.as_deref())
-        {
-            tracing::warn!("Failed to load text resource file: {error}");
-        }
-
-        let mut cursor = ResourceManager::with_files(host.preparation_files()?.clone());
-        if let Err(error) = cursor.attach_or_from_shipping(
-            "Data/Interface/DEFAULT.RES",
-            host.frontend.shipping.as_deref(),
-        ) {
-            tracing::warn!("Failed to load cursor resource file: {error}");
-        }
+        let MissionEngineResources { text, cursor } = MissionEngineResources::load(host)?;
 
         Ok(Self {
             text,
-            interface: Some(PendingInterfaceResources::Ready { cursor }),
+            interface: cursor,
             audio_backend,
         })
-    }
-
-    /// The interface archive for pre-engine metadata extraction. Panics if
-    /// the pre-decode was already dispatched — extraction must come first.
-    fn interface_cursor_mut(&mut self) -> &mut ResourceManager {
-        match self.interface.as_mut() {
-            Some(PendingInterfaceResources::Ready { cursor }) => cursor,
-            _ => panic!("interface archive already dispatched to the pre-decode worker"),
-        }
     }
 
     /// Move the interface archive onto a worker that eagerly decodes every
@@ -1380,56 +1377,18 @@ impl MissionProcessResources {
     /// of decoding hundreds of interface images on the loading path. No-op
     /// when no worker can run it (single-threaded wasm) — the lazy per-
     /// resource decode then behaves exactly as before.
-    pub(super) fn start_interface_decode(&mut self) {
-        let Some(PendingInterfaceResources::Ready { cursor }) = self.interface.take() else {
-            panic!("interface pre-decode dispatched twice");
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let handle = std::thread::Builder::new()
-                .name("interface-decode".into())
-                .spawn(move || decode_interface_managers(cursor))
-                .expect("failed to spawn interface decode thread");
-            self.interface = Some(PendingInterfaceResources::Thread(handle));
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            #[cfg(feature = "wasm-threads")]
-            if robin_assets::wasm_threads::pool_threads() > 0 {
-                self.interface = Some(PendingInterfaceResources::Pool(
-                    robin_assets::wasm_threads::start_on_pool(move || {
-                        decode_interface_managers(cursor)
-                    }),
-                ));
-                return;
-            }
-            self.interface = Some(PendingInterfaceResources::Ready { cursor });
-        }
-    }
-
-    /// Collect the `(cursor, menu)` interface managers for frontend
-    /// assembly, waiting for the pre-decode worker when one is running.
-    /// Never blocks the wasm main thread (the pool variant is awaited).
-    pub(super) async fn take_interface(&mut self) -> (ResourceManager, ResourceManager) {
-        match self
-            .interface
-            .take()
-            .expect("interface archive already consumed")
-        {
-            PendingInterfaceResources::Ready { cursor } => {
-                // No worker ran: hand the menus their own lazily-decoded
-                // copy, exactly like the old second attach.
-                let menu = cursor.duplicate();
-                (cursor, menu)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            PendingInterfaceResources::Thread(handle) => {
-                handle.join().expect("interface decode thread panicked")
-            }
-            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
-            PendingInterfaceResources::Pool(receiver) => receiver
-                .await
-                .expect("interface decode worker dropped its result"),
+    pub(super) fn start_interface_decode(
+        self,
+    ) -> MissionProcessResources<DecodingInterfaceResources> {
+        let Self {
+            text,
+            interface: cursor,
+            audio_backend,
+        } = self;
+        MissionProcessResources {
+            text,
+            interface: DecodingInterfaceResources::start(cursor),
+            audio_backend,
         }
     }
 
@@ -1441,16 +1400,69 @@ impl MissionProcessResources {
         Vec<u16>,
         Option<engine_api::MinimapWidgetSetup>,
     ) {
-        let cursor = self.interface_cursor_mut();
-        let ground_mark_sprite = extract_ground_mark_sprite_data(cursor);
-        let titbit_rows = extract_titbit_row_frame_counts(cursor);
-        let minimap_widget = extract_minimap_widget_setup(cursor);
-        if let Some(data) = ground_mark_sprite.as_ref() {
-            host.frontend.install_trajectory_ground_mark_sprite(data);
+        engine_setup_resources(&mut self.interface, host)
+    }
+}
+
+impl DecodingInterfaceResources {
+    fn start(cursor: ResourceManager) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let handle = std::thread::Builder::new()
+                .name("interface-decode".into())
+                .spawn(move || decode_interface_managers(cursor))
+                .expect("failed to spawn interface decode thread");
+            Self::Thread(handle)
         }
-        (ground_mark_sprite, titbit_rows, minimap_widget)
+        #[cfg(target_arch = "wasm32")]
+        {
+            #[cfg(feature = "wasm-threads")]
+            if robin_assets::wasm_threads::pool_threads() > 0 {
+                return Self::Pool(robin_assets::wasm_threads::start_on_pool(move || {
+                    decode_interface_managers(cursor)
+                }));
+            }
+            Self::Ready { cursor }
+        }
     }
 
+    /// Collect the `(cursor, menu)` interface managers for frontend
+    /// assembly, waiting for the pre-decode worker when one is running.
+    /// Never blocks the wasm main thread (the pool variant is awaited).
+    async fn collect(self) -> (ResourceManager, ResourceManager) {
+        match self {
+            #[cfg(target_arch = "wasm32")]
+            Self::Ready { cursor } => {
+                // No worker ran: hand the menus their own lazily-decoded
+                // copy, exactly like the old second attach.
+                let menu = cursor.duplicate();
+                (cursor, menu)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Thread(handle) => handle.join().expect("interface decode thread panicked"),
+            #[cfg(all(target_arch = "wasm32", feature = "wasm-threads"))]
+            Self::Pool(receiver) => receiver
+                .await
+                .expect("interface decode worker dropped its result"),
+        }
+    }
+}
+
+impl MissionProcessResources<DecodingInterfaceResources> {
+    pub(super) async fn collect(
+        self,
+    ) -> (
+        ResourceManager,
+        ResourceManager,
+        ResourceManager,
+        Option<KiraAudioBackend>,
+    ) {
+        let (cursor, menu) = self.interface.collect().await;
+        (self.text, cursor, menu, self.audio_backend)
+    }
+}
+
+impl<Interface> MissionProcessResources<Interface> {
     pub(super) fn resolve_short_briefings(
         &mut self,
         level_descriptors: Option<&assets_res_descr::LevelDescriptors>,
@@ -2622,9 +2634,9 @@ pub(super) fn prepare_mission(
     // Populate every simulation-visible audio dependency before preparing
     // the engine. PreparedMissionInputs seals LevelAssets immediately, so a
     // post-construction host reread would leave replay identity incomplete.
-    let dynamic_ambience_enabled = if host.transport.net.is_some() {
+    let dynamic_ambience_enabled = if host.transport.net().is_some() {
         host.transport
-            .mission_sim_config
+            .mission_sim_config()
             .unwrap_or_else(|| {
                 panic!("active multiplayer transport is missing its Welcome SimConfig")
             })
@@ -2787,11 +2799,11 @@ pub(super) fn prepare_mission(
         );
     }
 
-    let (rng_seed, sim_config) = if host.transport.net.is_some() {
-        let rng_seed = host.transport.mission_seed.unwrap_or_else(|| {
+    let (rng_seed, sim_config) = if host.transport.net().is_some() {
+        let rng_seed = host.transport.mission_seed().unwrap_or_else(|| {
             panic!("active multiplayer transport is missing its Welcome mission seed")
         });
-        let sim_config = host.transport.mission_sim_config.unwrap_or_else(|| {
+        let sim_config = host.transport.mission_sim_config().unwrap_or_else(|| {
             panic!("active multiplayer transport is missing its Welcome SimConfig")
         });
         (rng_seed, sim_config)
@@ -3175,7 +3187,7 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
             assets,
             engine_api::SimulationFrameInput::new(vec![engine_api::SimCommand::from(
                 PlayerCommand::ConnectSeat {
-                    player_id: host.transport.local_seat,
+                    player_id: host.transport.local_seat(),
                     nickname,
                 },
             )])
@@ -3183,10 +3195,10 @@ pub(super) fn setup_local_seat_and_multiplayer_snapshot(
         )
         .expect("bootstrap ConnectSeat admission");
     tracing::info!(
-        seat = ?host.transport.local_seat,
+        seat = ?host.transport.local_seat(),
         "bootstrap ConnectSeat applied to local engine",
     );
-    if let Some(net) = host.transport.net.as_ref() {
+    if let Some(net) = host.transport.net() {
         match net
             .publish_initial_snapshot(0, engine)
             .and_then(|()| net.send_ready_to_sim(0))
@@ -3373,6 +3385,102 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::io::Write;
+
+    fn interface_stage_fixture() -> ResourceManager {
+        let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
+        value["strings"] = serde_json::json!({"123": ["stage fixture"]});
+        let picture = robin_assets::picture::Picture {
+            width: 2,
+            height: 1,
+            pitch: 4,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: vec![0xc0, 0x07, 0xff, 0xff],
+            palette: None,
+        };
+        value["pictures"][resource_ids::RHID_GROUND_FOCUS.to_string()] =
+            serde_json::to_value(vec![Some(picture)]).unwrap();
+        serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn graphical_and_headless_stages_extract_identical_engine_metadata() {
+        let cursor = interface_stage_fixture();
+        let mut graphical = MissionProcessResources {
+            text: ResourceManager::new(),
+            interface: cursor.duplicate(),
+            audio_backend: None,
+        };
+        let mut headless = MissionEngineResources {
+            text: ResourceManager::new(),
+            cursor,
+        };
+        let mut graphical_host = Host::scratch(800.0, 600.0);
+        let mut headless_host = Host::scratch(800.0, 600.0);
+        let graphical_metadata = graphical.engine_setup_resources(&mut graphical_host);
+        let headless_metadata = headless.engine_setup_resources(&mut headless_host);
+        let ground = graphical_metadata
+            .0
+            .as_ref()
+            .expect("fixture ground geometry");
+        assert_eq!(ground.frame_sizes, vec![(2, 1)]);
+        assert_eq!(ground.per_frame_offsets, vec![(1, 0)]);
+        assert_eq!(
+            serde_json::to_value(graphical_metadata).unwrap(),
+            serde_json::to_value(headless_metadata).unwrap()
+        );
+    }
+
+    #[test]
+    fn mission_archives_require_owned_preparation_authority() {
+        let host = Host::scratch(800.0, 600.0);
+        assert!(MissionEngineResources::load(&host).is_err());
+    }
+
+    #[test]
+    fn optional_mission_archives_preserve_absent_and_malformed_fallbacks() {
+        use robin_util::asset_fs::{AssetVfs, Bundle};
+        use std::sync::Arc;
+        for malformed in [false, true] {
+            let vfs = Arc::new(AssetVfs::new());
+            if malformed {
+                vfs.mount_bundle_first(Arc::new(Bundle::from([
+                    (
+                        "Data/Text/Level.res".into(),
+                        b"invalid archive".to_vec().into(),
+                    ),
+                    (
+                        "Data/Interface/DEFAULT.RES".into(),
+                        b"invalid archive".to_vec().into(),
+                    ),
+                ])))
+                .unwrap();
+            }
+            let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
+            let mut probe = ResourceManager::with_files(files.clone());
+            assert!(probe.attach_resource_file("Data/Text/Level.res").is_err());
+            let loaded = MissionEngineResources::load_archives(files, None);
+            assert!(loaded.text.is_empty());
+            assert!(loaded.cursor.is_empty());
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn interface_decode_consumes_ready_stage_and_preserves_both_frontend_views() {
+        let process = MissionProcessResources {
+            text: interface_stage_fixture(),
+            interface: interface_stage_fixture(),
+            audio_backend: None,
+        };
+        let decoding: MissionProcessResources<DecodingInterfaceResources> =
+            process.start_interface_decode();
+        let (mut text, mut cursor, mut menu, audio) = pollster::block_on(decoding.collect());
+        assert!(audio.is_none());
+        for manager in [&mut text, &mut cursor, &mut menu] {
+            assert_eq!(manager.get_string(123, 0).unwrap(), "stage fixture");
+        }
+        assert_ne!(cursor.cache_identity(), menu.cache_identity());
+    }
 
     fn prepared_stage_fixture() -> PreparedMission {
         let mut assets = LevelAssets::new();
