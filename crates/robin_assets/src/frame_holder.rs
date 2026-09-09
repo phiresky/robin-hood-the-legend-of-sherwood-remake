@@ -1226,7 +1226,7 @@ impl FrameHolder {
             0.92,
         ));
         let dic_bytes = files
-            .read_all(&dic_path)
+            .read_shared(&dic_path)
             .map_err(|e| anyhow!("read sprite index '{dic_path}': error {e}"))?;
         self.load_sprite_index_bytes(&dic_bytes, bank_len_words, progress)?;
         self.sprite_streaming = None;

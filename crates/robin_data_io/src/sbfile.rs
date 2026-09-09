@@ -1008,8 +1008,14 @@ impl SbFileSystem {
         Err(SBFILE_ERROR_FILE_NOT_FOUND)
     }
 
+    /// Read through the same overlay, locale, and confinement rules as `open`,
+    /// retaining shared backing storage for memory-mounted files.
+    pub fn read_shared(&self, path: &str) -> Result<AssetBytes, i32> {
+        Ok(self.open(path, SB_FILE_READ)?.into_shared_bytes())
+    }
+
     pub fn read_all(&self, path: &str) -> Result<Vec<u8>, i32> {
-        Ok(self.open(path, SB_FILE_READ)?.into_bytes())
+        self.read_shared(path).map(AssetBytes::into_vec)
     }
 }
 
@@ -1041,14 +1047,17 @@ impl SbFile {
         global_file_system().read_all(path)
     }
 
-    /// Consume the stream and return its full backing buffer.
-    ///
-    /// Open buffers the entire file up front, so callers that want all
-    /// the bytes can take the buffer directly instead of copying it
-    /// back out through the stream API — for the sprite bank that copy
-    /// is hundreds of megabytes.
+    /// Consume the stream and retain its full backing buffer, irrespective of
+    /// the current cursor position. Shared memory-mounted bytes are not copied.
+    pub fn into_shared_bytes(self) -> AssetBytes {
+        self.file.into_inner()
+    }
+
+    /// Consume the stream as an owned buffer. Unique storage is transferred;
+    /// memory-mounted storage is copied if other readers still share it.
+    /// Read-only consumers should prefer [`Self::into_shared_bytes`].
     pub fn into_bytes(self) -> Vec<u8> {
-        self.file.into_inner().into_vec()
+        self.into_shared_bytes().into_vec()
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> i32 {
@@ -3068,6 +3077,37 @@ mod tests {
                 .read_all("Data/Interface/UI/allied_portrait_background.png")
                 .unwrap(),
             b"png"
+        );
+    }
+
+    #[test]
+    fn shared_reads_retain_vfs_storage_and_ignore_the_stream_cursor() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let path = "Data/Interface/shared-read-fixture.bin";
+        assets
+            .install_preloaded_asset(path, b"shared bytes".to_vec())
+            .unwrap();
+        let source = assets.read_shared(path).unwrap();
+        let file_system = SbFileSystem::new(assets.clone());
+        let shared = file_system.read_shared(path).unwrap();
+        assert_eq!(shared.as_ptr(), source.as_ptr());
+        assert_eq!(file_system.read_all(path).unwrap(), source.as_ref());
+
+        let mut stream = file_system.open(path, SB_FILE_READ).unwrap();
+        let mut prefix = [0; 2];
+        assert_eq!(stream.read(&mut prefix), SBFILE_NO_ERROR);
+        assert_eq!(prefix, *b"sh");
+        let backing = stream.into_shared_bytes();
+        assert_eq!(backing.as_ref(), b"shared bytes");
+        assert_eq!(backing.as_ptr(), source.as_ptr());
+
+        assets
+            .install_preloaded_asset(path, b"replacement".to_vec())
+            .unwrap();
+        assert_eq!(shared.as_ref(), b"shared bytes");
+        assert_eq!(
+            file_system.read_shared(path).unwrap().as_ref(),
+            b"replacement"
         );
     }
 

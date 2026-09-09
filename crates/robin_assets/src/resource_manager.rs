@@ -620,7 +620,7 @@ impl ResourceManager {
     pub fn attach_resource_file(&mut self, path: &str) -> Result<()> {
         let bytes = self
             .files()?
-            .read_all(path)
+            .read_shared(path)
             .map_err(|e| anyhow!("read resource file '{path}': error {e}"))?;
         self.attach_resource_bytes(&bytes, path)
     }
@@ -782,7 +782,7 @@ impl ResourceManager {
 
         let bytes = self
             .files()?
-            .read_all(&entry.file_path)
+            .read_shared(&entry.file_path)
             .map_err(|e| anyhow!("recovery read '{}': error {e}", entry.file_path))?;
         let offset = usize::try_from(entry.file_offset)
             .context("resource recovery offset does not fit usize")?;
