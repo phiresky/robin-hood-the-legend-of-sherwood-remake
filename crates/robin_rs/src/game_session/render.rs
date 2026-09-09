@@ -1023,7 +1023,7 @@ pub(super) fn update_mouse_and_cursor(
 ) {
     let mouse_screen = threaded_input.position();
     let portrait_hit = hit_test_portrait_detailed(
-        engine,
+        &engine.presentation_view(),
         host.transport.local_seat(),
         portrait_cache,
         renderer.screen_width(),
