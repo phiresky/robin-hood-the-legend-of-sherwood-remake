@@ -279,6 +279,8 @@ pub(super) async fn process_operation_and_save(
         // Flush any pending save before returning (e.g. the
         // quit-time continue save).
         suppress_load_requests_during_playback(runtime, callbacks);
+        #[cfg(target_arch = "wasm32")]
+        callbacks.prepare_browser_replay_load().await;
         let mut save_load = perform_pending_save_load(
             host,
             game,
@@ -325,6 +327,8 @@ pub(super) async fn process_operation_and_save(
         ))));
     }
     suppress_load_requests_during_playback(runtime, callbacks);
+    #[cfg(target_arch = "wasm32")]
+    callbacks.prepare_browser_replay_load().await;
     let mut save_load = perform_pending_save_load(
         host,
         game,
