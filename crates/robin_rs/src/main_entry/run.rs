@@ -1213,6 +1213,23 @@ async fn wait_for_replay_command(
 #[cfg(test)]
 mod early_replay_tests {
     #[test]
+    fn shutdown_failure_does_not_hide_the_original_application_failure() {
+        assert_eq!(super::finish_application(Ok(7), Ok(())), Ok(7));
+        assert_eq!(
+            super::finish_application(Err("run".into()), Ok(())),
+            Err("run".into())
+        );
+        assert_eq!(
+            super::finish_application(Ok(7), Err("drain".into())),
+            Err("application shutdown: drain".into())
+        );
+        assert_eq!(
+            super::finish_application(Err("run".into()), Err("drain".into())),
+            Err("run; application shutdown: drain".into())
+        );
+    }
+
+    #[test]
     fn early_mode_is_default_and_late_ablation_rejects_typos() {
         assert_eq!(super::replay_preparation_mode(None), Ok(true));
         assert_eq!(super::replay_preparation_mode(Some("late")), Ok(false));

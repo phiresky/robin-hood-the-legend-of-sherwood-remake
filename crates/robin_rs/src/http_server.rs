@@ -387,6 +387,9 @@ pub struct NativeCall {
 /// path doesn't pay a base64 tax.
 pub enum ReplyBody {
     Json(serde_json::Value),
+    /// Encoding is owned by the replay service; the transport awaits only the
+    /// result, under the same deadline/retirement guard as the original request.
+    ReplayExport(crate::replay_service::ExportResult),
     Binary {
         content_type: &'static str,
         data: Vec<u8>,
@@ -404,6 +407,17 @@ impl From<serde_json::Value> for ReplyBody {
 /// `Ok(body)` becomes a 200 with the matching Content-Type; `Err`
 /// becomes a 400 with `{"error": msg}` (always JSON).
 pub type Reply = Result<ReplyBody, String>;
+
+async fn resolve_deferred_reply(reply: Reply) -> Reply {
+    match reply? {
+        ReplyBody::ReplayExport(result) => result
+            .recv()
+            .await
+            .map_err(|error| format!("replay export worker dropped its result: {error}"))?
+            .map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))),
+        body => Ok(body),
+    }
+}
 
 mod request_lifetime;
 pub use request_lifetime::Responder;
@@ -1082,7 +1096,12 @@ async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
     let reply = tokio::select! {
         biased;
         _ = retirement.recv() => return (400, serde_json::json!({"error": "HTTP transport stopped"}).into()),
-        reply = rx.recv() => reply,
+        reply = async {
+            match rx.recv().await {
+                Ok(reply) => Ok(resolve_deferred_reply(reply).await),
+                Err(error) => Err(error),
+            }
+        } => reply,
         _ = tokio::time::sleep_until(deadline.into()) => {
             rx.expire();
             return (504, serde_json::json!({"error": "game loop did not process the request within 60s; already-admitted work may complete"}).into());
@@ -2068,10 +2087,7 @@ where
 // ──────────────────────────────────────────────────────────────────
 
 fn start_replay_export(exports: &crate::replay_service::ReplayExports, response_tx: Responder) {
-    exports.export(Box::new(move |result| {
-        response_tx
-            .send(result.map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))));
-    }));
+    response_tx.send(Ok(ReplyBody::ReplayExport(exports.export())));
 }
 
 /// Per-frame replay-playback status surfaced to the script-RPC
@@ -2704,6 +2720,9 @@ pub mod wasm_rpc {
 
     fn reply_to_js(reply: Reply) -> Result<JsValue, JsValue> {
         match reply {
+            Ok(ReplyBody::ReplayExport(_)) => {
+                panic!("deferred replay export must be resolved before JavaScript encoding")
+            }
             Ok(ReplyBody::Json(value)) => {
                 use serde::Serialize;
 
@@ -2772,7 +2791,10 @@ pub mod wasm_rpc {
         use futures::FutureExt as _;
         let reply = futures::select_biased! {
             _ = retirement.recv().fuse() => return Err(JsValue::from_str("HTTP transport stopped")),
-            reply = rx.recv().fuse() => reply.map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?,
+            reply = async {
+                let reply = rx.recv().await.map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?;
+                Ok::<_, JsValue>(super::resolve_deferred_reply(reply).await)
+            }.fuse() => reply?,
         };
         reply_to_js(reply)
     }
