@@ -1,6 +1,45 @@
 # Achievement proposals for Robin Hood: The Legend of Sherwood
 
-Research date: 9 September 2026. Scope: the original game's identity, the current Rust port, campaign achievements, and individual-mission challenges. This is a design report; nothing below adds achievements to the implementation. Story spoilers follow.
+Research date: 9 September 2026. Updated with the accepted selection below. Story spoilers follow. The accepted table is the current implementation scope; the original research and candidate lists that follow are background.
+
+**Accepted achievements and award scope**
+
+Use a **mission badge** when playing a different mission creates a meaningfully different tactical puzzle. Use a **campaign achievement** for a memorable one-time feat, a discovery, or an accomplishment spanning a campaign. A campaign achievement is recorded once for the campaign/player; it does not mean repeating its condition in every mission. Only the two explicitly marked full-campaign badge collections require mission-by-mission coverage.
+
+| Achievement | Mission badge | Campaign achievement | Accepted condition and reason for its scope |
+| --- | --- | --- | --- |
+| **Clean Hands** | Yes | Yes — full campaign | Win without kills under the selected causality rule. Each mission offers a different nonlethal problem; completing a whole campaign mercifully is also a coherent long-term challenge. |
+| **Ghost** | Yes | Yes — full campaign | Win without being observed by a living hostile. Patrols, routes, and objectives make each mission different; full-campaign stealth is also a worthwhile goal. |
+| **Pile-o-Bones** | No | Yes — once | Get ten out-of-order NPCs into one building in a successful mission. A comic feat to pull off once; carrying ten bodies should not become a checklist on every map. |
+| **Ruthless** | Yes | No | Kill every enemy and complete the mission. Different garrisons, reinforcements, and terrain make this a mission-specific clearing challenge. No additional campaign-wide extermination grind. |
+| **I'm off home** | Yes | No | Make every `ManCivilianRich` and `WomanCivilianRich` unconscious at least once during a successful mission. They may wake up later. Finding and reaching the complete rich-civilian population creates a different route/coverage puzzle on each eligible mission. Unavailable when there are none. |
+| **Nothing in Return** — replaces part of C5 | No | Yes — once | Give a beggar money after their information is exhausted and receive no information in return. A discovery about generosity, not a payment to repeat on every map. |
+| **Word on the Street** — replaces part of C5 | Yes | No | Get all information from all beggars in a successful mission. The people, hint chains, and access routes belong to that particular mission. Unavailable when there are no relevant beggars. |
+| **Earned, Not Bought** — replaces part of C7 | Yes | No | Complete a banner mission without purchasing any preparation banners. A distinct preparation challenge for each eligible mission. |
+| **Spare No Expense** — replaces part of C7 | Yes | No | Complete a banner mission with every purchasable preparation banner purchased. Buy the full preparation allotment; simply having enough banners after earning some is insufficient. Unavailable on non-banner missions. |
+| **A Legend Is Born** — C1 | No | Yes — campaign completion | Complete the full campaign. Straightforward recognition for finishing the story. |
+| **For King Richard** — C2 | No | Yes — story milestone | Reach the actual ransom dispatch/payment milestone, rather than a guessed wallet threshold. Celebrate that narrative accomplishment once. |
+| **The Whole Merry Company** — C3 | No | Yes — full campaign | Finish after recruiting all five named companions and winning at least one mission with each under player control. A campaign about the whole cast. |
+| **No Empty Places at the Table** — C4 | No | Yes — full campaign | Finish without permanently losing any recruited hero or generic Merry Man, including strategic assignments. Capture and recoverable coma are not permanent deaths; save/load is allowed. |
+| **Many Hands Make Sherwood** — C6 | No | Yes — full campaign | Finish after three distinct generic Merry Men each contribute to a successful mission and complete production or training in Sherwood. Connect the band in the field with the headquarters crew across a campaign. |
+| **Kill a Civilian** | No | Yes — once | Kill any civilian during play. Civilians resist many effects and cannot normally be attacked directly, so discovering a working method is the achievement. Exclude civilians already dead at initialization; document which indirect deaths qualify. |
+| **Leave Everyone Standing** — M1 | Yes | No | Win unseen without harming or incapacitating any NPC. Distractions are allowed. Stricter than Ghost + Clean Hands, which still permits unseen knockouts, binding, and hiding bodies. Different routes make this replayable; offer it only where a valid solution exists. |
+| **Not a Scratch** — M3 | Yes | No | Win without any deployed or newly controlled party member losing health. Healing cannot erase damage. Each mission offers a different challenge; a whole-campaign damage-free requirement would be excessive. |
+| **On My Mark** — M6 | No | Yes — once | In one quick-action execution, three characters successfully perform tactical actions on three distinct hostile targets, then win. Demonstrate coordination once; do not manufacture the same setup on every map. |
+| **You Never Saw Us Leave** — M9 | No | Yes — once | Escape at least three simultaneous pursuers without killing them or leaving the map, then win. A memorable recovery, not an incentive to deliberately trigger an alarm in every mission. |
+| **String Theory** — M10 | No | Yes — once | Finish a mission with three distinct player-knocked-out enemies alive, bound, and inside a building. Demonstrate the capture-and-hide workflow once. |
+| **A Round on the Friar** — M11 | No | Yes — once | Have three distinct hostile soldiers drink beer placed by Tuck in one successful mission. A character moment; repeated beer quotas would be busywork. |
+| **Something in the Air** — M12 | No | Yes — once | Affect three distinct hostiles with one player-thrown wasp nest, then win. A spectacular feat rather than a quota for every location. Count real effects from the same nest. |
+| **A Different Kind of Scarlet** — M13 | No | Yes — once | Have Will Scarlet knock out **six** distinct hostiles with his sling in one successful mission that also earns Clean Hands. A one-time invitation to use his nonlethal ability, not an obligation on every mission. |
+| **The People Behind the Legend** — M14 | Yes | No | Win an eligible optional mission with only generic Merry Men. Different objectives and terrain change how the substitute team solves each mission. Exclude missions requiring a named hero. |
+
+**Scope totals:** 24 accepted achievements: 8 mission-only, 14 campaign-only, and 2 at both scopes. A mission therefore has at most 10 badge types, reduced by eligibility; the campaign/player has 16 achievement types. One-time campaign feats do not require campaign completion unless explicitly stated above.
+
+Clean Hands and Ghost retain the existing campaign-mastery model: collect eligible badge evidence for every mission in one completed campaign path, including later practice on that path. Do not combine different campaigns or imply an uninterrupted no-reload run. C4 is different: practice cannot undo a permanent loss in progression history. All parts of a one-time feat must occur in the same successful attempt.
+
+**Removed or not accepted:** remove **All Enemies Stashed** entirely. Replace C5 with the two beggar achievements and C7 with the two banner badges above. Reject C8 as an ordinary campaign constraint: civilians cannot normally be killed through direct attacks; the separately accepted **Kill a Civilian** instead rewards finding an unusual working method. Reject M2, M4, M5, M7, and M8. C9, C10, and the S1–S10 authored candidates have not been approved. The old shortlist below is historical research, not an implementation checklist.
+
+**Research background and original candidates**
 
 **Recommendation**
 
