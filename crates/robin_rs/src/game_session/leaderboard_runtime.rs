@@ -91,7 +91,7 @@ impl RankedMissionAdmission {
         if !matches!(self, Self::Signed(_)) {
             return Ok(());
         }
-        let replay = crate::http_server::active_replay_snapshot()?.parse_sync()?;
+        let replay = crate::replay_service::process().snapshot()?.parse_sync()?;
         self.materialize_terminal_from_replay(mission_id, starting_campaign_bytes, &replay)
     }
 

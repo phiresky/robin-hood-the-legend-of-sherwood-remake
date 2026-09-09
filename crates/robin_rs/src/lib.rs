@@ -289,6 +289,7 @@ pub mod profiler;
 pub mod recon_report;
 pub mod renderer;
 pub mod replay_format;
+pub mod replay_service;
 pub mod rewind;
 pub mod rollback_checker;
 pub mod save_file;

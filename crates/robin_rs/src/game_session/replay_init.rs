@@ -58,7 +58,7 @@ fn mission_start_input_taints(
 /// `replay`) so the recorder itself stays filesystem-agnostic.
 struct TeeWriter {
     primary: Box<dyn std::io::Write + Send>,
-    mirror: crate::http_server::ReplaySpoolWriter,
+    mirror: crate::replay_service::ReplaySpoolWriter,
 }
 
 impl std::io::Write for TeeWriter {
@@ -133,7 +133,7 @@ fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
 pub(super) fn restart_recording(
     header: robin_engine::replay::ReplayHeader,
 ) -> std::io::Result<ReplayRecorder> {
-    let mirror = crate::http_server::reset_replay_buffer();
+    let mirror = crate::replay_service::process().begin_recording();
     #[cfg(all(not(target_arch = "wasm32"), not(test)))]
     let primary: Box<dyn std::io::Write + Send> = {
         let default_path = std::path::PathBuf::from(default_replay_path());
@@ -204,7 +204,7 @@ pub(super) fn init_replay_and_rollback(
     // mission construction. Reseeding an already-built Engine cannot recreate
     // random draws performed during level initialization.
     assert!(
-        crate::http_server::peek_pending_replay_mission_id().is_none(),
+        crate::replay_service::process().pending_mission().is_none(),
         "pending replay must be consumed and supplied before mission Engine construction"
     );
     let pending_paused = false;
@@ -221,7 +221,7 @@ pub(super) fn init_replay_and_rollback(
     let replay_path: Option<String> = None;
     // A fresh mission gets a fresh generation of the bounded spool. The
     // returned sole writer publishes only complete recorder flush boundaries.
-    let rpc_spool = crate::http_server::reset_replay_buffer();
+    let rpc_spool = crate::replay_service::process().begin_recording();
     // One-shot mission-map rendering exits before the first simulation
     // frame, so producing an empty replay (and its debug log) would only be
     // an unrelated filesystem side effect of the capture tool.
@@ -430,7 +430,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        crate::http_server::replay_spool_test_lock()
+        crate::replay_service::replay_spool_test_lock()
     }
 
     struct ControlledPrimary {
@@ -473,7 +473,7 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(false)),
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
-            mirror: crate::http_server::reset_replay_buffer(),
+            mirror: crate::replay_service::process().begin_recording(),
         };
         tee.write_all(b"complete replay record\n").unwrap();
         tee.flush().unwrap();
@@ -485,7 +485,7 @@ mod tests {
             b"complete replay record\n"
         );
         assert_eq!(
-            crate::http_server::replay_buffer_snapshot().unwrap(),
+            crate::replay_service::process().snapshot_bytes().unwrap(),
             b"complete replay record\n"
         );
     }
@@ -521,10 +521,12 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(true)),
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
-            mirror: crate::http_server::reset_replay_buffer(),
+            mirror: crate::replay_service::process().begin_recording(),
         };
         assert!(tee.write_all(b"rejected\n").is_err());
-        let error = crate::http_server::replay_buffer_snapshot().unwrap_err();
+        let error = crate::replay_service::process()
+            .snapshot_bytes()
+            .unwrap_err();
         assert!(error.contains("primary replay write failed"), "{error}");
         assert!(
             primary_bytes
@@ -540,10 +542,12 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(false)),
                 fail_flush: Arc::new(AtomicBool::new(false)),
             }),
-            mirror: crate::http_server::reset_replay_buffer(),
+            mirror: crate::replay_service::process().begin_recording(),
         };
         assert!(tee.write_all(b"zero progress\n").is_err());
-        let error = crate::http_server::replay_buffer_snapshot().unwrap_err();
+        let error = crate::replay_service::process()
+            .snapshot_bytes()
+            .unwrap_err();
         assert!(error.contains("made no progress"), "{error}");
         assert!(
             primary_bytes
@@ -559,7 +563,7 @@ mod tests {
                 fail_write: Arc::new(AtomicBool::new(false)),
                 fail_flush: Arc::new(AtomicBool::new(true)),
             }),
-            mirror: crate::http_server::reset_replay_buffer(),
+            mirror: crate::replay_service::process().begin_recording(),
         };
         tee.write_all(b"accepted by primary\n").unwrap();
         assert!(tee.flush().is_err());
@@ -570,7 +574,9 @@ mod tests {
                 .as_slice(),
             b"accepted by primary\n"
         );
-        let error = crate::http_server::replay_buffer_snapshot().unwrap_err();
+        let error = crate::replay_service::process()
+            .snapshot_bytes()
+            .unwrap_err();
         assert!(error.contains("primary replay flush failed"), "{error}");
         assert!(tee.flush().is_err(), "poisoned mirror must not recover");
     }

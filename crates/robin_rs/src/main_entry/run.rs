@@ -92,7 +92,7 @@ pub fn start_browser_replay_preparation(
             // assumption or another parse of URL bytes.
             loop {
                 crate::http_server::drain_pre_engine();
-                if let Some(pending) = crate::http_server::take_pending_replay() {
+                if let Some(pending) = crate::replay_service::process().take_pending() {
                     let mut prepared_profiles = profiles.clone();
                     let launch = crate::game_session::prepare_replay_launch(
                         &context,
@@ -105,7 +105,7 @@ pub fn start_browser_replay_preparation(
                     // Cold/custom resolution can yield. Respect a newer
                     // queued replay before starting any earlier one's I/O.
                     crate::http_server::drain_pre_engine();
-                    if crate::http_server::peek_pending_replay_mission_id().is_some() {
+                    if crate::replay_service::process().pending_mission().is_some() {
                         continue;
                     }
                     let shipping = context.shipping_arc()?;
@@ -163,7 +163,7 @@ pub async fn run_rust_game_with_browser_preparation(
                 .await
                 .map_err(|error| format!("early replay preparation dropped: {error}"))??;
             crate::http_server::drain_pre_engine();
-            if crate::http_server::peek_pending_replay_mission_id().is_some() {
+            if crate::replay_service::process().pending_mission().is_some() {
                 // Supersession before mission construction releases and aborts
                 // the old prefix. The normal queue path takes the latest one.
                 drop(prepared);
@@ -299,9 +299,11 @@ async fn run_rust_game_inner(
                 prepared.launch
             } else {
                 wait_for_replay_command(window).await;
-                let pending = crate::http_server::take_pending_replay().ok_or_else(|| {
-                    "--wait-for-command: replay disappeared before mission start".to_string()
-                })?;
+                let pending = crate::replay_service::process()
+                    .take_pending()
+                    .ok_or_else(|| {
+                        "--wait-for-command: replay disappeared before mission start".to_string()
+                    })?;
                 crate::game_session::prepare_replay_launch(
                     &application_context,
                     std::sync::Arc::make_mut(&mut profiles),
@@ -941,9 +943,14 @@ pub async fn run_rust_game_headless(
             "--headless --wait-for-command: data loaded, idling until load-replay RPC arrives"
         );
         wait_for_replay_command_headless().await;
-        Some(crate::http_server::take_pending_replay().ok_or_else(|| {
-            "--headless --wait-for-command: replay disappeared before mission start".to_owned()
-        })?)
+        Some(
+            crate::replay_service::process()
+                .take_pending()
+                .ok_or_else(|| {
+                    "--headless --wait-for-command: replay disappeared before mission start"
+                        .to_owned()
+                })?,
+        )
     } else {
         None
     };
@@ -1044,7 +1051,7 @@ pub async fn run_rust_game_headless(
 async fn wait_for_replay_command_headless() {
     loop {
         crate::http_server::drain_pre_engine();
-        if crate::http_server::peek_pending_replay_mission_id().is_some() {
+        if crate::replay_service::process().pending_mission().is_some() {
             return;
         }
         crate::window::sleep_ms(50).await;
@@ -1136,7 +1143,7 @@ async fn wait_for_replay_command(window: &mut GameWindow) {
             a: 1.0,
         });
 
-        if crate::http_server::peek_pending_replay_mission_id().is_some() {
+        if crate::replay_service::process().pending_mission().is_some() {
             return;
         }
 
