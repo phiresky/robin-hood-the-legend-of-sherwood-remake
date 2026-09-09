@@ -424,7 +424,7 @@ mod tests {
                 resource_locale_root,
             )
             .expect("fixture resource locale root"),
-            speech_timing: SimulationSpeechTimingSourceV1::BaseInstallation,
+            speech_timing: SimulationSpeechTimingSourceV1::CoreAudioDurationsV1,
             components: documents
                 .iter()
                 .map(|document| {
@@ -552,7 +552,7 @@ mod tests {
         let resource_locale_root = "1033";
         let (options, profiles, files) = enter_operator_datadir(&root, resource_locale_root);
         let sim_config = fixture_sim_config();
-        let speech_timing = SpeechTimingAuthorityV1::BaseInstallation;
+        let speech_timing = SpeechTimingAuthorityV1::CoreAudioDurationsV1;
         let mission_id = "Dem_Lei_MP";
         let campaign = campaign_for_mission(&profiles, mission_id, sim_config);
         let (manifest, documents, expected_seal) = prepare_fixture_projection(
@@ -608,7 +608,7 @@ mod tests {
         let resource_locale_root = "2047";
         let (options, profiles, files) = enter_operator_datadir(&root, resource_locale_root);
         let sim_config = fixture_sim_config();
-        let speech_timing = SpeechTimingAuthorityV1::BaseInstallation;
+        let speech_timing = SpeechTimingAuthorityV1::CoreAudioDurationsV1;
 
         let metadata = derive_approved_sherwood_metadata(
             &profiles,

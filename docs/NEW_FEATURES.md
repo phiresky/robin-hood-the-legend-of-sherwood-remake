@@ -4,6 +4,16 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Language-independent audio timing.** The required core-datadir
+  `Data/AudioDurations.json` supplies English speech variants and sample
+  durations to the client, replay preparation, and ranked verifier. A French-only
+  installation needs no English audio pack. Localized recordings play to their
+  natural end while simulation completes speech on canonical frames. Startup
+  rejects a missing or invalid timing file; mission loading rejects missing
+  required timing entries. The Rust `generate_audio_durations` example rebuilds
+  the table and core inventory from English full-game and demo audio.
+  See [generation instructions](../assets/core-datadir/README.md).
+
 - **Mission details and previous plays:** Campaign Manager's Mission Details tab
   combines the original localized briefing, entry requirements, and a complete
   history across saved and archived campaigns. The briefing and play-history
@@ -464,9 +474,8 @@ A list of which additional features we have added, which ones we might still wan
   packages; older manifests fail loudly and must be regenerated. Generated
   character names and persisted save labels remain frozen, multiplayer mission
   text and playback are client-local, and logical speech timing comes from
-  either a stable canonical voice pack or the host's explicit base
-  `Data/Sounds` selection rather than the client's active presentation
-  language.
+  the required English core audio timing table, independent of installed voice
+  packs and the client's active presentation language.
 
 - **Hackable JSON levels.** Every subdirectory of `mods/` is registered as an
   overlay datadir at startup, and any overlay may ship an editable

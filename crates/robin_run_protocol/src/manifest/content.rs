@@ -327,8 +327,11 @@ impl Validate for OfficialSimulationProjectionReceiptV1 {
                         self.edition,
                         &subject.content_manifest.subject,
                     )
-                || subject.content_manifest.speech_timing
-                    != SimulationSpeechTimingSourceV1::BaseInstallation
+                || !matches!(
+                    subject.content_manifest.speech_timing,
+                    SimulationSpeechTimingSourceV1::BaseInstallation
+                        | SimulationSpeechTimingSourceV1::CoreAudioDurationsV1
+                )
             {
                 return Err(ValidationError::ClaimMismatch {
                     field: "official_projection_receipt.content_manifest",
@@ -726,8 +729,11 @@ impl Validate for OfficialSimulationProjectionReceiptV2 {
                         self.edition,
                         &subject.content_manifest.subject,
                     )
-                || subject.content_manifest.speech_timing
-                    != SimulationSpeechTimingSourceV1::BaseInstallation
+                || !matches!(
+                    subject.content_manifest.speech_timing,
+                    SimulationSpeechTimingSourceV1::BaseInstallation
+                        | SimulationSpeechTimingSourceV1::CoreAudioDurationsV1
+                )
                 || subject.content_manifest.resource_locale_root.as_str()
                     != expected_resource_locale_root
             {
@@ -1145,6 +1151,7 @@ pub enum SimulationContentComponentKindV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SimulationSpeechTimingSourceV1 {
+    CoreAudioDurationsV1,
     BaseInstallation,
     LanguagePack { canonical_locale: String },
 }

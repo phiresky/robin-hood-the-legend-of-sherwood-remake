@@ -3045,8 +3045,8 @@ impl EngineInner {
     /// catalog admitted before ranked engine construction. The concrete audio
     /// sample is presentation-only; the duration is the only selected value
     /// that enters simulation state. Explicit variants therefore bind one
-    /// exact ordered catalog entry, while a random selection may bind any
-    /// authored entry in the sealed group.
+    /// exact ordered catalog entry; random playback uses the group's longest
+    /// English duration, independent of the local audio variant.
     fn validate_ranked_speech_resolution(
         assets: &LevelAssets,
         pending: &crate::sound::PendingExclamation,
@@ -3068,10 +3068,14 @@ impl EngineInner {
         }
 
         let duration_matches = match pending.variant {
-            -1 => group
-                .variants
-                .iter()
-                .any(|variant| variant.duration_frames == Some(resolution.duration_frames)),
+            -1 => {
+                group
+                    .variants
+                    .iter()
+                    .filter_map(|variant| variant.duration_frames)
+                    .max()
+                    == Some(resolution.duration_frames)
+            }
             explicit if explicit >= 0 => {
                 let variant_index = usize::try_from(explicit).map_err(|_| {
                     format!(

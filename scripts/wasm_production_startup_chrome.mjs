@@ -82,6 +82,7 @@ const runtimePrefix = `/wasm/${hash}/`;
 const dataPrefix = '/datadirs/demo-leicester/';
 const preload = [];
 const { readdir } = await import('node:fs/promises');
+preload.push({ path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' });
 preload.push({ path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' });
 for (const name of (await readdir(join(core, 'Data/Interface/UI'))).sort()) {
     if (name.endsWith('.png')) preload.push({ path: `Data/Interface/UI/${name}`, url: `Data/Interface/UI/${name}` });

@@ -126,8 +126,8 @@ export function parseSimulationSpeechTiming(
     path: string,
 ): ContentManifest['speechTiming'] {
     const obj = object(value, path);
-    const kind = enumeration(obj.kind, ['base_installation', 'language_pack'] as const, `${path}.kind`);
-    if (kind === 'base_installation') {
+    const kind = enumeration(obj.kind, ['core_audio_durations_v1', 'base_installation', 'language_pack'] as const, `${path}.kind`);
+    if (kind === 'base_installation' || kind === 'core_audio_durations_v1') {
         assertExactKeys(obj, path, ['kind']);
         return { kind };
     }

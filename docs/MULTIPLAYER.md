@@ -145,11 +145,10 @@ engine enforces the same predicate again at deterministic command admission.
 `Welcome` is authoritative. A peer must not substitute a local mission, seed,
 or `SimConfig` after decode failure. The snapshot payload uses the current
 Engine schema and is rejected rather than migrated when incompatible.
-`speech_timing_locale: Some(locale)` likewise requires that exact validated
-voice pack on every peer. `None` is an explicit selection of the installation's
-base `Data/Sounds`, not a missing field or permission to auto-select a local
-presentation language. Browser connection state tracks "Welcome pending"
-separately from the received `None` value.
+`speech_timing_locale` is `None` for new sessions: the required core
+`Data/AudioDurations.json` owns speech and sound-source timing. Peers can
+play different installed languages without installing an English voice pack.
+The legacy `Some(locale)` handshake belongs to earlier engine builds.
 
 The session id is stable across an authorized outer-mission rebuild. A native
 client reuses its process-held iroh transport key, while a browser re-proves its

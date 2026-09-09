@@ -493,6 +493,7 @@ export type ContentManifest = {
     /** One canonical numeric locale directory component, e.g. `1033`. */
     readonly resourceLocaleRoot: string;
     readonly speechTiming:
+        | { readonly kind: 'core_audio_durations_v1' }
         | { readonly kind: 'base_installation' }
         | { readonly kind: 'language_pack'; readonly canonicalLocale: string };
     readonly components: readonly {

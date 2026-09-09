@@ -6,12 +6,12 @@ export async function stageEnginePreloadAssets(coreDirectory, outputDirectory) {
     const core = resolve(coreDirectory);
     const output = resolve(outputDirectory);
     const ui = resolve(core, 'Data/Interface/UI');
-    const candidates = [resolve(core, 'Data/Interface/Fonts/arial.ttf')];
+    const candidates = [resolve(core, 'Data/AudioDurations.json'), resolve(core, 'Data/Interface/Fonts/arial.ttf')];
     for (const entry of (await readdir(ui, { withFileTypes: true }))
         .sort((left, right) => left.name.localeCompare(right.name, 'en'))) {
         if (entry.isFile() && entry.name.endsWith('.png')) candidates.push(resolve(ui, entry.name));
     }
-    if (candidates.length < 2) throw new Error('core engine overlay contains no UI PNG assets');
+    if (candidates.length < 3) throw new Error('core engine overlay contains no UI PNG assets');
 
     const manifest = [];
     for (const source of candidates) {
@@ -20,7 +20,7 @@ export async function stageEnginePreloadAssets(coreDirectory, outputDirectory) {
             throw new Error(`required core engine overlay is not a regular file: ${source}`);
         }
         const path = relative(core, source).split(sep).join('/');
-        if (!/^Data\/(?:Interface\/Fonts\/arial\.ttf|Interface\/UI\/[A-Za-z0-9_.-]+\.png)$/u.test(path)) {
+        if (!/^Data\/(?:AudioDurations\.json|Interface\/Fonts\/arial\.ttf|Interface\/UI\/[A-Za-z0-9_.-]+\.png)$/u.test(path)) {
             throw new Error(`core engine overlay has a non-canonical path: ${path}`);
         }
         const destination = resolve(output, path);
