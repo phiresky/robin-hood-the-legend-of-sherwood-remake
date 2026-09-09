@@ -1710,6 +1710,7 @@ pub struct HostTransport {
     /// Verified full-mod bytes, VFS overlays, and cache lease for a
     /// host-distributed mission. Field order makes the network runtime stop
     /// before this mount is dropped with the enclosing transport.
+    #[cfg(feature = "multiplayer")]
     distributed_mod: Option<crate::distributed_mod_admission::AdmittedDistributedMod>,
     /// Delayed Sherwood command boundary belongs to this transport lifetime.
     pending_campaign_exit: Option<crate::main_entry::PendingMultiplayerCampaignExit>,
@@ -1838,6 +1839,7 @@ impl HostTransport {
 
     /// Install one fully validated session before engine construction. Metadata
     /// and identity cannot be partially replaced by a subsequent Welcome.
+    #[cfg(any(feature = "multiplayer", test))]
     pub(crate) fn install_session(
         &mut self,
         net: crate::multiplayer::NetChannels,
@@ -1900,6 +1902,7 @@ impl HostTransport {
             _ => Err("snapshot transition commit has no prepared payload".into()),
         }
     }
+    #[cfg(feature = "multiplayer")]
     pub(crate) fn retain_distributed_mod(
         &mut self,
         admitted: crate::distributed_mod_admission::AdmittedDistributedMod,
