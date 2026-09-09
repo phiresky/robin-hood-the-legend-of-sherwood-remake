@@ -1450,7 +1450,20 @@ impl InteractiveFrameSimulation {
         // that just finished.  No-op when the HTTP server is disabled
         // or the mission isn't loaded yet (each handler returns an
         // `Err` that's relayed back).
-        super::runtime::drain_post_tick_rpc(http, runtime, host, engine, assets, dev, frame);
+        let application_context = host.application_context().clone();
+        super::runtime::drain_post_tick_rpc(
+            http,
+            runtime,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            &host.transport,
+            engine,
+            assets,
+            dev,
+            frame,
+        );
 
         // ── Rollback check + rewind buffer commit ──
         // Both are post-tick bookkeeping.  Skipped on paused frames
