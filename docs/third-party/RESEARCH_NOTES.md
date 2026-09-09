@@ -28,7 +28,7 @@ These are editorial comparison questions, not newly established facts about impl
 
 - [IGN](reference/ign-review.md) and [GamersGlobal](reference/gamersglobal-retrospective.md): supplied URLs retained; article bodies unreadable through the browser.
 - [The Tacticians Database](reference/tacticians-database.md): browser and direct HTML extraction exposed no substantive body.
-- [iDNES](reference/idnes-walkthrough.md), [Amiga Future](guides/amiga-future-german.md), and [Gamez.ru](guides/gamez-russian.md): limited indexed material retrieved; full articles or continuation pages still need inspection.
+- [Amiga Future](guides/amiga-future-german.md), and [Gamez.ru](guides/gamez-russian.md): limited indexed material retrieved; full articles or continuation pages still need inspection.
 - [Magazine index leads](reference/magazine-indexes.md): original scans and cover-disc footage remain uninspected. [GameStar's January 2003 tips contents](https://download.gamestar.de/public/31000/31056/01_2003_181.pdf) also lists a Robin Hood walkthrough; only indexed contents were consulted.
 - [Obligement's review index](https://obligement.free.fr/testsjeux.php) lists a December 2006 Robin Hood review by David Brunet. The review body was not located in this pass.
 - [Metacritic](reviews/metacritic.md) and [MobyGames](reviews/mobygames-reception.md) provide further review leads, including publications whose original pages were not inspected.
@@ -38,3 +38,11 @@ These are editorial comparison questions, not newly established facts about impl
 ## Supplied link coverage
 
 Every distinct URL supplied in the conversation has a record. The two GameFAQs URLs were supplied more than once and each appears as one guide. The [MogelPower link](related-games/mogelpower-longbow.md) is explicitly identified as a different game's walkthrough.
+
+## Follow-up research pass
+
+Added fourteen records covering further English, French, German, Russian, and Czech material: reviews, Mac and MorphOS experiences, a historical patch, general tactics, a walkthrough continuation, speedrunning, recording problems, and academic reception. The collection now has 59 source records.
+
+Substantial indexed text recovered for [iDNES part 1](reference/idnes-walkthrough.md) replaces its earlier title-only entry; [part 2](guides/idnes-part-2.md) is now separately documented. Part 3 still needs readable article text.
+
+Further leads located but not substantively inspected include the [German manual PDF](https://www.mogelpower.de/manuals/Robin_Hood_Die_Legende_von_Sherwood_Handbuch.pdf), the [Gameswelt December 2002 article archive](https://www.gameswelt.de/archiv/artikel/2002-12), and a [Filmweb retrospective by Mariusz Kruk](https://www.filmweb.pl/reviews/recenzja-gry-Robin%2BHood%3A%2BLegenda%2BSherwood-23254). These are discovery links, not completed source records.

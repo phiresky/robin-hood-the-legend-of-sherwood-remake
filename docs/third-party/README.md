@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **45 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **59 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Polish, Russian, Spanish, and Italian, plus Portuguese storefront text. These files contain spoilers.
 
@@ -33,6 +33,11 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Square Faction — royal relics and bonus ending](guides/square-faction-relics.md) | Russian | Page text inspected |
 | [Gamez.ru — Russian campaign walkthrough lead](guides/gamez-russian.md) | Russian | Indexed passage inspected; direct retrieval failed |
 
+| [A. Kondrashov — Russian review and mission guidance](guides/kondrashov-russian.md) | Russian | Article opening and indexed gameplay passages inspected |
+| [Gameswelt — basic tactics](guides/gameswelt-tactics.md) | German | Indexed article text inspected |
+| [iDNES — Czech walkthrough, part 1](reference/idnes-walkthrough.md) | Czech | Substantial indexed text inspected |
+| [iDNES — Czech walkthrough, part 2](guides/idnes-part-2.md) | Czech | Substantial indexed text inspected |
+
 ## Reviews and player impressions
 
 | Source record | Original language | Evidence inspected |
@@ -49,6 +54,13 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Multiplayer.it — Italian review](reviews/multiplayer-it.md) | Italian | Article excerpts inspected |
 | [PPA — Polish review of the MorphOS port](reviews/ppa-morphos.md) | Polish | Substantial article text inspected |
 
+| [Gamers’ Temple — review](reviews/gamers-temple.md) | English | Article text inspected |
+| [Altered Gamer — Lend Me Your Bow](reviews/altered-gamer.md) | English | Article text inspected |
+| [Gamekult — Robin Hood : le desperado des bois](reviews/gamekult.md) | French | Indexed article body and verdict inspected |
+| [Clubic — contemporary French review](reviews/clubic.md) | French | Article text inspected |
+| [BatteCave — On m'appelle Robin des Bois !](reviews/batteman-morphos.md) | French | Article text inspected |
+| [Old-Games.ru — Russian retrospective](reviews/old-games-redwings.md) | Russian | Article text inspected |
+
 ## Compatibility and configuration
 
 | Source record | Original language | Evidence inspected |
@@ -57,6 +69,9 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Ready2Play — maintainer's Steam guide](technical/steam-ready2play.md) | English | Page text inspected |
 | [Psojed — languages and fonts](technical/steam-language-fonts.md) | English | Page opening and configuration discussion inspected |
 | [ubuntuusers — archived native Linux instructions](technical/ubuntuusers-native-linux.md) | German | Page text inspected |
+
+| [ModDB — historical Windows 1.1 patch record](technical/moddb-patch-1-1.md) | English | File listing and description inspected; binary not downloaded |
+| [Speedrun.com — recording a wrapped game](technical/speedrun-capture-report.md) | English discussion | Discussion text inspected |
 
 ## Releases, ports, and development
 
@@ -71,6 +86,9 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [MeriStation — Spanish demo announcement](history/meristation-spanish-demo.md) | Spanish | Indexed announcement inspected |
 | [Obligement — Apollo port licensing and schedule report](history/obligement-apollo-news.md) | French | Indexed relevant passage inspected |
 
+| [macinplay — German Mac preview](history/macinplay-mac-preview.md) | German | Article text inspected |
+| [Academic research — Medieval Soundspace in the New Digital Leisure Time Media](history/medieval-soundspace.md) | English | Abstract and relevant PDF text inspected |
+
 ## Indexes, media, and sources awaiting access
 
 | Source record | Original language | Evidence inspected |
@@ -78,11 +96,12 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Steam Community — guide discovery index](reference/steam-guide-index.md) | Multiple languages | Guide listing inspected |
 | [Print review and cover-disc leads](reference/magazine-indexes.md) | German | Indexed listings inspected |
 | [UPlayNetwork — gameplay walkthrough video](reference/video-walkthrough.md) | Video | Indexed title and description inspected; video not watched |
-| [iDNES — Czech walkthrough lead](reference/idnes-walkthrough.md) | Czech | Search listing located; direct page retrieval failed |
 | [IGN — user-supplied article lead](reference/ign-review.md) | English | User-supplied URL; browser retrieval blocked |
 | [GamersGlobal — user-supplied article lead](reference/gamersglobal-retrospective.md) | German | User-supplied URL; browser retrieval failed |
 | [The Tacticians Database — user-supplied article](reference/tacticians-database.md) | English | Title retrieved; article body unavailable |
 | [JuegoMania — Spanish cheat reference](reference/juegomania-cheats.md) | Spanish | Indexed cheat list inspected |
+
+| [Speedrun.com — leaderboard and research community](reference/speedrun-community.md) | English interface | Leaderboard, category metadata, and forum listing inspected |
 
 ## Related games supplied by the user
 
