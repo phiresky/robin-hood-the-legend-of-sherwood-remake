@@ -130,7 +130,7 @@ impl SessionIngress {
         Self::with_router(None)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, not(target_arch = "wasm32")))]
     pub(super) fn enqueue_for_test(&mut self, payload: HttpPayload) -> request_lifetime::ReplyWait {
         let (response_tx, receiver) = Responder::channel();
         self.requests
