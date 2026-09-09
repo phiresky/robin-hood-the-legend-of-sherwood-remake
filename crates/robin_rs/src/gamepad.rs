@@ -353,6 +353,18 @@ mod device_input_tests {
     }
 }
 
+/// No selection is ordinary; a selection pointing at a missing entity is not.
+fn selected_leader(
+    engine: &engine_api::Engine,
+) -> Option<(engine_element::EntityId, &engine_element::Entity)> {
+    let id = *engine.selected_hero_ids().first()?;
+    let Some(entity) = engine.get_entity(id) else {
+        tracing::warn!(?id, "gamepad selection refers to a missing entity");
+        return None;
+    };
+    Some((id, entity))
+}
+
 impl GamePadState {
     pub fn new() -> Self {
         Self::default()
@@ -570,22 +582,14 @@ impl GamePadState {
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
-        let selected = engine.selected_hero_ids();
-        if selected.is_empty() {
+        let Some((_, leader_entity)) = selected_leader(engine) else {
             return cmds;
-        }
-        let leader = selected[0];
-        let leader_pos = match engine.get_entity(leader) {
-            Some(e) => e.element_data().position_map(),
-            None => return cmds,
         };
-        let leader_posture = engine
-            .get_entity(leader)
-            .map(|e| e.element_data().posture())
-            .unwrap_or_default();
-        let leader_swordfighting = engine
-            .get_entity(leader)
-            .and_then(|e| e.human_data())
+        let selected = engine.selected_hero_ids();
+        let leader_pos = leader_entity.element_data().position_map();
+        let leader_posture = leader_entity.element_data().posture();
+        let leader_swordfighting = leader_entity
+            .human_data()
             .is_some_and(|h| !h.opponents.is_empty());
 
         if engine.frame_counter().is_multiple_of(5)
@@ -654,16 +658,14 @@ impl GamePadState {
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
 
-        let selected = engine.selected_hero_ids();
-        let leader = selected.first().copied();
-        let leader_entity = leader.and_then(|id| engine.get_entity(id));
-        let swordfighting = leader_entity
-            .and_then(|e| e.human_data())
-            .is_some_and(|h| !h.opponents.is_empty());
+        let swordfighter = selected_leader(engine).and_then(|(leader, entity)| {
+            let opponent = *entity.human_data()?.opponents.first()?;
+            Some((leader, entity, opponent))
+        });
 
         let (dx, dy) = self.mouse_delta();
 
-        if !swordfighting {
+        if swordfighter.is_none() {
             if dx != 0.0 || dy != 0.0 {
                 let target = threaded_input.position();
                 threaded_input.reach_position(engine_coordinates::ScreenPoint::new(
@@ -679,24 +681,16 @@ impl GamePadState {
             }
         } else if dx != 0.0 || dy != 0.0 {
             self.sword_swing.push((dx, dy));
-        } else if !self.sword_swing.is_empty() {
+        } else if !self.sword_swing.is_empty()
+            && let Some((leader, leader_entity, target)) = swordfighter
+        {
             // Stick returned to centre — recognise the swing and
             // dispatch it against the PC's principal opponent.
-            let facing = leader_entity
-                .map(|e| e.element_data().direction())
-                .unwrap_or(0);
-            let facing_dir = (facing.rem_euclid(16)) as u16;
-            if let Some(strike) = recognize_swing(&self.sword_swing, facing_dir)
-                && let (Some(pc_id), Some(target_id)) = (
-                    leader,
-                    leader_entity
-                        .and_then(|e| e.human_data())
-                        .and_then(|h| h.opponents.first().copied()),
-                )
-            {
+            let facing_dir = leader_entity.element_data().direction().rem_euclid(16) as u16;
+            if let Some(strike) = recognize_swing(&self.sword_swing, facing_dir) {
                 cmds.push(PlayerCommand::SwordStrikeCmd {
-                    actor: pc_id,
-                    target: target_id,
+                    actor: leader,
+                    target,
                     command: strike.to_command(),
                     // TODO(combat-gesture-gamepad): add an input-specific
                     // quality metric and bindings for composite techniques.
@@ -777,12 +771,9 @@ impl GamePadState {
         engine: &robin_engine::engine::Engine,
     ) -> Vec<engine_player_command::PlayerCommand> {
         let mut cmds = Vec::new();
-        let selected = engine.selected_hero_ids();
-        if !selected.is_empty() {
-            let leader = selected[0];
-            let leader_entity = engine.get_entity(leader);
+        if let Some((leader, leader_entity)) = selected_leader(engine) {
             let swordfighting = leader_entity
-                .and_then(|e| e.human_data())
+                .human_data()
                 .is_some_and(|h| !h.opponents.is_empty());
 
             if !swordfighting {
@@ -812,10 +803,7 @@ impl GamePadState {
                 //   A → choose_opponent(pc, (dir+8)%16,  +1)  — rear
                 //   B → choose_opponent(pc, (dir+15)%16, -1)  — one step CCW
                 //   C → choose_opponent(pc,  dir+1,      +1)  — one step CW
-                let facing = leader_entity
-                    .map(|e| e.element_data().direction())
-                    .unwrap_or(0);
-                let facing_dir = facing.rem_euclid(16) as u16;
+                let facing_dir = leader_entity.element_data().direction().rem_euclid(16) as u16;
                 let seeds: &[(GamePadButton, u16, i16)] = &[
                     (GamePadButton::ActionA, (facing_dir + 8) % 16, 1),
                     (GamePadButton::ActionB, (facing_dir + 15) % 16, -1),
