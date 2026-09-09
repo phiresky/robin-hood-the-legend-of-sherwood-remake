@@ -1930,8 +1930,8 @@ impl ShippingDatadir {
 
     /// Parse a shipping datadir blob: zstd decompress + native bitcode decode.
     pub fn load_from_file(path: &Path) -> Result<Self> {
-        let compressed =
-            robin_util::asset_fs::read(path).with_context(|| format!("read {}", path.display()))?;
+        let compressed = robin_util::asset_fs::read_shared(path)
+            .with_context(|| format!("read {}", path.display()))?;
         let mut datadir = Self::from_compressed_bytes(&compressed)
             .with_context(|| format!("decode {}", path.display()))?;
         datadir.runtime.source_dir = path.parent().map(Path::to_path_buf);
@@ -1941,7 +1941,7 @@ impl ShippingDatadir {
     /// Load through an explicit VFS instance.
     pub fn load_from_vfs(vfs: &robin_util::asset_fs::AssetVfs, path: &Path) -> Result<Self> {
         let compressed = vfs
-            .read(path)
+            .read_shared(path)
             .with_context(|| format!("read {}", path.display()))?;
         let mut datadir = Self::from_compressed_bytes(&compressed)
             .with_context(|| format!("decode {}", path.display()))?;
@@ -2084,7 +2084,7 @@ impl ShippingDatadir {
             let path = self.source_file_path(file)?;
             let compressed = self
                 .asset_vfs()
-                .read(&path)
+                .read_shared(&path)
                 .with_context(|| format!("read {}", path.display()))?;
             merged.merge_part(
                 decode_mission_compressed(&compressed)
@@ -2800,7 +2800,7 @@ pub fn zstd_compress_with_window(bytes: &[u8], max_window_log: u32) -> Result<Ve
 /// the file isn't present (legacy datadir), `Ok(Some(_))` on success.
 pub fn try_load(data_dir: &Path) -> Result<Option<ShippingDatadir>> {
     let path = data_dir.join("datadir.bin");
-    match robin_util::asset_fs::read(&path) {
+    match robin_util::asset_fs::read_shared(&path) {
         Ok(compressed) => {
             let mut datadir = ShippingDatadir::from_compressed_bytes(&compressed)
                 .with_context(|| format!("decode {}", path.display()))?;
@@ -2819,7 +2819,7 @@ pub fn try_load_from(
     data_dir: &Path,
 ) -> Result<Option<ShippingDatadir>> {
     let path = data_dir.join("datadir.bin");
-    match vfs.read(&path) {
+    match vfs.read_shared(&path) {
         Ok(compressed) => {
             let mut datadir = ShippingDatadir::from_compressed_bytes(&compressed)
                 .with_context(|| format!("decode {}", path.display()))?;
@@ -2961,6 +2961,45 @@ pub fn global_assets() -> Option<&'static Arc<ShippingAssets>> {
 mod tests {
     use super::*;
     use robin_util::asset_fs::{AssetVfs, Bundle};
+
+    #[test]
+    fn shared_manifest_loads_preserve_source_and_distinguish_missing_from_corrupt() {
+        let vfs = AssetVfs::new();
+        let root = Path::new("shared-manifest-fixture");
+        let path = root.join("datadir.bin");
+        assert!(try_load_from(&vfs, root).unwrap().is_none());
+        assert!(ShippingDatadir::load_from_vfs(&vfs, &path).is_err());
+
+        let mut fixture = ShippingDatadir::default();
+        fixture.raw.insert("fixture.bin".to_owned(), vec![7, 8, 9]);
+        let compressed = zstd_compress_with_window(&encode_native(&fixture), 30).unwrap();
+        vfs.install_preloaded_asset(path.to_str().unwrap(), compressed)
+            .unwrap();
+
+        let required = ShippingDatadir::load_from_vfs(&vfs, &path).unwrap();
+        let optional = try_load_from(&vfs, root).unwrap().unwrap();
+        for loaded in [&required, &optional] {
+            assert_eq!(loaded.raw["fixture.bin"], [7, 8, 9]);
+            assert_eq!(
+                loaded.source_file_path("part.bin").unwrap(),
+                root.join("part.bin")
+            );
+        }
+
+        vfs.install_preloaded_asset(path.to_str().unwrap(), b"not zstd".to_vec())
+            .unwrap();
+        for error in [
+            ShippingDatadir::load_from_vfs(&vfs, &path).unwrap_err(),
+            try_load_from(&vfs, root).unwrap_err(),
+        ] {
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("decode {}", path.display()))
+            );
+        }
+        assert_eq!(required.raw["fixture.bin"], [7, 8, 9]);
+    }
 
     fn install_fixture(datadir: ShippingDatadir) -> ShippingDatadir {
         let ShippingAssets { datadir, .. } =

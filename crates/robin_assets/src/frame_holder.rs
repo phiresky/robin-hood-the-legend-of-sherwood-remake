@@ -259,7 +259,7 @@ fn open_bank_storage(bks_path: &str, files: &SbFileSystem) -> Result<BankStorage
     let bytes = files
         .open(bks_path, 0)
         .map_err(|e| anyhow!("open sprite bank '{bks_path}': error {e}"))?
-        .into_bytes();
+        .into_shared_bytes();
     if !bytes.len().is_multiple_of(2) {
         return Err(anyhow!(
             "sprite bank must contain 16-bit words (odd byte length {})",
@@ -2134,6 +2134,28 @@ mod tests {
         bytes.extend_from_slice(&size.to_le_bytes());
         bytes.extend_from_slice(&dictionary.to_le_bytes());
         bytes
+    }
+
+    #[test]
+    fn shared_sprite_bank_reads_preserve_words_and_reject_odd_lengths() {
+        let assets = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        let path = "Data/shared-bank-fixture.bks";
+        let files = SbFileSystem::new(assets.clone());
+        assert!(open_bank_storage(path, &files).is_err());
+
+        assets
+            .install_preloaded_asset(path, vec![0x34, 0x12, 0xcd, 0xab])
+            .unwrap();
+        let storage = open_bank_storage(path, &files).unwrap();
+        assert_eq!(storage.words(), &[0x1234, 0xabcd]);
+
+        assets.install_preloaded_asset(path, vec![1, 2, 3]).unwrap();
+        let error = open_bank_storage(path, &files).err().unwrap();
+        assert!(error.to_string().contains("odd byte length 3"));
+        assert_eq!(storage.words(), &[0x1234, 0xabcd]);
+
+        assets.install_preloaded_asset(path, Vec::new()).unwrap();
+        assert!(open_bank_storage(path, &files).unwrap().words().is_empty());
     }
 
     #[test]
