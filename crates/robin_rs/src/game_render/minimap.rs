@@ -79,10 +79,10 @@ pub(crate) fn render_minimap(
     render_minimap_fog(engine, mm, level_size_for(host), renderer);
 
     // Draw viewport indicator rectangle.
-    let camera_pos = host.frontend.viewport.view_position;
-    let screen_size = host.frontend.viewport.screen_size;
-    let zoom = host.frontend.viewport.zoom_factor;
-    let level_size = host.frontend.viewport.level_size;
+    let camera_pos = host.viewport().view_position;
+    let screen_size = host.viewport().screen_size;
+    let zoom = host.viewport().zoom_factor;
+    let level_size = host.viewport().level_size;
 
     // The visible area in world coordinates (accounting for zoom and
     // panel height).  Divide by zoom first, then subtract
@@ -334,7 +334,7 @@ fn clipped_dot_blit(
 }
 
 fn level_size_for(host: &HostDraw<'_>) -> engine_coordinates::MapSize {
-    host.frontend.viewport.level_size
+    host.viewport().level_size
 }
 
 fn render_minimap_fog(

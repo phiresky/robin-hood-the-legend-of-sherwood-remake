@@ -1855,6 +1855,8 @@ impl HostPresentation<'_> {
             options: self.options,
             local_seat: self.local_seat,
             graphic_config: self.graphic_config(),
+            viewport: &self.frontend.viewport,
+            draw_manager: self.frontend.presentation.draw_manager.clone(),
         }
     }
 
@@ -1876,6 +1878,8 @@ impl HostPresentation<'_> {
 /// mutable in the renderer. Serialization is diagnostic-only and cannot
 /// reconstruct borrowed frontend authority.
 pub(crate) struct HostDraw<'a> {
+    viewport: &'a ViewportState,
+    draw_manager: crate::draw_manager::DrawManager,
     pub(crate) frontend: &'a HostFrontend,
     pub(crate) sound: &'a crate::sound::SoundManager,
     pub(crate) options: &'a engine_api::GlobalOptions,
@@ -1899,6 +1903,41 @@ impl<'de> Deserialize<'de> for HostDraw<'_> {
 }
 
 impl HostDraw<'_> {
+    pub(crate) fn viewport(&self) -> &ViewportState {
+        self.viewport
+    }
+
+    pub(crate) fn draw_manager(&self) -> &crate::draw_manager::DrawManager {
+        &self.draw_manager
+    }
+
+    pub(crate) fn with_viewport<'a>(&'a self, viewport: &'a ViewportState) -> HostDraw<'a> {
+        let mut draw_manager = self.draw_manager.clone();
+        let view = viewport.view_position;
+        let screen = viewport.screen_size;
+        let zoom = viewport.zoom_factor;
+        assert!(zoom > 0.0, "capture viewport requires a positive zoom");
+        draw_manager.update_drawing_parameters(
+            0,
+            robin_engine::coordinates::MapBBox::from_coords(
+                view.x,
+                view.y,
+                view.x + (screen.x - 1.0) / zoom,
+                view.y + (screen.y - engine_api::PANNEL_HEIGHT + 1.0) / zoom,
+            ),
+            zoom,
+        );
+        HostDraw {
+            frontend: self.frontend,
+            sound: self.sound,
+            options: self.options,
+            local_seat: self.local_seat,
+            graphic_config: self.graphic_config.clone(),
+            viewport,
+            draw_manager,
+        }
+    }
+
     pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
         self.graphic_config.clone()
     }

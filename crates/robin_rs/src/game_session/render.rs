@@ -359,26 +359,14 @@ fn render_selected_allied_patrol_routes(
     // Advancing the phase makes the dots flow along the route without adding
     // presentation state to the deterministic simulation.
     let mut phase = (engine.frame_counter() % 18) as f32 * 0.5;
-    let route_color = host
-        .frontend
-        .presentation
-        .draw_manager
-        .pack_color(ROUTE_COLOR);
-    let waypoint_color = host
-        .frontend
-        .presentation
-        .draw_manager
-        .pack_color(WAYPOINT_COLOR);
-    let active_color = host
-        .frontend
-        .presentation
-        .draw_manager
-        .pack_color(ACTIVE_COLOR);
+    let route_color = host.draw_manager().pack_color(ROUTE_COLOR);
+    let waypoint_color = host.draw_manager().pack_color(WAYPOINT_COLOR);
+    let active_color = host.draw_manager().pack_color(ACTIVE_COLOR);
     let pulse_radius = 6 + ((engine.frame_counter() / 4) % 3) as u16;
 
     for route in routes {
         for segment in route.points.windows(2) {
-            host.frontend.presentation.draw_manager.draw_dotted_line(
+            host.draw_manager().draw_dotted_line(
                 renderer,
                 segment[0],
                 segment[1],
@@ -390,19 +378,11 @@ fn render_selected_allied_patrol_routes(
         }
         for (index, &point) in route.points.iter().enumerate() {
             if index == route.active_waypoint {
-                host.frontend.presentation.draw_manager.draw_ellipse(
-                    renderer,
-                    point,
-                    pulse_radius,
-                    active_color,
-                );
+                host.draw_manager()
+                    .draw_ellipse(renderer, point, pulse_radius, active_color);
             } else {
-                host.frontend.presentation.draw_manager.draw_ellipse(
-                    renderer,
-                    point,
-                    4,
-                    waypoint_color,
-                );
+                host.draw_manager()
+                    .draw_ellipse(renderer, point, 4, waypoint_color);
             }
         }
     }
@@ -493,15 +473,15 @@ pub(super) fn prepare_zoom_presentation(
     renderer.update_zoom_presentation(frame_id, input, tooltip);
 }
 
-/// Render a throwaway frame per pending `/screenshot` request, reply
-/// with the captured PNG, then clear the offscreen target for the
-/// live frame.  No-op when nothing is pending.
+/// Render a throwaway frame per pending `/screenshot` request and reply
+/// with the captured PNG. No-op when nothing is pending.
 ///
 /// Each screenshot renders against a **clone** of `dev` with its own
 /// debug-flag overrides — the live `dev` is never mutated. Tooltip trackers
 /// and console presentation are immutable draw inputs, so captures require
-/// no transient state rollback. Viewport captures borrow an immutable frontend;
-/// the full-map adapter alone temporarily changes and restores camera geometry.
+/// no transient state rollback. Both paths borrow an immutable frontend;
+/// full-map captures pass an independent camera to a reusable offscreen target,
+/// retaining the live target's pixels, pending commands and modal backdrop.
 pub(super) fn drain_screenshots(
     http: &mut crate::http_server::SessionIngress,
     sim_frame: u32,
@@ -584,20 +564,30 @@ fn render_screenshot_rgba(
     let mut scratch_dev = dev.clone();
     crate::http_server::apply_screenshot_flags(&mut scratch_dev.debug, &request.flags);
 
-    let saved_draw_hud = ctx.draw_hud;
-    ctx.draw_hud = !request.hide_ui;
-
-    let captured = if request.full_map {
-        capture_wide_map_rgba(engine, display, host, assets, &scratch_dev, ctx)
+    if request.full_map {
+        capture_wide_map_rgba(
+            engine,
+            display,
+            host,
+            assets,
+            &scratch_dev,
+            !request.hide_ui,
+            ctx,
+        )
     } else {
-        render_frame(engine, display, &host.draw(), assets, &scratch_dev, ctx);
+        render_frame_with_hud(
+            engine,
+            display,
+            &host.draw(),
+            assets,
+            &scratch_dev,
+            !request.hide_ui,
+            ctx,
+        );
         ctx.renderer
             .try_capture_frame_rgba()
             .map_err(|error| error.to_string())
-    };
-
-    ctx.draw_hud = saved_draw_hud;
-    captured
+    }
 }
 
 pub(crate) type PendingThumbnail =
@@ -752,7 +742,7 @@ pub(super) fn drain_wide_print_screen(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) -> bool {
-    match capture_wide_map_rgba(engine, display, host, assets, dev, ctx) {
+    match capture_wide_map_rgba(engine, display, host, assets, dev, ctx.draw_hud, ctx) {
         Ok((w, h, rgba)) => {
             write_print_screen_png(w, h, rgba);
             true
@@ -789,48 +779,58 @@ fn capture_wide_map_rgba(
     host: &mut HostPresentation<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
+    draw_hud: bool,
     ctx: &mut RenderContext<'_>,
 ) -> Result<(u32, u32, Vec<u8>), String> {
-    let level_w = host.frontend.viewport.level_size.x.ceil() as u32;
-    let level_h = host.frontend.viewport.level_size.y.ceil() as u32;
-    if level_w == 0 || level_h == 0 {
-        return Err("level size is empty".to_owned());
+    let (viewport, level_w, level_h) = wide_map_viewport(&host.frontend.viewport)?;
+    let render_h = viewport.screen_size.y as u32;
+    let gpu_limit = ctx.renderer.gpu.device.limits().max_texture_dimension_2d;
+    if level_w > gpu_limit || render_h > gpu_limit {
+        return Err(format!(
+            "capture {level_w}x{render_h} exceeds GPU texture limit {gpu_limit}"
+        ));
     }
-    if level_w > u16::MAX as u32
-        || level_h.saturating_add(engine_api::PANNEL_HEIGHT as u32) > u16::MAX as u32
-    {
-        return Err(format!("level {level_w}x{level_h} exceeds renderer limits"));
-    }
-
-    let saved_view = host.frontend.viewport.view_position;
-    let saved_old_view = host.frontend.viewport.old_view_position;
-    let saved_zoom = host.frontend.viewport.zoom_factor;
-    let saved_old_zoom = host.frontend.viewport.old_zoom_factor;
-    let saved_screen = host.frontend.viewport.screen_size;
-    let saved_renderer_w = ctx.renderer.screen_width();
-    let saved_renderer_h = ctx.renderer.screen_height();
-
-    let render_h = level_h + engine_api::PANNEL_HEIGHT as u32;
-    host.frontend.viewport.view_position = engine_coordinates::MapPoint::ZERO;
-    host.frontend.viewport.old_view_position = host.frontend.viewport.view_position;
-    host.frontend.viewport.zoom_factor = 1.0;
-    host.frontend.viewport.old_zoom_factor = 1.0;
-    host.frontend
-        .viewport
-        .set_screen_size(level_w as f32, render_h as f32);
-    ctx.renderer.resize(level_w as u16, render_h as u16);
-
-    render_frame(engine, display, &host.draw(), assets, dev, ctx);
-    let captured = ctx.renderer.try_capture_frame_rgba();
-
-    ctx.renderer.resize(saved_renderer_w, saved_renderer_h);
-    host.frontend.viewport.view_position = saved_view;
-    host.frontend.viewport.old_view_position = saved_old_view;
-    host.frontend.viewport.zoom_factor = saved_zoom;
-    host.frontend.viewport.old_zoom_factor = saved_old_zoom;
-    host.frontend
-        .viewport
-        .set_screen_size(saved_screen.x, saved_screen.y);
+    let draw = host.draw();
+    let capture_view = draw.with_viewport(&viewport);
+    let mut target = ctx.renderer.capture_target(level_w as u16, render_h as u16);
+    let mut capture_ctx = RenderContext {
+        renderer: &mut target,
+        cursor_renderer: ctx.cursor_renderer,
+        selection_mark_renderer: ctx.selection_mark_renderer,
+        titbit_renderer: ctx.titbit_renderer,
+        console_overlay: ctx.console_overlay,
+        hud_tooltips: ctx.hud_tooltips,
+        mouse_trail_renderer: ctx.mouse_trail_renderer,
+        portrait_cache: ctx.portrait_cache,
+        menu_resources: ctx.menu_resources,
+        hud_fonts: ctx.hud_fonts,
+        short_briefing_strings: ctx.short_briefing_strings,
+        sherwood_layout: ctx.sherwood_layout,
+        sherwood_sprites: ctx.sherwood_sprites,
+        zoom_layout: ctx.zoom_layout,
+        zoom_sprites: ctx.zoom_sprites,
+        corner_layout: ctx.corner_layout,
+        corner_sprites: ctx.corner_sprites,
+        stature_layout: ctx.stature_layout,
+        stature_sprites: ctx.stature_sprites,
+        threaded_input: ctx.threaded_input,
+        game: ctx.game,
+        pause_menu: ctx.pause_menu,
+        sherwood_enable: ctx.sherwood_enable,
+        shift_held: ctx.shift_held,
+        rewind_active: ctx.rewind_active,
+        display_info_elapsed_secs: ctx.display_info_elapsed_secs,
+        draw_hud,
+    };
+    render_frame(
+        engine,
+        display,
+        &capture_view,
+        assets,
+        dev,
+        &mut capture_ctx,
+    );
+    let captured = target.try_capture_frame_rgba();
 
     let (w, h, rgba) = captured.map_err(|error| error.to_string())?;
     if w != level_w || h < level_h {
@@ -842,6 +842,27 @@ fn capture_wide_map_rgba(
     let row_bytes = w as usize * 4;
     let crop_bytes = level_h as usize * row_bytes;
     Ok((level_w, level_h, rgba[..crop_bytes].to_vec()))
+}
+
+fn wide_map_viewport(
+    live: &crate::host::ViewportState,
+) -> Result<(crate::host::ViewportState, u32, u32), String> {
+    let level_w = live.level_size.x.ceil() as u32;
+    let level_h = live.level_size.y.ceil() as u32;
+    if level_w == 0 || level_h == 0 {
+        return Err("level size is empty".to_owned());
+    }
+    let render_h = level_h.saturating_add(engine_api::PANNEL_HEIGHT as u32);
+    if level_w > u16::MAX as u32 || render_h > u16::MAX as u32 {
+        return Err(format!("level {level_w}x{level_h} exceeds renderer limits"));
+    }
+    let mut viewport = live.clone();
+    viewport.view_position = engine_coordinates::MapPoint::ZERO;
+    viewport.old_view_position = viewport.view_position;
+    viewport.zoom_factor = 1.0;
+    viewport.old_zoom_factor = 1.0;
+    viewport.set_screen_size(level_w as f32, render_h as f32);
+    Ok((viewport, level_w, level_h))
 }
 
 fn median_filter_rgba_3x3(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
@@ -1242,6 +1263,18 @@ pub(super) fn render_frame(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
+    render_frame_with_hud(engine, display, host, assets, dev, ctx.draw_hud, ctx);
+}
+
+fn render_frame_with_hud(
+    engine: &PresentationView<'_>,
+    display: &engine_api::HostDisplayState,
+    host: &HostDraw<'_>,
+    assets: &engine_api::LevelAssets,
+    dev: &engine_api::DevState,
+    draw_hud: bool,
+    ctx: &mut RenderContext<'_>,
+) {
     // Rendering only reads the zoom presentation prepared at the update
     // boundary. A missing or stale snapshot is an ordering error, never a
     // reason to invent default button state.
@@ -1282,7 +1315,6 @@ pub(super) fn render_frame(
     let shift_held = ctx.shift_held;
     let rewind_active = ctx.rewind_active;
     let display_info_elapsed_secs = ctx.display_info_elapsed_secs;
-    let draw_hud = ctx.draw_hud;
     let local_seat = host.local_seat;
     // Pre-update captures may still hold a stale selection. Filter their
     // presentation without committing live selected-view state.
@@ -1304,8 +1336,8 @@ pub(super) fn render_frame(
         renderer.clear_frozen_scene();
     }
 
-    draw_background(&host.frontend.viewport, renderer);
-    crate::blit_to_map::render_background_decals(host.frontend, renderer);
+    draw_background(host.viewport(), renderer);
+    crate::blit_to_map::render_background_decals(host.frontend, host.viewport(), renderer);
 
     // ═══════════════════════════════════════════════════════════
     //  FLUSH: enter GPU overlay phase.  Everything after this point
@@ -1355,7 +1387,7 @@ pub(super) fn render_frame(
         if elem.posture() == Posture::OnShoulders {
             map_pt.y -= 50.0;
         }
-        let Some(screen_pt) = host.frontend.viewport.map_to_screen(map_pt) else {
+        let Some(screen_pt) = host.viewport().map_to_screen(map_pt) else {
             continue;
         };
         // Swordfighting iff the PC has any opponents.
@@ -1520,7 +1552,7 @@ pub(super) fn render_frame(
     // the persistent dotted-line phase stored on `PcMacroState`.
     // Allied patrol routes share this foreground, floating-chain layer.
     render_selected_allied_patrol_routes(host, engine, assets, local_seat, renderer);
-    crate::ui_panel::render_macro_dotted_chains(host.frontend, engine, renderer);
+    crate::ui_panel::render_macro_dotted_chains(host.draw_manager(), engine, renderer);
 
     // The items above are mission-space feedback and belong to the effected
     // gameplay image. Everything after this boundary is screen-space UI and
@@ -1915,7 +1947,7 @@ pub(super) fn render_frame(
         crate::hud_text::render_hud_text(
             engine,
             local_seat,
-            &host.frontend.viewport,
+            host.viewport(),
             assets,
             &host.frontend.presentation.draw_order.ids,
             portrait_cache,
@@ -1940,12 +1972,7 @@ pub(super) fn render_frame(
         // Dev-only EntityId overlay — draws each entity's ID under its
         // feet.  Driven by the `/screenshot?entity_ids` HTTP flag.
         if dev.debug.entity_ids {
-            crate::hud_text::render_entity_id_overlay(
-                engine,
-                &host.frontend.viewport,
-                renderer,
-                fonts,
-            );
+            crate::hud_text::render_entity_id_overlay(engine, host.viewport(), renderer, fonts);
         }
 
         // Dev-only AI speech-log overlay — draws recent accepted
@@ -2117,6 +2144,49 @@ mod tests {
         )
         .unwrap();
         Host::new(context.try_into().unwrap(), 800.0, 600.0).unwrap()
+    }
+
+    #[test]
+    fn capture_view_is_explicit_and_cannot_change_live_camera() {
+        let mut host = presentation_host();
+        host.frontend.viewport.level_size = engine_coordinates::MapSize::new(3136.0, 1984.0);
+        host.frontend.viewport.view_position = engine_coordinates::MapPoint::new(400.0, 200.0);
+        host.frontend.viewport.old_view_position = engine_coordinates::MapPoint::new(390.0, 190.0);
+        host.frontend.viewport.zoom_factor = 0.5;
+        host.frontend.viewport.old_zoom_factor = 0.75;
+        super::super::tick::sync_render_camera(&mut host.frontend);
+        let live_before = format!("{:?}", host.frontend.viewport);
+        let manager_before =
+            serde_json::to_value(&host.frontend.presentation.draw_manager).unwrap();
+        let (capture, width, height) = wide_map_viewport(&host.frontend.viewport).unwrap();
+        assert_eq!((width, height), (3136, 1984));
+        let presentation = host.presentation();
+        let live = presentation.draw();
+        let draw = live.with_viewport(&capture);
+        assert_eq!(
+            draw.viewport().view_position,
+            engine_coordinates::MapPoint::ZERO
+        );
+        assert_eq!(draw.viewport().zoom_factor, 1.0);
+        assert_eq!(draw.draw_manager().zoom_factor(), 1.0);
+        assert_eq!(
+            draw.draw_manager()
+                .map_to_screen(engine_coordinates::MapPoint::new(400.0, 200.0)),
+            engine_coordinates::ScreenPoint::new(400.0, 200.0)
+        );
+        assert_eq!(live.viewport().zoom_factor, 0.5);
+        assert_eq!(format!("{:?}", live.viewport()), live_before);
+        assert_eq!(
+            serde_json::to_value(live.draw_manager()).unwrap(),
+            manager_before
+        );
+        // Invalid capture requests cannot touch any live camera/history state.
+        let mut invalid = capture.clone();
+        invalid.level_size.x = 0.0;
+        assert!(wide_map_viewport(&invalid).is_err());
+        invalid.level_size.x = u16::MAX as f32 + 1.0;
+        assert!(wide_map_viewport(&invalid).is_err());
+        assert_eq!(format!("{:?}", live.viewport()), live_before);
     }
 
     #[test]
