@@ -28,7 +28,7 @@ fn drain_pre_tick_network(
         runtime.reopen_after_pre_tick_network_rollback(frame, &manager.engine, assets);
     }
     *mp_clock_pause |= drain.pause_simulation;
-    frame.commands.commands.extend(drain.inputs);
+    frame.stage_commands().commands.extend(drain.inputs);
     if host.transport.local_seat() == engine_player_command::PlayerId::HOST
         && host.transport.reconnecting()
     {
@@ -37,12 +37,12 @@ fn drain_pre_tick_network(
 }
 
 fn discard_abandoned_host_frame_inputs(frame: &mut MissionFrame) {
-    if !frame.commands.commands.is_empty() {
+    if !frame.commands().is_empty() {
         tracing::warn!(
-            count = frame.commands.commands.len(),
+            count = frame.commands().len(),
             "multiplayer: discarded accumulated frame inputs after host snapshot resynchronization"
         );
-        frame.commands.commands.clear();
+        frame.discard_commands();
     }
 }
 
@@ -209,11 +209,11 @@ fn prepare_pre_tick_timeline(
                 runtime.retained_history().oldest_cmd_frame()
             ));
         };
-        if runtime.replay_player.is_some() && frame.external_actions.is_empty() {
+        if runtime.replay_player.is_some() && frame.external_actions().is_empty() {
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Replay reused rewind-buffer frame {}", current_frame);
-        } else if frame.commands.commands.is_empty() && frame.external_actions.is_empty() {
+        } else if frame.commands().is_empty() && frame.external_actions().is_empty() {
             frame.adopt_authoritative_input(recorded);
             consumed_buffered = true;
             tracing::trace!("Auto-replay -> frame {}", current_frame);
@@ -263,7 +263,7 @@ fn dispatch_pre_tick_pointer_commands(
         let cmd = PlayerCommand::SelectFollowElement {
             entity_id: Some(id),
         };
-        dispatch_local_command(&host.transport, &mut frame.commands, &cmd);
+        dispatch_local_command(&host.transport, &mut frame.stage_commands(), &cmd);
     }
 
     let bow_armed = manager
@@ -272,7 +272,7 @@ fn dispatch_pre_tick_pointer_commands(
         == engine_profiles::Action::Bow;
     if host.frontend.trajectory_preview().hover_ticks() != 0 || bow_armed {
         let cmd = PlayerCommand::PerformOrientation { mouse_map };
-        dispatch_local_command(&host.transport, &mut frame.commands, &cmd);
+        dispatch_local_command(&host.transport, &mut frame.stage_commands(), &cmd);
     }
 }
 
@@ -453,7 +453,7 @@ mod tests {
             let mut frame = MissionFrame::new(123);
             timeline.open_frame(&mut frame, &manager.engine, &assets);
             frame
-                .commands
+                .stage_commands()
                 .commands
                 .push(robin_engine::player_command::PlayerInput::host(
                     PlayerCommand::CrouchDown,
@@ -499,7 +499,7 @@ mod tests {
             assert!(prepared.modal_rendered);
             assert!(!prepared.consumed_buffered);
             assert_eq!(prepared.frame.started_at_ms, 123);
-            assert_eq!(prepared.frame.commands.commands.len(), 1);
+            assert_eq!(prepared.frame.commands().len(), 1);
             assert_eq!(manual_pause, manual);
             assert_eq!(timeline.frame_number(), 0);
             assert_eq!(state_hash(&manager.engine), hash_before);
@@ -578,10 +578,15 @@ mod tests {
         let original_hash = frame.recorder_hash.unwrap();
         let local = PlayerInput::host(PlayerCommand::SetUnbindingEnabled { enabled: false });
         let due = PlayerInput::host(PlayerCommand::SetAmountOfSpeaking { amount: 7 });
-        frame.commands.commands.push(local.clone());
-        frame.external_facts = robin_engine::engine::ExternalFacts::default()
-            .with_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new()));
-        let facts_before = serde_json::to_value(&frame.external_facts).unwrap();
+        frame.stage_commands().commands.push(local.clone());
+        frame.adopt_authoritative_input(
+            frame.authoritative_input().with_external_facts(
+                robin_engine::engine::ExternalFacts::default()
+                    .with_sound_boundary(robin_engine::engine::SoundBoundary::live(Vec::new())),
+            ),
+        );
+        let facts_before =
+            serde_json::to_value(&frame.authoritative_input().external_facts).unwrap();
         for (target_frame, input) in [
             (
                 0,
@@ -621,11 +626,11 @@ mod tests {
             }
         );
         assert_eq!(
-            serde_json::to_value(&frame.commands.commands).unwrap(),
+            serde_json::to_value(frame.commands()).unwrap(),
             serde_json::to_value(vec![local, due]).unwrap()
         );
         assert_eq!(
-            serde_json::to_value(&frame.external_facts).unwrap(),
+            serde_json::to_value(&frame.authoritative_input().external_facts).unwrap(),
             facts_before
         );
         assert_eq!(frame.started_at_ms, 17);
@@ -692,13 +697,13 @@ mod tests {
     fn host_snapshot_reset_discards_inputs_accumulated_before_second_drain() {
         let mut frame = super::MissionFrame::new(0);
         frame
-            .commands
+            .stage_commands()
             .commands
             .push(robin_engine::player_command::PlayerInput::host(
                 robin_engine::player_command::PlayerCommand::CrouchDown,
             ));
         super::discard_abandoned_host_frame_inputs(&mut frame);
-        assert!(frame.commands.commands.is_empty());
+        assert!(frame.commands().is_empty());
     }
 
     use super::{

@@ -174,7 +174,7 @@ pub(super) async fn process_operation_and_save(
             host,
             assets,
             dev,
-            &mut frame.external_actions,
+            &mut frame.stage_external_actions(),
             &mut presentation.renderer,
             &mut resources.cursor,
             &mut presentation.sprites.cursor_renderer,

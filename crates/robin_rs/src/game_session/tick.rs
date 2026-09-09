@@ -191,7 +191,7 @@ pub(super) fn post_render_engine_cleanup(
     frame: &mut super::runtime::MissionFrame,
     local_seat: robin_engine::player_command::PlayerId,
 ) {
-    frame.post_commands.push(PlayerInput::new(
+    frame.stage_post_commands().push(PlayerInput::new(
         local_seat,
         PlayerCommand::ClearNpcDoubleStatusBarFlags,
     ));

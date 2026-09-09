@@ -51,7 +51,7 @@ fn begin_interactive_frame(
     // applies the journaled commands twice. The recorder hash samples this
     // same boundary so recording and playback remain in lockstep.
     runtime.open_frame(&mut frame, &manager.engine, assets.as_ref());
-    frame.commands.commands.extend(net_inputs);
+    frame.stage_commands().commands.extend(net_inputs);
 
     // Re-derive the corner HUD layout every frame so resolution
     // changes triggered from nested menus (options modal, Sherwood
@@ -434,8 +434,8 @@ pub(super) async fn collect_input_and_menus(
         engine,
         assets,
         dev,
-        commands,
-        external_actions,
+        mut commands,
+        mut external_actions,
     } = world.input_phase(&mut frame);
 
     // ── View-only input (scroll / zoom): always allowed ──
@@ -477,8 +477,8 @@ pub(super) async fn collect_input_and_menus(
                 audio,
                 input,
                 ui,
-                commands,
-                external_actions,
+                commands: &mut commands,
+                external_actions: &mut external_actions,
             },
             LiveGameplayInput {
                 events: &events,
@@ -526,6 +526,8 @@ pub(super) async fn collect_input_and_menus(
 
     runtime.trace(FrameContractStage::InputAndMenus);
 
+    drop(commands);
+    drop(external_actions);
     Ok(ControlFlow::Continue(InputPrepared(
         PreparationPhaseState {
             frame,

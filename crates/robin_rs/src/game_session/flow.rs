@@ -307,7 +307,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 engine,
                 assets,
                 dev,
-                external_actions,
+                mut external_actions,
                 ..
             } = world.post_tick_input_phase(&mut frame);
             pre_render_engine_setup(host);
@@ -316,7 +316,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
                 host,
                 assets,
                 dev,
-                external_actions,
+                &mut external_actions,
                 &mut frontend.presentation.renderer,
                 &mut frontend.resources.cursor,
                 &mut frontend.presentation.sprites.cursor_renderer,
@@ -814,7 +814,7 @@ fn run_interactive_post_initialize(
             &mut manager.engine,
             dev,
             frame.unapplied_post_external_actions(),
-            &frame.post_commands.commands,
+            frame.post_commands(),
             frame.run_post_initialize,
         )
     });
