@@ -161,6 +161,7 @@ fn engine_public_mutation_surface_is_an_exact_capability_allowlist() {
         "promote_mission_achievement_results",
         "test_add_entity",
         "test_launch_sequence",
+        "test_seed_achievement_persistence",
         "test_set_camera_transition_inputs",
         "test_set_diplomacy",
         "test_set_engine_scalars",
