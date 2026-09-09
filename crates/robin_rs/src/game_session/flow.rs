@@ -803,6 +803,7 @@ fn run_interactive_post_initialize(
     frame: &mut MissionFrame,
 ) {
     let application_context = host.application_context().clone();
+    let requested = frame.begin_post_initialize();
     let post_initialized = runtime.cross_post_initialize(|| {
         crate::sim_timeline::run_post_initialize_stage_with_actions(
             &mut host.frontend,
@@ -815,10 +816,10 @@ fn run_interactive_post_initialize(
             dev,
             frame.unapplied_post_external_actions(),
             frame.post_commands(),
-            frame.run_post_initialize,
+            requested,
         )
     });
-    frame.run_post_initialize = post_initialized;
+    frame.complete_post_initialize(post_initialized);
 
     if post_initialized
         && let Some(net) = host.transport.net()

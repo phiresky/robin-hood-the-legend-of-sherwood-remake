@@ -749,12 +749,14 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // replay EOF before opening either transaction.
         let engine = &mut manager.engine;
         let mut transaction = timeline.open_manual_frame(engine, source.records_live_input());
-        transaction.run_hourglass &= game.should_run_hourglass(
-            false,
-            !game
-                .operation
-                .is(robin_engine::game_operation::GameCode::LevelInProgress),
-            false,
+        transaction.restrict_hourglass(
+            game.should_run_hourglass(
+                false,
+                !game
+                    .operation
+                    .is(robin_engine::game_operation::GameCode::LevelInProgress),
+                false,
+            ),
         );
         timeline.begin_history_frame(frame, engine, assets);
         // Force-unpaused tick.  Same as the live-frame path at the
@@ -772,6 +774,7 @@ pub(super) fn run_forward_ticks_with_session_modals(
         // TODO: recording a new branch while rewound requires an explicit
         // raw-checkpoint transition, not the save/load projection protocol.
         timeline.begin_recording(&mut transaction, record_live_input);
+        transaction.admit_inline_transaction();
         game.run_engine_tick(
             &mut host.frontend,
             &mut host.audio,

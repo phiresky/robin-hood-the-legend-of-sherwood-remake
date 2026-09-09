@@ -298,7 +298,7 @@ impl MissionControl {
 ///
 /// Both mission drivers use this shell. The graphical driver additionally uses
 /// its modal-dismissal queue while the frontend owns native process resources.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug)]
 pub(super) struct MissionFrame {
     pub(super) started_at_ms: u32,
     commands: FrameCommands,
@@ -308,9 +308,7 @@ pub(super) struct MissionFrame {
     post_external_actions: Vec<robin_engine::engine::ExternalAction>,
     post_external_actions_applied: usize,
     external_facts: robin_engine::engine::ExternalFacts,
-    pub(super) run_hourglass: bool,
-    pub(super) simulation_body_allowed: bool,
-    pub(super) run_post_initialize: bool,
+    execution: FrameExecution,
     /// Recorded lockstep/history transition for a disk-replay host frame.
     pub(super) replay_timeline_transition: Option<TimelineTransition>,
     pub(super) modal_dismissals: Vec<PlayerCommand>,
@@ -320,6 +318,76 @@ pub(super) struct MissionFrame {
     timeline_after: Option<TimelineFrame>,
     replay_record_consumed: bool,
     recorder_state: RecorderFrameState,
+}
+
+/// Copyable evidence, never a runnable transaction or a recorder ownership token.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MissionFrameSnapshot {
+    started_at_ms: u32,
+    input: robin_engine::engine::SimulationFrameInput,
+    modal_dismissals: Vec<PlayerCommand>,
+    recorder_hash: Option<u64>,
+    timeline_before: Option<TimelineFrame>,
+    timeline_after: Option<TimelineFrame>,
+}
+
+impl Serialize for MissionFrame {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        MissionFrameSnapshot {
+            started_at_ms: self.started_at_ms,
+            input: self.authoritative_input(),
+            modal_dismissals: self.modal_dismissals.clone(),
+            recorder_hash: self.recorder_hash,
+            timeline_before: self.timeline_before,
+            timeline_after: self.timeline_after,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for MissionFrame {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "live mission frame authority cannot be deserialized; decode MissionFrameSnapshot instead",
+        ))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FrameExecution {
+    run_hourglass: bool,
+    simulation_body_allowed: bool,
+    post_initialize: PostInitializeAdmission,
+    simulation_admitted: bool,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum PostInitializeAdmission {
+    Pending(bool),
+    Running(bool),
+    Completed(bool),
+    /// Manual ticks execute both phases together and retain the input policy,
+    /// rather than recording a separately observed deferred initialization.
+    Inline(bool),
+}
+
+impl FrameExecution {
+    fn assert_pre_simulation(&self) {
+        assert!(
+            !self.simulation_admitted
+                && matches!(self.post_initialize, PostInitializeAdmission::Pending(_)),
+            "frame execution policy changed after execution admission"
+        );
+    }
+
+    fn post_initialize_requested_or_completed(&self) -> bool {
+        match self.post_initialize {
+            PostInitializeAdmission::Pending(value)
+            | PostInitializeAdmission::Running(value)
+            | PostInitializeAdmission::Completed(value)
+            | PostInitializeAdmission::Inline(value) => value,
+        }
+    }
 }
 
 /// Whether this host iteration owns an open replay-recorder frame.
@@ -402,6 +470,51 @@ frame_append_batch!(
 );
 
 impl MissionFrame {
+    /// Scheduling may suppress a recorded tick, never promote a suppressed tick.
+    pub(super) fn restrict_hourglass(&mut self, allowed: bool) {
+        self.execution.assert_pre_simulation();
+        self.execution.run_hourglass &= allowed;
+    }
+
+    fn host_controls_only(&mut self) {
+        self.execution.assert_pre_simulation();
+        self.execution.run_hourglass = false;
+        self.execution.simulation_body_allowed = false;
+        self.execution.post_initialize = PostInitializeAdmission::Pending(false);
+    }
+
+    /// Admit the simulation phase exactly once, separately from copying its data.
+    pub(super) fn admit_simulation(&mut self) {
+        self.execution.assert_pre_simulation();
+        self.execution.simulation_admitted = true;
+    }
+
+    pub(super) fn admit_inline_transaction(&mut self) {
+        self.admit_simulation();
+        let requested = self.execution.post_initialize_requested_or_completed();
+        self.execution.post_initialize = PostInitializeAdmission::Inline(requested);
+    }
+
+    /// A rewind or terminal frame can cross this boundary without simulation.
+    pub(super) fn begin_post_initialize(&mut self) -> bool {
+        let PostInitializeAdmission::Pending(requested) = self.execution.post_initialize else {
+            panic!("post-initialize phase admitted more than once");
+        };
+        self.execution.post_initialize = PostInitializeAdmission::Running(requested);
+        requested
+    }
+
+    pub(super) fn complete_post_initialize(&mut self, initialized: bool) {
+        let PostInitializeAdmission::Running(requested) = self.execution.post_initialize else {
+            panic!("post-initialize phase completed without admission or more than once");
+        };
+        assert!(
+            requested || !initialized,
+            "suppressed post-initialize phase reported initialization"
+        );
+        self.execution.post_initialize = PostInitializeAdmission::Completed(initialized);
+    }
+
     pub(super) fn commands(&self) -> &[robin_engine::player_command::PlayerInput] {
         &self.commands.commands
     }
@@ -462,9 +575,12 @@ impl MissionFrame {
             post_external_actions: Vec::new(),
             post_external_actions_applied: 0,
             external_facts: robin_engine::engine::ExternalFacts::default(),
-            run_hourglass: true,
-            simulation_body_allowed: true,
-            run_post_initialize: true,
+            execution: FrameExecution {
+                run_hourglass: true,
+                simulation_body_allowed: true,
+                post_initialize: PostInitializeAdmission::Pending(true),
+                simulation_admitted: false,
+            },
             replay_timeline_transition: None,
             modal_dismissals: Vec::new(),
             replay_modal_dismissals: super::modal_state::ReplayModalDismissals::default(),
@@ -488,7 +604,7 @@ impl MissionFrame {
                     .map(robin_engine::engine::SimCommand::from)
                     .collect(),
             )
-            .with_post_initialize(self.run_post_initialize)
+            .with_post_initialize(self.execution.post_initialize_requested_or_completed())
     }
 
     fn bind_timeline(&mut self, before: TimelineFrame) {
@@ -535,8 +651,8 @@ impl MissionFrame {
         )
         .with_external_facts(self.external_facts.clone())
         .with_external_actions(self.unapplied_external_actions().to_vec())
-        .with_simulation_body_allowed(self.simulation_body_allowed)
-        .with_hourglass(self.run_hourglass)
+        .with_simulation_body_allowed(self.execution.simulation_body_allowed)
+        .with_hourglass(self.execution.run_hourglass)
     }
 
     /// Replace the authoritative portion of this host frame with a recorded
@@ -546,6 +662,7 @@ impl MissionFrame {
         &mut self,
         input: robin_engine::engine::SimulationFrameInput,
     ) {
+        self.execution.assert_pre_simulation();
         self.commands.commands = input.player_inputs();
         self.post_commands.commands = input.post_player_inputs();
         self.external_actions = input.external_actions;
@@ -553,9 +670,10 @@ impl MissionFrame {
         self.post_external_actions = input.post_external_actions;
         self.post_external_actions_applied = 0;
         self.external_facts = input.external_facts;
-        self.run_hourglass = input.run_hourglass;
-        self.simulation_body_allowed = input.simulation_body_allowed;
-        self.run_post_initialize = input.run_post_initialize;
+        self.execution.run_hourglass = input.run_hourglass;
+        self.execution.simulation_body_allowed = input.simulation_body_allowed;
+        self.execution.post_initialize =
+            PostInitializeAdmission::Pending(input.run_post_initialize);
     }
 
     pub(super) fn record_applied_external_action(
@@ -603,6 +721,11 @@ impl MissionFrame {
     /// Adopt one complete replay frame, splitting presentation-only modal
     /// acknowledgements out of both command phases before engine admission.
     pub(super) fn inject_replay_input(&mut self, player: &mut ReplayPlayer) {
+        self.execution.assert_pre_simulation();
+        assert!(
+            !self.replay_record_consumed,
+            "replay input injected into the same mission frame more than once"
+        );
         assert!(
             !player.is_finished(),
             "replay injection requested after the replay finished"
@@ -776,13 +899,16 @@ impl MissionRuntime {
                 .game
                 .operation
                 .is(robin_engine::game_operation::GameCode::LevelInProgress);
-            mission_frame.run_hourglass &= !policy.skip_tick
-                && self.world.game.should_run_hourglass(
-                    false,
-                    mission_transitioning,
-                    policy.paused,
-                );
+            mission_frame.restrict_hourglass(
+                !policy.skip_tick
+                    && self.world.game.should_run_hourglass(
+                        false,
+                        mission_transitioning,
+                        policy.paused,
+                    ),
+            );
             let frame = mission_frame.hourglass_input();
+            mission_frame.admit_simulation();
             let result = self.world.game.run_engine_tick(
                 &mut self.world.host.frontend,
                 &mut self.world.host.audio,
@@ -829,6 +955,7 @@ impl MissionRuntime {
         let Self {
             world, timeline, ..
         } = self;
+        let requested = frame.begin_post_initialize();
         let initialized = timeline.cross_post_initialize(|| {
             let application_context = world.host.application_context().clone();
             let initialized = crate::sim_timeline::run_post_initialize_stage_with_actions(
@@ -842,12 +969,12 @@ impl MissionRuntime {
                 &mut world.dev,
                 frame.unapplied_post_external_actions(),
                 &frame.post_commands.commands,
-                frame.run_post_initialize,
+                requested,
             );
 
             initialized
         });
-        frame.run_post_initialize = initialized;
+        frame.complete_post_initialize(initialized);
         initialized
     }
 }
@@ -1923,9 +2050,7 @@ impl TimelineRuntime {
         self.trace(FrameContractStage::ManualTransactionBegin);
         let mut frame = MissionFrame::new(0);
         frame.bind_timeline(self.current_frame());
-        frame.run_hourglass = false;
-        frame.simulation_body_allowed = false;
-        frame.run_post_initialize = false;
+        frame.host_controls_only();
         frame.modal_dismissals = controls;
         frame.recorder_hash = self
             .replay_ordinal
@@ -3719,24 +3844,131 @@ mod tests {
     }
 
     #[test]
-    fn mission_frame_owns_only_one_iterations_commands() {
+    fn mission_frame_snapshot_copies_data_but_cannot_restore_live_authority() {
         let mut frame = MissionFrame::new(777);
         frame.commands.push(PlayerCommand::QuitMissionRequested);
         frame.recorder_hash = Some(0x55aa);
 
         let encoded = serde_json::to_string(&frame).expect("serialize mission frame");
-        let decoded: MissionFrame =
-            serde_json::from_str(&encoded).expect("deserialize mission frame");
+        let decoded: MissionFrameSnapshot =
+            serde_json::from_str(&encoded).expect("deserialize mission frame snapshot");
 
         assert_eq!(decoded.started_at_ms, 777);
-        assert_eq!(decoded.commands.commands.len(), 1);
+        assert_eq!(decoded.input.player_inputs().len(), 1);
         assert!(matches!(
-            decoded.commands.commands[0].command,
+            decoded.input.player_inputs()[0].command,
             PlayerCommand::QuitMissionRequested
         ));
         assert_eq!(decoded.recorder_hash, Some(0x55aa));
         assert!(decoded.modal_dismissals.is_empty());
-        assert!(decoded.replay_modal_dismissals.is_empty());
+        let error = serde_json::from_str::<MissionFrame>(&encoded).unwrap_err();
+        assert!(error.to_string().contains("live mission frame authority"));
+        assert!(!encoded.contains("recorder_state"));
+        assert!(!encoded.contains("external_actions_applied"));
+    }
+
+    #[test]
+    fn mission_frame_is_not_clone() {
+        // Inference becomes ambiguous (a compile error) if Clone is ever added.
+        trait AmbiguousIfClone<A> {
+            fn marker() {}
+        }
+        impl<T: ?Sized> AmbiguousIfClone<()> for T {}
+        impl<T: ?Sized + Clone> AmbiguousIfClone<u8> for T {}
+        let _ = <MissionFrame as AmbiguousIfClone<_>>::marker;
+    }
+
+    #[test]
+    fn mission_frame_execution_preserves_pause_and_post_initialize_outcome() {
+        let mut frame = MissionFrame::new(0);
+        frame.restrict_hourglass(false);
+        frame.restrict_hourglass(true);
+        assert!(!frame.authoritative_input().run_hourglass);
+        assert!(frame.authoritative_input().simulation_body_allowed);
+        frame.admit_simulation();
+        assert!(frame.begin_post_initialize());
+        frame.complete_post_initialize(false);
+        assert!(!frame.authoritative_input().run_post_initialize);
+    }
+
+    #[test]
+    fn mission_frame_host_only_transaction_has_no_simulation_authority() {
+        let mut frame = MissionFrame::new(0);
+        frame.host_controls_only();
+        let input = frame.authoritative_input();
+        assert!(!input.run_hourglass);
+        assert!(!input.simulation_body_allowed);
+        assert!(!frame.begin_post_initialize());
+        frame.complete_post_initialize(false);
+    }
+
+    #[test]
+    #[should_panic(expected = "frame execution policy changed after execution admission")]
+    fn mission_frame_rejects_repeated_simulation_admission() {
+        let mut frame = MissionFrame::new(0);
+        frame.admit_simulation();
+        frame.admit_simulation();
+    }
+
+    #[test]
+    #[should_panic(expected = "frame execution policy changed after execution admission")]
+    fn mission_frame_rejects_recorded_input_replacement_after_execution() {
+        let mut frame = MissionFrame::new(0);
+        frame.admit_simulation();
+        frame.adopt_authoritative_input(Default::default());
+    }
+
+    #[test]
+    #[should_panic(expected = "post-initialize phase admitted more than once")]
+    fn mission_frame_rejects_repeated_post_initialize_admission() {
+        let mut frame = MissionFrame::new(0);
+        frame.begin_post_initialize();
+        frame.begin_post_initialize();
+    }
+
+    #[test]
+    #[should_panic(expected = "post-initialize phase admitted more than once")]
+    fn mission_frame_rejects_post_initialize_after_completion() {
+        let mut frame = MissionFrame::new(0);
+        frame.begin_post_initialize();
+        frame.complete_post_initialize(false);
+        frame.begin_post_initialize();
+    }
+
+    #[test]
+    #[should_panic(expected = "post-initialize phase admitted more than once")]
+    fn mission_frame_inline_transaction_consumes_both_phases() {
+        let mut frame = MissionFrame::new(0);
+        frame.admit_inline_transaction();
+        frame.begin_post_initialize();
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "post-initialize phase completed without admission or more than once"
+    )]
+    fn mission_frame_rejects_post_initialize_completion_without_admission() {
+        MissionFrame::new(0).complete_post_initialize(true);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "post-initialize phase completed without admission or more than once"
+    )]
+    fn mission_frame_rejects_repeated_post_initialize_completion() {
+        let mut frame = MissionFrame::new(0);
+        frame.begin_post_initialize();
+        frame.complete_post_initialize(true);
+        frame.complete_post_initialize(true);
+    }
+
+    #[test]
+    #[should_panic(expected = "suppressed post-initialize phase reported initialization")]
+    fn mission_frame_rejects_initialization_after_suppression() {
+        let mut frame = MissionFrame::new(0);
+        frame.host_controls_only();
+        frame.begin_post_initialize();
+        frame.complete_post_initialize(true);
     }
 
     #[test]
