@@ -48,10 +48,69 @@ use crate::spellforge_trust::{
 const PANNEL_HEIGHT: f32 = engine_api::PANNEL_HEIGHT;
 const DISPLAY_INFO_SAMPLES: usize = 16;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct QueueStripAnimation {
     pub previous_count: usize,
     pub fall_offset: i32,
+}
+
+/// Identity of the UI source, never an arbitrary representative group member.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub(crate) enum QueueStripIdentity {
+    Pc(EntityId),
+    AlliedGroup(u32),
+    /// Unpinned selections have no persistent ID. Canonical membership keeps
+    /// reordering stable without carrying easing into an unrelated selection.
+    AlliedSelection(Vec<EntityId>),
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct QueueStripAnimations {
+    seat: Option<engine_player_command::PlayerId>,
+    entries: HashMap<QueueStripIdentity, QueueStripAnimation>,
+}
+
+impl QueueStripAnimations {
+    pub(crate) fn clear(&mut self) {
+        self.seat = None;
+        self.entries.clear();
+    }
+
+    pub(crate) fn prepare_fixed_tick(
+        &mut self,
+        seat: engine_player_command::PlayerId,
+        visible: impl IntoIterator<Item = (QueueStripIdentity, usize)>,
+    ) {
+        if self.seat != Some(seat) {
+            self.clear();
+            self.seat = Some(seat);
+        }
+        let mut remaining = std::mem::take(&mut self.entries);
+        for (identity, count) in visible {
+            let mut animation = remaining.remove(&identity).unwrap_or_default();
+            animation.prepare_fixed_tick(count);
+            assert!(
+                self.entries.insert(identity, animation).is_none(),
+                "visible queue strip identities must be unique"
+            );
+        }
+        // Entries absent from the visible portrait set are retired, including
+        // deleted groups, dead portraits and portraits paged off screen.
+    }
+
+    pub(crate) fn displayed_offset(
+        &self,
+        seat: engine_player_command::PlayerId,
+        identity: &QueueStripIdentity,
+        count: usize,
+    ) -> i32 {
+        if self.seat != Some(seat) {
+            return 0; // First capture for this seat has no previous queue.
+        }
+        self.entries
+            .get(identity)
+            .map_or(0, |entry| entry.displayed_offset(count))
+    }
 }
 
 impl QueueStripAnimation {
@@ -1537,7 +1596,7 @@ pub struct HostFrontend {
     pub planning: crate::frontend_input::FrontendPlanning,
 
     /// Per-portrait cosmetic easing for the independent automatic queue strip.
-    pub queue_strip_animations: HashMap<EntityId, QueueStripAnimation>,
+    queue_strip_animations: QueueStripAnimations,
 
     /// Active profile's local relationship colour/legend preference.
     pub diplomacy_visuals: bool,
@@ -1731,6 +1790,19 @@ pub enum InteractionReset {
 }
 
 impl HostFrontend {
+    pub(crate) fn queue_strip_animations(&self) -> &QueueStripAnimations {
+        &self.queue_strip_animations
+    }
+
+    pub(crate) fn prepare_queue_strip_animations(
+        &mut self,
+        seat: engine_player_command::PlayerId,
+        visible: impl IntoIterator<Item = (QueueStripIdentity, usize)>,
+    ) {
+        self.queue_strip_animations
+            .prepare_fixed_tick(seat, visible);
+    }
+
     pub fn reset_interaction(&mut self, reason: InteractionReset) {
         self.reset_pointer_sequence();
         self.reset_targeting_preview();

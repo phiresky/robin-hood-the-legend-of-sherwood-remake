@@ -1332,6 +1332,21 @@ pub(crate) struct PortraitBarItem {
     pub members: Vec<EntityId>,
 }
 
+impl PortraitBarItem {
+    fn queue_strip_identity(&self) -> crate::host::QueueStripIdentity {
+        use crate::host::QueueStripIdentity;
+        match self.target {
+            PortraitTarget::Pc(id) => QueueStripIdentity::Pc(id),
+            PortraitTarget::AlliedGroup(id) => QueueStripIdentity::AlliedGroup(id),
+            PortraitTarget::AlliedSelection => {
+                let mut members = self.members.clone();
+                members.sort_unstable();
+                QueueStripIdentity::AlliedSelection(members)
+            }
+        }
+    }
+}
+
 pub(crate) fn portrait_bar_items(
     engine: &Engine,
     seat: PlayerId,
@@ -1582,7 +1597,7 @@ pub(crate) fn prepare_auto_queue_animations(
     screen_width: u16,
 ) {
     let (items, _) = portrait_bar_items(engine, seat, screen_width);
-    let mut prepared = std::collections::HashSet::new();
+    let mut prepared = Vec::with_capacity(items.len());
     for item in items {
         if let PortraitTarget::Pc(id) = item.target {
             let entity = engine
@@ -1594,49 +1609,44 @@ pub(crate) fn prepare_auto_queue_animations(
                 continue;
             }
         }
-        let key = *item
-            .members
-            .first()
-            .expect("automatic queue strip cannot have an empty member list");
-        if !prepared.insert(key) {
-            // TODO: Give overlapping pinned groups distinct animation identities;
-            // the existing storage keys all strips by their first member.
-            continue;
-        }
+        assert!(
+            !item.members.is_empty(),
+            "automatic queue strip cannot have an empty member list"
+        );
         let count = item
             .members
             .iter()
             .map(|id| engine.automatic_quick_action_count(*id))
             .sum();
-        frontend
-            .queue_strip_animations
-            .entry(key)
-            .or_default()
-            .prepare_fixed_tick(count);
+        prepared.push((item.queue_strip_identity(), count));
     }
+    frontend.prepare_queue_strip_animations(seat, prepared);
 }
 
 fn render_auto_queue_ticks(
     frontend: &HostFrontend,
     renderer: &mut Renderer,
     engine: &Engine,
+    seat: PlayerId,
+    identity: crate::host::QueueStripIdentity,
     members: &[EntityId],
     x: u16,
     base_y: i32,
 ) {
-    let animation_key = *members
-        .first()
-        .expect("automatic queue strip cannot have an empty member list");
+    assert!(
+        !members.is_empty(),
+        "automatic queue strip cannot have an empty member list"
+    );
     let queue_count: usize = members
         .iter()
         .map(|member| engine.automatic_quick_action_count(*member))
         .sum();
     // Missing animation is the legitimate first, pre-update thumbnail state:
     // a strip has no previous queue from which to animate a collapse.
-    let fall_offset = frontend
-        .queue_strip_animations
-        .get(&animation_key)
-        .map_or(0, |animation| animation.displayed_offset(queue_count));
+    let fall_offset =
+        frontend
+            .queue_strip_animations()
+            .displayed_offset(seat, &identity, queue_count);
     if queue_count == 0 {
         return;
     }
@@ -1774,6 +1784,8 @@ fn render_allied_portrait(
         frontend,
         renderer,
         engine,
+        seat,
+        item.queue_strip_identity(),
         &item.members,
         x,
         i32::from(sh - top_scroll + 4),
@@ -2613,6 +2625,8 @@ pub fn draw_panel(
                 frontend,
                 renderer,
                 engine,
+                local_seat,
+                crate::host::QueueStripIdentity::Pc(pc_id),
                 std::slice::from_ref(&pc_id),
                 x,
                 i32::from(qa_strip_y.saturating_sub(8)),
@@ -3952,6 +3966,101 @@ pub(crate) fn verify_portrait_gpu_ownership(renderer: &mut Renderer, other: &mut
 
 #[cfg(test)]
 mod tests {
+    fn queue_item(target: PortraitTarget, members: &[u32]) -> PortraitBarItem {
+        PortraitBarItem {
+            target,
+            members: members
+                .iter()
+                .map(|id| EntityId::Soldier(robin_engine::entity_id::SoldierId(*id)))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn overlapping_group_strips_have_independent_history_and_survive_reordering() {
+        let first = queue_item(PortraitTarget::AlliedGroup(1), &[7, 8]);
+        let second = queue_item(PortraitTarget::AlliedGroup(2), &[7, 9]);
+        let selection = queue_item(PortraitTarget::AlliedSelection, &[7, 8]);
+        let a = first.queue_strip_identity();
+        let b = second.queue_strip_identity();
+        let c = selection.queue_strip_identity();
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        let mut animations = crate::host::QueueStripAnimations::default();
+        let seat = PlayerId::HOST;
+        animations.prepare_fixed_tick(seat, [(a.clone(), 4), (b.clone(), 8), (c.clone(), 4)]);
+        // Reordering portrait positions cannot transfer another strip's offset.
+        animations.prepare_fixed_tick(seat, [(b.clone(), 8), (c.clone(), 4), (a.clone(), 3)]);
+        assert_eq!(animations.displayed_offset(seat, &a, 3), 10);
+        assert_eq!(animations.displayed_offset(seat, &b, 8), 0);
+        assert_eq!(animations.displayed_offset(seat, &c, 4), 0);
+        for expected in [8, 6, 4, 2, 0, 0] {
+            animations.prepare_fixed_tick(seat, [(a.clone(), 3), (b.clone(), 8), (c.clone(), 4)]);
+            for _ in 0..20 {
+                assert_eq!(animations.displayed_offset(seat, &a, 3), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn selection_identity_ignores_member_order_but_not_membership() {
+        let a = queue_item(PortraitTarget::AlliedSelection, &[7, 8]);
+        let reordered = queue_item(PortraitTarget::AlliedSelection, &[8, 7]);
+        let replaced = queue_item(PortraitTarget::AlliedSelection, &[7, 9]);
+        assert_eq!(a.queue_strip_identity(), reordered.queue_strip_identity());
+        assert_ne!(a.queue_strip_identity(), replaced.queue_strip_identity());
+        let pinned = queue_item(PortraitTarget::AlliedGroup(1), &[7, 8]);
+        let changed_pinned = queue_item(PortraitTarget::AlliedGroup(1), &[8]);
+        assert_eq!(
+            pinned.queue_strip_identity(),
+            changed_pinned.queue_strip_identity()
+        );
+    }
+
+    #[test]
+    fn removed_strips_and_changed_seats_start_with_fresh_history() {
+        let key = queue_item(PortraitTarget::AlliedGroup(1), &[7]).queue_strip_identity();
+        let mut animations = crate::host::QueueStripAnimations::default();
+        let seat = PlayerId::HOST;
+        assert_eq!(animations.displayed_offset(seat, &key, 2), 0);
+        animations.prepare_fixed_tick(seat, [(key.clone(), 5)]);
+        animations.prepare_fixed_tick(seat, []);
+        animations.prepare_fixed_tick(seat, [(key.clone(), 2)]);
+        assert_eq!(animations.displayed_offset(seat, &key, 2), 0);
+        animations.prepare_fixed_tick(seat, [(key.clone(), 1)]);
+        assert_eq!(animations.displayed_offset(seat, &key, 1), 10);
+        let other_seat = PlayerId(2);
+        assert_eq!(animations.displayed_offset(other_seat, &key, 1), 0);
+        animations.prepare_fixed_tick(other_seat, [(key.clone(), 1)]);
+        assert_eq!(animations.displayed_offset(other_seat, &key, 1), 0);
+        animations.prepare_fixed_tick(seat, [(key.clone(), 1)]);
+        assert_eq!(animations.displayed_offset(seat, &key, 1), 0);
+    }
+
+    #[test]
+    fn snapshot_reset_retires_queue_history_before_first_capture() {
+        let mut host = crate::host::Host::scratch(640.0, 480.0);
+        let key = queue_item(PortraitTarget::AlliedGroup(1), &[7]).queue_strip_identity();
+        host.frontend
+            .prepare_queue_strip_animations(PlayerId::HOST, [(key.clone(), 5)]);
+        host.frontend
+            .reset_interaction(crate::host::InteractionReset::SnapshotRestored);
+        assert_eq!(
+            host.frontend
+                .queue_strip_animations()
+                .displayed_offset(PlayerId::HOST, &key, 1),
+            0
+        );
+        host.frontend
+            .prepare_queue_strip_animations(PlayerId::HOST, [(key.clone(), 1)]);
+        assert_eq!(
+            host.frontend
+                .queue_strip_animations()
+                .displayed_offset(PlayerId::HOST, &key, 1),
+            0
+        );
+    }
+
     #[test]
     fn required_ui_assets_follow_the_supplied_preparation() {
         let make = |bytes: &[u8]| {
