@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::bg_cache::BackgroundDecal;
+use crate::bg_cache::BackgroundDecals;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::distributed_mod_cache::DistributedModCache;
 use crate::draw_manager::DrawManager;
@@ -52,6 +52,27 @@ const DISPLAY_INFO_SAMPLES: usize = 16;
 pub struct QueueStripAnimation {
     pub previous_count: usize,
     pub fall_offset: i32,
+}
+
+impl QueueStripAnimation {
+    pub(crate) fn prepare_fixed_tick(&mut self, count: usize) {
+        self.fall_offset = if count < self.previous_count {
+            10
+        } else {
+            self.fall_offset.saturating_sub(2).max(0)
+        };
+        self.previous_count = count;
+    }
+
+    /// An early thumbnail may observe a queue change before live preparation.
+    /// Project its first collapse frame without advancing the live animation.
+    pub(crate) fn displayed_offset(&self, count: usize) -> i32 {
+        if count < self.previous_count {
+            10
+        } else {
+            self.fall_offset
+        }
+    }
 }
 
 /// Mutable application services shared by clones of one
@@ -111,7 +132,10 @@ fn unavailable_distributed_mod_cache() -> Mutex<Result<DistributedModCache, Stri
 /// `.await`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationContext {
+    // Launch overrides belong to this context; profiles and services are shared.
     options: engine_api::GlobalOptions,
+    // Profile-derived state. sim_config() overlays this context's launch options
+    // so changing one clone cannot silently change a sibling's launch authority.
     sim_config: Arc<Mutex<engine_api::SimConfig>>,
     services: Option<Arc<ApplicationServices>>,
 }
@@ -156,6 +180,13 @@ impl ReadyApplicationContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HostContextSnapshot {
     shipping: Option<Arc<ShippingDatadir>>,
+    preferences: FrontendPreferences,
+}
+
+/// A presentation-only projection of profile preferences. Applying it never
+/// writes the running engine's sealed replay/multiplayer simulation config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FrontendPreferences {
     key_config: KeyConfig,
     custom_key_config: KeyConfig,
     #[serde(alias = "control_allied_soldiers")]
@@ -166,6 +197,53 @@ struct HostContextSnapshot {
     quick_action_cursor_pulse: bool,
     diplomacy_visuals: bool,
     gameplay_config: robin_engine::gameplay_config::GameplayConfig,
+}
+
+/// Effects left to the live frame adapter, in its existing command/window order.
+/// Disabled preferences are enforced even when already disabled at menu entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct FrontendPreferenceEffects {
+    pub(crate) cancel_planned_action: bool,
+    pub(crate) native_refresh_presentation: bool,
+    pub(crate) release_tactical_control: bool,
+}
+
+impl FrontendPreferences {
+    pub(crate) fn new(
+        key_config: KeyConfig,
+        custom_key_config: KeyConfig,
+        gameplay: robin_engine::gameplay_config::GameplayConfig,
+        graphics: &robin_engine::graphic_config::GraphicConfig,
+    ) -> Self {
+        Self {
+            key_config,
+            custom_key_config,
+            control_tactical_units: gameplay.control_tactical_units,
+            plan_quick_actions: gameplay.plan_quick_actions,
+            touch_camera_gestures: gameplay.touch_camera_gestures,
+            native_refresh_presentation: graphics.native_refresh_presentation,
+            quick_action_cursor_pulse: graphics.quick_action_cursor_pulse,
+            diplomacy_visuals: graphics.diplomacy_visuals,
+            gameplay_config: gameplay,
+        }
+    }
+
+    pub(crate) fn apply(self, frontend: &mut HostFrontend) -> FrontendPreferenceEffects {
+        frontend.key_config = self.key_config;
+        frontend.custom_key_config = self.custom_key_config;
+        frontend.control_tactical_units = self.control_tactical_units;
+        frontend.planning.update_preference(self.plan_quick_actions);
+        frontend.touch_camera_gestures = self.touch_camera_gestures;
+        frontend.gameplay_config = self.gameplay_config;
+        frontend.native_refresh_presentation = self.native_refresh_presentation;
+        frontend.quick_action_cursor_pulse = self.quick_action_cursor_pulse;
+        frontend.diplomacy_visuals = self.diplomacy_visuals;
+        FrontendPreferenceEffects {
+            cancel_planned_action: !frontend.planning.enabled(),
+            native_refresh_presentation: self.native_refresh_presentation,
+            release_tactical_control: !self.control_tactical_units,
+        }
+    }
 }
 
 impl ApplicationContext {
@@ -394,19 +472,9 @@ impl ApplicationContext {
         })
     }
 
+    /// Replace this clone's launch overrides without changing its siblings.
+    /// Shared profile updates remain visible through every clone's sim_config().
     pub fn with_options(mut self, options: engine_api::GlobalOptions) -> Self {
-        let mut sim_config = self.sim_config();
-        let launcher = engine_api::SimConfig::from_options(&options, sim_config.difficulty);
-        sim_config.script_enabled = launcher.script_enabled;
-        sim_config.highlander = launcher.highlander;
-        sim_config.highlander2 = launcher.highlander2;
-        sim_config.golden_eye = launcher.golden_eye;
-        sim_config.ignore_default_loose = launcher.ignore_default_loose;
-        sim_config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
-        *self
-            .sim_config
-            .lock()
-            .expect("ApplicationContext sim-config lock poisoned") = sim_config;
         self.options = options;
         self
     }
@@ -437,10 +505,18 @@ impl ApplicationContext {
     }
 
     pub fn sim_config(&self) -> engine_api::SimConfig {
-        *self
+        let mut config = *self
             .sim_config
             .lock()
-            .expect("ApplicationContext sim-config lock poisoned")
+            .expect("ApplicationContext sim-config lock poisoned");
+        let launcher = engine_api::SimConfig::from_options(&self.options, config.difficulty);
+        config.script_enabled = launcher.script_enabled;
+        config.highlander = launcher.highlander;
+        config.highlander2 = launcher.highlander2;
+        config.golden_eye = launcher.golden_eye;
+        config.ignore_default_loose = launcher.ignore_default_loose;
+        config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
+        config
     }
 
     pub fn shipping(&self) -> Result<Option<&ShippingDatadir>, String> {
@@ -595,7 +671,7 @@ impl ApplicationContext {
         &self,
         update: impl FnOnce(&mut PlayerProfileManager) -> R,
     ) -> Result<R, String> {
-        let (result, difficulty, amount_of_speaking, gameplay_config) = {
+        let result = {
             let mut profiles = self
                 .required_services()?
                 .player_profiles
@@ -605,14 +681,15 @@ impl ApplicationContext {
             let active = profiles.get_active().ok_or_else(|| {
                 "ApplicationContext profile mutation must leave an active profile".to_string()
             })?;
-            (
-                result,
+            // Publish before releasing the profile lock: concurrent updates
+            // through sibling contexts must not publish snapshots out of order.
+            self.refresh_profile_derived_state(
                 active.difficulty,
                 active.sound_config.amount_of_speaking,
                 active.gameplay_config,
-            )
+            )?;
+            result
         };
-        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(result)
     }
 
@@ -626,7 +703,7 @@ impl ApplicationContext {
         screen_dims: (u32, u32),
     ) -> Result<u32, String> {
         let services = self.required_services()?;
-        let (profile_id, difficulty, amount_of_speaking, gameplay_config) = {
+        let profile_id = {
             // Keep this lock order (profiles, then keys) consistent for the
             // only operation that must update both services as one domain
             // transition. No guard escapes this synchronous method.
@@ -713,10 +790,10 @@ impl ApplicationContext {
                     "failed to complete durable first-launch profile transition: {error}; rollback profile={profile_rollback:?}, keys={key_rollback:?}"
                 ));
             }
-            (profile_id, difficulty, amount_of_speaking, gameplay_config)
+            self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
+            profile_id
         };
 
-        self.refresh_profile_derived_state(difficulty, amount_of_speaking, gameplay_config)?;
         Ok(profile_id)
     }
 
@@ -921,15 +998,12 @@ impl ApplicationContext {
         let active_profile = self.active_profile_snapshot()?;
         Ok(HostContextSnapshot {
             shipping: services.shipping.clone(),
-            key_config,
-            custom_key_config,
-            control_tactical_units: active_profile.gameplay_config.control_tactical_units,
-            plan_quick_actions: active_profile.gameplay_config.plan_quick_actions,
-            touch_camera_gestures: active_profile.gameplay_config.touch_camera_gestures,
-            native_refresh_presentation: active_profile.graphic_config.native_refresh_presentation,
-            quick_action_cursor_pulse: active_profile.graphic_config.quick_action_cursor_pulse,
-            diplomacy_visuals: active_profile.graphic_config.diplomacy_visuals,
-            gameplay_config: active_profile.gameplay_config,
+            preferences: FrontendPreferences::new(
+                key_config,
+                custom_key_config,
+                active_profile.gameplay_config,
+                &active_profile.graphic_config,
+            ),
         })
     }
 
@@ -992,16 +1066,20 @@ impl ApplicationContext {
         amount_of_speaking: u16,
         gameplay_config: robin_engine::gameplay_config::GameplayConfig,
     ) -> Result<(), String> {
-        let sim_config = profile_sim_config(
-            &self.options,
+        let mut state = self
+            .sim_config
+            .lock()
+            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())?;
+        let mut sim_config = profile_sim_config(
+            &engine_api::GlobalOptions::default(),
             difficulty,
             amount_of_speaking,
             gameplay_config,
         );
-        *self
-            .sim_config
-            .lock()
-            .map_err(|_| "ApplicationContext sim-config lock poisoned".to_string())? = sim_config;
+        // This is an explicit simulation-construction setting, not a profile
+        // preference. Profile updates must not reset official/parity authority.
+        sim_config.synchronous_pathfinding = state.synchronous_pathfinding;
+        *state = sim_config;
 
         Ok(())
     }
@@ -1573,10 +1651,9 @@ pub struct HostFrontend {
     /// Per-FX-entity persistent background decals replacing the legacy
     /// map-patch bake/restore surface pipeline. A queued map-patch insertion
     /// inserts or replaces the entity's decal; a queued restore removes it.
-    pub background_decals: HashMap<EntityId, BackgroundDecal>,
-    /// Stable draw order for [`Self::background_decals`], preserving the
-    /// order in which patch effects became permanent.
-    pub background_decal_order: Vec<EntityId>,
+    /// Draw order is owned by the collection: replacement keeps its position,
+    /// removal preserves survivor order, and reinsertion appends.
+    pub(crate) background_decals: BackgroundDecals,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1630,22 +1707,44 @@ impl HostFrontend {
     }
 }
 
+/// Mission-scoped transport authority. Admission installs the channel owner and
+/// construction metadata together; later events can only advance named states.
+///
+/// ```compile_fail,E0616
+/// let mut transport = robin_rs::host::HostTransport::default();
+/// transport.net = None;
+/// ```
+///
+/// ```compile_fail,E0616
+/// let mut transport = robin_rs::host::HostTransport::default();
+/// transport.local_seat = robin_engine::player_command::PlayerId::HOST;
+/// ```
 #[derive(Default)]
 pub struct HostTransport {
-    pub local_seat: engine_player_command::PlayerId,
-    pub net: Option<crate::multiplayer::NetChannels>,
-    pub mission_seed: Option<u64>,
-    pub mission_sim_config: Option<engine_api::SimConfig>,
-    pub speech_timing_locale: Option<String>,
-    pub mission_id: Option<String>,
-    pub reconnecting: bool,
+    local_seat: engine_player_command::PlayerId,
+    net: Option<crate::multiplayer::NetChannels>,
+    mission_seed: Option<u64>,
+    mission_sim_config: Option<engine_api::SimConfig>,
+    speech_timing_locale: Option<String>,
+    mission_id: Option<String>,
+    synchronization: TransportSynchronization,
     /// Verified full-mod bytes, VFS overlays, and cache lease for a
     /// host-distributed mission. Field order makes the network runtime stop
     /// before this mount is dropped with the enclosing transport.
-    pub distributed_mod: Option<crate::distributed_mod_admission::AdmittedDistributedMod>,
-    pub snapshot_transition: Option<PendingSnapshotTransition>,
+    #[cfg(feature = "multiplayer")]
+    distributed_mod: Option<crate::distributed_mod_admission::AdmittedDistributedMod>,
     /// Delayed Sherwood command boundary belongs to this transport lifetime.
-    pub(crate) pending_campaign_exit: Option<crate::main_entry::PendingMultiplayerCampaignExit>,
+    pending_campaign_exit: Option<crate::main_entry::PendingMultiplayerCampaignExit>,
+}
+
+/// Prepared transitions always hold simulation. Consuming their committed
+/// payload keeps that hold until the replacement mission releases BeginSim.
+#[derive(Default)]
+enum TransportSynchronization {
+    #[default]
+    Running,
+    AwaitingSnapshot,
+    Prepared(PendingSnapshotTransition),
 }
 
 pub struct PendingSnapshotTransition {
@@ -1734,27 +1833,308 @@ impl CommittedSnapshotTransition {
 }
 
 impl HostTransport {
+    pub fn local_seat(&self) -> engine_player_command::PlayerId {
+        self.local_seat
+    }
+    pub fn net(&self) -> Option<&crate::multiplayer::NetChannels> {
+        self.net.as_ref()
+    }
+    pub fn mission_seed(&self) -> Option<u64> {
+        self.mission_seed
+    }
+    pub fn mission_sim_config(&self) -> Option<engine_api::SimConfig> {
+        self.mission_sim_config
+    }
+    pub fn speech_timing_locale(&self) -> Option<&str> {
+        self.speech_timing_locale.as_deref()
+    }
+    pub fn mission_id(&self) -> Option<&str> {
+        self.mission_id.as_deref()
+    }
+    pub fn reconnecting(&self) -> bool {
+        !matches!(self.synchronization, TransportSynchronization::Running)
+    }
+    pub fn has_snapshot_transition(&self) -> bool {
+        matches!(self.synchronization, TransportSynchronization::Prepared(_))
+    }
+
+    /// Install one fully validated session before engine construction. Metadata
+    /// and identity cannot be partially replaced by a subsequent Welcome.
+    #[cfg(any(feature = "multiplayer", test))]
+    pub(crate) fn install_session(
+        &mut self,
+        net: crate::multiplayer::NetChannels,
+        seat: engine_player_command::PlayerId,
+        mission_id: String,
+        seed: u64,
+        config: engine_api::SimConfig,
+        speech_locale: Option<String>,
+    ) {
+        assert!(
+            self.net.is_none(),
+            "cannot overwrite a live multiplayer session"
+        );
+        assert!(
+            !self.has_snapshot_transition(),
+            "cannot install a session during a snapshot transition"
+        );
+        self.local_seat = seat;
+        self.mission_id = Some(mission_id);
+        self.mission_seed = Some(seed);
+        self.mission_sim_config = Some(config);
+        self.speech_timing_locale = speech_locale;
+        self.net = Some(net);
+        self.synchronization = TransportSynchronization::Running;
+    }
+
+    pub(crate) fn confirm_local_seat(&self, seat: engine_player_command::PlayerId) {
+        assert_eq!(
+            self.local_seat, seat,
+            "assigned seat changed after session admission"
+        );
+    }
+
+    /// Hold simulation without losing the admitted seat, campaign, or runtime.
+    pub(crate) fn await_authoritative_snapshot(&mut self) {
+        if !self.has_snapshot_transition() {
+            self.synchronization = TransportSynchronization::AwaitingSnapshot;
+        }
+    }
+    pub(crate) fn begin_simulation(&mut self) {
+        assert!(
+            !self.has_snapshot_transition(),
+            "ordinary snapshot cannot complete a prepared transition"
+        );
+        self.synchronization = TransportSynchronization::Running;
+    }
+    pub(crate) fn prepare_snapshot_transition(&mut self, pending: PendingSnapshotTransition) {
+        assert!(
+            !self.has_snapshot_transition(),
+            "snapshot transition already prepared"
+        );
+        self.synchronization = TransportSynchronization::Prepared(pending);
+    }
+    pub(crate) fn commit_snapshot_transition(
+        &mut self,
+        id: robin_engine::multiplayer::SnapshotTransitionId,
+    ) -> Result<(), String> {
+        match &mut self.synchronization {
+            TransportSynchronization::Prepared(pending) => pending.commit_authenticated(id),
+            _ => Err("snapshot transition commit has no prepared payload".into()),
+        }
+    }
+    #[cfg(feature = "multiplayer")]
+    pub(crate) fn retain_distributed_mod(
+        &mut self,
+        admitted: crate::distributed_mod_admission::AdmittedDistributedMod,
+    ) {
+        assert!(
+            self.distributed_mod.is_none(),
+            "distributed mission content already admitted"
+        );
+        self.distributed_mod = Some(admitted);
+    }
+    pub(crate) fn defer_campaign_exit(
+        &mut self,
+        pending: crate::main_entry::PendingMultiplayerCampaignExit,
+    ) {
+        assert!(
+            self.pending_campaign_exit.is_none(),
+            "campaign exit already pending"
+        );
+        self.pending_campaign_exit = Some(pending);
+    }
+    pub(crate) fn pending_campaign_exit(
+        &self,
+    ) -> Option<&crate::main_entry::PendingMultiplayerCampaignExit> {
+        self.pending_campaign_exit.as_ref()
+    }
+    pub(crate) fn take_campaign_exit_at(
+        &mut self,
+        frame: u32,
+    ) -> Option<crate::main_entry::PendingMultiplayerCampaignExit> {
+        if self
+            .pending_campaign_exit
+            .as_ref()
+            .is_some_and(|pending| frame >= pending.not_before_frame)
+        {
+            self.pending_campaign_exit.take()
+        } else {
+            None
+        }
+    }
+    pub(crate) fn preserve_session_for_next_mission(&mut self) {
+        if let Some(net) = self.net.as_mut() {
+            net.preserve_session_for_next_mission();
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn test_session(
+        net: crate::multiplayer::NetChannels,
+        seat: engine_player_command::PlayerId,
+    ) -> Self {
+        Self {
+            net: Some(net),
+            local_seat: seat,
+            ..Self::default()
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn test_local_seat(&mut self, seat: engine_player_command::PlayerId) {
+        self.local_seat = seat;
+    }
+    #[cfg(test)]
+    pub(crate) fn test_drop_channels(&mut self) {
+        self.net = None;
+    }
+
     pub fn authoritative_transition_actions_enabled(&self) -> bool {
-        !self.reconnecting
-            && self.snapshot_transition.is_none()
-            && (self.net.is_none()
-                || self.local_seat == robin_engine::player_command::PlayerId::HOST)
+        !self.reconnecting() && self.local_seat == robin_engine::player_command::PlayerId::HOST
     }
 
     pub(crate) fn take_committed_snapshot_transition(
         &mut self,
     ) -> Option<CommittedSnapshotTransition> {
-        if self
-            .snapshot_transition
-            .as_ref()
-            .is_some_and(|transition| transition.committed)
+        if !matches!(&self.synchronization, TransportSynchronization::Prepared(pending) if pending.committed)
         {
-            self.snapshot_transition
-                .take()
-                .map(CommittedSnapshotTransition)
-        } else {
-            None
+            return None;
         }
+        let TransportSynchronization::Prepared(pending) = std::mem::replace(
+            &mut self.synchronization,
+            TransportSynchronization::AwaitingSnapshot,
+        ) else {
+            unreachable!("checked committed preparation")
+        };
+        Some(CommittedSnapshotTransition(pending))
+    }
+}
+
+#[cfg(test)]
+mod transport_lifecycle_tests {
+    use super::*;
+    use robin_engine::multiplayer::{MultiplayerSessionId, SnapshotTransitionId};
+    use robin_engine::player_command::PlayerId;
+
+    fn installed(seat: PlayerId) -> HostTransport {
+        let (channels, _incoming, _outgoing, _, _) = crate::multiplayer::NetChannels::new();
+        let mut transport = HostTransport::default();
+        transport.install_session(
+            channels,
+            seat,
+            "leicester".into(),
+            42,
+            engine_api::SimConfig::default(),
+            Some("en".into()),
+        );
+        transport
+    }
+
+    fn transition_id() -> SnapshotTransitionId {
+        SnapshotTransitionId {
+            session_id: MultiplayerSessionId([8; 32]),
+            sequence: 1,
+        }
+    }
+
+    fn prepare(transport: &mut HostTransport) {
+        transport.prepare_snapshot_transition(PendingSnapshotTransition::new(
+            transition_id(),
+            PendingSnapshotTransitionPayload::CampaignExit {
+                exit_code: robin_engine::game_operation::GameCode::LevelInterrupted,
+                engine: None,
+            },
+        ));
+    }
+
+    #[test]
+    fn reconnect_retains_admitted_identity_metadata_and_channels() {
+        let mut transport = installed(PlayerId(2));
+        let channel_address = transport.net().unwrap() as *const _;
+        transport.await_authoritative_snapshot();
+        assert!(transport.reconnecting());
+        assert!(!transport.authoritative_transition_actions_enabled());
+        assert_eq!(transport.local_seat(), PlayerId(2));
+        assert_eq!(transport.mission_id(), Some("leicester"));
+        assert_eq!(transport.mission_seed(), Some(42));
+        assert_eq!(
+            transport.mission_sim_config(),
+            Some(engine_api::SimConfig::default())
+        );
+        assert_eq!(transport.speech_timing_locale(), Some("en"));
+        assert_eq!(transport.net().unwrap() as *const _, channel_address);
+        transport.confirm_local_seat(PlayerId(2));
+        transport.begin_simulation();
+        assert!(!transport.reconnecting());
+        assert!(
+            !transport.authoritative_transition_actions_enabled(),
+            "a resumed peer never becomes the host"
+        );
+    }
+
+    #[test]
+    fn committed_payload_is_consumed_once_and_keeps_simulation_held() {
+        let mut transport = installed(PlayerId::HOST);
+        prepare(&mut transport);
+        assert!(transport.take_committed_snapshot_transition().is_none());
+        assert!(
+            transport
+                .commit_snapshot_transition(SnapshotTransitionId {
+                    sequence: 2,
+                    ..transition_id()
+                })
+                .is_err()
+        );
+        transport.await_authoritative_snapshot();
+        assert!(
+            transport.has_snapshot_transition(),
+            "disconnect cannot discard an authenticated preparation"
+        );
+        transport
+            .commit_snapshot_transition(transition_id())
+            .unwrap();
+        assert!(
+            transport
+                .commit_snapshot_transition(transition_id())
+                .is_err()
+        );
+        assert_eq!(
+            transport.take_committed_snapshot_transition().unwrap().id(),
+            transition_id()
+        );
+        assert!(transport.take_committed_snapshot_transition().is_none());
+        assert!(!transport.has_snapshot_transition());
+        assert!(transport.reconnecting());
+        assert!(!transport.authoritative_transition_actions_enabled());
+        transport.begin_simulation();
+        assert!(transport.authoritative_transition_actions_enabled());
+    }
+
+    #[test]
+    #[should_panic(expected = "ordinary snapshot cannot complete a prepared transition")]
+    fn ordinary_barrier_cannot_discard_prepared_payload() {
+        let mut transport = installed(PlayerId::HOST);
+        prepare(&mut transport);
+        transport.begin_simulation();
+    }
+
+    #[test]
+    #[should_panic(expected = "assigned seat changed after session admission")]
+    fn late_assignment_cannot_rewrite_admitted_seat() {
+        installed(PlayerId(2)).confirm_local_seat(PlayerId::HOST);
+    }
+
+    #[test]
+    fn losing_test_channels_does_not_promote_a_waiting_peer() {
+        let mut transport = installed(PlayerId(2));
+        transport.await_authoritative_snapshot();
+        transport.test_drop_channels();
+        assert_eq!(transport.local_seat(), PlayerId(2));
+        assert!(!transport.authoritative_transition_actions_enabled());
+        transport.begin_simulation();
+        assert!(
+            !transport.authoritative_transition_actions_enabled(),
+            "missing channels cannot turn a former client into a single-player host"
+        );
     }
 }
 
@@ -2085,6 +2465,17 @@ pub(crate) struct HostPresentation<'a> {
 }
 
 impl HostPresentation<'_> {
+    /// Drawing cannot advance frontend state or escape into application services.
+    pub(crate) fn draw(&self) -> HostDraw<'_> {
+        HostDraw {
+            frontend: self.frontend,
+            sound: self.sound,
+            options: self.options,
+            local_seat: self.local_seat,
+            graphic_config: self.graphic_config(),
+        }
+    }
+
     /// Read only the active presentation settings, without granting storage,
     /// profile mutation, asset preparation, or other application authority.
     pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
@@ -2096,6 +2487,38 @@ impl HostPresentation<'_> {
             })
             .unwrap_or_else(|error| panic!("rendering requires an active profile: {error}"))
             .expect("rendering requires an active profile")
+    }
+}
+
+/// Immutable gameplay presentation inputs; GPU command buffers remain separately
+/// mutable in the renderer. Serialization is diagnostic-only and cannot
+/// reconstruct borrowed frontend authority.
+pub(crate) struct HostDraw<'a> {
+    pub(crate) frontend: &'a HostFrontend,
+    pub(crate) sound: &'a crate::sound::SoundManager,
+    pub(crate) options: &'a engine_api::GlobalOptions,
+    pub(crate) local_seat: robin_engine::player_command::PlayerId,
+    graphic_config: robin_engine::graphic_config::GraphicConfig,
+}
+
+impl Serialize for HostDraw<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // No live frontend, sound, options, or application state escapes.
+        serializer.serialize_unit_struct("HostDraw")
+    }
+}
+
+impl<'de> Deserialize<'de> for HostDraw<'_> {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "draw authority must be borrowed from the live presentation host",
+        ))
+    }
+}
+
+impl HostDraw<'_> {
+    pub(crate) fn graphic_config(&self) -> robin_engine::graphic_config::GraphicConfig {
+        self.graphic_config.clone()
     }
 }
 
@@ -2165,23 +2588,18 @@ impl Host {
         screen_height: f32,
     ) -> Result<Self, String> {
         let snapshot = application_context.host_snapshot()?;
+        let mut frontend = HostFrontend {
+            viewport: ViewportState::new(screen_width, screen_height),
+            input: InputState::focused(),
+            shipping: snapshot.shipping,
+            ..Default::default()
+        };
+        // Startup has no pending world commands or attached presentation window.
+        // The live options adapter performs the returned transition effects.
+        snapshot.preferences.apply(&mut frontend);
         Ok(Self {
             application_context: application_context.into(),
-            frontend: HostFrontend {
-                viewport: ViewportState::new(screen_width, screen_height),
-                input: InputState::focused(),
-                shipping: snapshot.shipping,
-                key_config: snapshot.key_config,
-                custom_key_config: snapshot.custom_key_config,
-                control_tactical_units: snapshot.control_tactical_units,
-                planning: crate::frontend_input::FrontendPlanning::new(snapshot.plan_quick_actions),
-                touch_camera_gestures: snapshot.touch_camera_gestures,
-                native_refresh_presentation: snapshot.native_refresh_presentation,
-                quick_action_cursor_pulse: snapshot.quick_action_cursor_pulse,
-                diplomacy_visuals: snapshot.diplomacy_visuals,
-                gameplay_config: snapshot.gameplay_config,
-                ..Default::default()
-            },
+            frontend,
             ..Default::default()
         })
     }
@@ -2559,7 +2977,6 @@ impl HostFrontend {
     /// Clear persistent decals that belonged to the previous level.
     pub fn clear_background_decals(&mut self) {
         self.background_decals.clear();
-        self.background_decal_order.clear();
     }
 
     pub fn install_trajectory_ground_mark_sprite(&mut self, data: &GroundMarkSpriteData) {
@@ -3207,6 +3624,179 @@ mod application_context_tests {
     }
 
     #[test]
+    fn cloned_launch_options_stay_local_while_profile_updates_are_shared() {
+        let original = context(
+            0,
+            DifficultyLevel::Easy,
+            KeyCode::F2,
+            "clone-options.marker",
+        );
+        let changed = original.clone().with_options(engine_api::GlobalOptions {
+            script_enabled: false,
+            highlander: true,
+            highlander2: true,
+            golden_eye: true,
+            ignore_default_loose: true,
+            bypass_fog_sprites_crash: true,
+            ..Default::default()
+        });
+        let original_options = original.options().clone();
+        let changed_options = changed.options().clone();
+        let sealed = changed.sim_config();
+
+        for (updater, difficulty, speech) in [
+            (&original, DifficultyLevel::Hard, 9),
+            (&changed, DifficultyLevel::Medium, 2),
+        ] {
+            updater
+                .with_player_profiles_mut(|profiles| {
+                    let active = profiles.get_active_mut().unwrap();
+                    active.difficulty = difficulty;
+                    active.sound_config.amount_of_speaking = speech;
+                    active.gameplay_config.enable_unbinding = false;
+                })
+                .unwrap();
+            for (context, options) in [(&original, &original_options), (&changed, &changed_options)]
+            {
+                let gameplay = context.active_profile_snapshot().unwrap().gameplay_config;
+                assert_eq!(
+                    context.sim_config(),
+                    profile_sim_config(options, difficulty, speech, gameplay),
+                );
+                assert_eq!(
+                    serde_json::to_value(context.options()).unwrap(),
+                    serde_json::to_value(options).unwrap(),
+                );
+            }
+        }
+        assert_eq!(sealed.difficulty, DifficultyLevel::Easy);
+        assert!(
+            sealed.highlander,
+            "already sealed simulation values are independent copies"
+        );
+        // The diagnostic wire snapshot must retain the same effective contract.
+        let decoded: ApplicationContext =
+            serde_json::from_value(serde_json::to_value(&changed).unwrap()).unwrap();
+        assert_eq!(decoded.sim_config(), changed.sim_config());
+    }
+
+    #[test]
+    fn startup_and_options_use_the_same_frontend_projection() {
+        let context = context(0, DifficultyLevel::Hard, KeyCode::F4, "projection.marker");
+        context
+            .with_player_profiles_mut(|profiles| {
+                let profile = profiles.get_active_mut().unwrap();
+                profile.gameplay_config.control_tactical_units = false;
+                profile.gameplay_config.plan_quick_actions = false;
+                profile.gameplay_config.touch_camera_gestures = false;
+                profile.graphic_config.native_refresh_presentation = true;
+                profile.graphic_config.quick_action_cursor_pulse = false;
+                profile.graphic_config.diplomacy_visuals = true;
+                profile.sound_config.amount_of_speaking = 7;
+            })
+            .unwrap();
+        let startup = Host::new(context.clone().try_into().unwrap(), 800.0, 600.0).unwrap();
+        let profile = context.active_profile_snapshot().unwrap();
+        let (keys, custom_keys) = context.active_key_configs().unwrap();
+        let mut live = Host::scratch(800.0, 600.0);
+        live.frontend.planning.toggle_touch();
+        let sealed = engine_api::SimConfig {
+            difficulty: DifficultyLevel::Easy,
+            amount_of_speaking: 1,
+            ..Default::default()
+        };
+        live.transport.mission_sim_config = Some(sealed);
+        let effects = FrontendPreferences::new(
+            keys,
+            custom_keys,
+            profile.gameplay_config,
+            &profile.graphic_config,
+        )
+        .apply(&mut live.frontend);
+        assert_eq!(
+            effects,
+            FrontendPreferenceEffects {
+                cancel_planned_action: true,
+                native_refresh_presentation: true,
+                release_tactical_control: true,
+            }
+        );
+        assert!(!live.frontend.planning.touch_latched());
+        assert_eq!(live.transport.mission_sim_config, Some(sealed));
+        assert_eq!(context.sim_config().amount_of_speaking, 7);
+        for frontend in [&startup.frontend, &live.frontend] {
+            assert_eq!(
+                serde_json::to_value(FrontendPreferences::new(
+                    frontend.key_config.clone(),
+                    frontend.custom_key_config.clone(),
+                    frontend.gameplay_config,
+                    &profile.graphic_config,
+                ))
+                .unwrap(),
+                serde_json::to_value(context.host_snapshot().unwrap().preferences).unwrap(),
+            );
+            assert!(!frontend.control_tactical_units);
+            assert!(!frontend.planning.enabled());
+            assert!(!frontend.touch_camera_gestures);
+            assert!(frontend.native_refresh_presentation);
+            assert!(!frontend.quick_action_cursor_pulse);
+            assert!(frontend.diplomacy_visuals);
+        }
+    }
+
+    #[test]
+    fn profile_updates_preserve_explicit_pathfinding_construction_policy() {
+        let context = context(
+            0,
+            DifficultyLevel::Medium,
+            KeyCode::F2,
+            "pathfinding.marker",
+        );
+        context.sim_config.lock().unwrap().synchronous_pathfinding = true;
+        let sibling = context.clone().with_options(engine_api::GlobalOptions {
+            highlander: true,
+            ..Default::default()
+        });
+        sibling
+            .with_player_profiles_mut(|profiles| {
+                profiles
+                    .get_active_mut()
+                    .unwrap()
+                    .sound_config
+                    .amount_of_speaking = 9;
+            })
+            .unwrap();
+        for snapshot in [context.sim_config(), sibling.sim_config()] {
+            assert!(snapshot.synchronous_pathfinding);
+            assert_eq!(snapshot.amount_of_speaking, 9);
+            assert_eq!(snapshot.difficulty, DifficultyLevel::Medium);
+        }
+        assert!(!context.sim_config().highlander);
+        assert!(sibling.sim_config().highlander);
+    }
+
+    #[test]
+    fn frontend_projection_preserves_session_planning_policy() {
+        let mut frontend = HostFrontend::default();
+        frontend.planning.force_off_for_session();
+        let gameplay = robin_engine::gameplay_config::GameplayConfig {
+            plan_quick_actions: true,
+            control_tactical_units: true,
+            ..Default::default()
+        };
+        let effects = FrontendPreferences::new(
+            KeyConfig::default(),
+            KeyConfig::default(),
+            gameplay,
+            &Default::default(),
+        )
+        .apply(&mut frontend);
+        assert!(effects.cancel_planned_action);
+        assert!(!effects.release_tactical_control);
+        assert!(!frontend.planning.enabled());
+    }
+
+    #[test]
     fn context_snapshots_release_locks_before_await() {
         let context = context(0, DifficultyLevel::Medium, KeyCode::F4, "lock.marker");
 
@@ -3219,6 +3809,7 @@ mod application_context_tests {
             assert!(services.key_configs.try_lock().is_ok());
             assert_eq!(
                 snapshot
+                    .preferences
                     .key_config
                     .get_binding("ZoomIn")
                     .unwrap()

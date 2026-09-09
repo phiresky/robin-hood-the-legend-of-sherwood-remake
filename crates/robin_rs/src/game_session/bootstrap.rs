@@ -11,10 +11,10 @@ use super::runtime::{
     FrameContract, MissionControl, MissionRuntime, MissionWorld, TimelineRuntime,
 };
 use super::setup::{
-    HeadlessEngineResources, LOADING_AUDIO_PROGRESS, LoadedInteractiveResources, LoadedMissionCore,
-    MissionInterfaceSetup, MissionLaunchSetup, MissionLoadError, MissionProcessResources,
-    TerrainJoinPoint, pre_decode_maps_and_resources, prepare_mission,
-    setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
+    DecodingInterfaceResources, LOADING_AUDIO_PROGRESS, LoadedInteractiveResources,
+    LoadedMissionCore, MissionEngineResources, MissionInterfaceSetup, MissionLaunchSetup,
+    MissionLoadError, MissionProcessResources, TerrainJoinPoint, pre_decode_maps_and_resources,
+    prepare_mission, setup_local_seat_and_multiplayer_snapshot, setup_mission_audio,
 };
 use super::{
     MissionOutcome, install_cold_save_lua_session, install_pending_lua_session,
@@ -320,7 +320,7 @@ impl MissionBootstrap {
     ) -> InteractiveMission {
         assert_eq!(self.spec.frontend, MissionFrontendKind::Interactive);
         self.lifecycle.require(MissionBootstrapPhase::EntryPrepared);
-        let wait_for_multiplayer_start = self.host.transport.net.is_some();
+        let wait_for_multiplayer_start = self.host.transport.net().is_some();
         InteractiveMission {
             runtime: self.finish_runtime(
                 args,
@@ -336,7 +336,7 @@ impl MissionBootstrap {
         let custom_package_present = self.host.scripting.lua_session.is_some()
             || args.custom_mission.is_some()
             || args.pending_lua_mission.is_some();
-        if let Some(net) = self.host.transport.net.as_ref() {
+        if let Some(net) = self.host.transport.net() {
             self.loaded
                 .ranked_admission
                 .install_multiplayer_before_frame_zero(net, custom_package_present)
@@ -357,7 +357,7 @@ impl MissionBootstrap {
         assert_eq!(self.spec.frontend, MissionFrontendKind::Headless);
         self.lifecycle
             .require(MissionBootstrapPhase::CampaignClockStarted);
-        let wait_for_multiplayer_start = self.host.transport.net.is_some();
+        let wait_for_multiplayer_start = self.host.transport.net().is_some();
         HeadlessMission {
             modals: super::session_policy::SessionModalScheduler::default(),
             runtime: self.finish_runtime(args, FrameContract::Headless, wait_for_multiplayer_start),
@@ -447,8 +447,7 @@ impl MissionBootstrap {
         let ranked_multiplayer_port =
             self.host
                 .transport
-                .net
-                .as_ref()
+                .net()
                 .and_then(|net| match net.ranked_port() {
                     Ok(port) => Some(port),
                     Err(error) => {
@@ -460,7 +459,7 @@ impl MissionBootstrap {
             super::leaderboard_runtime::MissionLeaderboardRuntime::new(
                 &self.loaded.replay_campaign,
                 mission_id.clone(),
-                self.host.transport.net.is_some(),
+                self.host.transport.net().is_some(),
                 ranked_admission,
                 ranked_multiplayer_port,
             )
@@ -475,13 +474,13 @@ impl MissionBootstrap {
             mission_assets,
             self.loaded.engine_rng_seed,
             self.loaded.engine_sim_config,
-            self.host.transport.net.is_some(),
+            self.host.transport.net().is_some(),
         );
         let mut timeline = TimelineRuntime::new(
             replay,
             contract,
             wait_for_multiplayer_start,
-            self.host.transport.local_seat == robin_engine::player_command::PlayerId::HOST,
+            self.host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST,
         );
         debug_assert_eq!(timeline.frame_contract(), contract);
         // Entry eligibility is insufficient: capture/indexing can fail, and
@@ -523,6 +522,16 @@ impl MissionBootstrap {
 
     fn into_campaign_and_simulation(self) -> (Campaign, u64, engine_api::SimConfig) {
         self.loaded.engine.into_campaign_and_simulation()
+    }
+
+    /// Frontend resources may be consumed on failure, but mission ownership
+    /// must remain available for the caller's campaign recovery path.
+    async fn retain_during_frontend_assembly(
+        mut self: Box<Self>,
+        assemble: impl AsyncFnOnce(&mut Self) -> Result<InteractiveFrontendAssembly, String>,
+    ) -> (Box<Self>, Result<InteractiveFrontendAssembly, String>) {
+        let result = assemble(&mut self).await;
+        (self, result)
     }
 }
 
@@ -817,7 +826,7 @@ impl InteractiveLoadStage {
             self.process.engine_setup_resources(&mut self.host);
         // Pre-engine metadata extraction is done with the interface archive;
         // send it off to get its JXL pictures decoded while the level loads.
-        self.process.start_interface_decode();
+        let mut process = self.process.start_interface_decode();
         let screen_width = window.width as f32;
         let screen_height = window.height as f32;
         let mut feedback = (Some(window), &mut self.loading.renderer);
@@ -827,7 +836,7 @@ impl InteractiveLoadStage {
             &mut self.game,
             campaign,
             profiles,
-            &mut self.process.text,
+            &mut process.text,
             args,
             MissionInterfaceSetup {
                 ground_mark,
@@ -849,15 +858,15 @@ impl InteractiveLoadStage {
             TerrainJoinPoint::BeforePresentationUpload,
         )?;
         Ok(LoadedInteractiveStage {
-            bootstrap: MissionBootstrap::new(
+            bootstrap: Box::new(MissionBootstrap::new(
                 MissionSpec::interactive(mission_idx, location, screen_width, screen_height),
                 self.host,
                 self.game,
                 loaded,
                 args,
-            ),
-            process: Some(self.process),
-            loading: Some(self.loading),
+            )),
+            process,
+            loading: self.loading,
         })
     }
 }
@@ -866,9 +875,12 @@ impl InteractiveLoadStage {
 /// complete. Its methods are intentionally ordered and guarded by
 /// `MissionBootstrapPhase`.
 struct LoadedInteractiveStage {
-    bootstrap: MissionBootstrap,
-    process: Option<MissionProcessResources>,
-    loading: Option<MissionLoadingScreen>,
+    // The bootstrap includes the complete simulation. Keep ownership on the
+    // heap across consuming async frontend stages rather than embedding it in
+    // every nested future and its returned result.
+    bootstrap: Box<MissionBootstrap>,
+    process: MissionProcessResources<DecodingInterfaceResources>,
+    loading: MissionLoadingScreen,
 }
 
 impl LoadedInteractiveStage {
@@ -877,129 +889,129 @@ impl LoadedInteractiveStage {
     }
     fn prepare_audio(&mut self, profiles: &ProfileManager) -> Result<(), String> {
         self.loading
-            .as_mut()
-            .expect("interactive loading screen must exist until frontend assembly")
             .status("Loading mission audio...", LOADING_AUDIO_PROGRESS);
-        self.bootstrap.prepare_audio(
-            self.process
-                .as_mut()
-                .expect("interactive process resources must exist until frontend assembly")
-                .audio_backend
-                .as_mut(),
-            profiles,
-        )
+        self.bootstrap
+            .prepare_audio(self.process.audio_backend.as_mut(), profiles)
     }
 
     async fn assemble_frontend(
-        &mut self,
+        self,
         window: &mut GameWindow,
         profiles: &ProfileManager,
         args: &crate::main_entry::CliArgs,
-    ) -> Result<InteractiveFrontendAssembly, String> {
-        let loading = self
-            .loading
-            .as_mut()
-            .expect("interactive loading screen must exist until frontend assembly");
-        let LoadedInteractiveResources {
-            level_descriptors,
-            hud_fonts,
-        } = pre_decode_maps_and_resources(
-            Some(window),
-            &mut loading.renderer,
-            &mut self.bootstrap.loaded.engine,
-            profiles,
-            &self.bootstrap.host,
-            &self.bootstrap.game,
-        )?;
-        let short_briefings = self
-            .process
-            .as_mut()
-            .expect("interactive process resources must exist until frontend assembly")
-            .resolve_short_briefings(level_descriptors.as_ref());
+    ) -> (
+        Box<MissionBootstrap>,
+        Result<InteractiveFrontendAssembly, String>,
+    ) {
+        let Self {
+            bootstrap,
+            process,
+            loading,
+        } = self;
+        bootstrap
+            .retain_during_frontend_assembly(async |bootstrap| {
+                Self::assemble_process_frontend(bootstrap, process, loading, window, profiles, args)
+                    .await
+            })
+            .await
+    }
 
-        let mut timer = super::setup::PhaseTimer::new("frontend assembly");
-        let (renderer_config, prepared_renderer) = self
-            .loading
-            .take()
-            .expect("interactive loading screen must close before renderer construction")
-            .close_before_renderer();
-        let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
-            window,
-            renderer_config,
-            prepared_renderer,
-        );
-        timer.step("game renderer construction");
-
-        // Deferred-terrain join: this is the first point that needs the
-        // decoded pixels, so the decode overlapped everything since the
-        // mission header was read. A decode failure aborts the mission
-        // launch here (the engine's campaign is recovered by the caller).
-        let (background, minimap) = match self.bootstrap.loaded.pending_terrain.take() {
-            Some(pending) => {
-                let decoded = pending.join().await;
-                let background = decoded.background?;
-                if let Some(bg) = background.as_ref() {
-                    assert_eq!(
-                        (bg.width as f32, bg.height as f32),
-                        self.bootstrap.loaded.bg_pixel_dims,
-                        "background map header dimensions diverge from decoded bitmap"
-                    );
-                }
-                timer.step("terrain decode join");
-                (background, decoded.minimap)
-            }
-            None => (
-                self.bootstrap.loaded.pre_decoded_background.take(),
-                self.bootstrap.loaded.pre_decoded_minimap.take(),
-            ),
-        };
-        let ambience_backgrounds =
-            std::mem::take(&mut self.bootstrap.loaded.pre_decoded_ambience_backgrounds);
-        let ambience_minimaps =
-            std::mem::take(&mut self.bootstrap.loaded.pre_decoded_ambience_minimaps);
-        renderer.upload_maps(
-            &self.bootstrap.loaded.engine,
-            &mut self.bootstrap.host,
-            background,
-            minimap,
-            ambience_backgrounds,
-            ambience_minimaps,
-        );
-        timer.step("map upload");
-
-        // Interface pre-decode join: `load_mission_sprites` and the in-game
-        // menus consume these managers next.
-        let (cursor, menu_res) = self
-            .process
-            .as_mut()
-            .expect("interactive process resources must exist until frontend assembly")
-            .take_interface()
-            .await;
-        timer.step("interface decode join");
-
-        let process = self
-            .process
-            .take()
-            .expect("interactive process resources must move into the frontend once");
-        renderer.assemble_process_frontend(
-            window,
-            &mut self.bootstrap.host,
-            &self.bootstrap.game,
-            &mut self.bootstrap.loaded.engine,
-            &self.bootstrap.loaded.assets,
-            process.text,
-            cursor,
-            menu_res,
-            process.audio_backend,
-            LoadedInteractiveResources {
+    // Keep the renderer/upload future behind a pointer as well: inlining it
+    // into the consuming stage and its owner-retention closure multiplies the
+    // stack required to construct and poll graphical startup.
+    fn assemble_process_frontend<'a>(
+        bootstrap: &'a mut MissionBootstrap,
+        mut process: MissionProcessResources<DecodingInterfaceResources>,
+        mut loading: MissionLoadingScreen,
+        window: &'a mut GameWindow,
+        profiles: &'a ProfileManager,
+        args: &'a crate::main_entry::CliArgs,
+    ) -> futures::future::LocalBoxFuture<'a, Result<InteractiveFrontendAssembly, String>> {
+        Box::pin(async move {
+            let LoadedInteractiveResources {
                 level_descriptors,
                 hud_fonts,
-            },
-            short_briefings,
-            args,
-            self.bootstrap.spec.mission_idx,
-            self.bootstrap.spec.location,
-        )
+            } = pre_decode_maps_and_resources(
+                Some(window),
+                &mut loading.renderer,
+                &mut bootstrap.loaded.engine,
+                profiles,
+                &bootstrap.host,
+                &bootstrap.game,
+            )?;
+            let short_briefings = process.resolve_short_briefings(level_descriptors.as_ref());
+
+            let mut timer = super::setup::PhaseTimer::new("frontend assembly");
+            let (renderer_config, prepared_renderer) = loading.close_before_renderer();
+            let mut renderer = InteractiveRendererAssembly::new_after_loading_screen(
+                window,
+                renderer_config,
+                prepared_renderer,
+            );
+            timer.step("game renderer construction");
+
+            // Deferred-terrain join: this is the first point that needs the
+            // decoded pixels, so the decode overlapped everything since the
+            // mission header was read. A decode failure aborts the mission
+            // launch here (the engine's campaign is recovered by the caller).
+            let (background, minimap) = match bootstrap.loaded.pending_terrain.take() {
+                Some(pending) => {
+                    let decoded = pending.join().await;
+                    let background = decoded.background?;
+                    if let Some(bg) = background.as_ref() {
+                        assert_eq!(
+                            (bg.width as f32, bg.height as f32),
+                            bootstrap.loaded.bg_pixel_dims,
+                            "background map header dimensions diverge from decoded bitmap"
+                        );
+                    }
+                    timer.step("terrain decode join");
+                    (background, decoded.minimap)
+                }
+                None => (
+                    bootstrap.loaded.pre_decoded_background.take(),
+                    bootstrap.loaded.pre_decoded_minimap.take(),
+                ),
+            };
+            let ambience_backgrounds =
+                std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_backgrounds);
+            let ambience_minimaps =
+                std::mem::take(&mut bootstrap.loaded.pre_decoded_ambience_minimaps);
+            renderer.upload_maps(
+                &bootstrap.loaded.engine,
+                &mut bootstrap.host,
+                background,
+                minimap,
+                ambience_backgrounds,
+                ambience_minimaps,
+            );
+            timer.step("map upload");
+
+            // Interface pre-decode join: `load_mission_sprites` and the in-game
+            // menus consume these managers next.
+            let (text, cursor, menu_res, audio_backend) = process.collect().await;
+            timer.step("interface decode join");
+
+            renderer.assemble_process_frontend(
+                window,
+                &mut bootstrap.host,
+                &bootstrap.game,
+                &mut bootstrap.loaded.engine,
+                &bootstrap.loaded.assets,
+                text,
+                cursor,
+                menu_res,
+                audio_backend,
+                LoadedInteractiveResources {
+                    level_descriptors,
+                    hud_fonts,
+                },
+                short_briefings,
+                args,
+                bootstrap.spec.mission_idx,
+                bootstrap.spec.location,
+            )
+        })
     }
 }
 
@@ -1061,7 +1073,7 @@ pub(super) enum InteractiveBuildOutcome {
 struct HeadlessLoadStage {
     host: Host,
     game: Game,
-    resources: HeadlessEngineResources,
+    resources: MissionEngineResources,
 }
 
 impl HeadlessLoadStage {
@@ -1107,7 +1119,7 @@ impl HeadlessLoadStage {
         );
         let mut game = Game::new(location);
         game.global_options = args.global_options.clone();
-        let resources = HeadlessEngineResources::load(&host)?;
+        let resources = MissionEngineResources::load(&host)?;
         Ok(Self {
             host,
             game,
@@ -1404,6 +1416,7 @@ impl InteractiveMissionBuilder {
         // A checkpoint belongs to one running mission, including when entry
         // into the next mission fails or takes the lost-Sherwood shortcut.
         callbacks.save_manager.clear_session_restart();
+        callbacks.begin_profile_clock_session();
 
         if let Err(error) = crate::lua_session::validate_launch_mode(
             args,
@@ -1612,10 +1625,11 @@ impl InteractiveMissionBuilder {
             ));
         }
         timer.step("audio prepare");
-        let frontend = match stage.assemble_frontend(window, profiles, args).await {
+        let (mut bootstrap, frontend) = stage.assemble_frontend(window, profiles, args).await;
+        let frontend = match frontend {
             Ok(frontend) => frontend,
             Err(error) => {
-                let (campaign, rng_seed, sim_config) = stage.into_campaign_and_simulation();
+                let (campaign, rng_seed, sim_config) = bootstrap.into_campaign_and_simulation();
                 return InteractiveBuildOutcome::Finished(MissionOutcome::from_engine(
                     campaign,
                     rng_seed,
@@ -1626,17 +1640,16 @@ impl InteractiveMissionBuilder {
         };
         timer.step("frontend assembly");
 
-        let lost_sherwood = stage.bootstrap.game.is_sherwood
-            && stage.bootstrap.loaded.engine.campaign().get_ares() == 0;
+        let lost_sherwood =
+            bootstrap.game.is_sherwood && bootstrap.loaded.engine.campaign().get_ares() == 0;
         if lost_sherwood {
-            stage.bootstrap.defer_lost_sherwood_entry();
+            bootstrap.defer_lost_sherwood_entry();
         } else {
-            stage.bootstrap.start_campaign_clock();
-            stage.bootstrap.setup_restart_or_sherwood(callbacks, args);
+            bootstrap.start_campaign_clock();
+            bootstrap.setup_restart_or_sherwood(callbacks, args);
         }
         let frontend = frontend.finish(window.width, window.height);
         timer.step("HUD sprite finish");
-        let bootstrap = stage.bootstrap;
         let mission = bootstrap.finish_interactive(frontend, args);
         timer.step("runtime + replay init");
         timer.total();
@@ -1769,6 +1782,48 @@ mod tests {
             },
             &crate::main_entry::CliArgs::default(),
         )
+    }
+
+    #[test]
+    fn frontend_retention_future_does_not_embed_the_simulation_owner() {
+        let bootstrap = Box::new(scratch_bootstrap_fixture());
+        let future = bootstrap
+            .retain_during_frontend_assembly(async |_| Err("assembly rejected".to_owned()));
+        assert!(
+            std::mem::size_of_val(&future) < 4096,
+            "frontend ownership handoff must retain a pointer, not inline simulation state: {} bytes",
+            std::mem::size_of_val(&future),
+        );
+    }
+
+    #[test]
+    fn consuming_frontend_failure_retains_the_original_campaign_and_simulation() {
+        let bootstrap = Box::new(scratch_bootstrap_fixture());
+        let expected_campaign = serde_json::to_value(bootstrap.loaded.engine.campaign()).unwrap();
+        let original_allocation = bootstrap.loaded.engine.campaign().missions.as_ptr();
+        let expected_config = bootstrap.loaded.engine_sim_config;
+        let expected_seed = bootstrap.loaded.engine_rng_seed;
+        let (bootstrap, result) = futures::executor::block_on(
+            bootstrap.retain_during_frontend_assembly(async |bootstrap| {
+                // Exercise the real non-GPU preparation failure: a scratch
+                // host cannot borrow application-owned resource readers.
+                let error = match bootstrap.host.preparation_files() {
+                    Err(error) => error,
+                    Ok(_) => panic!("scratch fixture unexpectedly has resource authority"),
+                };
+                Err(error)
+            }),
+        );
+        assert!(result.is_err());
+        assert_eq!(
+            bootstrap.loaded.engine.campaign().missions.as_ptr(),
+            original_allocation
+        );
+        let (campaign, seed, config) = bootstrap.into_campaign_and_simulation();
+        assert_eq!(campaign.missions.as_ptr(), original_allocation);
+        assert_eq!(serde_json::to_value(campaign).unwrap(), expected_campaign);
+        assert_eq!(seed, expected_seed);
+        assert_eq!(config, expected_config);
     }
 
     #[test]

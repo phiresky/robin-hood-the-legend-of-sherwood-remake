@@ -42,7 +42,7 @@ fn screen_rect_to_sprite_bbox(rect: ScreenRect) -> engine_sprite::BBox {
 }
 
 /// Which stature arrow widget was hit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StatureButton {
     Up,
     Down,
@@ -489,7 +489,7 @@ pub fn stature_button_tooltip_mt_id(btn: StatureButton) -> usize {
 #[allow(clippy::too_many_arguments)]
 pub fn draw_tooltip(
     renderer: &mut Renderer,
-    tracker: &StatureTooltipTracker,
+    ready_button: Option<StatureButton>,
     tooltip_text: impl Fn(StatureButton) -> String,
     font: &Font,
     shadow: Option<&Font>,
@@ -497,7 +497,7 @@ pub fn draw_tooltip(
     mouse_y: i32,
     cursor_size: (i32, i32),
 ) {
-    if let Some(btn) = tracker.ready_button() {
+    if let Some(btn) = ready_button {
         let text = tooltip_text(btn);
         if text.is_empty() {
             return;

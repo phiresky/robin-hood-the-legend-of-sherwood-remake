@@ -6,7 +6,7 @@
 //! [`crate::game_session`].
 
 use crate::gfx_types::Rect;
-use crate::host::HostPresentation;
+use crate::host::HostDraw;
 use crate::hud_text::{self, HudFonts};
 use crate::ingame_menu::layout;
 use crate::renderer::{BLIT_SOURCE_TRANSPARENT, OUTLINE_PAD, Renderer, rgb565_to_rgb8};
@@ -34,9 +34,9 @@ pub(crate) use debug::{
     render_noise_display, render_shadow_polygon_sphere_debug,
 };
 pub(crate) use hud::{
-    draw_multi_selection_box, render_combat_status_bars, render_item_effect_preview,
-    render_listen_ping, render_mission_countdown, render_ransom_amulet_overlay,
-    render_trajectory_preview,
+    draw_multi_selection_box, prepare_multi_selection_box, render_combat_status_bars,
+    render_item_effect_preview, render_listen_ping, render_mission_countdown,
+    render_ransom_amulet_overlay, render_trajectory_preview,
 };
 pub(crate) use minimap::render_minimap;
 
@@ -55,7 +55,7 @@ pub(crate) struct FramePresentationInputs {
 }
 
 impl FramePresentationInputs {
-    pub(crate) fn prepare(host: &HostPresentation<'_>, engine: &Engine) -> Self {
+    pub(crate) fn prepare(host: &HostDraw<'_>, engine: &Engine) -> Self {
         let graphic_config = host.graphic_config();
         let dynamic = graphic_config.dynamic_ambience_visuals;
         Self {
@@ -199,11 +199,7 @@ fn rasterize_fog_region(
 
 /// Composite the smooth visibility field after every world-space pass and
 /// before HUD rendering, so unseen sprites and effects cannot leak through.
-pub(crate) fn render_fog_of_war(
-    host: &HostPresentation<'_>,
-    engine: &Engine,
-    renderer: &mut Renderer,
-) {
+pub(crate) fn render_fog_of_war(host: &HostDraw<'_>, engine: &Engine, renderer: &mut Renderer) {
     if !engine.fog_of_war_enabled() {
         return;
     }
@@ -276,7 +272,7 @@ const ALPHA_JUMPZONE: u32 = 64;
 ///     of its door polygons, and each opposite-side motion-area's own door
 ///     polygons.
 pub(crate) fn render_door_overlays(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     renderer: &mut Renderer,
@@ -614,7 +610,7 @@ pub(crate) fn render_door_overlays(
 /// brightness on top of the darkened base — the overlay must run before
 /// the entity refresh loop.
 pub(crate) fn render_view_cone_overlay(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     assets: &LevelAssets,
@@ -911,7 +907,7 @@ fn shadow_polygon_slice_radius(
 
 /// Render view cones for ALL NPCs with per-NPC alert tinting (`--view-cones`).
 fn render_all_view_cones(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     assets: &LevelAssets,
@@ -1034,7 +1030,7 @@ fn render_all_view_cones(
 /// preview marks advance on the same hourglass cadence without entering
 /// sim state.
 pub(crate) fn render_ground_marks(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     _assets: &LevelAssets,
@@ -1055,7 +1051,7 @@ pub(crate) fn render_ground_marks(
 }
 
 fn render_ground_mark_set(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     ground_mark: &GroundMark,
     engine: &Engine,
@@ -1248,7 +1244,7 @@ fn entity_visual_map_position(entity: &Entity) -> MapPoint {
 /// frames with the same `(bank_id, variant, shadow_color)` key reuse the
 /// cached texture in a queued GPU draw (zero CPU decompression work).
 pub(crate) fn render_entities_gpu(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     assets: &LevelAssets,
@@ -1733,7 +1729,7 @@ fn transition_crenel_climb_up_mask_position(
 
 #[allow(clippy::too_many_arguments)]
 fn render_sprite_mask_debug_overlay(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
     sprite_world_bbox: &engine_coordinates::MapBBox,
@@ -1775,7 +1771,7 @@ fn render_sprite_mask_debug_overlay(
 }
 
 fn draw_map_bbox_outline(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     renderer: &mut Renderer,
     bbox: &engine_coordinates::MapBBox,
     color: u16,
@@ -1795,7 +1791,7 @@ fn draw_map_bbox_outline(
 }
 
 fn draw_map_cross(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     renderer: &mut Renderer,
     point: engine_coordinates::MapPoint,
     color: u16,
@@ -1805,7 +1801,7 @@ fn draw_map_cross(
     renderer.draw_line_screen(x, y - 4, x, y + 4, color);
 }
 
-fn map_to_screen(host: &HostPresentation<'_>, point: engine_coordinates::MapPoint) -> (i32, i32) {
+fn map_to_screen(host: &HostDraw<'_>, point: engine_coordinates::MapPoint) -> (i32, i32) {
     let view = host.frontend.viewport.view_position;
     let zoom = host.frontend.viewport.zoom_factor;
     (
@@ -1824,7 +1820,7 @@ fn map_to_screen(host: &HostPresentation<'_>, point: engine_coordinates::MapPoin
 /// For each outlined entity, the cached outline mask texture is tinted and
 /// alpha-modulated by the GPU pipeline (for hulk fade animation).
 pub(crate) fn render_selection_outlines_gpu(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     engine: &Engine,
     _assets: &LevelAssets,
@@ -2015,7 +2011,7 @@ fn render_entity_fallback(
 /// `render_entities_gpu`.
 pub(crate) fn render_bg_animations_gpu(
     engine: &Engine,
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     _assets: &LevelAssets,
     renderer: &mut Renderer,
@@ -2036,7 +2032,7 @@ pub(crate) fn render_bg_animations_gpu(
 fn render_fx_entities_gpu<I>(
     entity_ids: I,
     engine: &Engine,
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     presentation: &FramePresentationInputs,
     renderer: &mut Renderer,
 ) where

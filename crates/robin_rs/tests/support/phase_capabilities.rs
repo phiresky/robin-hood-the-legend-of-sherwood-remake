@@ -224,6 +224,136 @@ fn render_consumers_cannot_request_a_whole_host() {
     }
 }
 
+#[test]
+fn draw_capability_has_no_mutable_frontend_or_application_authority() {
+    let syntax = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    let view = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(view) if view.ident == "HostDraw" => Some(view),
+            _ => None,
+        })
+        .expect("production immutable draw capability exists");
+    let fields: Vec<_> = view
+        .fields
+        .iter()
+        .map(|field| field.ident.as_ref().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            "frontend",
+            "sound",
+            "options",
+            "local_seat",
+            "graphic_config"
+        ]
+    );
+    for (field, expected) in view.fields.iter().zip([
+        "HostFrontend",
+        "SoundManager",
+        "GlobalOptions",
+        "PlayerId",
+        "GraphicConfig",
+    ]) {
+        if matches!(expected, "PlayerId" | "GraphicConfig") {
+            assert!(matches!(&field.ty, syn::Type::Path(path)
+                if path.path.segments.last().is_some_and(|segment| segment.ident == expected)));
+        } else {
+            assert!(
+                readonly_reference_to(&field.ty, expected),
+                "draw {expected} must be shared"
+            );
+        }
+        if expected == "GraphicConfig" {
+            assert!(matches!(field.vis, syn::Visibility::Inherited));
+        }
+    }
+    let render = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
+    let draw = render
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == "render_frame" => Some(function),
+            _ => None,
+        })
+        .expect("production render entry point exists");
+    assert!(draw.sig.inputs.iter().any(|input| matches!(input,
+        syn::FnArg::Typed(argument) if readonly_reference_to(&argument.ty, "HostDraw"))));
+    for input in &draw.sig.inputs {
+        if let syn::FnArg::Typed(argument) = input {
+            struct MutableHost(bool);
+            impl<'ast> Visit<'ast> for MutableHost {
+                fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+                    self.0 |= path.path.segments.iter().any(|segment| {
+                        ["Host", "HostPresentation", "HostFrontend"]
+                            .iter()
+                            .any(|name| segment.ident == name)
+                    });
+                    visit::visit_type_path(self, path);
+                }
+            }
+            let mut escape = MutableHost(false);
+            escape.visit_type(&argument.ty);
+            assert!(
+                !escape.0,
+                "render_frame must receive only immutable host draw authority"
+            );
+        }
+    }
+}
+
+#[test]
+fn hud_draw_context_receives_decisions_not_mutable_hover_clocks() {
+    let syntax = syn::parse_file(include_str!("../../src/game_session/render.rs")).unwrap();
+    let context = syntax
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Struct(view) if view.ident == "RenderContext" => Some(view),
+            _ => None,
+        })
+        .expect("production draw context exists");
+    let field = |name: &str| {
+        context
+            .fields
+            .iter()
+            .find(|field| field.ident.as_ref().is_some_and(|ident| ident == name))
+            .unwrap_or_else(|| panic!("missing draw context field {name}"))
+    };
+    assert!(readonly_reference_to(
+        &field("console_overlay").ty,
+        "ConsoleOverlay"
+    ));
+    assert!(matches!(&field("hud_tooltips").ty, syn::Type::Path(path)
+        if path.path.is_ident("HudTooltipPresentation")));
+    // All hover clocks stay behind explicit preparation boundaries, never
+    // inside the draw bundle (including the frame-addressed zoom clock).
+    struct HoverClock(bool);
+    impl<'ast> Visit<'ast> for HoverClock {
+        fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+            self.0 |= path.path.segments.iter().any(|segment| {
+                [
+                    "CornerTooltipTracker",
+                    "RequirementsTooltipTracker",
+                    "BlazonTooltipTracker",
+                    "StatureTooltipTracker",
+                    "SherwoodTooltipTracker",
+                    "PcActionTooltipTracker",
+                    "ZoomTooltipTracker",
+                ]
+                .iter()
+                .any(|name| segment.ident == name)
+            });
+            visit::visit_type_path(self, path);
+        }
+    }
+    let mut clocks = HoverClock(false);
+    clocks.visit_item_struct(context);
+    assert!(!clocks.0, "draw context must not own live hover clocks");
+}
+
 pub(super) fn assert_production_views_are_readonly() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/game_session");
     for (file, name, presentation) in [

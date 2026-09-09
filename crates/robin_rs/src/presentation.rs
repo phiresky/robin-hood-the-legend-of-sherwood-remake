@@ -250,4 +250,34 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn captures_and_paused_refresh_leave_next_zoom_tick_equal_to_control() {
+        let mut control = ZoomPresentationState::default();
+        let mut captured = ZoomPresentationState::default();
+        let mut control_tracker = ZoomTooltipTracker::new();
+        let mut captured_tracker = ZoomTooltipTracker::new();
+        for tick in 0..160 {
+            let frame = PresentationFrameId::new(tick);
+            let mut input = zoom_up_input();
+            if tick >= 90 {
+                input.hovered = None;
+            }
+            control.update(frame, input, &mut control_tracker);
+            captured.update(frame, input, &mut captured_tracker);
+            // A thumbnail can prepare first; later preparation in the same
+            // frame is idempotent, and any number of draw reads is inert.
+            for _ in 0..100 {
+                captured.update(frame, input, &mut captured_tracker);
+                assert_eq!(captured.presentation(frame), control.presentation(frame));
+            }
+            // A failed/unprepared capture must not consume or fabricate state.
+            assert!(
+                captured
+                    .presentation(PresentationFrameId::new(tick + 1))
+                    .is_err()
+            );
+            assert_eq!(captured, control);
+        }
+    }
 }

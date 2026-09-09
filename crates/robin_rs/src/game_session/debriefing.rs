@@ -5,7 +5,6 @@ use crate::host::Host;
 use crate::ingame_menu::resources::MT_MSG_STRATEGICAL_MISSION_LOST;
 use crate::ingame_menu::widget_bridge::default_modal_cursor;
 use crate::window::GameWindow;
-use robin_assets::res_descr as assets_res_descr;
 use robin_engine::engine::Engine;
 use robin_engine::mission::MissionStatus;
 use robin_engine::player_command::DialogResult;
@@ -110,24 +109,11 @@ pub(super) fn drive_lost_sherwood_gate(
             );
         }
 
-        let pseudo_red = {
-            let filename = assets_res_descr::red_filename(last_id);
-            host.frontend
-                .shipping
-                .as_deref()
-                .and_then(|datadir| datadir.localized_level_descriptors(&filename).cloned())
-                .or_else(|| {
-                    let path = format!("Data/Text/{filename}");
-                    assets_res_descr::load(&path)
-                        .map_err(|error| {
-                            tracing::warn!(
-                                "Lost-Leicester: failed to load pseudo-mission .red {path}: {error}"
-                            );
-                            error
-                        })
-                        .ok()
-                })
-        };
+        let pseudo_red = crate::mission_descriptors::for_presentation(
+            host.application_context(),
+            host.frontend.shipping.as_deref(),
+            last_id,
+        );
         let per_mission_text = pseudo_red.as_ref().and_then(|descriptor| {
             let table_id = descriptor.debriefing.lose_text_table_id;
             if !resources.text.has_text_resource(table_id) {

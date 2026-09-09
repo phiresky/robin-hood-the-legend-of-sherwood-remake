@@ -59,7 +59,7 @@ pub(super) fn handle_gamepad_events(
                 } else {
                     let slot = super::mouse_input::choose_recording_place(
                         &manager.engine,
-                        host.transport.local_seat,
+                        host.transport.local_seat(),
                     );
                     PlayerCommand::StartRecordingMacro { pc: None, slot }
                 }
@@ -68,7 +68,7 @@ pub(super) fn handle_gamepad_events(
             QaEvent::LaunchMacroForSelected => {
                 let Some(&pc) = manager
                     .engine
-                    .hero_selection(host.transport.local_seat)
+                    .hero_selection(host.transport.local_seat())
                     .first()
                 else {
                     return;

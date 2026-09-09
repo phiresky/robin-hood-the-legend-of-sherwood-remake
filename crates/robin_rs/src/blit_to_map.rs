@@ -42,10 +42,7 @@ pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::r
     let screen_h = frontend.viewport.screen_size.y as i32;
     let margin = 256;
 
-    for entity_id in &frontend.background_decal_order {
-        let Some(decal) = frontend.background_decals.get(entity_id) else {
-            continue;
-        };
+    for decal in frontend.background_decals.in_draw_order() {
         let dst_x = ((decal.dst_x as f32 - view.x) * zoom) as i32;
         let dst_y = ((decal.dst_y as f32 - view.y) * zoom) as i32;
         let dst_w = (decal.width as f32 * zoom).ceil().max(1.0) as u32;
@@ -83,21 +80,12 @@ pub fn render_background_decals(frontend: &HostFrontend, renderer: &mut crate::r
 /// changed.
 fn apply_bg_blit(frontend: &mut HostFrontend, blit: PendingBgBlit) -> bool {
     if blit.restore_only {
-        let removed = frontend.background_decals.remove(&blit.entity_id).is_some();
-        if removed {
-            frontend
-                .background_decal_order
-                .retain(|&id| id != blit.entity_id);
-        }
-        return removed;
+        return frontend.background_decals.remove(blit.entity_id).is_some();
     }
 
     let Some(decal) = build_background_decal(frontend, blit.entity_id, blit.decal) else {
         return false;
     };
-    if !frontend.background_decals.contains_key(&blit.entity_id) {
-        frontend.background_decal_order.push(blit.entity_id);
-    }
     frontend.background_decals.insert(blit.entity_id, decal);
     true
 }
@@ -139,6 +127,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restore_reports_absence_without_reordering_surviving_patches() {
+        let mut frontend = HostFrontend::default();
+        for bank_id in 1..=4 {
+            frontend.background_decals.insert(
+                engine_element::EntityId::Fx(engine_element::FxId(bank_id)),
+                BackgroundDecal {
+                    bank_id,
+                    dst_x: 0,
+                    dst_y: 0,
+                    width: 4,
+                    height: 4,
+                    shadow_color: 0,
+                    shadow_level: 0,
+                },
+            );
+        }
+
+        for expected_changed in [true, false] {
+            assert_eq!(
+                apply_bg_blit(
+                    &mut frontend,
+                    PendingBgBlit {
+                        entity_id: engine_element::EntityId::Fx(engine_element::FxId(2)),
+                        restore_only: true,
+                        decal: None,
+                    },
+                ),
+                expected_changed
+            );
+            assert_eq!(
+                frontend
+                    .background_decals
+                    .in_draw_order()
+                    .map(|decal| decal.bank_id)
+                    .collect::<Vec<_>>(),
+                [1, 3, 4]
+            );
+        }
+    }
+
+    #[test]
     fn restore_drains_effects_with_only_frontend_authority() {
         let mut frontend = HostFrontend::default();
         let mut effects = HostEffectBatches::default();
@@ -155,7 +184,6 @@ mod tests {
                 shadow_level: 0,
             },
         );
-        frontend.background_decal_order.push(id);
         effects.background_blits.push(PendingBgBlit {
             entity_id: id,
             restore_only: true,
@@ -166,7 +194,6 @@ mod tests {
         drain_pending_bg_blits(&mut frontend, &mut effects);
 
         assert!(frontend.background_decals.is_empty());
-        assert!(frontend.background_decal_order.is_empty());
         assert!(effects.background_blits.is_empty());
         assert!(effects.has_sherwood_report(), "unrelated effects survive");
     }

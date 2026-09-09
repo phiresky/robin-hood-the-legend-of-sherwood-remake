@@ -1,7 +1,7 @@
 //! Mission HUD and player-feedback rendering helpers.
 
 use super::{FramePresentationInputs, render_text_with_shadow};
-use crate::host::HostPresentation;
+use crate::host::HostDraw;
 use crate::hud_text::HudFonts;
 use crate::ingame_menu::resources::{IngameMenuResources, MT_STR_AMULETS, MT_STR_RANSOM};
 use crate::renderer::Renderer;
@@ -61,7 +61,7 @@ pub(crate) fn render_mission_countdown(
 /// hover path, currently unimplemented) is also honoured so the feature is
 /// ready once that call site lands.
 pub(crate) fn render_combat_status_bars(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
 ) {
@@ -164,7 +164,7 @@ pub(crate) fn render_combat_status_bars(
 /// gameplay draw-manager semantics than this fixed HUD overlay.
 #[allow(clippy::too_many_arguments)]
 fn draw_status_bar(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     renderer: &mut Renderer,
     x_world: f32,
     y_world: f32,
@@ -214,7 +214,7 @@ const TRAJECTORY_DOT_INTERVAL: f32 = 7.0;
 ///
 /// Draws filled 1-pixel squares at regular intervals along the
 /// ballistic arc.
-pub(crate) fn render_trajectory_preview(host: &HostPresentation<'_>, renderer: &mut Renderer) {
+pub(crate) fn render_trajectory_preview(host: &HostDraw<'_>, renderer: &mut Renderer) {
     if !host.frontend.trajectory_preview.is_valid() {
         return;
     }
@@ -312,7 +312,7 @@ pub(crate) fn render_trajectory_preview(host: &HostPresentation<'_>, renderer: &
 /// currently being aimed. This deliberately reads no simulation-owned state:
 /// disabling it changes neither commands nor rollback hashes.
 pub(crate) fn render_item_effect_preview(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     renderer: &mut Renderer,
     fonts: Option<&HudFonts>,
 ) {
@@ -350,11 +350,7 @@ pub(crate) fn render_item_effect_preview(
 /// Draws an ellipse with a radius growing from 0 → `DISTANCE_LISTEN`
 /// (Listen) or `NOISE_VOLUME_PFIIIT` (Whistle) over `TIME_LISTEN`
 /// frames.
-pub(crate) fn render_listen_ping(
-    host: &mut HostPresentation<'_>,
-    engine: &Engine,
-    renderer: &mut Renderer,
-) {
+pub(crate) fn render_listen_ping(host: &HostDraw<'_>, engine: &Engine, renderer: &mut Renderer) {
     const TIME_LISTEN: u32 = 5;
     const DISTANCE_LISTEN: f32 = 750.0;
     const NOISE_VOLUME_PFIIIT: f32 = 400.0;
@@ -468,17 +464,39 @@ fn substitute_int(template: &str, value: i32) -> String {
 ///   subsequent frames paint the box even if the pointer briefly
 ///   shrinks the rect below the threshold.
 /// * When latched, paint the four edges in the select/unselect color.
+pub(crate) fn prepare_multi_selection_box(
+    host: &mut crate::host::HostPresentation<'_>,
+    engine: &Engine,
+) {
+    if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {
+        host.frontend.input.cancel_selection_for_swordfight();
+        return;
+    }
+    if (host.frontend.input.multi_selection_active()
+        || host.frontend.input.multi_unselection_active())
+        && selection_outline_visible(&host.draw())
+    {
+        host.frontend.input.latch_selection_outline();
+    }
+}
+
+fn selection_outline_visible(host: &HostDraw<'_>) -> bool {
+    let p1 = host.frontend.input.multi_selection_pt1();
+    let p2 = host.frontend.input.multi_selection_pt2();
+    let dx = p1.x - p2.x;
+    let dy = p1.y - p2.y;
+    host.frontend.input.draw_multi_selection() || dx * dx + dy * dy > MULTI_SELECTION_THRESHOLD
+}
+
+/// Compose the selection outline without changing drag/selection state.
+/// Captures before the live update can preview a newly crossed threshold,
+/// but only `prepare_multi_selection_box` commits the persistent latch.
 pub(crate) fn draw_multi_selection_box(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
-    advance_transients: bool,
 ) {
-    // ── Swordfighting cancel ──
     if crate::game_input::is_selected_unit_swordfighting(engine, host.local_seat) {
-        if advance_transients {
-            host.frontend.input.cancel_selection_for_swordfight();
-        }
         return;
     }
 
@@ -491,22 +509,7 @@ pub(crate) fn draw_multi_selection_box(
     let p1 = host.frontend.input.multi_selection_pt1();
     let p2 = host.frontend.input.multi_selection_pt2();
 
-    // ── Latch draw_multi_selection once the drag clears the
-    //    threshold.  The square norm is in map units; compared to
-    //    `MULTI_SELECTION_THRESHOLD` (1600). ──
-    let mut draw_multi_selection = host.frontend.input.draw_multi_selection();
-    if !draw_multi_selection {
-        let dx = p1.x - p2.x;
-        let dy = p1.y - p2.y;
-        if dx * dx + dy * dy > MULTI_SELECTION_THRESHOLD {
-            draw_multi_selection = true;
-            if advance_transients {
-                host.frontend.input.latch_selection_outline();
-            }
-        }
-    }
-
-    if !draw_multi_selection {
+    if !selection_outline_visible(host) {
         return;
     }
 

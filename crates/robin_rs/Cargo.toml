@@ -24,6 +24,7 @@ geo = { workspace = true, features = ["serde"] }
 earcutr = "0.5"
 bitflags = { workspace = true, features = ["serde"] }
 enum-map = { workspace = true, features = ["serde"] }
+indexmap.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde_urlencoded = "0.7"

@@ -13,7 +13,7 @@
 
 use crate::gfx_types::BlendMode;
 use crate::gfx_types::Rect;
-use crate::host::HostPresentation;
+use crate::host::HostDraw;
 use crate::host::HostTitbitPreview;
 use robin_assets::picture::Picture;
 use robin_engine::coordinates as engine_coordinates;
@@ -313,7 +313,7 @@ impl TitbitRenderer {
 
     fn render_host_preview_if_due(
         &mut self,
-        host: &HostPresentation<'_>,
+        host: &HostDraw<'_>,
         engine: &Engine,
         renderer: &mut crate::renderer::Renderer,
         next_sim_display_order: f32,
@@ -337,7 +337,7 @@ impl TitbitRenderer {
 
     fn render_host_preview(
         &self,
-        host: &HostPresentation<'_>,
+        host: &HostDraw<'_>,
         engine: &Engine,
         renderer: &mut crate::renderer::Renderer,
         preview: HostTitbitPreview,
@@ -399,7 +399,7 @@ impl TitbitRenderer {
     /// - Ghost — frame index offset by +7.
     pub(crate) fn render_up_to(
         &mut self,
-        host: &mut HostPresentation<'_>,
+        host: &HostDraw<'_>,
         engine: &Engine,
         assets: &engine_api::LevelAssets,
         renderer: &mut crate::renderer::Renderer,

@@ -8,7 +8,11 @@
 //! platform-specific [`MultiplayerRuntime`] have one owner and one lifetime.
 
 #[cfg(feature = "multiplayer")]
+mod client_gameplay;
+#[cfg(feature = "multiplayer")]
 mod client_protocol;
+#[cfg(feature = "multiplayer")]
+pub use client_protocol::ClientSessionMetadata;
 
 #[cfg(all(feature = "multiplayer", not(target_arch = "wasm32")))]
 pub(crate) use robin_engine::multiplayer::INPUT_DELAY_FRAMES;
@@ -1900,6 +1904,16 @@ mod tests {
         assert_eq!(_client.mission_seed(), Some(42));
         assert_eq!(_client.mission_sim_config(), Some(expected_config));
         assert_eq!(_client.speech_timing_locale().as_deref(), Some("en-US"));
+        let session = _client
+            .session_metadata()
+            .expect("complete Welcome publication");
+        assert_eq!(session.seat, PlayerId(1));
+        assert_eq!(session.mission_id, "Dem_Lei_MP");
+        assert_eq!(session.mission_seed, 42);
+        assert_eq!(session.sim_config, expected_config);
+        assert_eq!(session.speech_timing_locale.as_deref(), Some("en-US"));
+        assert_eq!(Some(session.session_id), _client.session_id());
+        assert!(session.admitted_content.is_none());
 
         let assigned = loop {
             match client_in_rx.recv_timeout(Duration::from_secs(2)) {

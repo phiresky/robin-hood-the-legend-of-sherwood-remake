@@ -158,9 +158,7 @@ impl MissionWorld {
     }
 
     pub(super) fn preserve_multiplayer_session_for_next_mission(&mut self) {
-        if let Some(net) = self.host.transport.net.as_mut() {
-            net.preserve_session_for_next_mission();
-        }
+        self.host.transport.preserve_session_for_next_mission();
     }
 
     pub(super) fn ingress(&mut self) -> MissionIngress<'_> {
@@ -691,18 +689,15 @@ impl MissionRuntime {
             self.world.host.frontend.engine_display = display;
             frame.mark_post_external_actions_applied();
         }
-        let net = self.world.host.transport.net.take();
         let actions = crate::http_server::drain_global(
             &mut self.world.manager,
             &mut self.world.host,
             &self.world.assets,
-            net.as_ref(),
             &mut frame.post_commands,
         );
         self.timeline
             .record_input_taints(crate::http_server::take_pending_replay_taints());
         frame.record_applied_post_external_actions(actions);
-        self.world.host.transport.net = net;
         self.timeline
             .trace(FrameContractStage::HostRpcAndTimelineCommit);
     }

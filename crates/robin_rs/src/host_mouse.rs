@@ -139,7 +139,7 @@ pub fn choose_mouse_pointer_for_no_action(
     host.frontend.input.display_door = true;
 
     // Dragging while swordfighting → swordfight cursor.
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     let selected = engine.hero_selection(local_seat);
 
     if host.frontend.input.left_mouse_down()
@@ -503,7 +503,7 @@ pub fn choose_mouse_pointer_for_no_action(
                     // instead of `find_map`.
                     let mut jump_line_idx: Option<u32> = None;
                     let mut jumper_on_shoulders = false;
-                    for &pc_id in engine.hero_selection(host.transport.local_seat) {
+                    for &pc_id in engine.hero_selection(host.transport.local_seat()) {
                         if !engine.selected_pc_has_contextual_action(
                             assets,
                             Some(pc_id),
@@ -674,9 +674,9 @@ pub fn update_mouse(
     host.frontend.host_titbit_preview = None;
 
     let cursor_action = if shift_held {
-        engine.planned_action_for_seat(host.transport.local_seat)
+        engine.planned_action_for_seat(host.transport.local_seat())
     } else {
-        engine.selected_action_for_seat(host.transport.local_seat)
+        engine.selected_action_for_seat(host.transport.local_seat())
     };
     host.frontend
         .trajectory_preview
@@ -722,7 +722,7 @@ pub fn update_mouse(
     // The reference is used by `get_sector` to tie-break overlapping
     // jump sectors (nearest-mid wins).
     let reference = engine
-        .hero_selection(host.transport.local_seat)
+        .hero_selection(host.transport.local_seat())
         .first()
         .and_then(|&id| engine.get_entity(id))
         .map(|e| {
@@ -890,11 +890,14 @@ fn cursor_for_bow(
 ) -> i32 {
     use robin_engine::resource_ids::*;
     {
-        if engine.hero_selection(host.transport.local_seat).is_empty() {
+        if engine
+            .hero_selection(host.transport.local_seat())
+            .is_empty()
+        {
             return RHMOUSE_BOW_NO;
         }
         let mut cursor = RHMOUSE_BOW_NO;
-        let pc_id = engine.hero_selection(host.transport.local_seat)[0];
+        let pc_id = engine.hero_selection(host.transport.local_seat())[0];
 
         // Shift planning previews the shot from the end of the actor's live
         // movement / queued movement chain. It must not require the live bow
@@ -1109,7 +1112,7 @@ fn cursor_for_apple(
     {
         let mut cursor = RHMOUSE_APPLE_NO;
         let pc_id = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .copied();
 
@@ -1213,7 +1216,7 @@ fn cursor_for_stone(
     {
         let mut cursor = RHMOUSE_STONE_NO;
         let pc_id = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .copied();
 
@@ -1356,7 +1359,7 @@ fn cursor_for_purse(
         let mut cursor = RHMOUSE_PURSE_NO;
         let mouse_elem = mouse_map_pt;
         let pc_id = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .copied();
 
@@ -1450,7 +1453,7 @@ fn cursor_for_wasp_nest(
         let mut cursor = RHMOUSE_WASP_NEST_NO;
         let mouse_elem = mouse_map_pt;
         let pc_id = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .copied();
 
@@ -1531,7 +1534,7 @@ fn cursor_for_help_to_climb(
     use robin_engine::resource_ids::*;
     {
         let posture = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .and_then(|&id| engine.get_entity(id))
             .map(|e| e.element_data().posture())
@@ -1561,18 +1564,18 @@ fn cursor_for_shield(
     use robin_engine::resource_ids::*;
     {
         let action = if shift_held {
-            engine.planned_action_for_seat(host.transport.local_seat)
+            engine.planned_action_for_seat(host.transport.local_seat())
         } else {
-            engine.selected_action_for_seat(host.transport.local_seat)
+            engine.selected_action_for_seat(host.transport.local_seat())
         };
         let is_big = action == Action::BigShield;
 
         let choosing_protectee = if shift_held {
             engine
-                .hero_selection(host.transport.local_seat)
+                .hero_selection(host.transport.local_seat())
                 .first()
                 .and_then(|&actor| {
-                    engine.planned_shield_protected_for_seat(host.transport.local_seat, actor)
+                    engine.planned_shield_protected_for_seat(host.transport.local_seat(), actor)
                 })
                 .is_none()
         } else {
@@ -1617,7 +1620,7 @@ fn cursor_for_net(
         let mouse_elem = mouse_map_pt;
 
         let pc_id = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .copied();
         if (shift_held || !engine.is_selected_pc_in_restricted_sector())
@@ -1844,7 +1847,7 @@ fn cursor_for_beggar(
     use robin_engine::resource_ids::*;
     {
         let posture = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .and_then(|&id| engine.get_entity(id))
             .map(|e| e.element_data().posture())
@@ -1868,7 +1871,7 @@ fn cursor_for_listen(
     use robin_engine::resource_ids::*;
     {
         let action_state = engine
-            .hero_selection(host.transport.local_seat)
+            .hero_selection(host.transport.local_seat())
             .first()
             .and_then(|&id| engine.get_entity(id))
             .and_then(|e| e.actor_data())

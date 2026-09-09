@@ -223,6 +223,7 @@ pub mod hud_text;
 pub mod level_loading_host;
 pub mod mission_asset_launch;
 pub mod mission_asset_restore;
+pub mod mission_descriptors;
 pub mod session_achievement;
 pub mod shader_preset;
 pub mod shipping_mission;

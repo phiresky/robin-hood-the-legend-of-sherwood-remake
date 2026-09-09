@@ -22,6 +22,7 @@ use super::cli::CliArgs;
 
 mod executor;
 mod load_owner;
+mod profile;
 pub use load_owner::PreparedLoad;
 
 /// Real implementation of [`GameCallbacks`](crate::game::GameCallbacks)
@@ -45,6 +46,7 @@ pub(crate) struct RustCallbacks {
     /// Save-slot metadata manager, persists slot list as `saves.json`.
     pub save_manager: SaveGameManager,
     autosave: AutosaveCoordinator,
+    profile_clock_credits: profile::ProfileClockCredits,
     /// Pending save/load request queued by the state machine, handled
     /// before the next engine tick in `game_session`.
     pending: Option<OperationRequest>,
@@ -225,35 +227,73 @@ impl AutosaveNotices {
 /// queued because autosaves do not run through this executor.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OperationOutcome {
-    /// A request was present and handled (successfully or not).
-    pub processed: bool,
+    pub completion: OperationCompletion,
     /// The state-affecting event that actually completed, if any.
     pub event: Option<SaveLoadEvent>,
-    pub restore: Option<PostLoadSync>,
-    pub reset_input: bool,
     pub banner: Option<SaveBannerKind>,
-    pub restart_requested: bool,
-    pub transition: Option<PendingLevelLoad>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) enum OperationCompletion {
+    NotPending,
+    Handled,
+    Restored {
+        sync: PostLoadSync,
+        reset_input: bool,
+    },
+    RestartRequested,
+    Transition(PendingLevelLoad),
 }
 
 impl OperationOutcome {
+    pub(crate) fn processed(&self) -> bool {
+        !matches!(self.completion, OperationCompletion::NotPending)
+    }
+    pub(crate) fn restore(&self) -> Option<PostLoadSync> {
+        match self.completion {
+            OperationCompletion::Restored { sync, .. } => Some(sync),
+            _ => None,
+        }
+    }
+    pub(crate) fn reset_input(&self) -> bool {
+        matches!(
+            self.completion,
+            OperationCompletion::Restored {
+                reset_input: true,
+                ..
+            }
+        )
+    }
+    pub(crate) fn restart_requested(&self) -> bool {
+        matches!(self.completion, OperationCompletion::RestartRequested)
+    }
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn transition(&self) -> Option<&PendingLevelLoad> {
+        match &self.completion {
+            OperationCompletion::Transition(load) => Some(load),
+            _ => None,
+        }
+    }
+    pub(crate) fn take_transition(&mut self) -> Option<PendingLevelLoad> {
+        if !matches!(self.completion, OperationCompletion::Transition(_)) {
+            return None;
+        }
+        let OperationCompletion::Transition(load) =
+            std::mem::replace(&mut self.completion, OperationCompletion::Handled)
+        else {
+            unreachable!("transition checked above")
+        };
+        Some(load)
+    }
     const NOT_PENDING: Self = Self {
-        processed: false,
-        transition: None,
+        completion: OperationCompletion::NotPending,
         event: None,
-        restore: None,
-        reset_input: false,
         banner: None,
-        restart_requested: false,
     };
     const NO_EVENT: Self = Self {
-        processed: true,
-        transition: None,
+        completion: OperationCompletion::Handled,
         event: None,
-        restore: None,
-        reset_input: false,
         banner: None,
-        restart_requested: false,
     };
 }
 
@@ -313,6 +353,7 @@ impl RustCallbacks {
             application_context,
             save_manager,
             autosave: AutosaveCoordinator::default(),
+            profile_clock_credits: profile::ProfileClockCredits::default(),
             pending: None,
             app_effects: AppEffectQueue::default(),
             leaderboard_background: MissionEndLeaderboardBackground::default(),
@@ -541,52 +582,13 @@ impl crate::game::GameCallbacks for RustCallbacks {
         } else {
             self.get_current_playing_time(campaign)
         };
-        let persistence = self
-            .application_context
-            .with_player_profiles_mut(|manager| {
-                let added = {
-                    let profile = manager
-                        .get_active_mut()
-                        .expect("ApplicationContext lost its required active player profile");
-                    profile.score =
-                        campaign.get_value(engine_campaign::CampaignValue::Score) as u32;
-                    profile.ransom =
-                        campaign.get_value(engine_campaign::CampaignValue::Ransom) as u32;
-                    profile.progression = campaign.get_progression(profiles);
-                    profile.play_time += mission_secs;
-                    let achievements_before = profile.earned_achievements();
-                    let added = profile
-                        .promote_campaign_history(campaign, profiles)
-                        .unwrap_or_else(|error| {
-                            panic!("cannot promote campaign attempt into profile history: {error}")
-                        });
-                    let _newly_earned = profile
-                        .earned_achievements()
-                        .difference(achievements_before);
-
-                    let dead =
-                        campaign.get_value(engine_campaign::CampaignValue::DeadSoldiers) as u32;
-                    let alive =
-                        campaign.get_value(engine_campaign::CampaignValue::LivingSoldiers) as u32;
-                    profile.preserved_lives = if dead != 0 || alive != 0 {
-                        (100.0 * alive as f32 / (dead + alive) as f32) as u32
-                    } else {
-                        0
-                    };
-                    added
-                };
-                if added != 0 {
-                    self.application_context.persist_player_profiles(manager)?;
-                }
-                Ok::<(), std::io::Error>(())
-            });
-        match persistence {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => panic!("cannot persist promoted campaign history: {error}"),
-            Err(error) => {
-                panic!("profile synchronization lost its ApplicationContext: {error}")
-            }
-        }
+        profile::synchronize_metrics(
+            &self.application_context,
+            &mut self.profile_clock_credits,
+            campaign,
+            profiles,
+            mission_secs,
+        );
     }
     fn save_game_file_exists(&self) -> bool {
         self.save_manager
@@ -823,15 +825,15 @@ fn begin_multiplayer_snapshot_transition(
     host: &mut crate::host::Host,
     load: PreparedLoad,
 ) -> Result<bool, String> {
-    let Some(net) = host.transport.net.as_ref() else {
+    let Some(net) = host.transport.net() else {
         return Ok(false);
     };
-    if host.transport.local_seat != robin_engine::player_command::PlayerId::HOST {
+    if host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
         return Err(
             "only the multiplayer host can load, restart, or quick-load the session".to_string(),
         );
     }
-    if host.transport.reconnecting || host.transport.snapshot_transition.is_some() {
+    if host.transport.reconnecting() || host.transport.has_snapshot_transition() {
         return Err("a multiplayer snapshot transition is already in progress".to_string());
     }
     let save = load.save();
@@ -844,13 +846,13 @@ fn begin_multiplayer_snapshot_transition(
     let save_bytes = serde_json::to_vec(&save)
         .map_err(|error| format!("encode multiplayer snapshot transition: {error}"))?;
     let id = net.begin_snapshot_transition(mission_id, save_bytes)?;
-    host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition::new(
-        id,
-        crate::host::PendingSnapshotTransitionPayload::Save {
-            load: crate::host::SnapshotSave::Local(load),
-        },
-    ));
-    host.transport.reconnecting = true;
+    host.transport
+        .prepare_snapshot_transition(crate::host::PendingSnapshotTransition::new(
+            id,
+            crate::host::PendingSnapshotTransitionPayload::Save {
+                load: crate::host::SnapshotSave::Local(load),
+            },
+        ));
     tracing::info!(
         ?id,
         mission_id,
@@ -1256,7 +1258,8 @@ mod operation_outcome_tests {
         let mut host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 640.0, 480.0).unwrap();
         let (channels, _incoming, _outgoing, _, _) = crate::multiplayer::NetChannels::new();
-        host.transport.net = Some(channels);
+        host.transport =
+            crate::host::HostTransport::test_session(channels, host.transport.local_seat());
         let callbacks = RustCallbacks::new(context).unwrap();
         let mut profiles = ProfileManager::default();
         profiles.missions.push(engine_profiles::MissionProfile {
@@ -1294,7 +1297,7 @@ mod operation_outcome_tests {
         let directory = tempfile::tempdir().unwrap();
         let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
             diagnostic_callback_fixture(directory.path());
-        host.transport.net = None;
+        host.transport.test_drop_channels();
         let reason = callbacks
             .plan_autosave(true, true, 17, 0, false, false)
             .unwrap();
@@ -1337,12 +1340,14 @@ mod operation_outcome_tests {
             &profiles,
             None,
         );
-        assert!(rejected.processed);
+        assert!(rejected.processed());
         assert_eq!(rejected.banner, Some(SaveBannerKind::SaveFailed));
         assert!(
-            rejected.event.is_none() && rejected.restore.is_none() && rejected.transition.is_none()
+            rejected.event.is_none()
+                && rejected.restore().is_none()
+                && rejected.transition().is_none()
         );
-        assert!(!rejected.restart_requested && !rejected.reset_input);
+        assert!(!rejected.restart_requested() && !rejected.reset_input());
         assert_eq!(engine.frame_counter(), frame);
         assert!(callbacks.pending_request().is_none());
         let idle = perform_pending_save_load(
@@ -1354,7 +1359,7 @@ mod operation_outcome_tests {
             &profiles,
             None,
         );
-        assert!(!idle.processed);
+        assert!(!idle.processed());
         assert!(idle.banner.is_none());
     }
 
@@ -1381,7 +1386,7 @@ mod operation_outcome_tests {
                 &profiles,
                 None,
             );
-            assert!(outcome.processed);
+            assert!(outcome.processed());
             assert_eq!(outcome.banner, Some(SaveBannerKind::Saved));
             assert!(outcome.event.is_none());
             assert!(callbacks.pending_request().is_none());
@@ -1431,7 +1436,7 @@ mod operation_outcome_tests {
                 &profiles,
                 None,
             );
-            assert!(outcome.processed);
+            assert!(outcome.processed());
             assert_eq!(outcome.banner, Some(SaveBannerKind::SaveFailed));
             assert!(outcome.event.is_none());
             assert!(callbacks.pending_request().is_none());
@@ -1484,11 +1489,11 @@ mod operation_outcome_tests {
             &profiles,
             None,
         );
-        assert!(outcome.processed);
-        assert!(outcome.restart_requested);
-        assert!(outcome.restore.is_none());
+        assert!(outcome.processed());
+        assert!(outcome.restart_requested());
+        assert!(outcome.restore().is_none());
         assert!(outcome.event.is_none());
-        assert!(!outcome.reset_input);
+        assert!(!outcome.reset_input());
         assert!(callbacks.pending.is_none());
         let next = perform_pending_save_load(
             &mut host,
@@ -1499,8 +1504,8 @@ mod operation_outcome_tests {
             &profiles,
             None,
         );
-        assert!(!next.processed);
-        assert!(!next.restart_requested);
-        assert!(next.restore.is_none());
+        assert!(!next.processed());
+        assert!(!next.restart_requested());
+        assert!(next.restore().is_none());
     }
 }
