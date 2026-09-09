@@ -122,6 +122,23 @@ class QualitySuitesTests(unittest.TestCase):
         self.run_suite("gpu")
         self.assertEqual(self.calls()[0][-3:], ["--", "--ignored", "--exact"])
 
+    def test_services_checks_production_boundary_then_enables_all_fixtures(self):
+        self.run_suite("services")
+        production, boundary, fixtures = self.calls()
+        self.assertEqual(production[0], "check")
+        self.assertIn("--lib", production)
+        self.assertIn("--bins", production)
+        for call in (production, boundary):
+            self.assertIn("--no-default-features", call)
+            self.assertNotIn("--features", call)
+        self.assertIn("--doc", boundary)
+        self.assertEqual(fixtures[fixtures.index("--features") + 1],
+                         "robin_highscores/test-support")
+        manifest = tomllib.loads((ROOT / "crates/robin_highscores/Cargo.toml").read_text())
+        self.assertNotIn("test-support", manifest["features"].get("default", []))
+        router = next(target for target in manifest["test"] if target["name"] == "router_e2e")
+        self.assertEqual(router["required-features"], ["test-support"])
+
     def test_gl_gate_uses_an_owned_display_and_explicit_backend(self):
         self.run_suite("gpu-gl")
         self.assertEqual(self.gpu_backend.read_text(), "gl\n")

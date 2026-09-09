@@ -314,7 +314,7 @@ async fn backup_owner_drains_source_sql_before_partial_cleanup() {
         .join(format!(".backup-v4-1-{}.partial", "a".repeat(32)));
     std::fs::create_dir(&partial).unwrap();
     set_private_directory(&partial).await.unwrap();
-    let connection = database.pool().acquire().await.unwrap();
+    let connection = database.fixture_pool().acquire().await.unwrap();
     let cleanup = cleanup_failed_partial_backup(
         &database,
         directory.path(),
@@ -359,7 +359,7 @@ async fn uncertain_gate_release_keeps_exclusive_fence_through_pool_close() {
     let exclusive = acquire_exclusive_backup_database_fence(&database, &token)
         .await
         .unwrap();
-    let held_connection = database.pool().acquire().await.unwrap();
+    let held_connection = database.fixture_pool().acquire().await.unwrap();
     let release_connection = std::sync::Arc::new(tokio::sync::Notify::new());
     let holder_release = release_connection.clone();
     let holder = tokio::spawn(async move {
@@ -437,7 +437,7 @@ async fn killed_worker_lease_drains_under_retained_exclusive_fence() {
         "SELECT expires_at_ms FROM maintenance_locks WHERE name = 'backup' AND token = ?",
     )
     .bind(&backup_lock)
-    .fetch_one(database.pool())
+    .fetch_one(database.fixture_pool())
     .await
     .unwrap();
 
@@ -495,7 +495,7 @@ async fn killed_worker_lease_drains_under_retained_exclusive_fence() {
         "SELECT expires_at_ms FROM maintenance_locks WHERE name = 'backup' AND token = ?",
     )
     .bind(&backup_lock)
-    .fetch_one(database.pool())
+    .fetch_one(database.fixture_pool())
     .await
     .unwrap();
     assert!(
@@ -514,7 +514,7 @@ async fn killed_worker_lease_drains_under_retained_exclusive_fence() {
     let stale_expiry: i64 =
         sqlx::query_scalar("SELECT expires_at_ms FROM maintenance_write_leases WHERE token = ?")
             .bind(&killed_worker_lease)
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap();
     assert!(stale_expiry <= robin_highscores::model::now_epoch_ms().unwrap());

@@ -250,7 +250,7 @@ mod tests {
         );
         sqlx::query("UPDATE replay_objects SET created_at_ms = 0 WHERE sha256 = ?")
             .bind(digest.as_slice())
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         assert_eq!(
@@ -263,7 +263,7 @@ mod tests {
         let state: String =
             sqlx::query_scalar("SELECT purge_state FROM replay_objects WHERE sha256 = ?")
                 .bind(digest.as_slice())
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap();
         assert_eq!(state, "purged");

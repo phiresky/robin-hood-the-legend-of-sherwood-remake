@@ -91,6 +91,13 @@ The Ubuntu 26.04 CI job installs the native library development packages it need
 The services suite also needs bubblewrap 0.11.1 or newer and a system POSIX shell. Its runner
 allows unprivileged user namespaces for the verifier launched through a pinned
 file descriptor.
+The services gate first checks the high-score library and all production binaries
+without features, including compile-fail documentation tests for the database
+boundary. It then explicitly enables `robin_highscores/test-support` for the
+corruption/concurrency fixtures. For a complete package-only suite, run
+`cargo test --locked -p robin_highscores --features test-support`; a plain package
+test omits the router integration target and admin execution fixture module.
+Never enable this raw database fixture access feature in deployment builds.
 For a machine without the local Wild linker, use
 `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=cc`; preserve the repository CPU
 flags. The pinned Rust toolchain includes the configured code generation

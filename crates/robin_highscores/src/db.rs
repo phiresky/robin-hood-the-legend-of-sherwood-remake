@@ -90,6 +90,33 @@ impl DbError {
     }
 }
 
+/// Fenced database operations. Raw SQL is not part of the production interface.
+///
+/// ```compile_fail,E0599
+/// fn bypass_fencing(database: &robin_highscores::Database) {
+///     let _ = database.pool();
+/// }
+/// ```
+#[cfg_attr(
+    not(feature = "test-support"),
+    doc = "
+The explicitly named fixture accessor is also absent without `test-support`:
+
+```compile_fail,E0599
+fn bypass_fencing(database: &robin_highscores::Database) {
+    let _ = database.fixture_pool();
+}
+```
+
+The pool itself remains private:
+
+```compile_fail,E0616
+fn bypass_fencing(database: &robin_highscores::Database) {
+    let _ = &database.pool;
+}
+```
+"
+)]
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
@@ -3320,12 +3347,17 @@ impl Database {
     pub async fn close_pool_under_fence(&self) {
         self.pool.close().await;
     }
+}
 
-    /// Escape hatch for corruption/concurrency fixtures, including binary tests
-    /// linked against the non-test library. Production code must use the narrow
-    /// database operations, wait_for_idle, and fenced shutdown instead.
-    #[doc(hidden)]
-    pub fn pool(&self) -> &SqlitePool {
+// Library unit fixtures use cfg(test); cross-crate integration and binary
+// fixtures must explicitly opt in. Normal server/worker/admin builds expose no
+// raw pool accessor and retain the narrow operations and fenced shutdown API.
+#[cfg(any(test, feature = "test-support"))]
+impl Database {
+    /// Raw access solely for corruption/concurrency fixtures.
+    ///
+    /// This bypasses database fencing. Never enable `test-support` in deployments.
+    pub fn fixture_pool(&self) -> &SqlitePool {
         &self.pool
     }
 }
@@ -4158,7 +4190,7 @@ mod tests {
     }
 
     async fn insert_acceptance_sequence(database: &Database, created_at_ms: i64) {
-        let mut transaction = database.pool().begin().await.unwrap();
+        let mut transaction = database.fixture_pool().begin().await.unwrap();
         sqlx::query("INSERT INTO acceptance_sequences (created_at_ms) VALUES (?)")
             .bind(created_at_ms)
             .execute(&mut *transaction)
@@ -4256,7 +4288,7 @@ mod tests {
             "SELECT completed_at_ms FROM competition_run_grants WHERE id = ?",
         )
         .bind(grant_id)
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap()
     }
@@ -4360,13 +4392,13 @@ mod tests {
         let lifecycle = insert_submission_fixture(database, &submission).await;
         sqlx::query("UPDATE submissions SET status = 'accepted' WHERE id = ?")
             .bind(&lifecycle.id)
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         let accepted_sequence: i64 = sqlx::query_scalar(
             "INSERT INTO acceptance_sequences (created_at_ms) VALUES (1) RETURNING sequence",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         let run_id = uuid::Uuid::now_v7().to_string();
@@ -4412,7 +4444,7 @@ mod tests {
         .bind([31_u8; 32].as_slice())
         .bind([32_u8; 32].as_slice())
         .bind(accepted_sequence)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         sqlx::query(
@@ -4420,7 +4452,7 @@ mod tests {
              VALUES (?, 'original_score', 10)",
         )
         .bind(&run_id)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         (run_id, lifecycle.id, accepted_sequence)
@@ -4505,7 +4537,7 @@ mod tests {
             .bind(instance_id.as_slice())
             .bind(public_key.as_slice())
             .bind(disclosure)
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         }
@@ -4543,7 +4575,7 @@ mod tests {
              WHERE submission_id = ? ORDER BY participant_instance_id",
         )
         .bind(&submission_id)
-        .fetch_all(database.pool())
+        .fetch_all(database.fixture_pool())
         .await
         .unwrap();
         assert!(private_ids.contains(&vec![0xf1; 32]));
@@ -4565,11 +4597,11 @@ mod tests {
                 insert_indexed_campaign_run(&database, discriminator).await;
             sqlx::query("UPDATE verified_runs SET campaign_session_kind = 'field_mission', campaign_hq_sequence = NULL, config_id = ?, ruleset_id = ? WHERE id = ?")
                 .bind(vec![ruleset - 1; 32]).bind(vec![ruleset; 32]).bind(&id)
-                .execute(database.pool()).await.unwrap();
+                .execute(database.fixture_pool()).await.unwrap();
             sqlx::query("UPDATE verified_run_metrics SET value = ? WHERE run_id = ?")
                 .bind(value)
                 .bind(&id)
-                .execute(database.pool())
+                .execute(database.fixture_pool())
                 .await
                 .unwrap();
             watermark = u64::try_from(sequence).unwrap();
@@ -4626,7 +4658,7 @@ mod tests {
         filter.ruleset_manifest_sha256 = None;
         sqlx::query("UPDATE submissions SET tombstoned_at_ms = created_at_ms WHERE id = ?")
             .bind(&runs[0].1)
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         let remaining = database
@@ -4655,7 +4687,7 @@ mod tests {
              (sha256, byte_length, created_at_ms, purge_state) VALUES (?, 1, 1, 'live')",
         )
         .bind([44_u8; 32].as_slice())
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         for role in ["starting", "final"] {
@@ -4666,7 +4698,7 @@ mod tests {
             .bind(&run_id)
             .bind(role)
             .bind([44_u8; 32].as_slice())
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         }
@@ -4722,7 +4754,7 @@ mod tests {
             "SELECT canonical_campaign_state_json FROM verified_runs WHERE id = ?",
         )
         .bind(&terminal_run_id)
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         let aggregate_id = uuid::Uuid::now_v7().to_string();
@@ -4757,7 +4789,7 @@ mod tests {
         .bind([6_u8; 32].as_slice())
         .bind([12_u8; 32].as_slice())
         .bind(accepted_sequence + 1)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         sqlx::query(
@@ -4766,7 +4798,7 @@ mod tests {
         )
         .bind(&aggregate_id)
         .bind(&terminal_run_id)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
 
@@ -4885,7 +4917,7 @@ mod tests {
              WHERE public_key = ? ORDER BY generation",
         )
         .bind(key.as_slice())
-        .fetch_all(database.pool())
+        .fetch_all(database.fixture_pool())
         .await
         .unwrap();
         assert_eq!(rows.len(), 2);
@@ -4952,7 +4984,7 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("UPDATE campaign_objects SET created_at_ms = 0")
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         let lock = database
@@ -5136,7 +5168,7 @@ mod tests {
     #[tokio::test]
     async fn full_campaign_sessions_are_fetched_in_one_bounded_query_through_4096() {
         let (_directory, database) = test_database().await;
-        let mut connection = database.pool().acquire().await.unwrap();
+        let mut connection = database.fixture_pool().acquire().await.unwrap();
         sqlx::query("PRAGMA foreign_keys = OFF")
             .execute(&mut *connection)
             .await
@@ -5165,12 +5197,12 @@ mod tests {
     async fn migrations_enable_wal_foreign_keys_and_security_indexes() {
         let (directory, database) = test_database().await;
         let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap();
         assert_eq!(journal_mode, "wal");
         let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap();
         assert_eq!(foreign_keys, 1);
@@ -5178,21 +5210,21 @@ mod tests {
             "SELECT sql FROM sqlite_master WHERE type = 'index' \
              AND name = 'accepted_campaign_predecessor_idx'",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert!(predecessor_index.contains("status = 'accepted'"));
         let verified_schema: String = sqlx::query_scalar(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verified_runs'",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert!(verified_schema.contains("diagnostics_json"));
         assert!(!verified_schema.contains("facts_json"));
         assert!(verified_schema.contains("4294967295"));
         let submission_columns = sqlx::query("PRAGMA table_info(submissions)")
-            .fetch_all(database.pool())
+            .fetch_all(database.fixture_pool())
             .await
             .unwrap()
             .into_iter()
@@ -5212,13 +5244,13 @@ mod tests {
                 "SELECT \"notnull\" FROM pragma_table_info('submissions') WHERE name = ?",
             )
             .bind(required_column)
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap();
             assert_eq!(not_null, 1, "submissions.{required_column}");
         }
         let verified_run_columns = sqlx::query("PRAGMA table_info(verified_runs)")
-            .fetch_all(database.pool())
+            .fetch_all(database.fixture_pool())
             .await
             .unwrap()
             .into_iter()
@@ -5247,13 +5279,13 @@ mod tests {
                 "SELECT \"notnull\" FROM pragma_table_info('verified_runs') WHERE name = ?",
             )
             .bind(required_column)
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap();
             assert_eq!(not_null, 1, "verified_runs.{required_column}");
         }
         let full_campaign_columns = sqlx::query("PRAGMA table_info(full_campaign_runs)")
-            .fetch_all(database.pool())
+            .fetch_all(database.fixture_pool())
             .await
             .unwrap()
             .into_iter()
@@ -5285,7 +5317,7 @@ mod tests {
                 "SELECT \"notnull\" FROM pragma_table_info('full_campaign_runs') WHERE name = ?",
             )
             .bind(required_column)
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap();
             assert_eq!(not_null, 1, "full_campaign_runs.{required_column}");
@@ -5295,7 +5327,7 @@ mod tests {
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
                  AND name = 'verified_run_public_campaign_objects'",
             )
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap(),
             0
@@ -5304,14 +5336,14 @@ mod tests {
             "SELECT sql FROM sqlite_master WHERE type = 'view' \
              AND name = 'campaign_object_submission_references'",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert!(campaign_reference_view.contains("verified_run_campaign_objects"));
         assert!(!campaign_reference_view.contains("verified_run_public_campaign_objects"));
         let aggregate_participant_columns =
             sqlx::query("PRAGMA table_info(full_campaign_participants)")
-                .fetch_all(database.pool())
+                .fetch_all(database.fixture_pool())
                 .await
                 .unwrap()
                 .into_iter()
@@ -5325,7 +5357,7 @@ mod tests {
             "SELECT sql FROM sqlite_master WHERE type = 'table' \
              AND name = 'submission_upload_reservations'",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert!(reservation_schema.contains("STRICT"));
@@ -5336,7 +5368,7 @@ mod tests {
                  AND name IN ('submission_upload_reservations_expiry_idx', \
                               'submission_upload_reservations_lease_idx')",
             )
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap(),
             2
@@ -5429,12 +5461,12 @@ mod tests {
         insert_acceptance_sequence(&database, 102).await;
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM acceptance_sequences")
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             2
         );
-        database.pool().close().await;
+        database.fixture_pool().close().await;
         drop(database);
         for (path, bytes) in &sentinels {
             assert_eq!(tokio::fs::read(path).await.unwrap(), *bytes);
@@ -5445,12 +5477,12 @@ mod tests {
         let reopened = Database::connect(&displaced_config).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM acceptance_sequences")
-                .fetch_one(reopened.pool())
+                .fetch_one(reopened.fixture_pool())
                 .await
                 .unwrap(),
             2
         );
-        reopened.pool().close().await;
+        reopened.fixture_pool().close().await;
         for (path, bytes) in &sentinels {
             assert_eq!(tokio::fs::read(path).await.unwrap(), *bytes);
         }
@@ -5492,7 +5524,7 @@ mod tests {
         }
 
         insert_acceptance_sequence(&database, 202).await;
-        database.pool().close().await;
+        database.fixture_pool().close().await;
         drop(database);
         for (path, bytes) in &sentinels {
             assert_eq!(tokio::fs::read(path).await.unwrap(), *bytes);
@@ -5503,12 +5535,12 @@ mod tests {
         let reopened = Database::connect(&pinned_config).await.unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM acceptance_sequences")
-                .fetch_one(reopened.pool())
+                .fetch_one(reopened.fixture_pool())
                 .await
                 .unwrap(),
             2
         );
-        reopened.pool().close().await;
+        reopened.fixture_pool().close().await;
         for (path, bytes) in &sentinels {
             assert_eq!(tokio::fs::read(path).await.unwrap(), *bytes);
         }
@@ -5650,13 +5682,13 @@ mod tests {
         let challenges: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM upload_challenges WHERE purpose = 'submission'",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         let generations: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM challenge_generations WHERE purpose = 'submission'",
         )
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert_eq!((challenges, generations), (0, 0));
@@ -5767,7 +5799,7 @@ mod tests {
         sqlx::query("UPDATE upload_challenges SET consumed_at_ms = ? WHERE id = ?")
             .bind(now_epoch_ms().unwrap())
             .bind(&replacement_offer.id)
-            .execute(database.pool())
+            .execute(database.fixture_pool())
             .await
             .unwrap();
         assert!(matches!(
@@ -5786,7 +5818,7 @@ mod tests {
         )
         .bind(now_epoch_ms().unwrap())
         .bind(&replacement_offer.id)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         database
@@ -5868,7 +5900,7 @@ mod tests {
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions WHERE id = ?")
                 .bind(&submission.id)
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             0,
@@ -5887,7 +5919,7 @@ mod tests {
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions WHERE id = ?")
                 .bind(&submission.id)
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             1,
@@ -5933,13 +5965,13 @@ mod tests {
              WHERE id = ?",
         )
         .bind(&inserted.id)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         let rejected_at: i64 =
             sqlx::query_scalar("SELECT updated_at_ms FROM submissions WHERE id = ?")
                 .bind(&inserted.id)
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap();
         let tombstoned_at = u64::try_from(rejected_at).unwrap() + 1;
@@ -5954,7 +5986,7 @@ mod tests {
         let tombstone: Option<i64> =
             sqlx::query_scalar("SELECT tombstoned_at_ms FROM submissions WHERE id = ?")
                 .bind(&inserted.id)
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap();
         assert_eq!(tombstone, Some(i64::try_from(tombstoned_at).unwrap()));
@@ -6007,7 +6039,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM verified_runs")
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             0,
@@ -6022,7 +6054,7 @@ mod tests {
              FROM submission_terminal_failures WHERE submission_id = ?",
         )
         .bind(&inserted.id)
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert_eq!(row.get::<String, _>("code"), "verification_infrastructure");
@@ -6064,7 +6096,7 @@ mod tests {
              FROM upload_challenges WHERE public_key = ? AND purpose = 'username_update'",
         )
         .bind([8; 32].as_slice())
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert_eq!(row.get::<i64, _>("total"), 16);
@@ -6092,7 +6124,7 @@ mod tests {
                 "SELECT consumed_at_ms FROM upload_challenges WHERE id = ?"
             )
             .bind(&submission.upload_challenge_id)
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap(),
             None,
@@ -6100,7 +6132,7 @@ mod tests {
         );
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             0,
@@ -6155,7 +6187,7 @@ mod tests {
         ));
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             0,
@@ -6192,7 +6224,7 @@ mod tests {
             "SELECT COUNT(*) FROM submission_participants WHERE submission_id = ?",
         )
         .bind(&inserted.id)
-        .fetch_one(database.pool())
+        .fetch_one(database.fixture_pool())
         .await
         .unwrap();
         assert_eq!(max_concurrent_players, 1);
@@ -6211,7 +6243,7 @@ mod tests {
         assert_eq!(lifecycle.id, inserted.id);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             1
@@ -6274,13 +6306,13 @@ mod tests {
             1
         );
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM submissions")
-            .fetch_one(left_db.pool())
+            .fetch_one(left_db.fixture_pool())
             .await
             .unwrap();
         assert_eq!(count, 0);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submission_upload_reservations")
-                .fetch_one(left_db.pool())
+                .fetch_one(left_db.fixture_pool())
                 .await
                 .unwrap(),
             1
@@ -6301,7 +6333,7 @@ mod tests {
              SET lease_expires_at_ms = reserved_at_ms + 1 WHERE upload_challenge_id = ?",
         )
         .bind(&submission.upload_challenge_id)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         tokio::time::sleep(Duration::from_millis(2)).await;
@@ -6330,7 +6362,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM submissions")
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             1
@@ -6349,7 +6381,7 @@ mod tests {
              WHERE upload_challenge_id = ?",
         )
         .bind(&submission.upload_challenge_id)
-        .execute(database.pool())
+        .execute(database.fixture_pool())
         .await
         .unwrap();
         tokio::time::sleep(Duration::from_millis(2)).await;
@@ -6360,7 +6392,7 @@ mod tests {
                  WHERE upload_challenge_id = ?",
             )
             .bind(&submission.upload_challenge_id)
-            .fetch_one(database.pool())
+            .fetch_one(database.fixture_pool())
             .await
             .unwrap(),
             0
@@ -6368,7 +6400,7 @@ mod tests {
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM upload_challenges WHERE id = ?")
                 .bind(&submission.upload_challenge_id)
-                .fetch_one(database.pool())
+                .fetch_one(database.fixture_pool())
                 .await
                 .unwrap(),
             0
