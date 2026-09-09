@@ -22,8 +22,8 @@ use crate::player_profile::DifficultyLevel;
 use crate::profiles::ProfileManager;
 
 /// Schema of the per-mission history embedded in a native campaign.
-pub const CAMPAIGN_HISTORY_SCHEMA_VERSION: u16 = 2;
-pub const PROFILE_HISTORY_SCHEMA_VERSION: u16 = 3;
+pub const CAMPAIGN_HISTORY_SCHEMA_VERSION: u16 = 3;
+pub const PROFILE_HISTORY_SCHEMA_VERSION: u16 = 4;
 
 #[repr(u8)]
 #[derive(
@@ -915,6 +915,7 @@ impl ProfileCampaignHistory {
                     AchievementAggregationPolicy::AllRequiredMissions => {
                         (best_earned, best_required, best_unverifiable)
                     }
+                    AchievementAggregationPolicy::MissionOnly => (0, 0, 0),
                     AchievementAggregationPolicy::AnyMissionOnce => (
                         u32::from(!any_earned_missions.is_empty()),
                         u32::from(!self.attempts.is_empty()),
@@ -1155,7 +1156,7 @@ fn lifetime_attempt_evidence_incomplete(attempt: &MissionAttempt, id: Achievemen
     };
     match results.evaluation(id) {
         AchievementEvaluation::Unverifiable => true,
-        AchievementEvaluation::Failed => false,
+        AchievementEvaluation::Failed | AchievementEvaluation::NotApplicable => false,
         AchievementEvaluation::Earned => attempt.achievement_attestation.is_none(),
     }
 }

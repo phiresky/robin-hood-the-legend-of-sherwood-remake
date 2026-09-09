@@ -1,0 +1,185 @@
+# Metacritic — reception overview and review leads
+
+- Original source: [Metacritic — reception overview and review leads](https://www.metacritic.com/game/robin-hood-the-legend-of-sherwood/)
+- Author / publication: Metacritic
+- Language / date: English; dynamic listing checked 2026-09-09
+- Access: Overview page retrieved directly
+- Checked: 2026-09-09
+- Retrieved: 2026-09-09
+- Archived copy: [Wayback Machine, 2026-07-01](http://web.archive.org/web/20260701214701/https://www.metacritic.com/game/robin-hood-the-legend-of-sherwood/)
+- Format: header notes, then the page text converted from the original HTML
+
+## Converted text from the original HTML
+
+
+
+### reviews__metacritic.html
+
+_Source: `originals/reviews__metacritic.html`._
+
+Advertisement
+
+[ ](/)
+
+  * [Games](/game/)
+
+Explore Games
+
+    * [August/September Game Preview](/pictures/august-september-2026-game-preview-wolverine-silent-hill-townfall-control-resonant/)
+    * [Free & Subscription Games](/news/new-free-games-playstation-xbox-pc/)
+    * [Xbox Game Pass](/news/xbox-game-pass-library/)
+    * [Best Games This Year](/browse/game/all/all/current-year/)
+    * [Best Games of All Time](/browse/game/)
+    * [Upcoming Releases](/browse/game/?releaseType=coming-soon)
+    * [New PS5 Games](/browse/game/ps5/all/all-time/new/?platform=ps5)
+    * [New Xbox Series X/S Games](/browse/game/xbox-series-x/all/all-time/new/?platform=xbox-series-x)
+    * [New PC Games](/browse/game/pc/all/all-time/new/?platform=pc)
+    * [New Switch/Switch 2 Games](/browse/game/all/all/all-time/new/?platform=nintendo-switch-2&platform=nintendo-switch)
+    * [See All](/browse/game/)
+
+New Games
+
+    * [→ Game Release Calendar](/news/major-new-and-upcoming-video-games-ps5-xbox-switch-pc/)
+    * [Valheim](/game/valheim/)
+    * [Halloween: The Game](/game/halloween-the-game/)
+    * [Hot Wheels Infinite Rush](/game/hot-wheels-infinite-rush/)
+    * [The Blood of Dawnwalker](/game/the-blood-of-dawnwalker/)
+    * [Onimusha: Way of the Sword](/game/onimusha-way-of-the-sword/)
+    * [Orbitals](/game/orbitals/)
+    * [Crimson Moon](/game/crimson-moon/)
+    * [Resonance: A Plague Tale Legacy](/game/resonance-a-plague-tale-legacy/)
+    * [Star Wars Zero Company](/game/star-wars-zero-company/)
+    * [More](/browse/game/)
+
+  * [Movies](/movie/)
+
+Explore Movies
+
+    * [September Movie Preview](/pictures/september-2026-movie-preview/)
+    * [Theatrical Release Schedule](/news/upcoming-movie-release-dates-schedule/)
+    * [DVD/Blu-ray: New & Upcoming](/news/dvd-blu-ray-new-and-upcoming-release-calendar/)
+    * [Best Movies This Year](/browse/movie/all/all/current-year/)
+    * [Best Movies of All Time](/browse/movie/)
+    * [Best Movies on Netflix](/browse/movie/netflix/)
+    * [Best Movies on Hulu](/browse/movie/hulu/)
+    * [Best Movies on Prime Video](/browse/movie/prime-video/)
+    * [Best Movies on HBO Max](/browse/movie/max/)
+    * [Best Movies on Paramount+](/browse/movie/paramount-plus/)
+    * [See All](/browse/movie/)
+
+New Movies
+
+    * [→ Movie Release Calendar](/news/upcoming-movie-release-dates-schedule/)
+    * [The Debut [festival reviews]](/movie/the-debut-2026/)
+    * [Musk [festival reviews]](/movie/musk/)
+    * [Possible Love [festival reviews]](/)
+    * [You Can See Everything [festival reviews]](/movie/musk/movie/you-can-see-everything/)
+    * [Practical Magic 2](/movie/practical-magic-2/)
+    * [Onslaught](/movie/onslaught/)
+    * [Mayday](/movie/mayday-2026/)
+    * [By Any Means](/movie/by-any-means/)
+    * [Coyote vs. Acme](/movie/coyote-vs-acme/)
+    * [See All](/browse/movie/?releaseType=in-theaters)
+
+  * [TV Shows](/tv/)
+
+Explore TV
+
+    * [September TV Preview](/pictures/september-2026-tv-preview/)
+    * [Renew/Cancel Scorecard](/news/tv-renew-cancel-scorecard/)
+    * [Apple TV: New & Upcoming](/news/what-to-watch-on-apple-tv-right-now/)
+    * [Disney+: New & Upcoming](/news/what-to-watch-on-disney-plus-right-now/)
+    * [HBO Max: New & Upcoming](/news/what-to-watch-on-max-right-now/)
+    * [Hulu: New & Upcoming](/news/what-to-watch-on-hulu-right-now/)
+    * [Netflix: New & Upcoming](/news/what-to-watch-on-netflix-right-now/)
+    * [Paramount+: New & Upcoming](/news/what-to-watch-on-paramount-plus-right-now/)
+    * [Peacock: New & Upcoming](/news/what-to-watch-on-peacock-right-now/)
+    * [Prime Video: New & Upcoming](/news/what-to-watch-on-prime-video-right-now/)
+    * [See All](/browse/tv/)
+
+New TV Shows
+
+    * [→ TV Premiere Calendar](/news/tv-premiere-dates/)
+    * [Slow Horses S6](/tv/slow-horses/season-6/)
+    * [The Paper S2](/tv/the-paper-2025/season-2/)
+    * [Dang!](/tv/dang!/)
+    * [The Drop: A Snowfall Saga](/tv/the-drop-a-snowfall-saga/)
+    * [A Tale of Two Cities](/tv/a-tale-of-two-cities/)
+    * [Earle Meets World](/tv/earle-meets-world/)
+    * [The Grand Tour [2026 reboot]](/tv/the-grand-tour-2026/)
+    * [Chad Powers S2](/tv/chad-powers/season-2/)
+    * [The Gentlemen S2](/tv/the-gentlemen/season-2/)
+    * [See All New Shows](/browse/tv/all/all/all-time/new/)
+
+  * [Music](/music/)
+
+New Albums
+
+    * [ADÉLA: PRIMA](/music/prima/adela/)
+    * [Arab Strap: Half-Told Tales](/music/half-told-tales/arab-strap/)
+    * [Chat Pile: Who Loves the Sun](/music/who-loves-the-sun/chat-pile/)
+    * [Alabama Shakes: I Must Be Dreaming](/music/i-must-be-dreaming/alabama-shakes/)
+    * [Dinosaur Jr.: There Near](/music/there-near/dinosaur-jr/)
+    * [Interpol: This Mirror Weighs a Ton](/music/this-mirror-weighs-a-ton/interpol/)
+    * [Jim James: Wowed Out](/music/wowed-out/jim-james/)
+    * [Mastodon: Marrow Deep](/music/marrow-deep/mastodon/)
+    * [Mike D: Thank You](/music/thank-you/mike-d-5d/)
+    * [Billy Strings: So Much for Goodbyes](/music/so-much-for-goodbyes/billy-strings/)
+    * [More in Music ...](/music/)
+
+  * [News](/news/)
+
+
+
+Register
+
+[ ](/)
+
+Register
+
+  * T
+  * [Strategy First](/company/strategy-first/)
+
+
+
+SummaryRoam the dense foliage of Sherwood Forest and come face to face with royal trouble as you fight for the common man in Robin Hood: The Legend of Sherwood. Take on the role of the legendary nobleman, Robin Hood, and join forces with Little John and his Merrymen as the battle for control of the King's throne ensues. A fascinating universe with stron... Read More
+
+  * [Real-Time Tactics](/browse/game/all/real---time-tactics/)
+
+
+
+Rated Tfor Teen
+
+Developer:[Spellbound](/company/spellbound/)
+
+# Robin Hood: The Legend of Sherwood
+
+Released On: 
+
+Nov 14, 2002
+
+Metascore
+
+Generally Favorable
+
+[Based on 15 Critic Reviews](/game/robin-hood-the-legend-of-sherwood/critic-reviews/?platform=pc)
+
+80
+
+User score
+
+Generally Favorable
+
+[Based on 144 User Ratings](/game/robin-hood-the-legend-of-sherwood/user-reviews/?platform=pc)
+
+8.5
+
+My Score
+
+Drag or tap to give a rating
+
+Hover and click to give a rating
+
+tbd
+
+Add My Review

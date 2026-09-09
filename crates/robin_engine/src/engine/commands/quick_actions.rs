@@ -1108,8 +1108,38 @@ impl EngineInner {
             return;
         }
 
+        self.mission_domain.achievements.qa_execution = self
+            .mission_domain
+            .achievements
+            .qa_execution
+            .checked_add(1)
+            .expect("QA achievement execution overflow");
+        self.mission_domain.achievements.replaying_qa = true;
         for pc_id in &targets {
+            let intended_target = self
+                .players
+                .macro_store
+                .get(*pc_id)
+                .and_then(|state| state.slot(slot as usize))
+                .and_then(|slot| {
+                    slot.steps.iter().rev().find_map(|step| match step.replay {
+                        crate::macro_store::QaReplayCommand::Interaction { target, .. }
+                        | crate::macro_store::QaReplayCommand::TargetInteraction {
+                            target, ..
+                        } => Some(target),
+                        _ => None,
+                    })
+                });
+            self.mission_domain.achievements.qa_actors.remove(pc_id);
             self.replay_macro_slot(sim, display, assets, *pc_id, slot);
+            if !self.has_quick_action(*pc_id, slot)
+                && let Some(target) = intended_target
+            {
+                self.mission_domain.achievements.qa_actors.insert(
+                    *pc_id,
+                    (self.mission_domain.achievements.qa_execution, target),
+                );
+            }
             if self.has_quick_action(*pc_id, slot) {
                 // The original game posts a macro-fizzle message when a quick action's
                 // validity/launch gate fails. The game consumes that message
@@ -1130,6 +1160,7 @@ impl EngineInner {
         // QuickActionFailed (some target still has the slot — its
         // sequence build refused).  `targets.is_empty()` was checked
         // above so at-least-one-launched is implicitly true here.
+        self.mission_domain.achievements.replaying_qa = false;
         let all_launched = !targets.iter().any(|id| self.has_quick_action(*id, slot));
         let jingle = if all_launched {
             crate::sound::Jingle::QuickActionSucceeded

@@ -543,6 +543,15 @@ impl EngineInner {
                 },
             });
             let ale_id = self.add_entity(ale);
+            if self
+                .world
+                .entities
+                .get(pc_id)
+                .and_then(Entity::pc_data)
+                .is_some_and(|pc| pc.kind == Some(crate::character_kind::CharacterKind::FriarTuck))
+            {
+                self.mission_domain.achievements.beer_by_tuck.insert(ale_id);
+            }
             // Ale creation clones the ACCESSORIES_Ale master before
             // lying-object animation assignment, whose forced restart resets the
             // new sprite to frame/count zero.
@@ -1323,13 +1332,17 @@ impl EngineInner {
         }
     }
 
-    pub(super) fn drain_drink_done(&mut self, assets: &LevelAssets, drink_done: Vec<EntityId>) {
+    pub(super) fn drain_drink_done(
+        &mut self,
+        assets: &LevelAssets,
+        drink_done: Vec<(EntityId, Option<EntityId>)>,
+    ) {
         // DRINKING_ALE TERMINATED — add the profile's beer value
         // to the soldier's blood alcohol (clamped to 100).
         // `blood_alcohol` lives on the `AiController` attached to
         // the soldier's NPC data via `ai_brain`; `profile.beer` is
         // the per-profile increment (see profiles.rs).
-        for soldier in drink_done {
+        for (soldier, bottle) in drink_done {
             let Some(profile_idx) = self
                 .world
                 .entities
@@ -1377,6 +1390,19 @@ impl EngineInner {
             };
             let new_val = (base.blood_alcohol as u16 + beer).min(100);
             base.blood_alcohol = new_val as u8;
+            if let Some(bottle) = bottle {
+                let hostile = self
+                    .world
+                    .entities
+                    .get(soldier)
+                    .and_then(Entity::soldier_data)
+                    .is_some_and(|s| self.is_hostile_to_player_camp(s.cached_camp));
+                if hostile {
+                    self.mission_domain
+                        .achievements
+                        .record_beer_drunk(soldier, bottle);
+                }
+            }
         }
     }
 
@@ -1443,6 +1469,16 @@ impl EngineInner {
         // GETTING_FREE_FROM_WASP START — `Say(REMARK_WASP_STING)`.
         // Plain `say` on the AI base.
         for speaker in wasp_sting_remark {
+            if let Some(nest) = self
+                .mission_domain
+                .achievements
+                .pending_stings
+                .remove(&speaker)
+            {
+                self.mission_domain
+                    .achievements
+                    .record_wasp_sting(nest, speaker);
+            }
             if let Some(entity) = self.world.entities.get_mut(speaker)
                 && let Some(npc) = entity.npc_data_mut()
                 && let Some(base) = npc.ai_brain.base_mut()
@@ -1624,7 +1660,7 @@ mod tests {
             crate::element::AiBrain::Enemy(Box::new(crate::ai_enemy::EnemyAi::new(0)));
         let soldier_id = engine.add_entity(soldier);
 
-        engine.drain_drink_done(&assets, vec![soldier_id]);
+        engine.drain_drink_done(&assets, vec![(soldier_id, None)]);
         assert_eq!(
             engine
                 .get_entity(soldier_id)
@@ -1640,7 +1676,7 @@ mod tests {
             .sim_config
             .item_gameplay
             .ale_reliable_distraction = true;
-        engine.drain_drink_done(&assets, vec![soldier_id]);
+        engine.drain_drink_done(&assets, vec![(soldier_id, None)]);
         assert_eq!(
             engine
                 .get_entity(soldier_id)

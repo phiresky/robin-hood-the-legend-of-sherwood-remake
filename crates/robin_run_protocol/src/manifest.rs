@@ -1955,10 +1955,30 @@ pub(crate) mod tests {
     fn achievement_catalog_is_canonical_and_validates_complete_results() {
         let mut manifest = ruleset_manifest(Digest32::from_bytes([7; 32]));
         let expected_ids = [
-            "all-enemies-stashed",
+            "a-legend-is-born",
+            "all-banners-purchased",
+            "all-beggar-info",
+            "charity",
             "clean-hands",
+            "different-kind-of-scarlet",
+            "for-king-richard",
             "ghost",
+            "im-off-home",
+            "kill-a-civilian",
+            "leave-everyone-standing",
+            "many-hands",
+            "no-banners-purchased",
+            "no-empty-places",
+            "not-a-scratch",
+            "on-my-mark",
+            "people-behind-the-legend",
             "pile-o-bones",
+            "round-on-the-friar",
+            "ruthless",
+            "something-in-the-air",
+            "string-theory",
+            "whole-merry-company",
+            "you-never-saw-us-leave",
         ];
         assert_eq!(
             manifest

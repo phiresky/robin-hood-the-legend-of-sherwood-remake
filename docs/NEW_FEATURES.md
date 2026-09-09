@@ -4,10 +4,20 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Mission details and previous plays:** Campaign Manager's Mission Details tab
+  combines the original localized briefing, entry requirements, and a complete
+  paginated history across saved and archived campaigns. Outcomes, dates,
+  durations, and practice runs remain visible even without a recording.
+  Watch Replay opens an available recording in a separate desktop viewer while
+  preserving the current session. New terminal recordings are linked by exact
+  attempt identity; older compatible local recordings are indexed in the
+  background. See [campaign history](CAMPAIGN_HISTORY.md#campaign-manager-ui-and-offscreen-captures)
+  for controls and browser limitations.
+
 - **Campaign story navigation:** the main prerequisite route stays visible above
   stage-grouped story branches, optional missions, and ambushes. Training and
   campaign events are labeled separately; unused map placeholders are omitted
-  unless they hold archived results. R / Requirements explains actual money,
+  unless they hold archived results. Mission Details explains actual money,
   gang, mission, expiry, and story restrictions, with keyboard and mouse paging.
   Achievement cards describe exact conditions and campaign-versus-mission scope.
   These presentation changes preserve campaign selection and award eligibility.
@@ -164,18 +174,29 @@ A list of which additional features we have added, which ones we might still wan
   schemas are rejected, and only the separate original-game importer may
   produce incomplete historical detail.
 
-- **Per-mission achievements, debrief evidence, XP, and trackers.** Four
-  deterministic achievements are evaluated independently for each successful
-  attempt: **Clean Hands**, **Ghost**, **Pile-o-Bones**, and **All Enemies
-  Stashed**. Tracking establishes a post-initialization baseline of living and
-  already-dead NPCs, then records exact death causality, hostile sighting pairs,
-  and exact building-sector membership. Clean Hands fails only for deaths
-  caused by player-controlled units by default; `NPC Kills Break Clean Hands`
-  can additionally count NPC-on-NPC deaths. Ghost cares only whether a living
-  hostile actually observed a player character, so it remains independent of
-  killing. Pile-o-Bones latches after any ten NPC bodies occupy one building;
-  All Enemies Stashed requires every encountered hostile to be out of order in
-  the same building.
+- **Mission badges and campaign achievements.** The accepted catalogue now has
+  24 achievements: 10 mission badge types and 16 campaign achievement types,
+  with **Clean Hands** and **Ghost** available at both scopes. The complete
+  conditions and scope decisions are in [Achievement proposals](ACHIEVEMENT_PROPOSALS.md).
+  The former all-enemies-stashed achievement is removed, and its stable ID 3
+  is retired. New badges include **Ruthless**, **I'm off home**, beggar-info
+  completion, banner purchase challenges, **Leave Everyone Standing**,
+  **Not a Scratch**, and the generic-only optional-mission challenge.
+
+  Campaign-only feats cover story completion/ransom, companions, permanent
+  losses, camp workers who contribute in the field, civilian deaths, and
+  one-time coordination, pursuit escape, capture, beer, wasp, and six-sling-
+  knockout feats. Rich-civilian knockouts are counted by identity and remain
+  credited after waking. The final hint payment is distinct from a later
+  unrewarded donation. Deaths after initialization count for Kill a Civilian,
+  including NPC and environmental/script damage; pre-existing corpses do not.
+  Damage followed by healing still fails damage-free challenges.
+
+  Tracking establishes a post-initialization NPC baseline, records authoritative
+  effects, and includes its evidence in save/replay/rollback state. Clean Hands
+  retains its configurable NPC-death rule; Ghost remains independent of kills.
+  Campaign history practice restores progression deeds, so it cannot erase
+  permanent losses or manufacture previous camp work.
 
   Results and metrics are frozen into the canonical attempt, and an exactly-once
   host attestation decides whether the badges may enter campaign and lifetime
@@ -183,7 +204,7 @@ A list of which additional features we have added, which ones we might still wan
   but do not award icons. A normal history replay is an eligible campaign
   practice attempt, so a player can return to one mission and earn a missed
   badge after the fact. Campaign badges, detailed debrief conditions, exact
-  selected-character sword/bow XP, the speedrun clock, and each of the four
+  selected-character sword/bow XP, the speedrun clock, and the optional
   top-left achievement trackers have separate settings. Fresh profiles show
   campaign badges and debrief details but leave the HUD trackers and detailed
   XP off; settings documents that predate these presentation fields leave all
@@ -191,11 +212,13 @@ A list of which additional features we have added, which ones we might still wan
   `crates/robin_engine/src/achievement.rs`; presentation lives in
   `crates/robin_rs/src/achievement_hud.rs`.
 
-  Mission badges remain four independent pieces of evidence. Campaign and
-  lifetime badges apply a separate typed aggregation policy: **Clean Hands**
+  Mission-only badges do not create duplicate campaign awards. **Clean Hands**
   and **Ghost** require the badge on every successful canonical mission in one
-  completed campaign path, while **Pile-o-Bones** and **All Enemies Stashed**
-  unlock permanently after any one eligible mission. The required path is
+  completed campaign path; one-time campaign feats need one eligible success.
+  The campaign catalogue is paged, while the classic map shows compact totals.
+  The expanded deterministic state uses native save 74, replay 32, network 41,
+  campaign history 3, and profile history 4. Older native schemas are rejected;
+  original-game imports retain incomplete evidence. The required path is
   frozen by campaign run ID and terminal sequence when the Original campaign
   completion boundary is crossed. Lost, failed, and interrupted attempts stay
   in full history but never expand that won-mission set. A later practice

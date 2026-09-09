@@ -2576,7 +2576,7 @@ pub(super) struct ExecuteSideOutcomes {
     pub taking_net_ticks: Vec<TakingNetTick>,
     /// Soldiers that should gain `blood_alcohol += profile.beer` on
     /// DRINKING_ALE TERMINATED.
-    pub drink_done: Vec<EntityId>,
+    pub drink_done: Vec<(EntityId, Option<EntityId>)>,
     /// Entities that should say the wasp-sting remark on
     /// GETTING_FREE_FROM_WASP initialisation.
     pub wasp_sting_remark: Vec<EntityId>,
@@ -2883,7 +2883,7 @@ fn apply_soldier_execute_side_effects(
             }
         }
         (OT::DrinkingAle, MS::Terminated) => {
-            outcomes.drink_done.push(entity_id);
+            outcomes.drink_done.push((entity_id, antagonist));
         }
 
         // TAKING DONE: pick up the antagonist (Purse or Coin) and add

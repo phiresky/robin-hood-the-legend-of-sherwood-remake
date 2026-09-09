@@ -962,8 +962,7 @@ impl EngineInner {
         if won {
             // A terminal script may have moved or spawned actors after the
             // preceding regular tick scan. Freeze the exact terminal layout.
-            self.refresh_achievement_progress();
-            self.mission_domain.achievements.finalize_success();
+            self.refresh_achievement_progress(assets);
         }
 
         let profiles = &assets.profile_manager;
@@ -994,6 +993,11 @@ impl EngineInner {
         } else {
             // Explicitly zero on the lost path.
             self.mission_domain.mission_stat.new_peasant_count = 0;
+        }
+
+        if won {
+            self.evaluate_campaign_deeds(assets);
+            self.mission_domain.achievements.finalize_success();
         }
 
         let Some(mission_index) = self.mission_domain.campaign.current_mission_idx else {
@@ -5557,6 +5561,7 @@ impl EngineInner {
             if roll < *life_points as i32 {
                 campaign.move_to_reservists(*char_idx);
             } else {
+                campaign.deeds.lost_members.insert(*char_idx);
                 campaign.remove_from_gang(*char_idx);
             }
 

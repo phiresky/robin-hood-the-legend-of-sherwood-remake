@@ -568,10 +568,30 @@ pub struct AchievementPolicyV1 {
 /// vector is already in canonical stable-ID order.
 pub fn official_achievement_policies_v1() -> Vec<AchievementPolicyV1> {
     [
-        "all-enemies-stashed",
+        "a-legend-is-born",
+        "all-banners-purchased",
+        "all-beggar-info",
+        "charity",
         "clean-hands",
+        "different-kind-of-scarlet",
+        "for-king-richard",
         "ghost",
+        "im-off-home",
+        "kill-a-civilian",
+        "leave-everyone-standing",
+        "many-hands",
+        "no-banners-purchased",
+        "no-empty-places",
+        "not-a-scratch",
+        "on-my-mark",
+        "people-behind-the-legend",
         "pile-o-bones",
+        "round-on-the-friar",
+        "ruthless",
+        "something-in-the-air",
+        "string-theory",
+        "whole-merry-company",
+        "you-never-saw-us-leave",
     ]
     .into_iter()
     .map(|achievement_id| AchievementPolicyV1 {

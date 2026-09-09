@@ -5266,6 +5266,7 @@ impl EngineInner {
                         target = ?target_id,
                         "Carry: picked up body"
                     );
+                    self.record_achievement_contribution(carrier_id);
                 }
                 AbilityTickResult::DropDone {
                     carrier_id,
@@ -5312,6 +5313,7 @@ impl EngineInner {
                         target = ?target_id,
                         "Tie: enemy tied up"
                     );
+                    self.record_achievement_tactical_effect(actor_id, target_id);
                 }
                 AbilityTickResult::UntieDone {
                     actor_id,
@@ -5583,6 +5585,7 @@ impl EngineInner {
                         target = ?target_id,
                         "Heal: restored HP"
                     );
+                    self.record_achievement_contribution(healer_id);
                 }
                 AbilityTickResult::EatDone {
                     actor_id,
@@ -5852,6 +5855,10 @@ impl EngineInner {
                         Some(&obstacle_check),
                     );
                     let wasp_id = self.add_entity(wasp_entity);
+                    self.mission_domain
+                        .achievements
+                        .wasp_targets
+                        .insert(wasp_id, Default::default());
                     self.attach_accessory_sprite(assets, wasp_id);
                     tracing::debug!(
                         actor = ?actor_id,
@@ -5983,6 +5990,13 @@ impl EngineInner {
                         crate::campaign::CampaignValue::Ransom,
                         -crate::engine::BEGGAR_SALARY,
                     );
+                    if !antagonist_is_fx_target {
+                        let exhausted = !self.are_there_revealable_scrolls(assets, beggar_id);
+                        self.mission_domain
+                            .achievements
+                            .record_beggar_payment(beggar_id, exhausted)
+                            .expect("beggar payment after finalization");
+                    }
                     tracing::debug!(
                         pc = ?pc_id,
                         beggar = ?beggar_id,

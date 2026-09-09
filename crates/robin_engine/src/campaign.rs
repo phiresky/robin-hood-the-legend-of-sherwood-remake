@@ -230,6 +230,7 @@ crate::bitcode_adapters::impl_native_bitcode!(CampaignValues);
 )]
 pub struct CampaignPracticeReturn {
     values: CampaignValues,
+    deeds: crate::achievement::CampaignDeeds,
     ares: i8,
     missions: Vec<Mission>,
     accessible_mission_indices: Vec<usize>,
@@ -281,6 +282,7 @@ impl CampaignPracticeReturn {
     pub fn validation_view(&self) -> CampaignPracticeReturnView<'_> {
         let Self {
             values: _,
+            deeds: _,
             ares,
             missions,
             accessible_mission_indices,
@@ -326,6 +328,7 @@ impl CampaignPracticeReturn {
     fn capture(campaign: &Campaign) -> Self {
         Self {
             values: campaign.values.clone(),
+            deeds: campaign.deeds.clone(),
             ares: campaign.ares,
             missions: campaign.missions.clone(),
             accessible_mission_indices: campaign.accessible_mission_indices.clone(),
@@ -351,6 +354,7 @@ impl CampaignPracticeReturn {
 
     fn restore(self, campaign: &mut Campaign) {
         campaign.values = self.values;
+        campaign.deeds = self.deeds;
         campaign.ares = self.ares;
         campaign.missions = self.missions;
         campaign.accessible_mission_indices = self.accessible_mission_indices;
@@ -435,6 +439,7 @@ fn validate_attempt_history_storage(
 pub struct Campaign<S: robin_util::state_hash::StateHash = Option<CampaignSnapshot>> {
     // ── Values / currency ──
     pub values: CampaignValues,
+    pub deeds: crate::achievement::CampaignDeeds,
     pub ares: i8,
 
     // ── Missions ──
@@ -515,6 +520,7 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
     ) -> Campaign<T> {
         let Self {
             values,
+            deeds,
             ares,
             missions,
             accessible_mission_indices,
@@ -544,6 +550,7 @@ impl<S: robin_util::state_hash::StateHash> Campaign<S> {
         } = self;
         Campaign {
             values,
+            deeds,
             ares,
             missions,
             accessible_mission_indices,
@@ -592,6 +599,7 @@ impl Default for Campaign {
         values[CampaignValue::Ransom] = INITIAL_RANSOM;
         Campaign {
             values: values.into(),
+            deeds: Default::default(),
             ares: -1,
             missions: Vec::new(),
             accessible_mission_indices: Vec::new(),
@@ -732,11 +740,12 @@ impl Campaign {
         required
     }
 
-    /// Whether the Original campaign boundary has been crossed. The Original
-    /// and this port define completion through the H12/100%-progression rule,
-    /// not by exhausting every optional profile in the catalogue.
+    /// Whether the full campaign's H12 victory boundary has been crossed.
+    /// A demo can reach 100% of its small catalogue without completing the game.
     pub fn achievement_envelope_complete(&self, profiles: &ProfileManager) -> bool {
-        self.get_progression(profiles) == 100
+        self.missions.iter().any(|mission| {
+            mission.profile(profiles).id == 0x4948 && mission.status == MissionStatus::Won
+        })
     }
 
     /// Derive campaign-level badges from immutable per-mission evidence.
@@ -800,6 +809,7 @@ impl Campaign {
                         required_count,
                         all_required_unverifiable,
                     ),
+                    AchievementAggregationPolicy::MissionOnly => (0, 0, 0),
                     AchievementAggregationPolicy::AnyMissionOnce => (
                         u32::from(any_earned != 0),
                         u32::from(relevant_missions != 0),
@@ -947,6 +957,7 @@ impl Campaign {
     /// order but an unknown outcome, because the legacy list did not serialize
     /// the result of each individual launch.
     pub fn reconstruct_original_save_history(&mut self, recent_launches: &[usize]) {
+        self.deeds.complete_evidence = false;
         assert_eq!(
             self.mission_attempt_sequence, 0,
             "Original save history reconstruction requires an empty sequence"
@@ -1840,6 +1851,11 @@ impl Campaign {
         profiles: &ProfileManager,
     ) -> bool {
         let price = self.missions[mission_index].get_blazon_price() as i32;
+        let mission_id = self.missions[mission_index].profile(profiles).id;
+        let count = self.deeds.purchased_banners.entry(mission_id).or_default();
+        *count = count
+            .checked_add(1)
+            .expect("banner purchase count overflow");
         self.add_value(CampaignValue::Ransom, -price);
         self.add_value(CampaignValue::Blazon, 1);
         self.missions[mission_index].increase_blazon_price(profiles);
@@ -2598,6 +2614,7 @@ impl Campaign {
         // Reset values, set initial ransom
         self.values = enum_map! { _ => 0 }.into();
         self.values[CampaignValue::Ransom] = INITIAL_RANSOM;
+        self.deeds = Default::default();
 
         // Recreate missions and gang from profiles
 
@@ -3599,6 +3616,18 @@ mod tests {
     }
 
     #[test]
+    fn completed_demo_catalogue_does_not_award_full_campaign_mastery() {
+        let mut profiles = achievement_test_profiles();
+        profiles.missions.pop();
+        let mut campaign = achievement_test_campaign(&profiles);
+        for mission in &mut campaign.missions {
+            mission.status = MissionStatus::Won;
+        }
+        assert_eq!(campaign.get_progression(&profiles), 100);
+        assert!(!campaign.achievement_envelope_complete(&profiles));
+    }
+
+    #[test]
     fn incomplete_imported_campaign_history_never_fabricates_an_envelope_badge() {
         let profiles = achievement_test_profiles();
         let mut campaign = achievement_test_campaign(&profiles);
@@ -3608,6 +3637,9 @@ mod tests {
         assert!(campaign.achievement_envelope_complete(&profiles));
         let summary = campaign.achievement_aggregation(&profiles);
         for id in AchievementId::ALL {
+            if id.aggregation_policy() == AchievementAggregationPolicy::MissionOnly {
+                continue;
+            }
             assert_eq!(
                 summary.get(id).status,
                 crate::achievement::AchievementAggregationStatus::Unverifiable,
@@ -3654,8 +3686,11 @@ mod tests {
         campaign.peasant_names = vec!["Alys".into()];
         campaign.collected_relics = vec![11, 22];
         campaign.production_sectors[0].amount = 13;
+        campaign.deeds.workers.insert(0);
+        campaign.deeds.purchased_banners.insert(123, 2);
 
         let expected_values = bitcode::encode(&campaign.values);
+        let expected_deeds = bitcode::encode(&campaign.deeds);
         let expected_character = campaign.characters[0].status.clone();
         let expected_production = bitcode::encode(&campaign.production_sectors);
 
@@ -3688,6 +3723,9 @@ mod tests {
         campaign.peasant_names.clear();
         campaign.collected_relics.clear();
         campaign.production_sectors[0].amount = 0;
+        campaign.deeds.lost_members.insert(0);
+        campaign.deeds.workers.clear();
+        campaign.deeds.purchased_banners.insert(123, 3);
 
         let stat = crate::mission_stat::MissionStat {
             added_score: 123,
@@ -3719,6 +3757,7 @@ mod tests {
         assert_eq!(campaign.pre_mission_sim_config, None);
         assert!(!campaign.pre_mission_was_preselected);
         assert_eq!(bitcode::encode(&campaign.values), expected_values);
+        assert_eq!(bitcode::encode(&campaign.deeds), expected_deeds);
         assert_eq!(campaign.ares, 6);
         assert_eq!(campaign.accessible_mission_indices, vec![2]);
         assert_eq!(campaign.pending_accessible_mission_indices, vec![0]);

@@ -128,7 +128,7 @@ pub struct ReplayHeader {
 /// second replay representation. There is deliberately no Rust-schema
 /// compatibility adapter; earlier incompatible layouts are rejected at the
 /// header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 31;
+pub const REPLAY_SCHEMA_VERSION: u32 = 32;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn replay_schema_version_includes_reversible_background_patches() {
-        assert_eq!(REPLAY_SCHEMA_VERSION, 31);
+        assert_eq!(REPLAY_SCHEMA_VERSION, 32);
     }
 
     #[test]

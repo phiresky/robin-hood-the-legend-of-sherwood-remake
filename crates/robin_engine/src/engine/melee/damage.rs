@@ -2564,6 +2564,13 @@ impl EngineInner {
         };
         let is_dead = life_points <= 0;
 
+        if !is_pc && (life_points < life_points_before || (is_unconscious && !unconscious_before)) {
+            self.mission_domain.achievements.record_npc_harm();
+            if let Some(actor) = attacker_id {
+                self.record_achievement_tactical_effect(actor, victim_id);
+            }
+        }
+
         // Outer-gate: if the PC is already in coma, the whole
         // coma-save/parent-wounded tree is skipped — a comatose PC is
         // unkillable by further damage.  The subtraction is applied
@@ -2776,6 +2783,11 @@ impl EngineInner {
         // `mission_role == PlayerParty && is_vip && amulets == 0`.
         if !is_vip || amulets == 0 {
             if let (Some(idx), Some(c)) = (char_idx, Some(&mut self.mission_domain.campaign)) {
+                if mission_role == crate::human_control::MissionRole::PlayerParty
+                    && c.gang_indices.contains(&idx)
+                {
+                    c.deeds.lost_members.insert(idx);
+                }
                 c.remove_from_gang(idx);
             }
             // Autonomous hero-bodied combatants (such as every Robin in the
@@ -3418,6 +3430,40 @@ impl EngineInner {
         damage_element: (crate::sequence::SequenceId, usize),
         attacker_is_pc: bool,
     ) {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(damage_element.0, damage_element.1)
+            .expect("knockout lost damage element");
+        let stone = element.command == crate::element::Command::ReceiveStoneDamage;
+        let origin = match element.data {
+            crate::sequence::SequenceElementData::Damage { origin, .. } => origin,
+            _ => None,
+        };
+        if let Some(actor) = origin {
+            let hostile = self.world.entities.get(victim_id).is_some_and(|entity| {
+                matches!(entity, Entity::Soldier(_))
+                    && self.is_hostile_to_player_camp(entity.camp())
+            });
+            if attacker_is_pc && hostile {
+                self.mission_domain.achievements.knockouts.insert(victim_id);
+                let scarlet = self
+                    .world
+                    .entities
+                    .get(actor)
+                    .and_then(Entity::pc_data)
+                    .is_some_and(|pc| {
+                        pc.kind == Some(crate::character_kind::CharacterKind::WillScarlet)
+                    });
+                if stone && scarlet {
+                    self.mission_domain
+                        .achievements
+                        .scarlet_knockouts
+                        .insert(victim_id);
+                }
+                self.record_achievement_tactical_effect(actor, victim_id);
+            }
+        }
         let concussion = self
             .get_entity(victim_id)
             .and_then(|e| e.human_data())

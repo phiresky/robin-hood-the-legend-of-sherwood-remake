@@ -5438,6 +5438,9 @@ fn assert_npc_translate_books(
     let mut engine = EngineInner::new();
     let actor = match command {
         crate::element::Command::BeggarShowFace => {
+            std::sync::Arc::make_mut(&mut assets.profile_manager)
+                .civilians
+                .push(crate::profiles::CivilianProfile::default());
             let actor = engine.add_entity(make_test_civilian(crate::element::Posture::Upright));
             let Entity::Civilian(civilian) = engine
                 .get_entity_mut(actor)

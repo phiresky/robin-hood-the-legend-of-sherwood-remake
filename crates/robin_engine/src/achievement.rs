@@ -20,7 +20,7 @@ use std::{array, collections::BTreeSet, fmt};
 use serde::{Deserialize, Serialize};
 
 /// Number of stable achievement identifiers understood by this build.
-pub const ACHIEVEMENT_COUNT: usize = 4;
+pub const ACHIEVEMENT_COUNT: usize = 24;
 
 /// Stable achievement identifiers used by simulation, campaign and profile
 /// persistence.
@@ -47,19 +47,180 @@ pub enum AchievementId {
     CleanHands = 0,
     Ghost = 1,
     PileOBones = 2,
-    AllEnemiesOneBuilding = 3,
+    // Stable ID 3 is retired; never reuse it.
+    Ruthless = 4,
+    ImOffHome = 5,
+    Charity = 6,
+    AllBeggarInfo = 7,
+    NoBannersPurchased = 8,
+    AllBannersPurchased = 9,
+    ALegendIsBorn = 10,
+    ForKingRichard = 11,
+    WholeMerryCompany = 12,
+    NoEmptyPlaces = 13,
+    ManyHands = 14,
+    KillCivilian = 15,
+    LeaveEveryoneStanding = 16,
+    NotAScratch = 17,
+    OnMyMark = 18,
+    YouNeverSawUsLeave = 19,
+    StringTheory = 20,
+    RoundOnTheFriar = 21,
+    SomethingInTheAir = 22,
+    DifferentKindOfScarlet = 23,
+    PeopleBehindTheLegend = 24,
 }
 
 impl AchievementId {
+    pub const fn campaign_only(self) -> bool {
+        matches!(
+            self,
+            Self::ALegendIsBorn
+                | Self::ForKingRichard
+                | Self::WholeMerryCompany
+                | Self::NoEmptyPlaces
+                | Self::ManyHands
+                | Self::KillCivilian
+                | Self::PileOBones
+                | Self::Charity
+                | Self::StringTheory
+                | Self::DifferentKindOfScarlet
+                | Self::OnMyMark
+                | Self::YouNeverSawUsLeave
+                | Self::RoundOnTheFriar
+                | Self::SomethingInTheAir
+        )
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CleanHands => "Clean Hands",
+            Self::Ghost => "Ghost",
+            Self::PileOBones => "Pile-o-Bones",
+            Self::Ruthless => "Ruthless",
+            Self::ImOffHome => "I'm off home",
+            Self::Charity => "Nothing in Return",
+            Self::AllBeggarInfo => "Word on the Street",
+            Self::NoBannersPurchased => "Earned, Not Bought",
+            Self::AllBannersPurchased => "Spare No Expense",
+            Self::ALegendIsBorn => "A Legend Is Born",
+            Self::ForKingRichard => "For King Richard",
+            Self::WholeMerryCompany => "The Whole Merry Company",
+            Self::NoEmptyPlaces => "No Empty Places at the Table",
+            Self::ManyHands => "Many Hands Make Sherwood",
+            Self::KillCivilian => "Kill a Civilian",
+            Self::LeaveEveryoneStanding => "Leave Everyone Standing",
+            Self::NotAScratch => "Not a Scratch",
+            Self::OnMyMark => "On My Mark",
+            Self::YouNeverSawUsLeave => "You Never Saw Us Leave",
+            Self::StringTheory => "String Theory",
+            Self::RoundOnTheFriar => "A Round on the Friar",
+            Self::SomethingInTheAir => "Something in the Air",
+            Self::DifferentKindOfScarlet => "A Different Kind of Scarlet",
+            Self::PeopleBehindTheLegend => "The People Behind the Legend",
+        }
+    }
+
+    pub const fn description(self) -> &'static str {
+        match self {
+            Self::CleanHands => {
+                "Complete the mission without player-caused deaths (NPC deaths also count when enabled)."
+            }
+            Self::Ghost => {
+                "Complete the mission without a living hostile observing a player character."
+            }
+            Self::PileOBones => {
+                "Place ten unconscious or dead NPCs in one building, then complete the mission."
+            }
+            Self::Ruthless => "Complete the mission with every enemy dead.",
+            Self::ImOffHome => {
+                "Knock every rich civilian unconscious at least once, then complete the mission. They may wake up."
+            }
+            Self::Charity => {
+                "Give a beggar money after all their information is exhausted, receiving no information in return."
+            }
+            Self::AllBeggarInfo => {
+                "Get all information from every beggar and complete the mission. Mission badge only."
+            }
+            Self::NoBannersPurchased => {
+                "Complete a banner mission without purchasing any of its preparation banners."
+            }
+            Self::AllBannersPurchased => {
+                "Complete a banner mission having purchased every preparation banner, rather than earning any."
+            }
+            Self::ALegendIsBorn => "Complete the full campaign.",
+            Self::ForKingRichard => {
+                "Complete Lackland's Plan and send the ransom with Allan-a-Dale."
+            }
+            Self::WholeMerryCompany => {
+                "Complete the campaign after winning a mission with each of Robin's five named companions."
+            }
+            Self::NoEmptyPlaces => {
+                "Complete the campaign without permanently losing a recruited hero or Merry Man, including strategic assignments."
+            }
+            Self::LeaveEveryoneStanding => {
+                "Complete the mission unseen without harming or incapacitating any NPC. Distractions are allowed."
+            }
+            Self::NotAScratch => "Complete the mission without any party member losing health.",
+            Self::OnMyMark => {
+                "Have three characters successfully act on three distinct enemies in one quick-action execution, then win."
+            }
+            Self::YouNeverSawUsLeave => {
+                "Escape three simultaneous pursuers without killing them or leaving the map, then win."
+            }
+            Self::StringTheory => {
+                "Complete a mission with three player-knocked-out enemies alive, bound, and inside a building."
+            }
+            Self::RoundOnTheFriar => {
+                "Have three different enemies drink beer placed by Tuck in one successful mission."
+            }
+            Self::SomethingInTheAir => {
+                "A single player-thrown wasp nest must sting three different enemies in a successful mission."
+            }
+            Self::DifferentKindOfScarlet => {
+                "Have Will Scarlet knock out six different enemies with his sling and finish with Clean Hands."
+            }
+            Self::PeopleBehindTheLegend => {
+                "Win an optional ambush or tactical mission with only generic Merry Men."
+            }
+            Self::KillCivilian => {
+                "Kill a civilian during a successful mission, including indirect deaths. Civilians already dead at mission start do not count."
+            }
+            Self::ManyHands => {
+                "Complete the campaign after three distinct generic Merry Men each contribute to a mission victory and complete production or training in Sherwood."
+            }
+        }
+    }
     pub const ALL: [Self; ACHIEVEMENT_COUNT] = [
         Self::CleanHands,
         Self::Ghost,
         Self::PileOBones,
-        Self::AllEnemiesOneBuilding,
+        Self::Ruthless,
+        Self::ImOffHome,
+        Self::Charity,
+        Self::AllBeggarInfo,
+        Self::NoBannersPurchased,
+        Self::AllBannersPurchased,
+        Self::ALegendIsBorn,
+        Self::ForKingRichard,
+        Self::WholeMerryCompany,
+        Self::NoEmptyPlaces,
+        Self::ManyHands,
+        Self::KillCivilian,
+        Self::LeaveEveryoneStanding,
+        Self::NotAScratch,
+        Self::OnMyMark,
+        Self::YouNeverSawUsLeave,
+        Self::StringTheory,
+        Self::RoundOnTheFriar,
+        Self::SomethingInTheAir,
+        Self::DifferentKindOfScarlet,
+        Self::PeopleBehindTheLegend,
     ];
 
     pub const fn index(self) -> usize {
-        self as usize
+        let value = self as usize;
+        if value > 3 { value - 1 } else { value }
     }
 
     /// Numeric identifier persisted by compact sets and available to external
@@ -76,7 +237,27 @@ impl AchievementId {
             Self::CleanHands => "clean-hands",
             Self::Ghost => "ghost",
             Self::PileOBones => "pile-o-bones",
-            Self::AllEnemiesOneBuilding => "all-enemies-stashed",
+            Self::Ruthless => "ruthless",
+            Self::ImOffHome => "im-off-home",
+            Self::Charity => "charity",
+            Self::AllBeggarInfo => "all-beggar-info",
+            Self::NoBannersPurchased => "no-banners-purchased",
+            Self::AllBannersPurchased => "all-banners-purchased",
+            Self::ALegendIsBorn => "a-legend-is-born",
+            Self::ForKingRichard => "for-king-richard",
+            Self::WholeMerryCompany => "whole-merry-company",
+            Self::NoEmptyPlaces => "no-empty-places",
+            Self::ManyHands => "many-hands",
+            Self::KillCivilian => "kill-a-civilian",
+            Self::LeaveEveryoneStanding => "leave-everyone-standing",
+            Self::NotAScratch => "not-a-scratch",
+            Self::OnMyMark => "on-my-mark",
+            Self::YouNeverSawUsLeave => "you-never-saw-us-leave",
+            Self::StringTheory => "string-theory",
+            Self::RoundOnTheFriar => "round-on-the-friar",
+            Self::SomethingInTheAir => "something-in-the-air",
+            Self::DifferentKindOfScarlet => "different-kind-of-scarlet",
+            Self::PeopleBehindTheLegend => "people-behind-the-legend",
         }
     }
 
@@ -85,11 +266,12 @@ impl AchievementId {
     /// Keeping this policy beside the persistent identifier prevents campaign,
     /// profile, and UI code from growing separate name-specific conditionals.
     pub const fn aggregation_policy(self) -> AchievementAggregationPolicy {
-        match self {
-            Self::CleanHands | Self::Ghost => AchievementAggregationPolicy::AllRequiredMissions,
-            Self::PileOBones | Self::AllEnemiesOneBuilding => {
-                AchievementAggregationPolicy::AnyMissionOnce
-            }
+        if matches!(self, Self::CleanHands | Self::Ghost) {
+            AchievementAggregationPolicy::AllRequiredMissions
+        } else if self.campaign_only() {
+            AchievementAggregationPolicy::AnyMissionOnce
+        } else {
+            AchievementAggregationPolicy::MissionOnly
         }
     }
 
@@ -100,7 +282,27 @@ impl AchievementId {
             0 => Some(Self::CleanHands),
             1 => Some(Self::Ghost),
             2 => Some(Self::PileOBones),
-            3 => Some(Self::AllEnemiesOneBuilding),
+            4 => Some(Self::Ruthless),
+            5 => Some(Self::ImOffHome),
+            6 => Some(Self::Charity),
+            7 => Some(Self::AllBeggarInfo),
+            8 => Some(Self::NoBannersPurchased),
+            9 => Some(Self::AllBannersPurchased),
+            10 => Some(Self::ALegendIsBorn),
+            11 => Some(Self::ForKingRichard),
+            12 => Some(Self::WholeMerryCompany),
+            13 => Some(Self::NoEmptyPlaces),
+            14 => Some(Self::ManyHands),
+            15 => Some(Self::KillCivilian),
+            16 => Some(Self::LeaveEveryoneStanding),
+            17 => Some(Self::NotAScratch),
+            18 => Some(Self::OnMyMark),
+            19 => Some(Self::YouNeverSawUsLeave),
+            20 => Some(Self::StringTheory),
+            21 => Some(Self::RoundOnTheFriar),
+            22 => Some(Self::SomethingInTheAir),
+            23 => Some(Self::DifferentKindOfScarlet),
+            24 => Some(Self::PeopleBehindTheLegend),
             _ => None,
         }
     }
@@ -131,6 +333,8 @@ pub enum AchievementAggregationPolicy {
     AllRequiredMissions = 0,
     /// One eligible mission permanently satisfies the campaign/lifetime rule.
     AnyMissionOnce = 1,
+    /// Deliberately excluded from campaign and profile awards.
+    MissionOnly = 2,
 }
 
 impl From<AchievementAggregationPolicy> for u8 {
@@ -146,6 +350,7 @@ impl TryFrom<u8> for AchievementAggregationPolicy {
         match value {
             0 => Ok(Self::AllRequiredMissions),
             1 => Ok(Self::AnyMissionOnce),
+            2 => Ok(Self::MissionOnly),
             _ => Err(format!("unknown achievement aggregation policy {value}")),
         }
     }
@@ -304,6 +509,9 @@ pub fn aggregate_achievement(
                 AchievementAggregationStatus::InProgress
             }
         }
+        AchievementAggregationPolicy::MissionOnly => {
+            AchievementAggregationStatus::MissingRequirements
+        }
         AchievementAggregationPolicy::AnyMissionOnce => {
             if input.earned_missions != 0 {
                 AchievementAggregationStatus::Earned
@@ -358,7 +566,7 @@ impl TryFrom<u8> for AchievementId {
 pub struct AchievementSet(u64);
 
 impl AchievementSet {
-    const KNOWN_BITS: u64 = (1_u64 << ACHIEVEMENT_COUNT) - 1;
+    const KNOWN_BITS: u64 = ((1_u64 << (ACHIEVEMENT_COUNT + 1)) - 1) & !(1_u64 << 3);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -448,12 +656,13 @@ pub enum AchievementEvaluation {
     Unverifiable = 0,
     Failed = 1,
     Earned = 2,
+    NotApplicable = 3,
 }
 
 impl AchievementEvaluation {
     pub(crate) const fn history_rank(self) -> u8 {
         match self {
-            Self::Unverifiable => 0,
+            Self::Unverifiable | Self::NotApplicable => 0,
             Self::Failed => 1,
             Self::Earned => 2,
         }
@@ -474,6 +683,7 @@ impl TryFrom<u8> for AchievementEvaluation {
             0 => Ok(Self::Unverifiable),
             1 => Ok(Self::Failed),
             2 => Ok(Self::Earned),
+            3 => Ok(Self::NotApplicable),
             _ => Err(format!("unknown achievement evaluation {value}")),
         }
     }
@@ -634,8 +844,14 @@ pub struct AchievementAttemptMetrics {
     pub unique_hostile_observers: u32,
     pub unique_observed_player_characters: u32,
     pub max_bodies_in_one_building: u32,
-    pub enemies_in_stash_building: u32,
-    pub enemies_required_for_stash: u32,
+    pub dead_enemies: u32,
+    pub rich_civilians: u32,
+    pub rich_civilians_knocked_out: u32,
+    pub beggars: u32,
+    pub beggars_exhausted: u32,
+    pub charitable_payments: u32,
+    pub banners_purchased: u32,
+    pub purchasable_banners: u32,
 }
 
 /// Read-only live data used by optional HUD trackers.
@@ -678,11 +894,17 @@ pub struct AchievementBuildingId {
 }
 
 /// One NPC human's current contribution to body/stash trackers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AchievementEntitySnapshot {
     pub entity: crate::element::EntityId,
     /// Whether this NPC contributes to the "all enemies" requirement.
     pub hostile: bool,
+    pub dead: bool,
+    pub health: i32,
+    pub rich_civilian: bool,
+    pub unconscious: bool,
+    pub bound: bool,
+    pub beggar: bool,
     pub out_of_order: bool,
     pub building: Option<AchievementBuildingId>,
 }
@@ -710,6 +932,40 @@ impl fmt::Display for AchievementStateError {
 
 impl std::error::Error for AchievementStateError {}
 
+/// Campaign-owned evidence, restored by restart/practice snapshots along with
+/// the economy. Character indices identify individuals, not peasant templates.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub struct CampaignDeeds {
+    pub complete_evidence: bool,
+    pub lost_members: BTreeSet<usize>,
+    pub companion_victories: BTreeSet<u8>,
+    pub contributing_veterans: BTreeSet<usize>,
+    pub workers: BTreeSet<usize>,
+    pub purchased_banners: std::collections::BTreeMap<u32, u32>,
+}
+impl Default for CampaignDeeds {
+    fn default() -> Self {
+        Self {
+            complete_evidence: true,
+            lost_members: BTreeSet::new(),
+            companion_victories: BTreeSet::new(),
+            contributing_veterans: BTreeSet::new(),
+            workers: BTreeSet::new(),
+            purchased_banners: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
 /// Simulation-owned achievement state for the active mission.
 ///
 /// Feature-specific trackers may add deterministic fields to this aggregate;
@@ -734,12 +990,43 @@ pub struct MissionAchievementState {
     baseline_living_npcs: BTreeSet<crate::element::EntityId>,
     baseline_dead_npcs: BTreeSet<crate::element::EntityId>,
     encountered_hostiles: BTreeSet<crate::element::EntityId>,
+    rich_civilians: BTreeSet<crate::element::EntityId>,
+    rich_knockouts: BTreeSet<crate::element::EntityId>,
+    beggars: BTreeSet<crate::element::EntityId>,
+    exhausted_beggars: BTreeSet<crate::element::EntityId>,
+    paid_beggars: BTreeSet<crate::element::EntityId>,
+    pending_charity: BTreeSet<crate::element::EntityId>,
+    dead_hostiles: BTreeSet<crate::element::EntityId>,
     processed_deaths: BTreeSet<crate::element::EntityId>,
     player_caused_deaths: BTreeSet<crate::element::EntityId>,
     npc_caused_deaths: BTreeSet<crate::element::EntityId>,
     hostile_observers: BTreeSet<crate::element::EntityId>,
     observed_player_characters: BTreeSet<crate::element::EntityId>,
     observation_pairs: BTreeSet<(crate::element::EntityId, crate::element::EntityId)>,
+    npc_baselines: std::collections::BTreeMap<crate::element::EntityId, (i32, bool)>,
+    harmed_npc: bool,
+    pub contributors: BTreeSet<usize>,
+    pub party_health: std::collections::BTreeMap<crate::element::EntityId, i32>,
+    pub party_hurt: bool,
+    pub knockouts: BTreeSet<crate::element::EntityId>,
+    pub scarlet_knockouts: BTreeSet<crate::element::EntityId>,
+    pub beer_by_tuck: BTreeSet<crate::element::EntityId>,
+    pub beer_drinkers: BTreeSet<crate::element::EntityId>,
+    pub wasp_targets:
+        std::collections::BTreeMap<crate::element::EntityId, BTreeSet<crate::element::EntityId>>,
+    pub escape_pursuers: BTreeSet<crate::element::EntityId>,
+    pub escape_earned: bool,
+    pub pending_stings:
+        std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
+    pub replaying_qa: bool,
+    pub named_party_participated: bool,
+    pub qa_execution: u32,
+    pub qa_actors:
+        std::collections::BTreeMap<crate::element::EntityId, (u32, crate::element::EntityId)>,
+    pub qa_successes: std::collections::BTreeMap<
+        u32,
+        std::collections::BTreeMap<crate::element::EntityId, crate::element::EntityId>,
+    >,
     metrics: AchievementAttemptMetrics,
     pile_o_bones_earned: bool,
     history_promotion_attempted: bool,
@@ -753,21 +1040,197 @@ impl Default for MissionAchievementState {
 }
 
 impl MissionAchievementState {
+    pub fn latch(&mut self, id: AchievementId) {
+        self.ensure_not_finalized()
+            .expect("achievement effect after finalization");
+        self.live_evaluations[id.index()] = Some(AchievementEvaluation::Earned);
+    }
+
+    pub fn record_qa_success(
+        &mut self,
+        actor: crate::element::EntityId,
+        target: crate::element::EntityId,
+    ) {
+        let Some(&(group, expected_target)) = self.qa_actors.get(&actor) else {
+            return;
+        };
+        if target != expected_target {
+            return;
+        }
+        self.qa_actors.remove(&actor);
+        let successes = self.qa_successes.entry(group).or_default();
+        successes.insert(actor, target);
+        if successes.values().copied().collect::<BTreeSet<_>>().len() >= 3 {
+            self.latch(AchievementId::OnMyMark);
+        }
+    }
+
+    pub fn record_beer_drunk(
+        &mut self,
+        soldier: crate::element::EntityId,
+        bottle: crate::element::EntityId,
+    ) {
+        if self.beer_by_tuck.contains(&bottle) {
+            self.beer_drinkers.insert(soldier);
+            if self.beer_drinkers.len() >= 3 {
+                self.latch(AchievementId::RoundOnTheFriar);
+            }
+        }
+    }
+
+    pub fn record_wasp_sting(
+        &mut self,
+        nest: crate::element::EntityId,
+        victim: crate::element::EntityId,
+    ) {
+        // Only nests registered on a successful player throw participate.
+        if let Some(targets) = self.wasp_targets.get_mut(&nest) {
+            targets.insert(victim);
+            if targets.len() >= 3 {
+                self.latch(AchievementId::SomethingInTheAir);
+            }
+        }
+    }
+
+    pub fn record_npc_harm(&mut self) {
+        self.harmed_npc = true;
+    }
+
+    pub fn refresh_pursuit(
+        &mut self,
+        pursuing: BTreeSet<crate::element::EntityId>,
+        present_alive: BTreeSet<crate::element::EntityId>,
+    ) {
+        if self
+            .escape_pursuers
+            .iter()
+            .any(|id| !present_alive.contains(id))
+        {
+            self.escape_pursuers.clear();
+        }
+        if !self.escape_pursuers.is_empty() && self.escape_pursuers.is_disjoint(&pursuing) {
+            self.escape_earned = true;
+            self.latch(AchievementId::YouNeverSawUsLeave);
+        }
+        if pursuing.len() >= 3 {
+            self.escape_pursuers.extend(pursuing);
+        }
+    }
+    fn coverage(required: usize, achieved: usize) -> AchievementEvaluation {
+        if required == 0 {
+            AchievementEvaluation::NotApplicable
+        } else if achieved == required {
+            AchievementEvaluation::Earned
+        } else {
+            AchievementEvaluation::Failed
+        }
+    }
+
+    pub fn configure_banners(&mut self, requirement: Option<(u32, u32)>) {
+        for id in [
+            AchievementId::NoBannersPurchased,
+            AchievementId::AllBannersPurchased,
+        ] {
+            self.live_evaluations[id.index()] = Some(AchievementEvaluation::NotApplicable);
+        }
+        if let Some((purchased, total)) = requirement {
+            assert!(
+                total > 0 && purchased <= total,
+                "invalid banner purchase evidence"
+            );
+            self.metrics.banners_purchased = purchased;
+            self.metrics.purchasable_banners = total;
+            self.live_evaluations[AchievementId::NoBannersPurchased.index()] =
+                Some(if purchased == 0 {
+                    AchievementEvaluation::Earned
+                } else {
+                    AchievementEvaluation::Failed
+                });
+            self.live_evaluations[AchievementId::AllBannersPurchased.index()] =
+                Some(if purchased == total {
+                    AchievementEvaluation::Earned
+                } else {
+                    AchievementEvaluation::Failed
+                });
+        }
+    }
+
+    /// Called only after a successful Pay deducts real money.
+    pub fn record_beggar_payment(
+        &mut self,
+        beggar: crate::element::EntityId,
+        exhausted: bool,
+    ) -> Result<(), AchievementStateError> {
+        self.ensure_not_finalized()?;
+        self.paid_beggars.insert(beggar);
+        if exhausted {
+            self.pending_charity.insert(beggar);
+        }
+        Ok(())
+    }
+
+    /// Settle the paid response, never a scripted/unpaid reveal.
+    pub fn record_beggar_response(
+        &mut self,
+        beggar: crate::element::EntityId,
+        exhausted: bool,
+        gave_info: bool,
+    ) -> Result<(), AchievementStateError> {
+        self.ensure_not_finalized()?;
+        if self.paid_beggars.remove(&beggar) {
+            if exhausted {
+                self.exhausted_beggars.insert(beggar);
+            }
+            if self.pending_charity.remove(&beggar) && !gave_info {
+                self.metrics.charitable_payments = self
+                    .metrics
+                    .charitable_payments
+                    .checked_add(1)
+                    .expect("charity count overflow");
+            }
+        }
+        Ok(())
+    }
     pub fn from_mission_start() -> Self {
         Self {
             tracking_provenance: AchievementTrackingProvenance::MissionStart,
             verifiable: AchievementSet::all(),
-            live_evaluations: [None; ACHIEVEMENT_COUNT],
+            live_evaluations: [Some(AchievementEvaluation::Failed); ACHIEVEMENT_COUNT],
             baseline_frame: 0,
             baseline_living_npcs: BTreeSet::new(),
             baseline_dead_npcs: BTreeSet::new(),
             encountered_hostiles: BTreeSet::new(),
+            rich_civilians: BTreeSet::new(),
+            rich_knockouts: BTreeSet::new(),
+            beggars: BTreeSet::new(),
+            exhausted_beggars: BTreeSet::new(),
+            paid_beggars: BTreeSet::new(),
+            pending_charity: BTreeSet::new(),
+            dead_hostiles: BTreeSet::new(),
             processed_deaths: BTreeSet::new(),
             player_caused_deaths: BTreeSet::new(),
             npc_caused_deaths: BTreeSet::new(),
             hostile_observers: BTreeSet::new(),
             observed_player_characters: BTreeSet::new(),
             observation_pairs: BTreeSet::new(),
+            npc_baselines: Default::default(),
+            harmed_npc: false,
+            contributors: BTreeSet::new(),
+            party_health: Default::default(),
+            party_hurt: false,
+            knockouts: Default::default(),
+            scarlet_knockouts: Default::default(),
+            beer_by_tuck: Default::default(),
+            beer_drinkers: Default::default(),
+            wasp_targets: Default::default(),
+            escape_pursuers: Default::default(),
+            escape_earned: false,
+            pending_stings: Default::default(),
+            replaying_qa: false,
+            named_party_participated: false,
+            qa_execution: 0,
+            qa_actors: Default::default(),
+            qa_successes: Default::default(),
             metrics: AchievementAttemptMetrics::default(),
             pile_o_bones_earned: false,
             history_promotion_attempted: false,
@@ -784,12 +1247,37 @@ impl MissionAchievementState {
             baseline_living_npcs: BTreeSet::new(),
             baseline_dead_npcs: BTreeSet::new(),
             encountered_hostiles: BTreeSet::new(),
+            rich_civilians: BTreeSet::new(),
+            rich_knockouts: BTreeSet::new(),
+            beggars: BTreeSet::new(),
+            exhausted_beggars: BTreeSet::new(),
+            paid_beggars: BTreeSet::new(),
+            pending_charity: BTreeSet::new(),
+            dead_hostiles: BTreeSet::new(),
             processed_deaths: BTreeSet::new(),
             player_caused_deaths: BTreeSet::new(),
             npc_caused_deaths: BTreeSet::new(),
             hostile_observers: BTreeSet::new(),
             observed_player_characters: BTreeSet::new(),
             observation_pairs: BTreeSet::new(),
+            npc_baselines: Default::default(),
+            harmed_npc: false,
+            contributors: BTreeSet::new(),
+            party_health: Default::default(),
+            party_hurt: false,
+            knockouts: Default::default(),
+            scarlet_knockouts: Default::default(),
+            beer_by_tuck: Default::default(),
+            beer_drinkers: Default::default(),
+            wasp_targets: Default::default(),
+            escape_pursuers: Default::default(),
+            escape_earned: false,
+            pending_stings: Default::default(),
+            replaying_qa: false,
+            named_party_participated: false,
+            qa_execution: 0,
+            qa_actors: Default::default(),
+            qa_successes: Default::default(),
             metrics: AchievementAttemptMetrics::default(),
             pile_o_bones_earned: false,
             history_promotion_attempted: false,
@@ -820,6 +1308,10 @@ impl MissionAchievementState {
     }
 
     /// Record one fresh hostile death using the damage element's exact origin.
+    pub fn is_fresh_death(&self, victim: crate::element::EntityId) -> bool {
+        !self.processed_deaths.contains(&victim)
+    }
+
     pub fn record_npc_death(
         &mut self,
         victim: crate::element::EntityId,
@@ -874,7 +1366,7 @@ impl MissionAchievementState {
         Ok(())
     }
 
-    /// Recompute exact-building body and whole-enemy stash progress.
+    /// Recompute body arrangements and mission population coverage.
     pub fn refresh_hostile_arrangement(
         &mut self,
         frame: u32,
@@ -882,18 +1374,47 @@ impl MissionAchievementState {
     ) -> Result<(), AchievementStateError> {
         self.ensure_not_finalized()?;
         let mut body_counts = std::collections::BTreeMap::new();
-        let mut hostile_body_counts = std::collections::BTreeMap::new();
+        let mut bound_captives = 0;
+
         for npc in npcs {
+            let baseline = self
+                .npc_baselines
+                .entry(npc.entity)
+                .or_insert((npc.health, npc.out_of_order));
+            if npc.health < baseline.0 || (npc.out_of_order && !baseline.1) {
+                self.harmed_npc = true;
+            }
+            // Retain the high-water mark so healing cannot conceal later damage.
+            baseline.0 = baseline.0.max(npc.health);
             if npc.hostile {
-                self.encountered_hostiles.insert(npc.entity);
+                if !self.baseline_dead_npcs.contains(&npc.entity) {
+                    self.encountered_hostiles.insert(npc.entity);
+                }
+                if npc.dead {
+                    self.dead_hostiles.insert(npc.entity);
+                }
+            }
+            if npc.hostile
+                && !npc.dead
+                && npc.bound
+                && npc.building.is_some()
+                && self.knockouts.contains(&npc.entity)
+            {
+                bound_captives += 1;
+            }
+            if npc.rich_civilian {
+                self.rich_civilians.insert(npc.entity);
+                if npc.unconscious {
+                    self.rich_knockouts.insert(npc.entity);
+                }
+            }
+            if npc.beggar {
+                self.beggars.insert(npc.entity);
             }
             if npc.out_of_order
                 && let Some(building) = npc.building
             {
                 *body_counts.entry(building).or_insert(0_u32) += 1;
-                if npc.hostile {
-                    *hostile_body_counts.entry(building).or_insert(0_u32) += 1;
-                }
             }
         }
 
@@ -910,13 +1431,69 @@ impl MissionAchievementState {
                 AchievementEvaluation::Failed
             });
 
-        let required = u32::try_from(self.encountered_hostiles.len())
-            .expect("hostile achievement entity count exceeds u32");
-        let bundled = hostile_body_counts.values().copied().max().unwrap_or(0);
-        self.metrics.enemies_in_stash_building = bundled;
-        self.metrics.enemies_required_for_stash = required;
-        self.live_evaluations[AchievementId::AllEnemiesOneBuilding.index()] =
-            Some(if required > 0 && bundled == required {
+        self.metrics.dead_enemies = self
+            .encountered_hostiles
+            .intersection(&self.dead_hostiles)
+            .count()
+            .try_into()
+            .expect("enemy count overflow");
+        self.metrics.rich_civilians = self
+            .rich_civilians
+            .len()
+            .try_into()
+            .expect("civilian count overflow");
+        self.metrics.rich_civilians_knocked_out = self
+            .rich_knockouts
+            .len()
+            .try_into()
+            .expect("knockout count overflow");
+        self.metrics.beggars = self
+            .beggars
+            .len()
+            .try_into()
+            .expect("beggar count overflow");
+        let exhausted = self.beggars.intersection(&self.exhausted_beggars).count();
+        self.metrics.beggars_exhausted = exhausted.try_into().expect("beggar count overflow");
+        self.live_evaluations[AchievementId::Ruthless.index()] = Some(Self::coverage(
+            self.encountered_hostiles.len(),
+            self.metrics.dead_enemies as usize,
+        ));
+        self.live_evaluations[AchievementId::ImOffHome.index()] = Some(Self::coverage(
+            self.rich_civilians.len(),
+            self.rich_knockouts.len(),
+        ));
+        self.live_evaluations[AchievementId::AllBeggarInfo.index()] =
+            Some(Self::coverage(self.beggars.len(), exhausted));
+        self.live_evaluations[AchievementId::Charity.index()] =
+            Some(if self.metrics.charitable_payments > 0 {
+                AchievementEvaluation::Earned
+            } else if self.beggars.is_empty() {
+                AchievementEvaluation::NotApplicable
+            } else {
+                AchievementEvaluation::Failed
+            });
+        self.live_evaluations[AchievementId::StringTheory.index()] = Some(if bound_captives >= 3 {
+            AchievementEvaluation::Earned
+        } else {
+            AchievementEvaluation::Failed
+        });
+        self.live_evaluations[AchievementId::DifferentKindOfScarlet.index()] = Some(
+            if self.scarlet_knockouts.len() >= 6
+                && self.live_evaluation(AchievementId::CleanHands)
+                    == Some(AchievementEvaluation::Earned)
+            {
+                AchievementEvaluation::Earned
+            } else {
+                AchievementEvaluation::Failed
+            },
+        );
+        self.live_evaluations[AchievementId::NotAScratch.index()] = Some(if self.party_hurt {
+            AchievementEvaluation::Failed
+        } else {
+            AchievementEvaluation::Earned
+        });
+        self.live_evaluations[AchievementId::LeaveEveryoneStanding.index()] =
+            Some(if !self.harmed_npc && self.observation_pairs.is_empty() {
                 AchievementEvaluation::Earned
             } else {
                 AchievementEvaluation::Failed
@@ -1331,29 +1908,281 @@ mod tests {
         assert_eq!(AchievementId::CleanHands as u8, 0);
         assert_eq!(AchievementId::Ghost as u8, 1);
         assert_eq!(AchievementId::PileOBones as u8, 2);
-        assert_eq!(AchievementId::AllEnemiesOneBuilding as u8, 3);
+        assert_eq!(AchievementId::Ruthless as u8, 4);
         for id in AchievementId::ALL {
             assert_eq!(AchievementId::from_stable_id(id.stable_id()), Some(id));
         }
-        assert_eq!(AchievementId::from_stable_id(4), None);
+        assert_eq!(AchievementId::from_stable_id(3), None);
         assert_eq!(serde_json::to_string(&AchievementId::Ghost).unwrap(), "1");
         assert_eq!(
-            serde_json::from_str::<AchievementId>("3").unwrap(),
-            AchievementId::AllEnemiesOneBuilding
+            serde_json::from_str::<AchievementId>("4").unwrap(),
+            AchievementId::Ruthless
         );
-        assert!(serde_json::from_str::<AchievementId>("4").is_err());
+        assert!(serde_json::from_str::<AchievementId>("3").is_err());
 
-        let set = AchievementSet::from_ids([
-            AchievementId::AllEnemiesOneBuilding,
-            AchievementId::CleanHands,
-        ]);
+        let set = AchievementSet::from_ids([AchievementId::Ruthless, AchievementId::CleanHands]);
         assert_eq!(
             set.iter().collect::<Vec<_>>(),
-            vec![
-                AchievementId::CleanHands,
-                AchievementId::AllEnemiesOneBuilding
-            ]
+            vec![AchievementId::CleanHands, AchievementId::Ruthless]
         );
+    }
+
+    fn npc_snapshot(index: usize) -> AchievementEntitySnapshot {
+        AchievementEntitySnapshot {
+            entity: crate::element::EntityId::Soldier(crate::entity_id::SoldierId(index as u32)),
+            hostile: true,
+            dead: false,
+            health: 100,
+            rich_civilian: false,
+            unconscious: false,
+            bound: false,
+            beggar: false,
+            out_of_order: false,
+            building: None,
+        }
+    }
+
+    #[test]
+    fn accepted_scopes_and_retired_bit_are_enforced() {
+        assert_eq!(
+            AchievementId::ALL
+                .iter()
+                .filter(|id| !id.campaign_only())
+                .count(),
+            10
+        );
+        assert_eq!(
+            AchievementId::ALL
+                .iter()
+                .filter(|id| id.aggregation_policy() != AchievementAggregationPolicy::MissionOnly)
+                .count(),
+            16
+        );
+        assert_eq!(AchievementSet::all().0 & (1 << 3), 0);
+    }
+
+    #[test]
+    fn rich_coverage_survives_waking_and_includes_new_arrivals() {
+        let mut state = MissionAchievementState::default();
+        let mut first = npc_snapshot(0);
+        first.rich_civilian = true;
+        state.refresh_hostile_arrangement(0, [first]).unwrap();
+        first.unconscious = true;
+        state.refresh_hostile_arrangement(1, [first]).unwrap();
+        first.unconscious = false;
+        state.refresh_hostile_arrangement(2, [first]).unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::ImOffHome),
+            Some(AchievementEvaluation::Earned)
+        );
+        let mut second = npc_snapshot(1);
+        second.rich_civilian = true;
+        state
+            .refresh_hostile_arrangement(3, [first, second])
+            .unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::ImOffHome),
+            Some(AchievementEvaluation::Failed)
+        );
+        assert_eq!(state.progress(3).metrics.rich_civilians_knocked_out, 1);
+    }
+
+    #[test]
+    fn ruthless_requires_deaths_not_knockouts_and_ignores_initial_corpses() {
+        let mut state = MissionAchievementState::default();
+        let mut corpse = npc_snapshot(0);
+        corpse.dead = true;
+        let mut enemy = npc_snapshot(1);
+        enemy.unconscious = true;
+        state.initialize_mission_baseline(0, [(corpse.entity, true), (enemy.entity, false)]);
+        state
+            .refresh_hostile_arrangement(1, [corpse, enemy])
+            .unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::Ruthless),
+            Some(AchievementEvaluation::Failed)
+        );
+        enemy.dead = true;
+        state
+            .refresh_hostile_arrangement(2, [corpse, enemy])
+            .unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::Ruthless),
+            Some(AchievementEvaluation::Earned)
+        );
+        assert!(!state.is_fresh_death(corpse.entity));
+        assert_eq!(state.progress(2).metrics.dead_enemies, 1);
+    }
+
+    #[test]
+    fn last_hint_payment_is_not_charity_but_the_next_donation_is() {
+        let mut state = MissionAchievementState::default();
+        let mut beggar = npc_snapshot(0);
+        beggar.beggar = true;
+        state.record_beggar_payment(beggar.entity, false).unwrap();
+        state
+            .record_beggar_response(beggar.entity, true, true)
+            .unwrap();
+        state.refresh_hostile_arrangement(1, [beggar]).unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::AllBeggarInfo),
+            Some(AchievementEvaluation::Earned)
+        );
+        assert_eq!(
+            state.live_evaluation(AchievementId::Charity),
+            Some(AchievementEvaluation::Failed)
+        );
+        state.record_beggar_payment(beggar.entity, true).unwrap();
+        state
+            .record_beggar_response(beggar.entity, true, false)
+            .unwrap();
+        state
+            .record_beggar_response(beggar.entity, true, false)
+            .unwrap();
+        state.refresh_hostile_arrangement(2, [beggar]).unwrap();
+        assert_eq!(state.progress(2).metrics.charitable_payments, 1);
+        assert_eq!(
+            state.live_evaluation(AchievementId::Charity),
+            Some(AchievementEvaluation::Earned)
+        );
+    }
+
+    #[test]
+    fn banner_badges_distinguish_missing_mixed_zero_and_full_purchases() {
+        let mut state = MissionAchievementState::default();
+        for (requirement, expected) in [
+            (None, [AchievementEvaluation::NotApplicable; 2]),
+            (
+                Some((0, 3)),
+                [AchievementEvaluation::Earned, AchievementEvaluation::Failed],
+            ),
+            (Some((1, 3)), [AchievementEvaluation::Failed; 2]),
+            (
+                Some((3, 3)),
+                [AchievementEvaluation::Failed, AchievementEvaluation::Earned],
+            ),
+        ] {
+            state.configure_banners(requirement);
+            assert_eq!(
+                [
+                    state
+                        .live_evaluation(AchievementId::NoBannersPurchased)
+                        .unwrap(),
+                    state
+                        .live_evaluation(AchievementId::AllBannersPurchased)
+                        .unwrap()
+                ],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn quick_action_feat_requires_matching_targets_in_one_execution() {
+        let mut state = MissionAchievementState::default();
+        let ids = (0..6).map(|i| npc_snapshot(i).entity).collect::<Vec<_>>();
+        for i in 0..3 {
+            state.qa_actors.insert(ids[i], (1, ids[i + 3]));
+        }
+        state.record_qa_success(ids[0], ids[4]);
+        assert!(state.qa_successes.is_empty());
+        for i in 0..2 {
+            state.record_qa_success(ids[i], ids[i + 3]);
+        }
+        assert_ne!(
+            state.live_evaluation(AchievementId::OnMyMark),
+            Some(AchievementEvaluation::Earned)
+        );
+        state.record_qa_success(ids[2], ids[5]);
+        assert_eq!(
+            state.live_evaluation(AchievementId::OnMyMark),
+            Some(AchievementEvaluation::Earned)
+        );
+    }
+
+    #[test]
+    fn beer_and_wasps_require_distinct_victims_and_player_sources() {
+        let mut state = MissionAchievementState::default();
+        let ids = (0..7).map(|i| npc_snapshot(i).entity).collect::<Vec<_>>();
+        state.beer_by_tuck.insert(ids[0]);
+        state.wasp_targets.insert(ids[0], BTreeSet::new());
+        state.wasp_targets.insert(ids[1], BTreeSet::new());
+        for _ in 0..3 {
+            state.record_beer_drunk(ids[2], ids[0]);
+            state.record_wasp_sting(ids[0], ids[2]);
+        }
+        state.record_beer_drunk(ids[3], ids[6]);
+        state.record_wasp_sting(ids[1], ids[3]);
+        for id in [
+            AchievementId::RoundOnTheFriar,
+            AchievementId::SomethingInTheAir,
+        ] {
+            assert_ne!(
+                state.live_evaluation(id),
+                Some(AchievementEvaluation::Earned)
+            );
+        }
+        for victim in [ids[3], ids[4]] {
+            state.record_beer_drunk(victim, ids[0]);
+            state.record_wasp_sting(ids[0], victim);
+        }
+        for id in [
+            AchievementId::RoundOnTheFriar,
+            AchievementId::SomethingInTheAir,
+        ] {
+            assert_eq!(
+                state.live_evaluation(id),
+                Some(AchievementEvaluation::Earned)
+            );
+        }
+    }
+
+    #[test]
+    fn scarlet_requires_six_unique_knockouts_and_clean_hands_at_completion() {
+        let mut state = MissionAchievementState::default();
+        state.initialize_mission_baseline(0, []);
+        for i in 0..5 {
+            state.scarlet_knockouts.insert(npc_snapshot(i).entity);
+        }
+        state.refresh_hostile_arrangement(1, []).unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::DifferentKindOfScarlet),
+            Some(AchievementEvaluation::Failed)
+        );
+        state.scarlet_knockouts.insert(npc_snapshot(5).entity);
+        state.refresh_hostile_arrangement(2, []).unwrap();
+        assert_eq!(
+            state.live_evaluation(AchievementId::DifferentKindOfScarlet),
+            Some(AchievementEvaluation::Earned)
+        );
+        state
+            .record_npc_death(
+                npc_snapshot(6).entity,
+                AchievementDeathCause::PlayerControlled,
+                false,
+            )
+            .unwrap();
+        state.refresh_hostile_arrangement(3, []).unwrap();
+        assert_eq!(
+            state
+                .finalize_success()
+                .evaluation(AchievementId::DifferentKindOfScarlet),
+            AchievementEvaluation::Failed
+        );
+    }
+
+    #[test]
+    fn escaped_pursuit_cannot_be_created_by_removing_the_pursuers() {
+        let ids = (0..3)
+            .map(|i| npc_snapshot(i).entity)
+            .collect::<BTreeSet<_>>();
+        let mut state = MissionAchievementState::default();
+        state.refresh_pursuit(ids.clone(), ids.clone());
+        state.refresh_pursuit(BTreeSet::new(), BTreeSet::new());
+        assert!(!state.escape_earned);
+        state.refresh_pursuit(ids.clone(), ids.clone());
+        state.refresh_pursuit(BTreeSet::new(), ids);
+        assert!(state.escape_earned);
     }
 
     #[test]
@@ -1371,14 +2200,17 @@ mod tests {
             AchievementAggregationPolicy::AnyMissionOnce
         );
         assert_eq!(
-            AchievementId::AllEnemiesOneBuilding.aggregation_policy(),
-            AchievementAggregationPolicy::AnyMissionOnce
+            AchievementId::Ruthless.aggregation_policy(),
+            AchievementAggregationPolicy::MissionOnly
         );
         assert_eq!(
             serde_json::to_string(&AchievementAggregationPolicy::AnyMissionOnce).unwrap(),
             "1"
         );
-        assert!(serde_json::from_str::<AchievementAggregationPolicy>("2").is_err());
+        assert_eq!(
+            serde_json::from_str::<AchievementAggregationPolicy>("2").unwrap(),
+            AchievementAggregationPolicy::MissionOnly
+        );
     }
 
     #[test]
@@ -1546,7 +2378,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_building_trackers_latch_pile_but_recompute_whole_stash() {
+    fn exact_building_tracker_latches_pile() {
         use crate::entity_id::SoldierId;
 
         let ids = (0..10)
@@ -1568,6 +2400,12 @@ mod tests {
                 ids.iter().copied().map(|entity| AchievementEntitySnapshot {
                     entity,
                     hostile: true,
+                    dead: false,
+                    health: 100,
+                    rich_civilian: false,
+                    unconscious: false,
+                    bound: false,
+                    beggar: false,
                     out_of_order: true,
                     building: Some(building),
                 }),
@@ -1575,10 +2413,6 @@ mod tests {
             .unwrap();
         assert_eq!(
             state.live_evaluation(AchievementId::PileOBones),
-            Some(AchievementEvaluation::Earned)
-        );
-        assert_eq!(
-            state.live_evaluation(AchievementId::AllEnemiesOneBuilding),
             Some(AchievementEvaluation::Earned)
         );
 
@@ -1591,6 +2425,12 @@ mod tests {
                     .map(|(index, entity)| AchievementEntitySnapshot {
                         entity,
                         hostile: true,
+                        dead: false,
+                        health: 100,
+                        rich_civilian: false,
+                        unconscious: false,
+                        bound: false,
+                        beggar: false,
                         out_of_order: true,
                         building: Some(if index == 0 { other_building } else { building }),
                     }),
@@ -1601,15 +2441,10 @@ mod tests {
             Some(AchievementEvaluation::Earned),
             "Pile-o-Bones remains earned after its condition was met"
         );
-        assert_eq!(
-            state.live_evaluation(AchievementId::AllEnemiesOneBuilding),
-            Some(AchievementEvaluation::Failed),
-            "whole-enemy stash is evaluated at the terminal layout"
-        );
     }
 
     #[test]
-    fn pile_counts_non_hostile_npc_bodies_without_expanding_enemy_stash() {
+    fn pile_counts_non_hostile_npc_bodies() {
         use crate::entity_id::{CivilianId, SoldierId};
 
         let building = AchievementBuildingId {
@@ -1628,6 +2463,12 @@ mod tests {
                 std::iter::once(AchievementEntitySnapshot {
                     entity: hostile,
                     hostile: true,
+                    dead: false,
+                    health: 100,
+                    rich_civilian: false,
+                    unconscious: false,
+                    bound: false,
+                    beggar: false,
                     out_of_order: true,
                     building: Some(building),
                 })
@@ -1635,6 +2476,12 @@ mod tests {
                     AchievementEntitySnapshot {
                         entity,
                         hostile: false,
+                        dead: false,
+                        health: 100,
+                        rich_civilian: false,
+                        unconscious: false,
+                        bound: false,
+                        beggar: false,
                         out_of_order: true,
                         building: Some(building),
                     }
@@ -1648,8 +2495,7 @@ mod tests {
             AchievementEvaluation::Earned
         );
         assert_eq!(progress.metrics.max_bodies_in_one_building, 10);
-        assert_eq!(progress.metrics.enemies_required_for_stash, 1);
-        assert_eq!(progress.metrics.enemies_in_stash_building, 1);
+        assert_eq!(progress.metrics.encountered_hostiles, 1);
     }
 
     #[test]

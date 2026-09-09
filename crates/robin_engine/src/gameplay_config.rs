@@ -314,7 +314,7 @@ pub struct GameplayConfig {
     #[serde(default)]
     pub show_pile_o_bones_tracker: bool,
     #[serde(default)]
-    pub show_all_enemies_one_building_tracker: bool,
+    pub show_new_achievement_trackers: bool,
 
     /// Show named per-mission and aggregate achievement badges in campaign
     /// presentations. Calculation and storage remain active when hidden.
@@ -415,7 +415,7 @@ impl Default for GameplayConfig {
             show_clean_hands_tracker: false,
             show_ghost_tracker: false,
             show_pile_o_bones_tracker: false,
-            show_all_enemies_one_building_tracker: false,
+            show_new_achievement_trackers: false,
             show_achievement_badges: true,
             show_achievement_debrief: true,
             enable_timed_missions: true,
@@ -460,7 +460,7 @@ impl GameplayConfig {
             show_clean_hands_tracker: false,
             show_ghost_tracker: false,
             show_pile_o_bones_tracker: false,
-            show_all_enemies_one_building_tracker: false,
+            show_new_achievement_trackers: false,
             show_achievement_badges: false,
             show_achievement_debrief: false,
             enable_timed_missions: true,

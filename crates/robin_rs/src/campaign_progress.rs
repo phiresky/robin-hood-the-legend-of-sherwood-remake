@@ -223,11 +223,66 @@ impl MissionBestStats {
     }
 }
 
+/// One distinct play across the active save and permanent profile archive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissionPlay {
+    pub campaign_run_id: Option<u64>,
+    pub attempt: MissionAttempt,
+    pub recording: Option<std::path::PathBuf>,
+}
+
+fn mission_plays(
+    campaign: &Campaign,
+    attempts: &[MissionAttempt],
+    mission_id: u32,
+    lifetime: Option<&robin_engine::campaign_history::ProfileCampaignHistory>,
+) -> Vec<MissionPlay> {
+    let mut plays = Vec::new();
+    if let Some(history) = lifetime {
+        for entry in history
+            .attempts()
+            .iter()
+            .filter(|entry| entry.mission_id() == mission_id)
+        {
+            plays.push(MissionPlay {
+                campaign_run_id: Some(entry.campaign_run_id()),
+                attempt: entry.attempt().clone(),
+                recording: None,
+            });
+        }
+    }
+    for attempt in attempts {
+        if !plays.iter().any(|play| {
+            play.campaign_run_id == campaign.history_run_id()
+                && play.attempt.sequence() == attempt.sequence()
+        }) {
+            plays.push(MissionPlay {
+                campaign_run_id: campaign.history_run_id(),
+                attempt: attempt.clone(),
+                recording: None,
+            });
+        }
+    }
+    plays.sort_by_key(|play| {
+        std::cmp::Reverse((
+            play.attempt.completed_at_unix_seconds(),
+            play.campaign_run_id,
+            play.attempt.sequence(),
+        ))
+    });
+    plays
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CampaignProgressNode {
     pub mission_idx: usize,
     pub mission_id: u32,
     pub name: String,
+    /// Localized presentation text, populated from the same resource table as
+    /// the original mission tooltip (1) and briefing (2).
+    pub description: Option<String>,
+    pub briefing: Option<String>,
+    pub plays: Vec<MissionPlay>,
     pub location: MissionLocation,
     pub state: MissionProgressState,
     pub kind: MissionKind,
@@ -352,32 +407,12 @@ impl CampaignProgressGraph {
                     best.include(entry.attempt());
                 }
             }
-            let lifetime_attempt_count = lifetime
-                .map(|history| {
-                    history
-                        .attempts()
-                        .iter()
-                        .filter(|entry| entry.mission_id() == profile.id)
-                        .count()
-                })
-                .unwrap_or(attempts.len());
-            let lifetime_win_count = lifetime
-                .map(|history| {
-                    history
-                        .attempts()
-                        .iter()
-                        .filter(|entry| {
-                            entry.mission_id() == profile.id
-                                && entry.attempt().outcome() == MissionAttemptOutcome::Won
-                        })
-                        .count()
-                })
-                .unwrap_or_else(|| {
-                    attempts
-                        .iter()
-                        .filter(|attempt| attempt.outcome() == MissionAttemptOutcome::Won)
-                        .count()
-                });
+            let plays = mission_plays(campaign, attempts, profile.id, lifetime);
+            let lifetime_attempt_count = plays.len();
+            let lifetime_win_count = plays
+                .iter()
+                .filter(|play| play.attempt.outcome() == MissionAttemptOutcome::Won)
+                .count();
             let badges =
                 combined_mission_badges(mission.achievement_badges(), profile.id, lifetime);
             nodes.push(CampaignProgressNode {
@@ -393,6 +428,9 @@ impl CampaignProgressGraph {
                     profile.mission_name.clone()
                 },
                 location: profile.location,
+                description: None,
+                briefing: None,
+                plays,
                 state,
                 kind,
                 on_spine: false,
@@ -959,6 +997,20 @@ mod tests {
         assert_eq!(graph.nodes[0].attempt_count, 1);
         assert_eq!(graph.nodes[0].lifetime_attempt_count, 2);
         assert_eq!(graph.nodes[0].lifetime_win_count, 2);
+        assert_eq!(
+            graph.nodes[0].plays.len(),
+            2,
+            "archive and active save must not duplicate plays"
+        );
+        assert_eq!(graph.nodes[0].plays[0].campaign_run_id, Some(2));
+        assert_eq!(graph.nodes[0].plays[1].campaign_run_id, Some(1));
+        let unarchived = campaign_with_attempt(3);
+        let graph = CampaignProgressGraph::build(&unarchived, &profiles, Some(&lifetime));
+        assert_eq!(
+            graph.nodes[0].plays.len(),
+            3,
+            "include the active attempt before archival"
+        );
     }
     #[test]
     fn lifetime_badge_survives_reset_without_unlocking_an_archived_replay() {
@@ -1054,6 +1106,9 @@ mod tests {
             mission_idx: 0,
             mission_id: 10,
             name: "The Rescue".into(),
+            description: None,
+            briefing: None,
+            plays: Vec::new(),
             location: MissionLocation::Nottingham,
             state: MissionProgressState::Completed,
             kind: MissionKind::Story,
