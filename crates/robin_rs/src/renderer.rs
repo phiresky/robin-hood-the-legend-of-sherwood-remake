@@ -515,6 +515,16 @@ impl Renderer {
         )
     }
 
+    /// Render into a GPU texture without creating a window or swapchain.
+    /// Use try_capture_frame_rgba to read the result.
+    pub fn offscreen(gpu: GpuContext, width: u16, height: u16) -> Self {
+        assert!(
+            width > 0 && height > 0,
+            "offscreen dimensions must be positive"
+        );
+        Self::with_optional_surface(gpu, None, None, width, height, TextureScaleMode::Nearest)
+    }
+
     fn with_optional_surface(
         gpu: GpuContext,
         surface: Option<SharedSurface>,

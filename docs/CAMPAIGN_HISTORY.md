@@ -67,3 +67,36 @@ The main menu also has a **Campaign Manager** entry, using the same browse-only
 UI. It reads the selected player's latest resumable checkpoint; players without
 one see a fresh campaign and their lifetime history. Escape returns to the main
 menu. Viewing the campaign does not start a mission or apply a save.
+
+
+## Campaign manager UI and offscreen captures
+
+The campaign manager uses a fixed **1024×768** canvas. Both entry points and
+the Sherwood history screen share its renderer. The tree keeps fixed-size cards
+and follows the selected stage/row; Hall of Deeds shows twelve missions per page.
+Click once to select and read details. Enter, the Inspect button, or a double-click
+opens an available mission in Sherwood; the main-menu and pause-menu views remain
+browse-only. Arrow keys navigate, Page Up/Down or the mouse wheel change pages,
+and the Previous/Next buttons work with mouse or touch. Tab switches tree/gallery;
+A or the Achievements tab shows campaign and lifetime badge progress. Back/Escape
+returns to the originating screen.
+
+An opt-in screenshot test uses the real production renderer with an offscreen
+wgpu texture. It creates no window and needs neither a display server nor Xvfb.
+Use a full-game legacy data directory (the shipping loader currently rejects
+absolute datadir paths in this test setup). From the worktree root:
+
+    RUST_LOG=error \
+    ROBINHOOD_DATA_DIR=/absolute/path/to/datadirs/fullgame_gog \
+    ROBIN_UI_CAPTURE_DIR=target/campaign-ui \
+    cargo test -p robin_rs --lib campaign_map::capture_tests::capture_campaign_ui -- --ignored --exact --nocapture
+
+Run this capture test alone: it sets its process working directory to the worktree
+root for install-resource lookup. The PNG matrix includes the first, middle, and
+last selections of the real campaign in tree/gallery/achievement views at 1024×768.
+Names, fonts, and graph structure come from the supplied data; mission statuses
+are a presentation-only fixture covering all five states. No save is applied or
+written. A wgpu adapter is required; Vulkan software rendering also works when
+provided by the host. Captures fail explicitly if data, fonts, or the adapter are
+missing. The ordinary tests check all 62 selections for non-overlapping cards,
+viewport visibility, and matching pointer hit targets.

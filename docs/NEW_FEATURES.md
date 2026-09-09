@@ -4,6 +4,14 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Campaign manager layout:** fixed 1024×768 presentation with twelve-card
+  gallery pages, a navigable progress-tree viewport, wrapped mission titles,
+  separate mission details, and a campaign/lifetime Achievements tab. Both menu
+  entry points and Sherwood share the layout. An opt-in offscreen GPU capture
+  test produces PNGs for visual iteration without a game window; see
+  [campaign history](CAMPAIGN_HISTORY.md#campaign-manager-ui-and-offscreen-captures).
+
+
 - **Campaign manager from menus:** Campaign Manager on the main menu or
   Escape → Campaign Manager during any mission opens the existing progress
   tree / Hall of Deeds, including before reaching Sherwood. The main menu

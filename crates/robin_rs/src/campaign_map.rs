@@ -128,6 +128,8 @@ struct CampaignMapAssets {
     tooltip_bg: Option<MenuSurface>,
     lifetime: [Option<MenuSurface>; 5],
     font: Option<Font>,
+    progress_font: Option<Font>,
+    progress_title_font: Option<Font>,
 }
 
 struct ShortMissionDescriptionWindow {
@@ -146,6 +148,8 @@ impl CampaignMapAssets {
         let Some(resources) = resources else {
             return Self {
                 font: load_campaign_font(files),
+                progress_font: load_progress_font(files, "MenuButtonEnabled"),
+                progress_title_font: load_progress_font(files, "MissionTitle"),
                 ..Self::default()
             };
         };
@@ -183,6 +187,8 @@ impl CampaignMapAssets {
                 resources.default_picture(renderer, id)
             }),
             font: load_campaign_font(files),
+            progress_font: load_progress_font(files, "MenuButtonEnabled"),
+            progress_title_font: load_progress_font(files, "MissionTitle"),
         }
     }
 }
@@ -204,6 +210,7 @@ pub(crate) struct CampaignMapModalState {
     selected_classic: usize,
     selected_progress: usize,
     show_achievement_badges: bool,
+    achievement_overview: bool,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
     lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
 }
@@ -273,6 +280,7 @@ impl CampaignMapModalState {
             selected_classic: 0,
             selected_progress,
             show_achievement_badges,
+            achievement_overview: false,
             lifetime_totals: lifetime_history.totals(),
             lifetime_achievements: lifetime_history.achievement_aggregation(),
         }
@@ -317,6 +325,7 @@ impl CampaignMapModalState {
             selected_classic: 0,
             selected_progress,
             show_achievement_badges: profile.gameplay_config.show_achievement_badges,
+            achievement_overview: false,
             lifetime_totals: profile.campaign_history.totals(),
             lifetime_achievements: profile.campaign_history.achievement_aggregation(),
         }
@@ -329,7 +338,11 @@ impl CampaignMapModalState {
         renderer: &mut Renderer,
         cursor: Option<&ModalCursor<'_>>,
     ) -> Option<bool> {
-        let (events, transform) = layout::poll_events_with_transform(window, renderer);
+        let (events, _) = layout::poll_events_with_transform(window, renderer);
+        let transform = progress_transform(
+            renderer.screen_width() as i32,
+            renderer.screen_height() as i32,
+        );
         let exit_requested = events.iter().any(|event| matches!(event, GameEvent::Quit));
         let choice = self.handle_events(events, transform, true);
         layout::enter_modal_gpu_phase(renderer);
@@ -343,6 +356,7 @@ impl CampaignMapModalState {
             self.show_achievement_badges,
             self.lifetime_totals,
             true,
+            self.achievement_overview,
         );
         if let Some(cursor) = cursor {
             cursor.draw(renderer, transform, &self.input);
@@ -378,7 +392,23 @@ impl CampaignMapModalState {
         }
 
         let (events, transform) = layout::poll_events_with_transform(window, renderer);
-        let final_choice = self.handle_events(events, transform, false);
+        let input_transform = if self.presentation == CampaignPresentationMode::ClassicMap {
+            transform
+        } else {
+            progress_transform(
+                renderer.screen_width() as i32,
+                renderer.screen_height() as i32,
+            )
+        };
+        let final_choice = self.handle_events(events, input_transform, false);
+        let transform = if self.presentation == CampaignPresentationMode::ClassicMap {
+            transform
+        } else {
+            progress_transform(
+                renderer.screen_width() as i32,
+                renderer.screen_height() as i32,
+            )
+        };
 
         layout::enter_modal_gpu_phase(renderer);
         match self.presentation {
@@ -409,6 +439,7 @@ impl CampaignMapModalState {
                     self.show_achievement_badges,
                     self.lifetime_totals,
                     false,
+                    self.achievement_overview,
                 )
             }
         }
@@ -423,6 +454,20 @@ impl CampaignMapModalState {
         self.pseudo_debrief_at_ms
             .is_some_and(|at| crate::window::process_uptime_ms() >= at)
             .then_some(CampaignMapChoice::PseudoDebriefTimer)
+    }
+
+    fn move_progress_page(&mut self, direction: i32) {
+        let step = if self.presentation == CampaignPresentationMode::SherwoodMuseum {
+            PROGRESS_PAGE_SIZE
+        } else {
+            1
+        };
+        self.selected_progress = self
+            .selected_progress
+            .saturating_add_signed(direction as isize * step as isize)
+            .min(self.graph.nodes.len().saturating_sub(1));
+        self.exhibit_grid =
+            ExhibitGridNavigator::new(self.graph.nodes.len(), self.selected_progress);
     }
 
     fn handle_events(
@@ -455,6 +500,7 @@ impl CampaignMapModalState {
                     keycode: Keycode::Tab,
                     ..
                 } => {
+                    self.achievement_overview = false;
                     self.presentation = match self.presentation {
                         CampaignPresentationMode::ClassicMap => {
                             CampaignPresentationMode::ProgressTree
@@ -470,6 +516,49 @@ impl CampaignMapModalState {
                             CampaignPresentationMode::ProgressTree
                         }
                     };
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Char(b'a'),
+                    ..
+                } if self.presentation != CampaignPresentationMode::ClassicMap
+                    && self.show_achievement_badges =>
+                {
+                    self.achievement_overview = !self.achievement_overview;
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::PageDown,
+                    ..
+                } if self.presentation != CampaignPresentationMode::ClassicMap => {
+                    self.move_progress_page(1)
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::PageUp,
+                    ..
+                } if self.presentation != CampaignPresentationMode::ClassicMap => {
+                    self.move_progress_page(-1)
+                }
+                GameEvent::MouseWheel(delta)
+                    if self.presentation != CampaignPresentationMode::ClassicMap =>
+                {
+                    self.move_progress_page(-delta.signum())
+                }
+                GameEvent::KeyDown {
+                    keycode: Keycode::Left | Keycode::Right,
+                    ..
+                } if self.presentation == CampaignPresentationMode::ProgressTree => {
+                    let dx = if matches!(
+                        event,
+                        GameEvent::KeyDown {
+                            keycode: Keycode::Left,
+                            ..
+                        }
+                    ) {
+                        -1
+                    } else {
+                        1
+                    };
+                    self.selected_progress =
+                        tree_neighbor(&self.graph, self.selected_progress, dx, 0);
                 }
                 GameEvent::KeyDown {
                     keycode: Keycode::Up,
@@ -493,7 +582,8 @@ impl CampaignMapModalState {
                 } if self.presentation != CampaignPresentationMode::ClassicMap => {
                     match self.presentation {
                         CampaignPresentationMode::ProgressTree => {
-                            self.selected_progress = self.selected_progress.saturating_sub(1)
+                            self.selected_progress =
+                                tree_neighbor(&self.graph, self.selected_progress, 0, -1)
                         }
                         CampaignPresentationMode::SherwoodMuseum => {
                             self.exhibit_grid.navigate(0, -1);
@@ -508,8 +598,8 @@ impl CampaignMapModalState {
                 } if self.presentation != CampaignPresentationMode::ClassicMap => {
                     match self.presentation {
                         CampaignPresentationMode::ProgressTree => {
-                            self.selected_progress = (self.selected_progress + 1)
-                                .min(self.graph.nodes.len().saturating_sub(1))
+                            self.selected_progress =
+                                tree_neighbor(&self.graph, self.selected_progress, 0, 1)
                         }
                         CampaignPresentationMode::SherwoodMuseum => {
                             self.exhibit_grid.navigate(0, 1);
@@ -557,6 +647,7 @@ impl CampaignMapModalState {
                     ..
                 } if self.presentation != CampaignPresentationMode::ClassicMap
                     && !browsing
+                    && !self.achievement_overview
                     && !self.graph.nodes.is_empty()
                     && self.graph.nodes[self.selected_progress].selectable =>
                 {
@@ -570,11 +661,63 @@ impl CampaignMapModalState {
                     self.input.virt_x = vx as f32;
                     self.input.virt_y = vy as f32;
                 }
-                GameEvent::MouseDown(x, y, 1, _) => {
+                GameEvent::MouseDown(x, y, 1, clicks) => {
                     let (vx, vy) = transform.from_screen(x, y);
                     self.input.virt_x = vx as f32;
                     self.input.virt_y = vy as f32;
+                    if self.presentation != CampaignPresentationMode::ClassicMap {
+                        if (76..116).contains(&vy) {
+                            match vx {
+                                32..=207 => {
+                                    self.presentation = CampaignPresentationMode::ProgressTree;
+                                    self.achievement_overview = false;
+                                }
+                                220..=427 => {
+                                    self.presentation = CampaignPresentationMode::SherwoodMuseum;
+                                    self.achievement_overview = false;
+                                }
+                                440..=647 if self.show_achievement_badges => {
+                                    self.achievement_overview = !self.achievement_overview
+                                }
+                                884..=991 => {
+                                    final_choice = Some(CampaignMapChoice::Quit);
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            self.exhibit_grid = ExhibitGridNavigator::new(
+                                self.graph.nodes.len(),
+                                self.selected_progress,
+                            );
+                            continue;
+                        }
+                        if (482..518).contains(&vy) && !self.achievement_overview {
+                            if (32..208).contains(&vx) {
+                                self.move_progress_page(-1);
+                            }
+                            if (816..992).contains(&vx) {
+                                self.move_progress_page(1);
+                            }
+                            continue;
+                        }
+                        if (712..752).contains(&vy)
+                            && (840..992).contains(&vx)
+                            && !browsing
+                            && !self.achievement_overview
+                            && self
+                                .graph
+                                .nodes
+                                .get(self.selected_progress)
+                                .is_some_and(|n| n.selectable)
+                        {
+                            final_choice = Some(CampaignMapChoice::SelectMission(
+                                self.graph.nodes[self.selected_progress].mission_idx,
+                            ));
+                            break;
+                        }
+                    }
                     if self.presentation != CampaignPresentationMode::ClassicMap
+                        && !self.achievement_overview
                         && let Some(index) = progress_hit_test(
                             &self.graph,
                             self.presentation,
@@ -586,7 +729,7 @@ impl CampaignMapModalState {
                         self.selected_progress = index;
                         self.exhibit_grid =
                             ExhibitGridNavigator::new(self.graph.nodes.len(), index);
-                        if !browsing && self.graph.nodes[index].selectable {
+                        if !browsing && clicks >= 2 && self.graph.nodes[index].selectable {
                             final_choice = Some(CampaignMapChoice::SelectMission(
                                 self.graph.nodes[index].mission_idx,
                             ));
@@ -631,6 +774,89 @@ impl CampaignMapModalState {
     }
 }
 
+// TODO: Move campaign-manager labels and status text into the localization catalog.
+const PROGRESS_W: i32 = 1024;
+const PROGRESS_H: i32 = 768;
+const PROGRESS_PAGE_SIZE: usize = 12;
+const CARD_W: i32 = 228;
+const CARD_H: i32 = 88;
+
+fn progress_transform(width: i32, height: i32) -> MenuTransform {
+    MenuTransform {
+        origin_x: (width - PROGRESS_W) / 2,
+        origin_y: (height - PROGRESS_H) / 2,
+    }
+}
+
+fn tree_neighbor(graph: &CampaignProgressGraph, selected: usize, dx: i32, dy: i32) -> usize {
+    if graph.nodes.is_empty() {
+        return 0;
+    }
+    let current = &graph.nodes[selected];
+    graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            if dx != 0 {
+                if dx < 0 {
+                    node.depth < current.depth
+                } else {
+                    node.depth > current.depth
+                }
+            } else {
+                node.depth == current.depth
+                    && if dy < 0 {
+                        node.lane < current.lane
+                    } else {
+                        node.lane > current.lane
+                    }
+            }
+        })
+        .min_by_key(|(_, node)| {
+            (
+                node.depth.abs_diff(current.depth),
+                node.lane.abs_diff(current.lane),
+            )
+        })
+        .map_or(selected, |(index, _)| index)
+}
+
+fn progress_node_rect(
+    graph: &CampaignProgressGraph,
+    presentation: CampaignPresentationMode,
+    selected: usize,
+    index: usize,
+) -> (i32, i32, i32, i32) {
+    let (column, row) = match presentation {
+        CampaignPresentationMode::ProgressTree => {
+            let focus = &graph.nodes[selected];
+            let max_depth = graph.nodes.iter().map(|n| n.depth).max().unwrap_or(0);
+            let first_depth = focus
+                .depth
+                .saturating_sub(1)
+                .min(max_depth.saturating_sub(3));
+            let first_lane = focus.lane / 3 * 3;
+            (
+                graph.nodes[index].depth as i32 - first_depth as i32,
+                graph.nodes[index].lane as i32 - first_lane as i32,
+            )
+        }
+        CampaignPresentationMode::SherwoodMuseum => {
+            let page_index =
+                index as i32 - (selected / PROGRESS_PAGE_SIZE * PROGRESS_PAGE_SIZE) as i32;
+            (page_index.rem_euclid(4), page_index.div_euclid(4))
+        }
+        CampaignPresentationMode::ClassicMap => unreachable!(),
+    };
+    (32 + column * 244, 176 + row * 100, CARD_W, CARD_H)
+}
+
+fn card_visible(rect: (i32, i32, i32, i32)) -> bool {
+    let (x, y, w, h) = rect;
+    x >= 32 && x + w <= 992 && y >= 176 && y + h <= 464
+}
+
 fn progress_hit_test(
     graph: &CampaignProgressGraph,
     presentation: CampaignPresentationMode,
@@ -638,53 +864,94 @@ fn progress_hit_test(
     x: i32,
     y: i32,
 ) -> Option<usize> {
-    graph.nodes.iter().enumerate().find_map(|(idx, _)| {
-        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
-            return None;
-        }
-        let (rx, ry, rw, rh) = progress_node_rect(graph, presentation, idx);
-        (x >= rx && x < rx + rw && y >= ry && y < ry + rh).then_some(idx)
+    graph.nodes.iter().enumerate().find_map(|(index, _)| {
+        let rect = progress_node_rect(graph, presentation, selected, index);
+        let (rx, ry, w, h) = rect;
+        (card_visible(rect) && (rx..rx + w).contains(&x) && (ry..ry + h).contains(&y))
+            .then_some(index)
     })
 }
 
-fn progress_node_rect(
-    graph: &CampaignProgressGraph,
-    presentation: CampaignPresentationMode,
-    index: usize,
-) -> (i32, i32, i32, i32) {
-    match presentation {
-        CampaignPresentationMode::ProgressTree => {
-            let node = &graph.nodes[index];
-            let max_depth = graph.nodes.iter().map(|node| node.depth).max().unwrap_or(0);
-            let x_step = if max_depth == 0 {
-                0
-            } else {
-                480 / max_depth as i32
-            };
-            let lane_count = graph
-                .nodes
-                .iter()
-                .filter(|candidate| candidate.depth == node.depth)
-                .count()
-                .max(1);
-            let y_step = 245 / lane_count as i32;
-            (
-                30 + node.depth as i32 * x_step,
-                124 + node.lane as i32 * y_step,
-                112,
-                38,
-            )
-        }
-        CampaignPresentationMode::SherwoodMuseum => {
-            let page_index = index % 16;
-            let col = page_index % 4;
-            let row = page_index / 4;
-            (35 + col as i32 * 150, 124 + row as i32 * 64, 126, 58)
-        }
-        CampaignPresentationMode::ClassicMap => unreachable!(),
-    }
+fn progress_rect(
+    renderer: &mut Renderer,
+    transform: MenuTransform,
+    rect: (i32, i32, i32, i32),
+    color: (u8, u8, u8),
+) {
+    let (x, y, w, h) = rect;
+    renderer.render_gpu_rect(
+        transform.origin_x + x,
+        transform.origin_y + y,
+        w,
+        h,
+        color.0,
+        color.1,
+        color.2,
+        255,
+    );
 }
 
+fn progress_text(
+    renderer: &mut Renderer,
+    font: &Font,
+    transform: MenuTransform,
+    text: &str,
+    x: i32,
+    y: i32,
+    width: i32,
+) {
+    let text = fit_progress_text(font, text, width);
+    layout::render_text_virt_font(renderer, font, transform, &text, x, y);
+}
+
+fn fit_progress_text(font: &Font, text: &str, width: i32) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    if font.text_width(text) <= width {
+        return text.to_owned();
+    }
+    let mut end = text.len();
+    for (index, _) in text.grapheme_indices(true).rev() {
+        end = index;
+        if font.text_width(&format!("{}...", &text[..end])) <= width {
+            break;
+        }
+    }
+    format!("{}...", &text[..end])
+}
+
+fn progress_button(
+    renderer: &mut Renderer,
+    font: &Font,
+    transform: MenuTransform,
+    label: &str,
+    rect: (i32, i32, i32, i32),
+    active: bool,
+) {
+    let (x, y, w, h) = rect;
+    progress_rect(
+        renderer,
+        transform,
+        rect,
+        if active { (48, 39, 17) } else { (15, 23, 16) },
+    );
+    progress_rect(
+        renderer,
+        transform,
+        (x, y + h - 2, w, 2),
+        if active { (191, 164, 93) } else { (74, 82, 66) },
+    );
+    progress_text(
+        renderer,
+        font,
+        transform,
+        label,
+        x + 12,
+        y + (h - font.height() as i32) / 2,
+        w - 24,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_campaign_progress(
     renderer: &mut Renderer,
     transform: MenuTransform,
@@ -695,218 +962,354 @@ fn render_campaign_progress(
     show_achievement_badges: bool,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
     browsing: bool,
+    achievement_overview: bool,
 ) {
-    if let Some(background) = assets.background.as_ref() {
-        layout::draw_background(renderer, transform, background, 0, 0, MAP_W, MAP_H);
-    } else {
-        renderer.render_gpu_rect(
-            transform.origin_x,
-            transform.origin_y,
-            MAP_W,
-            MAP_H,
-            38,
-            31,
-            20,
-            255,
+    // Opaque panels isolate the text from both the map artwork and the menu beneath it.
+    progress_rect(
+        renderer,
+        transform,
+        (0, 0, PROGRESS_W, PROGRESS_H),
+        (3, 6, 4),
+    );
+    progress_rect(renderer, transform, (16, 16, 992, 736), (7, 12, 8));
+    progress_rect(renderer, transform, (16, 16, 992, 2), (157, 137, 81));
+    let font = assets
+        .progress_font
+        .as_ref()
+        .expect("campaign manager needs a readable font");
+    let title_font = assets
+        .progress_title_font
+        .as_ref()
+        .expect("campaign title font");
+    progress_text(renderer, title_font, transform, "Campaign", 32, 30, 480);
+    progress_text(
+        renderer,
+        font,
+        transform,
+        &format!(
+            "{} / {} missions completed",
+            graph.completed_missions, graph.known_missions
+        ),
+        640,
+        38,
+        352,
+    );
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Progress tree",
+        (32, 76, 176, 40),
+        presentation == CampaignPresentationMode::ProgressTree && !achievement_overview,
+    );
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Hall of Deeds",
+        (220, 76, 208, 40),
+        presentation == CampaignPresentationMode::SherwoodMuseum && !achievement_overview,
+    );
+    if show_achievement_badges {
+        progress_button(
+            renderer,
+            font,
+            transform,
+            "Achievements",
+            (440, 76, 208, 40),
+            achievement_overview,
         );
     }
-    // The translucent wash leaves the original campaign artwork visible as
-    // the museum/tree room while keeping graph text readable.
-    renderer.render_gpu_rect(
-        transform.origin_x + 10,
-        transform.origin_y + 10,
-        620,
-        455,
-        18,
-        23,
-        25,
-        215,
+    progress_button(renderer, font, transform, "Back", (884, 76, 108, 40), false);
+    progress_text(
+        renderer,
+        font,
+        transform,
+        "Arrows: navigate   Tab: switch view",
+        32,
+        132,
+        480,
     );
+    progress_text(
+        renderer,
+        font,
+        transform,
+        &format!(
+            "Lifetime: {} attempts / {} wins",
+            lifetime_totals.attempts, lifetime_totals.wins
+        ),
+        544,
+        132,
+        448,
+    );
+    progress_rect(renderer, transform, (32, 162, 960, 1), (70, 79, 59));
 
-    let color_for = |state: MissionProgressState| match state {
-        MissionProgressState::Completed => (40, 105, 62),
-        MissionProgressState::Available => (132, 102, 30),
-        MissionProgressState::Lost => (125, 45, 38),
-        MissionProgressState::Expired => (78, 55, 55),
-        MissionProgressState::Locked => (58, 61, 65),
-    };
-
+    if achievement_overview {
+        for (scope, summary, top) in [
+            ("This campaign", graph.campaign_achievements, 178),
+            ("Lifetime", graph.lifetime_achievements, 432),
+        ] {
+            progress_text(renderer, font, transform, scope, 32, top, 960);
+            for (index, item) in
+                crate::achievement_hud::achievement_aggregation_presentations(summary)
+                    .iter()
+                    .enumerate()
+            {
+                let x = 32 + index as i32 % 2 * 496;
+                let y = top + 36 + index as i32 / 2 * 80;
+                progress_rect(renderer, transform, (x, y, 464, 70), (12, 20, 13));
+                draw_achievement_badge_icon(
+                    renderer,
+                    item.badge.id,
+                    item.progress.earned(),
+                    transform.origin_x + x + 10,
+                    transform.origin_y + y + 8,
+                );
+                progress_text(
+                    renderer,
+                    font,
+                    transform,
+                    &item.badge.label,
+                    x + 38,
+                    y + 6,
+                    412,
+                );
+                progress_text(
+                    renderer,
+                    font,
+                    transform,
+                    &item.compact_status,
+                    x + 38,
+                    y + 40,
+                    412,
+                );
+            }
+        }
+        progress_text(
+            renderer,
+            font,
+            transform,
+            "A: achievements   Esc: back",
+            32,
+            722,
+            480,
+        );
+        progress_text(
+            renderer,
+            font,
+            transform,
+            &format!(
+                "Recorded time: {}h {:02}m",
+                lifetime_totals.known_duration_seconds / 3600,
+                lifetime_totals.known_duration_seconds / 60 % 60
+            ),
+            544,
+            722,
+            448,
+        );
+        return;
+    }
+    if graph.nodes.is_empty() {
+        progress_text(
+            renderer,
+            font,
+            transform,
+            "No campaign missions in this content.",
+            32,
+            184,
+            960,
+        );
+        return;
+    }
+    let node = &graph.nodes[selected];
     if presentation == CampaignPresentationMode::ProgressTree {
-        for (idx, node) in graph.nodes.iter().enumerate() {
-            let (x, y, _w, h) = progress_node_rect(graph, presentation, idx);
-            for &parent in &node.prerequisite_nodes {
-                let (px, py, pw, ph) = progress_node_rect(graph, presentation, parent);
+        for (index, child) in graph.nodes.iter().enumerate() {
+            let rect = progress_node_rect(graph, presentation, selected, index);
+            if !card_visible(rect) {
+                continue;
+            }
+            let (x, y, _, h) = rect;
+            for &parent in &child.prerequisite_nodes {
+                let (px, py, pw, ph) = progress_node_rect(graph, presentation, selected, parent);
+                // Off-screen dependencies end at the viewport edge, never over the header/details.
                 renderer.render_gpu_line(
-                    transform.origin_x + px + pw,
-                    transform.origin_y + py + ph / 2,
+                    transform.origin_x + (px + pw).clamp(32, 992),
+                    transform.origin_y + (py + ph / 2).clamp(170, 472),
                     transform.origin_x + x,
                     transform.origin_y + y + h / 2,
-                    155,
-                    137,
-                    91,
+                    114,
+                    111,
+                    74,
                 );
             }
         }
     }
-
-    for (idx, node) in graph.nodes.iter().enumerate() {
-        if presentation == CampaignPresentationMode::SherwoodMuseum && idx / 16 != selected / 16 {
+    for (index, entry) in graph.nodes.iter().enumerate() {
+        let rect = progress_node_rect(graph, presentation, selected, index);
+        if !card_visible(rect) {
             continue;
         }
-        let (x, y, w, h) = progress_node_rect(graph, presentation, idx);
-        let (r, g, b) = color_for(node.state);
-        renderer.render_gpu_rect(
-            transform.origin_x + x,
-            transform.origin_y + y,
-            w,
-            h,
-            r,
-            g,
-            b,
-            245,
-        );
-        if idx == selected {
-            renderer.draw_rect_outline_screen(
-                transform.origin_x + x - 3,
-                transform.origin_y + y - 3,
-                transform.origin_x + x + w + 3,
-                transform.origin_y + y + h + 3,
-                Renderer::create_color_16(255, 230, 95),
+        let (x, y, w, h) = rect;
+        let (status, color) = match entry.state {
+            MissionProgressState::Completed => ("Completed", (102, 157, 101)),
+            MissionProgressState::Available => ("Available", (193, 163, 78)),
+            MissionProgressState::Lost => ("Lost", (174, 102, 81)),
+            MissionProgressState::Expired => ("Expired", (139, 121, 103)),
+            MissionProgressState::Locked => ("Locked", (99, 112, 101)),
+        };
+        if index == selected {
+            progress_rect(
+                renderer,
+                transform,
+                (x - 2, y - 2, w + 4, h + 4),
+                (194, 165, 88),
             );
         }
-
-        if presentation == CampaignPresentationMode::SherwoodMuseum {
-            let loc_idx = node.location as usize;
-            if let Some(surface) = assets.locations.get(loc_idx).copied().flatten() {
-                layout::draw_background(renderer, transform, &surface, x + 4, y + 4, 22, 22);
-            }
-        }
-        if let Some(font) = assets.font.as_ref() {
-            let max_chars = if presentation == CampaignPresentationMode::SherwoodMuseum {
-                15
+        progress_rect(
+            renderer,
+            transform,
+            rect,
+            if index == selected {
+                (30, 40, 19)
             } else {
-                13
+                (12, 20, 14)
+            },
+        );
+        progress_rect(renderer, transform, (x, y, 3, h), color);
+        let wrap = layout::wrap_text_for_box_font(font, &entry.name, w - 20, 2);
+        for (line, text) in wrap.lines.iter().enumerate() {
+            let text = if line == 1 && !wrap.remaining.is_empty() {
+                format!("{text}...")
+            } else {
+                text.clone()
             };
-            let name: String = node.name.chars().take(max_chars).collect();
-            layout::render_text_virt_font(renderer, font, transform, &name, x + 5, y + h - 17);
-            if node.attempt_count != 0 {
-                let detail = if show_achievement_badges {
-                    format!("{}x  {} badge", node.attempt_count, node.badge_count)
-                } else {
-                    format!("{}x", node.attempt_count)
-                };
-                layout::render_text_virt_font(renderer, font, transform, &detail, x + 31, y + 5);
-            }
-        }
-    }
-
-    // Existing flag art marks the selected exhibit in the modal grid.
-    if presentation == CampaignPresentationMode::SherwoodMuseum
-        && !graph.nodes.is_empty()
-        && let Some(flag) = assets.flag.as_ref()
-    {
-        let (x, y, _, h) = progress_node_rect(graph, presentation, selected);
-        layout::draw_background(renderer, transform, flag, x + 52, y + h + 2, 20, 24);
-    }
-
-    if let Some(font) = assets.font.as_ref() {
-        let title = match presentation {
-            CampaignPresentationMode::ProgressTree => "Campaign Progress Tree".to_owned(),
-            CampaignPresentationMode::SherwoodMuseum => format!(
-                "Sherwood Hall of Deeds - Gallery {}/{}",
-                selected / 16 + 1,
-                graph.nodes.len().div_ceil(16)
-            ),
-            CampaignPresentationMode::ClassicMap => unreachable!(),
-        };
-        layout::render_text_virt_font(renderer, font, transform, &title, 25, 22);
-        layout::render_text_virt_font(
-            renderer,
-            font,
-            transform,
-            &format!(
-                "{} / {} missions completed    Tab: switch view    Esc: leave",
-                graph.completed_missions, graph.known_missions
-            ),
-            25,
-            43,
-        );
-        layout::render_text_virt_font(
-            renderer,
-            font,
-            transform,
-            &format!(
-                "Lifetime: {} attempts / {} wins / {}h {:02}m",
-                lifetime_totals.attempts,
-                lifetime_totals.wins,
-                lifetime_totals.known_duration_seconds / 3600,
-                (lifetime_totals.known_duration_seconds / 60) % 60,
-            ),
-            315,
-            43,
-        );
-        if show_achievement_badges {
-            render_achievement_aggregation_summary(
-                renderer,
-                transform,
-                "Campaign",
-                graph.campaign_achievements,
-                font,
-                58,
-            );
-            render_achievement_aggregation_summary(
-                renderer,
-                transform,
-                "Lifetime",
-                graph.lifetime_achievements,
-                font,
-                90,
-            );
-        }
-        if graph.nodes.is_empty() {
-            layout::render_text_virt_font(
+            progress_text(
                 renderer,
                 font,
                 transform,
-                "No campaign missions in this content",
-                25,
-                160,
+                &text,
+                x + 10,
+                y + 10 + line as i32 * 23,
+                w - 20,
             );
-            return;
         }
-        let node = &graph.nodes[selected];
-        // TODO: Localize campaign history controls and the unavailable-action reason.
-        let action = if browsing {
-            "Mission launch unavailable here - return to Sherwood"
-        } else if node.history_replay {
-            "Enter: replay (campaign changes discarded)"
-        } else if node.selectable {
-            "Enter: inspect and launch"
+        let status = if entry.attempt_count == 0 {
+            status.to_string()
         } else {
-            "Locked: inspect only"
+            format!("{status} / {} attempts", entry.attempt_count)
         };
-        layout::render_text_virt_font(renderer, font, transform, action, 25, 414);
-        if show_achievement_badges {
-            render_progress_achievement_badges(renderer, transform, node.badges, Some(font));
-        }
-        layout::render_text_virt_font(
-            renderer,
-            font,
-            transform,
-            &node.summary(show_achievement_badges),
-            25,
-            437,
-        );
-        if graph.cyclic_prerequisites {
-            layout::render_text_virt_font(
+        progress_text(renderer, font, transform, &status, x + 10, y + 62, w - 20);
+    }
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Previous",
+        (32, 482, 176, 36),
+        false,
+    );
+    progress_button(
+        renderer,
+        font,
+        transform,
+        "Next",
+        (816, 482, 176, 36),
+        false,
+    );
+    let page = match presentation {
+        CampaignPresentationMode::SherwoodMuseum => format!(
+            "Gallery {} / {}",
+            selected / PROGRESS_PAGE_SIZE + 1,
+            graph.nodes.len().div_ceil(PROGRESS_PAGE_SIZE)
+        ),
+        _ => format!("Stage {} / Row {}", node.depth + 1, node.lane + 1),
+    };
+    progress_text(renderer, font, transform, &page, 380, 490, 392);
+    progress_rect(renderer, transform, (32, 534, 960, 1), (91, 94, 67));
+    progress_text(renderer, font, transform, &node.name, 32, 550, 960);
+    progress_text(
+        renderer,
+        font,
+        transform,
+        &format!(
+            "{:?} / {} attempts / {} wins",
+            node.state, node.attempt_count, node.win_count
+        ),
+        32,
+        590,
+        960,
+    );
+    let mut record = format!(
+        "Lifetime: {} attempts / {} wins",
+        node.lifetime_attempt_count, node.lifetime_win_count
+    );
+    if let Some(seconds) = node.best.fastest_win_seconds {
+        record.push_str(&format!(" / Best: {}m {:02}s", seconds / 60, seconds % 60));
+    }
+    if let Some(score) = node.best.highest_score {
+        record.push_str(&format!(" / Score: {score}"));
+    }
+    progress_text(renderer, font, transform, &record, 32, 616, 960);
+    if show_achievement_badges {
+        for (index, badge) in
+            crate::achievement_hud::mission_badge_presentations(node.badges, |_| None)
+                .iter()
+                .enumerate()
+        {
+            let x = 32 + index as i32 % 2 * 496;
+            let y = 650 + index as i32 / 2 * 27;
+            draw_achievement_badge_icon(
+                renderer,
+                badge.id,
+                badge.earned,
+                transform.origin_x + x,
+                transform.origin_y + y,
+            );
+            progress_text(
                 renderer,
                 font,
                 transform,
-                "Warning: cyclic mission prerequisites detected",
-                355,
-                22,
+                &format!(
+                    "{}: {}",
+                    badge.label,
+                    if badge.earned { "earned" } else { "not earned" }
+                ),
+                x + 18,
+                y,
+                436,
             );
         }
+    }
+    let action = if browsing {
+        "Browse only / launch missions from Sherwood"
+    } else if node.history_replay {
+        "Practice replay / campaign rewards unchanged"
+    } else if node.selectable {
+        "Enter or double-click to inspect mission"
+    } else {
+        "Complete prerequisites to unlock this mission"
+    };
+    progress_text(renderer, font, transform, action, 32, 724, 780);
+    if !browsing && node.selectable {
+        progress_button(
+            renderer,
+            font,
+            transform,
+            "Inspect",
+            (840, 712, 152, 40),
+            false,
+        );
+    }
+    if graph.cyclic_prerequisites {
+        progress_text(
+            renderer,
+            font,
+            transform,
+            "Cyclic prerequisites",
+            544,
+            132,
+            448,
+        );
     }
 }
 
@@ -946,32 +1349,6 @@ fn render_achievement_aggregation_summary(
             x + 14,
             item_y,
         );
-    }
-}
-
-fn render_progress_achievement_badges(
-    renderer: &mut Renderer,
-    transform: MenuTransform,
-    badges: robin_engine::achievement::AchievementSet,
-    font: Option<&Font>,
-) {
-    let Some(font) = font else {
-        return;
-    };
-    for (index, badge) in crate::achievement_hud::mission_badge_presentations(badges, |_| None)
-        .iter()
-        .enumerate()
-    {
-        let x = 25 + i32::try_from(index).expect("four achievement badges fit i32") * 150;
-        let y = 389;
-        draw_achievement_badge_icon(
-            renderer,
-            badge.id,
-            badge.earned,
-            transform.origin_x + x,
-            transform.origin_y + y + 1,
-        );
-        layout::render_text_virt_font(renderer, font, transform, &badge.label, x + 14, y);
     }
 }
 
@@ -1573,6 +1950,15 @@ fn campaign_surface_for_resource(
     }
 }
 
+fn load_progress_font(files: &robin_engine::sbfile::SbFileSystem, key: &str) -> Option<Font> {
+    let config = native_font::load_font_config(files)
+        .unwrap_or_else(|error| panic!("campaign font configuration unavailable: {error}"));
+    Some(
+        native_font::load_font_by_name_for_active_locale(&config, key, files)
+            .unwrap_or_else(|error| panic!("campaign font {key} unavailable: {error}")),
+    )
+}
+
 fn load_campaign_font(files: &robin_engine::sbfile::SbFileSystem) -> Option<Font> {
     let config = native_font::load_font_config(files).ok()?;
     native_font::load_font_by_name_for_active_locale(&config, "Default", files).ok()
@@ -1674,6 +2060,7 @@ mod browser_tests {
             selected_classic: 0,
             selected_progress: 0,
             show_achievement_badges: true,
+            achievement_overview: false,
             lifetime_totals: history.totals(),
             lifetime_achievements: history.achievement_aggregation(),
         }
@@ -1689,7 +2076,7 @@ mod browser_tests {
     #[test]
     fn browser_navigates_same_views_but_cannot_launch() {
         let mut state = browser();
-        let transform = MenuTransform::centered(640, 480);
+        let transform = progress_transform(1024, 768);
         assert_eq!(
             state.handle_events(vec![key(Keycode::Down)], transform, true),
             None
@@ -1703,7 +2090,8 @@ mod browser_tests {
             for code in [Keycode::Return, Keycode::KpEnter, Keycode::Space] {
                 assert_eq!(state.handle_events(vec![key(code)], transform, true), None);
             }
-            let (x, y, _, _) = progress_node_rect(&state.graph, presentation, 0);
+            let (x, y, _, _) =
+                progress_node_rect(&state.graph, presentation, state.selected_progress, 0);
             assert_eq!(
                 state.handle_events(
                     vec![GameEvent::MouseDown(x + 5, y + 5, 1, 0)],
@@ -1731,11 +2119,94 @@ mod browser_tests {
     }
 
     #[test]
+    fn large_campaign_cards_never_overlap_and_hit_testing_matches_the_viewport() {
+        let mut state = browser();
+        let template = state.graph.nodes[0].clone();
+        state.graph.nodes = (0..62)
+            .map(|index| {
+                let mut node = template.clone();
+                node.mission_idx = index;
+                node.depth = index % 8;
+                node.lane = index / 8;
+                node
+            })
+            .collect();
+        for presentation in [
+            CampaignPresentationMode::ProgressTree,
+            CampaignPresentationMode::SherwoodMuseum,
+        ] {
+            for selected in 0..state.graph.nodes.len() {
+                assert!(card_visible(progress_node_rect(
+                    &state.graph,
+                    presentation,
+                    selected,
+                    selected
+                )));
+                let visible: Vec<_> = (0..state.graph.nodes.len())
+                    .filter_map(|index| {
+                        let rect = progress_node_rect(&state.graph, presentation, selected, index);
+                        card_visible(rect).then_some((index, rect))
+                    })
+                    .collect();
+                assert!(visible.len() <= PROGRESS_PAGE_SIZE);
+                for (a, &(index, (x, y, w, h))) in visible.iter().enumerate() {
+                    assert_eq!(
+                        progress_hit_test(
+                            &state.graph,
+                            presentation,
+                            selected,
+                            x + w / 2,
+                            y + h / 2
+                        ),
+                        Some(index)
+                    );
+                    for &(_, (bx, by, bw, bh)) in &visible[a + 1..] {
+                        assert!(x + w <= bx || bx + bw <= x || y + h <= by || by + bh <= y);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pointer_tabs_and_back_work_without_launching_or_stale_gallery_selection() {
+        let mut state = browser();
+        let transform = progress_transform(1024, 768);
+        state.selected_progress = 1;
+        let click = |x, y| {
+            let (x, y) = transform.to_screen(x, y);
+            vec![GameEvent::MouseDown(x, y, 1, 1)]
+        };
+        assert_eq!(state.handle_events(click(250, 90), transform, true), None);
+        assert_eq!(state.presentation, CampaignPresentationMode::SherwoodMuseum);
+        assert_eq!(state.exhibit_grid.selected, 1);
+        assert_eq!(state.handle_events(click(470, 90), transform, true), None);
+        assert!(state.achievement_overview);
+        assert_eq!(
+            state.handle_events(vec![key(Keycode::Return)], transform, false),
+            None
+        );
+        assert_eq!(state.handle_events(click(50, 90), transform, true), None);
+        assert!(!state.achievement_overview);
+        let (x, y, _, _) =
+            progress_node_rect(&state.graph, state.presentation, state.selected_progress, 0);
+        assert_eq!(
+            state.handle_events(click(x + 5, y + 5), transform, false),
+            None
+        );
+        assert_eq!(state.selected_progress, 0);
+        assert_eq!(
+            state.handle_events(click(900, 90), transform, true),
+            Some(CampaignMapChoice::Quit)
+        );
+    }
+
+    #[test]
     fn browser_with_no_missions_still_navigates_and_closes() {
         let mut state = browser();
         state.graph.nodes.clear();
         state.exhibit_grid = ExhibitGridNavigator::new(0, 0);
-        let transform = MenuTransform::centered(640, 480);
+        let transform = progress_transform(1024, 768);
         for code in [
             Keycode::Down,
             Keycode::Return,
@@ -1749,5 +2220,145 @@ mod browser_tests {
             state.handle_events(vec![key(Keycode::Escape)], transform, true),
             Some(CampaignMapChoice::Quit)
         );
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod capture_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Real campaign names and fonts, rendered through the production screen.
+    /// Explicitly opt in because this requires game data and a GPU/software adapter.
+    #[test]
+    #[ignore = "requires game data and an offscreen wgpu adapter; see docs/CAMPAIGN_HISTORY.md"]
+    fn capture_campaign_ui() {
+        // Run this opt-in capture alone: the real resource loader uses the install root.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        std::env::set_current_dir(root).unwrap();
+        let data = std::env::var("ROBINHOOD_DATA_DIR").expect("set ROBINHOOD_DATA_DIR");
+        let output =
+            std::env::var("ROBIN_UI_CAPTURE_DIR").unwrap_or_else(|_| "target/campaign-ui".into());
+        std::fs::create_dir_all(&output).unwrap();
+        let (campaign, profiles, context) =
+            crate::main_entry::rust_init_with_data_dir(Some(std::path::Path::new(&data)))
+                .expect("initialize capture content");
+        let gpu = pollster::block_on(async {
+            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+            descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::VULKAN);
+            let instance = Arc::new(wgpu::Instance::new(descriptor));
+            let options = wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+                apply_limit_buckets: false,
+            };
+            let adapter = instance
+                .request_adapter(&options)
+                .await
+                .expect("offscreen adapter");
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("campaign UI capture"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                        .using_resolution(adapter.limits()),
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                })
+                .await
+                .expect("offscreen device");
+            crate::window::GpuContext {
+                instance,
+                adapter: Arc::new(adapter),
+                device: Arc::new(device),
+                queue: Arc::new(queue),
+                surface_format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            }
+        });
+        for (width, height) in [(1024, 768)] {
+            let mut renderer = Renderer::offscreen(gpu.clone(), width, height);
+            let mut resources = IngameMenuResources::new(
+                &mut renderer,
+                context.shipping().unwrap(),
+                context.preparation_files().unwrap().clone(),
+            )
+            .expect("campaign menu assets");
+            let mut state = CampaignMapModalState::new_browser(
+                &context,
+                &mut renderer,
+                &campaign,
+                &profiles,
+                &mut resources,
+            );
+            assert!(
+                !state.graph.nodes.is_empty(),
+                "capture content must contain campaign missions"
+            );
+            // Presentation-only fixture: exercise all status colors without altering saved data.
+            for (idx, node) in state.graph.nodes.iter_mut().enumerate() {
+                node.state = match idx % 5 {
+                    0 => MissionProgressState::Completed,
+                    1 => MissionProgressState::Available,
+                    2 => MissionProgressState::Lost,
+                    3 => MissionProgressState::Expired,
+                    _ => MissionProgressState::Locked,
+                };
+                node.attempt_count = match idx % 5 {
+                    0 => 12,
+                    2 => 1,
+                    _ => 0,
+                };
+                node.win_count = usize::from(idx % 5 == 0);
+                node.lifetime_attempt_count = node.attempt_count;
+                node.lifetime_win_count = node.win_count;
+            }
+            state.graph.completed_missions = state
+                .graph
+                .nodes
+                .iter()
+                .filter(|node| node.state == MissionProgressState::Completed)
+                .count();
+            for (name, mode) in [
+                ("tree", CampaignPresentationMode::ProgressTree),
+                ("gallery", CampaignPresentationMode::SherwoodMuseum),
+                ("achievements", CampaignPresentationMode::ProgressTree),
+            ] {
+                for selected in [0, state.graph.nodes.len() / 2, state.graph.nodes.len() - 1] {
+                    renderer.begin_gpu_frame_clear();
+                    renderer.begin_ui_only_frame();
+                    render_campaign_progress(
+                        &mut renderer,
+                        progress_transform(width as i32, height as i32),
+                        &state.graph,
+                        selected,
+                        mode,
+                        &state.assets,
+                        true,
+                        state.lifetime_totals,
+                        true,
+                        name == "achievements",
+                    );
+                    let (w, h, pixels) = renderer.try_capture_frame_rgba().expect("read UI pixels");
+                    let path = std::path::Path::new(&output)
+                        .join(format!("{name}-{width}x{height}-{selected}.png"));
+                    let file = std::fs::File::create(&path).unwrap();
+                    let mut encoder = png::Encoder::new(file, w, h);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    encoder
+                        .write_header()
+                        .unwrap()
+                        .write_image_data(&pixels)
+                        .unwrap();
+                    eprintln!("Captured {}", path.display());
+                }
+            }
+        }
     }
 }
