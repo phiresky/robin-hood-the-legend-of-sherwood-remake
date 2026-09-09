@@ -218,7 +218,7 @@ fn on_left_mouse_down(
     clicks: u8,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         host.frontend.input.press_left_pointer(
             engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
@@ -342,7 +342,7 @@ fn on_right_mouse_down(
     clicks: u8,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         host.frontend.input.right_mouse_down = true;
         host.frontend.pointer_capture.right_button_down(clicks);
@@ -380,7 +380,7 @@ fn on_mouse_move(
     y: i32,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         let mouse_pt = engine_coordinates::ScreenPoint::new(x as f32, y as f32);
 
@@ -496,7 +496,7 @@ fn on_left_mouse_up(
     planning_held: bool,
     ctrl_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     {
         let is_double = host.frontend.input.release_left_pointer();
 
@@ -650,7 +650,7 @@ fn on_portrait_click(
     planning_held: bool,
     ctrl_held: bool,
 ) -> bool {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
 
     if matches!(
         hit.area,
@@ -1164,7 +1164,7 @@ fn on_world_click(
             );
         }
         let queued_action = if planning_held {
-            engine.planned_action_for_seat(host.transport.local_seat)
+            engine.planned_action_for_seat(host.transport.local_seat())
         } else {
             Action::NoAction
         };
@@ -1188,7 +1188,7 @@ fn on_right_mouse_up(
     my: i32,
     planning_held: bool,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     let right_double_click = host.frontend.pointer_capture.take_right_double_click();
     {
         host.frontend.input.right_mouse_down = false;
@@ -1565,7 +1565,7 @@ pub(super) fn handle_pause_menu_events(
                     host.frontend.key_config.clone(),
                     host.frontend.custom_key_config.clone(),
                     host.audio.sound.can_3d_sound(),
-                    host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                    host.transport.local_seat() == engine_player_command::PlayerId::HOST,
                 )));
             }
             PauseMenuOutcome::OpenLoad | PauseMenuOutcome::OpenSave => {
@@ -1594,14 +1594,14 @@ pub(super) fn handle_pause_menu_events(
                     mission_id,
                     detailed_metadata,
                     mode,
-                    host.transport.net.is_some(),
+                    host.transport.net().is_some(),
                 )));
             }
             PauseMenuOutcome::Restart => {
                 callbacks.emit_app_effect(AppEffect::SetSoundMode(SoundMode::Mission));
-                if host.transport.net.is_some() {
+                if host.transport.net().is_some() {
                     assert_eq!(
-                        host.transport.local_seat,
+                        host.transport.local_seat(),
                         robin_engine::player_command::PlayerId::HOST,
                         "multiplayer client activated disabled Restart button"
                     );
@@ -1648,7 +1648,7 @@ pub(super) fn dispatch_corner_button_left_click(
     host: &mut Host,
     frame_cmds: &mut FrameCommands,
 ) {
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     match btn {
         CornerButton::Clock => {
             if engine.hero_selection(local_seat).is_empty() {
@@ -1729,21 +1729,21 @@ pub(super) fn choose_recording_place(
 }
 
 fn defer_multiplayer_campaign_exit(host: &mut Host, mission_id: u32) -> bool {
-    let Some(net) = host.transport.net.as_ref() else {
+    let Some(net) = host.transport.net() else {
         return false;
     };
     assert_eq!(
-        host.transport.local_seat,
+        host.transport.local_seat(),
         robin_engine::player_command::PlayerId::HOST,
         "only the multiplayer host can launch the selected campaign mission"
     );
     assert!(
-        host.transport.pending_campaign_exit.is_none(),
+        host.transport.pending_campaign_exit().is_none(),
         "a Sherwood campaign transition is already deferred"
     );
     let origin_frame = net.frame_cursor.load(std::sync::atomic::Ordering::Relaxed);
-    host.transport.pending_campaign_exit =
-        Some(crate::main_entry::PendingMultiplayerCampaignExit {
+    host.transport
+        .defer_campaign_exit(crate::main_entry::PendingMultiplayerCampaignExit {
             not_before_frame: origin_frame
                 .saturating_add(robin_engine::multiplayer::INPUT_DELAY_FRAMES)
                 .saturating_add(1),
@@ -1776,8 +1776,8 @@ pub(super) fn handle_sherwood_hud_buttons(
     sherwood_layout: &SherwoodHudLayout,
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> HandlerAction {
-    if host.transport.net.is_some()
-        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    if host.transport.net().is_some()
+        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
     {
         // Sherwood campaign state is host-authored. Clients keep simulating
         // and receive the eventual authoritative mission transition.
@@ -2031,8 +2031,8 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
     sherwood_enable: &mut SherwoodButtonEnable,
 ) -> Result<HandlerAction, String> {
     let engine = &mut manager.engine;
-    if host.transport.net.is_some()
-        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    if host.transport.net().is_some()
+        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
         && (game.persistent.campaign_map_active || sherwood_flow.is_some())
     {
         // Mission-description ticks can spend blazons through synchronous

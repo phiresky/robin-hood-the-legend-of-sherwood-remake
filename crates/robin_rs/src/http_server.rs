@@ -948,7 +948,6 @@ pub fn drain_global(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut crate::host::Host,
     assets: &LevelAssets,
-    net: Option<&crate::multiplayer::NetChannels>,
     post_commands: &mut FrameCommands,
 ) -> Vec<engine_api::ExternalAction> {
     let mut external_actions = Vec::new();
@@ -1039,7 +1038,7 @@ pub fn drain_global(
                     assets,
                     &mut host.frontend.input,
                     &mut host.frontend.selected_view_element,
-                    net,
+                    host.transport.net(),
                     post_commands,
                     &mut external_actions,
                 );
@@ -1330,9 +1329,9 @@ fn snapshot_host_debug(
     host: &crate::host::Host,
     assets: &LevelAssets,
 ) -> serde_json::Value {
-    let selected_action = engine.selected_action_for_seat(host.transport.local_seat);
+    let selected_action = engine.selected_action_for_seat(host.transport.local_seat());
     let selected_pc = engine
-        .hero_selection(host.transport.local_seat)
+        .hero_selection(host.transport.local_seat())
         .first()
         .copied();
     let selected_pc_state = selected_pc.and_then(|id| {
@@ -1381,7 +1380,7 @@ fn snapshot_host_debug(
     serde_json::json!({
         "frame": engine.frame_counter(),
         "selected_action": selected_action,
-        "selection": engine.hero_selection(host.transport.local_seat),
+        "selection": engine.hero_selection(host.transport.local_seat()),
         "selected_pc": selected_pc_state,
         "valid_trajectory": host.frontend.trajectory_preview.is_valid(),
         "trajectory_preview_points_len": host.frontend.trajectory_preview.points().len(),

@@ -507,7 +507,7 @@ fn validate_multiplayer_step_request(
     admission: super::runtime::MultiplayerAdmission,
     kind: &crate::http_server::StepKind,
 ) -> Result<(), String> {
-    if host.transport.net.is_none() {
+    if host.transport.net().is_none() {
         return Ok(());
     }
     let policy = match kind {
@@ -521,7 +521,7 @@ fn validate_multiplayer_step_request(
         | crate::http_server::StepKind::Back { modal_policy, .. }
         | crate::http_server::StepKind::GoToFrame { modal_policy, .. } => modal_policy,
     };
-    if host.transport.local_seat != PlayerId::HOST {
+    if host.transport.local_seat() != PlayerId::HOST {
         return Err(
             "manual stepping is disabled for multiplayer clients; only explicit synchronized host automation is allowed"
                 .to_string(),
@@ -533,7 +533,7 @@ fn validate_multiplayer_step_request(
                 .to_string(),
         );
     }
-    if host.transport.reconnecting || admission != super::runtime::MultiplayerAdmission::Running {
+    if host.transport.reconnecting() || admission != super::runtime::MultiplayerAdmission::Running {
         return Err(
             "multiplayer snapshot synchronization is still in progress; wait for the ready barrier"
                 .to_string(),
@@ -547,10 +547,10 @@ fn begin_synchronized_step_resync(
     timeline: &mut super::runtime::TimelineRuntime,
     engine: &engine_api::Engine,
 ) -> Result<(), String> {
-    let Some(net) = host.transport.net.as_ref() else {
+    let Some(net) = host.transport.net() else {
         return Ok(());
     };
-    if host.transport.local_seat != PlayerId::HOST {
+    if host.transport.local_seat() != PlayerId::HOST {
         return Err("only the multiplayer host can synchronize manual stepping".to_string());
     }
     let frame = timeline.frame_number();
@@ -560,7 +560,7 @@ fn begin_synchronized_step_resync(
         "host synchronized automation adopted timeline frame {frame}"
     ))?;
     net.send_ready_to_sim(frame)?;
-    host.transport.reconnecting = true;
+    host.transport.await_authoritative_snapshot();
     Ok(())
 }
 
@@ -880,8 +880,8 @@ pub(super) fn rewind_to_frame(
 /// timeline movement. Manual HTTP steps bypass the normal outer-frame commit,
 /// which otherwise refreshes both pieces of host-authoritative network state.
 fn refresh_authoritative_multiplayer_state(host: &Host, frame: u32, engine: &engine_api::Engine) {
-    if let Some(net) = host.transport.net.as_ref()
-        && host.transport.local_seat == PlayerId::HOST
+    if let Some(net) = host.transport.net()
+        && host.transport.local_seat() == PlayerId::HOST
     {
         net.publish_frame(frame);
         net.set_initial_snapshot(frame, engine);
@@ -961,11 +961,11 @@ fn authorize_http_modal_dismissals(
     host: &Host,
     dismissals: &[crate::http_server::HttpModalDismissal],
 ) -> Result<(), String> {
-    let Some(net) = host.transport.net.as_ref() else {
+    let Some(net) = host.transport.net() else {
         return Ok(());
     };
 
-    if host.transport.local_seat == PlayerId::HOST {
+    if host.transport.local_seat() == PlayerId::HOST {
         for dismissal in dismissals {
             let instance = net.open_modal_instance(&dismissal.kind)?;
             net.decide_modal_dismiss(instance, dismissal.kind.clone(), dismissal.result)?;
@@ -1599,8 +1599,7 @@ mod tests {
             stepping_fixture(None);
         let (net, _incoming, _outgoing, frame_cursor, initial_snapshot) =
             crate::multiplayer::NetChannels::new();
-        host.transport.local_seat = PlayerId::HOST;
-        host.transport.net = Some(net);
+        host.transport = crate::host::HostTransport::test_session(net, PlayerId::HOST);
         let mut modal_policy = crate::http_server::StepModalPolicy::default();
 
         run_forward_ticks(
@@ -1645,8 +1644,7 @@ mod tests {
         let (net, _incoming, _outgoing, _cursor, _snapshot) =
             crate::multiplayer::NetChannels::new();
         let mut host = Host::default();
-        host.transport.local_seat = PlayerId::HOST;
-        host.transport.net = Some(net);
+        host.transport = crate::host::HostTransport::test_session(net, PlayerId::HOST);
 
         let pause_error = validate_multiplayer_step_request(
             &host,
@@ -1689,7 +1687,7 @@ mod tests {
             );
         }
 
-        host.transport.local_seat = PlayerId(1);
+        host.transport.test_local_seat(PlayerId(1));
         let client_error =
             validate_multiplayer_step_request(&host, MultiplayerAdmission::Running, &synchronized)
                 .expect_err("a client must never own timeline movement");
@@ -1743,8 +1741,7 @@ mod tests {
         net.install_session_id(crate::multiplayer::MultiplayerSessionId([1; 32]))
             .unwrap();
         let mut host = Host::default();
-        host.transport.local_seat = PlayerId(1);
-        host.transport.net = Some(net);
+        host.transport = crate::host::HostTransport::test_session(net, PlayerId(1));
         host.effects.extend_dialogues([7]);
         let expected = crate::http_server::HttpModalDismissal {
             kind: ModalKind::Dialog { dialog_id: 7 },
@@ -1773,8 +1770,7 @@ mod tests {
         net.install_session_id(crate::multiplayer::MultiplayerSessionId([2; 32]))
             .unwrap();
         let mut host = Host::default();
-        host.transport.local_seat = PlayerId::HOST;
-        host.transport.net = Some(net);
+        host.transport = crate::host::HostTransport::test_session(net, PlayerId::HOST);
         host.effects.extend_popup_texts([9]);
         let expected = crate::http_server::HttpModalDismissal {
             kind: ModalKind::PopupText { text_id: 9 },

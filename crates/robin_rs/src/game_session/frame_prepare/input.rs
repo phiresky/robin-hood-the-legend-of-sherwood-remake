@@ -290,8 +290,8 @@ pub(super) async fn collect_input_and_menus(
             "multiplayer: waiting for peers to validate the campaign-exit snapshot"
         );
     }
-    if host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
-        && let Some(net) = host.transport.net.as_ref()
+    if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
+        && let Some(net) = host.transport.net()
     {
         let proposals = net
             .take_all_visible_modal_requests()
@@ -313,8 +313,8 @@ pub(super) async fn collect_input_and_menus(
         }
     }
 
-    let client_waiting_for_campaign_host = host.transport.net.is_some()
-        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST
+    let client_waiting_for_campaign_host = host.transport.net().is_some()
+        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST
         && (game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some());
     let campaign_ui_presented = !client_waiting_for_campaign_host
         && (game.persistent.campaign_map_active || ui.sherwood_campaign_flow.is_some());

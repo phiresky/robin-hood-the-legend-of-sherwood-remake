@@ -15,7 +15,7 @@ fn drain_pre_tick_network(
     mp_clock_pause: &mut bool,
     rewind_active: bool,
 ) {
-    if host.transport.net.is_none() || rewind_active {
+    if host.transport.net().is_none() || rewind_active {
         return;
     }
 
@@ -29,8 +29,8 @@ fn drain_pre_tick_network(
     }
     *mp_clock_pause |= drain.pause_simulation;
     frame.commands.commands.extend(drain.inputs);
-    if host.transport.local_seat == engine_player_command::PlayerId::HOST
-        && host.transport.reconnecting
+    if host.transport.local_seat() == engine_player_command::PlayerId::HOST
+        && host.transport.reconnecting()
     {
         discard_abandoned_host_frame_inputs(frame);
     }
@@ -53,10 +53,10 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
     host: &Host,
     manager: &robin_engine::engine_manager::EngineManager,
 ) {
-    if host.transport.net.is_none() {
+    if host.transport.net().is_none() {
         return;
     }
-    let local_is_host = host.transport.local_seat == engine_player_command::PlayerId::HOST;
+    let local_is_host = host.transport.local_seat() == engine_player_command::PlayerId::HOST;
     let hash_boundary = runtime
         .frame_number()
         .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL);
@@ -268,7 +268,7 @@ fn dispatch_pre_tick_pointer_commands(
 
     let bow_armed = manager
         .engine
-        .selected_action_for_seat(host.transport.local_seat)
+        .selected_action_for_seat(host.transport.local_seat())
         == engine_profiles::Action::Bow;
     if host.frontend.trajectory_preview.hover_ticks() != 0 || bow_armed {
         let cmd = PlayerCommand::PerformOrientation { mouse_map };
@@ -318,9 +318,9 @@ pub(super) fn finalize_pre_tick(
     let modal_pause = ui
         .active_modal
         .as_ref()
-        .is_some_and(|modal| modal.pauses_simulation(host.transport.net.is_some()))
+        .is_some_and(|modal| modal.pauses_simulation(host.transport.net().is_some()))
         || ui.terminal_flow_active()
-        || (ui.sherwood_campaign_flow.is_some() && host.transport.net.is_none())
+        || (ui.sherwood_campaign_flow.is_some() && host.transport.net().is_none())
         || ui
             .lost_sherwood_gate
             .blocks_mission(game.is_sherwood, &manager.engine);
@@ -354,7 +354,7 @@ pub(super) fn finalize_pre_tick(
         // local simulation continue underneath it.
         pause_menu: local_pause_stops_timeline(
             ui.pause_menu.is_some() || ui.active_ui_task.is_some(),
-            host.transport.net.is_some(),
+            host.transport.net().is_some(),
         ),
         manual: *manual_pause,
         multiplayer_clock: mp_clock_pause,
@@ -572,8 +572,7 @@ mod tests {
         }
         let (channels, incoming, _outgoing, _, _) = NetChannels::new();
         let mut host = Host::scratch(640.0, 480.0);
-        host.transport.local_seat = PlayerId::HOST;
-        host.transport.net = Some(channels);
+        host.transport = crate::host::HostTransport::test_session(channels, PlayerId::HOST);
         let mut frame = MissionFrame::new(17);
         frame.run_hourglass = false;
         frame.run_post_initialize = false;
