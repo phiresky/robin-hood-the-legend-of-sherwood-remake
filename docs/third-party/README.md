@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **78 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **93 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -38,6 +38,11 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [iDNES — Czech walkthrough, part 2](guides/idnes-part-2.md) | Czech | Substantial indexed text inspected |
 | [大众软件 / Ali213 — Chinese campaign guide](guides/ali213-chinese.md) | Simplified Chinese | Substantial article text and mission passages inspected |
 | [MogelPower — controls, awareness, and manual links](guides/mogelpower-controls.md) | German | Page text and attachment descriptions inspected |
+| [GameStar — Lösung für Räuber und Wegelagerer](guides/gamestar-january-2003.md) | German | Substantial indexed PDF text inspected; direct PDF retrieval failed |
+| [Steam — Spanish cheat-code reference](guides/steam-spanish-cheats.md) | Spanish | Guide text inspected |
+| [Steam — pre-existing corpses and spared-life statistics](guides/steam-spared-lives-report.md) | English | Opening and all six replies inspected through direct HTML retrieval |
+| [Steam — camp production and mission type discussion](guides/steam-camp-production-report.md) | English | Opening and sole reply inspected through direct HTML retrieval |
+| [Steam — which characters can search bodies?](guides/steam-body-search.md) | English | Opening and both replies inspected through direct HTML retrieval |
 
 ## Reviews and player impressions
 
@@ -70,6 +75,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [GameFAQs — Challenging but fun](reviews/gamefaqs-guybrush999.md) | English | Review text inspected |
 | [PC Games — Nicht ganz der Stoff, aus dem die Helden sind](reviews/pcgames.md) | German | Article page and indexed text inspected; continuation pages not inspected |
 | [Games.cz — Leon's contemporary review](reviews/tiscali-leon.md) | Czech | Article text and verdict inspected |
+| [Jeuxlinux — French Linux overview](reviews/jeuxlinux-french.md) | French | Indexed presentation and section list inspected; direct retrieval failed |
 
 ## Compatibility and configuration
 
@@ -81,6 +87,14 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [ubuntuusers — archived native Linux instructions](technical/ubuntuusers-native-linux.md) | German | Page text inspected |
 | [ModDB — historical Windows 1.1 patch record](technical/moddb-patch-1-1.md) | English | File listing and description inspected; binary not downloaded |
 | [Speedrun.com — recording a wrapped game](technical/speedrun-capture-report.md) | English discussion | Discussion text inspected |
+| [Holarse — native Linux installation and save problems](technical/holarse-linux.md) | German | Page text inspected; linked installer and troubleshooting pages not retrieved |
+| [CodeWeavers — CrossOver compatibility record](technical/codeweavers-crossover.md) | English | Compatibility overview and version listing inspected |
+| [Lutris — native Desura installer and language selection](technical/lutris-desura-script.md) | English | Installer source and maintainer notes inspected; script not executed |
+| [Steam — Kisa's Windows 10/11 compatibility guide](technical/steam-kisa-windows.md) | English | Guide text inspected |
+| [Steam — Naxyň's FPS/font fix and retirement note](technical/steam-naxyn-fps.md) | English body | Guide body and visible comments inspected |
+| [Steam — Naxyň's Polish localization package](technical/steam-polish-localization.md) | Polish | Guide body and visible comment excerpt inspected |
+| [Steam — Spanish selection still launches English](technical/steam-spanish-language-report.md) | Spanish | Full retrieved discussion inspected |
+| [Steam — cart-ambush completion dialog loop](technical/steam-ambush-dialog-loop.md) | English | Opening and sole reply inspected through direct HTML retrieval |
 
 ## Releases, ports, and development
 
@@ -103,6 +117,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [Games.cz — July 2002 release-window correction](history/tiscali-release-revision.md) | Czech | Indexed article text inspected; direct retrieval failed |
 | [Games.cz — completion and regional schedule report](history/tiscali-gold.md) | Czech | Article text inspected; linked press release could not be retrieved |
 | [Games.cz — Czech distribution agreement and trailer](history/tiscali-localization-announcement.md) | Czech | Indexed article text inspected |
+| [GamingOnLinux — platform limitations of a 2013 bundle](history/gamingonlinux-bundle-rights.md) | English | Relevant article passage inspected |
 
 ## Indexes, media, and sources awaiting access
 

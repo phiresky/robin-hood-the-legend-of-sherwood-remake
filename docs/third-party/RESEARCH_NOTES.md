@@ -62,3 +62,19 @@ Added eight records, bringing the collection to 78. The additions cover PC Games
 The [July 2002 schedule correction](history/tiscali-release-revision.md) explicitly records earlier 2003 expectations being replaced by a 2002 target. This contextualizes the [Turkish preview](history/level-turkish-preview.md) without proving its date came from the same source. The [October localization announcement](history/tiscali-localization-announcement.md), [completion report](history/tiscali-gold.md), and [February Czech-edition impressions](history/sector-czech-localization.md) distinguish plans from an observed localized release.
 
 Additional leads: [Macworld's April 2005 page](https://www.macworld.com/article/175293/robinhood-4.html) yielded only its opening; [the July 2005 magazine PDF](https://vintageapple.org/macworld/pdf/MacWorld_0507_July_2005.pdf) has indexed review material that still needs comparison with the original pages. Sector's game index links a November 2002 editorial review, but its original article URL and full body remain unresolved. These leads are not counted as additional records.
+
+## Linux material and expanded Steam Community research
+
+Added fifteen records, bringing the collection to 93: six magazine/Linux sources and nine Steam guides or discussions. Steam coverage now includes Polish localization, older Windows fixes and their retirement notes, Spanish cheat documentation, language-selection reports, body searching, camp production, spared-life statistics, and an unresolved cart-ambush dialog loop.
+
+Search results often confused this game's Steam app 46560 with Sherwood Builders (1159420). Only the original game's records were added. Steam's extracted discussion index omitted thread URLs; direct HTML retrieval recovered the links and four complete small discussions. Years omitted in the displayed forum dates remain unspecified. Replies are attributed as hypotheses or player-confirmed workarounds, not validated engine behavior.
+
+Further comparison targets:
+
+- [Pre-existing corpses](guides/steam-spared-lives-report.md): compare displayed percentages with the scoring guide's point formula.
+- [Camp production](guides/steam-camp-production-report.md): check primary missions, sieges, and ambushes separately; healing may follow different rules.
+- [Dialog loop](technical/steam-ambush-dialog-loop.md): obtain an exact mission and build before diagnosing.
+- [Native Linux saves](technical/holarse-linux.md): linked detailed troubleshooting was inaccessible; compare symptoms with MorphOS reports without assuming one cause.
+- [GameStar tips](guides/gamestar-january-2003.md): substantial opening recovered, but remaining pages still need inspection.
+
+No fixes, localization archives, or installers were executed.
