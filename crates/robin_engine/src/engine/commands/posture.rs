@@ -6,7 +6,7 @@ use crate::engine::EngineInner;
 use crate::sequence::{Field, FieldValue, Sequence, SequenceElement, SequenceElementData};
 
 impl EngineInner {
-    pub(super) fn dispatch_raise_shield(
+    pub(super) fn dispatch_player_raise_shield(
         &mut self,
         actor: &EntityId,
         protected_pc: &EntityId,

@@ -73,7 +73,7 @@ fn sword_gesture_sequence(
 }
 
 impl EngineInner {
-    pub(super) fn dispatch_sword_strike(
+    pub(super) fn dispatch_player_sword_strike(
         &mut self,
         assets: &LevelAssets,
         actor: &EntityId,

@@ -492,7 +492,7 @@ impl EngineInner {
                 with_seek,
                 seek_distance,
             } => {
-                self.dispatch_sword_strike(
+                self.dispatch_player_sword_strike(
                     assets,
                     actor,
                     target,
@@ -657,7 +657,12 @@ impl EngineInner {
                 danger_point,
                 danger_point_layer,
             } => {
-                self.dispatch_raise_shield(actor, protected_pc, danger_point, danger_point_layer);
+                self.dispatch_player_raise_shield(
+                    actor,
+                    protected_pc,
+                    danger_point,
+                    danger_point_layer,
+                );
             }
 
             // ── Posture ─────────────────────────────────────────
