@@ -406,15 +406,32 @@ impl From<serde_json::Value> for ReplyBody {
 ///
 /// `Ok(body)` becomes a 200 with the matching Content-Type; `Err`
 /// becomes a 400 with `{"error": msg}` (always JSON).
-pub type Reply = Result<ReplyBody, String>;
+pub type Reply = Result<ReplyBody, RpcError>;
+
+mod error;
+pub use error::{RpcError, RpcErrorKind};
 
 async fn resolve_deferred_reply(reply: Reply) -> Reply {
     match reply? {
         ReplyBody::ReplayExport(result) => result
             .recv()
             .await
-            .map_err(|error| format!("replay export worker dropped its result: {error}"))?
-            .map(|content| ReplyBody::Json(serde_json::json!({ "content": content }))),
+            .map_err(|error| {
+                RpcError::internal(format!("replay export worker dropped its result: {error}"))
+            })?
+            .map(|content| ReplyBody::Json(serde_json::json!({ "content": content })))
+            .map_err(|error| match error {
+                crate::replay_service::ExportError::Capacity(message) => {
+                    RpcError::capacity(message)
+                }
+                crate::replay_service::ExportError::Retired(message) => RpcError::retired(message),
+                crate::replay_service::ExportError::Unavailable(message) => {
+                    RpcError::unavailable_capability(message)
+                }
+                crate::replay_service::ExportError::Internal(message) => {
+                    RpcError::internal(message)
+                }
+            }),
         body => Ok(body),
     }
 }
@@ -1160,7 +1177,7 @@ async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
         });
     let reply = tokio::select! {
         biased;
-        _ = retirement.recv() => return (400, serde_json::json!({"error": "HTTP transport stopped"}).into()),
+        _ = retirement.recv() => return (400, RpcError::retired("HTTP transport stopped").wire_body().into()),
         reply = async {
             match rx.recv().await {
                 Ok(reply) => Ok(resolve_deferred_reply(reply).await),
@@ -1169,19 +1186,23 @@ async fn relay(queue: &Queue, payload: HttpPayload) -> (u16, ReplyBody) {
         } => reply,
         _ = tokio::time::sleep_until(deadline.into()) => {
             rx.expire();
-            return (504, serde_json::json!({"error": "game loop did not process the request within 60s; already-admitted work may complete"}).into());
+            return (504, RpcError::deadline("game loop did not process the request within 60s; already-admitted work may complete").wire_body().into());
         },
     };
     match reply {
         Ok(Ok(body)) => (200, body),
-        Ok(Err(msg)) => (400, serde_json::json!({"error": msg}).into()),
+        Ok(Err(error)) => (400, error.wire_body().into()),
         Err(_) if rx.is_expired() => (
             504,
-            serde_json::json!({"error": "request expired before admission"}).into(),
+            RpcError::deadline("request expired before admission")
+                .wire_body()
+                .into(),
         ),
         Err(_) => (
             500,
-            serde_json::json!({"error": "game loop dropped the response channel"}).into(),
+            RpcError::internal("game loop dropped the response channel")
+                .wire_body()
+                .into(),
         ),
     }
 }
@@ -1281,10 +1302,9 @@ fn drain_pre_engine(server: &HttpServer) {
                 let reply = decode_load_replay(&server.replay_launches, &data, paused);
                 req.response_tx.send(reply);
             }
-            _ => req.response_tx.send(Err(
+            _ => req.response_tx.send(Err(RpcError::unavailable_capability(
                 "engine not ready — only `load-replay`, `get-replay`, and `info` work during --wait-for-command"
-                    .into(),
-            )),
+            ))),
         }
     }
 }
@@ -1301,13 +1321,15 @@ fn decode_load_replay(
     let trimmed = data;
     let replay = crate::replay_format::decode_compact_for_public_playback(trimmed)
         .map(|(_, replay)| replay)
-        .map_err(|e| format!("decode compact replay: {e}"))?;
+        .map_err(|e| RpcError::invalid_request(format!("decode compact replay: {e}")))?;
     let frame_count = replay.frame_count();
     let seed = replay.header().rng_seed;
-    launches.admit_pending(crate::replay_service::PendingReplay {
-        data: replay,
-        paused,
-    })?;
+    launches
+        .admit_pending(crate::replay_service::PendingReplay {
+            data: replay,
+            paused,
+        })
+        .map_err(RpcError::capacity)?;
     Ok(ReplyBody::Json(serde_json::json!({
         "ok": true,
         "frames": frame_count,
@@ -1327,44 +1349,20 @@ impl SessionIngress {
         assets: &LevelAssets,
         post_commands: &mut FrameCommands,
     ) -> Vec<engine_api::ExternalAction> {
+        let mut selected = frontend.selected_view_element();
         let mut external_actions = Vec::new();
-        for req in self.take_requests() {
-            if !req.admit_unless_deferred() {
-                continue;
-            }
-            self.observe_ranked_input_taint(&req.payload);
-            match req.payload.classify() {
-                RoutedRequest::HostDebug => {
-                    req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
-                        engine, frontend, local_seat, assets,
-                    ))));
-                }
-                RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
-                    query,
-                    self.replay_status(),
-                    engine,
-                    assets,
-                )),
-                RoutedRequest::Deferred(request) => {
-                    self.defer_request(request, req.response_tx, true)
-                }
-                RoutedRequest::Process(request) => self.dispatch_process(request, req.response_tx),
-                RoutedRequest::Command(command) => {
-                    let mut selected = frontend.selected_view_element();
-                    let reply = dispatch_command(
-                        command,
-                        engine,
-                        assets,
-                        &mut selected,
-                        net,
-                        post_commands,
-                        &mut external_actions,
-                    );
-                    frontend.set_selected_view_element(selected);
-                    req.response_tx.send(reply);
-                }
-            }
-        }
+        self.drain_with_capabilities(
+            engine,
+            assets,
+            &mut selected,
+            net,
+            post_commands,
+            &mut external_actions,
+            DispatchCapabilities::Interactive {
+                frontend,
+                local_seat,
+            },
+        );
         external_actions
     }
 
@@ -1382,6 +1380,30 @@ impl SessionIngress {
     ) -> FrameCommands {
         let mut commands = FrameCommands::new();
         let mut external_actions = Vec::new();
+        self.drain_with_capabilities(
+            engine,
+            assets,
+            selected_view_element,
+            None,
+            &mut commands,
+            &mut external_actions,
+            DispatchCapabilities::Headless,
+        );
+        commands
+    }
+
+    /// Admission, taint accounting and routing have one ordering for every
+    /// runner. Only the named presentation/diagnostic capabilities differ.
+    fn drain_with_capabilities(
+        &mut self,
+        engine: &mut Engine,
+        assets: &LevelAssets,
+        selected_view_element: &mut Option<engine_element::EntityId>,
+        net: Option<&crate::multiplayer::NetChannels>,
+        commands: &mut FrameCommands,
+        external_actions: &mut Vec<engine_api::ExternalAction>,
+        mut capabilities: DispatchCapabilities<'_>,
+    ) {
         for req in self.take_requests() {
             if !req.admit_unless_deferred() {
                 continue;
@@ -1390,14 +1412,10 @@ impl SessionIngress {
             match req.payload.classify() {
                 RoutedRequest::HostDebug => {
                     req.response_tx
-                        .send(Err("host-debug is unavailable in a headless runner".into()));
+                        .send(capabilities.host_debug(engine, assets));
                 }
                 RoutedRequest::Query(QueryRequest::EngineDump) => {
-                    let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
-                    let reply = engine_dump_json(&diagnostic)
-                        .map(ReplyBody::Json)
-                        .map_err(|e| format!("engine serialize: {e}"));
-                    req.response_tx.send(reply);
+                    req.response_tx.send(capabilities.engine_dump(engine));
                 }
                 RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
                     query,
@@ -1406,7 +1424,7 @@ impl SessionIngress {
                     assets,
                 )),
                 RoutedRequest::Deferred(request) => {
-                    self.defer_request(request, req.response_tx, false)
+                    self.defer_request(request, req.response_tx, capabilities.has_presentation())
                 }
                 RoutedRequest::Process(request) => self.dispatch_process(request, req.response_tx),
                 RoutedRequest::Command(command) => {
@@ -1415,15 +1433,63 @@ impl SessionIngress {
                         engine,
                         assets,
                         selected_view_element,
-                        None,
-                        &mut commands,
-                        &mut external_actions,
+                        net,
+                        commands,
+                        external_actions,
                     );
+                    capabilities.publish_selection(*selected_view_element);
                     req.response_tx.send(reply);
                 }
             }
         }
-        commands
+    }
+}
+
+/// Live capabilities are borrowed for one drain, never saved or reconstructed.
+enum DispatchCapabilities<'a> {
+    Interactive {
+        frontend: &'a mut crate::host::HostFrontend,
+        local_seat: robin_engine::player_command::PlayerId,
+    },
+    Headless,
+}
+
+impl DispatchCapabilities<'_> {
+    fn has_presentation(&self) -> bool {
+        matches!(self, Self::Interactive { .. })
+    }
+
+    fn engine_dump(&self, engine: &Engine) -> Reply {
+        // Original-parity runners own a nonserializable RNG source. Their
+        // established diagnostic policy removes it from a clone only; the
+        // interactive endpoint deliberately retains its full-snapshot policy.
+        let value = match self {
+            Self::Headless => {
+                engine_dump_json(&engine.diagnostic_snapshot_without_original_rng_replay())
+            }
+            Self::Interactive { .. } => engine_dump_json(engine),
+        };
+        value
+            .map(ReplyBody::Json)
+            .map_err(|error| RpcError::internal(format!("engine serialize: {error}")))
+    }
+
+    fn host_debug(&self, engine: &Engine, assets: &LevelAssets) -> Reply {
+        match self {
+            Self::Interactive {
+                frontend,
+                local_seat,
+            } => Ok(snapshot_host_debug(engine, frontend, *local_seat, assets).into()),
+            Self::Headless => Err(RpcError::unavailable_capability(
+                "host-debug is unavailable in a headless runner",
+            )),
+        }
+    }
+
+    fn publish_selection(&mut self, selected: Option<engine_element::EntityId>) {
+        if let Self::Interactive { frontend, .. } = self {
+            frontend.set_selected_view_element(selected);
+        }
     }
 }
 
@@ -1432,14 +1498,28 @@ fn admit_external_actions(
     assets: &LevelAssets,
     actions: Vec<engine_api::ExternalAction>,
     journal: &mut Vec<engine_api::ExternalAction>,
-) -> Result<Vec<engine_api::ExternalActionResult>, String> {
+) -> Result<Vec<engine_api::ExternalActionResult>, RpcError> {
     let output = engine
         .advance_frame(
             assets,
             engine_api::SimulationFrameInput::no_hourglass()
                 .with_post_external_actions(actions.clone()),
         )
-        .map_err(|error| format!("developer action frame admission failed: {error}"))?;
+        .map_err(|error| {
+            let message = format!("developer action frame admission failed: {error}");
+            match error {
+                engine_api::FrameAdvanceError::RankedSimulationSettingCommandRejected {
+                    ..
+                } => RpcError::invalid_request(message),
+                engine_api::FrameAdvanceError::RankedSimulationConfigViolation { .. }
+                | engine_api::FrameAdvanceError::SpellforgeMissionAborted { .. }
+                | engine_api::FrameAdvanceError::DirectorCompletionRejected { .. }
+                | engine_api::FrameAdvanceError::SoundBoundaryRejected { .. }
+                | engine_api::FrameAdvanceError::RecordedDropAleRouteRejected { .. } => {
+                    RpcError::internal(message)
+                }
+            }
+        })?;
     journal.extend(actions);
     Ok(output.external_action_results)
 }
@@ -1466,10 +1546,12 @@ fn dispatch_command(
                 external_actions,
             )?;
             match results.into_iter().next() {
-                Some(engine_api::ExternalActionResult::Native(result)) => {
-                    result.map(|value| ReplyBody::Json(serde_json::json!({"return": value})))
-                }
-                _ => Err("native frame admission returned no native result".into()),
+                Some(engine_api::ExternalActionResult::Native(result)) => result
+                    .map(|value| ReplyBody::Json(serde_json::json!({"return": value})))
+                    .map_err(RpcError::invalid_request),
+                _ => Err(RpcError::internal(
+                    "native frame admission returned no native result",
+                )),
             }
         }
         CommandRequest::Batch(calls) => {
@@ -1528,7 +1610,9 @@ fn dispatch_command(
                     *selected_view_element = selected;
                     Ok(ReplyBody::Json(frame_console_response_to_json(response)))
                 }
-                _ => Err("console frame admission returned no console result".into()),
+                _ => Err(RpcError::internal(
+                    "console frame admission returned no console result",
+                )),
             }
         }
         CommandRequest::Player(cmd) => {
@@ -1537,7 +1621,8 @@ fn dispatch_command(
             // engine doesn't mutate here; the echo lands via
             // `drain_net_inputs` at `sim_frame + INPUT_DELAY_FRAMES`.
             if let Some(net) = net {
-                net.send_input(cmd)?;
+                net.send_input(cmd)
+                    .map_err(RpcError::unavailable_capability)?;
             } else {
                 frame_commands.push(cmd);
             }
@@ -1556,10 +1641,10 @@ fn dispatch_query(
         QueryRequest::State => Ok(ReplyBody::Json(snapshot_state(engine, replay))),
         QueryRequest::EngineDump => engine_dump_json(engine)
             .map(ReplyBody::Json)
-            .map_err(|e| format!("engine serialize: {e}")),
+            .map_err(|e| RpcError::internal(format!("engine serialize: {e}"))),
         QueryRequest::LevelAssets => level_assets_json(engine, assets)
             .map(ReplyBody::Json)
-            .map_err(|e| format!("level assets serialize: {e}")),
+            .map_err(|e| RpcError::internal(format!("level assets serialize: {e}"))),
         QueryRequest::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
         QueryRequest::Decompile { class } => {
             Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
@@ -1570,7 +1655,9 @@ fn dispatch_query(
 impl SessionIngress {
     fn dispatch_process(&self, request: ProcessRequest, response: Responder) {
         let Some((exports, launches)) = &self.replay_capabilities else {
-            response.send(Err("replay transport capabilities were not attached".into()));
+            response.send(Err(RpcError::unavailable_capability(
+                "replay transport capabilities were not attached",
+            )));
             return;
         };
         match request {
@@ -2203,8 +2290,8 @@ impl PendingScreenshot {
 
     /// Reply with an error string instead of a PNG (e.g. when pixel
     /// readback failed).  Consumes `self`.
-    pub fn respond_err(self, msg: impl Into<String>) {
-        self.response_tx.send(Err(msg.into()));
+    pub fn respond_err(self, error: RpcError) {
+        self.response_tx.send(Err(error));
     }
 }
 
@@ -2257,8 +2344,8 @@ impl PendingStep {
         self.response_tx.send(Ok(ReplyBody::Json(body)));
     }
 
-    pub fn respond_err(self, msg: impl Into<String>) {
-        self.response_tx.send(Err(msg.into()));
+    pub fn respond_err(self, error: RpcError) {
+        self.response_tx.send(Err(error));
     }
 }
 
@@ -2317,7 +2404,8 @@ fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRequest) -> R
             (Cow::Borrowed(rgba), src_w, src_h)
         };
 
-    let (target_w, target_h) = screenshot_target_dimensions(used_w, used_h, req)?;
+    let (target_w, target_h) =
+        screenshot_target_dimensions(used_w, used_h, req).map_err(RpcError::invalid_request)?;
 
     let resized;
     let pixels: &[u8] = if (target_w, target_h) != (used_w, used_h) {
@@ -2346,10 +2434,10 @@ fn encode_png(src_w: u32, src_h: u32, rgba: &[u8], req: &ScreenshotRequest) -> R
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder
             .write_header()
-            .map_err(|e| format!("png header: {e}"))?;
+            .map_err(|e| RpcError::internal(format!("png header: {e}")))?;
         writer
             .write_image_data(pixels)
-            .map_err(|e| format!("png data: {e}"))?;
+            .map_err(|e| RpcError::internal(format!("png data: {e}")))?;
     }
     Ok(ReplyBody::Binary {
         content_type: "image/png",
@@ -2384,6 +2472,142 @@ fn screenshot_target_dimensions(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_dispatch_preserves_admission_commands_queries_and_capability_differences() {
+        for graphical in [false, true] {
+            let mut assets = LevelAssets::new();
+            let mut engine = Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets)
+                .expect("RPC fixture engine");
+            let mut host = crate::host::Host::scratch(1024.0, 768.0);
+            let mut ingress = SessionIngress::detached_for_test();
+            // Cancellation must occur before taint accounting or mutation.
+            drop(ingress.enqueue_for_test(HttpPayload::Console("UNBLIP".into())));
+            let state = ingress.enqueue_for_test(HttpPayload::State);
+            let command = ingress.enqueue_for_test(HttpPayload::Command(PlayerCommand::CrouchDown));
+            let debug = ingress.enqueue_for_test(HttpPayload::HostDebug);
+            let screenshot =
+                ingress.enqueue_for_test(HttpPayload::Screenshot(ScreenshotRequest::default()));
+            let step = ingress.enqueue_for_test(HttpPayload::StepForward {
+                request: StepRequest::default(),
+            });
+            let process = ingress.enqueue_for_test(HttpPayload::GetReplay);
+            let mut selected = None;
+            let commands = if graphical {
+                let mut commands = FrameCommands::new();
+                let external = ingress.drain(
+                    &mut engine,
+                    &mut host.frontend,
+                    robin_engine::player_command::PlayerId::HOST,
+                    None,
+                    &assets,
+                    &mut commands,
+                );
+                assert!(external.is_empty());
+                commands
+            } else {
+                ingress.drain_headless(&mut engine, &assets, &mut selected)
+            };
+            assert_eq!(commands.commands.len(), 1);
+            assert_eq!(
+                commands.commands[0].player_id,
+                robin_engine::player_command::PlayerId::HOST
+            );
+            assert!(matches!(
+                commands.commands[0].command,
+                PlayerCommand::CrouchDown
+            ));
+            assert!(
+                matches!(state.try_recv().unwrap(), Ok(ReplyBody::Json(value)) if value["frame"] == engine.frame_counter())
+            );
+            assert!(
+                matches!(command.try_recv().unwrap(), Ok(ReplyBody::Json(value)) if value == serde_json::json!({"ok": true}))
+            );
+            let debug_reply = debug.try_recv().unwrap();
+            if graphical {
+                assert!(matches!(debug_reply, Ok(ReplyBody::Json(_))));
+                assert!(
+                    screenshot.try_recv().is_err(),
+                    "graphical capture remains deferred"
+                );
+                assert_eq!(
+                    ingress
+                        .take_pending_screenshots(engine.frame_counter())
+                        .len(),
+                    1
+                );
+            } else {
+                assert!(
+                    matches!(debug_reply, Err(error) if error.kind == RpcErrorKind::UnavailableCapability && error.message == "host-debug is unavailable in a headless runner")
+                );
+                assert!(
+                    matches!(screenshot.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::UnavailableCapability)
+                );
+            }
+            assert!(step.try_recv().is_err());
+            assert_eq!(ingress.take_pending_steps().len(), 1);
+            assert!(
+                matches!(process.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::UnavailableCapability)
+            );
+            assert_eq!(
+                ingress.take_pending_replay_taints(),
+                BTreeSet::from([
+                    InputTaintKind::HttpPlayerCommand,
+                    InputTaintKind::HttpSimulationStep,
+                ])
+            );
+        }
+    }
+
+    #[test]
+    fn headless_diagnostic_policy_omits_rng_without_mutating_live_engine() {
+        for graphical in [false, true] {
+            let mut assets = LevelAssets::new();
+            let mut engine =
+                Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets).unwrap();
+            engine = Engine::new(engine_api::EngineArgs {
+                campaign: engine.campaign().clone(),
+                level: engine_api::LevelLoadArgs {
+                    assets: &mut assets,
+                    level_directory: "",
+                    progress: &mut |_| {},
+                    loaded: robin_engine::level_data::LoadedLevel::empty_for_test(),
+                    bg_pixel_dims: (0.0, 0.0),
+                },
+                ground_mark_sprite: None,
+                titbit_row_frame_counts: Vec::new(),
+                rng_seed: 0,
+                original_rng_replay: Some(vec![11, 22]),
+                sim_config: engine_api::SimConfig {
+                    script_enabled: false,
+                    ..Default::default()
+                },
+            })
+            .expect("original RNG diagnostic fixture");
+            let rng_cursor = engine.original_rng_replay_cursor();
+            assert!(rng_cursor.is_some());
+            let mut ingress = SessionIngress::detached_for_test();
+            let dump = ingress.enqueue_for_test(HttpPayload::EngineDump);
+            if graphical {
+                let mut host = crate::host::Host::scratch(1024.0, 768.0);
+                ingress.drain(
+                    &mut engine,
+                    &mut host.frontend,
+                    robin_engine::player_command::PlayerId::HOST,
+                    None,
+                    &assets,
+                    &mut FrameCommands::new(),
+                );
+                assert!(
+                    matches!(dump.try_recv().unwrap(), Err(error) if error.kind == RpcErrorKind::Internal && error.message.starts_with("engine serialize:"))
+                );
+            } else {
+                ingress.drain_headless(&mut engine, &assets, &mut None);
+                assert!(matches!(dump.try_recv().unwrap(), Ok(ReplyBody::Json(_))));
+            }
+            assert_eq!(engine.original_rng_replay_cursor(), rng_cursor);
+        }
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -2809,7 +3033,7 @@ pub mod wasm_rpc {
                     .map_err(|e| JsValue::from_str(&format!("set data: {e:?}")))?;
                 Ok(out.into())
             }
-            Err(message) => Err(JsValue::from_str(&message)),
+            Err(message) => Err(JsValue::from_str(&message.to_string())),
         }
     }
 
@@ -2824,8 +3048,11 @@ pub mod wasm_rpc {
             #[serde(default)]
             params: serde_json::Value,
         }
-        let req: Req = serde_wasm_bindgen::from_value(request)
-            .map_err(|e| JsValue::from_str(&format!("bad request: {e}")))?;
+        let req: Req = serde_wasm_bindgen::from_value(request).map_err(|e| {
+            JsValue::from_str(
+                &super::RpcError::invalid_request(format!("bad request: {e}")).to_string(),
+            )
+        })?;
         // Pure-introspection methods don't need a live engine — resolve
         // inline without touching the tick queue.
         match req.method.as_str() {
@@ -2837,10 +3064,16 @@ pub mod wasm_rpc {
             }
             _ => {}
         }
-        let payload = decode_request(&req.method, req.params).map_err(|e| JsValue::from_str(&e))?;
+        let payload = decode_request(&req.method, req.params)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let queue = BROWSER_QUEUE
             .with(|binding| binding.borrow().upgrade())
-            .ok_or_else(|| JsValue::from_str("RPC bridge not initialized"))?;
+            .ok_or_else(|| {
+                JsValue::from_str(
+                    &super::RpcError::unavailable_capability("RPC bridge not initialized")
+                        .to_string(),
+                )
+            })?;
         let retirement = queue
             .lock()
             .expect("queue mutex poisoned")
@@ -2855,16 +3088,19 @@ pub mod wasm_rpc {
             });
         use futures::FutureExt as _;
         let reply = futures::select_biased! {
-            _ = retirement.recv().fuse() => return Err(JsValue::from_str("HTTP transport stopped")),
+            _ = retirement.recv().fuse() => return reply_to_js(Err(super::RpcError::retired("HTTP transport stopped"))),
             reply = async {
-                let reply = rx.recv().await.map_err(|e| JsValue::from_str(&format!("RPC response dropped: {e}")))?;
+                let reply = rx.recv().await.map_err(|e| JsValue::from_str(&super::RpcError::internal(format!("RPC response dropped: {e}")).to_string()))?;
                 Ok::<_, JsValue>(super::resolve_deferred_reply(reply).await)
             }.fuse() => reply?,
         };
         reply_to_js(reply)
     }
 
-    fn decode_request(method: &str, params: serde_json::Value) -> Result<HttpPayload, String> {
+    fn decode_request(
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<HttpPayload, super::RpcError> {
         super::request_decode::decode_browser(method, params)
     }
 }

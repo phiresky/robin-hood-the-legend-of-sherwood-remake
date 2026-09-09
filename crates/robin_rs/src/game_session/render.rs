@@ -519,7 +519,7 @@ pub(super) fn drain_screenshot_requests(
     for ss in pending {
         match render_screenshot_rgba(engine, display, host, assets, dev, ss.request(), ctx) {
             Ok((w, h, rgba)) => ss.respond(w, h, &rgba),
-            Err(err) => ss.respond_err(err),
+            Err(err) => ss.respond_err(crate::http_server::RpcError::internal(err)),
         }
 
         // Clear the offscreen target so the next render (another
@@ -547,9 +547,9 @@ pub(super) fn drain_presented_ui_screenshots(
         }
         Err(error) => {
             for screenshot in pending {
-                screenshot.respond_err(format!(
+                screenshot.respond_err(crate::http_server::RpcError::internal(format!(
                     "failed to read the presented pause UI framebuffer: {error}"
-                ));
+                )));
             }
         }
     }

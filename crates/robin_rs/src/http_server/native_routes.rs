@@ -66,7 +66,7 @@ pub(super) async fn dispatch(
         listen_port,
     ) {
         tracing::warn!("script HTTP server: rejected request: {reason}");
-        return (403, serde_json::json!({"error": reason}).into());
+        return (403, RpcError::invalid_request(reason).wire_body().into());
     }
     let (path, query) = req.url().split_once('?').unwrap_or((req.url(), ""));
     let payload = match classify(req.method(), path) {
@@ -81,42 +81,55 @@ pub(super) async fn dispatch(
             if matches!(kind, RequestKind::LoadReplay)
                 && let Err(error) = validate_replay_headers(&req)
             {
-                return (400, serde_json::json!({"error": error}).into());
+                return (400, error.wire_body().into());
             }
             request_decode::decode_json(kind, req.body_bytes())
         }
-        None => return (404, serde_json::json!({"error": "not found"}).into()),
+        None => {
+            return (
+                404,
+                RpcError::unavailable_capability("not found")
+                    .wire_body()
+                    .into(),
+            );
+        }
     };
     match payload {
         Ok(payload) => relay(queue, payload).await,
-        Err(error) => (400, serde_json::json!({"error": error}).into()),
+        Err(error) => (400, error.wire_body().into()),
     }
 }
 
 /// Reject unsupported replay framing before acquiring the request body.
 /// Returns the maximum accepted body size for the transport collector.
-pub(super) fn validate_replay_headers(req: &NativeRequest) -> Result<usize, String> {
+pub(super) fn validate_replay_headers(req: &NativeRequest) -> Result<usize, RpcError> {
     let limit = replay_body_limit();
     if req.header("Transfer-Encoding").is_some() {
-        return Err("load-replay does not accept Transfer-Encoding".into());
+        return Err(RpcError::invalid_request(
+            "load-replay does not accept Transfer-Encoding",
+        ));
     }
     if req.header("Content-Encoding").is_some() {
-        return Err("load-replay does not accept Content-Encoding".into());
+        return Err(RpcError::invalid_request(
+            "load-replay does not accept Content-Encoding",
+        ));
     }
-    let content_type = req
-        .header("Content-Type")
-        .ok_or_else(|| "load-replay requires Content-Type: application/json".to_string())?;
+    let content_type = req.header("Content-Type").ok_or_else(|| {
+        RpcError::invalid_request("load-replay requires Content-Type: application/json")
+    })?;
     let media_type = content_type.split(';').next().unwrap_or_default().trim();
     if !media_type.eq_ignore_ascii_case("application/json") {
-        return Err("load-replay requires Content-Type: application/json".into());
-    }
-    let declared = req
-        .body_length()
-        .ok_or_else(|| "load-replay requires a bounded Content-Length".to_string())?;
-    if declared > limit {
-        return Err(format!(
-            "load-replay JSON body observed {declared} bytes, limit is {limit}"
+        return Err(RpcError::invalid_request(
+            "load-replay requires Content-Type: application/json",
         ));
+    }
+    let declared = req.body_length().ok_or_else(|| {
+        RpcError::invalid_request("load-replay requires a bounded Content-Length")
+    })?;
+    if declared > limit {
+        return Err(RpcError::capacity(format!(
+            "load-replay JSON body observed {declared} bytes, limit is {limit}"
+        )));
     }
     Ok(limit)
 }

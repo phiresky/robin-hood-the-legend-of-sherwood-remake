@@ -1508,7 +1508,11 @@ impl<'de> Deserialize<'de> for ReplayExportTask {
 impl MissionEndTask<Arc<[u8]>> for ReplayExportTask {
     fn try_take(&mut self) -> Option<Result<Arc<[u8]>, String>> {
         match self.0.try_recv() {
-            Ok(result) => Some(result.map(|compact| Arc::<[u8]>::from(compact.into_bytes()))),
+            Ok(result) => Some(
+                result
+                    .map(|compact| Arc::<[u8]>::from(compact.into_bytes()))
+                    .map_err(|error| error.to_string()),
+            ),
             Err(async_channel::TryRecvError::Empty) => None,
             Err(async_channel::TryRecvError::Closed) => Some(Err(
                 "ranked replay export task stopped unexpectedly".to_owned(),
