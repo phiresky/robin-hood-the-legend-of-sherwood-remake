@@ -527,9 +527,9 @@ impl MissionBootstrap {
     /// Frontend resources may be consumed on failure, but mission ownership
     /// must remain available for the caller's campaign recovery path.
     async fn retain_during_frontend_assembly(
-        mut self,
+        mut self: Box<Self>,
         assemble: impl AsyncFnOnce(&mut Self) -> Result<InteractiveFrontendAssembly, String>,
-    ) -> (Self, Result<InteractiveFrontendAssembly, String>) {
+    ) -> (Box<Self>, Result<InteractiveFrontendAssembly, String>) {
         let result = assemble(&mut self).await;
         (self, result)
     }
@@ -858,13 +858,13 @@ impl InteractiveLoadStage {
             TerrainJoinPoint::BeforePresentationUpload,
         )?;
         Ok(LoadedInteractiveStage {
-            bootstrap: MissionBootstrap::new(
+            bootstrap: Box::new(MissionBootstrap::new(
                 MissionSpec::interactive(mission_idx, location, screen_width, screen_height),
                 self.host,
                 self.game,
                 loaded,
                 args,
-            ),
+            )),
             process,
             loading: self.loading,
         })
@@ -875,7 +875,10 @@ impl InteractiveLoadStage {
 /// complete. Its methods are intentionally ordered and guarded by
 /// `MissionBootstrapPhase`.
 struct LoadedInteractiveStage {
-    bootstrap: MissionBootstrap,
+    // The bootstrap includes the complete simulation. Keep ownership on the
+    // heap across consuming async frontend stages rather than embedding it in
+    // every nested future and its returned result.
+    bootstrap: Box<MissionBootstrap>,
     process: MissionProcessResources<DecodingInterfaceResources>,
     loading: MissionLoadingScreen,
 }
@@ -897,7 +900,7 @@ impl LoadedInteractiveStage {
         profiles: &ProfileManager,
         args: &crate::main_entry::CliArgs,
     ) -> (
-        MissionBootstrap,
+        Box<MissionBootstrap>,
         Result<InteractiveFrontendAssembly, String>,
     ) {
         let Self {
@@ -1776,8 +1779,20 @@ mod tests {
     }
 
     #[test]
+    fn frontend_retention_future_does_not_embed_the_simulation_owner() {
+        let bootstrap = Box::new(scratch_bootstrap_fixture());
+        let future = bootstrap
+            .retain_during_frontend_assembly(async |_| Err("assembly rejected".to_owned()));
+        assert!(
+            std::mem::size_of_val(&future) < 4096,
+            "frontend ownership handoff must retain a pointer, not inline simulation state: {} bytes",
+            std::mem::size_of_val(&future),
+        );
+    }
+
+    #[test]
     fn consuming_frontend_failure_retains_the_original_campaign_and_simulation() {
-        let bootstrap = scratch_bootstrap_fixture();
+        let bootstrap = Box::new(scratch_bootstrap_fixture());
         let expected_campaign = serde_json::to_value(bootstrap.loaded.engine.campaign()).unwrap();
         let original_allocation = bootstrap.loaded.engine.campaign().missions.as_ptr();
         let expected_config = bootstrap.loaded.engine_sim_config;
