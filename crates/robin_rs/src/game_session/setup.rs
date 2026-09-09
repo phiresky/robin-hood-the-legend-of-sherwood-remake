@@ -3387,8 +3387,7 @@ mod tests {
     use std::io::Write;
 
     fn interface_stage_fixture() -> ResourceManager {
-        let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
-        value["strings"] = serde_json::json!({"123": ["stage fixture"]});
+        use std::sync::Arc;
         let picture = robin_assets::picture::Picture {
             width: 2,
             height: 1,
@@ -3397,9 +3396,34 @@ mod tests {
             data: vec![0xc0, 0x07, 0xff, 0xff],
             palette: None,
         };
-        value["pictures"][resource_ids::RHID_GROUND_FOCUS.to_string()] =
-            serde_json::to_value(vec![Some(picture)]).unwrap();
-        serde_json::from_value(value).unwrap()
+        // Load a real two-entry legacy archive through the owned reader. This
+        // avoids relying on flattened JSON maps to decode integer resource IDs.
+        let mut bytes = b"SRES".to_vec();
+        bytes.extend_from_slice(&0x0100u32.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(b"PIC ");
+        bytes.extend_from_slice(&resource_ids::RHID_GROUND_FOCUS.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend(
+            picture
+                .write_sixteen_to_bytes(robin_assets::picture::SixteenPacking::None)
+                .unwrap(),
+        );
+        bytes.extend_from_slice(b"TEXT");
+        bytes.extend_from_slice(&123u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        let text: Vec<_> = "stage fixture".encode_utf16().collect();
+        bytes.extend_from_slice(&(text.len() as u16).to_le_bytes());
+        for unit in text {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let vfs = Arc::new(robin_util::asset_fs::AssetVfs::new());
+        vfs.install_preloaded_asset("stage.res", bytes).unwrap();
+        let files = Arc::new(engine_sbfile::SbFileSystem::new(vfs).snapshot());
+        let mut resources = ResourceManager::with_files(files);
+        resources.attach_resource_file("stage.res").unwrap();
+        resources
     }
 
     #[test]
