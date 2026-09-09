@@ -12,11 +12,14 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT=Path(__file__).resolve().parents[3]
-DATA=ROOT/'datadirs/fullgame_gog_hackable/Data'
+from paths import DATA
 OUT=ROOT/'level-editor/work/sherwood-refinement/animation-references'
 OUT.mkdir(parents=True,exist_ok=True)
 level=json.loads((DATA/'Levels/Sherwood.rhp.json').read_text())
 composite=Image.open(DATA/'Levels/Day/sherwood.map.png').convert('RGBA')
+from paths import OUT as PASS2
+PASS2.mkdir(parents=True,exist_ok=True)
+composite.crop((982,502,1010,588)).save(PASS2/'oak-bark-donor.png')
 records=[]
 
 
@@ -54,7 +57,8 @@ for index,item in enumerate(level['animations']):
             'blit_type':item['blit_type'],'frame_count':len(frames),
             'delays':[f['delay'] for f in frames],
             'offsets':[[f['offset_x'],f['offset_y']] for f in frames],
-            'source_frames':[str(p.relative_to(ROOT)) for p in paths]}
+            'source_data_dir':str(DATA),
+            'source_frames':[str(p.relative_to(DATA)) for p in paths]}
     if record['kind']=='tree':
         loaded=[keyed_image(p) for p in paths]
         minx=math.floor(min(f['offset_x'] for f in frames))

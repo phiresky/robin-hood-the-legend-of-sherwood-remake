@@ -28,6 +28,7 @@ const { values } = parseArgs({ options: {
     'http-wasm-gzip': { type: 'string' }, 'http-admission-gzip': { type: 'string' },
     replay: { type: 'string' }, 'replay-eof': { type: 'boolean', default: false },
     'repeat-replay': { type: 'string', multiple: true, default: [] },
+    'seek-replay': { type: 'string', multiple: true, default: [] },
     query: { type: 'string', multiple: true, default: [] },
 } });
 if (!values.pkg || !values.datadir || !values.output) throw new Error('--pkg, --datadir and --output are required');
@@ -82,6 +83,7 @@ const runtimePrefix = `/wasm/${hash}/`;
 const dataPrefix = '/datadirs/demo-leicester/';
 const preload = [];
 const { readdir } = await import('node:fs/promises');
+preload.push({ path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' });
 preload.push({ path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' });
 for (const name of (await readdir(join(core, 'Data/Interface/UI'))).sort()) {
     if (name.endsWith('.png')) preload.push({ path: `Data/Interface/UI/${name}`, url: `Data/Interface/UI/${name}` });
@@ -258,6 +260,31 @@ try {
             }
             await writeFile(output + '.eof.json', JSON.stringify({ states, finalPlayback }, null, 2));
         }
+        if (values['seek-replay'].length) {
+            if (!values['replay-eof']) throw new Error('--seek-replay requires --replay-eof');
+            const evaluateRpc = async (method, params) => {
+                const result = await send('Runtime.evaluate', {
+                    expression: `globalThis.robinRpc(${JSON.stringify(method)}, ${JSON.stringify(params)})`,
+                    awaitPromise: true, returnByValue: true,
+                });
+                if (result.exceptionDetails) throw new Error('Replay seek RPC failed: ' + JSON.stringify(result.exceptionDetails));
+                return result.result.value;
+            };
+            await evaluateRpc('set-paused', { paused: true });
+            const seeks = [];
+            for (const value of values['seek-replay']) {
+                const target = Number(value);
+                if (!Number.isSafeInteger(target) || target < 0) throw new Error('--seek-replay requires a nonnegative ordinal');
+                const result = await evaluateRpc('go-to-frame', { frame: target, auto_dismiss: true });
+                const state = await evaluateRpc('state', {});
+                if (result.frame !== target || state.replay?.frame !== target) {
+                    throw new Error('Replay seek reached wrong ordinal: ' + JSON.stringify({ target, result, state }));
+                }
+                seeks.push({ target, result, state });
+            }
+            await writeFile(output + '.seeks.json', JSON.stringify(seeks, null, 2));
+        }
+        if (logs.some(({ line }) => /replay.*desync/i.test(line))) throw new Error('Replay logged a state desync');
         const probe = await send('Runtime.evaluate', { expression: `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve({timeOrigin:performance.timeOrigin, screenshotRequestAt:performance.now(), canvas:{width:document.querySelector('#canvas').width,height:document.querySelector('#canvas').height}, resources:performance.getEntriesByType('resource').map(e=>e.toJSON()), marks:performance.getEntriesByType('mark').map(e=>e.toJSON())}))))`, awaitPromise: true, returnByValue: true });
         const page = probe.result.value;
         await sleep(500);

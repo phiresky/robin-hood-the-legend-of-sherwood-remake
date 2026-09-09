@@ -359,17 +359,10 @@ impl LocalizationService {
         self.preferences.show_in_options && self.installed.len() > 1
     }
 
-    /// Locale whose recorded samples define deterministic logical speech
-    /// duration. This is deliberately independent of the active presentation
-    /// language: multiplayer hosts publish it in the mission handshake and
-    /// every peer derives timing from this exact pack while playing its own
-    /// selected voice track.
+    /// No installed voice pack is required: all sessions use the core audio timing table.
+    /// The legacy optional handshake locale stays None for this engine-owned authority.
     pub fn canonical_speech_timing_locale(&self) -> Option<&str> {
-        self.installed
-            .iter()
-            .filter(|pack| pack.has_voice)
-            .min_by_key(|pack| (pack.locale != "en-US", pack.locale.as_str()))
-            .map(|pack| pack.locale.as_str())
+        None
     }
 
     /// Persist and atomically commit a new locale lookup generation.  The

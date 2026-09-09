@@ -818,7 +818,11 @@ impl InteractiveFrameSimulation {
                     dev,
                     &mut render_context,
                 );
-                post_render_engine_cleanup(&mut frame, host.transport.local_seat());
+                post_render_engine_cleanup(
+                    &mut frame,
+                    host.transport.local_seat(),
+                    runtime.playback().is_some(),
+                );
             }
             let menu_resources =
                 required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");
@@ -1431,7 +1435,12 @@ impl InteractiveFrameSimulation {
         // the tick: the engine state was just replaced with a
         // reconstruction of an earlier frame and must not be
         // advanced this frame.
+        let replay_idle = runtime.playback().is_some() && !frame.has_recorded_input();
         let tick_exit_code = runtime.run_simulation(|| {
+            if replay_idle {
+                frame.admit_simulation();
+                return None;
+            }
             if execution == FrameExecutionMode::Rewind {
                 return None;
             }

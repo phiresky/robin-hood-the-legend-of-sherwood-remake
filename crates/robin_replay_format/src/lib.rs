@@ -754,6 +754,12 @@ fn validate_file_for_admission(
         limits.max_total_frame_entries,
     )?;
 
+    // Embedded saves consume the same aggregate typed budget as frame inputs.
+    // They remain local/unranked because every load record derives StateLoad.
+    for load in file.load_backs.values() {
+        load.serialize(&mut budget).map_err(FormatError::from)?;
+    }
+
     let metadata_records = file
         .hashes
         .len()
@@ -2212,6 +2218,59 @@ mod tests {
         assert_limit(
             decode_compact_bounded(&encode_file(&file), &total).unwrap_err(),
             ReplayLimitKind::TotalFrameEntries,
+        );
+    }
+
+    #[test]
+    fn embedded_saves_round_trip_and_consume_admission_budget() {
+        use robin_engine::replay::{ReplayLoadBack, ReplaySaveSnapshot};
+        let mut file = sample_file();
+        file.load_backs.insert(
+            0,
+            ReplayLoadBack {
+                to_frame: 0,
+                is_continue: false,
+                snapshot: Some(ReplaySaveSnapshot {
+                    payload: vec![b' '; 4096],
+                    timeline_frame: 0,
+                }),
+            },
+        );
+        let (_, data) = decode_compact_bounded(&encode_file(&file), &Default::default()).unwrap();
+        assert_eq!(data.load_back_for_frame(0), file.load_backs.get(&0));
+        assert!(data.ranked_submission_verdict().is_err());
+        let limits = ReplayAdmissionLimits {
+            max_typed_collection_entries: 4095,
+            ..Default::default()
+        };
+        assert_limit(
+            decode_compact_bounded(&encode_file(&file), &limits).unwrap_err(),
+            ReplayLimitKind::TypedCollectionEntries,
+        );
+        file.load_backs
+            .get_mut(&0)
+            .unwrap()
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .timeline_frame = 7;
+        assert!(
+            ReplayData::try_from(file.clone())
+                .unwrap_err()
+                .contains("inconsistent timeline")
+        );
+        file.load_backs
+            .get_mut(&0)
+            .unwrap()
+            .snapshot
+            .as_mut()
+            .unwrap()
+            .payload
+            .clear();
+        assert!(
+            ReplayData::try_from(file)
+                .unwrap_err()
+                .contains("invalid embedded save")
         );
     }
 

@@ -77,6 +77,7 @@ pub(super) fn route(
 #[derive(serde::Serialize)]
 pub(super) struct AppliedLoad {
     mission_id: u32,
+    snapshot: Option<Vec<u8>>,
     identity: Option<crate::save_file::ReplaySaveIdentity>,
 }
 
@@ -106,6 +107,7 @@ impl AppliedLoad {
         };
         OperationOutcome {
             event: self.identity.map(|identity| SaveLoadEvent::LoadApplied {
+                snapshot: self.snapshot,
                 identity,
                 is_continue,
             }),
@@ -129,8 +131,12 @@ pub(super) fn apply(
     let save = save.into_payload();
     let mission_id = save.header.mission_id;
     let identity = replay_loaded_identity(&save);
+    // Dereference the process-local prepared-save wrapper: the replay carries
+    // the public save envelope, never the checkpoint's local authority.
+    let snapshot = Some(serde_json::to_vec(&*save)?);
     save.apply_to_with_game(engine, host, game, assets)?;
     Ok(AppliedLoad {
+        snapshot,
         mission_id,
         identity,
     })
@@ -188,6 +194,16 @@ mod tests {
         assert_eq!(engine.frame_counter(), 41);
         assert_eq!(applied.mission_id(), 17);
         let outcome = applied.outcome(LoadCompletion::Quick);
+        let super::SaveLoadEvent::LoadApplied {
+            snapshot: Some(snapshot),
+            ..
+        } = outcome.event.as_ref().expect("successful load receipt")
+        else {
+            panic!("successful load must carry its replay save payload");
+        };
+        let embedded: crate::save_file::GameSaveFile = serde_json::from_slice(snapshot).unwrap();
+        embedded.validate_current_schema().unwrap();
+        assert_eq!(embedded.engine.frame_counter(), 41);
         assert!(outcome.processed() && outcome.reset_input());
         assert_eq!(outcome.banner, Some(SaveBannerKind::Loaded));
         assert!(!outcome.restore().unwrap().is_continue);
@@ -261,6 +277,7 @@ mod tests {
         ] {
             // Reducer-only fixture: no claim that an engine was applied here.
             let receipt = AppliedLoad {
+                snapshot: None,
                 mission_id: 17,
                 identity: None,
             };

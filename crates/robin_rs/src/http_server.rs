@@ -203,9 +203,8 @@ pub enum HttpPayload {
     StepForward { request: StepRequest },
     /// `POST /step-back` — rewind `n` frames synchronously.
     StepBack { request: StepRequest },
-    /// `POST /go-to-frame` — absolute seek to `target` frame.
-    /// Internally decomposes into a forward or backward step
-    /// depending on the current frame.  Replay scrubbing uses this.
+    /// `POST /go-to-frame` — absolute simulation-frame seek in live play,
+    /// or dense recording-ordinal seek during replay.
     GoToFrame {
         target: u32,
         modal_policy: StepModalPolicy,
@@ -1696,8 +1695,8 @@ pub enum StepKind {
         n: u32,
         modal_policy: StepModalPolicy,
     },
-    /// Absolute seek — no-op if `target == sim_frame`, decomposes into
-    /// a forward or back step otherwise.  Replay scrubbing uses this.
+    /// Absolute simulation-frame seek in live play; dense recording-ordinal
+    /// seek during replay, so reloads and stationary records remain addressable.
     GoToFrame {
         target: u32,
         modal_policy: StepModalPolicy,

@@ -3,6 +3,11 @@
   "shippingDatadirSchema": 16,
   "files": [
     {
+      "path": "Data/AudioDurations.json",
+      "size": 222794,
+      "sha256": "a691fc39a0536746b749d1fd3af88527c5812dd4b36b21f8be4b40f2507d6ba7"
+    },
+    {
       "path": "Data/Interface/Fonts/Debrief.bfn",
       "size": 37988,
       "sha256": "b558b72255cfd3d3d04ae5c4fa0752203cd7e212090bed3c2a35dad364d6ec81"

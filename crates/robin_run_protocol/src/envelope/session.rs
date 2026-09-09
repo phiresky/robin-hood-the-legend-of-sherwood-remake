@@ -23,6 +23,8 @@ use std::collections::BTreeSet;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SpeechTimingAuthorityV1 {
+    /// Required English timing metadata in the engine core datadir.
+    CoreAudioDurationsV1,
     /// Validated base `Data/Sounds` timing with no locale override.
     BaseInstallation,
     LanguagePack {
@@ -33,7 +35,7 @@ pub enum SpeechTimingAuthorityV1 {
 impl SpeechTimingAuthorityV1 {
     pub(super) fn validate(&self) -> Result<(), ValidationError> {
         match self {
-            Self::BaseInstallation => Ok(()),
+            Self::BaseInstallation | Self::CoreAudioDurationsV1 => Ok(()),
             Self::LanguagePack { canonical_locale } => {
                 crate::validation::text(
                     "ranked_session.speech_timing.canonical_locale",
@@ -203,6 +205,9 @@ impl RankedSessionConfigV1 {
             (
                 SpeechTimingAuthorityV1::BaseInstallation,
                 SimulationSpeechTimingSourceV1::BaseInstallation
+            ) | (
+                SpeechTimingAuthorityV1::CoreAudioDurationsV1,
+                SimulationSpeechTimingSourceV1::CoreAudioDurationsV1
             )
         ) || matches!(
             (&self.speech_timing, &manifest.speech_timing),

@@ -37,7 +37,7 @@ function log(name, value) { appendFileSync(join(evidence, name), JSON.stringify(
 const cert = join(evidence, 'localhost-cert.pem'), key = join(evidence, 'localhost-key.pem');
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-keyout', key,
     '-out', cert, '-subj', '/CN=robinhood.phiresky.xyz', '-addext', `subjectAltName=DNS:${gameHost},DNS:${signerHost}`], { stdio: 'ignore' });
-const preload = ['Data/Interface/Fonts/arial.ttf', ...readdirSync('assets/core-datadir/Data/Interface/UI')
+const preload = ['Data/AudioDurations.json', 'Data/Interface/Fonts/arial.ttf', ...readdirSync('assets/core-datadir/Data/Interface/UI')
     .filter(name => name.endsWith('.png')).map(name => `Data/Interface/UI/${name}`)];
 function headers(kind, path) {
     const output = {}; let active = false;

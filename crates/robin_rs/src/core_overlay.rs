@@ -31,6 +31,7 @@ pub const CORE_OVERLAY_MANIFEST_SCHEMA: u32 = 1;
 /// error, rather than turning an incomplete package into a self-consistent
 /// one.
 pub const EXPECTED_CORE_OVERLAY_PATHS: &[&str] = &[
+    "Data/AudioDurations.json",
     "Data/Interface/Fonts/Debrief.bfn",
     "Data/Interface/Fonts/EditFields.bfn",
     "Data/Interface/Fonts/InfoScroll.bfn",

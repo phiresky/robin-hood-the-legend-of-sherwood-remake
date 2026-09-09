@@ -19,6 +19,33 @@ pub struct ReplayRecorder {
 }
 
 impl ReplayRecorder {
+    /// Dense mission-wide cursor, including host-only save boundaries.
+    pub fn next_ordinal(&self) -> u32 {
+        self.next_expected_ordinal
+    }
+
+    pub fn recording_header(&self) -> &ReplayHeader {
+        &self.initial_header
+    }
+
+    /// Continue a validated mission prefix in a new physical chunk. The writer
+    /// receives a header for that chunk; archive assembly keeps only the root header.
+    pub fn continue_recording(
+        writer: Box<dyn std::io::Write + Send>,
+        header: ReplayHeader,
+        next_ordinal: u32,
+    ) -> std::io::Result<Self> {
+        let mut recorder = Self::from_recording_header(writer, header)?;
+        recorder.next_expected_ordinal = next_ordinal;
+        Ok(recorder)
+    }
+
+    /// Save publication must observe a failed recording write. Frame recording
+    /// can log errors, but must never publish a save pointing at missing bytes.
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
+    }
+
     /// Create a recorder that streams to `path`.  Writes the header
     /// immediately; returns `Err` if the file can't be created.
     pub fn new(
@@ -260,7 +287,36 @@ impl ReplayRecorder {
             h: None,
             sv: None,
             lb: Some(ReplayLoadBack {
+                snapshot: None,
                 to_frame,
+                is_continue,
+            }),
+            t: Vec::new(),
+        });
+    }
+
+    /// Restore an external save at this boundary without a timeline marker.
+    pub fn write_load_snapshot(
+        &mut self,
+        ordinal: u32,
+        snapshot: Vec<u8>,
+        timeline_frame: u32,
+        is_continue: bool,
+    ) {
+        assert_eq!(ordinal, self.next_expected_ordinal);
+        assert!(!snapshot.is_empty(), "embedded save must not be empty");
+        self.boundary_metadata_pending = true;
+        self.write_record(&FrameRecord {
+            f: ordinal,
+            i: None,
+            h: None,
+            sv: None,
+            lb: Some(ReplayLoadBack {
+                snapshot: Some(ReplaySaveSnapshot {
+                    payload: snapshot,
+                    timeline_frame,
+                }),
+                to_frame: ordinal,
                 is_continue,
             }),
             t: Vec::new(),

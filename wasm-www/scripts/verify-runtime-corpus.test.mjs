@@ -122,9 +122,11 @@ async function runtimeAddition(buildShort = short) {
     await writeFile(resolve(build, 'robin.js.gz'), 'compressed js fixture');
     await writeFile(resolve(build, 'robin_bg.wasm'), wasm);
     await writeFile(resolve(build, 'robin_bg.wasm.gz'), wasmGzip);
+    await writeFile(resolve(build, 'Data/AudioDurations.json'), '{}');
     await writeFile(resolve(build, 'Data/Interface/Fonts/arial.ttf'), 'font fixture');
     await writeFile(resolve(build, 'Data/Interface/UI/marker.png'), 'image fixture');
     await writeFile(resolve(build, 'preload-assets.json'), `${JSON.stringify([
+        { path: 'Data/AudioDurations.json', url: 'Data/AudioDurations.json' },
         { path: 'Data/Interface/Fonts/arial.ttf', url: 'Data/Interface/Fonts/arial.ttf' },
         { path: 'Data/Interface/UI/marker.png', url: 'Data/Interface/UI/marker.png' },
     ], null, 2)}\n`);
@@ -216,7 +218,7 @@ test('runtime is wasm-only and requires the exact external authority plus deploy
     ]));
 
     await assert.rejects(verifyRuntimeCorpus(addition, { addition: true, expectedContract: contract }), /missing replay admission/);
-    assert.equal((await verifyRuntimeCorpus(addition, { addition: true })).assetCount, 10);
+    assert.equal((await verifyRuntimeCorpus(addition, { addition: true })).assetCount, 11);
     const assembled = await assembleRuntimeCorpus({
         existing: null,
         addition,
@@ -224,7 +226,7 @@ test('runtime is wasm-only and requires the exact external authority plus deploy
         datadirDeployment: release.receipt,
         output,
     });
-    assert.equal(assembled.assetCount, 11);
+    assert.equal(assembled.assetCount, 12);
     await assert.rejects(verifyRuntimeCorpus(output), /requires the external datadir/u);
     assert.equal((await verifyRuntimeCorpus(output, {
         datadirAuthorityPath: release.authority,
@@ -279,7 +281,7 @@ test('runtime update retains immutable wasm versions and never imports the datad
         existing: original, addition: second, datadirAuthority: release.authority,
         datadirDeployment: release.receipt, output: updated,
     });
-    assert.equal(result.assetCount, 20);
+    assert.equal(result.assetCount, 22);
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/latest.json'))).short, '222222222222');
     assert.equal(JSON.parse(await readFile(resolve(updated, 'wasm/111111111111/manifest.json'))).short, '111111111111');
     await assert.rejects(readFile(resolve(updated, DEMO_CONTENT_MANIFEST_PATH)), /ENOENT/u);

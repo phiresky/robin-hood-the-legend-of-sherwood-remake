@@ -58,13 +58,15 @@ pub(super) use admission::{
 /// `BrowseOnly` is a deliberate state, not a failed attempt to invent the
 /// missing signatures later. The authorized arm is the sole integration seam
 /// for the ranked-session setup flow.
-pub(super) enum RankedMissionAdmission {
+#[derive(Clone)]
+pub(crate) enum RankedMissionAdmission {
     BrowseOnly { reason: String },
     Authorized(MissionEndSubmissionInput),
     Signed(SignedRankedMissionAdmission),
 }
 
-pub(super) struct SignedRankedMissionAdmission {
+#[derive(Clone)]
+pub(crate) struct SignedRankedMissionAdmission {
     lifecycle: crate::leaderboard_ranked_session::SharedRankedSessionLifecycle,
     scope_request: ScopeRequestV1,
     requested_metrics: Vec<BoardMetricV1>,
@@ -72,6 +74,24 @@ pub(super) struct SignedRankedMissionAdmission {
 }
 
 impl RankedMissionAdmission {
+    /// Public signed documents only; no private signer or live transport state.
+    pub(crate) fn archive_input(
+        &self,
+        replay: &robin_engine::replay::ReplayData,
+    ) -> Result<Option<MissionEndSubmissionInput>, String> {
+        let mut copy = self.clone();
+        copy.materialize_terminal_from_replay(
+            &replay.header().mission_id,
+            replay.header().campaign.clone().into(),
+            replay,
+        )?;
+        match copy {
+            Self::Authorized(input) => Ok(Some(input)),
+            Self::BrowseOnly { .. } => Ok(None),
+            Self::Signed(_) => Err("ranked evidence remained unresolved".into()),
+        }
+    }
+
     fn browse_only(reason: impl Into<String>) -> Self {
         let reason = reason.into();
         assert!(!reason.is_empty(), "browse-only admission needs a reason");
@@ -172,6 +192,37 @@ impl RankedMissionAdmission {
     }
 }
 
+/// Restored files carry signed evidence, not permission to invent a genesis.
+/// Submission still passes the normal authorizer and server preflight checks.
+fn validate_archived_ranked_input(
+    input: &MissionEndSubmissionInput,
+    replay: &robin_engine::replay::ReplayData,
+) -> Result<(), String> {
+    input.validate().map_err(|error| error.to_string())?;
+    if input.starting_campaign_bytes.as_ref() != replay.header().campaign.as_slice()
+        || input.offer_request.mission_id != replay.header().mission_id
+    {
+        return Err("archived ranked admission does not match the mission recording root".into());
+    }
+    let genesis = &input.offer_request.session_genesis;
+    crate::leaderboard_ranked_session::validate_session_genesis(
+        genesis,
+        *genesis.claim.host_public_key.as_bytes(),
+        &genesis.claim.ranked_session,
+    )
+    .map_err(|error| error.to_string())?;
+    crate::leaderboard_ranked_session::validate_transcript_against_local_replay(
+        replay,
+        genesis,
+        &input.offer_request.participant_claims,
+        &input.replay_session_transcript,
+    )
+    .map_err(|error| error.to_string())?;
+    replay
+        .ranked_submission_verdict()
+        .map_err(|error| format!("mission replay is ineligible: {error:?}"))
+}
+
 enum MetadataLoad {
     Loading(LeaderboardBrowser),
     Ready(LeaderboardMetadataV1),
@@ -239,9 +290,9 @@ impl MissionLeaderboardRuntime {
     }
 
     /// Restoring state after terminal presentation starts a new local attempt.
-    /// Its previous signed admission and frozen replay belong to the completed
-    /// attempt and must never be reused. Ordinary mid-mission loads leave the
-    /// still-unconsumed preparation alone.
+    /// Its frozen export belongs to the completed attempt. The next export
+    /// adopts the original signed admission only after validating the resumed
+    /// mission archive. Mid-mission loads keep the existing preparation.
     pub(super) fn after_state_restore(&mut self, campaign: &Campaign) {
         if self.preparation.is_some() {
             return;
@@ -251,7 +302,7 @@ impl MissionLeaderboardRuntime {
             self.mission_id.clone(),
             self.multiplayer,
             RankedMissionAdmission::browse_only(
-                "state restored after the completed attempt; a new ranked admission is required",
+                "restored mission requires its original archived ranked admission",
             ),
             None,
         );
@@ -297,6 +348,21 @@ impl MissionEndPreparation {
         &mut self,
         replay_exports: &crate::replay_service::ReplayExports,
     ) -> Option<Result<MissionEndRunBundle, String>> {
+        if let Some(restored) = replay_exports.restored_ranked_input() {
+            match restored.and_then(|input| {
+                let replay = replay_exports.snapshot()?.parse_sync()?;
+                validate_archived_ranked_input(&input, &replay)?;
+                Ok(input)
+            }) {
+                Ok(input) => {
+                    self.starting_campaign_bytes = input.starting_campaign_bytes.clone();
+                    self.admission = RankedMissionAdmission::Authorized(input);
+                }
+                Err(error) => {
+                    self.admission = RankedMissionAdmission::browse_only(error);
+                }
+            }
+        }
         let authors_submission = self
             .ranked_multiplayer_port
             .as_ref()
@@ -818,7 +884,7 @@ mod tests {
             bitcode::encode(engine.campaign())
         );
         assert!(
-            matches!(second.admission, RankedMissionAdmission::BrowseOnly { ref reason } if reason.contains("new ranked admission"))
+            matches!(second.admission, RankedMissionAdmission::BrowseOnly { ref reason } if reason.contains("original archived ranked admission"))
         );
         assert!(second.ranked_multiplayer_port.is_none());
         assert!(runtime.capture_terminal(MissionEndOutcome::Lost).is_err());
@@ -1152,6 +1218,128 @@ mod tests {
 
         claim.predecessor_verification_sha256 = digest(0xaa);
         assert!(validate_controller_preflight_claim(&claim, &selection, host, controller).is_err());
+    }
+
+    #[test]
+    fn archived_admission_survives_process_restart_and_uses_the_normal_board() {
+        use crate::replay_archive::MissionArchive;
+        use crate::replay_recording::SharedReplayRecorder;
+        use crate::save_file::{GameSaveFile, SaveProvenance};
+        use robin_engine::replay::ReplayRecorder;
+
+        let directory = tempfile::tempdir().unwrap();
+        let mut assets = robin_engine::engine::LevelAssets::new();
+        let mut engine = robin_engine::engine::Engine::new_for_test(
+            1024.0,
+            768.0,
+            Campaign::default(),
+            &mut assets,
+        )
+        .unwrap();
+        let campaign_bytes = bitcode::encode(engine.campaign());
+        let (admission, replay) = signed_single_player_admission(&campaign_bytes);
+        let service = Arc::new(crate::replay_service::ReplayService::default());
+        let archive = MissionArchive::create(&directory.path().join("original")).unwrap();
+        let recorder = ReplayRecorder::with_writer(
+            crate::game_session::replay_init::root_writer(
+                archive.writer().unwrap(),
+                service.recording().begin_recording(),
+            ),
+            replay.header().mission_id.clone(),
+            replay.header().mission_assets.clone(),
+            7,
+            engine.sim_config(),
+            engine.campaign(),
+        )
+        .unwrap();
+        let recorder = SharedReplayRecorder::archived(recorder, archive);
+        service
+            .recording()
+            .install_capture_recorder(Some(recorder.clone()));
+        service.recording().set_ranked_source(admission);
+        let mut host = crate::host::Host::scratch(1024.0, 768.0);
+        let mut game = crate::game::Game::default();
+        let mut save = GameSaveFile::capture_with_game(
+            &engine,
+            &host,
+            &game,
+            1,
+            replay.header().mission_assets.clone(),
+            "ranked checkpoint".into(),
+            SaveProvenance::new("Mission".into(), 0, "Player".into()).unwrap(),
+        )
+        .unwrap();
+        save.header.replay = service.recording().capture_save(&save).unwrap();
+        let original: MissionEndSubmissionInput = serde_json::from_slice(
+            &std::fs::read(directory.path().join("original/ranked.json")).unwrap(),
+        )
+        .unwrap();
+        drop(recorder);
+        drop(service);
+
+        let service = Arc::new(crate::replay_service::ReplayService::default());
+        let archive = MissionArchive::create(&directory.path().join("new-process")).unwrap();
+        let recorder = ReplayRecorder::with_writer(
+            crate::game_session::replay_init::root_writer(
+                archive.writer().unwrap(),
+                service.recording().begin_recording(),
+            ),
+            replay.header().mission_id.clone(),
+            replay.header().mission_assets.clone(),
+            7,
+            engine.sim_config(),
+            engine.campaign(),
+        )
+        .unwrap();
+        let recorder = SharedReplayRecorder::archived(recorder, archive);
+        service
+            .recording()
+            .install_capture_recorder(Some(recorder.clone()));
+        save.clone()
+            .apply_to_with_game(&mut engine, &mut host, &mut game, &assets)
+            .unwrap();
+        let (ordinal, timeline, target) = recorder
+            .restore(
+                &save,
+                &service.recording(),
+                &crate::mission_replays::RecordingIndex::disabled(),
+            )
+            .unwrap();
+        recorder.write_load_back(ordinal, target.unwrap(), false);
+        recorder
+            .commit_restore_boundary(timeline, robin_engine::replay::state_hash(&engine))
+            .unwrap();
+        let restored = service.exports().restored_ranked_input().unwrap().unwrap();
+        assert_eq!(
+            restored, original,
+            "the original signatures and campaign must survive, without minting new admission"
+        );
+        let data = service.exports().snapshot().unwrap().parse_sync().unwrap();
+        validate_archived_ranked_input(&restored, &data).unwrap();
+        let mut preparation = MissionEndPreparation {
+            mission_id: replay.header().mission_id.clone(),
+            multiplayer: false,
+            starting_campaign_bytes: Arc::from(b"unrelated fresh startup".as_slice()),
+            admission: RankedMissionAdmission::browse_only("fresh process has no admission"),
+            ranked_multiplayer_port: None,
+            preferences: LeaderboardPreferences::default(),
+            metadata: MetadataLoad::Failed("metadata must not block signed submission".into()),
+            outcome: Some(MissionEndOutcome::Won),
+        };
+        let bundle = preparation
+            .poll_bundle(&service.exports())
+            .unwrap()
+            .unwrap();
+        assert_eq!(bundle.eligible_submission.unwrap(), original);
+        assert!(
+            bundle.boards.iter().all(|board| matches!(
+                board.query.subject_kind,
+                LeaderboardQuerySubjectV1::Mission
+            ))
+        );
+        let mut forged = restored;
+        forged.offer_request.session_genesis.host_signature = Signature64::from_bytes([0x55; 64]);
+        assert!(validate_archived_ranked_input(&forged, &data).is_err());
     }
 
     #[test]

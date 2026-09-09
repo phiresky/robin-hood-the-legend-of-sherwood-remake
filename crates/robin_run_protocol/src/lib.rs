@@ -154,13 +154,13 @@ pub const HIGHSCORES_DATABASE_SCHEMA_VERSION: i64 = 2;
 /// Exact save format emitted by a build eligible for the current ranked
 /// replay contract. The engine and ranking-service publication gate share
 /// this constant so a stale build cannot be advertised as current.
-pub const CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1: u32 = 74;
+pub const CURRENT_RANKED_SAVE_SCHEMA_VERSION_V1: u32 = 75;
 
 /// Exact replay schema whose compact bitcode bytes are simultaneously the
 /// submitted, verifier-resimulated, retained, and publicly downloadable
 /// artifact. Older Rust schemas are intentionally outside the service
 /// contract and must be rejected rather than normalized.
-pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 32;
+pub const CURRENT_RANKED_REPLAY_SCHEMA_VERSION_V1: u32 = 33;
 
 /// Exact multiplayer wire protocol carried by current ranked session genesis,
 /// build manifests, and immutable ruleset allowlists. A current replay schema
