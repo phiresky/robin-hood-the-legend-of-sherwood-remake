@@ -134,8 +134,11 @@ fn apply_restored_mission(
     assets: &LevelAssets,
 ) -> std::result::Result<(), SnapshotRestoreError> {
     let draw_hidden = game_persistent.draw_hidden;
-    *engine =
-        Engine::restore_from_snapshot(&mut host.frontend.engine_display, restored_engine, assets)?;
+    *engine = Engine::restore_from_snapshot(
+        &mut host.frontend.presentation.engine_display,
+        restored_engine,
+        assets,
+    )?;
     host.audio.sound = restored_sound;
     host.audio.sound.after_load(&engine.sound_sim().sources);
     host.post_load_reset();

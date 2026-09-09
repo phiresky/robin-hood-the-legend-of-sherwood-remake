@@ -316,6 +316,7 @@ fn timeline_replay_matches_the_supported_public_hourglass_transaction() {
     let mut facade_host = Host::scratch(1024.0, 768.0);
     facade_host
         .frontend
+        .presentation
         .engine_display
         .display_minimap(true, false);
     let mut facade_dev = DevState::default();

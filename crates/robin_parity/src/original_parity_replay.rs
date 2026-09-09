@@ -4739,24 +4739,43 @@ impl VisualReplay {
             }
             let bank_id = sprite.bank_id_for(sprite.current_row, sprite.current_frame);
             if !self.sprite_images.contains_key(&bank_id) {
-                let width = self.host.frontend.frame_holder().sprite_width(bank_id);
-                let height = self.host.frontend.frame_holder().sprite_height(bank_id);
+                let width = self
+                    .host
+                    .frontend
+                    .resources
+                    .frame_holder()
+                    .sprite_width(bank_id);
+                let height = self
+                    .host
+                    .frontend
+                    .resources
+                    .frame_holder()
+                    .sprite_height(bank_id);
                 if width == 0 || height == 0 {
                     continue;
                 }
-                let rgba = if let Some(rgba) = self.host.frontend.frame_holder().rgba_data(bank_id)
+                let rgba = if let Some(rgba) = self
+                    .host
+                    .frontend
+                    .resources
+                    .frame_holder()
+                    .rgba_data(bank_id)
                 {
                     rgba.to_vec()
                 } else {
                     let mut pixels = vec![0_u16; usize::from(width) * usize::from(height)];
-                    self.host.frontend.frame_holder().uncompress_frame(
-                        &mut pixels,
-                        usize::from(width),
-                        bank_id,
-                        robin_assets::frame_holder::SpriteVariant::Day,
-                        engine.weather().night_color,
-                        16,
-                    );
+                    self.host
+                        .frontend
+                        .resources
+                        .frame_holder()
+                        .uncompress_frame(
+                            &mut pixels,
+                            usize::from(width),
+                            bank_id,
+                            robin_assets::frame_holder::SpriteVariant::Day,
+                            engine.weather().night_color,
+                            16,
+                        );
                     let mut rgba = Vec::with_capacity(pixels.len() * 4);
                     for pixel in pixels {
                         if pixel == robin_assets::frame_holder::TRANSPARENT_COLOR_16 {
@@ -5887,10 +5906,11 @@ fn initialize_engine(
     let menu_text = robin_rs::ingame_menu::resources::MenuText::load(&mut text_res);
     let mut host = Host::scratch(1024.0, 768.0);
     host.frontend
+        .resources
         .frame_holder_before_publication_mut()
         .initialize_sprite_bank(".")
         .expect("initialize sprite bank");
-    assets.bank_signature = host.frontend.frame_holder().signature();
+    assets.bank_signature = host.frontend.resources.frame_holder().signature();
 
     let mission_name = campaign.missions[mission_idx]
         .profile(&profiles)
@@ -5961,7 +5981,7 @@ fn initialize_engine(
     // dimensions into the serialized sprite frontier. The parity engine is
     // intentionally headless, so publish the immutable frame metadata used
     // to project that post-render state without mutating the simulation.
-    assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    assets.attachments.pixel_opacity = Some(host.frontend.resources.publish_frame_holder_opacity());
     (engine, assets, host, background, scb, menu_text)
 }
 

@@ -382,7 +382,7 @@ pub(super) fn run_replay(options: Options, visual_window: Option<ClientWindow>) 
         #[cfg(feature = "client")]
         {
             loaded.apply_display_to(&mut display);
-            loaded.apply_display_to(&mut host.frontend.engine_display);
+            loaded.apply_display_to(&mut host.frontend.presentation.engine_display);
             selected_view_element = loaded.selected_view_element();
             host.frontend
                 .set_selected_view_element(selected_view_element);

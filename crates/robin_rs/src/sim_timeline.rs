@@ -44,7 +44,7 @@ pub fn run_engine_frame_core(
     .flatten()
     {
         let side_effects = prepare_display_effects(
-            &mut frontend.engine_display,
+            &mut frontend.presentation.engine_display,
             &mut frontend.input,
             dev,
             events.into_side_effects(),

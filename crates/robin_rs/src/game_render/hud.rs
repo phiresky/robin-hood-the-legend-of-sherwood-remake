@@ -321,7 +321,7 @@ pub(crate) fn render_item_effect_preview(
     };
 
     if let Some(radius) = preview.radius {
-        host.frontend.draw_manager.draw_circle(
+        host.frontend.presentation.draw_manager.draw_circle(
             renderer,
             preview.center,
             radius,
@@ -392,7 +392,7 @@ pub(crate) fn render_listen_ping(
             }
             _ => continue,
         };
-        host.frontend.draw_manager.draw_circle(
+        host.frontend.presentation.draw_manager.draw_circle(
             renderer, position, radius, 0xFFFF, // white
         );
     }

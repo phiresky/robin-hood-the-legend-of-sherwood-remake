@@ -112,7 +112,7 @@ impl MissionEngineResources {
             host.preparation_files()
                 .map_err(ResourcePreparationError::MissingAuthority)?
                 .clone(),
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
         )
     }
 

@@ -559,7 +559,7 @@ impl Game {
         // and re-selecting after an idle period would jump to a
         // different visible frame.
         if frame.run_hourglass && engine.any_selection_drawing_selection_mark(local_seat) {
-            frontend.selection_mark.tick();
+            frontend.presentation.selection_mark.tick();
         }
         let viewport = &frontend.viewport;
         let view_position = viewport.view_position.to_geo();

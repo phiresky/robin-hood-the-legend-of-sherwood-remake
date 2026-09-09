@@ -34,7 +34,7 @@ pub(crate) fn render_shadow_polygon_sphere_debug(
     else {
         return;
     };
-    host.frontend.draw_manager.draw_ellipse(
+    host.frontend.presentation.draw_manager.draw_ellipse(
         renderer,
         engine_coordinates::MapPoint::new(viewer.x, viewer.y),
         params.radius as u16,
@@ -562,6 +562,7 @@ pub(crate) fn render_noise_display(
         let mut closed = sector.points.clone();
         closed.push(sector.points[0]);
         host.frontend
+            .presentation
             .draw_manager
             .draw_polyline(renderer, &closed, 0x00AF);
     }
@@ -593,7 +594,11 @@ pub(crate) fn render_noise_display(
                 GameMaterial::LightShadow => "shadow",
             };
             // Offset (+10, -40) from the centre, in screen space.
-            let screen = host.frontend.draw_manager.map_to_screen(origin);
+            let screen = host
+                .frontend
+                .presentation
+                .draw_manager
+                .map_to_screen(origin);
             render_text_with_shadow(
                 renderer,
                 fonts,
@@ -611,6 +616,7 @@ pub(crate) fn render_noise_display(
         let mut r = start_radius;
         while r < effective {
             host.frontend
+                .presentation
                 .draw_manager
                 .draw_ellipse(renderer, origin, r, 0xFFFF);
             r = r.saturating_add(CIRCLE_DISTANCE);
@@ -628,6 +634,7 @@ pub(crate) fn render_noise_display(
         let mut r = displayed.start_radius;
         while r < effective {
             host.frontend
+                .presentation
                 .draw_manager
                 .draw_ellipse(renderer, origin, r, 0xFFFF);
             r = r.saturating_add(CIRCLE_DISTANCE);
@@ -646,7 +653,7 @@ pub(crate) fn render_noise_display(
             let r2 = effective as f32 * effective as f32 - (sw_height * sw_height) as f32;
             if r2 > 0.0 {
                 let radius = r2.sqrt() as u16;
-                host.frontend.draw_manager.draw_ellipse(
+                host.frontend.presentation.draw_manager.draw_ellipse(
                     renderer,
                     engine_coordinates::MapPoint::new(origin.x, origin.y - sw_height as f32),
                     radius,
@@ -674,6 +681,7 @@ pub(crate) fn render_noise_display(
         if radius > 0 {
             let pos = entity.element_data().position_map();
             host.frontend
+                .presentation
                 .draw_manager
                 .draw_ellipse(renderer, pos, radius, 0x0000);
         }
@@ -701,6 +709,7 @@ pub(crate) fn render_debug_animation_lines(
         let color: u16 = if entity.is_active() { 0xFFFF } else { 0xFA00 };
 
         host.frontend
+            .presentation
             .draw_manager
             .draw_polyline(renderer, polyline, color);
     }

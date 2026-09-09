@@ -179,7 +179,10 @@ pub fn initialize_sprite_variants_for_ambiance(
     ambiance: Ambiance,
     bypass_fog_sprites_crash: bool,
 ) {
-    let fh = host.frontend.frame_holder_before_publication_mut();
+    let fh = host
+        .frontend
+        .resources
+        .frame_holder_before_publication_mut();
     // When the launcher flag `bypass_fog_sprites_crash` is on, drop both
     // Night and Fog dictionaries regardless of ambiance and skip the
     // shadow-value set — the renderer then falls back to
@@ -867,7 +870,7 @@ pub fn apply_background_map(
     }
 
     timer.step("occlusion depth");
-    host.frontend.clear_background_decals();
+    host.frontend.resources.clear_background_decals();
 }
 
 /// Decode the minimap bitmap from disk (or the shipping bundle).
@@ -1013,6 +1016,7 @@ pub fn apply_minimap(
         .expect("apply_minimap: decoded minimap dimensions must match RGB565 payload");
     let surface_handle = surface.handle();
     host.frontend
+        .resources
         .mission_surfaces
         .replace_map(renderer, surface);
 

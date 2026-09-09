@@ -182,10 +182,10 @@ fn apply_frame_resizes(
     host.frontend.viewport.set_screen_size(w, h);
     game.set_resolution(new_w as u16, new_h as u16);
     input.resize(new_w, new_h, host.frontend.preferences().key_config());
-    if host.frontend.mission_surfaces.corner_size().x > 0.0 {
+    if host.frontend.resources.mission_surfaces.corner_size().x > 0.0 {
         let cmd = PlayerCommand::MinimapResize {
             base: engine_coordinates::ScreenPoint::new(w - 83.0, 38.0),
-            corner_size: host.frontend.mission_surfaces.corner_size(),
+            corner_size: host.frontend.resources.mission_surfaces.corner_size(),
         };
         dispatch_local_command(&host.transport, &mut frame.stage_commands(), &cmd);
     }
@@ -312,7 +312,8 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         .plan
     };
     let corner_enable = CornerButtonEnable::from_engine(&manager.engine);
-    let zoom_enable = ZoomButtonEnable::from_engine(&manager.engine, &host.frontend.engine_display);
+    let zoom_enable =
+        ZoomButtonEnable::from_engine(&manager.engine, &host.frontend.presentation.engine_display);
     let stature = manager.engine.retrieve_stature(None);
     game.stature_focus.maybe_clear(stature);
     let stature_enable = StatureEnable::from_stature(stature).with_focus_latch(game.stature_focus);

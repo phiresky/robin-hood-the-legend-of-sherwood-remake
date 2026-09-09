@@ -127,7 +127,7 @@ pub(super) fn setup_mission_audio(
     let loader = crate::audio_backend::create_sample_loader_with_files(
         std::path::PathBuf::from(sound_dir),
         host.preparation_files()?.clone(),
-        host.frontend.shipping.clone(),
+        host.frontend.resources.shipping.clone(),
     );
 
     // Initialize music pools from the mission profile.
@@ -244,13 +244,13 @@ fn canonical_speech_timing_inputs(
                 std::path::PathBuf::from(sound_dir),
                 pack.clone(),
                 host.preparation_files()?.clone(),
-                host.frontend.shipping.clone(),
+                host.frontend.resources.shipping.clone(),
             );
             let mut cache = engine_sound_cache::SoundCache::new();
             let canonical_exclamations =
                 crate::process_asset_cache::build_exclamations_for_language(
                     &pack,
-                    host.frontend.shipping.as_deref(),
+                    host.frontend.resources.shipping.as_deref(),
                     profiles,
                     host.preparation_files()?.clone(),
                 )
@@ -272,7 +272,7 @@ fn canonical_speech_timing_inputs(
                 crate::audio_backend::create_sample_loader_with_files(
                     std::path::PathBuf::from(sound_dir),
                     host.preparation_files()?.clone(),
-                    host.frontend.shipping.clone(),
+                    host.frontend.resources.shipping.clone(),
                 ),
                 host.audio.sound.sound_cache().speech_cache.clone(),
             ))
@@ -290,7 +290,7 @@ fn initialize_mission_sound_caches(
     // source closure: IndexedCache correctly rejects duplicate group IDs.
     host.audio.sound.sound_cache_mut().flush(true);
     let asset_cache = host.application_context().asset_cache()?.get_or_build(
-        host.frontend.shipping.as_deref(),
+        host.frontend.resources.shipping.as_deref(),
         profiles,
         files,
     );
@@ -641,7 +641,7 @@ pub(super) fn pre_decode_maps_and_resources(
             descriptor_mission_id(campaign, profiles, files).map_err(|error| error.to_string())?;
         crate::mission_descriptors::for_presentation(
             host.application_context(),
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
             mission_id,
         )
     };
@@ -724,7 +724,10 @@ pub(super) fn load_mission_sprites(
     // `cursor_res` (DEFAULT.RES) was pre-attached above while the
     // loading screen was still visible.
     let mut timer = PhaseTimer::new("mission sprite setup");
-    host.frontend.mission_surfaces.retire_sprites(renderer);
+    host.frontend
+        .resources
+        .mission_surfaces
+        .retire_sprites(renderer);
     let mut cursor_renderer = CursorRenderer::new();
     cursor_renderer.init(renderer);
 
@@ -754,7 +757,7 @@ pub(super) fn load_mission_sprites(
                     Vec::new()
                 }
             };
-            host.frontend.mission_surfaces.replace_corners(
+            host.frontend.resources.mission_surfaces.replace_corners(
                 renderer,
                 ScreenSize::new(btn_w as f32, btn_h as f32),
                 corner_surfaces,
@@ -764,24 +767,28 @@ pub(super) fn load_mission_sprites(
                 btn_w,
                 btn_h,
                 host.frontend
+                    .presentation
                     .engine_display
                     .minimap()
                     .button_box()
                     .top_left()
                     .x,
                 host.frontend
+                    .presentation
                     .engine_display
                     .minimap()
                     .button_box()
                     .top_left()
                     .y,
                 host.frontend
+                    .presentation
                     .engine_display
                     .minimap()
                     .map_box()
                     .top_left()
                     .x,
                 host.frontend
+                    .presentation
                     .engine_display
                     .minimap()
                     .map_box()
@@ -806,6 +813,7 @@ pub(super) fn load_mission_sprites(
                 .collect();
             tracing::info!("Loaded RHMAP_ITEMS: {} dot frames", surfaces.len());
             host.frontend
+                .resources
                 .mission_surfaces
                 .replace_dots(renderer, surfaces);
         }
@@ -856,10 +864,13 @@ pub(super) fn load_mission_sprites(
             // engine at construction via
             // `EngineArgs::ground_mark_sprite`; the GPU surfaces below
             // are pure host-side rendering state.
-            host.frontend.mission_surfaces.replace_ground_marks(
-                renderer,
-                surfaces.into_iter().map(|(id, _, _)| id).collect(),
-            );
+            host.frontend
+                .resources
+                .mission_surfaces
+                .replace_ground_marks(
+                    renderer,
+                    surfaces.into_iter().map(|(id, _, _)| id).collect(),
+                );
         }
         Err(e) => {
             tracing::warn!("Failed to load RHID_GROUND_FOCUS resource: {e}");
@@ -1403,6 +1414,7 @@ pub(super) fn prepare_mission(
         if let Some(name) = mission_name.as_deref()
             && let Some(level) = host
                 .frontend
+                .resources
                 .shipping
                 .as_ref()
                 .and_then(|datadir| datadir.loaded_level(name))
@@ -1448,7 +1460,10 @@ pub(super) fn prepare_mission(
     // the `wasm-threads` build initialized one, and otherwise decodes
     // synchronously right here (single-threaded browser fallback — the
     // progress closure keeps feeding the loading bar in that case).
-    let early_terrain = match (mission_name.as_deref(), host.frontend.shipping.as_ref()) {
+    let early_terrain = match (
+        mission_name.as_deref(),
+        host.frontend.resources.shipping.as_ref(),
+    ) {
         (Some(mission), Some(shipping)) => {
             let cache = match host.application_context().asset_cache() {
                 Ok(cache) => cache,
@@ -1477,6 +1492,7 @@ pub(super) fn prepare_mission(
             level_directory: level_directory.clone(),
             shipping: host
                 .frontend
+                .resources
                 .shipping
                 .clone()
                 .expect("early terrain requires shipping"),
@@ -1487,7 +1503,7 @@ pub(super) fn prepare_mission(
             &map_name,
             &ambiance_dir,
             &level_directory,
-            host.frontend.shipping.clone(),
+            host.frontend.resources.shipping.clone(),
             files.clone(),
         )
     };
@@ -1498,7 +1514,7 @@ pub(super) fn prepare_mission(
     // remaining occlusion/minimap reads retain this preparation snapshot.
     // Resource environments clone/validate mission RHS and scripts. Start the
     // independent terrain job first so this work overlaps pixel decoding.
-    let resources = match host.frontend.shipping.as_ref() {
+    let resources = match host.frontend.resources.shipping.as_ref() {
         Some(shipping) => match mission_name
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("shipping launch has no current mission"))
@@ -1535,11 +1551,15 @@ pub(super) fn prepare_mission(
             Ok(cache) => cache,
             Err(message) => return Err(MissionLoadError::new(campaign, message)),
         };
-        let asset_cache =
-            cache_owner.get_or_build(host.frontend.shipping.as_deref(), profiles, files.clone());
+        let asset_cache = cache_owner.get_or_build(
+            host.frontend.resources.shipping.as_deref(),
+            profiles,
+            files.clone(),
+        );
         match asset_cache.sprite_bank.as_ref() {
             Some(bank) => host
                 .frontend
+                .resources
                 .install_frame_holder_before_publication(bank.clone()),
             None => tracing::warn!("Sprite bank unavailable in application asset cache"),
         }
@@ -1552,7 +1572,9 @@ pub(super) fn prepare_mission(
             Err(error) => return Err(MissionLoadError::new(campaign, error.to_string())),
         };
     if let Err(error) = custom_sprites.install(
-        host.frontend.frame_holder_before_publication_mut(),
+        host.frontend
+            .resources
+            .frame_holder_before_publication_mut(),
         assets.sprite_scriptor_mut(),
     ) {
         return Err(MissionLoadError::new(campaign, error.to_string()));
@@ -1560,7 +1582,7 @@ pub(super) fn prepare_mission(
     timer.step("hackable character preload");
     // Publish the sprite-bank signature into LevelAssets so engine-side
     // sprite-script loaders can detect bank changes.
-    assets.bank_signature = host.frontend.frame_holder().signature();
+    assets.bank_signature = host.frontend.resources.frame_holder().signature();
     tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
 
     if let Some(ls) = loading_screen.as_mut() {
@@ -1691,7 +1713,7 @@ pub(super) fn prepare_mission(
                 &map_name,
                 &ambiance_dir,
                 &level_directory,
-                host.frontend.shipping.as_deref(),
+                host.frontend.resources.shipping.as_deref(),
                 &files,
             )
         }) {
@@ -1755,7 +1777,7 @@ pub(super) fn prepare_mission(
     let sample_loader = crate::audio_backend::create_sample_loader_with_files(
         std::path::PathBuf::from(&sound_dir),
         files.clone(),
-        host.frontend.shipping.clone(),
+        host.frontend.resources.shipping.clone(),
     );
     let (canonical_speech_base, canonical_speech_loader, canonical_speech_cache) =
         match canonical_speech_timing_inputs(host, profiles, &sound_dir) {
@@ -1821,7 +1843,7 @@ pub(super) fn prepare_mission(
             &map_name,
             dir,
             &level_directory,
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
             &mut update,
         )
         .map_err(|error| {
@@ -1851,7 +1873,7 @@ pub(super) fn prepare_mission(
             &map_name,
             dir,
             &level_directory,
-            host.frontend.shipping.as_deref(),
+            host.frontend.resources.shipping.as_deref(),
             &mut progress,
         ) {
             pre_decoded_ambience_minimaps.push((ambiance, decoded));
@@ -1866,13 +1888,16 @@ pub(super) fn prepare_mission(
     // replay sequence. A negotiated multiplayer mission seed remains the
     // authority for a network mission.
     if let Some(mm) = minimap_widget {
-        host.frontend.engine_display.setup_minimap_widget(
-            engine_coordinates::ScreenPoint::new(screen_width - 83.0, 38.0),
-            mm.corner_size,
-            mm.button_hit_mask,
-            screen_width,
-            screen_height,
-        );
+        host.frontend
+            .presentation
+            .engine_display
+            .setup_minimap_widget(
+                engine_coordinates::ScreenPoint::new(screen_width - 83.0, 38.0),
+                mm.corner_size,
+                mm.button_hit_mask,
+                screen_width,
+                screen_height,
+            );
     }
 
     let (rng_seed, sim_config) = if host.transport.net().is_some() {
@@ -1911,9 +1936,10 @@ pub(super) fn prepare_mission(
     let (night_r, night_g, night_b) = presentation_initial_ambiance.night_color_rgb();
     let initial_shadow_key = robin_util::color::rgb565(night_r, night_g, night_b);
     host.frontend
+        .resources
         .frame_holder_before_publication_mut()
         .apply_arno_law(initial_shadow_key);
-    assets.attachments.pixel_opacity = Some(host.frontend.publish_frame_holder_opacity());
+    assets.attachments.pixel_opacity = Some(host.frontend.resources.publish_frame_holder_opacity());
     timer.step("initial sprite shadow and opacity publication");
 
     Ok(PreparedMission {
@@ -2179,7 +2205,7 @@ impl ConstructedMission {
                         format!("adopt frame-zero Original save: {error}"),
                     )
                 })?;
-            loaded_host.apply_display_to(&mut host.frontend.engine_display);
+            loaded_host.apply_display_to(&mut host.frontend.presentation.engine_display);
             host.frontend
                 .set_selected_view_element(loaded_host.selected_view_element());
             tracing::info!("adopted Original v48 save for frame-zero viewport capture");
