@@ -132,6 +132,7 @@ fn replay_debug_log_path(replay_path: &str) -> std::path::PathBuf {
 /// Never overwrite the terminal attempt, including an explicit --record path.
 pub(super) fn restart_recording(
     control: &crate::replay_service::ReplayRecordingControl,
+    _recording_index: &crate::mission_replays::RecordingIndex,
     header: robin_engine::replay::ReplayHeader,
 ) -> std::io::Result<ReplayRecorder> {
     let mirror = control.begin_recording();
@@ -149,7 +150,7 @@ pub(super) fn restart_recording(
             .keep()
             .map_err(|error| error.error)?;
         tracing::info!("Recording restarted replay → {}", path.display());
-        crate::mission_replays::recording_started(&path);
+        _recording_index.recording_started(&path);
         let log_path = replay_debug_log_path(path.to_str().expect("replay directory is UTF-8"));
         if let Err(error) = crate::set_replay_log_file(&log_path) {
             tracing::warn!("Failed to create restarted replay debug log: {error}");
@@ -254,7 +255,9 @@ pub(super) fn init_replay_and_rollback(
                     match std::fs::File::create(path) {
                         Ok(f) => {
                             tracing::info!("Recording replay → {path}");
-                            crate::mission_replays::recording_started(std::path::Path::new(path));
+                            args.global_options
+                                .recording_index()
+                                .recording_started(std::path::Path::new(path));
                             let log_path = replay_debug_log_path(path);
                             if let Err(e) = crate::set_replay_log_file(&log_path) {
                                 tracing::warn!(

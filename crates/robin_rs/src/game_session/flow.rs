@@ -537,15 +537,17 @@ impl InteractiveFrameFinish<'_, '_, '_> {
         let was_recording = runtime.is_recording();
         if runtime.seal_terminal_recording(&frame) && was_recording {
             if let Some(key) = manager.engine.campaign().latest_mission_attempt_key() {
-                crate::mission_replays::recording_finished(
-                    key,
-                    manager
-                        .engine
-                        .campaign()
-                        .latest_mission_attempt()
-                        .expect("attempt key requires an attempt")
-                        .completed_at_unix_seconds(),
-                );
+                host.application_context()
+                    .recording_index()
+                    .recording_finished(
+                        key,
+                        manager
+                            .engine
+                            .campaign()
+                            .latest_mission_attempt()
+                            .expect("attempt key requires an attempt")
+                            .completed_at_unix_seconds(),
+                    );
             } else {
                 tracing::warn!("Terminal recording has no mission attempt identity");
             }

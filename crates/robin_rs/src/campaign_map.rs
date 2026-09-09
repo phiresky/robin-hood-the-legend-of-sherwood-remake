@@ -217,6 +217,7 @@ pub(crate) struct CampaignMapModalState {
     history_scroll: usize,
     selected_play: usize,
     replay_status: String,
+    recording_index: std::sync::Arc<crate::mission_replays::RecordingIndex>,
     lifetime_totals: robin_engine::campaign_history::CampaignHistoryTotals,
     lifetime_achievements: robin_engine::achievement::AchievementAggregationSummary,
 }
@@ -271,9 +272,11 @@ impl CampaignMapModalState {
         if presentation != CampaignPresentationMode::ClassicMap && graph.nodes.is_empty() {
             tracing::warn!("Campaign history presentation has no non-Sherwood missions");
         }
-        load_recording_links(&mut graph);
-        #[cfg(not(test))]
-        crate::mission_replays::refresh_index();
+        let recording_index = application_context.recording_index().clone();
+        load_recording_links(&recording_index, &mut graph);
+        if let Err(error) = recording_index.refresh_index() {
+            tracing::warn!("Cannot refresh recording index: {error}");
+        }
         let selected_progress = graph.first_selectable().unwrap_or(0);
         let exhibit_grid = ExhibitGridNavigator::new(graph.nodes.len(), selected_progress);
         let pseudo_debrief_at_ms =
@@ -295,6 +298,7 @@ impl CampaignMapModalState {
             history_scroll: 0,
             selected_play: 0,
             replay_status: String::new(),
+            recording_index,
             lifetime_totals: lifetime_history.totals(),
             lifetime_achievements: lifetime_history.achievement_aggregation(),
         }
@@ -334,9 +338,11 @@ impl CampaignMapModalState {
             ),
             Err(error) => tracing::warn!("Campaign mission descriptions unavailable: {error}"),
         }
-        load_recording_links(&mut graph);
-        #[cfg(not(test))]
-        crate::mission_replays::refresh_index();
+        let recording_index = application_context.recording_index().clone();
+        load_recording_links(&recording_index, &mut graph);
+        if let Err(error) = recording_index.refresh_index() {
+            tracing::warn!("Cannot refresh recording index: {error}");
+        }
         let selected_progress = graph.first_selectable().unwrap_or(0);
         let assets = CampaignMapAssets::load(
             renderer,
@@ -365,6 +371,7 @@ impl CampaignMapModalState {
             history_scroll: 0,
             selected_play: 0,
             replay_status: String::new(),
+            recording_index,
             lifetime_totals: profile.campaign_history.totals(),
             lifetime_achievements: profile.campaign_history.achievement_aggregation(),
         }
@@ -582,8 +589,12 @@ impl CampaignMapModalState {
         transform: MenuTransform,
         browsing: bool,
     ) -> Option<CampaignMapChoice> {
-        if crate::mission_replays::take_index_updated() {
-            load_recording_links(&mut self.graph);
+        if let Some(completion) = self.recording_index.take_completion() {
+            load_recording_links(&self.recording_index, &mut self.graph);
+            if let Err(error) = completion {
+                tracing::warn!("Cannot index previous recordings: {error}");
+                self.replay_status = format!("Recording index unavailable: {error}");
+            }
         }
         let mut final_choice = None;
         let input_enabled = self
@@ -1887,10 +1898,13 @@ fn draw_achievement_badge_icon(
     }
 }
 
-fn load_recording_links(graph: &mut CampaignProgressGraph) {
+fn load_recording_links(
+    index: &crate::mission_replays::RecordingIndex,
+    graph: &mut CampaignProgressGraph,
+) {
     for play in graph.nodes.iter_mut().flat_map(|node| &mut node.plays) {
         play.recording = play.campaign_run_id.and_then(|run| {
-            crate::mission_replays::find(
+            index.find(
                 play.attempt.key(run),
                 play.attempt.completed_at_unix_seconds(),
             )
@@ -3004,6 +3018,8 @@ mod browser_tests {
         assert_eq!(graph.nodes.len(), 2);
         assert!(graph.nodes.iter().all(|node| node.selectable));
         let history = robin_engine::campaign_history::ProfileCampaignHistory::default();
+        let recording_index =
+            std::sync::Arc::new(crate::mission_replays::RecordingIndex::disabled());
         CampaignMapModalState {
             items: Vec::new(),
             assets: CampaignMapAssets::default(),
@@ -3021,6 +3037,7 @@ mod browser_tests {
             history_scroll: 0,
             selected_play: 0,
             replay_status: String::new(),
+            recording_index,
             lifetime_totals: history.totals(),
             lifetime_achievements: history.achievement_aggregation(),
         }

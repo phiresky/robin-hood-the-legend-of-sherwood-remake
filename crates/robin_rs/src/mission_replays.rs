@@ -2,33 +2,152 @@
 //! These paths never enter deterministic campaign/save state.
 
 use robin_engine::campaign_history::MissionAttemptKey;
-#[cfg(not(target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-static INDEX_UPDATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub(crate) fn take_index_updated() -> bool {
-    INDEX_UPDATED.swap(false, std::sync::atomic::Ordering::Relaxed)
+/// Application-owned recording links and background scan. Runtime ownership cannot
+/// be restored from a diagnostic serialization.
+#[derive(Debug, Serialize)]
+pub(crate) struct RecordingIndex {
+    directory: Option<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    active_path: std::sync::Mutex<Option<PathBuf>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    scan: std::sync::Mutex<ScanState>,
+    #[cfg(not(target_arch = "wasm32"))]
+    #[serde(skip)]
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
-/// Backfill recordings made before attempt links existed, off the UI thread.
-#[cfg(not(test))]
-pub(crate) fn refresh_index() {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        static SCANNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-        if SCANNING.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            return;
-        }
-        std::thread::spawn(|| {
-            if let Err(error) = backfill() {
-                tracing::warn!("Cannot index previous recordings: {error}");
-            }
-            INDEX_UPDATED.store(true, std::sync::atomic::Ordering::Relaxed);
-            SCANNING.store(false, std::sync::atomic::Ordering::Relaxed);
-        });
+impl<'de> Deserialize<'de> for RecordingIndex {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "recording index runtime ownership cannot be deserialized",
+        ))
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Default, Serialize)]
+struct ScanState {
+    #[serde(skip)]
+    worker: Option<std::thread::JoinHandle<Result<(), String>>>,
+    stopped: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<'de> Deserialize<'de> for ScanState {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "recording scan runtime ownership cannot be deserialized",
+        ))
+    }
+}
+
+impl RecordingIndex {
+    pub(crate) fn disabled() -> Self {
+        Self {
+            directory: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            active_path: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            scan: Default::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            cancelled: Default::default(),
+        }
+    }
+
+    /// The directory contains attempt links; recordings are scanned in its parent.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn native(directory: PathBuf) -> Self {
+        let mut index = Self::disabled();
+        index.directory = Some(directory);
+        index
+    }
+
+    /// Starts one scan at a time. A completed scan must be observed before retrying.
+    pub(crate) fn refresh_index(&self) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut scan = self
+                .scan
+                .lock()
+                .map_err(|_| "recording scan lock poisoned")?;
+            if scan.stopped {
+                return Err("recording index is shut down".into());
+            }
+            let Some(directory) = self.directory.clone() else {
+                return Ok(());
+            };
+            if scan.worker.is_none() {
+                let cancelled = self.cancelled.clone();
+                scan.worker = Some(
+                    std::thread::Builder::new()
+                        .name("recording-index".into())
+                        .spawn(move || {
+                            backfill(&directory, &cancelled).map_err(|error| error.to_string())
+                        })
+                        .map_err(|error| format!("Cannot start recording index: {error}"))?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Nonblocking completion polling. Failure, including worker panic, is visible
+    /// to the caller and retires the worker so a later refresh can retry.
+    pub(crate) fn take_completion(&self) -> Option<Result<(), String>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut scan = self.scan.lock().expect("recording scan lock poisoned");
+            if scan
+                .worker
+                .as_ref()
+                .is_some_and(|worker| worker.is_finished())
+            {
+                return Some(join_scan(
+                    scan.worker.take().expect("finished worker exists"),
+                ));
+            }
+        }
+        None
+    }
+
+    /// Stops further work, cancels between files and joins the active scan.
+    /// Parsing an already-open recording must finish before shutdown returns.
+    pub(crate) fn shutdown(&self) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.cancelled
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let mut scan = self
+                .scan
+                .lock()
+                .map_err(|_| "recording scan lock poisoned")?;
+            scan.stopped = true;
+            if let Some(worker) = scan.worker.take() {
+                return join_scan(worker);
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RecordingIndex {
+    fn drop(&mut self) {
+        if let Err(error) = self.shutdown() {
+            tracing::warn!("Cannot shut down recording index: {error}");
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn join_scan(worker: std::thread::JoinHandle<Result<(), String>>) -> Result<(), String> {
+    worker
+        .join()
+        .map_err(|_| "recording index worker panicked".to_string())?
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -84,10 +203,14 @@ fn replay_attempt_identity(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[cfg(not(test))]
-fn backfill() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = directory();
-    let recordings = dir.parent().expect("attempt index directory has a parent");
+fn backfill(
+    dir: &std::path::Path,
+    cancelled: &std::sync::atomic::AtomicBool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let recordings = dir
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or("attempt index directory must have a parent")?;
     let entries = match std::fs::read_dir(recordings) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -95,6 +218,9 @@ fn backfill() -> Result<(), Box<dyn std::error::Error>> {
     };
     // TODO: Index compact imports too when importing an artifact into a profile.
     for entry in entries {
+        if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
         let entry = entry?;
         let path = entry.path();
         if !path.to_string_lossy().ends_with(".rhrec.jsonl")
@@ -119,7 +245,7 @@ fn backfill() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        if find(key, completed_at).is_some() {
+        if find_in(dir, key, completed_at).is_some() {
             continue;
         }
         std::fs::create_dir_all(&dir)?;
@@ -153,14 +279,7 @@ struct RecordingLink {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn active_path() -> &'static std::sync::Mutex<Option<PathBuf>> {
-    static PATH: std::sync::OnceLock<std::sync::Mutex<Option<PathBuf>>> =
-        std::sync::OnceLock::new();
-    PATH.get_or_init(Default::default)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn directory() -> PathBuf {
+pub(crate) fn default_directory() -> PathBuf {
     #[cfg(feature = "native-fs")]
     if let Some(dir) = dirs::data_dir() {
         return dir.join("robin_hood/replays/attempts");
@@ -168,72 +287,95 @@ fn directory() -> PathBuf {
     PathBuf::from("Data/Replays/attempts")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn recording_started(path: &std::path::Path) {
-    match path.canonicalize() {
-        Ok(path) => *active_path().lock().expect("recording path lock") = Some(path),
-        Err(error) => {
-            *active_path().lock().expect("recording path lock") = None;
-            tracing::warn!("Cannot track mission recording: {error}");
-        }
-    }
-}
-
-pub(crate) fn recording_finished(key: MissionAttemptKey, completed_at: Option<i64>) {
+impl RecordingIndex {
     #[cfg(not(target_arch = "wasm32"))]
-    {
-        let Some(path) = active_path().lock().expect("recording path lock").take() else {
-            tracing::warn!("Completed attempt has no local recording path");
+    pub(crate) fn recording_started(&self, path: &std::path::Path) {
+        if self.directory.is_none() {
             return;
-        };
-        let save = || -> Result<(), Box<dyn std::error::Error>> {
-            let dir = directory();
-            std::fs::create_dir_all(&dir)?;
-            let mut file = tempfile::NamedTempFile::new_in(&dir)?;
-            serde_json::to_writer(
-                &mut file,
-                &RecordingLink {
-                    key,
-                    completed_at,
-                    path,
-                },
-            )?;
-            file.persist(dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence)))?;
-            Ok(())
-        };
-        if let Err(error) = save() {
-            tracing::warn!("Cannot save mission recording link: {error}");
+        }
+        match path.canonicalize() {
+            Ok(path) => *self.active_path.lock().expect("recording path lock") = Some(path),
+            Err(error) => {
+                *self.active_path.lock().expect("recording path lock") = None;
+                tracing::warn!("Cannot track mission recording: {error}");
+            }
         }
     }
-    // TODO: Persist browser recordings and open playback in an isolated browser session.
-    #[cfg(target_arch = "wasm32")]
-    let _ = (key, completed_at);
+
+    pub(crate) fn recording_finished(&self, key: MissionAttemptKey, completed_at: Option<i64>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Some(dir) = self.directory.as_ref() else {
+                return;
+            };
+            let Some(path) = self.active_path.lock().expect("recording path lock").take() else {
+                tracing::warn!("Completed attempt has no local recording path");
+                return;
+            };
+            let save = || -> Result<(), Box<dyn std::error::Error>> {
+                std::fs::create_dir_all(&dir)?;
+                let mut file = tempfile::NamedTempFile::new_in(&dir)?;
+                serde_json::to_writer(
+                    &mut file,
+                    &RecordingLink {
+                        key,
+                        completed_at,
+                        path,
+                    },
+                )?;
+                file.persist(dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence)))?;
+                Ok(())
+            };
+            if let Err(error) = save() {
+                tracing::warn!("Cannot save mission recording link: {error}");
+            }
+        }
+        // TODO: Persist browser recordings and open playback in an isolated browser session.
+        #[cfg(target_arch = "wasm32")]
+        let _ = (key, completed_at);
+    }
+
+    pub(crate) fn find(
+        &self,
+        key: MissionAttemptKey,
+        completed_at: Option<i64>,
+    ) -> Option<PathBuf> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.directory
+                .as_ref()
+                .and_then(|dir| find_in(dir, key, completed_at))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (key, completed_at);
+            None
+        }
+    }
 }
 
-pub(crate) fn find(key: MissionAttemptKey, completed_at: Option<i64>) -> Option<PathBuf> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let file = directory().join(format!("{}-{}.json", key.campaign_run_id, key.sequence));
-        let bytes = match std::fs::read(file) {
-            Ok(bytes) => bytes,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(error) => {
-                tracing::warn!("Cannot read recording link: {error}");
-                return None;
-            }
-        };
-        match serde_json::from_slice::<RecordingLink>(&bytes) {
-            Ok(link)
-                if link.key == key && link.completed_at == completed_at && link.path.is_file() =>
-            {
-                return Some(link.path);
-            }
-            Ok(_) => tracing::warn!("Recording link is stale or has the wrong attempt identity"),
-            Err(error) => tracing::warn!("Invalid recording link: {error}"),
+#[cfg(not(target_arch = "wasm32"))]
+fn find_in(
+    dir: &std::path::Path,
+    key: MissionAttemptKey,
+    completed_at: Option<i64>,
+) -> Option<PathBuf> {
+    let file = dir.join(format!("{}-{}.json", key.campaign_run_id, key.sequence));
+    let bytes = match std::fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            tracing::warn!("Cannot read recording link: {error}");
+            return None;
         }
+    };
+    match serde_json::from_slice::<RecordingLink>(&bytes) {
+        Ok(link) if link.key == key && link.completed_at == completed_at && link.path.is_file() => {
+            return Some(link.path);
+        }
+        Ok(_) => tracing::warn!("Recording link is stale or has the wrong attempt identity"),
+        Err(error) => tracing::warn!("Invalid recording link: {error}"),
     }
-    #[cfg(target_arch = "wasm32")]
-    let _ = (key, completed_at);
     None
 }
 
@@ -282,6 +424,184 @@ mod tests {
         engine::{SimCommand, SimulationFrameInput},
         replay::{ReplayData, ReplayFile, ReplayFrame, ReplayHeader},
     };
+
+    fn write_recording(path: &std::path::Path, nonce: u64) {
+        let data = recording(&Campaign::default(), &[nonce]);
+        std::fs::write(
+            path,
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(data.header()).unwrap(),
+                serde_json::json!({"f": 0, "i": data.frame(0).unwrap()}),
+            ),
+        )
+        .unwrap();
+    }
+
+    fn completion(index: &RecordingIndex) -> Result<(), String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(result) = index.take_completion() {
+                return result;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "recording scan did not finish"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn background_backfill_and_active_recordings_are_application_local() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let first = RecordingIndex::native(first_dir.path().join("attempts"));
+        let second = RecordingIndex::native(second_dir.path().join("attempts"));
+        let key = MissionAttemptKey {
+            campaign_run_id: 41,
+            sequence: 1,
+        };
+        let first_path = first_dir.path().join("first.rhrec.jsonl");
+        let second_path = second_dir.path().join("second.rhrec.jsonl");
+        write_recording(&first_path, 41);
+        write_recording(&second_path, 41);
+        first.refresh_index().unwrap();
+        completion(&first).unwrap();
+        assert_eq!(
+            first.find(key, Some(100)),
+            Some(first_path.canonicalize().unwrap())
+        );
+        assert!(second.find(key, Some(100)).is_none());
+        assert!(second.take_completion().is_none());
+
+        first.recording_started(&first_path);
+        second.recording_started(&second_path);
+        first.recording_finished(key, Some(200));
+        second.recording_finished(key, Some(300));
+        assert_eq!(
+            first.find(key, Some(200)),
+            Some(first_path.canonicalize().unwrap())
+        );
+        assert_eq!(
+            second.find(key, Some(300)),
+            Some(second_path.canonicalize().unwrap())
+        );
+        assert!(first.find(key, Some(300)).is_none());
+    }
+
+    #[test]
+    fn backfill_does_not_replace_a_live_attempt_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = RecordingIndex::native(dir.path().join("attempts"));
+        let old = dir.path().join("old.rhrec.jsonl");
+        let live = dir.path().join("live.rhrec.jsonl");
+        write_recording(&old, 41);
+        write_recording(&live, 41);
+        let key = MissionAttemptKey {
+            campaign_run_id: 41,
+            sequence: 1,
+        };
+        index.recording_started(&live);
+        // Deliberately different completion time: lookup cannot short-circuit the
+        // scan, so persist_noclobber must preserve the authoritative live link.
+        index.recording_finished(key, Some(200));
+        index.refresh_index().unwrap();
+        completion(&index).unwrap();
+        assert_eq!(
+            index.find(key, Some(200)),
+            Some(live.canonicalize().unwrap())
+        );
+        assert!(index.find(key, Some(100)).is_none());
+    }
+
+    #[test]
+    fn failed_scan_is_observable_and_can_retry_after_repair() {
+        let dir = tempfile::tempdir().unwrap();
+        let recordings = dir.path().join("recordings");
+        std::fs::write(&recordings, "not a directory").unwrap();
+        let index = RecordingIndex::native(recordings.join("attempts"));
+        index.refresh_index().unwrap();
+        assert!(completion(&index).is_err());
+        assert!(index.take_completion().is_none());
+        std::fs::remove_file(&recordings).unwrap();
+        std::fs::create_dir(&recordings).unwrap();
+        write_recording(&recordings.join("old.rhrec.jsonl"), 41);
+        index.refresh_index().unwrap();
+        completion(&index).unwrap();
+        assert!(
+            index
+                .find(
+                    MissionAttemptKey {
+                        campaign_run_id: 41,
+                        sequence: 1
+                    },
+                    Some(100)
+                )
+                .is_some()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires LLVM codegen backend for panic unwinding; see docs/TESTING.md"]
+    fn worker_panic_is_observable_and_does_not_wedge_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let index = RecordingIndex::native(dir.path().join("attempts"));
+        index.scan.lock().unwrap().worker =
+            Some(std::thread::spawn(|| panic!("injected scanner panic")));
+        assert!(completion(&index).unwrap_err().contains("panicked"));
+        index.refresh_index().unwrap();
+        completion(&index).unwrap();
+    }
+
+    #[test]
+    fn shutdown_and_drop_join_workers_and_prevent_new_scans() {
+        let index = RecordingIndex::disabled();
+        let cancelled = index.cancelled.clone();
+        index.scan.lock().unwrap().worker = Some(std::thread::spawn(move || {
+            while !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::yield_now();
+            }
+            Err("injected worker failure during shutdown".into())
+        }));
+        assert!(
+            index
+                .shutdown()
+                .unwrap_err()
+                .contains("injected worker failure")
+        );
+        assert!(index.scan.lock().unwrap().worker.is_none());
+        assert!(index.refresh_index().unwrap_err().contains("shut down"));
+        index.shutdown().unwrap();
+
+        let index = RecordingIndex::disabled();
+        let cancelled = index.cancelled.clone();
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_finished = finished.clone();
+        index.scan.lock().unwrap().worker = Some(std::thread::spawn(move || {
+            while !cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::yield_now();
+            }
+            worker_finished.store(true, std::sync::atomic::Ordering::Relaxed);
+            Ok(())
+        }));
+        drop(index);
+        assert!(finished.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn cancelled_scan_does_not_publish_links_and_disabled_index_does_not_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        write_recording(&dir.path().join("old.rhrec.jsonl"), 41);
+        let attempts = dir.path().join("attempts");
+        backfill(&attempts, &std::sync::atomic::AtomicBool::new(true)).unwrap();
+        assert!(!attempts.exists());
+        let index = RecordingIndex::disabled();
+        index.refresh_index().unwrap();
+        assert!(index.scan.lock().unwrap().worker.is_none());
+        assert!(index.take_completion().is_none());
+        assert!(serde_json::from_str::<RecordingIndex>("{}").is_err());
+    }
 
     fn recording(campaign: &Campaign, nonces: &[u64]) -> ReplayData {
         ReplayData::try_from(ReplayFile {
