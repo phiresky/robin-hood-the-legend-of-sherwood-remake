@@ -124,6 +124,13 @@ pub struct CliArgs {
     #[serde(skip)]
     pub replay_data: Option<engine_replay::ReplayData>,
 
+    /// Evidence for this cold mission reconstruction, owned by the run loop.
+    /// Never inherited by an unrelated launch or accepted from configuration.
+    #[arg(skip)]
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub mission_restart: bool,
+
     /// Process-internal authority request installed only by the native
     /// official projection exporter. It is deliberately not a public CLI or
     /// configuration-file surface.
@@ -387,6 +394,7 @@ impl Default for CliArgs {
             record: None,
             replay: None,
             replay_data: None,
+            mission_restart: false,
             #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
             simulation_content_export: None,
             rollback_check: true,

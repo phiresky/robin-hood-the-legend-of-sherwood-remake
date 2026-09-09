@@ -302,6 +302,9 @@ fn replay_authority_has_no_process_singleton() {
         .visit_file(&syn::parse_file(include_str!("../../src/replay_service.rs")).unwrap());
     ReplayStatics
         .visit_file(&syn::parse_file(include_str!("../../src/mission_replays.rs")).unwrap());
+    ReplayStatics.visit_file(
+        &syn::parse_file(include_str!("../../src/game_session/replay_init.rs")).unwrap(),
+    );
 }
 
 #[test]

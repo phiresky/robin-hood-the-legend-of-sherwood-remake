@@ -3,6 +3,95 @@ use crate::host::{FrontendPreferenceEffects, FrontendPreferences, Host, HostFron
 use robin_engine::player_profile::DifficultyLevel;
 use winit::keyboard::KeyCode;
 
+#[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
+#[test]
+fn nondefault_projection_rules_survive_host_only_profile_updates() {
+    let mut exact = engine_api::SimConfig::original_parity_ranked(DifficultyLevel::Hard);
+    exact.synchronous_pathfinding = true;
+    let application = ApplicationContext::complete_official_projection(
+        engine_api::GlobalOptions::default(),
+        exact,
+        None,
+    )
+    .unwrap();
+    application
+        .with_player_profiles_mut(|profiles| {
+            profiles.get_active_mut().unwrap().minimap_x = 123.0;
+        })
+        .unwrap();
+    assert_eq!(application.sim_config(), exact);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn save_recovery_conflict_does_not_regenerate_profiles() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().to_str().unwrap();
+    let store = crate::player_profile_store::PlayerProfileStore::for_directory(directory);
+    let mut profiles = store.load().unwrap();
+    profiles.get_active_mut().unwrap().name = "Retained identity".into();
+    store.save(&profiles).unwrap();
+    let archive = std::fs::read(root.path().join("profiles.json")).unwrap();
+    std::fs::create_dir(root.path().join("Profile_000")).unwrap();
+    store.quarantine_profile_saves(0).unwrap();
+    std::fs::create_dir(root.path().join("Profile_000")).unwrap();
+    // Metadata loading must still succeed: the launcher regenerates defaults
+    // for corrupt archives, but a save-directory conflict is not corruption.
+    let loaded = store.load().unwrap();
+    let error = ApplicationContext::complete_with_localization(
+        store,
+        Default::default(),
+        loaded,
+        KeyConfigStore::new(directory.into()),
+        None,
+        LocalizationService::disabled(),
+    )
+    .unwrap_err();
+    assert!(error.contains("recover interrupted player deletion"));
+    assert_eq!(
+        std::fs::read(root.path().join("profiles.json")).unwrap(),
+        archive
+    );
+    assert!(root.path().join(".deleted-Profile_000").is_dir());
+    assert!(root.path().join("Profile_000").is_dir());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn deletion_keeps_quarantined_saves_when_key_cleanup_fails() {
+    let root = tempfile::tempdir().unwrap();
+    let directory = root.path().to_str().unwrap();
+    let store = crate::player_profile_store::PlayerProfileStore::for_directory(directory);
+    let mut profiles = store.load().unwrap();
+    profiles.create_profile("Marian".into(), DifficultyLevel::Hard);
+    store.save(&profiles).unwrap();
+    let application = ApplicationContext::complete(
+        store,
+        Default::default(),
+        profiles,
+        KeyConfigStore::new(directory.into()),
+        None,
+    )
+    .unwrap();
+    std::fs::create_dir(root.path().join("Profile_000")).unwrap();
+    std::fs::write(root.path().join("Profile_000/save.json"), b"retained").unwrap();
+    std::fs::create_dir(root.path().join("keyconfigs.json")).unwrap();
+    assert!(application.delete_player_profile(0).unwrap());
+    assert_eq!(
+        application.active_profile_snapshot().unwrap().name,
+        "Marian"
+    );
+    assert_eq!(
+        std::fs::read(root.path().join(".deleted-Profile_000/save.json")).unwrap(),
+        b"retained"
+    );
+    let reloaded = crate::player_profile_store::PlayerProfileStore::for_directory(directory)
+        .load()
+        .unwrap();
+    assert_eq!(reloaded.profiles.len(), 1);
+    assert_eq!(reloaded.profiles[0].name, "Marian");
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn recording_index_is_shared_only_within_application_and_retired_on_exit() {

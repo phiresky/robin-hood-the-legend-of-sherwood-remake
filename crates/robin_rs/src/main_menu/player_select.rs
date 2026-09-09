@@ -593,59 +593,7 @@ fn rename_profile(application_context: &ApplicationContext, idx: usize, new_name
 }
 
 fn delete_profile(application_context: &ApplicationContext, idx: usize) -> Result<bool, String> {
-    let deleted_profile_id = application_context.with_player_profiles(|mgr| {
-        if idx >= mgr.profile_count() {
-            return None;
-        }
-        if mgr.profile_count() == 1 {
-            tracing::warn!(
-                "Select Player: refusing to delete the final profile; create a replacement first"
-            );
-            return None;
-        }
-        Some(mgr.profiles[idx].id)
-    })?;
-    let Some(deleted_profile_id) = deleted_profile_id else {
-        return Ok(false);
-    };
-
-    // Remove durable executable-content authority first. If the trust store
-    // is corrupt or cannot be written, retain the profile so an approval can
-    // never outlive the identity whose explicit consent created it.
-    application_context
-        .with_spellforge_trust_mut(|store| store.remove_profile(deleted_profile_id))??;
-
-    // The application-owned profile store wipes
-    // `<save_directory>/Profile_NNN`.
-    application_context.try_update_player_profiles(|mgr| {
-        let current_idx = mgr
-            .profiles
-            .iter()
-            .position(|profile| profile.id == deleted_profile_id)
-            .ok_or_else(|| {
-                format!("player profile {deleted_profile_id} disappeared during deletion")
-            })?;
-        if let Err(error) = application_context.remove_profile_saves(deleted_profile_id) {
-            tracing::warn!("failed to remove deleted player saves: {error}");
-        }
-        mgr.delete_profile(current_idx);
-        // Unconditionally promote index 0 to active whenever any profile
-        // remains — regardless of whether the deleted one was the active
-        // one.
-        if mgr.profile_count() > 0 {
-            mgr.set_active(0);
-        }
-        application_context
-            .persist_player_profiles(mgr)
-            .map_err(|error| format!("persist player deletion: {error:#}"))
-    })?;
-    application_context.with_key_configs_mut(|store| {
-        store.configs.remove(&deleted_profile_id);
-        store
-            .save()
-            .map_err(|error| format!("persist deleted key configuration: {error:#}"))
-    })??;
-    Ok(true)
+    application_context.delete_player_profile(idx)
 }
 
 /// Format a profile row as `"<Name> / <Difficulty> / <Progression>%"`.
@@ -1727,6 +1675,9 @@ mod tests {
         let before = serde_json::to_value(context.player_profiles_snapshot().unwrap()).unwrap();
         let config = context.sim_config();
         // Reject the profile store's atomic rename without changing permissions.
+        let saves = root.path().join("Profile_000");
+        std::fs::create_dir(&saves).unwrap();
+        std::fs::write(saves.join("QuickSave.json"), b"retained save").unwrap();
         std::fs::create_dir(root.path().join("profiles.json")).unwrap();
         assert!(
             delete_profile(&context, first)
@@ -1738,6 +1689,11 @@ mod tests {
             before
         );
         assert_eq!(context.sim_config(), config);
+        assert_eq!(
+            std::fs::read(saves.join("QuickSave.json")).unwrap(),
+            b"retained save"
+        );
+        assert!(!root.path().join(".deleted-Profile_000").exists());
     }
 
     #[test]

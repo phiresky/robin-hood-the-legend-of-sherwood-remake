@@ -121,27 +121,78 @@ impl PlayerProfileStore {
         }
     }
 
-    /// Remove only this selected store's numeric per-profile save directory.
-    /// Callers retain the original best-effort policy and log failures.
-    pub fn remove_profile_saves(&self, profile_id: u32) -> std::io::Result<()> {
+    /// Rename saves aside before publishing deletion. They remain recoverable:
+    /// the profile archive itself decides whether startup must restore them.
+    pub(crate) fn quarantine_profile_saves(&self, profile_id: u32) -> std::io::Result<()> {
+        self.move_profile_saves(profile_id, false)
+    }
+
+    pub(crate) fn restore_profile_saves(&self, profile_id: u32) -> std::io::Result<()> {
+        self.move_profile_saves(profile_id, true)
+    }
+
+    pub(crate) fn restore_interrupted_deletions(
+        &self,
+        profiles: &PlayerProfileManager,
+    ) -> std::io::Result<()> {
+        for profile in &profiles.profiles {
+            self.restore_profile_saves(profile.id)?;
+        }
+        Ok(())
+    }
+
+    fn move_profile_saves(&self, profile_id: u32, restore: bool) -> std::io::Result<()> {
         self.directory()?;
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Native { directory } => {
-                let path = directory.join(robin_engine::player_profile::profile_save_subdirectory(
-                    profile_id,
-                ));
-                match std::fs::remove_dir_all(path) {
-                    Ok(()) => Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(error) => Err(error),
+                let name = robin_engine::player_profile::profile_save_subdirectory(profile_id);
+                let live = directory.join(&name);
+                let deleted = directory.join(format!(".deleted-{name}"));
+                let (source, destination) = if restore {
+                    (deleted, live)
+                } else {
+                    (live, deleted)
+                };
+                match std::fs::symlink_metadata(&source) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                    Err(error) => return Err(error),
+                    Ok(metadata) if !metadata.is_dir() => {
+                        return Err(std::io::Error::other(format!(
+                            "profile saves are not a directory: {}",
+                            source.display()
+                        )));
+                    }
+                    Ok(_) => {}
                 }
+                match std::fs::symlink_metadata(&destination) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                    Ok(_) => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            format!(
+                                "refusing to replace profile saves at {}",
+                                destination.display()
+                            ),
+                        ));
+                    }
+                }
+                std::fs::rename(&source, &destination)?;
+                #[cfg(unix)]
+                std::fs::File::open(directory)?.sync_all()?;
+                tracing::info!(
+                    "Moved profile saves {} → {}",
+                    source.display(),
+                    destination.display()
+                );
+                Ok(())
             }
             #[cfg(target_arch = "wasm32")]
             Self::Browser { .. } => {
                 // Browser saves have their own store; the legacy profile
                 // archive did not perform filesystem directory deletion.
-                let _ = profile_id;
+                let _ = (profile_id, restore);
                 Ok(())
             }
             Self::Unavailable { .. } => unreachable!("directory checked authority"),
@@ -167,6 +218,67 @@ fn decode_native_archive(
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn profile_archive_decides_recovery_of_interrupted_save_rename() {
+        for committed in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let store = PlayerProfileStore::for_directory(root.path().to_str().unwrap());
+            let mut profiles = store.load().unwrap();
+            profiles.create_profile("Marian".into(), DifficultyLevel::Hard);
+            store.save(&profiles).unwrap();
+            let saves = root.path().join("Profile_000");
+            fs::create_dir(&saves).unwrap();
+            fs::write(saves.join("QuickSave.json"), b"precious save").unwrap();
+            store.quarantine_profile_saves(0).unwrap();
+            if committed {
+                profiles.delete_profile(0);
+                profiles.set_active(0);
+                store.save(&profiles).unwrap();
+            }
+            // Reopen exactly as startup would after the process died.
+            let restarted = PlayerProfileStore::for_directory(root.path().to_str().unwrap());
+            let loaded = restarted.load().unwrap();
+            restarted.restore_interrupted_deletions(&loaded).unwrap();
+            assert_eq!(
+                loaded.profiles.iter().any(|profile| profile.id == 0),
+                !committed
+            );
+            let retained = if committed {
+                root.path().join(".deleted-Profile_000/QuickSave.json")
+            } else {
+                saves.join("QuickSave.json")
+            };
+            assert_eq!(fs::read(retained).unwrap(), b"precious save");
+            assert_eq!(saves.exists(), !committed);
+            restarted.restore_interrupted_deletions(&loaded).unwrap(); // Recovery is idempotent.
+        }
+    }
+
+    #[test]
+    fn recovery_never_overwrites_a_conflicting_save_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let store = PlayerProfileStore::for_directory(root.path().to_str().unwrap());
+        store.load().unwrap();
+        let live = root.path().join("Profile_000");
+        fs::create_dir(&live).unwrap();
+        fs::write(live.join("old"), b"old").unwrap();
+        store.quarantine_profile_saves(0).unwrap();
+        fs::create_dir(&live).unwrap();
+        fs::write(live.join("new"), b"new").unwrap();
+        assert!(
+            store
+                .restore_interrupted_deletions(&store.load().unwrap())
+                .unwrap_err()
+                .to_string()
+                .contains("refusing to replace")
+        );
+        assert_eq!(fs::read(live.join("new")).unwrap(), b"new");
+        assert_eq!(
+            fs::read(root.path().join(".deleted-Profile_000/old")).unwrap(),
+            b"old"
+        );
+    }
 
     #[test]
     fn restart_ignores_incomplete_staging_without_regenerating_identity() {
@@ -314,8 +426,12 @@ mod tests {
         fs::write(save.join("save.json"), "fixture").unwrap();
         manager.delete_profile(0);
         assert!(save.exists());
-        store.remove_profile_saves(id).unwrap();
+        store.quarantine_profile_saves(id).unwrap();
         assert!(!save.exists());
+        assert_eq!(
+            fs::read(selected.path().join(".deleted-Profile_000/save.json")).unwrap(),
+            b"fixture"
+        );
         assert!(selected.path().join("profiles.json").exists());
     }
 
