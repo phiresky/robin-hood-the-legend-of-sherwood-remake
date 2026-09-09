@@ -555,7 +555,7 @@ pub(crate) fn render_door_overlays(
 
     // ── 6. Hovered-patch branch ──
     // Local cursor selection is host presentation state. Read it directly
-    // instead of mutating a render cache inside the authoritative PresentationView.
+    // instead of mutating a render cache inside the authoritative engine.
     if let Some(patch) = host
         .frontend
         .input
@@ -1037,7 +1037,7 @@ fn render_all_view_cones(
 
 /// Render every active destination marker.
 ///
-/// For each active mark, check on-screen and blit. PresentationView-owned command
+/// For each active mark, check on-screen and blit. Engine-owned command
 /// marks advance inside `perform_hourglass`; host-owned trajectory-
 /// preview marks advance on the same hourglass cadence without entering
 /// sim state.
@@ -1470,7 +1470,7 @@ pub(crate) fn render_entities_gpu(
             // sprite).  As the counter ticks down 20→0 the ghost
             // fades out and the new sprite fades in.  The per-frame
             // decrement is done in `pre_render_engine_setup` via
-            // `PresentationView::tick_pc_teleport_fades`.
+            // `EngineInner::tick_pc_teleport_fades`.
             let teleport_fade = entity.pc_data().and_then(|pc| {
                 if pc.teleport_counter > 0 && pc.max_teleport_counter > 0 {
                     let ratio = pc.teleport_counter as f32 / pc.max_teleport_counter as f32;

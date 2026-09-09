@@ -1038,7 +1038,7 @@ pub(super) fn update_mouse_and_cursor(
 ) {
     let mouse_screen = threaded_input.position();
     let portrait_hit = hit_test_portrait_detailed(
-        engine,
+        &engine.presentation_view(),
         host.transport.local_seat(),
         portrait_cache,
         renderer.screen_width(),
@@ -1046,7 +1046,7 @@ pub(super) fn update_mouse_and_cursor(
         mouse_screen.x,
         mouse_screen.y,
     );
-    // RHGame keeps widget-owned mouse handling outside PresentationView::UpdateMouse.
+    // RHGame keeps widget-owned mouse handling outside the original Engine::UpdateMouse.
     // The minimap (including its folded button and active drag) must not ask
     // the occluded world cell which movement/action cursor to display.
     let over_minimap = host
@@ -1291,7 +1291,7 @@ pub(super) fn render_frame(
             || (engine.get_entity(id).is_some() && engine.fog_entity_visible(id))
     });
     // Queue the GPU background texture for the current camera view.
-    // PresentationView-mutating pre-render bookkeeping (background blits, display sorting)
+    // Host-mutating pre-render bookkeeping (background blits, display sorting)
     // is hoisted to the main loop so `render_frame` itself observes an
     // immutable `&PresentationView<'_>` / `&DevState` — this lets
     // the `/screenshot` HTTP endpoint render with dev-flag overrides

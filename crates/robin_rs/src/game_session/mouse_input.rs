@@ -621,7 +621,7 @@ fn on_left_mouse_up(
                 None
             } else {
                 ui_panel::hit_test_portrait_detailed(
-                    engine,
+                    &engine.presentation_view(),
                     local_seat,
                     portrait_cache,
                     screen_width,
@@ -1314,7 +1314,7 @@ fn on_right_mouse_up(
                 let cmd = PlayerCommand::MinimapRightClick;
                 dispatch_local_command(&host.transport, frame_cmds, &cmd);
             } else if let Some(hit) = ui_panel::hit_test_portrait_detailed(
-                engine,
+                &engine.presentation_view(),
                 local_seat,
                 portrait_cache,
                 screen_width,
