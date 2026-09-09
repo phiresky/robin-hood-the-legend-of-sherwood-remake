@@ -745,7 +745,7 @@ pub(super) fn extract_minimap_widget_setup(
             panic!("Data/Interface/DEFAULT.RES minimap corner dimensions: {error:#}")
         });
     let corner_size = ScreenSize::new(btn_w as f32, btn_h as f32);
-    let button_hit_mask = metadata.get(1).and_then(Clone::clone).map(|metadata| {
+    let button_hit_mask = metadata.into_iter().nth(1).flatten().map(|metadata| {
         metadata
             .into_hit_mask()
             .expect("validated minimap hit mask")

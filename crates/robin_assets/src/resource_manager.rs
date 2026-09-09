@@ -791,20 +791,30 @@ impl ResourceManager {
         self.load_resource_data(&mut reader, id, &entry.resource_type)
     }
 
+    fn decode_picture_slots(
+        id: ResourceId,
+        slots: &[Option<EncodedPicture>],
+    ) -> Result<Vec<Option<Picture>>> {
+        slots
+            .iter()
+            .enumerate()
+            .map(|(sub_id, slot)| {
+                slot.as_ref()
+                    .map(|picture| {
+                        picture
+                            .decode()
+                            .with_context(|| format!("resource {id}/{sub_id}: decode JXL"))
+                    })
+                    .transpose()
+            })
+            .collect()
+    }
+
     /// Ensure a picture resource is loaded (recover if dismissed).
     fn ensure_pictures_loaded(&mut self, id: ResourceId) -> Result<()> {
         if !self.data.pictures.contains_key(&id) {
-            if let Some(encoded) = self.data.encoded_pictures.get(&id).cloned() {
-                let mut decoded = Vec::with_capacity(encoded.len());
-                for (sub_id, slot) in encoded.into_iter().enumerate() {
-                    decoded.push(match slot {
-                        Some(pic) => Some(
-                            pic.decode()
-                                .with_context(|| format!("resource {id}/{sub_id}: decode JXL"))?,
-                        ),
-                        None => None,
-                    });
-                }
+            if let Some(encoded) = self.data.encoded_pictures.get(&id) {
+                let decoded = Self::decode_picture_slots(id, encoded)?;
                 self.data.pictures.insert(id, decoded);
                 return Ok(());
             }
@@ -824,31 +834,21 @@ impl ResourceManager {
     /// exactly as it would have without this warm-up. Returns the number of
     /// resources decoded.
     pub fn decode_all_encoded_pictures(&mut self) -> usize {
-        let todo: Vec<(ResourceId, Vec<Option<EncodedPicture>>)> = self
+        let todo: Vec<(ResourceId, &[Option<EncodedPicture>])> = self
             .data
             .encoded_pictures
             .iter()
             .filter(|(id, _)| !self.data.pictures.contains_key(id))
-            .map(|(id, slots)| (*id, slots.clone()))
+            .map(|(id, slots)| (*id, slots.as_slice()))
             .collect();
-        let decode_one = |(id, slots): (ResourceId, Vec<Option<EncodedPicture>>)| {
-            let mut decoded = Vec::with_capacity(slots.len());
-            for (sub_id, slot) in slots.into_iter().enumerate() {
-                match slot {
-                    Some(pic) => match pic.decode() {
-                        Ok(picture) => decoded.push(Some(picture)),
-                        Err(error) => {
-                            tracing::warn!(
-                                "resource {id}/{sub_id}: eager JXL decode failed \
-                                 (left for the lazy path): {error:#}"
-                            );
-                            return None;
-                        }
-                    },
-                    None => decoded.push(None),
+        let decode_one = |(id, slots): (ResourceId, &[Option<EncodedPicture>])| {
+            match Self::decode_picture_slots(id, slots) {
+                Ok(decoded) => Some((id, decoded)),
+                Err(error) => {
+                    tracing::warn!("eager JXL decode failed (left for the lazy path): {error:#}");
+                    None
                 }
             }
-            Some((id, decoded))
         };
         #[cfg(any(not(target_arch = "wasm32"), feature = "wasm-threads"))]
         let use_pool = {
@@ -1668,6 +1668,34 @@ mod tests {
             [None, Some((2, 3))]
         );
         assert!(manager.pictures_raw(42).is_none());
+
+        // Eager and lazy decoding use the same borrowed slot interpretation.
+        // Failed resources must retain their encoded source, without publishing
+        // a partially decoded collection.
+        let mut warmed = manager.clone();
+        warmed.data.encoded_pictures.insert(
+            43,
+            vec![None, Some(EncodedPicture::jxl_rgba565_keyed(vec![]))],
+        );
+        let encoded_before = serde_json::to_value(&warmed.data.encoded_pictures).unwrap();
+        assert_eq!(warmed.decode_all_encoded_pictures(), 1);
+        assert_eq!(warmed.get_pictures(42).unwrap().len(), 2);
+        assert!(warmed.get_pictures(42).unwrap()[0].is_none());
+        assert_eq!(warmed.get_picture(42, 1).unwrap().data, decoded.data);
+        assert!(!warmed.data.pictures.contains_key(&43));
+        assert_eq!(
+            serde_json::to_value(&warmed.data.encoded_pictures).unwrap(),
+            encoded_before
+        );
+        assert!(
+            warmed
+                .get_picture(43, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("resource 43/1")
+        );
+        assert!(!warmed.data.pictures.contains_key(&43));
+        assert_eq!(warmed.decode_all_encoded_pictures(), 0);
 
         // Header inspection must not start pixel decode or require frame data.
         let picture = manager.data.encoded_pictures.get_mut(&42).unwrap()[1]
