@@ -931,7 +931,7 @@ fn plan_interactive_pacing(
         && host.transport.local_seat() != engine_player_command::PlayerId::HOST
         && !args.fast_forward
     {
-        host_scheduled_frame_deadline_ms(runtime.mp_host_frame_schedule, runtime.frame_number())
+        runtime.host_frame_deadline_ms()
     } else {
         None
     };
@@ -954,12 +954,9 @@ fn plan_interactive_pacing(
     };
     if host_deadline_ms.is_some() {
         let correction_ms = i64::from(remaining_sleep_ms) - i64::from(normal_sleep_ms);
-        if correction_ms != 0
-            && frame_end_ms.saturating_sub(runtime.last_mp_sleep_correction_log_ms) >= 1000
-        {
-            runtime.last_mp_sleep_correction_log_ms = frame_end_ms;
+        if correction_ms != 0 && runtime.sleep_correction_log_due(frame_end_ms) {
             tracing::info!(
-                scheduled_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
+                scheduled_frame = runtime.host_schedule_frame(),
                 local_frame = runtime.frame_number(),
                 normal_sleep_ms,
                 adjusted_sleep_ms = remaining_sleep_ms,
@@ -968,26 +965,7 @@ fn plan_interactive_pacing(
             );
         }
     }
-    if let Some((hash_frame, hash)) = runtime.pending_mp_state_hash
-        && let Some(net) = host.transport.net()
-        && host.transport.local_seat() == engine_player_command::PlayerId::HOST
-    {
-        net.publish_frame(runtime.frame_number());
-        tracing::info!(
-            hash_frame,
-            clock_frame = runtime.frame_number(),
-            elapsed_ms = elapsed,
-            target_ms = target,
-            remaining_sleep_ms,
-            "multiplayer: host sending state hash timing sample"
-        );
-        if let Err(error) =
-            net.send_state_hash(hash_frame, hash, runtime.frame_number(), remaining_sleep_ms)
-        {
-            // NetChannels latches the worker failure for the next ingress poll.
-            tracing::error!(%error, "multiplayer state hash publication failed");
-        }
-    }
+    runtime.publish_multiplayer_timing(&host.transport, remaining_sleep_ms);
     // Preserve the absolute deadline across the capability handoff. Hash
     // publication and preparing the presentation borrow both consume this
     // budget; neither may turn it into a fresh relative sleep.

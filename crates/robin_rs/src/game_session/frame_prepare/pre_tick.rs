@@ -60,24 +60,21 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
     let hash_boundary = runtime
         .frame_number()
         .is_multiple_of(crate::multiplayer::STATE_HASH_INTERVAL);
-    if local_is_host
-        && hash_boundary
-        && runtime.last_mp_state_hash_frame != Some(runtime.frame_number())
-    {
-        runtime.last_mp_state_hash_frame = Some(runtime.frame_number());
-        let mp_hash_start = web_time::Instant::now();
-        let live_hash_start = web_time::Instant::now();
-        let local_hash = robin_engine::replay::state_hash(&manager.engine);
-        let live_hash_us = live_hash_start.elapsed().as_micros();
-        runtime.pending_mp_state_hash = Some((runtime.frame_number(), local_hash));
-        tracing::debug!(
-            frame = runtime.frame_number(),
-            total_us = mp_hash_start.elapsed().as_micros(),
-            live_hash_us,
-            "multiplayer hash frame timing"
-        );
-    }
     if local_is_host {
+        let current_frame = runtime.frame_number();
+        runtime.sample_host_state_hash(|| {
+            let mp_hash_start = web_time::Instant::now();
+            let live_hash_start = web_time::Instant::now();
+            let local_hash = robin_engine::replay::state_hash(&manager.engine);
+            let live_hash_us = live_hash_start.elapsed().as_micros();
+            tracing::debug!(
+                frame = current_frame,
+                total_us = mp_hash_start.elapsed().as_micros(),
+                live_hash_us,
+                "multiplayer hash frame timing"
+            );
+            local_hash
+        });
         return;
     }
     if hash_boundary && !runtime.has_local_mp_hash(runtime.frame_number()) {
@@ -118,7 +115,7 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
                 frame,
                 local = format!("{local_hash:016x}"),
                 host = format!("{host_hash:016x}"),
-                host_schedule_frame = runtime.mp_host_frame_schedule.map(|(frame, _)| frame),
+                host_schedule_frame = runtime.host_schedule_frame(),
                 pending_input_frames = runtime.pending_input_frame_count(),
                 last_rollback_path,
                 last_rollback_earliest,

@@ -822,30 +822,20 @@ pub(super) fn drain_mission_network(
     if local_is_peer
         && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
     {
-        let current_frame = timeline.frame_number();
-        accept_host_frame_schedule(
-            &mut timeline.mp_host_frame_schedule,
-            clock_frame,
-            ms_until_next_frame,
-            current_frame,
-        );
+        timeline.accept_host_frame_schedule(clock_frame, ms_until_next_frame);
     }
 
     let admission_pause = timeline.multiplayer_admission_paused(now_epoch_ms);
     let mut clock_pause = false;
     if local_is_peer && !admission_pause {
-        if let Some(deadline_ms) = host_scheduled_frame_deadline_ms(
-            timeline.mp_host_frame_schedule,
-            timeline.frame_number(),
-        ) {
+        if let Some(deadline_ms) = timeline.host_frame_deadline_ms() {
             let now_ms = crate::window::process_uptime_ms();
             let until_frame_ms = deadline_ms - i64::from(now_ms);
             if until_frame_ms > 0 {
                 clock_pause = true;
-                if now_ms.saturating_sub(timeline.last_mp_clock_ahead_log_ms) >= 1000 {
-                    timeline.last_mp_clock_ahead_log_ms = now_ms;
+                if timeline.clock_ahead_log_due(now_ms) {
                     tracing::info!(
-                        scheduled_frame = timeline.mp_host_frame_schedule.map(|(frame, _)| frame),
+                        scheduled_frame = timeline.host_schedule_frame(),
                         local_frame = timeline.frame_number(),
                         until_frame_ms,
                         "multiplayer: local frame is ahead of host schedule; holding sim"
@@ -921,45 +911,6 @@ fn rewind_from_recent_timeline_history(
             replay_tick_us,
         },
     ))
-}
-
-pub(super) fn accept_host_frame_schedule(
-    mp_host_frame_schedule: &mut Option<(u32, u32)>,
-    clock_frame: u32,
-    ms_until_next_frame: u32,
-    local_frame: u32,
-) {
-    if mp_host_frame_schedule.is_some_and(|(sample_frame, _)| clock_frame < sample_frame) {
-        tracing::trace!(
-            clock_frame,
-            current_sample_frame = mp_host_frame_schedule.map(|(frame, _)| frame),
-            "multiplayer: ignored stale host frame schedule"
-        );
-        return;
-    }
-
-    let now_ms = crate::window::process_uptime_ms();
-    let scheduled_deadline_ms = now_ms.saturating_add(ms_until_next_frame);
-    *mp_host_frame_schedule = Some((clock_frame, scheduled_deadline_ms));
-    let local_frame_deadline_ms =
-        host_scheduled_frame_deadline_ms(*mp_host_frame_schedule, local_frame)
-            .expect("host schedule was just installed");
-    tracing::info!(
-        host_clock_frame = clock_frame,
-        ms_until_next_frame,
-        local_frame_at_receive = local_frame,
-        deadline_delta_ms_for_local_frame = local_frame_deadline_ms - i64::from(now_ms),
-        "multiplayer: received host frame schedule"
-    );
-}
-
-pub(super) fn host_scheduled_frame_deadline_ms(
-    mp_host_frame_schedule: Option<(u32, u32)>,
-    local_frame: u32,
-) -> Option<i64> {
-    let (scheduled_frame, scheduled_deadline_ms) = mp_host_frame_schedule?;
-    let frame_delta = i64::from(local_frame) - i64::from(scheduled_frame);
-    Some(i64::from(scheduled_deadline_ms) + frame_delta * i64::from(engine_api::FRAME_TIME_MS))
 }
 
 /// Initialise the multiplayer transport based on `--server` /
