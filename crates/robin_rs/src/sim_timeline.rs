@@ -22,6 +22,7 @@ pub fn run_engine_frame_core(
     frame: robin_engine::engine::SimulationFrameInput,
 ) -> robin_engine::engine::SimulationFrameOutput {
     host.sync_sound_listener();
+    let camera_before = engine.director_camera_frame();
     let output = engine
         .advance_frame(assets, frame)
         .unwrap_or_else(|error| panic!("authoritative frame admission failed: {error}"));
@@ -49,6 +50,11 @@ pub fn run_engine_frame_core(
     if let Some(events) = output.post_initialize_events.clone() {
         apply_engine_side_effects(host, display, dev, events.into_side_effects());
     }
+    host.frontend.viewport.advance_director_camera(
+        camera_before,
+        engine.director_camera_frame(),
+        engine.director_camera_view_size(),
+    );
     output
 }
 

@@ -4318,6 +4318,18 @@ impl Engine {
         EngineInner::director_camera_view_size()
     }
 
+    /// Sample before and after a tick to present scripted motion from the
+    /// host's current view, without feeding local scrolling into simulation.
+    pub fn director_camera_frame(&self) -> super::DirectorCameraFrame {
+        let camera = &self.inner.feedback.cutscene_camera;
+        super::DirectorCameraFrame {
+            view_position: camera.view_position,
+            zoom_factor: camera.zoom_factor,
+            slide_target: camera.is_sliding().then_some(camera.camera_slide),
+            owns_view: self.director_camera_view().is_some(),
+        }
+    }
+
     #[cfg(feature = "test-helpers")]
     #[doc(hidden)]
     pub fn test_assert_level_assets_attached(&self, assets: &LevelAssets) {

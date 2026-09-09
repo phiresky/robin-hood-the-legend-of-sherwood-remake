@@ -1135,7 +1135,62 @@ impl ViewportState {
         self.clip_view();
     }
 
-    /// Mirror the shared script/director camera while a cutscene owns input.
+    /// Apply scripted motion from the local view. Merely locking input must
+    /// not restore the stale shared view left by an earlier cutscene.
+    pub fn advance_director_camera(
+        &mut self,
+        before: engine_api::DirectorCameraFrame,
+        after: engine_api::DirectorCameraFrame,
+        view_size: ScreenSize,
+    ) {
+        if !before.owns_view && !after.owns_view {
+            return;
+        }
+        if before.zoom_factor != after.zoom_factor {
+            // Script zooms retain the local focal point until a pan or jump
+            // explicitly chooses a new one.
+            self.zoom_by(after.zoom_factor / self.zoom_factor, None);
+        }
+
+        let target = after.slide_target.or_else(|| {
+            before
+                .slide_target
+                .filter(|target| *target == after.view_position)
+        });
+        if let Some(target) = target {
+            if self.zoom_factor != after.zoom_factor {
+                self.zoom_by(after.zoom_factor / self.zoom_factor, None);
+            }
+            let distance = |point: MapPoint| (point.x - target.x).hypot(point.y - target.y);
+            let remaining_before = distance(before.view_position);
+            let progress = if remaining_before == 0.0 {
+                1.0
+            } else {
+                (1.0 - distance(after.view_position) / remaining_before).clamp(0.0, 1.0)
+            };
+            // Use the shared pan's progress, but interpolate from the local
+            // viewport. This preserves deterministic sequence completion and
+            // makes every peer arrive at the scripted destination together.
+            // TODO: a shared pan with zero distance has no duration to reuse;
+            // presenting a local-only pan then needs a separate visual clock.
+            self.old_view_position = self.view_position;
+            let target_x =
+                target.x + (view_size.x - self.screen_size.x) / (2.0 * after.zoom_factor);
+            let target_y =
+                target.y + (view_size.y - self.screen_size.y) / (2.0 * after.zoom_factor);
+            self.view_position.x += (target_x - self.view_position.x) * progress;
+            self.view_position.y += (target_y - self.view_position.y) * progress;
+            self.clip_view();
+        } else if before.view_position != after.view_position
+            && before.zoom_factor == after.zoom_factor
+        {
+            // An explicit jump (including jump+unlock in one tick), or a
+            // follow-camera update, still adopts the scripted framing.
+            self.adopt_director_camera(after.view_position, view_size, after.zoom_factor);
+        }
+    }
+
+    /// Mirror the shared script/director camera for an explicit placement.
     ///
     /// The director camera is deterministic shared state, so the engine
     /// frames its focal point inside a fixed virtual view (`view_size`)
@@ -2597,6 +2652,98 @@ mod viewport_touch_tests {
         let transformed_anchor = viewport.screen_to_map_unchecked(ScreenPoint::new(340.0, 270.0));
         close(transformed_anchor.x, anchor.x);
         close(transformed_anchor.y, anchor.y);
+    }
+
+    #[test]
+    fn director_pan_starts_at_local_view_and_finishes_at_script_target() {
+        let mut viewport = ViewportState::new(1280.0, 720.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(2200.0, 1800.0);
+        let view_size = ScreenSize::new(1024.0, 768.0);
+        let idle = engine_api::DirectorCameraFrame {
+            view_position: MapPoint::new(100.0, 200.0),
+            zoom_factor: 1.0,
+            slide_target: None,
+            owns_view: false,
+        };
+
+        // LockUser and a timer before CameraGoto must leave the local view
+        // where the player put it, even though the director is far away.
+        let locked = engine_api::DirectorCameraFrame {
+            owns_view: true,
+            ..idle
+        };
+        viewport.advance_director_camera(idle, locked, view_size);
+        assert_eq!(viewport.view_position, MapPoint::new(2200.0, 1800.0));
+        let start = engine_api::DirectorCameraFrame {
+            slide_target: Some(MapPoint::new(1100.0, 1200.0)),
+            ..locked
+        };
+        viewport.advance_director_camera(locked, start, view_size);
+        assert_eq!(viewport.view_position, MapPoint::new(2200.0, 1800.0));
+
+        let halfway = engine_api::DirectorCameraFrame {
+            view_position: MapPoint::new(600.0, 700.0),
+            ..start
+        };
+        viewport.advance_director_camera(start, halfway, view_size);
+        close(viewport.view_position.x, 1586.0);
+        close(viewport.view_position.y, 1512.0);
+
+        // Completion can clear the slide in the same tick that it arrives.
+        let end = engine_api::DirectorCameraFrame {
+            view_position: start.slide_target.unwrap(),
+            slide_target: None,
+            ..start
+        };
+        viewport.advance_director_camera(halfway, end, view_size);
+        assert_eq!(viewport.view_position, MapPoint::new(972.0, 1224.0));
+        viewport.advance_director_camera(end, end, view_size);
+        assert_eq!(viewport.view_position, MapPoint::new(972.0, 1224.0));
+    }
+
+    #[test]
+    fn director_jump_interrupts_pan_and_adopts_destination() {
+        let mut viewport = ViewportState::new(1024.0, 768.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(2200.0, 1800.0);
+        let before = engine_api::DirectorCameraFrame {
+            view_position: MapPoint::new(100.0, 200.0),
+            zoom_factor: 1.0,
+            slide_target: Some(MapPoint::new(1100.0, 1200.0)),
+            owns_view: true,
+        };
+        let after = engine_api::DirectorCameraFrame {
+            view_position: MapPoint::new(500.0, 600.0),
+            slide_target: None,
+            owns_view: false,
+            ..before
+        };
+        viewport.advance_director_camera(before, after, viewport.screen_size);
+        assert_eq!(viewport.view_position, after.view_position);
+    }
+
+    #[test]
+    fn director_zoom_keeps_local_focal_point() {
+        let mut viewport = ViewportState::new(1280.0, 720.0);
+        viewport.set_level_size(5000.0, 5000.0);
+        viewport.view_position = MapPoint::new(2200.0, 1800.0);
+        let center = ScreenPoint::new(640.0, 360.0);
+        let focal_point = viewport.screen_to_map_unchecked(center);
+        let before = engine_api::DirectorCameraFrame {
+            view_position: MapPoint::new(100.0, 200.0),
+            zoom_factor: 1.0,
+            slide_target: None,
+            owns_view: true,
+        };
+        let after = engine_api::DirectorCameraFrame {
+            view_position: MapPoint::new(356.0, 392.0),
+            zoom_factor: 2.0,
+            ..before
+        };
+        viewport.advance_director_camera(before, after, ScreenSize::new(1024.0, 768.0));
+        assert_eq!(viewport.zoom_factor, 2.0);
+        assert_eq!(viewport.screen_to_map_unchecked(center), focal_point);
     }
 
     #[test]

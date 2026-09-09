@@ -580,6 +580,16 @@ where
     Option::<T>::deserialize(deserializer)
 }
 
+/// Read-only camera motion for a host to apply to its own viewport.
+/// Positions use the director's fixed virtual view, independent of canvas size.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DirectorCameraFrame {
+    pub view_position: MapPoint,
+    pub zoom_factor: f32,
+    pub slide_target: Option<MapPoint>,
+    pub owns_view: bool,
+}
+
 /// Script/director camera state.
 #[derive(Debug, Clone, robin_state_hash_derive::StateHash, bitcode::Encode, bitcode::Decode)]
 pub struct CameraState {

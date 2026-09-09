@@ -576,13 +576,6 @@ impl Game {
 
         let output =
             crate::sim_timeline::run_engine_frame_core(host, display, assets, engine, dev, frame);
-        if let Some((view_position, zoom_factor)) = engine.director_camera_view() {
-            host.frontend.viewport.adopt_director_camera(
-                view_position,
-                engine.director_camera_view_size(),
-                zoom_factor,
-            );
-        }
         if !output.hourglass_ran {
             return None;
         }
