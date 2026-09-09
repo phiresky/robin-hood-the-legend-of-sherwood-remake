@@ -1573,8 +1573,51 @@ fn render_allied_portrait_layer(
     }
 }
 
-fn render_auto_queue_ticks(
+/// Advance visible automatic strips once per fixed tick, not once per capture
+/// or physical-display refresh. This is presentation-only animation state.
+pub(crate) fn prepare_auto_queue_animations(
     frontend: &mut HostFrontend,
+    engine: &Engine,
+    seat: PlayerId,
+    screen_width: u16,
+) {
+    let (items, _) = portrait_bar_items(engine, seat, screen_width);
+    let mut prepared = std::collections::HashSet::new();
+    for item in items {
+        if let PortraitTarget::Pc(id) = item.target {
+            let entity = engine
+                .get_entity(id)
+                .expect("displayed portrait must have an entity");
+            if matches!(entity, Entity::Pc(pc) if pc.pc.life_points <= 0)
+                || is_pc_in_coma(engine, entity)
+            {
+                continue;
+            }
+        }
+        let key = *item
+            .members
+            .first()
+            .expect("automatic queue strip cannot have an empty member list");
+        if !prepared.insert(key) {
+            // TODO: Give overlapping pinned groups distinct animation identities;
+            // the existing storage keys all strips by their first member.
+            continue;
+        }
+        let count = item
+            .members
+            .iter()
+            .map(|id| engine.automatic_quick_action_count(*id))
+            .sum();
+        frontend
+            .queue_strip_animations
+            .entry(key)
+            .or_default()
+            .prepare_fixed_tick(count);
+    }
+}
+
+fn render_auto_queue_ticks(
+    frontend: &HostFrontend,
     renderer: &mut Renderer,
     engine: &Engine,
     members: &[EntityId],
@@ -1588,16 +1631,12 @@ fn render_auto_queue_ticks(
         .iter()
         .map(|member| engine.automatic_quick_action_count(*member))
         .sum();
-    let animation = frontend
+    // Missing animation is the legitimate first, pre-update thumbnail state:
+    // a strip has no previous queue from which to animate a collapse.
+    let fall_offset = frontend
         .queue_strip_animations
-        .entry(animation_key)
-        .or_default();
-    if queue_count < animation.previous_count {
-        animation.fall_offset = 10;
-    }
-    animation.previous_count = queue_count;
-    let fall_offset = animation.fall_offset;
-    animation.fall_offset = animation.fall_offset.saturating_sub(2);
+        .get(&animation_key)
+        .map_or(0, |animation| animation.displayed_offset(queue_count));
     if queue_count == 0 {
         return;
     }
@@ -1606,7 +1645,7 @@ fn render_auto_queue_ticks(
     for index in 0..visible {
         // Original-game falling-button behavior offsets the surviving
         // quick-action icon horizontally, then reduces that elevation on
-        // every refresh. Keep the automatic strip independent, but preserve
+        // every fixed tick. Keep the automatic strip independent, but preserve
         // the same right-to-left tetris collapse.
         let left = i32::from(x) + 5 + index as i32 * 8 + fall_offset;
         let height = if index == 11 && queue_count > 12 {
@@ -1620,7 +1659,7 @@ fn render_auto_queue_ticks(
 }
 
 fn render_allied_portrait(
-    frontend: &mut HostFrontend,
+    frontend: &HostFrontend,
     renderer: &mut Renderer,
     portraits: &PortraitCache,
     engine: &Engine,
@@ -2006,7 +2045,7 @@ fn blit_centered_between_scrolls(
 /// Should be called after entity rendering and before `renderer.flip()`.
 #[allow(clippy::too_many_arguments)]
 pub fn draw_panel(
-    frontend: &mut HostFrontend,
+    frontend: &HostFrontend,
     engine: &Engine,
     local_seat: PlayerId,
     profiles: &engine_profiles::ProfileManager,

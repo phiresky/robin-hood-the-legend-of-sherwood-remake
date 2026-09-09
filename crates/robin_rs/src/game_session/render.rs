@@ -15,7 +15,7 @@ use crate::game_render::{
     render_shadow_polygon_sphere_debug, render_trajectory_preview, render_view_cone_overlay,
 };
 use crate::host::PrintScreenRequest;
-use crate::host::{Host, HostPresentation};
+use crate::host::{Host, HostDraw, HostPresentation};
 use crate::ingame_menu::{IngameMenuResources, PauseMenu};
 use crate::level_loading_host::EngineLevelLoadExt;
 use crate::presentation::{PresentationFrameId, ZoomPresentationUpdate};
@@ -133,6 +133,13 @@ pub(super) fn prepare_fixed_tick_hud(
     let sw = presentation.renderer.screen_width();
     let sh = presentation.renderer.screen_height();
     let local_seat = host.local_seat;
+    if sw != 0 && sh != 0 {
+        crate::ui_panel::prepare_auto_queue_animations(host.frontend, engine, local_seat, sw);
+    }
+    crate::combat_gesture_overlay::prepare_feedback(
+        host.frontend,
+        crate::window::process_uptime_ms(),
+    );
     let campaign = engine.campaign();
     let portrait_cache = &presentation.sprites.portrait_cache;
     let mut tooltip_update = HudTooltipUpdate {
@@ -333,7 +340,7 @@ fn selected_allied_patrol_routes(
 }
 
 fn render_selected_allied_patrol_routes(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     assets: &engine_api::LevelAssets,
     seat: robin_engine::player_command::PlayerId,
@@ -454,21 +461,21 @@ fn allied_portrait_tooltip(
 /// Original-game behavior:
 /// - Tooltip focus/timer state advances before display.
 /// - The Zoom+ and Zoom- widgets receive their localized tooltips.
-fn update_zoom_presentation(
+pub(super) fn prepare_zoom_presentation(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
     host: &HostPresentation<'_>,
-    ctx: &mut RenderContext<'_>,
+    renderer: &mut Renderer,
+    tooltip: &mut ZoomTooltipTracker,
+    layout: &zoom_hud::ZoomHudLayout,
+    threaded_input: &crate::input::ThreadedInput,
 ) {
     let frame_id = PresentationFrameId::new(engine.frame_counter());
     let enable = ZoomButtonEnable::from_engine(engine, display);
-    let mouse = ctx.threaded_input.position();
-    let hovered = ctx
-        .zoom_layout
-        .hit_test_geometric(mouse.x as i32, mouse.y as i32);
+    let mouse = threaded_input.position();
+    let hovered = layout.hit_test_geometric(mouse.x as i32, mouse.y as i32);
     let input = ZoomPresentationUpdate::new(enable, hovered, host.frontend.input.left_mouse_down());
-    ctx.renderer
-        .update_zoom_presentation(frame_id, input, &mut *ctx.zoom_tooltip);
+    renderer.update_zoom_presentation(frame_id, input, tooltip);
 }
 
 /// Render a throwaway frame per pending `/screenshot` request, reply
@@ -478,9 +485,8 @@ fn update_zoom_presentation(
 /// Each screenshot renders against a **clone** of `dev` with its own
 /// debug-flag overrides — the live `dev` is never mutated. Tooltip trackers
 /// and console presentation are immutable draw inputs, so captures require
-/// no transient state rollback. `host.frontend.input` hover state
-/// (focused_entity_id etc.) is not restored because the live `render_frame`
-/// overwrites it anyway.
+/// no transient state rollback. Viewport captures borrow an immutable frontend;
+/// the full-map adapter alone temporarily changes and restores camera geometry.
 pub(super) fn drain_screenshots(
     sim_frame: u32,
     engine: &Engine,
@@ -506,10 +512,6 @@ pub(super) fn drain_screenshot_requests(
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
 ) {
-    // This is the normal frame's update boundary even when there are no HTTP
-    // requests. The live draw later in the loop only reads the snapshot.
-    update_zoom_presentation(engine, display, host, ctx);
-
     if pending.is_empty() {
         return;
     }
@@ -568,7 +570,7 @@ fn render_screenshot_rgba(
     let captured = if request.full_map {
         capture_wide_map_rgba(engine, display, host, assets, &scratch_dev, ctx)
     } else {
-        render_frame(engine, display, host, assets, &scratch_dev, ctx);
+        render_frame(engine, display, &host.draw(), assets, &scratch_dev, ctx);
         ctx.renderer
             .try_capture_frame_rgba()
             .map_err(|error| error.to_string())
@@ -596,9 +598,7 @@ pub(super) fn begin_save_thumbnail(
     ctx: &mut RenderContext<'_>,
 ) -> PendingThumbnail {
     let mut timer = super::setup::PhaseTimer::new("save thumbnail");
-    update_zoom_presentation(engine, display, host, ctx);
-
-    render_frame(engine, display, host, assets, dev, ctx);
+    render_frame(engine, display, &host.draw(), assets, dev, ctx);
 
     timer.step("compose");
     let capture = ctx.renderer.begin_capture_frame_rgba();
@@ -759,7 +759,6 @@ pub(super) fn capture_screenshot_to_path(
     request: &crate::http_server::ScreenshotRequest,
     path: &std::path::Path,
 ) -> Result<(), String> {
-    update_zoom_presentation(engine, display, host, ctx);
     let (w, h, rgba) = render_screenshot_rgba(engine, display, host, assets, dev, request, ctx)?;
     write_rgba_png(path, w, h, &rgba)
 }
@@ -801,7 +800,7 @@ fn capture_wide_map_rgba(
         .set_screen_size(level_w as f32, render_h as f32);
     ctx.renderer.resize(level_w as u16, render_h as u16);
 
-    render_frame(engine, display, host, assets, dev, ctx);
+    render_frame(engine, display, &host.draw(), assets, dev, ctx);
     let captured = ctx.renderer.try_capture_frame_rgba();
 
     ctx.renderer.resize(saved_renderer_w, saved_renderer_h);
@@ -861,18 +860,8 @@ fn median_filter_rgba_3x3(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
     out
 }
 
-fn render_display_info_overlay(
-    host: &mut HostPresentation<'_>,
-    renderer: &mut crate::renderer::Renderer,
-    fonts: &crate::hud_text::HudFonts,
-    elapsed_secs: u32,
-) {
-    debug_assert!(
-        renderer.is_gpu_phase(),
-        "render_display_info_overlay runs after flush_base_layer"
-    );
-
-    let now = crate::window::process_uptime_ms();
+/// Sample diagnostics at the live presentation boundary, never during captures.
+pub(super) fn prepare_display_info(host: &mut HostPresentation<'_>, now: u32) {
     let frame_ms = if host.frontend.display_info_last_tick_ms == 0 {
         engine_api::FRAME_TIME_MS
     } else {
@@ -885,6 +874,22 @@ fn render_display_info_overlay(
     host.frontend.display_info_frame_samples[cursor] = frame_ms;
     host.frontend.display_info_sample_cursor =
         (cursor + 1) % host.frontend.display_info_frame_samples.len();
+    host.frontend.display_info_max_pending_sounds = host
+        .frontend
+        .display_info_max_pending_sounds
+        .max(host.sound.num_pending_sounds());
+}
+
+fn render_display_info_overlay(
+    host: &HostDraw<'_>,
+    renderer: &mut crate::renderer::Renderer,
+    fonts: &crate::hud_text::HudFonts,
+    elapsed_secs: u32,
+) {
+    debug_assert!(
+        renderer.is_gpu_phase(),
+        "render_display_info_overlay runs after flush_base_layer"
+    );
     let sample_sum: u32 = host
         .frontend
         .display_info_frame_samples
@@ -955,10 +960,6 @@ fn render_display_info_overlay(
     );
     fill_rect(renderer, left + 84, top - 8, 12, 4, mode_color);
 
-    host.frontend.display_info_max_pending_sounds = host
-        .frontend
-        .display_info_max_pending_sounds
-        .max(host.sound.num_pending_sounds());
     fill_rect(renderer, left - 24, top + 48, 180, 12, 0x2408);
     text(
         renderer,
@@ -1037,7 +1038,7 @@ pub(super) fn update_mouse_and_cursor(
     let mouse_screen = threaded_input.position();
     let portrait_hit = hit_test_portrait_detailed(
         engine,
-        host.transport.local_seat,
+        host.transport.local_seat(),
         portrait_cache,
         renderer.screen_width(),
         renderer.screen_height(),
@@ -1078,7 +1079,7 @@ pub(super) fn update_mouse_and_cursor(
     // computed by `update_mouse` (which queries `find_focusable_*`
     // against the world `mouse_map`) so the cursor reflects whether
     // the portrait's PC is a valid target.
-    let local_seat = host.transport.local_seat;
+    let local_seat = host.transport.local_seat();
     let armed = if shift_held {
         engine.planned_action_for_seat(local_seat)
     } else {
@@ -1164,7 +1165,7 @@ pub(super) fn update_mouse_and_cursor(
 ///
 /// The struct exists so the screenshot path can call `render_frame`
 /// with a one-liner:
-/// `render_frame(&engine, &mut host, &assets, &scratch_dev, &mut ctx)`
+/// `render_frame(&engine, &display, &host.draw(), &assets, &scratch_dev, &mut ctx)`
 /// instead of threading ~25 arguments through the HTTP plumbing.
 pub struct RenderContext<'a> {
     // Mutable GPU / render resources.
@@ -1174,10 +1175,8 @@ pub struct RenderContext<'a> {
     pub titbit_renderer: &'a mut crate::titbit_renderer::TitbitRenderer,
     pub console_overlay: &'a crate::console_overlay::ConsoleOverlay,
 
-    // Update-owned per-frame UI trackers (tooltip hover timers). The zoom
-    // tracker is only mutated by `update_zoom_presentation`. Other trackers
-    // are borrowed read-only after `prepare_fixed_tick_hud` advances them.
-    pub zoom_tooltip: &'a mut ZoomTooltipTracker,
+    // Immutable snapshots after explicit HUD/zoom preparation. No tooltip
+    // tracker can be advanced by a draw or capture through this capability.
     pub hud_tooltips: HudTooltipPresentation,
 
     // Immutable resources.
@@ -1236,7 +1235,7 @@ impl RenderContext<'_> {
 pub(super) fn render_frame(
     engine: &Engine,
     display: &engine_api::HostDisplayState,
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
     ctx: &mut RenderContext<'_>,
@@ -2088,6 +2087,45 @@ pub(super) fn draw_rewind_icon(
 mod tests {
     use super::*;
     use robin_engine::level_data::{RawHikingPath, RawWaypoint, WaypointCommand};
+
+    #[test]
+    fn draw_capability_reads_do_not_sample_live_diagnostics() {
+        let mut host = Host::scratch(800.0, 600.0);
+        prepare_display_info(&mut host.presentation(), 100);
+        let samples = host.frontend.display_info_frame_samples;
+        let cursor = host.frontend.display_info_sample_cursor;
+        let last_tick = host.frontend.display_info_last_tick_ms;
+        for _ in 0..100 {
+            let presentation = host.presentation();
+            let draw = presentation.draw();
+            assert_eq!(draw.frontend.display_info_frame_samples, samples);
+            assert_eq!(draw.frontend.display_info_sample_cursor, cursor);
+            assert_eq!(draw.frontend.display_info_last_tick_ms, last_tick);
+        }
+        prepare_display_info(&mut host.presentation(), 116);
+        assert_eq!(host.frontend.display_info_frame_samples[cursor], 16);
+        assert_eq!(host.frontend.display_info_last_tick_ms, 116);
+    }
+
+    #[test]
+    fn queue_collapse_uses_fixed_ticks_not_capture_or_refresh_count() {
+        let mut animation = crate::host::QueueStripAnimation::default();
+        animation.prepare_fixed_tick(3);
+        assert_eq!(animation.displayed_offset(3), 0);
+        // A capture can preview the decrease without committing it.
+        for _ in 0..100 {
+            assert_eq!(animation.displayed_offset(2), 10);
+        }
+        assert_eq!(animation.previous_count, 3);
+        assert_eq!(animation.fall_offset, 0);
+        for expected in [10, 8, 6, 4, 2, 0, 0] {
+            animation.prepare_fixed_tick(2);
+            for _ in 0..100 {
+                assert_eq!(animation.displayed_offset(2), expected);
+            }
+            assert_eq!(animation.fall_offset, expected);
+        }
+    }
 
     type TooltipTrackers = (
         CornerTooltipTracker,

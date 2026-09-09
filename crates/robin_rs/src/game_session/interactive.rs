@@ -793,12 +793,32 @@ impl MissionPresentation {
         }
     }
 
+    /// Explicit frame-addressed update before thumbnail or screenshot/live
+    /// composition. Native-refresh samples only construct a read-only context.
+    pub(super) fn prepare_zoom(
+        &mut self,
+        engine: &robin_engine::engine::Engine,
+        host: &crate::host::HostPresentation<'_>,
+        hud: &mut MissionHud,
+        input: &MissionInput,
+    ) {
+        super::render::prepare_zoom_presentation(
+            engine,
+            &host.frontend.engine_display,
+            host,
+            &mut self.renderer,
+            &mut hud.zoom_tooltip,
+            &hud.zoom_layout,
+            &input.threaded,
+        );
+    }
+
     pub(super) fn render_context<'a>(
         &'a mut self,
         resources: &'a MissionResources,
-        hud: &'a mut MissionHud,
+        hud: &'a MissionHud,
         input: &'a MissionInput,
-        ui: &'a mut MissionUi,
+        ui: &'a MissionUi,
         game: &'a Game,
         state: RenderViewState,
     ) -> RenderContext<'a> {
@@ -808,7 +828,6 @@ impl MissionPresentation {
             selection_mark_renderer: &mut self.sprites.selection_mark_renderer,
             titbit_renderer: &mut self.sprites.titbit_renderer,
             console_overlay: &ui.console_overlay,
-            zoom_tooltip: &mut hud.zoom_tooltip,
             hud_tooltips: super::render::HudTooltipPresentation::prepare(
                 &hud.corner_tooltip,
                 &hud.requirements_tooltip,

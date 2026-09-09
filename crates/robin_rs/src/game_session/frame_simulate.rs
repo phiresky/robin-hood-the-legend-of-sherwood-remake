@@ -726,6 +726,7 @@ impl InteractiveFrameSimulation {
                     &mut hud.last_cursor_id,
                 );
                 let display_snapshot = host.frontend.engine_display.clone();
+                presentation.prepare_zoom(&manager.engine, &host.presentation(), hud, input);
                 let mut render_context = presentation.render_context(
                     resources,
                     hud,

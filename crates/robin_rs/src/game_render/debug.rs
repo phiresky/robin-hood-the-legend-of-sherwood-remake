@@ -1,7 +1,7 @@
 //! Developer rendering overlays.
 
 use super::render_text_with_shadow;
-use crate::host::HostPresentation;
+use crate::host::HostDraw;
 use crate::hud_text::HudFonts;
 use crate::renderer::{Renderer, rgb565_to_rgb8};
 use robin_engine::coordinates as engine_coordinates;
@@ -21,7 +21,7 @@ use robin_engine::pathfinder as engine_pathfinder;
 /// `params.radius` is sufficient to match the gameplay-relevant debug
 /// cue.
 pub(crate) fn render_shadow_polygon_sphere_debug(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     selected_view_element: Option<engine_element::EntityId>,
     dev: &engine_api::DevState,
@@ -60,7 +60,7 @@ pub(crate) fn render_shadow_polygon_sphere_debug(
 /// (same architectural shift the `draw_status_bar` docstring calls
 /// out).
 pub(crate) fn render_debug_doors(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -159,7 +159,7 @@ pub(crate) fn render_debug_doors(
 /// view rect.  World→screen transform is
 /// `(point - view_rect.top_left) * zoom`.
 pub(crate) fn render_debug_motion_graph(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     assets: &engine_api::LevelAssets,
     dev: &engine_api::DevState,
@@ -324,7 +324,7 @@ fn fill_polygon_map(
 /// Find the `(layer, area_idx)` the selected character is standing on,
 /// using the canonical `PathGraph::find_area_at_point` lookup.
 fn selected_surface(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     graph: &engine_pathfinder::PathGraph,
 ) -> Option<(usize, usize)> {
@@ -343,7 +343,7 @@ fn selected_surface(
 /// MotionArea is filled — outlining every area is left to the post-
 /// sprite pass so the sprite art reads cleanly.
 pub(crate) fn render_debug_surfaces_fill(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
@@ -380,7 +380,7 @@ pub(crate) fn render_debug_surfaces_fill(
 /// highlighted-surface outline, and the committed-path polyline all
 /// sit on top of the world and remain readable.
 pub(crate) fn render_debug_surfaces_outline(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
@@ -535,7 +535,7 @@ pub(crate) fn render_debug_surfaces_outline(
 ///    is selected), draw a black ring at its `cover_noise_deafness`
 ///    radius — the "can't hear inside this circle" envelope.
 pub(crate) fn render_noise_display(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     assets: &LevelAssets,
     dev: &engine_api::DevState,
@@ -681,7 +681,7 @@ pub(crate) fn render_noise_display(
 }
 
 pub(crate) fn render_debug_animation_lines(
-    host: &mut HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     dev: &engine_api::DevState,
     renderer: &mut Renderer,
@@ -723,7 +723,7 @@ pub(crate) fn render_debug_animation_lines(
 /// world→screen transform and let the framebuffer clip.  Empty rects
 /// are skipped.
 pub(crate) fn render_debug_whatsup_overlay(
-    host: &HostPresentation<'_>,
+    host: &HostDraw<'_>,
     engine: &Engine,
     renderer: &mut Renderer,
 ) {
