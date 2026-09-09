@@ -553,16 +553,26 @@ impl HostConsoleDispatch<'_> {
     }
 }
 
+/// How a newly assembled mission enters runtime. A lost Sherwood mission enters
+/// debriefing without starting the campaign clock, but still closes bootstrap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum MissionBootstrapCompletion {
+    StartClock,
+    DebriefOnly,
+}
+
 impl Engine {
     /// Complete fresh mission bootstrap exactly once. Only pre-hourglass setup
     /// admissions may precede this boundary. Original save capture may import
     /// a nonzero initial frame before entry; the authority tracks this process'
     /// lifecycle, not the imported absolute frame number. Cloning, decoding,
     /// or restoring a running engine never recreates bootstrap authority.
-    pub fn finish_mission_bootstrap(&mut self) {
+    pub fn finish_mission_bootstrap(&mut self, completion: MissionBootstrapCompletion) {
         assert!(self.bootstrap_open, "mission bootstrap authority is closed");
         self.bootstrap_open = false;
-        self.campaign_reset_mission_length();
+        if completion == MissionBootstrapCompletion::StartClock {
+            self.campaign_reset_mission_length();
+        }
     }
 
     /// Open the capability used exclusively by Original parity replay tools.
@@ -4938,7 +4948,7 @@ mod tests {
         assert!(!decoded.bootstrap_open);
         let hash = crate::replay::state_hash(&engine);
         assert_eq!(hash, crate::replay::state_hash(&engine.inner));
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
         assert_eq!(crate::replay::state_hash(&engine), hash);
         assert_eq!(serde_json::to_vec(&engine).unwrap(), bytes);
     }
@@ -4949,23 +4959,63 @@ mod tests {
         engine
             .advance_frame(&assets, SimulationFrameInput::no_hourglass())
             .unwrap();
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
         assert!(!engine.bootstrap_open);
+    }
+
+    #[test]
+    fn debrief_completion_preserves_clock_snapshot_and_hash() {
+        let (mut engine, _) = frame_api_fixture();
+        engine
+            .inner
+            .mission_domain
+            .campaign
+            .set_value(crate::campaign::CampaignValue::MissionLength, 23);
+        let bytes = serde_json::to_vec(&engine).unwrap();
+        let hash = crate::replay::state_hash(&engine);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::DebriefOnly);
+        assert!(!engine.bootstrap_open);
+        assert_eq!(
+            engine.campaign().values[crate::campaign::CampaignValue::MissionLength],
+            23
+        );
+        assert_eq!(serde_json::to_vec(&engine).unwrap(), bytes);
+        assert_eq!(crate::replay::state_hash(&engine), hash);
+        for completion in [
+            MissionBootstrapCompletion::StartClock,
+            MissionBootstrapCompletion::DebriefOnly,
+        ] {
+            let json = serde_json::to_string(&completion).unwrap();
+            assert_eq!(
+                serde_json::from_str::<MissionBootstrapCompletion>(&json).unwrap(),
+                completion
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "mission bootstrap authority is closed")]
+    fn debrief_completion_cannot_later_start_clock() {
+        let (mut engine, _) = frame_api_fixture();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::DebriefOnly);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     #[test]
     #[should_panic(expected = "mission bootstrap authority is closed")]
     fn bootstrap_cannot_be_finished_twice() {
         let (mut engine, _) = frame_api_fixture();
-        engine.finish_mission_bootstrap();
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     #[test]
     #[should_panic(expected = "mission bootstrap authority is closed")]
     fn bootstrap_cannot_be_reopened_by_clone() {
         let (engine, _) = frame_api_fixture();
-        engine.clone().finish_mission_bootstrap();
+        engine
+            .clone()
+            .finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     #[test]
@@ -4974,7 +5024,7 @@ mod tests {
         let (engine, _) = frame_api_fixture();
         let mut decoded: Engine =
             serde_json::from_value(serde_json::to_value(engine).unwrap()).unwrap();
-        decoded.finish_mission_bootstrap();
+        decoded.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     #[test]
@@ -4983,7 +5033,7 @@ mod tests {
         let (engine, assets) = frame_api_fixture();
         Engine::adopt_authoritative_snapshot(engine, &assets)
             .unwrap()
-            .finish_mission_bootstrap();
+            .finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     #[test]
@@ -4993,7 +5043,7 @@ mod tests {
         engine
             .advance_frame(&assets, SimulationFrameInput::new(Vec::new()))
             .unwrap();
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     #[test]
@@ -5006,7 +5056,7 @@ mod tests {
             .campaign
             .set_value(crate::campaign::CampaignValue::MissionLength, 23);
         engine.install_legacy_adoption_inner(imported);
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
         assert_eq!(engine.frame_counter(), 98_765);
         assert_eq!(
             engine.campaign().values[crate::campaign::CampaignValue::MissionLength],
@@ -5019,10 +5069,10 @@ mod tests {
     #[should_panic(expected = "mission bootstrap authority is closed")]
     fn legacy_adoption_cannot_reopen_finished_bootstrap() {
         let (mut engine, _) = frame_api_fixture();
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
         let (fresh, _) = frame_api_fixture();
         engine.install_legacy_adoption_inner(fresh.inner);
-        engine.finish_mission_bootstrap();
+        engine.finish_mission_bootstrap(MissionBootstrapCompletion::StartClock);
     }
 
     fn frame_api_fixture() -> (Engine, LevelAssets) {
