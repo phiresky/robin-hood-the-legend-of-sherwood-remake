@@ -253,11 +253,12 @@ pub fn wasm_boot(datadir_bin: &[u8], data_base_url: String) -> Result<(), wasm_b
     let dd = assets_shipping_datadir::install_global(std::sync::Arc::new(dd)).map_err(|e| {
         wasm_bindgen::JsValue::from_str(&format!("install shipping datadir: {e:#}"))
     })?;
-    robin_rs::http_server::start_global(0)
+    let replay_service = std::sync::Arc::new(robin_rs::replay_service::ReplayService::default());
+    robin_rs::http_server::start_global(0, replay_service.exports(), replay_service.launches())
         .map_err(|e| wasm_bindgen::JsValue::from_str(&format!("rpc init: {e}")))?;
 
     wasm_bindgen_futures::spawn_local(async move {
-        if let Err(e) = wasm_main(dd).await {
+        if let Err(e) = wasm_main(dd, replay_service).await {
             tracing::error!("wasm boot failed: {e:#}");
         }
     });
@@ -408,6 +409,7 @@ fn wasm_query_thread_override() -> Option<usize> {
 #[cfg(target_arch = "wasm32")]
 async fn wasm_main(
     shipping: std::sync::Arc<assets_shipping_datadir::ShippingDatadir>,
+    replay_service: std::sync::Arc<robin_rs::replay_service::ReplayService>,
 ) -> anyhow::Result<()> {
     use futures::FutureExt as _;
 
@@ -431,6 +433,10 @@ async fn wasm_main(
     let init_start = web_time::Instant::now();
     let (campaign, profiles, shipping) =
         robin_rs::main_entry::rust_init_with_shipping(Some(shipping))?;
+    // Preserve replay requests admitted while asynchronous browser startup runs.
+    let shipping = shipping
+        .with_replay_service(replay_service)
+        .map_err(anyhow::Error::msg)?;
     tracing::info!(
         elapsed_ms = init_start.elapsed().as_secs_f64() * 1000.0,
         "startup timing: rust initialization"

@@ -5,6 +5,7 @@
 //! gameplay, and level results. This module covers the **state
 //! management** and **transition logic** for those flows.
 
+#[cfg(test)]
 use crate::host::Host;
 use crate::host::{ApplicationContext, HostSignal};
 use robin_engine::engine as engine_api;
@@ -522,8 +523,11 @@ impl Game {
     #[allow(clippy::too_many_arguments)]
     pub fn run_engine_tick(
         &mut self,
-        host: &mut Host,
-        display: &mut engine_api::HostDisplayState,
+        frontend: &mut crate::host::HostFrontend,
+        audio: &mut crate::host::HostAudio,
+        effects: &mut crate::host::HostEffectBatches,
+        application_context: &ApplicationContext,
+        local_seat: robin_engine::player_command::PlayerId,
         assets: &LevelAssets,
         engine: &mut Engine,
         dev: &mut engine_api::DevState,
@@ -554,18 +558,16 @@ impl Game {
         // ticking while in a building / flying / nothing selected,
         // and re-selecting after an idle period would jump to a
         // different visible frame.
-        if frame.run_hourglass
-            && engine.any_selection_drawing_selection_mark(host.transport.local_seat())
-        {
-            host.frontend.selection_mark.tick();
+        if frame.run_hourglass && engine.any_selection_drawing_selection_mark(local_seat) {
+            frontend.selection_mark.tick();
         }
-        let viewport = &host.frontend.viewport;
+        let viewport = &frontend.viewport;
         let view_position = viewport.view_position.to_geo();
         let zoom_factor = viewport.zoom_factor;
         let screen_width = viewport.screen_size.x as i32;
         let screen_height = viewport.screen_size.y as i32;
         if frame.run_hourglass {
-            host.frontend.tick_trajectory_marks(
+            frontend.tick_trajectory_marks(
                 view_position,
                 zoom_factor,
                 screen_width,
@@ -574,8 +576,17 @@ impl Game {
             );
         }
 
-        let output =
-            crate::sim_timeline::run_engine_frame_core(host, display, assets, engine, dev, frame);
+        let output = crate::sim_timeline::run_engine_frame_core(
+            frontend,
+            audio,
+            effects,
+            application_context,
+            local_seat,
+            assets,
+            engine,
+            dev,
+            frame,
+        );
         if !output.hourglass_ran {
             return None;
         }
@@ -585,13 +596,13 @@ impl Game {
         // promotes it into the debug-info overlay, so toggling the FPS
         // cheat arms the next input reset to leave the info overlay
         // visible.  The cheat flag lives on `DevState::debug.fps_display`
-        // while the overlay flag lives on `Host::info_displayed`; the
+        // while the overlay flag lives in frontend diagnostics; the
         // engine-side `reset_input` side-effect is consumed by
-        // `apply_side_effects` (which can only see `Host`), so it parks
+        // frontend effect handler cannot access DevState, so it parks
         // `pending_fps_cheat_promote` for us to apply here where both
         // halves are in scope.
-        if host.effects.take_signal(HostSignal::PromoteFpsCheat) {
-            host.frontend
+        if effects.take_signal(HostSignal::PromoteFpsCheat) {
+            frontend
                 .diagnostics_mut()
                 .set_info_displayed(dev.debug.fps_display);
             dev.debug.fps_display = false;
@@ -602,7 +613,7 @@ impl Game {
         // `SideEffects`, the host drains it into
         // `pending_silent_win_widget_swap`, and we apply it here where
         // `&mut self` can mutate the widget-enable flags.
-        if host.effects.take_signal(HostSignal::SilentWinWidgetSwap) {
+        if effects.take_signal(HostSignal::SilentWinWidgetSwap) {
             self.enable_start_mission(true);
             self.enable_quit_mission(false);
         }
@@ -613,7 +624,7 @@ impl Game {
         // `&mut crate::window::GameWindow` is in scope.  The host-side
         // `pending_mission_state_popup` flag stays set until the main
         // loop shows and dismisses the popup.
-        if host.effects.take_signal(HostSignal::MissionStateNotice) {
+        if effects.take_signal(HostSignal::MissionStateNotice) {
             self.enable_quit_mission(false);
         }
 
@@ -1094,12 +1105,15 @@ mod tests {
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::scratch(800.0, 600.0);
-        let mut display = engine_api::HostDisplayState::default();
+        let application_context = host.application_context().clone();
 
         // Normal state — engine should tick and return None (still in progress)
         let result = game.run_engine_tick(
-            &mut host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             &assets,
             &mut engine,
             &mut dev,
@@ -1118,12 +1132,15 @@ mod tests {
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::scratch(800.0, 600.0);
-        let mut display = engine_api::HostDisplayState::default();
+        let application_context = host.application_context().clone();
 
         // Paused — engine should NOT tick
         let result = game.run_engine_tick(
-            &mut host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             &assets,
             &mut engine,
             &mut dev,
@@ -1141,12 +1158,15 @@ mod tests {
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::scratch(800.0, 600.0);
-        let mut display = engine_api::HostDisplayState::default();
+        let application_context = host.application_context().clone();
 
         // Console displayed — engine should NOT tick
         let result = game.run_engine_tick(
-            &mut host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             &assets,
             &mut engine,
             &mut dev,
@@ -1164,12 +1184,15 @@ mod tests {
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::scratch(800.0, 600.0);
-        let mut display = engine_api::HostDisplayState::default();
+        let application_context = host.application_context().clone();
         engine.test_set_mission_flags(true, false, false);
 
         let result = game.run_engine_tick(
-            &mut host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             &assets,
             &mut engine,
             &mut dev,
@@ -1187,12 +1210,15 @@ mod tests {
         let mut dev = engine_api::DevState::default();
         let (mut engine, assets) = fresh_engine();
         let mut host = Host::scratch(800.0, 600.0);
-        let mut display = engine_api::HostDisplayState::default();
+        let application_context = host.application_context().clone();
         engine.test_set_mission_flags(false, true, false);
 
         let result = game.run_engine_tick(
-            &mut host,
-            &mut display,
+            &mut host.frontend,
+            &mut host.audio,
+            &mut host.effects,
+            &application_context,
+            host.transport.local_seat(),
             &assets,
             &mut engine,
             &mut dev,

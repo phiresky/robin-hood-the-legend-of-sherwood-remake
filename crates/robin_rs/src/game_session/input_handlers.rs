@@ -247,11 +247,11 @@ pub(super) fn handle_console_overlay_events(
             // Route through the engine messenger so the drain handler
             // applies the reset symmetrically for any future
             // open→close path.
-            frame
-                .external_actions
-                .push(robin_engine::engine::ExternalAction::SimpleMessage {
+            frame.stage_external_actions().push(
+                robin_engine::engine::ExternalAction::SimpleMessage {
                     message: engine_messenger::SimpleMessage::HideConsole,
-                });
+                },
+            );
         }
     }
 }

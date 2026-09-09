@@ -2127,7 +2127,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     MissionChoice::StartMission => {
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::CampaignSelectNextMission {
                                 mission_idx: Some(mission_index),
                             },
@@ -2135,7 +2135,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         game.set_men_to_blazon_conversion(men_to_blazon);
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::SetMenToBlazonConversionMode { on: men_to_blazon },
                         );
                         *sherwood_enable = SherwoodButtonEnable::post_commit();
@@ -2143,7 +2143,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     MissionChoice::ShowPendingMissions => {
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::CampaignSwapPendingToAccessibleMissions,
                         );
                         game.show_campaign_map();
@@ -2169,7 +2169,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     SherwoodConfirmationAction::ReturnToMap => {
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::CampaignSelectNextMission { mission_idx: None },
                         );
                         *sherwood_enable = SherwoodButtonEnable::pre_commit();
@@ -2181,12 +2181,12 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                     } => {
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::UnselectAllPcs,
                         );
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::CampaignConvertSelectedPeasantsToBlazons,
                         );
                         game.persistent.campaign_map_active = true;
@@ -2194,7 +2194,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                         game.set_men_to_blazon_conversion(false);
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::SetMenToBlazonConversionMode { on: false },
                         );
                         *sherwood_enable = SherwoodButtonEnable::pre_commit();
@@ -2207,7 +2207,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                             current_mission_id(engine.campaign(), &assets.profile_manager);
                         dispatch_local_command(
                             &host.transport,
-                            &mut frame.commands,
+                            &mut frame.stage_commands(),
                             &PlayerCommand::CampaignHarvestProductionSectorState,
                         );
                         if defer_multiplayer_campaign_exit(host, mission_id) {
@@ -2440,7 +2440,7 @@ pub(super) fn handle_sherwood_campaign_map_overlay(
                 );
                 dispatch_local_command(
                     &host.transport,
-                    &mut frame.commands,
+                    &mut frame.stage_commands(),
                     &PlayerCommand::CampaignSelectNextMission {
                         mission_idx: Some(idx),
                     },

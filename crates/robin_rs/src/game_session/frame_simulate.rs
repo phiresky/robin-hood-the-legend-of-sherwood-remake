@@ -365,6 +365,10 @@ async fn drive_scripted_modal_lanes(
 
     use super::session_policy::{ScriptedModalLane, take_next_scripted_batch};
     use engine_player_command::ModalKind;
+    // ModalContext borrows the frame's acknowledgement journal throughout this
+    // loop. Collect its command output separately, then admit the complete FIFO
+    // batch after that disjoint presentation borrow ends.
+    let mut modal_commands = engine_player_command::FrameCommands::new();
     loop {
         let mut processed = false;
         while !rendered && ui.active_modal.is_none() {
@@ -430,7 +434,7 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_active_modal_outcome(outcome, host, &mut frame.post_commands);
+            dispatch_active_modal_outcome(outcome, host, &mut modal_commands);
             rendered = true;
             processed = true;
         }
@@ -440,6 +444,10 @@ async fn drive_scripted_modal_lanes(
         }
         break;
     }
+    frame
+        .stage_post_commands()
+        .commands
+        .extend(modal_commands.commands);
     rendered
 }
 
@@ -500,7 +508,7 @@ fn drive_leave_mission_prompt(
     if host.effects.take_signal(HostSignal::MissionStatePopup) {
         if mode == ScriptedModalMode::AutoDismiss {
             let cmd = PlayerCommand::QuitMissionRequested;
-            dispatch_local_command(&host.transport, &mut frame.post_commands, &cmd);
+            dispatch_local_command(&host.transport, &mut frame.stage_post_commands(), &cmd);
         } else if let Some(menu_resources) = resources.menu.as_ref() {
             let kind = engine_player_command::ModalKind::MissionState {
                 kind: engine_player_command::MissionStateModalKind::LeaveMissionNow,
@@ -548,7 +556,7 @@ fn drive_leave_mission_prompt(
         &manager.engine,
         &assets.profile_manager,
     );
-    dispatch_active_modal_outcome(outcome, host, &mut frame.post_commands);
+    dispatch_active_modal_outcome(outcome, host, &mut frame.stage_post_commands());
     true
 }
 
@@ -773,7 +781,7 @@ impl InteractiveFrameSimulation {
                     host,
                     assets.as_ref(),
                     dev,
-                    &mut frame.post_external_actions,
+                    &mut frame.stage_post_external_actions(),
                     &mut presentation.renderer,
                     &mut resources.cursor,
                     &mut presentation.sprites.cursor_renderer,
@@ -898,7 +906,7 @@ impl InteractiveFrameSimulation {
                         if effects.cancel_planned_action {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::CancelPlannedAction,
                             );
                         }
@@ -911,7 +919,7 @@ impl InteractiveFrameSimulation {
                         if effects.release_tactical_control {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::ReleaseTacticalControl,
                             );
                         }
@@ -920,7 +928,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetAmountOfSpeaking {
                                     amount: result.sound_config.amount_of_speaking,
                                 },
@@ -931,7 +939,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetFixHardReactionTimes {
                                     enabled: result.gameplay_config.fix_hard_reaction_times,
                                 },
@@ -942,7 +950,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetUnbindingEnabled {
                                     enabled: result.gameplay_config.enable_unbinding,
                                 },
@@ -955,7 +963,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetCleanHandsNpcKillsInvalidate {
                                     enabled: result
                                         .gameplay_config
@@ -968,7 +976,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetReusableCloaks {
                                     enabled: result.gameplay_config.reusable_cloaks,
                                 },
@@ -979,7 +987,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetItemGameplayConfig {
                                     config: result.gameplay_config.item_gameplay,
                                 },
@@ -990,7 +998,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetNoiseDistractionFeedback {
                                     enabled: result.gameplay_config.noise_distraction_feedback,
                                 },
@@ -1001,7 +1009,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetSherwoodTrading {
                                     enabled: result.gameplay_config.sherwood_trading,
                                 },
@@ -1012,7 +1020,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetTimedMissionsEnabled {
                                     enabled: result.gameplay_config.enable_timed_missions,
                                 },
@@ -1023,7 +1031,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetDynamicAmbienceEnabled {
                                     enabled: result.gameplay_config.enable_dynamic_ambience,
                                 },
@@ -1034,7 +1042,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetDiplomacyEnabled {
                                     enabled: result.gameplay_config.diplomacy,
                                 },
@@ -1045,7 +1053,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetNpcFactionWars {
                                     enabled: result.gameplay_config.npc_faction_wars,
                                 },
@@ -1058,7 +1066,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetCombatGestureRules {
                                     more_combat_gestures: result
                                         .gameplay_config
@@ -1074,7 +1082,7 @@ impl InteractiveFrameSimulation {
                         {
                             dispatch_local_command(
                                 &host.transport,
-                                &mut frame.post_commands,
+                                &mut frame.stage_post_commands(),
                                 &PlayerCommand::SetFogOfWar {
                                     enabled: result.gameplay_config.fog_of_war,
                                 },
@@ -1110,7 +1118,7 @@ impl InteractiveFrameSimulation {
                             if host.frontend.mission_surfaces.corner_size().x > 0.0 {
                                 dispatch_local_command(
                                     &host.transport,
-                                    &mut frame.post_commands,
+                                    &mut frame.stage_post_commands(),
                                     &PlayerCommand::MinimapResize {
                                         base: engine_coordinates::ScreenPoint::new(
                                             width - 83.0,
@@ -1289,21 +1297,24 @@ impl InteractiveFrameSimulation {
         reset_input_after_tick_request(host, input);
 
         if ui_task_exit_requested {
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
+            let application_context = host.application_context().clone();
             let post_initialized = runtime.cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
-                    host,
-                    &mut display,
+                    &mut host.frontend,
+                    &mut host.audio,
+                    &mut host.effects,
+                    &application_context,
+                    host.transport.local_seat(),
                     assets,
                     &mut manager.engine,
                     dev,
                     frame.unapplied_post_external_actions(),
-                    &frame.post_commands.commands,
+                    frame.post_commands(),
                     frame.run_post_initialize,
                 )
             });
             frame.run_post_initialize = post_initialized;
-            host.frontend.engine_display = display;
+
             if history_commit_pending {
                 runtime.commit_simulation_history(
                     host,
@@ -1323,7 +1334,7 @@ impl InteractiveFrameSimulation {
 
         let terminal_progress = drive_tick_exit_modals(TerminalDebriefingContext {
             tick_exit_code,
-            playing_back: runtime.replay_player.is_some(),
+            playing_back: runtime.playback().is_some(),
             host,
             game,
             manager,
@@ -1344,21 +1355,24 @@ impl InteractiveFrameSimulation {
         if terminal_progress == TerminalDebriefingProgress::EmergencyExit
             || lost_sherwood_progress == LostSherwoodGateProgress::Exit
         {
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
+            let application_context = host.application_context().clone();
             let post_initialized = runtime.cross_post_initialize(|| {
                 crate::sim_timeline::run_post_initialize_stage_with_actions(
-                    host,
-                    &mut display,
+                    &mut host.frontend,
+                    &mut host.audio,
+                    &mut host.effects,
+                    &application_context,
+                    host.transport.local_seat(),
                     assets,
                     &mut manager.engine,
                     dev,
                     frame.unapplied_post_external_actions(),
-                    &frame.post_commands.commands,
+                    frame.post_commands(),
                     frame.run_post_initialize,
                 )
             });
             frame.run_post_initialize = post_initialized;
-            host.frontend.engine_display = display;
+
             if history_commit_pending {
                 runtime.commit_simulation_history(
                     host,
@@ -1423,15 +1437,18 @@ impl InteractiveFrameSimulation {
                 return None;
             }
             let paused = execution == FrameExecutionMode::Paused;
-            let mut display = std::mem::take(&mut host.frontend.engine_display);
+            let application_context = host.application_context().clone();
             let mission_transitioning = !game
                 .operation
                 .is(robin_engine::game_operation::GameCode::LevelInProgress);
             frame.run_hourglass &= game.should_run_hourglass(false, mission_transitioning, paused);
             let simulation_frame = frame.hourglass_input();
             let result = game.run_engine_tick(
-                host,
-                &mut display,
+                &mut host.frontend,
+                &mut host.audio,
+                &mut host.effects,
+                &application_context,
+                host.transport.local_seat(),
                 assets,
                 engine,
                 dev,
@@ -1439,7 +1456,7 @@ impl InteractiveFrameSimulation {
                 false,
                 paused,
             );
-            host.frontend.engine_display = display;
+
             result
         });
 
@@ -1575,13 +1592,15 @@ impl InteractiveFrameSimulation {
         // endpoint so JS timelines can render a playhead.  `None`
         // when we're not replaying — the state response will carry
         // `null` for `replay`, the JS UI's "hide me" signal.
-        http.set_replay_status(runtime.replay_player.as_ref().map(|p| {
-            crate::http_server::ReplayStatus {
-                frame: p.current_frame(),
-                total: p.total_frames(),
-                paused: *manual_pause,
-            }
-        }));
+        http.set_replay_status(
+            runtime
+                .playback()
+                .map(|p| crate::http_server::ReplayStatus {
+                    frame: p.current_frame(),
+                    total: p.total_frames(),
+                    paused: *manual_pause,
+                }),
+        );
 
         // ── Keyboard-driven single-frame step (`.` / `,`) ──
         // Same bookkeeping as the HTTP `/step-forward` / `/step-back`
@@ -1737,6 +1756,9 @@ mod tests {
             let mut dev = DevState::default();
             let mut timeline = TimelineRuntime::new(
                 super::super::replay_init::ReplayAndRollback {
+                    recording_control:
+                        std::sync::Arc::<crate::replay_service::ReplayService>::default()
+                            .recording(),
                     recorder: None,
                     player: None,
                     rollback_checker: None,
@@ -1749,7 +1771,7 @@ mod tests {
             );
             let mut frame = MissionFrame::new(0);
             timeline.open_frame(&mut frame, &engine, &assets);
-            frame.commands.push(PlayerInput::new(
+            frame.stage_commands().push(PlayerInput::new(
                 PlayerId::HOST,
                 PlayerCommand::SetLockAlt(true),
             ));
@@ -1758,7 +1780,7 @@ mod tests {
                 ..Default::default()
             };
             frame
-                .post_external_actions
+                .stage_post_external_actions()
                 .push(ExternalAction::ReplaceCampaign { campaign });
             let before_tick = engine.simulation_tick();
             let mut http = crate::http_server::SessionIngress::detached_for_test();

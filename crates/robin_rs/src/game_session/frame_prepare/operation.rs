@@ -59,7 +59,7 @@ fn suppress_load_requests_during_playback(
     runtime: &crate::game_session::runtime::TimelineRuntime,
     callbacks: &mut RustCallbacks,
 ) {
-    if runtime.replay_player.is_some()
+    if runtime.playback().is_some()
         && callbacks
             .pending_request()
             .is_some_and(|request| !request.writes_save_payload())
@@ -122,7 +122,7 @@ pub(super) async fn process_operation_and_save(
     let autosave_allowed = crate::autosave::session_allows_autosave(
         callbacks.autosave_enabled(),
         host.transport.net().is_some(),
-        runtime.replay_player.is_some(),
+        runtime.playback().is_some(),
         args.headless,
     );
     let snapshot_available = callbacks
@@ -174,7 +174,7 @@ pub(super) async fn process_operation_and_save(
             host,
             assets,
             dev,
-            &mut frame.external_actions,
+            &mut frame.stage_external_actions(),
             &mut presentation.renderer,
             &mut resources.cursor,
             &mut presentation.sprites.cursor_renderer,

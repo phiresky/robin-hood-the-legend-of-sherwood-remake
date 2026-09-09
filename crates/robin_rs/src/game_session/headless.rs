@@ -121,22 +121,16 @@ impl HeadlessMission {
         // them so rollback replay does not start post-command and apply the
         // journaled inputs a second time.
         let mut frame = self.runtime.begin_frame(frame_started_at_ms);
-        frame.commands.commands.extend(net_inputs);
+        frame.stage_commands().commands.extend(net_inputs);
 
         if !tick_paused
             && self
                 .runtime
                 .timeline
-                .replay_player
-                .as_ref()
+                .playback()
                 .is_some_and(|player| !player.is_finished())
         {
-            let player = self
-                .runtime
-                .timeline
-                .replay_player
-                .as_ref()
-                .expect("active replay");
+            let player = self.runtime.timeline.playback().expect("active replay");
             let ordinal = player.current_frame();
             let loads_state = player.load_back_for_frame(ordinal).is_some();
             self.modals
@@ -149,7 +143,7 @@ impl HeadlessMission {
             }
         }
 
-        if self.policy.auto_dismiss_modals && self.runtime.timeline.replay_player.is_none() {
+        if self.policy.auto_dismiss_modals && self.runtime.timeline.playback().is_none() {
             let _ = self.runtime.world.dismiss_pending_modals();
         }
         self.runtime
@@ -184,7 +178,7 @@ impl HeadlessMission {
         let timeline_advances = frame.timeline_advances(!paused);
         self.commit_simulation_history(&mut frame, timeline_advances);
         self.finish_frame_recording(&mut frame);
-        if let Some(player) = self.runtime.timeline.replay_player.as_ref() {
+        if let Some(player) = self.runtime.timeline.playback() {
             self.modals.checkpoint(
                 player.current_frame(),
                 &self.runtime.world.view().host.effects,
@@ -195,8 +189,7 @@ impl HeadlessMission {
         let replay_finished = self
             .runtime
             .timeline
-            .replay_player
-            .as_ref()
+            .playback()
             .is_some_and(|player| player.is_finished());
         if replay_finished {
             tracing::info!("headless replay finished");
@@ -207,7 +200,7 @@ impl HeadlessMission {
             .timeline
             .trace(FrameContractStage::Presentation);
         let (exit_code, exit) = if let Some(code) = tick_exit_code {
-            if self.runtime.timeline.replay_player.is_some() {
+            if self.runtime.timeline.playback().is_some() {
                 super::session_policy::TerminalAdapter::ReadOnlyReplay
                     .admit_campaign_transition()
                     .unwrap_or_else(|error| panic!("{error}; engine exit={code:?}"));
@@ -276,7 +269,7 @@ impl HeadlessMission {
 
     fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
         use super::session_policy::ModalDecisionSource;
-        let replaying = self.runtime.timeline.replay_player.is_some();
+        let replaying = self.runtime.timeline.playback().is_some();
         let source = if replaying {
             ModalDecisionSource::Recorded
         } else {
@@ -303,7 +296,7 @@ impl HeadlessMission {
                             tracing::error!(%error, "multiplayer quit request send failed");
                         }
                     }
-                    frame.post_commands.push(PlayerInput::new(
+                    frame.stage_post_commands().push(PlayerInput::new(
                         host.transport.local_seat(),
                         PlayerCommand::QuitMissionRequested,
                     ));
@@ -390,7 +383,7 @@ impl HeadlessMission {
     }
 
     fn finish_frame_recording(&mut self, frame: &mut super::runtime::MissionFrame) {
-        if self.runtime.timeline.replay_recorder.is_some() {
+        if self.runtime.timeline.is_recording() {
             self.runtime.timeline.begin_recording(frame, true);
         }
         self.runtime.timeline.finish_recording(frame);
@@ -444,6 +437,9 @@ mod tests {
         let manager = EngineManager::new(engine);
         let timeline = TimelineRuntime::new(
             ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: None,
                 player: None,
                 rollback_checker: None,
@@ -517,6 +513,9 @@ mod tests {
         let manager = EngineManager::new(engine);
         let timeline = TimelineRuntime::new(
             ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: None,
                 player: None,
                 rollback_checker: None,

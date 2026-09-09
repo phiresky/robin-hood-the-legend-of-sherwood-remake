@@ -1066,7 +1066,7 @@ fn render_ground_mark_set(
 
     // The same shadow rendering used for entity shadows.
     let shadow_color = presentation.shadow_color;
-    let shadow_level = host.frontend.frame_holder.global_shadow();
+    let shadow_level = host.frontend.frame_holder().global_shadow();
 
     let view_pos = host.frontend.viewport.view_position;
 
@@ -1257,8 +1257,8 @@ pub(crate) fn render_entities_gpu(
     let screen_w = presentation.screen_size.x as i32;
     let screen_h = presentation.screen_size.y as i32;
     let shadow_color = presentation.shadow_color;
-    let global_shadow = host.frontend.frame_holder.global_shadow();
-    let blip_shadow = host.frontend.frame_holder.global_blip_shadow();
+    let global_shadow = host.frontend.frame_holder().global_shadow();
+    let blip_shadow = host.frontend.frame_holder().global_blip_shadow();
     // When the player has disabled "Display Animations" in the graphics
     // options, unforced non-patched non-elevated non-masked FX should
     // not render.  The flag defaults to `true` so the live datadir is
@@ -1396,7 +1396,7 @@ pub(crate) fn render_entities_gpu(
         }
 
         if let Some((sw, sh)) = renderer.ensure_sprite_cached(
-            &host.frontend.frame_holder,
+            host.frontend.frame_holder(),
             bank_id,
             variant,
             shadow_color,
@@ -1505,7 +1505,7 @@ pub(crate) fn render_entities_gpu(
                     for &(mask_idx, mask_rect) in &ghost_screen_masks {
                         let mask = &engine.fast_grid().level.masks[mask_idx as usize];
                         renderer.render_hidden_mask_outline(
-                            &host.frontend.frame_holder,
+                            host.frontend.frame_holder(),
                             bank_id,
                             variant,
                             shadow_color,
@@ -1628,7 +1628,7 @@ pub(crate) fn render_entities_gpu(
                 let mask = &engine.fast_grid().level.masks[mask_idx as usize];
                 if let Some(rgb) = hidden_outline_rgb {
                     renderer.render_hidden_mask_outline(
-                        &host.frontend.frame_holder,
+                        host.frontend.frame_holder(),
                         bank_id,
                         variant,
                         shadow_color,
@@ -1831,7 +1831,7 @@ pub(crate) fn render_selection_outlines_gpu(
     let screen_w = presentation.screen_size.x as i32;
     let screen_h = presentation.screen_size.y as i32;
     let shadow_color = presentation.shadow_color;
-    let shadow_level = host.frontend.frame_holder.global_shadow();
+    let shadow_level = host.frontend.frame_holder().global_shadow();
     let apply_fog_to_all_sprites = presentation.graphic_config.apply_fog_to_all_sprites;
 
     for &entity_id in &presentation.draw_order_ids {
@@ -1944,7 +1944,7 @@ pub(crate) fn render_selection_outlines_gpu(
         let dst_y = ((sprite_y - view.y) * zoom) as i32;
 
         if let Some((ow, oh)) = renderer.ensure_outline_cached(
-            &host.frontend.frame_holder,
+            host.frontend.frame_holder(),
             bank_id,
             variant,
             shadow_color,
@@ -2043,7 +2043,7 @@ fn render_fx_entities_gpu<I>(
     let screen_w = host.frontend.viewport.screen_size.x as i32;
     let screen_h = host.frontend.viewport.screen_size.y as i32;
     let shadow_color = presentation.shadow_color;
-    let global_shadow = host.frontend.frame_holder.global_shadow();
+    let global_shadow = host.frontend.frame_holder().global_shadow();
 
     // Bg animations are unforced ground-level non-masked FX, so they
     // are suppressed when the player has disabled "Display Animations"
@@ -2115,7 +2115,7 @@ fn render_fx_entities_gpu<I>(
         };
 
         if let Some((sw, sh)) = renderer.ensure_sprite_cached(
-            &host.frontend.frame_holder,
+            host.frontend.frame_holder(),
             bank_id,
             variant,
             shadow_color,

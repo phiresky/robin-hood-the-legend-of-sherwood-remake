@@ -179,7 +179,7 @@ pub fn initialize_sprite_variants_for_ambiance(
     ambiance: Ambiance,
     bypass_fog_sprites_crash: bool,
 ) {
-    let fh = host.frontend.frame_holder_mut();
+    let fh = host.frontend.frame_holder_before_publication_mut();
     // When the launcher flag `bypass_fog_sprites_crash` is on, drop both
     // Night and Fog dictionaries regardless of ambiance and skip the
     // shadow-value set — the renderer then falls back to

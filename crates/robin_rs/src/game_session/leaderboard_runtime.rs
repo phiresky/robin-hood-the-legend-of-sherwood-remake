@@ -87,11 +87,12 @@ impl RankedMissionAdmission {
         &mut self,
         mission_id: &str,
         starting_campaign_bytes: Arc<[u8]>,
+        replay_exports: &crate::replay_service::ReplayExports,
     ) -> Result<(), String> {
         if !matches!(self, Self::Signed(_)) {
             return Ok(());
         }
-        let replay = crate::replay_service::process().snapshot()?.parse_sync()?;
+        let replay = replay_exports.snapshot()?.parse_sync()?;
         self.materialize_terminal_from_replay(mission_id, starting_campaign_bytes, &replay)
     }
 
@@ -292,16 +293,21 @@ impl MissionEndPreparation {
     }
 
     /// Poll once. `None` means the bounded HTTP task is still in flight.
-    pub(super) fn poll_bundle(&mut self) -> Option<Result<MissionEndRunBundle, String>> {
+    pub(super) fn poll_bundle(
+        &mut self,
+        replay_exports: &crate::replay_service::ReplayExports,
+    ) -> Option<Result<MissionEndRunBundle, String>> {
         let authors_submission = self
             .ranked_multiplayer_port
             .as_ref()
             .is_none_or(|port| port.role() == crate::multiplayer::RankedMultiplayerRole::Host);
         if authors_submission
             && matches!(self.admission, RankedMissionAdmission::Signed(_))
-            && let Err(error) = self
-                .admission
-                .materialize_terminal(&self.mission_id, self.starting_campaign_bytes.clone())
+            && let Err(error) = self.admission.materialize_terminal(
+                &self.mission_id,
+                self.starting_campaign_bytes.clone(),
+                replay_exports,
+            )
         {
             self.admission = RankedMissionAdmission::browse_only(format!(
                 "terminal ranked evidence could not be sealed: {error}"
