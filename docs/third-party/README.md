@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **168 source records** with the available original text converted to Markdown, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **167 source records** with the available original text converted to Markdown, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports.
 
 This is a broad research collection, not an exhaustive archive of the internet. Records preserve the captured source text, relevant comments, and formatting while removing site navigation, advertisements, and footer chrome. Non-English originals follow their English translations in separate sections. Editorial notes distinguish missing or truncated material from captured text. The original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Hungarian, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -17,7 +17,7 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 
 ## Conversion and coverage
 
-All 168 records now contain available source text; none is wholly missing an original. This does **not** mean every linked page, comment, attachment, or video has been archived. The catalog below identifies records and original languages; each record's coverage notes describe what was actually captured.
+All 167 records now contain available source text; none is wholly missing an original. This does **not** mean every linked page, comment, attachment, or video has been archived. The catalog below identifies records and original languages; each record's coverage notes describe what was actually captured.
 
 The manual-upload and web/browser recovery passes are integrated, including:
 
@@ -222,12 +222,6 @@ Local raw captures are preserved under `originals/`, including manual uploads in
 | [The Strong — physical-game catalogue](reference/strong-museum.md) | English |
 | [Gayle Fallon — scholarly videogame reference](reference/fallon-ludic-scholarship.md) | English |
 
-## Related games supplied by the user
-
-| Source record | Original language |
-| --- | --- |
-| [MogelPower — Conquests of the Longbow walkthrough](related-games/mogelpower-longbow.md) | German |
-
 ## Adding sources
 
 Keep one record per distinct article or guide. Repeated links, platform-specific GameFAQs mirrors, tracking parameters, and translated storefront URLs do not necessarily represent independent sources.
@@ -277,4 +271,4 @@ Deleted or approval-hidden comments, dynamic details, and linked binary/media co
 
 ### Supplied link coverage
 
-Every distinct URL supplied in the conversation has a record. The two GameFAQs URLs were supplied more than once and each appears as one guide. The [MogelPower link](related-games/mogelpower-longbow.md) is explicitly identified as a different game's walkthrough.
+Distinct supplied URLs concerning this game have records. The two GameFAQs URLs were supplied more than once and each appears as one guide. The unrelated *Conquests of the Longbow* walkthrough has been excluded.
