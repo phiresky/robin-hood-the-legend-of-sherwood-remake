@@ -115,7 +115,7 @@ async fn capture_full_frame_zero_screenshot(
     let (_launcher_campaign, profiles, application_context) = robin_rs::main_entry::rust_init()
         .unwrap_or_else(|error| panic!("initialize game: {error}"));
     let campaign = restore_campaign(&header.campaign, &profiles);
-    let mut game_args = robin_rs::main_entry::try_parse_cli_from([
+    let game_args = robin_rs::main_entry::try_parse_cli_from([
         "original_parity_replay",
         "--mission",
         header.mission.as_str(),
@@ -126,6 +126,7 @@ async fn capture_full_frame_zero_screenshot(
         "--rollback-check=false",
     ])
     .unwrap_or_else(|error| panic!("construct frame-zero game arguments: {error}"));
+    let mut game_args = robin_rs::main_entry::MissionLaunch::from(game_args);
     game_args.mission_start_map_output = Some(output_path.clone());
     game_args.mission_start_map_frame = 0;
     game_args.mission_start_viewport_capture = true;
@@ -138,7 +139,7 @@ async fn capture_full_frame_zero_screenshot(
         campaign,
         profiles,
         application_context,
-        &robin_rs::main_entry::MissionLaunch::from(game_args),
+        &game_args,
     )
     .await
     {

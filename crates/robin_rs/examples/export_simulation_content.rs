@@ -442,9 +442,9 @@ fn main() -> Result<()> {
                 rollback_check: false,
                 headless: true,
                 http_server: 0,
-                global_options: context.clone().into(),
                 ..CliArgs::default()
             },
+            global_options: context.clone().into(),
             simulation_content_export: Some(SimulationContentExportRequest {
                 output_root: args.catalog_output.clone(),
                 subject: subject.clone(),

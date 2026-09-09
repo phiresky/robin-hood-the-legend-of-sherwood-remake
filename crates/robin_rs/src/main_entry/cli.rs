@@ -227,18 +227,6 @@ pub struct CliArgs {
     #[arg(long, value_name = "RHMP2_TICKET")]
     pub join: Option<String>,
 
-    /// Browser shell attestation that this durable local identity previously
-    /// redeemed the invitation. The host remains authoritative.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub browser_join_redeemed: bool,
-
-    /// Internal outer-mission handoff. A replacement host consumes the exact
-    /// authenticated session/seat roster retained by the previous transport.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mp_continue_session: bool,
-
     /// Internal matchmaking handoff: keep the simulation paused until this
     /// wall-clock timestamp so host and joiners begin together.
     #[arg(long, hide = true)]
@@ -262,75 +250,6 @@ pub struct CliArgs {
     /// peers.  Defaults to a host-name-derived fallback when omitted.
     #[arg(long, value_name = "NICKNAME", default_value = "")]
     pub mp_nickname: String,
-
-    /// Runtime startup options consumed by engine/UI layers that have
-    /// not been threaded through `CliArgs` directly.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub global_options: ApplicationContext,
-
-    /// Internal handoff from the custom-mission picker. Spellforge-tagged
-    /// launches carry the bits needed to construct a required `LuaSession`;
-    /// Vanilla-tagged custom missions carry the same launch metadata but
-    /// intentionally produce no Lua state. `None` for every non-mod launch.
-    /// Not a real CLI flag; not serialised.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub pending_lua_mission: Option<PendingLuaMission>,
-    /// Exact canonical full-mod envelope used by a custom multiplayer host or
-    /// joiner. The host distributes these bytes before Welcome; the joiner
-    /// keeps the independently validated cache lease/mount in HostTransport.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub pending_distributed_mod: Option<std::sync::Arc<[u8]>>,
-
-    /// Internal one-shot render request used by the `render_mission_map`
-    /// example. The mission session captures the complete level through the
-    /// regular screenshot machinery, writes it here, and exits. This is
-    /// deliberately not a launcher flag:
-    /// the Cargo example is the supported CLI for this specialized tool.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mission_start_map_output: Option<std::path::PathBuf>,
-
-    /// Absolute simulation frame for `mission_start_map_output`. Frame zero is
-    /// the post-`Initialize`, pre-tick state.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mission_start_map_frame: u32,
-
-    /// Apply the original `UBIQUITY` / `UNBLIP` reveal-all-NPCs cheat to
-    /// the one-shot mission-start map before it is rendered.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mission_start_reveal_all: bool,
-
-    /// Include gameplay fog in a one-shot mission map export. Full-map
-    /// exports default this off so tool output remains complete.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mission_start_fog_of_war: bool,
-
-    /// Internal one-shot capture mode used by parity tooling. Unlike the map
-    /// exporter, this captures the saved viewport and includes the ordinary
-    /// gameplay HUD.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mission_start_viewport_capture: bool,
-
-    /// Exact Original v48 save bytes to adopt after constructing the mission
-    /// topology and before the one-shot frame-zero capture.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub mission_start_legacy_save: Option<Vec<u8>>,
-
-    /// Preserve the caller-supplied campaign when `--mission` selects the
-    /// one-shot capture mission. Parity captures supply the exact recorded
-    /// roster and campaign state instead of the map exporter's representative
-    /// team.
-    #[clap(skip)]
-    #[serde(skip)]
-    pub preserve_forced_mission_campaign: bool,
 }
 
 /// Process-owned mission request, prepared from the raw CLI/URL configuration.
@@ -339,8 +258,12 @@ pub struct CliArgs {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MissionLaunch {
-    /// Parsed launcher configuration and existing tool/menu options.
+    /// Raw CLI/URL configuration, without process or mission handoffs.
     pub config: CliArgs,
+    /// Process services and startup options bound to this launch. Parsed
+    /// options seed a bootstrap context; application startup installs readiness.
+    #[serde(skip)]
+    pub global_options: ApplicationContext,
     /// Already-decoded replay, installed before engine construction so the
     /// canonical header supplies the initial world, seed and simulation config.
     #[serde(skip)]
@@ -359,14 +282,90 @@ pub struct MissionLaunch {
     #[serde(skip)]
     pub simulation_content_export:
         Option<crate::official_projection_export::SimulationContentExportRequest>,
+    /// Browser shell attestation that this durable local identity previously
+    /// redeemed the invitation. The host remains authoritative.
+    #[serde(skip)]
+    pub browser_join_redeemed: bool,
+
+    /// Internal outer-mission handoff. A replacement host consumes the exact
+    /// authenticated session/seat roster retained by the previous transport.
+    #[serde(skip)]
+    pub mp_continue_session: bool,
+
+    /// Internal handoff from the custom-mission picker. Spellforge-tagged
+    /// launches carry the bits needed to construct a required `LuaSession`;
+    /// Vanilla-tagged custom missions carry the same launch metadata but
+    /// intentionally produce no Lua state. `None` for every non-mod launch.
+    /// Not a real CLI flag; not serialised.
+    #[serde(skip)]
+    pub pending_lua_mission: Option<PendingLuaMission>,
+    /// Exact canonical full-mod envelope used by a custom multiplayer host or
+    /// joiner. The host distributes these bytes before Welcome; the joiner
+    /// keeps the independently validated cache lease/mount in HostTransport.
+    #[serde(skip)]
+    pub pending_distributed_mod: Option<std::sync::Arc<[u8]>>,
+
+    /// Internal one-shot render request used by the `render_mission_map`
+    /// example. The mission session captures the complete level through the
+    /// regular screenshot machinery, writes it here, and exits. This is
+    /// deliberately not a launcher flag:
+    /// the Cargo example is the supported CLI for this specialized tool.
+    #[serde(skip)]
+    pub mission_start_map_output: Option<std::path::PathBuf>,
+
+    /// Absolute simulation frame for `mission_start_map_output`. Frame zero is
+    /// the post-`Initialize`, pre-tick state.
+    #[serde(skip)]
+    pub mission_start_map_frame: u32,
+
+    /// Apply the original `UBIQUITY` / `UNBLIP` reveal-all-NPCs cheat to
+    /// the one-shot mission-start map before it is rendered.
+    #[serde(skip)]
+    pub mission_start_reveal_all: bool,
+
+    /// Include gameplay fog in a one-shot mission map export. Full-map
+    /// exports default this off so tool output remains complete.
+    #[serde(skip)]
+    pub mission_start_fog_of_war: bool,
+
+    /// Internal one-shot capture mode used by parity tooling. Unlike the map
+    /// exporter, this captures the saved viewport and includes the ordinary
+    /// gameplay HUD.
+    #[serde(skip)]
+    pub mission_start_viewport_capture: bool,
+
+    /// Exact Original v48 save bytes to adopt after constructing the mission
+    /// topology and before the one-shot frame-zero capture.
+    #[serde(skip)]
+    pub mission_start_legacy_save: Option<Vec<u8>>,
+
+    /// Preserve the caller-supplied campaign when `--mission` selects the
+    /// one-shot capture mission. Parity captures supply the exact recorded
+    /// roster and campaign state instead of the map exporter's representative
+    /// team.
+    #[serde(skip)]
+    pub preserve_forced_mission_campaign: bool,
 }
 
 impl From<CliArgs> for MissionLaunch {
     fn from(config: CliArgs) -> Self {
-        // CliArgs::default installs process-wide options. Do not construct a
-        // discarded default configuration while preserving the parsed options.
+        // Derive startup policy without reinstalling process-wide options or
+        // constructing a discarded default configuration.
+        let global_options = ApplicationContext::bootstrap(options_from_args(&config));
         Self {
             config,
+            global_options,
+            browser_join_redeemed: false,
+            mp_continue_session: false,
+            pending_lua_mission: None,
+            pending_distributed_mod: None,
+            mission_start_map_output: None,
+            mission_start_map_frame: 0,
+            mission_start_reveal_all: false,
+            mission_start_fog_of_war: false,
+            mission_start_viewport_capture: false,
+            mission_start_legacy_save: None,
+            preserve_forced_mission_campaign: false,
             replay_data: None,
             mission_restart: false,
             resolved_mission_assets: None,
@@ -403,7 +402,7 @@ pub struct PendingLuaMission {
 
 impl Default for CliArgs {
     fn default() -> Self {
-        let mut args = Self {
+        let args = Self {
             no_sound: false,
             no_script: false,
             goldeneye: false,
@@ -431,25 +430,13 @@ impl Default for CliArgs {
             server: false,
             connect: None,
             join: None,
-            browser_join_redeemed: false,
-            mp_continue_session: false,
             mp_start_at_epoch_ms: None,
             mp_expected_players: None,
             mp_mission_profile_id: None,
             mp_browser_join_links: None,
             mp_nickname: String::new(),
-            global_options: ApplicationContext::default(),
-            pending_lua_mission: None,
-            pending_distributed_mod: None,
-            mission_start_map_output: None,
-            mission_start_map_frame: 0,
-            mission_start_reveal_all: false,
-            mission_start_fog_of_war: false,
-            mission_start_viewport_capture: false,
-            mission_start_legacy_save: None,
-            preserve_forced_mission_campaign: false,
         };
-        install_global_options(&mut args);
+        install_global_options(&args);
         args
     }
 }
@@ -493,7 +480,7 @@ pub fn set_pending_browser_join(_code: String, _redeemed: bool) -> Result<(), St
 }
 
 #[cfg(feature = "multiplayer")]
-pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
+pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]
     if args.join.is_none() {
         if let Some((code, redeemed)) =
@@ -523,7 +510,7 @@ pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
 
 #[cfg(feature = "multiplayer")]
 fn apply_authenticated_join_route(
-    args: &mut CliArgs,
+    args: &mut MissionLaunch,
     ticket: &crate::multiplayer::join_ticket::BrowserJoinTicket,
     browser_interactive_preflight: bool,
 ) -> Result<(), String> {
@@ -550,7 +537,7 @@ fn apply_authenticated_join_route(
 }
 
 #[cfg(not(feature = "multiplayer"))]
-pub(super) fn resolve_join_ticket(args: &mut CliArgs) -> Result<(), String> {
+pub(super) fn resolve_join_ticket(args: &mut MissionLaunch) -> Result<(), String> {
     if args.join.is_some() || args.server || args.connect.is_some() {
         return Err(
             "multiplayer was requested but is unavailable in this build; rebuild with `--features multiplayer`"
@@ -568,8 +555,8 @@ fn current_epoch_seconds() -> Result<u64, String> {
         .map_err(|error| format!("system clock precedes the Unix epoch: {error}"))
 }
 
-fn install_global_options(args: &mut CliArgs) {
-    let opts = engine_api::GlobalOptions {
+fn options_from_args(args: &CliArgs) -> engine_api::GlobalOptions {
+    engine_api::GlobalOptions {
         sound_enabled: !args.no_sound,
         script_enabled: !args.no_script,
         highlander2: args.highlander2,
@@ -580,12 +567,13 @@ fn install_global_options(args: &mut CliArgs) {
         ignore_default_loose: args.no_default_loose,
         check_sound_data: args.check_sound_data,
         ..Default::default()
-    };
+    }
+}
 
-    args.global_options = ApplicationContext::bootstrap(opts.clone());
+fn install_global_options(args: &CliArgs) {
     // Install the process-wide `GlobalOptions` so UI layers that don't
     // have a `Game` or `CliArgs` in scope can still read startup flags.
-    engine_api::GlobalOptions::set_global(opts);
+    engine_api::GlobalOptions::set_global(options_from_args(args));
 }
 
 pub fn try_parse_cli_from<I, T>(itr: I) -> Result<CliArgs, clap::Error>
@@ -593,8 +581,8 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let mut args = CliArgs::try_parse_from(itr)?;
-    install_global_options(&mut args);
+    let args = CliArgs::try_parse_from(itr)?;
+    install_global_options(&args);
     Ok(args)
 }
 
@@ -637,7 +625,7 @@ fn wasm_cli_args_from_location() -> CliArgs {
         args.wait_for_command = true;
         args.replay = None;
     }
-    install_global_options(&mut args);
+    install_global_options(&args);
     args
 }
 
@@ -676,38 +664,125 @@ mod tests {
     };
     use robin_engine::campaign::Campaign;
 
-    #[test]
-    fn parsed_configuration_cannot_install_runtime_launch_authority() {
-        let raw: super::CliArgs = serde_json::from_value(serde_json::json!({
-            "headless": true,
-            "mission-restart": true,
-            "replay-data": {},
-            "resolved-mission-assets": {},
-            "simulation-content-export": {}
-        }))
-        .unwrap();
-        let launch = super::MissionLaunch::from(raw);
-        assert!(launch.headless);
+    const RUNTIME_HANDOFF_FIELDS: &[&str] = &[
+        "replay_data",
+        "mission_restart",
+        "resolved_mission_assets",
+        "simulation_content_export",
+        "pending_lua_mission",
+        "pending_distributed_mod",
+        "mission_start_map_output",
+        "mission_start_map_frame",
+        "mission_start_reveal_all",
+        "mission_start_fog_of_war",
+        "mission_start_viewport_capture",
+        "mission_start_legacy_save",
+        "preserve_forced_mission_campaign",
+        "mp_continue_session",
+        "browser_join_redeemed",
+        "global_options",
+    ];
+
+    fn assert_unprepared_launch(launch: &super::MissionLaunch) {
         assert!(!launch.mission_restart);
         assert!(launch.replay_data.is_none());
         assert!(launch.resolved_mission_assets.is_none());
+        assert!(launch.pending_lua_mission.is_none());
+        assert!(launch.pending_distributed_mod.is_none());
+        assert!(launch.mission_start_map_output.is_none());
+        assert_eq!(launch.mission_start_map_frame, 0);
+        assert!(!launch.mission_start_reveal_all);
+        assert!(!launch.mission_start_fog_of_war);
+        assert!(!launch.mission_start_viewport_capture);
+        assert!(launch.mission_start_legacy_save.is_none());
+        assert!(!launch.preserve_forced_mission_campaign);
+        assert!(!launch.mp_continue_session);
+        assert!(!launch.browser_join_redeemed);
+        assert!(launch.global_options.preparation_files().is_err());
         #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
         assert!(launch.simulation_content_export.is_none());
+    }
 
-        let injected: super::MissionLaunch = serde_json::from_value(serde_json::json!({
-            "config": {"headless": true},
-            "mission_restart": true,
-            "replay_data": {},
-            "resolved_mission_assets": {},
-            "simulation_content_export": {}
-        }))
-        .unwrap();
+    #[test]
+    fn raw_cli_type_cannot_own_process_or_mission_handoffs() {
+        // Guard the Rust API as well as clap/serde: skipped fields would still
+        // let callers put runtime authority back in the raw configuration.
+        let source = syn::parse_file(include_str!("cli.rs")).unwrap();
+        let fields = source
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == "CliArgs" => Some(&item.fields),
+                _ => None,
+            })
+            .unwrap();
+        for field in fields {
+            let name = field.ident.as_ref().unwrap().to_string();
+            assert!(
+                !RUNTIME_HANDOFF_FIELDS.contains(&name.as_str()),
+                "{name} belongs to MissionLaunch"
+            );
+        }
+    }
+
+    #[test]
+    fn parsed_configuration_cannot_install_runtime_launch_authority() {
+        let mut input = serde_json::json!({"headless": true, "no-sound": true});
+        for field in RUNTIME_HANDOFF_FIELDS {
+            input[field.replace('_', "-")] = serde_json::json!({"forged": true});
+        }
+        let raw: super::CliArgs = serde_json::from_value(input).unwrap();
+        let encoded_raw = serde_json::to_value(&raw).unwrap();
+        for field in RUNTIME_HANDOFF_FIELDS {
+            assert!(encoded_raw.get(field.replace('_', "-")).is_none());
+        }
+        let launch = super::MissionLaunch::from(raw);
+        assert!(launch.headless);
+        assert!(!launch.global_options.sound_enabled);
+        assert_unprepared_launch(&launch);
+
+        let mut input = serde_json::json!({"config": {"headless": true}});
+        for field in RUNTIME_HANDOFF_FIELDS {
+            input[*field] = serde_json::json!({"forged": true});
+        }
+        let injected: super::MissionLaunch = serde_json::from_value(input).unwrap();
         assert!(injected.headless);
-        assert!(!injected.mission_restart);
-        assert!(injected.replay_data.is_none());
-        assert!(injected.resolved_mission_assets.is_none());
-        #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
-        assert!(injected.simulation_content_export.is_none());
+        assert_unprepared_launch(&injected);
+    }
+
+    #[test]
+    fn runtime_handoffs_clone_in_process_but_do_not_round_trip_through_configuration() {
+        let launch = super::MissionLaunch {
+            browser_join_redeemed: true,
+            mp_continue_session: true,
+            pending_lua_mission: Some(super::PendingLuaMission {
+                rhm_basename: "custom".into(),
+                requires_spellforge: false,
+                spellforge_package: None,
+            }),
+            pending_distributed_mod: Some(std::sync::Arc::from([1u8, 2, 3])),
+            mission_start_map_output: Some("capture.png".into()),
+            mission_start_map_frame: 42,
+            mission_start_reveal_all: true,
+            mission_start_fog_of_war: true,
+            mission_start_viewport_capture: true,
+            mission_start_legacy_save: Some(vec![4, 5, 6]),
+            preserve_forced_mission_campaign: true,
+            ..Default::default()
+        };
+        let cloned = launch.clone();
+        assert_eq!(cloned.mission_start_map_frame, 42);
+        assert_eq!(cloned.mission_start_legacy_save, Some(vec![4, 5, 6]));
+        assert!(std::sync::Arc::ptr_eq(
+            cloned.pending_distributed_mod.as_ref().unwrap(),
+            launch.pending_distributed_mod.as_ref().unwrap(),
+        ));
+        let encoded = serde_json::to_value(&cloned).unwrap();
+        for field in RUNTIME_HANDOFF_FIELDS {
+            assert!(encoded.get(*field).is_none());
+        }
+        let decoded: super::MissionLaunch = serde_json::from_value(encoded).unwrap();
+        assert_unprepared_launch(&decoded);
     }
 
     #[test]
@@ -729,8 +804,11 @@ mod tests {
         )
         .unwrap();
         let code = ticket.encode();
-        let mut args = super::CliArgs {
-            join: Some(code.clone()),
+        let mut args = super::MissionLaunch {
+            config: super::CliArgs {
+                join: Some(code.clone()),
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -759,6 +837,7 @@ mod tests {
         ])
         .unwrap();
 
+        let args = super::MissionLaunch::from(args);
         assert!(!args.global_options.sound_enabled);
         assert!(!args.global_options.script_enabled);
         assert!(args.global_options.highlander2);

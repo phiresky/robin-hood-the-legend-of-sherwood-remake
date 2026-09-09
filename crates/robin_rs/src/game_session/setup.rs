@@ -2992,19 +2992,13 @@ mod tests {
         assert!(!initial_sim_config(&ordinary).fog_of_war);
 
         let unfogged_export = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                mission_start_map_output: Some("map.png".into()),
-                ..Default::default()
-            },
+            mission_start_map_output: Some("map.png".into()),
             ..Default::default()
         };
         assert!(!initial_sim_config(&unfogged_export).fog_of_war);
 
         let fogged_export = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                mission_start_fog_of_war: true,
-                ..unfogged_export.config
-            },
+            mission_start_fog_of_war: true,
             ..unfogged_export
         };
         assert!(initial_sim_config(&fogged_export).fog_of_war);

@@ -1861,9 +1861,9 @@ mod required_state_tests {
         let mut args = crate::main_entry::MissionLaunch {
             config: crate::main_entry::CliArgs {
                 server: true,
-                mp_continue_session: true,
                 ..Default::default()
             },
+            mp_continue_session: true,
             ..Default::default()
         };
         super::carry_direct_restart_multiplayer_continuation(&mut args, false);
@@ -2560,10 +2560,7 @@ mod required_state_tests {
     fn current_replay_rejects_original_parity_capture_before_resolution() {
         let (mut profiles, data) = replay_fixture(Some(0));
         let args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                mission_start_legacy_save: Some(vec![0; 4]),
-                ..Default::default()
-            },
+            mission_start_legacy_save: Some(vec![0; 4]),
             ..Default::default()
         };
 

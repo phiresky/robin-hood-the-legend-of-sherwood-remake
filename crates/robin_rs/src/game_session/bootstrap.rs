@@ -2064,10 +2064,7 @@ mod tests {
         .try_into()
         .unwrap();
         let args = crate::main_entry::MissionLaunch {
-            config: crate::main_entry::CliArgs {
-                global_options: callbacks.application_context().clone(),
-                ..Default::default()
-            },
+            global_options: callbacks.application_context().clone(),
             replay_data: Some(replay),
             ..Default::default()
         };

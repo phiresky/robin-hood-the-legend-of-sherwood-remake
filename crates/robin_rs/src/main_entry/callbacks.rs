@@ -18,7 +18,7 @@ use robin_engine::game_operation::GameCode;
 use robin_engine::profiles as engine_profiles;
 use robin_engine::profiles::{MissionLocation, ProfileManager};
 
-use super::cli::CliArgs;
+use super::cli::MissionLaunch;
 
 mod executor;
 mod load_owner;
@@ -1021,7 +1021,7 @@ pub(super) fn force_mission_launch(
     campaign: &mut Campaign,
     profiles: &mut std::sync::Arc<ProfileManager>,
     application_context: &ApplicationContext,
-    args: &CliArgs,
+    args: &MissionLaunch,
 ) -> Result<Option<(usize, MissionLocation)>, String> {
     let Some(mission_name) = args.mission.as_deref() else {
         return Ok(None);
