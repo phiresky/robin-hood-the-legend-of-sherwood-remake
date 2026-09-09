@@ -27,6 +27,82 @@ mod lifecycle_tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+    #[test]
+    fn speech_definitions_accept_borrowed_and_shared_bytes_with_the_same_errors() {
+        let id = u32::from_le_bytes(*b"ROBN");
+        let mut profiles = ProfileManager::new();
+        profiles
+            .civilians
+            .push(robin_engine::profiles::CivilianProfile {
+                exclamation_id: id,
+                ..Default::default()
+            });
+        let mut definition = b"NEUF".to_vec();
+        for value in [1u32, 42, 1, 0] {
+            definition.extend_from_slice(&value.to_le_bytes());
+        }
+        let mut resources = ResourceManager::new();
+        let borrowed = build_exclamations_from(
+            &profiles,
+            None,
+            &mut resources,
+            |name| {
+                assert_eq!(name, "actorROBN.dat");
+                Ok(definition.as_slice())
+            },
+            "fixture",
+            true,
+        )
+        .unwrap();
+        let shared = robin_util::asset_fs::AssetBytes::from(definition.clone());
+        let retained = build_exclamations_from(
+            &profiles,
+            None,
+            &mut resources,
+            |_| Ok(shared.clone()),
+            "fixture",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            borrowed,
+            vec![vec![(id & 0xffff_0000, Vec::<String>::new())]]
+        );
+        assert_eq!(retained, borrowed);
+        let read_error = build_exclamations_from::<&[u8]>(
+            &profiles,
+            None,
+            &mut resources,
+            |_| Err("unreadable".to_owned()),
+            "fixture",
+            true,
+        )
+        .unwrap_err();
+        assert!(read_error.contains("failed to read fixture"));
+        let parse_error = build_exclamations_from(
+            &profiles,
+            None,
+            &mut resources,
+            |_| Ok(b"bad".as_slice()),
+            "fixture",
+            true,
+        )
+        .unwrap_err();
+        assert!(parse_error.contains("failed to parse fixture"));
+        assert!(
+            build_exclamations_from(
+                &profiles,
+                None,
+                &mut resources,
+                |_| Ok(b"bad".as_slice()),
+                "fixture",
+                false,
+            )
+            .unwrap()
+            .is_empty()
+        );
+    }
+
     fn key(generation: u64) -> CacheKey {
         CacheKey {
             reader: 0,
@@ -919,7 +995,7 @@ fn build_exclamations(
         |dat_filename| {
             let path = format!("Data/Sounds/Exclamations/{dat_filename}");
             files
-                .read_all(&path)
+                .read_shared(&path)
                 .map_err(|status| format!("{path}: file error {status}"))
         },
         "active language",
@@ -966,38 +1042,46 @@ pub fn build_exclamations_for_language(
         resources
     };
 
-    let data_root = pack.data_root.clone();
-    let locale = pack.locale.clone();
-    build_exclamations_from(
-        profiles,
-        shipping,
-        &mut resources,
-        |dat_filename| {
-            if data_root.is_empty() {
-                let shipping = shipping.ok_or_else(|| "shipping datadir is absent".to_owned())?;
+    let source = format!("canonical locale {}", pack.locale);
+    if pack.data_root.is_empty() {
+        // The resource lookup above already requires this same shipping authority.
+        let shipping = shipping.expect("shipping voice resources were resolved above");
+        build_exclamations_from(
+            profiles,
+            Some(shipping),
+            &mut resources,
+            |dat_filename| {
                 let path = format!("Data/Sounds/Exclamations/{dat_filename}");
                 shipping
-                    .locale_raw(&locale, &path)
+                    .locale_raw(&pack.locale, &path)
                     .map_err(|error| error.to_string())?
-                    .map(<[u8]>::to_vec)
-                    .ok_or_else(|| format!("{path}: missing from shipping locale {locale}"))
-            } else {
-                let path = format!("{data_root}/Data/Sounds/Exclamations/{dat_filename}");
+                    .ok_or_else(|| format!("{path}: missing from shipping locale {}", pack.locale))
+            },
+            &source,
+            true,
+        )
+    } else {
+        build_exclamations_from(
+            profiles,
+            shipping,
+            &mut resources,
+            |dat_filename| {
+                let path = format!("{}/Data/Sounds/Exclamations/{dat_filename}", pack.data_root);
                 files
-                    .read_all(&path)
+                    .read_shared(&path)
                     .map_err(|status| format!("{path}: file error {status}"))
-            }
-        },
-        &format!("canonical locale {}", pack.locale),
-        true,
-    )
+            },
+            &source,
+            true,
+        )
+    }
 }
 
-fn build_exclamations_from(
+fn build_exclamations_from<B: AsRef<[u8]>>(
     profiles: &ProfileManager,
     shipping: Option<&assets_shipping_datadir::ShippingDatadir>,
     excl_res: &mut ResourceManager,
-    mut read_definition: impl FnMut(&str) -> Result<Vec<u8>, String>,
+    mut read_definition: impl FnMut(&str) -> Result<B, String>,
     source: &str,
     strict: bool,
 ) -> Result<Vec<Vec<(u32, Vec<String>)>>, String> {
@@ -1049,7 +1133,7 @@ fn build_exclamations_from(
 
         let prefix_id = excl_id & 0xFFFF_0000;
         let (table_id, exclamations) =
-            match robin_engine::sound_cache::parse_exclamation_file(&data, prefix_id) {
+            match robin_engine::sound_cache::parse_exclamation_file(data.as_ref(), prefix_id) {
                 Ok(r) => r,
                 Err(e) => {
                     if strict {
