@@ -83,7 +83,7 @@ impl HudFonts {
             .ok()?;
 
         let load = |name: &str| -> Option<Font> {
-            match native_font::load_font_by_name_for_active_locale(&config, name, files) {
+            match native_font::load_font_by_name_for_locale(&config, name, files) {
                 Ok(font) if font.is_renderable() => Some(font),
                 Ok(_) => {
                     tracing::info!("HUD font '{name}' is not renderable");
@@ -393,6 +393,7 @@ fn render_text_centered_gpu(
 /// 3. Floating counter titbits (coin pickups, etc.)
 #[allow(clippy::too_many_arguments)]
 pub fn render_hud_text(
+    sprite_streaming_status: Option<(f32, usize, usize)>,
     engine: &PresentationView<'_>,
     local_seat: PlayerId,
     camera: &ViewportState,
@@ -413,7 +414,7 @@ pub fn render_hud_text(
     );
     render_ammo_counts_gpu(engine, local_seat, assets, renderer, fonts, shadow);
     render_counter_titbits_gpu(engine, camera, renderer, fonts, shadow);
-    render_sprite_stream_indicator(renderer, fonts);
+    render_sprite_stream_indicator(renderer, fonts, sprite_streaming_status);
 }
 
 /// Unobtrusive corner note while the background sprite-streaming tail is
@@ -422,9 +423,12 @@ pub fn render_hud_text(
 /// characters and variants — on the worker pool). The fraction is real
 /// measured work: decoded blob bytes over the deferred tail's total. Hidden
 /// on native builds and once the tail finishes.
-fn render_sprite_stream_indicator(renderer: &mut Renderer, fonts: &HudFonts) {
-    let Some((fraction, chunks_done, chunks_total)) = robin_assets::late_sprites::tail_status()
-    else {
+fn render_sprite_stream_indicator(
+    renderer: &mut Renderer,
+    fonts: &HudFonts,
+    status: Option<(f32, usize, usize)>,
+) {
+    let Some((fraction, chunks_done, chunks_total)) = status else {
         return;
     };
     let sh = renderer.screen_height() as i32;

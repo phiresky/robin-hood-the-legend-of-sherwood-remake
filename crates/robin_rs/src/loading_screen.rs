@@ -618,7 +618,7 @@ impl LoadingScreenRenderer {
         let font_config = crate::native_font::load_font_config(files).ok();
         let load_font = |name: &str| -> Option<Font> {
             let cfg = font_config.as_ref()?;
-            match crate::native_font::load_font_by_name_for_active_locale(cfg, name, files) {
+            match crate::native_font::load_font_by_name_for_locale(cfg, name, files) {
                 Ok(font) if font.is_renderable() => Some(font),
                 Ok(Font::TrueType(tt)) => {
                     tracing::info!(

@@ -3117,9 +3117,14 @@ mod host_resource_tests {
             rle_jxl_chunks: Vec::new(),
         });
 
+        let installed = robin_assets::shipping_datadir::ShippingAssets::install(
+            std::sync::Arc::new(shipping),
+            std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()),
+        )
+        .expect("install synthetic dictionary bank");
         let mut holder = FrameHolder::new();
         holder
-            .initialize_sprite_bank_with_progress(".", &mut |_| {}, Some(&shipping))
+            .initialize_sprite_bank_with_progress(".", &mut |_| {}, Some(installed.datadir()))
             .expect("load synthetic dictionary bank");
         holder.generate_night_dictionaries();
         holder.apply_arno_law(shadow_color);

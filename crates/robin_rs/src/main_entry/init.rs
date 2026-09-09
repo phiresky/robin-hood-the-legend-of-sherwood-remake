@@ -633,14 +633,12 @@ pub fn rust_init_official_projection(
                     locale.source_lcid
                 )));
             }
+            let datadir = assets_shipping_datadir::install_global(std::sync::Arc::new(datadir))
+                .map_err(|error| authority_error(format!("install shipping datadir: {error:#}")))?;
             datadir
                 .set_active_locale(Some(resource_locale_root.as_str()))
                 .map_err(|error| authority_error(format!("select shipping LCID: {error:#}")))?;
-            Some(
-                assets_shipping_datadir::install_global(std::sync::Arc::new(datadir)).map_err(
-                    |error| authority_error(format!("install shipping datadir: {error:#}")),
-                )?,
-            )
+            Some(datadir)
         }
     };
 

@@ -809,6 +809,7 @@ impl InteractiveFrameSimulation {
                     },
                 );
                 drain_screenshot_requests(
+                    http,
                     scene_screenshots,
                     &manager.engine.presentation_view(),
                     &display_snapshot,

@@ -32,6 +32,7 @@ mod lifecycle_tests {
             reader: 0,
             mounts: SbFileSystem::new(Arc::new(robin_util::asset_fs::AssetVfs::new()))
                 .mount_snapshot(),
+            presentation_locale: None,
             installation: 7,
             generation,
             mission_generation: 0,
@@ -333,6 +334,26 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn language_only_changes_retire_localized_banks_but_reuse_stable_assets() {
+        let files = Arc::new(SbFileSystem::new(Arc::new(
+            robin_util::asset_fs::AssetVfs::new(),
+        )));
+        files.set_presentation_locale(None, None, Some("en-US"));
+        let before = CacheKey::capture(None, 0, &files);
+        let prepared = Arc::new(files.snapshot());
+        files.set_presentation_locale(None, None, Some("ja-JP"));
+        let after = CacheKey::capture(None, 0, &files);
+        assert_ne!(before, after);
+        assert!(before.same_stable_assets(&after));
+        assert_eq!(before, CacheKey::capture(None, 0, &prepared));
+        let owner = ApplicationAssetCache::default();
+        let previous = resolve(&owner, || before.clone(), build_test);
+        let current = resolve(&owner, || after.clone(), build_test);
+        assert!(!Arc::ptr_eq(&previous, &current));
+        assert!(Arc::ptr_eq(&previous.stable, &current.stable));
+    }
+
+    #[test]
     fn explicit_readers_and_mount_changes_never_share_cache_entries() {
         let first = Arc::new(SbFileSystem::new(Arc::new(
             robin_util::asset_fs::AssetVfs::new(),
@@ -388,6 +409,8 @@ mod lifecycle_tests {
 struct CacheKey {
     reader: u64,
     mounts: robin_engine::sbfile::SbFileMountSnapshot,
+    #[serde(default)]
+    presentation_locale: Option<String>,
     installation: u64,
     generation: u64,
     mission_generation: u64,
@@ -419,6 +442,7 @@ impl CacheKey {
         Self {
             reader: files.origin_identity(),
             mounts,
+            presentation_locale: files.presentation_locale(),
             installation: shipping.map_or(0, |dd| dd.installation_id()),
             generation: selection.generation,
             mission_generation: selection.mission_generation,

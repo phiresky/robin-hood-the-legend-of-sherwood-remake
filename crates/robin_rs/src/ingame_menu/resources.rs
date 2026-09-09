@@ -919,7 +919,7 @@ impl MenuFonts {
         // The original game kept menu fonts behind a shared handle; cache
         // the Rust `Font` enum so every caller preserves the same
         // native/TrueType split without loading duplicate bitmap atlases.
-        let load_any = |name: &str| match native_font::load_font_by_name_for_active_locale(
+        let load_any = |name: &str| match native_font::load_font_by_name_for_locale(
             &config, name, files,
         ) {
             Ok(font) if font.is_renderable() => Some(font),

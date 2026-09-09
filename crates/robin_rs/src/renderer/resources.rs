@@ -77,7 +77,7 @@ impl GpuResources {
         // A still-streaming sprite must not enter the permanent cache as a
         // blank texture — skip the draw; it pops in once its grid lands.
         if frame_holder.sprite_pixels_pending(bank_id) {
-            let skips = robin_assets::late_sprites::note_skipped_draw();
+            let skips = frame_holder.note_pending_sprite_draw();
             tracing::debug!(
                 bank_id,
                 skips,
@@ -148,7 +148,7 @@ impl GpuResources {
         }
         // See `ensure_sprite_cached`: never cache a still-streaming sprite.
         if frame_holder.sprite_pixels_pending(bank_id) {
-            let skips = robin_assets::late_sprites::note_skipped_draw();
+            let skips = frame_holder.note_pending_sprite_draw();
             tracing::debug!(
                 bank_id,
                 skips,

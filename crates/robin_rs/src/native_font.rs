@@ -531,8 +531,9 @@ pub fn load_font_by_name(
 /// Locale-aware counterpart to [`load_font_by_name`]. Scripts whose retail
 /// bitmap family cannot provide full glyph coverage prefer the authored `.tfn`
 /// face, then fall back to the normal native-first behavior when that face is
-/// absent or unusable.
-pub fn load_font_by_name_for_active_locale(
+/// absent or unusable. Language policy and font bytes both come from `files`,
+/// including when it is a frozen mission preparation reader.
+pub fn load_font_by_name_for_locale(
     config: &HashMap<String, FontEntry>,
     name: &str,
     files: &SbFileSystem,
@@ -540,7 +541,7 @@ pub fn load_font_by_name_for_active_locale(
     let Some(entry) = config.get(name) else {
         bail!("font '{}' not in config", name);
     };
-    if crate::localization::active_locale_prefers_truetype()
+    if crate::localization::locale_prefers_truetype(files)
         && let Some(filename) = entry.truetype.as_deref()
     {
         let rel = format!("{FONT_PATH}{filename}");
@@ -566,6 +567,76 @@ pub fn load_font_by_name_for_active_locale(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn locale_font_choice_is_isolated_and_frozen_with_its_resource_reader() {
+        let make = |locale: &str, with_face: bool| {
+            let vfs = std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new());
+            // A minimal valid native font, with two uncompressed 1x1 pictures.
+            let mut bitmap = b"SBFONT".to_vec();
+            bitmap.extend_from_slice(&0x100u32.to_le_bytes());
+            bitmap.extend_from_slice(&[0; FONT_NAME_LEN]);
+            for value in [0u32, 0, 1, 1, 1, 0] {
+                bitmap.extend_from_slice(&value.to_le_bytes());
+            }
+            for _ in 0..2 {
+                bitmap.extend_from_slice(&1u16.to_le_bytes());
+                bitmap.extend_from_slice(&1u16.to_le_bytes());
+                bitmap.extend_from_slice(&0u32.to_le_bytes());
+                bitmap.extend_from_slice(&2u32.to_le_bytes());
+                bitmap.extend_from_slice(&31u16.to_le_bytes());
+            }
+            vfs.install_preloaded_asset("Data/Interface/Fonts/choice.sbf", bitmap)
+                .unwrap();
+            let face =
+                include_bytes!("../../../assets/core-datadir/Data/Interface/Fonts/arial.ttf");
+            let mut name = [0; FONT_NAME_LEN];
+            name[..10].copy_from_slice(b"LocaleFace");
+            let descriptor =
+                TrueTypeFont::from_parts(&name, 12, 0, 0, &name, 0, face).to_sbf_bytes();
+            vfs.install_preloaded_asset("Data/Interface/Fonts/choice.tfn", descriptor)
+                .unwrap();
+            vfs.install_preloaded_asset(
+                "Data/Interface/Fonts/LocaleFace.ttf",
+                if with_face {
+                    face.to_vec()
+                } else {
+                    b"unusable font face".to_vec()
+                },
+            )
+            .unwrap();
+            let files = SbFileSystem::new(vfs);
+            assert_eq!(files.set_presentation_locale(None, None, Some(locale)), 0);
+            files
+        };
+        let config = parse_font_config("Default: choice.sbf, choice.tfn");
+        let latin = make("en-US", true);
+        let international = make("ja-JP", true);
+        let prepared = international.snapshot();
+        for (files, truetype) in [(&latin, false), (&international, true), (&latin, false)] {
+            let font = load_font_by_name_for_locale(&config, "Default", files).unwrap();
+            assert_eq!(matches!(font, Font::TrueType(_)), truetype);
+        }
+        international.set_presentation_locale(None, None, Some("en-US"));
+        assert!(matches!(
+            load_font_by_name_for_locale(&config, "Default", &international).unwrap(),
+            Font::Native(_)
+        ));
+        assert!(matches!(
+            load_font_by_name_for_locale(&config, "Default", &prepared).unwrap(),
+            Font::TrueType(_)
+        ));
+        let unavailable = make("ja-JP", false);
+        assert!(matches!(
+            load_font_by_name_for_locale(&config, "Default", &unavailable).unwrap(),
+            Font::Native(_)
+        ));
+        let native_only = parse_font_config("Default: choice.sbf,");
+        assert!(matches!(
+            load_font_by_name_for_locale(&native_only, "Default", &prepared).unwrap(),
+            Font::Native(_)
+        ));
+    }
 
     #[test]
     fn font_config_and_native_font_reads_use_independent_preparations() {
