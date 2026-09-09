@@ -896,7 +896,7 @@ fn rewind_with_session_modals(
     } else {
         None
     };
-    let from = rewind_to_frame_rpc(manager, host, assets, timeline, target)?;
+    let from = rewind_to_frame(manager, host, assets, timeline, target)?;
     if let (Some(ordinal), Some(scheduler)) = (restore_ordinal, session_modals) {
         assert_eq!(
             timeline.playback().expect("seek replay").current_frame(),
@@ -907,18 +907,7 @@ fn rewind_with_session_modals(
     Ok(from)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn rewind_to_frame(
-    manager: &mut engine_manager_api::EngineManager,
-    host: &mut Host,
-    assets: &engine_api::LevelAssets,
-    timeline: &mut super::runtime::TimelineRuntime,
-    target: u32,
-) -> Result<u32, String> {
-    rewind_to_frame_rpc(manager, host, assets, timeline, target).map_err(|error| error.to_string())
-}
-
-fn rewind_to_frame_rpc(
+fn rewind_to_frame(
     manager: &mut engine_manager_api::EngineManager,
     host: &mut Host,
     assets: &engine_api::LevelAssets,
@@ -1957,7 +1946,7 @@ mod tests {
     fn empty_history_is_an_unavailable_rpc_capability_without_mutation() {
         let (assets, mut manager, mut host, _dev, _game, mut timeline) = stepping_fixture(None);
         let before = manager.engine.encode_native_snapshot();
-        let error = rewind_to_frame_rpc(&mut manager, &mut host, &assets, &mut timeline, 0)
+        let error = rewind_to_frame(&mut manager, &mut host, &assets, &mut timeline, 0)
             .expect_err("no history has been retained");
         assert_eq!(
             error.kind,
