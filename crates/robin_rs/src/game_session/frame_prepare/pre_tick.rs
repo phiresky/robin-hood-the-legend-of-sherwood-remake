@@ -575,8 +575,9 @@ mod tests {
         let mut host = Host::scratch(640.0, 480.0);
         host.transport = crate::host::HostTransport::test_session(channels, PlayerId::HOST);
         let mut frame = MissionFrame::new(17);
-        frame.run_hourglass = false;
-        frame.run_post_initialize = false;
+        frame.adopt_authoritative_input(
+            SimulationFrameInput::no_hourglass().with_post_initialize(false),
+        );
         timeline.open_frame(&mut frame, &manager.engine, &assets);
         let original_hash = frame.recorder_hash.unwrap();
         let local = PlayerInput::host(PlayerCommand::SetUnbindingEnabled { enabled: false });
