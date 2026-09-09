@@ -8,12 +8,15 @@ does not establish the shape or appearance of the reverse side.
 
 import json
 import math
+import sys
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0,str(Path(__file__).parent))
+from paths import DATA
 SIN = math.sin(math.radians(35))
 COS = math.cos(math.radians(35))
 NAME = '03 Detail pass - suspension bridge'
@@ -23,7 +26,7 @@ work = bpy.data.collections['01 Refinement - working copy']
 source = next(o for o in work.objects if o.get('source_obstacle') == 'building-094')
 collection = bpy.data.collections.new(NAME)
 bpy.context.scene.collection.children.link(collection)
-image = bpy.data.images.load(str(ROOT / 'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'), check_existing=True)
+image = bpy.data.images.load(str(DATA / 'Levels/Day/sherwood.map.png'), check_existing=True)
 image.pack()
 material = bpy.data.materials.new('Sherwood measured Day projection')
 material.use_nodes = True
@@ -82,7 +85,7 @@ def tube(name, points, radius, sides=8):
     return mesh(name, vertices, faces)
 
 
-level = json.loads((ROOT / 'datadirs/fullgame_gog_hackable/Data/Levels/Sherwood.rhp.json').read_text())
+level = json.loads((DATA / 'Levels/Sherwood.rhp.json').read_text())
 points = level['sight_obstacles'][94]['points']
 corners = [Vector((p['x'], -p['y']/SIN, p['z_top']/COS)) for p in points]
 front = [corners[i] for i in (0, 6, 5, 4)]
