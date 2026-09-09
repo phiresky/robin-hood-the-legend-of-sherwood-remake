@@ -1781,25 +1781,29 @@ mod tests {
             None,
         ));
         let mut exporter = ActiveMissionReplayExporter::new(service.exports());
-        let mut task = exporter.begin().unwrap();
-        assert!(
-            ActiveMissionReplayExporter::new(other.exports())
-                .begin()
-                .is_err()
-        );
+        let task = exporter.begin().unwrap();
+        let empty_task = ActiveMissionReplayExporter::new(other.exports())
+            .begin()
+            .unwrap();
         // Replacing the active generation must not replace the admitted export.
         let _replacement = service.recording().begin_recording();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        let bytes = loop {
-            if let Some(result) = task.try_take() {
-                break result.unwrap();
+        let finish = |mut task: Box<dyn MissionEndTask<Arc<[u8]>>>| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                if let Some(result) = task.try_take() {
+                    break result;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "export worker timed out"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(1));
             }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "export worker timed out"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
         };
+        // Snapshot admission is synchronous; an empty service's missing replay
+        // header is rejected by the asynchronous parsing/encoding worker.
+        assert!(finish(empty_task).is_err());
+        let bytes = finish(task).unwrap();
         let (_, replay) =
             robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
         assert_eq!(replay.header().mission_id, "injected-export");
