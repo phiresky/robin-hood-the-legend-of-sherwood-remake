@@ -157,8 +157,8 @@ pub struct HttpRequest {
 
 /// Per-request payload — the transport layer parses each endpoint
 /// down to one of these.  Distinct variants (rather than a generic
-/// `serde_json::Value` body) keep the dispatch typed: each handler in
-/// `dispatch_in_engine` does its own argument extraction once.
+/// `serde_json::Value` body) keep the dispatch typed: classification
+/// selects the authority needed by each handler.
 pub enum HttpPayload {
     /// `POST /native` / `robin.call("native", …)` — single native invocation.
     Native {
@@ -212,6 +212,93 @@ pub enum HttpPayload {
     /// triggering a mission restart (e.g. by sending a console command
     /// or by resetting the Game op) so the slot is actually picked up.
     LoadReplay { data: String, paused: bool },
+}
+
+/// Internal routing types are deliberately separate from the transport schema.
+/// A query handler cannot receive a mutation or a deferred operation.
+enum QueryRequest {
+    State,
+    EngineDump,
+    LevelAssets,
+    Script,
+    Decompile { class: Option<String> },
+}
+
+enum CommandRequest {
+    Native {
+        name: String,
+        args: Vec<i32>,
+        this: Option<i32>,
+    },
+    Batch(Vec<NativeCall>),
+    Console(String),
+    Player(PlayerCommand),
+}
+
+enum DeferredRequest {
+    Step(StepKind),
+    Screenshot(ScreenshotRequest),
+}
+
+enum ProcessRequest {
+    ExportReplay,
+    LoadReplay { data: String, paused: bool },
+}
+
+enum RoutedRequest {
+    Query(QueryRequest),
+    HostDebug,
+    Command(CommandRequest),
+    Deferred(DeferredRequest),
+    Process(ProcessRequest),
+}
+
+impl HttpPayload {
+    fn classify(self) -> RoutedRequest {
+        match self {
+            Self::State => RoutedRequest::Query(QueryRequest::State),
+            Self::HostDebug => RoutedRequest::HostDebug,
+            Self::EngineDump => RoutedRequest::Query(QueryRequest::EngineDump),
+            Self::LevelAssets => RoutedRequest::Query(QueryRequest::LevelAssets),
+            Self::Script => RoutedRequest::Query(QueryRequest::Script),
+            Self::Decompile { class } => RoutedRequest::Query(QueryRequest::Decompile { class }),
+            Self::Native { name, args, this } => {
+                RoutedRequest::Command(CommandRequest::Native { name, args, this })
+            }
+            Self::Batch(calls) => RoutedRequest::Command(CommandRequest::Batch(calls)),
+            Self::Console(command) => RoutedRequest::Command(CommandRequest::Console(command)),
+            Self::Command(command) => RoutedRequest::Command(CommandRequest::Player(command)),
+            Self::Screenshot(request) => {
+                RoutedRequest::Deferred(DeferredRequest::Screenshot(request))
+            }
+            Self::StepForward { request } => {
+                RoutedRequest::Deferred(DeferredRequest::Step(StepKind::Forward {
+                    n: request.n,
+                    modal_policy: request.modal_policy,
+                }))
+            }
+            Self::StepBack { request } => {
+                RoutedRequest::Deferred(DeferredRequest::Step(StepKind::Back {
+                    n: request.n,
+                    modal_policy: request.modal_policy,
+                }))
+            }
+            Self::GoToFrame {
+                target,
+                modal_policy,
+            } => RoutedRequest::Deferred(DeferredRequest::Step(StepKind::GoToFrame {
+                target,
+                modal_policy,
+            })),
+            Self::SetPaused { paused } => {
+                RoutedRequest::Deferred(DeferredRequest::Step(StepKind::SetPaused { paused }))
+            }
+            Self::GetReplay => RoutedRequest::Process(ProcessRequest::ExportReplay),
+            Self::LoadReplay { data, paused } => {
+                RoutedRequest::Process(ProcessRequest::LoadReplay { data, paused })
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
@@ -933,29 +1020,34 @@ impl SessionIngress {
         let mut external_actions = Vec::new();
         for req in self.take_requests() {
             self.observe_ranked_input_taint(&req.payload);
-            let Some(req) = self.defer(req, true) else {
-                continue;
-            };
-            match req.payload {
-                HttpPayload::HostDebug => {
+            match req.payload.classify() {
+                RoutedRequest::HostDebug => {
                     req.response_tx.send(Ok(ReplyBody::Json(snapshot_host_debug(
                         engine, frontend, local_seat, assets,
                     ))));
                 }
-                HttpPayload::GetReplay => start_replay_export(req.response_tx),
-                other => {
-                    let reply = dispatch_in_engine(
-                        other,
-                        self.replay_status(),
+                RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
+                    query,
+                    self.replay_status(),
+                    engine,
+                    assets,
+                )),
+                RoutedRequest::Deferred(request) => {
+                    self.defer_request(request, req.response_tx, true)
+                }
+                RoutedRequest::Process(request) => dispatch_process(request, req.response_tx),
+                RoutedRequest::Command(command) => {
+                    let mut selected = frontend.selected_view_element();
+                    let reply = dispatch_command(
+                        command,
                         engine,
-                        &mut frontend.engine_display,
                         assets,
-                        &mut frontend.input,
-                        &mut frontend.selected_view_element,
+                        &mut selected,
                         net,
                         post_commands,
                         &mut external_actions,
                     );
+                    frontend.set_selected_view_element(selected);
                     req.response_tx.send(reply);
                 }
             }
@@ -972,39 +1064,40 @@ impl SessionIngress {
     pub fn drain_headless(
         &mut self,
         engine: &mut Engine,
-        display: &mut engine_api::HostDisplayState,
         assets: &LevelAssets,
-        input: &mut engine_api::InputState,
         selected_view_element: &mut Option<engine_element::EntityId>,
     ) -> FrameCommands {
         let mut commands = FrameCommands::new();
         let mut external_actions = Vec::new();
         for req in self.take_requests() {
             self.observe_ranked_input_taint(&req.payload);
-            let Some(req) = self.defer(req, false) else {
-                continue;
-            };
-            match req.payload {
-                HttpPayload::HostDebug => {
+            match req.payload.classify() {
+                RoutedRequest::HostDebug => {
                     req.response_tx
                         .send(Err("host-debug is unavailable in a headless runner".into()));
                 }
-                HttpPayload::EngineDump => {
+                RoutedRequest::Query(QueryRequest::EngineDump) => {
                     let diagnostic = engine.diagnostic_snapshot_without_original_rng_replay();
                     let reply = engine_dump_json(&diagnostic)
                         .map(ReplyBody::Json)
                         .map_err(|e| format!("engine serialize: {e}"));
                     req.response_tx.send(reply);
                 }
-                HttpPayload::GetReplay => start_replay_export(req.response_tx),
-                other => {
-                    let reply = dispatch_in_engine(
-                        other,
-                        self.replay_status(),
+                RoutedRequest::Query(query) => req.response_tx.send(dispatch_query(
+                    query,
+                    self.replay_status(),
+                    engine,
+                    assets,
+                )),
+                RoutedRequest::Deferred(request) => {
+                    self.defer_request(request, req.response_tx, false)
+                }
+                RoutedRequest::Process(request) => dispatch_process(request, req.response_tx),
+                RoutedRequest::Command(command) => {
+                    let reply = dispatch_command(
+                        command,
                         engine,
-                        display,
                         assets,
-                        input,
                         selected_view_element,
                         None,
                         &mut commands,
@@ -1020,8 +1113,6 @@ impl SessionIngress {
 
 fn admit_external_actions(
     engine: &mut Engine,
-    _display: &mut engine_api::HostDisplayState,
-    _input: &mut engine_api::InputState,
     assets: &LevelAssets,
     actions: Vec<engine_api::ExternalAction>,
     journal: &mut Vec<engine_api::ExternalAction>,
@@ -1037,24 +1128,19 @@ fn admit_external_actions(
     Ok(output.external_action_results)
 }
 
-fn dispatch_in_engine(
-    payload: HttpPayload,
-    replay: Option<ReplayStatus>,
+fn dispatch_command(
+    payload: CommandRequest,
     engine: &mut Engine,
-    display: &mut engine_api::HostDisplayState,
     assets: &LevelAssets,
-    input: &mut engine_api::InputState,
     selected_view_element: &mut Option<engine_element::EntityId>,
     net: Option<&crate::multiplayer::NetChannels>,
     frame_commands: &mut FrameCommands,
     external_actions: &mut Vec<engine_api::ExternalAction>,
 ) -> Reply {
     match payload {
-        HttpPayload::Native { name, args, this } => {
+        CommandRequest::Native { name, args, this } => {
             let results = admit_external_actions(
                 engine,
-                display,
-                input,
                 assets,
                 vec![engine_api::ExternalAction::Native {
                     name,
@@ -1070,7 +1156,7 @@ fn dispatch_in_engine(
                 _ => Err("native frame admission returned no native result".into()),
             }
         }
-        HttpPayload::Batch(calls) => {
+        CommandRequest::Batch(calls) => {
             let actions = calls
                 .into_iter()
                 .map(|call| engine_api::ExternalAction::Native {
@@ -1079,22 +1165,21 @@ fn dispatch_in_engine(
                     this_actor: call.this,
                 })
                 .collect();
-            let results =
-                admit_external_actions(engine, display, input, assets, actions, external_actions)?
-                    .into_iter()
-                    .map(|result| match result {
-                        engine_api::ExternalActionResult::Native(Ok(value)) => {
-                            serde_json::json!({"return": value})
-                        }
-                        engine_api::ExternalActionResult::Native(Err(error)) => {
-                            serde_json::json!({"error": error})
-                        }
-                        _ => serde_json::json!({"error": "non-native batch result"}),
-                    })
-                    .collect::<Vec<_>>();
+            let results = admit_external_actions(engine, assets, actions, external_actions)?
+                .into_iter()
+                .map(|result| match result {
+                    engine_api::ExternalActionResult::Native(Ok(value)) => {
+                        serde_json::json!({"return": value})
+                    }
+                    engine_api::ExternalActionResult::Native(Err(error)) => {
+                        serde_json::json!({"error": error})
+                    }
+                    _ => serde_json::json!({"error": "non-native batch result"}),
+                })
+                .collect::<Vec<_>>();
             Ok(ReplyBody::Json(serde_json::json!({"results": results})))
         }
-        HttpPayload::Console(cmd) => {
+        CommandRequest::Console(cmd) => {
             // HTTP forces the full developer parser, but it has no live
             // `DevState`. Presentation-only commands therefore stay outside
             // the authoritative journal and report that limitation.
@@ -1112,8 +1197,6 @@ fn dispatch_in_engine(
             }
             let results = admit_external_actions(
                 engine,
-                display,
-                input,
                 assets,
                 vec![engine_api::ExternalAction::ConsoleCommand {
                     command,
@@ -1132,7 +1215,7 @@ fn dispatch_in_engine(
                 _ => Err("console frame admission returned no console result".into()),
             }
         }
-        HttpPayload::Command(cmd) => {
+        CommandRequest::Player(cmd) => {
             // In multiplayer, route the command over the wire so every
             // peer applies it at the same `target_frame`.  The local
             // engine doesn't mutate here; the echo lands via
@@ -1144,33 +1227,36 @@ fn dispatch_in_engine(
             }
             Ok(ReplyBody::Json(serde_json::json!({"ok": true})))
         }
-        HttpPayload::State => Ok(ReplyBody::Json(snapshot_state(engine, replay))),
-        HttpPayload::HostDebug => Err("host-debug must be routed via SessionIngress::drain".into()),
-        HttpPayload::EngineDump => engine_dump_json(engine)
+    }
+}
+
+fn dispatch_query(
+    query: QueryRequest,
+    replay: Option<ReplayStatus>,
+    engine: &Engine,
+    assets: &LevelAssets,
+) -> Reply {
+    match query {
+        QueryRequest::State => Ok(ReplyBody::Json(snapshot_state(engine, replay))),
+        QueryRequest::EngineDump => engine_dump_json(engine)
             .map(ReplyBody::Json)
             .map_err(|e| format!("engine serialize: {e}")),
-        HttpPayload::LevelAssets => level_assets_json(engine, assets)
+        QueryRequest::LevelAssets => level_assets_json(engine, assets)
             .map(ReplyBody::Json)
             .map_err(|e| format!("level assets serialize: {e}")),
-        HttpPayload::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
-        HttpPayload::Decompile { class } => {
+        QueryRequest::Script => Ok(ReplyBody::Json(snapshot_script(engine))),
+        QueryRequest::Decompile { class } => {
             Ok(ReplyBody::Json(decompile_script(engine, class.as_deref())))
         }
-        // Routed through `SessionIngress::drain`'s per-kind arm — should never
-        // reach this generic dispatch path.
-        HttpPayload::Screenshot(_) => {
-            Err("screenshot must be routed via SessionIngress::drain".into())
+    }
+}
+
+fn dispatch_process(request: ProcessRequest, response: Responder) {
+    match request {
+        ProcessRequest::ExportReplay => start_replay_export(response),
+        ProcessRequest::LoadReplay { data, paused } => {
+            response.send(decode_load_replay(&data, paused))
         }
-        HttpPayload::StepForward { .. }
-        | HttpPayload::StepBack { .. }
-        | HttpPayload::GoToFrame { .. }
-        | HttpPayload::SetPaused { .. } => {
-            Err("step must be routed via SessionIngress::drain".into())
-        }
-        HttpPayload::GetReplay => {
-            Err("get-replay must be routed to the replay export worker".into())
-        }
-        HttpPayload::LoadReplay { data, paused } => decode_load_replay(&data, paused),
     }
 }
 
@@ -1211,7 +1297,8 @@ fn snapshot_host_debug(
             })
         })
     });
-    let last_preview_point = frontend.trajectory_preview.points().last().map(|point| {
+    let preview = frontend.trajectory_preview();
+    let last_preview_point = preview.points().last().map(|point| {
         serde_json::json!({
             "position": point.position,
             "time": point.time,
@@ -1240,15 +1327,15 @@ fn snapshot_host_debug(
         "selected_action": selected_action,
         "selection": engine.hero_selection(local_seat),
         "selected_pc": selected_pc_state,
-        "valid_trajectory": frontend.trajectory_preview.is_valid(),
-        "trajectory_preview_points_len": frontend.trajectory_preview.points().len(),
-        "trajectory_preview_start": frontend.trajectory_preview.start(),
+        "valid_trajectory": preview.is_valid(),
+        "trajectory_preview_points_len": preview.points().len(),
+        "trajectory_preview_start": preview.start(),
         "trajectory_preview_last": last_preview_point,
-        "trajectory_preview_layer": frontend.trajectory_preview.layer(),
-        "net_crumpled": frontend.trajectory_preview.crumpled(),
-        "time_no_mouse_move": frontend.trajectory_preview.hover_ticks(),
-        "mouse_map_prev": frontend.trajectory_preview.previous_mouse(),
-        "trajectory_mark_count": frontend.trajectory_preview.mark_count(),
+        "trajectory_preview_layer": preview.layer(),
+        "net_crumpled": preview.crumpled(),
+        "time_no_mouse_move": preview.hover_ticks(),
+        "mouse_map_prev": preview.previous_mouse(),
+        "trajectory_mark_count": preview.mark_count(),
         "bow_hover": bow_hover,
         "input": {
             "focused_entity_id": frontend.input.focused_entity_id,
@@ -2385,6 +2472,61 @@ fn screenshot_target_dimensions(
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn query_dispatch_has_only_read_authority() {
+        // Function-pointer coercion is a compile-time capability proof: adding
+        // mutable state, frontend input, or command sinks breaks this contract.
+        let _: fn(QueryRequest, Option<ReplayStatus>, &Engine, &LevelAssets) -> Reply =
+            dispatch_query;
+        let _: fn(
+            &Engine,
+            &crate::host::HostFrontend,
+            robin_engine::player_command::PlayerId,
+            &LevelAssets,
+        ) -> serde_json::Value = snapshot_host_debug;
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+    fn transport_classification_separates_authority_without_losing_arguments() {
+        for payload in [
+            HttpPayload::State,
+            HttpPayload::EngineDump,
+            HttpPayload::LevelAssets,
+            HttpPayload::Script,
+        ] {
+            assert!(matches!(payload.classify(), RoutedRequest::Query(_)));
+        }
+        assert!(matches!(
+            HttpPayload::HostDebug.classify(),
+            RoutedRequest::HostDebug
+        ));
+        assert!(
+            matches!(HttpPayload::Decompile { class: Some("Mission".into()) }.classify(), RoutedRequest::Query(QueryRequest::Decompile { class: Some(class) }) if class == "Mission")
+        );
+        assert!(
+            matches!(HttpPayload::Native { name: "test".into(), args: vec![1, -2], this: Some(3) }.classify(), RoutedRequest::Command(CommandRequest::Native { name, args, this: Some(3) }) if name == "test" && args == [1, -2])
+        );
+        assert!(
+            matches!(HttpPayload::Console("UNBLIP".into()).classify(), RoutedRequest::Command(CommandRequest::Console(command)) if command == "UNBLIP")
+        );
+        assert!(matches!(
+            HttpPayload::Command(PlayerCommand::CrouchDown).classify(),
+            RoutedRequest::Command(CommandRequest::Player(PlayerCommand::CrouchDown))
+        ));
+        assert!(
+            matches!(HttpPayload::Batch(vec![]).classify(), RoutedRequest::Command(CommandRequest::Batch(calls)) if calls.is_empty())
+        );
+        assert!(matches!(
+            HttpPayload::GetReplay.classify(),
+            RoutedRequest::Process(ProcessRequest::ExportReplay)
+        ));
+        assert!(
+            matches!(HttpPayload::LoadReplay { data: "encoded".into(), paused: true }.classify(), RoutedRequest::Process(ProcessRequest::LoadReplay { data, paused: true }) if data == "encoded")
+        );
+    }
 
     #[test]
     fn replay_spool_publishes_only_complete_flush_boundaries() {
