@@ -4267,6 +4267,16 @@ impl EngineInner {
             // areas so PathFinder can apply obstacle state and use its
             // deterministic visibility-graph fallback for routing.
             let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
+            // Graph-free levels use the stock human footprint (slot 0),
+            // normally supplied by the legacy graph's half-diagonal table.
+            // Both actor spawning and visibility-graph routing need it.
+            // TODO: expose authored footprints for custom profiles that use
+            // additional pathfinder slots; keep invalid indices strict.
+            let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 4.0);
+            graph.static_mut().half_diagonals.push(half_diagonal);
+            self.world
+                .fast_grid_mut()
+                .add_move_box_half_diagonal(half_diagonal);
             let shape: Vec<Vec<usize>> = graph
                 .static_data
                 .move_layers
