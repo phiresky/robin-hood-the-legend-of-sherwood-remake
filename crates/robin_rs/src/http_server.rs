@@ -1321,7 +1321,7 @@ fn decode_load_replay(
     let trimmed = data;
     let replay = crate::replay_format::decode_compact_for_public_playback(trimmed)
         .map(|(_, replay)| replay)
-        .map_err(|error| RpcError::replay_format("decode compact replay", error))?;
+        .map_err(|error| RpcError::replay_load("decode compact replay", error))?;
     let frame_count = replay.frame_count();
     let seed = replay.header().rng_seed;
     launches
