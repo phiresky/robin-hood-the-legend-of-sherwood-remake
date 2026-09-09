@@ -14,7 +14,9 @@ use robin_engine::engine::{DevState, Engine, LevelAssets};
 use robin_engine::engine_manager::EngineManager;
 use robin_engine::game_operation::GameCode;
 use robin_engine::player_command::{FrameCommands, PlayerCommand};
-use robin_engine::replay::{ReplayPlayer, ReplayRecorder};
+use robin_engine::replay::ReplayPlayer;
+#[cfg(test)]
+use robin_engine::replay::ReplayRecorder;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -1756,18 +1758,7 @@ impl TimelineRuntime {
                     // The load replaced every effect admitted before it. Keep
                     // this host frame's scheduling flags, but give the new
                     // attempt a clean recording transaction.
-                    frame.external_actions.clear();
-                    frame.external_actions_applied = 0;
-                    frame.post_commands.commands.clear();
-                    frame.post_external_actions.clear();
-                    frame.post_external_actions_applied = 0;
-                    frame.external_facts = Default::default();
-                    frame.modal_dismissals.clear();
-                    frame.replay_modal_dismissals = Default::default();
-                    frame.replay_timeline_transition = None;
-                    frame.replay_record_consumed = false;
-                    frame.recorder_state = RecorderFrameState::Inactive;
-                    frame.recorder_hash = Some(robin_engine::replay::state_hash(engine));
+                    frame.reset_after_terminal_restore(robin_engine::replay::state_hash(engine));
                 }
                 let replay_ordinal = self.replay_ordinal;
                 self.replay.record_taints(
@@ -1780,13 +1771,13 @@ impl TimelineRuntime {
                 let target = recorded_save.map_or(self.current_frame, |(_, timeline)| timeline);
                 self.reset_reconstruction_history(target, engine, assets);
                 frame.rebind_timeline_after_discontinuity(target);
-                if !frame.commands.commands.is_empty() {
+                if !frame.commands().is_empty() {
                     tracing::debug!(
-                        dropped = frame.commands.commands.len(),
+                        dropped = frame.commands().len(),
                         "replay: dropping commands dispatched before the load; \
                          their effects were overwritten by the loaded state"
                     );
-                    frame.commands.commands.clear();
+                    frame.discard_commands();
                 }
                 if !self.replay.is_recording() {
                     frame.recorder_state = RecorderFrameState::Inactive;
@@ -2746,7 +2737,7 @@ mod tests {
         );
         assert_eq!(timeline.replay.validity(), &RecordingValidity::Linear);
         assert!(timeline.is_recording());
-        assert!(timeline.replay.has_sealed_header() == false);
+        assert!(!timeline.replay.has_sealed_header());
         assert_eq!(timeline.replay_ordinal, ReplayFrameOrdinal::ZERO);
         assert_eq!(timeline.current_frame(), TimelineFrame::ZERO);
         assert_eq!(

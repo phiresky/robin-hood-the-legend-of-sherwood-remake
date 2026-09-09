@@ -1218,7 +1218,7 @@ mod tests {
         let initial = manager.engine.clone();
         let file = tempfile::NamedTempFile::new().unwrap();
         let path = file.path().to_string_lossy().into_owned();
-        timeline.replay_recorder = Some(
+        timeline.install_test_recorder(
             ReplayRecorder::new(
                 &path,
                 "step-test".into(),
@@ -1341,7 +1341,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state_hash(&manager.engine), expected);
-        drop(timeline.replay_recorder.take());
+        timeline.seal_test_recorder();
         let replay = ReplayData::from_file(&path).unwrap();
         assert_eq!(replay.frame_count(), 6);
         assert!(!replay.frame(0).unwrap().input.post_commands.is_empty());
@@ -1412,7 +1412,7 @@ mod tests {
             stepping_fixture(None);
         let file = tempfile::NamedTempFile::new().unwrap();
         let path = file.path().to_string_lossy().into_owned();
-        timeline.replay_recorder = Some(
+        timeline.install_test_recorder(
             ReplayRecorder::new(
                 &path,
                 "step-test".into(),
@@ -1461,7 +1461,7 @@ mod tests {
             &mut policy,
         )
         .unwrap();
-        drop(timeline.replay_recorder.take());
+        timeline.seal_test_recorder();
         let replay = ReplayData::from_file(&path).unwrap();
         assert_eq!(replay.frame_count(), 2);
         assert!(replay.frame(0).unwrap().host_controls.is_empty());
