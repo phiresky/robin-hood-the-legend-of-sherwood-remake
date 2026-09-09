@@ -1066,7 +1066,7 @@ pub trait EngineLevelLoadExt {
     fn draw_background(&self, viewport: &crate::host::ViewportState, renderer: &mut Renderer);
 }
 
-impl EngineLevelLoadExt for Engine {
+impl EngineLevelLoadExt for robin_engine::engine::EngineInner {
     fn draw_background(&self, viewport: &crate::host::ViewportState, renderer: &mut Renderer) {
         let view = &viewport.view_position;
         let screen = &viewport.screen_size;

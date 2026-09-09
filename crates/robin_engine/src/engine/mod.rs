@@ -98,8 +98,8 @@ pub(crate) use movement::{
 pub use peripherals::{CameraDisplayState, DebugFlags, DevState, HostDisplayState};
 pub use rollback_safe::{
     Engine, EngineArgs, GroundMarkSpriteData, HostConsoleDispatch, LevelLoadArgs,
-    MinimapWidgetSetup, MissionBootstrapCompletion, ParityReplaySetup, SnapshotGridComponent,
-    SnapshotRestoreError, SpatialPresentationSnapshot,
+    MinimapWidgetSetup, MissionBootstrapCompletion, ParityReplaySetup, PresentationEngine,
+    SnapshotGridComponent, SnapshotRestoreError, SpatialPresentationSnapshot,
 };
 pub use scroll_reveal::{BeggarRemark, PendingScrollAmulet, ScrollStatus};
 pub use seat::SeatState;

@@ -37,7 +37,7 @@ use crate::zoom_hud::{ZoomButtonSprites, ZoomHudLayout, ZoomTooltipTracker};
 use robin_assets::res_descr::LevelDescriptors;
 use robin_assets::resource_manager::ResourceManager;
 use robin_engine::coordinates::ScreenBBox;
-use robin_engine::engine::{Engine, SpatialPresentationSnapshot};
+use robin_engine::engine::{Engine, EngineInner, PresentationEngine, SpatialPresentationSnapshot};
 use robin_engine::graphic_config::TextureScaleMode;
 use robin_engine::profiles::MissionLocation;
 use robin_engine::sound_cache::SampleLoader;
@@ -245,7 +245,7 @@ pub(super) struct MissionPresentation {
 pub(super) struct NativeRefreshInterpolation {
     previous: Option<SpatialPresentationSnapshot>,
     current: Option<SpatialPresentationSnapshot>,
-    working: Option<Engine>,
+    working: Option<PresentationEngine>,
     previous_camera: Option<CameraPresentationPose>,
     current_camera: Option<CameraPresentationPose>,
     latest_frame: Option<u32>,
@@ -357,7 +357,7 @@ impl NativeRefreshInterpolation {
             if self.current_camera != Some(camera) {
                 self.previous = self.current.clone();
                 self.previous_camera = self.current_camera.replace(camera);
-                self.working = Some(authoritative.clone());
+                self.working = Some(PresentationEngine::new(authoritative));
                 self.segment_started_at_ms = started_at_ms;
                 self.segment_active = true;
             }
@@ -370,7 +370,7 @@ impl NativeRefreshInterpolation {
         if sequential {
             self.previous = self.current.replace(current);
             self.previous_camera = self.current_camera.replace(camera);
-            self.working = Some(authoritative.clone());
+            self.working = Some(PresentationEngine::new(authoritative));
             self.segment_started_at_ms = started_at_ms;
             self.segment_active = true;
         } else {
@@ -378,7 +378,7 @@ impl NativeRefreshInterpolation {
             self.current = Some(current);
             self.previous_camera = Some(camera);
             self.current_camera = Some(camera);
-            self.working = Some(authoritative.clone());
+            self.working = Some(PresentationEngine::new(authoritative));
             self.segment_started_at_ms = started_at_ms;
             self.segment_active = false;
         }
@@ -405,8 +405,8 @@ impl NativeRefreshInterpolation {
         ))
     }
 
-    pub(super) fn engine(&self) -> Option<&Engine> {
-        self.working.as_ref()
+    pub(super) fn engine(&self) -> Option<&EngineInner> {
+        self.working.as_ref().map(PresentationEngine::view)
     }
 
     pub(super) fn clear(&mut self) {
