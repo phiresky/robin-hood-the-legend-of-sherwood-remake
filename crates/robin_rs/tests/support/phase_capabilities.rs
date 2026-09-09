@@ -36,8 +36,8 @@ fn timeline_execution_uses_modes_without_snapshot_replacement_authority() {
                                 self.mode |= segment.ident == "FrameExecutionMode";
                             } else {
                                 assert!(
-                                    segment.ident != "Game",
-                                    "RPC execution must not own mission flow"
+                                    segment.ident != "Game" && segment.ident != "Host",
+                                    "RPC execution must receive disjoint phase authority, not the whole game or host"
                                 );
                             }
                         }
