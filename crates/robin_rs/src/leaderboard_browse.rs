@@ -14,7 +14,7 @@ use robin_run_protocol::{
     OpaqueId, ReplayArtifactV1, RunDetailV1,
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::io::Write as _;
+use std::io::Read as _;
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -210,7 +210,9 @@ pub fn persist_verified_replay(
     download: &VerifiedReplayDownload,
     download_directory: &std::path::Path,
 ) -> Result<std::path::PathBuf, String> {
-    if download.suggested_filename.is_empty()
+    let mut components = std::path::Path::new(&download.suggested_filename).components();
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
         || download
             .suggested_filename
             .chars()
@@ -218,31 +220,60 @@ pub fn persist_verified_replay(
     {
         return Err("replay filename escaped the selected directory".to_owned());
     }
-    std::fs::create_dir_all(download_directory)
-        .map_err(|error| format!("create replay download directory: {error}"))?;
     let path = download_directory.join(&download.suggested_filename);
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut file) => file
-            .write_all(download.bytes.as_ref())
-            .and_then(|()| file.sync_all())
-            .map_err(|error| format!("write authenticated replay download: {error}"))?,
+    match crate::desktop_persistence::write_new_bytes(&path, download.bytes.as_ref()) {
+        Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing = std::fs::read(&path)
-                .map_err(|error| format!("read existing replay download: {error}"))?;
-            if existing.as_slice() != download.bytes.as_ref() {
+            if !existing_download_matches(&path, download.bytes.as_ref())
+                .map_err(|error| format!("read existing replay download: {error}"))?
+            {
                 return Err(format!(
                     "refusing to overwrite a different replay at {}",
                     path.display()
                 ));
             }
         }
-        Err(error) => return Err(format!("create authenticated replay download: {error}")),
+        Err(error) => return Err(format!("publish authenticated replay download: {error}")),
     }
     Ok(path)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn existing_download_matches(path: &std::path::Path, expected: &[u8]) -> std::io::Result<bool> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::other(
+            "existing replay download is not a regular file",
+        ));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // A path swapped after the metadata check must not follow a symlink
+        // or block the UI waiting for a FIFO writer.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::other(
+            "existing replay download is not a regular file",
+        ));
+    }
+    if metadata.len() != expected.len() as u64 {
+        return Ok(false);
+    }
+    let mut buffer = [0; 8192];
+    for chunk in expected.chunks(buffer.len()) {
+        file.read_exact(&mut buffer[..chunk.len()])?;
+        if &buffer[..chunk.len()] != chunk {
+            return Ok(false);
+        }
+    }
+    // Reject a file extended after the length check.
+    Ok(file.read(&mut buffer[..1])? == 0)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -284,7 +315,7 @@ pub fn trigger_verified_replay_download(
 fn browser_download_error(value: wasm_bindgen::JsValue) -> String {
     value
         .as_string()
-        .unwrap_or_else(|| "browser rejected replay download".to_owned())
+        .unwrap_or_else(|| format!("browser rejected replay download: {value:?}"))
 }
 
 #[cfg(test)]
@@ -328,13 +359,82 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
+    fn native_delivery_compares_existing_files_in_bounded_chunks() {
+        for length in [0, 8191, 8192, 8193, 16385] {
+            let directory = tempfile::tempdir().unwrap();
+            let bytes = vec![42; length];
+            let first = download("run.rhrec", &bytes);
+            let path = persist_verified_replay(&first, directory.path()).unwrap();
+            assert_eq!(
+                persist_verified_replay(&first, directory.path()).unwrap(),
+                path
+            );
+            if length != 0 {
+                let mut different = bytes.clone();
+                different[length - 1] = 43;
+                assert!(
+                    persist_verified_replay(&download("run.rhrec", &different), directory.path())
+                        .is_err()
+                );
+            }
+            let longer = vec![42; length + 1];
+            assert!(
+                persist_verified_replay(&download("run.rhrec", &longer), directory.path()).is_err()
+            );
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_delivery_rejects_symlinks_and_non_regular_destinations() {
+        let directory = tempfile::tempdir().unwrap();
+        let outside = directory.path().join("outside.rhrec");
+        std::fs::write(&outside, b"same").unwrap();
+        let link = directory.path().join("link.rhrec");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(
+            persist_verified_replay(&download("link.rhrec", b"same"), directory.path()).is_err()
+        );
+        std::fs::create_dir(directory.path().join("directory.rhrec")).unwrap();
+        assert!(
+            persist_verified_replay(&download("directory.rhrec", b"same"), directory.path())
+                .is_err()
+        );
+        assert_eq!(std::fs::read(outside).unwrap(), b"same");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 3);
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn browser_download_failures_preserve_javascript_error_details() {
+        assert_eq!(
+            browser_download_error("string failure".into()),
+            "string failure"
+        );
+        let error = js_sys::Error::new("download permission denied");
+        assert!(browser_download_error(error.into()).contains("download permission denied"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
     fn native_delivery_rejects_escaping_names() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(
-            persist_verified_replay(&download("../run.rhrec", b"x"), directory.path()).is_err()
-        );
-        assert!(
-            persist_verified_replay(&download("dir\\run.rhrec", b"x"), directory.path()).is_err()
-        );
+        for filename in [
+            "",
+            ".",
+            "..",
+            "../run.rhrec",
+            "dir\\run.rhrec",
+            "/absolute.rhrec",
+        ] {
+            assert!(
+                persist_verified_replay(&download(filename, b"x"), directory.path()).is_err(),
+                "{filename:?}"
+            );
+        }
+        #[cfg(windows)]
+        assert!(persist_verified_replay(&download("C:run.rhrec", b"x"), directory.path()).is_err());
     }
 }

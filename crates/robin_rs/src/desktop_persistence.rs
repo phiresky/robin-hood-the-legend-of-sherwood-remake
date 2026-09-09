@@ -61,12 +61,35 @@ fn failure(stage: PublicationStage, error: io::Error) -> io::Error {
 /// failure-stage contract as [`write_json`].
 pub fn write_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
-    publish(path, |file| file.write_all(bytes), |_| Ok(()))
+    publish(
+        path,
+        PublicationMode::Replace,
+        |file| file.write_all(bytes),
+        |_| Ok(()),
+    )
+}
+
+/// Publish a complete new archive without replacing any existing destination.
+pub fn write_new_bytes(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+    publish(
+        path,
+        PublicationMode::CreateNew,
+        |file| file.write_all(bytes),
+        |_| Ok(()),
+    )
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum PublicationMode {
+    Replace,
+    CreateNew,
 }
 
 pub fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<()> {
     publish(
         path,
+        PublicationMode::Replace,
         |file| serde_json::to_writer_pretty(file, value).map_err(io::Error::other),
         |_| Ok(()),
     )
@@ -74,6 +97,7 @@ pub fn write_json<T: Serialize + ?Sized>(path: &Path, value: &T) -> io::Result<(
 
 fn publish(
     path: &Path,
+    mode: PublicationMode,
     write: impl FnOnce(&mut fs::File) -> io::Result<()>,
     mut before: impl FnMut(PublicationStage) -> io::Result<()>,
 ) -> io::Result<()> {
@@ -97,9 +121,11 @@ fn publish(
         .and_then(|()| temporary.as_file().sync_all())
         .map_err(|error| failure(SyncFile, error))?;
     before(Replace).map_err(|error| failure(Replace, error))?;
-    temporary
-        .persist(path)
-        .map_err(|error| failure(Replace, error.error))?;
+    let published = match mode {
+        PublicationMode::Replace => temporary.persist(path),
+        PublicationMode::CreateNew => temporary.persist_noclobber(path),
+    };
+    published.map_err(|error| failure(Replace, error.error))?;
     before(SyncDirectory).map_err(|error| failure(SyncDirectory, error))?;
     #[cfg(unix)]
     fs::File::open(parent)
@@ -127,6 +153,7 @@ mod tests {
             write_json(&path, &"old").unwrap();
             let error = publish(
                 &path,
+                PublicationMode::Replace,
                 |file| file.write_all(b"\"new\""),
                 |current| {
                     if current == stage {
@@ -152,6 +179,89 @@ mod tests {
                 "new"
             );
         }
+    }
+
+    #[test]
+    fn create_new_publication_failures_preserve_visibility_and_competing_files() {
+        for stage in [
+            PublicationStage::Prepare,
+            PublicationStage::Write,
+            PublicationStage::SyncFile,
+            PublicationStage::Replace,
+            PublicationStage::SyncDirectory,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("replay.rhrec");
+            let error = publish(
+                &path,
+                PublicationMode::CreateNew,
+                |file| file.write_all(b"complete"),
+                |current| {
+                    if current == stage {
+                        Err(io::Error::other("injected failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .unwrap_err();
+            let published = error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<PublicationFailure>()
+                .unwrap()
+                .published();
+            assert_eq!(path.exists(), published);
+            if published {
+                assert_eq!(fs::read(&path).unwrap(), b"complete");
+            } else {
+                write_new_bytes(&path, b"retry").unwrap();
+                assert_eq!(fs::read(&path).unwrap(), b"retry");
+            }
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replay.rhrec");
+        let error = publish(
+            &path,
+            PublicationMode::CreateNew,
+            |file| file.write_all(b"ours"),
+            |stage| {
+                if stage == PublicationStage::Replace {
+                    fs::write(&path, b"concurrent winner")?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&path).unwrap(), b"concurrent winner");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn partial_create_new_write_does_not_poison_the_final_filename() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("replay.rhrec");
+        let error = publish(
+            &path,
+            PublicationMode::CreateNew,
+            |file| {
+                file.write_all(b"partial")?;
+                Err(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "injected disk full",
+                ))
+            },
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+        assert!(!path.exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        write_new_bytes(&path, b"complete retry").unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"complete retry");
     }
 
     #[test]
@@ -182,6 +292,7 @@ mod tests {
         write_json(&path, &"old").unwrap();
         let error = publish(
             &path,
+            PublicationMode::Replace,
             |file| {
                 file.write_all(b"{partial")?;
                 Err(io::Error::new(
