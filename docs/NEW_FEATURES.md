@@ -4,10 +4,20 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Mission details and previous plays:** Campaign Manager's Mission Details tab
+  combines the original localized briefing, entry requirements, and a complete
+  paginated history across saved and archived campaigns. Outcomes, dates,
+  durations, and practice runs remain visible even without a recording.
+  Watch Replay opens an available recording in a separate desktop viewer while
+  preserving the current session. New terminal recordings are linked by exact
+  attempt identity; older compatible local recordings are indexed in the
+  background. See [campaign history](CAMPAIGN_HISTORY.md#campaign-manager-ui-and-offscreen-captures)
+  for controls and browser limitations.
+
 - **Campaign story navigation:** the main prerequisite route stays visible above
   stage-grouped story branches, optional missions, and ambushes. Training and
   campaign events are labeled separately; unused map placeholders are omitted
-  unless they hold archived results. R / Requirements explains actual money,
+  unless they hold archived results. Mission Details explains actual money,
   gang, mission, expiry, and story restrictions, with keyboard and mouse paging.
   Achievement cards describe exact conditions and campaign-versus-mission scope.
   These presentation changes preserve campaign selection and award eligibility.
