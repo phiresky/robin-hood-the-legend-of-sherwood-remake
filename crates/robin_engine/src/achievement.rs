@@ -1204,6 +1204,11 @@ impl MissionAchievementState {
         self.escape_pursuers.contains(&actor)
     }
 
+    pub(crate) fn clear_pursuit(&mut self) {
+        self.assert_tracking_open();
+        self.escape_pursuers.clear();
+    }
+
     /// Named participation is sticky even after that character leaves the party.
     pub(crate) fn record_party_composition(&mut self, present: bool, generic_only: bool) -> bool {
         self.assert_tracking_open();

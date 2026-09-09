@@ -287,7 +287,7 @@ impl EngineInner {
         } else {
             // Do not carry an unfinished chase across an exit/reinforcement
             // transition and award it when a different hero remains on-map.
-            self.mission_domain.achievements.escape_pursuers.clear();
+            self.mission_domain.achievements.clear_pursuit();
         }
         let generic_only = !party.is_empty()
             && party.iter().all(|(_, _, kind)| {
@@ -683,16 +683,20 @@ mod tests {
 
     #[test]
     fn off_map_party_member_cannot_complete_a_tracked_escape() {
+        use crate::achievement::{AchievementEvaluation, AchievementId};
+        use std::collections::BTreeSet;
+
         let mut engine = EngineInner::new();
         let assets = super::super::LevelAssets::new();
+        let mut pursuers = BTreeSet::new();
         for _ in 0..3 {
             let id = engine.add_entity(test_soldier(Camp::Lacklandists));
-            engine
-                .mission_domain
-                .achievements
-                .escape_pursuers
-                .insert(id);
+            pursuers.insert(id);
         }
+        engine
+            .mission_domain
+            .achievements
+            .refresh_pursuit(pursuers.clone(), pursuers.clone());
         for off_map in [false, true] {
             let mut element = ElementData::default();
             element.active = true;
@@ -711,13 +715,17 @@ mod tests {
         }
         engine.refresh_achievement_progress(&assets);
         assert!(
+            pursuers
+                .into_iter()
+                .all(|id| !engine.mission_domain.achievements.is_tracked_pursuer(id))
+        );
+        assert_ne!(
             engine
                 .mission_domain
                 .achievements
-                .escape_pursuers
-                .is_empty()
+                .live_evaluation(AchievementId::YouNeverSawUsLeave),
+            Some(AchievementEvaluation::Earned)
         );
-        assert!(!engine.mission_domain.achievements.escape_earned);
     }
 
     #[test]
