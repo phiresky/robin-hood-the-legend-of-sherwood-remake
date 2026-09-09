@@ -1493,9 +1493,9 @@ pub(super) fn render_frame(
     if let Some(trail) = mouse_trail_renderer
         && host.frontend.input.is_dragging()
         && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
-        && !host.frontend.mouse_way.is_empty()
+        && !host.frontend.mouse_way().is_empty()
     {
-        trail.render(&host.frontend.mouse_way, renderer);
+        trail.render(host.frontend.mouse_way(), renderer);
     }
 
     // ── GPU phase: per-PC macro dotted chains (world space) ──

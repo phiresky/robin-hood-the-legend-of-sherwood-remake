@@ -319,11 +319,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
     // Widgets own the complete press/release gesture. Keeping their raw
     // events in this batch also dispatched world actions behind the HUD.
     events.retain(|event| {
-        if host
-            .frontend
-            .pointer_capture_mut()
-            .route_hud_event(event, false)
-        {
+        if host.frontend.route_hud_event(event, false) {
             return false;
         }
         if input_suppressed {
@@ -345,9 +341,7 @@ pub(super) fn collect_event_and_hud_input(context: EventHudContext<'_>) -> Event
         if button != 1 && button != 3 {
             return true;
         }
-        host.frontend
-            .pointer_capture_mut()
-            .route_hud_event(event, true);
+        host.frontend.route_hud_event(event, true);
         if button == 1 {
             if let Some(button) = hud.zoom_layout.hit_test(mx, my, zoom_enable) {
                 let factor = match button {

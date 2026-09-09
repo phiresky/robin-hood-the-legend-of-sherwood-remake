@@ -101,87 +101,93 @@ pub(super) fn handle_mouse_input(
     // event each frame land normally.
     host.frontend.input.has_focus = true;
 
-    if pause_menu.is_none() && !pause_closed_this_frame {
-        for event in events {
-            // When `user_locked` is set (by Command::LockUser, which
-            // cutscenes and forced dialogues dispatch), MOUSE_MOVED
-            // and MOUSE_BUTTON are dropped.  Filter all mouse events
-            // here at the top of the dispatch loop.
-            if engine.user_locked()
-                && matches!(
-                    *event,
-                    GameEvent::MouseDown(..)
-                        | GameEvent::MouseUp(..)
-                        | GameEvent::MouseMove { .. }
-                        | GameEvent::ViewportPan { .. }
-                        | GameEvent::PointerCancel
-                        | GameEvent::TouchMotionStop
-                        | GameEvent::TouchTransformStart { .. }
-                        | GameEvent::TouchTransform { .. }
-                        | GameEvent::TouchTransformEnd { .. }
-                )
-            {
-                continue;
+    for event in events {
+        if matches!(event, GameEvent::WindowFocusChanged(false)) {
+            cancel_left_pointer(host, frame_cmds);
+            host.frontend.lose_pointer_focus();
+            continue;
+        }
+        if pause_menu.is_some() || pause_closed_this_frame {
+            continue;
+        }
+        // When `user_locked` is set (by Command::LockUser, which
+        // cutscenes and forced dialogues dispatch), MOUSE_MOVED
+        // and MOUSE_BUTTON are dropped.  Filter all mouse events
+        // here at the top of the dispatch loop.
+        if engine.user_locked()
+            && matches!(
+                *event,
+                GameEvent::MouseDown(..)
+                    | GameEvent::MouseUp(..)
+                    | GameEvent::MouseMove { .. }
+                    | GameEvent::ViewportPan { .. }
+                    | GameEvent::PointerCancel
+                    | GameEvent::TouchMotionStop
+                    | GameEvent::TouchTransformStart { .. }
+                    | GameEvent::TouchTransform { .. }
+                    | GameEvent::TouchTransformEnd { .. }
+            )
+        {
+            continue;
+        }
+        match *event {
+            // ViewportPan is applied unconditionally in
+            // `run_mission`'s always-on view-input pass so middle-
+            // drag panning works during replay; nothing to do here.
+            GameEvent::ViewportPan { .. } => {}
+            GameEvent::TouchMotionStop => {}
+            GameEvent::PointerCancel => {
+                cancel_left_pointer(host, frame_cmds);
             }
-            match *event {
-                // ViewportPan is applied unconditionally in
-                // `run_mission`'s always-on view-input pass so middle-
-                // drag panning works during replay; nothing to do here.
-                GameEvent::ViewportPan { .. } => {}
-                GameEvent::TouchMotionStop => {}
-                GameEvent::PointerCancel => {
-                    cancel_left_pointer(host, frame_cmds);
-                }
-                GameEvent::MouseDown(mx, my, 1, clicks) => {
-                    on_left_mouse_down(
-                        engine,
-                        host,
-                        assets,
-                        frame_cmds,
-                        mx,
-                        my,
-                        clicks,
-                        planning_held,
-                    );
-                }
-                GameEvent::MouseDown(mx, my, 3, clicks) => {
-                    on_right_mouse_down(engine, host, mx, my, clicks, planning_held);
-                }
-                GameEvent::MouseMove { x, y, .. } => {
-                    on_mouse_move(engine, host, assets, frame_cmds, x, y, planning_held);
-                }
-                GameEvent::MouseUp(mx, my, 1) => {
-                    on_left_mouse_up(
-                        engine,
-                        host,
-                        assets,
-                        portrait_cache,
-                        frame_cmds,
-                        screen_width,
-                        screen_height,
-                        mx,
-                        my,
-                        shift_held,
-                        planning_held,
-                        ctrl_held,
-                    );
-                }
-                GameEvent::MouseUp(mx, my, 3) => {
-                    on_right_mouse_up(
-                        engine,
-                        host,
-                        assets,
-                        portrait_cache,
-                        frame_cmds,
-                        screen_width,
-                        screen_height,
-                        mx,
-                        my,
-                        planning_held,
-                    );
-                }
-                _ => {}
+            GameEvent::MouseDown(mx, my, 1, clicks) => {
+                on_left_mouse_down(
+                    engine,
+                    host,
+                    assets,
+                    frame_cmds,
+                    mx,
+                    my,
+                    clicks,
+                    planning_held,
+                );
             }
+            GameEvent::MouseDown(mx, my, 3, clicks) => {
+                on_right_mouse_down(engine, host, mx, my, clicks, planning_held);
+            }
+            GameEvent::MouseMove { x, y, .. } => {
+                on_mouse_move(engine, host, assets, frame_cmds, x, y, planning_held);
+            }
+            GameEvent::MouseUp(mx, my, 1) => {
+                on_left_mouse_up(
+                    engine,
+                    host,
+                    assets,
+                    portrait_cache,
+                    frame_cmds,
+                    screen_width,
+                    screen_height,
+                    mx,
+                    my,
+                    shift_held,
+                    planning_held,
+                    ctrl_held,
+                );
+            }
+            GameEvent::MouseUp(mx, my, 3) => {
+                on_right_mouse_up(
+                    engine,
+                    host,
+                    assets,
+                    portrait_cache,
+                    frame_cmds,
+                    screen_width,
+                    screen_height,
+                    mx,
+                    my,
+                    planning_held,
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -199,9 +205,7 @@ fn cancel_left_pointer(host: &mut Host, frame_cmds: &mut FrameCommands) {
             &PlayerCommand::MinimapMouseUp { on_minimap: false },
         );
     }
-    host.frontend.pointer_capture_mut().end_minimap_drag();
-    host.frontend.input.cancel_left_pointer();
-    host.frontend.mouse_way.clear();
+    host.frontend.cancel_left_pointer();
 }
 
 // ─── Per-event handlers ─────────────────────────────────────────────
@@ -220,14 +224,10 @@ fn on_left_mouse_down(
 ) {
     let local_seat = host.transport.local_seat();
     {
-        host.frontend.input.press_left_pointer(
+        host.frontend.begin_left_pointer(
             engine_coordinates::ScreenPoint::new(mx as f32, my as f32),
             clicks,
         );
-
-        // Clear the swordfight mouse-way polyline at the
-        // start of every left-drag.
-        host.frontend.mouse_way.clear();
 
         let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
         let on_minimap = host
@@ -244,9 +244,7 @@ fn on_left_mouse_down(
             );
             // Commands are queued until the simulation tick. Capture locally
             // so a move in this same event batch cannot hit the world.
-            host.frontend
-                .pointer_capture_mut()
-                .begin_minimap_drag(center.is_some());
+            host.frontend.begin_minimap_drag(center.is_some());
             if let Some(point) = center {
                 host.frontend.viewport.center_on_point(point);
                 dispatch_local_command(
@@ -344,10 +342,7 @@ fn on_right_mouse_down(
 ) {
     let local_seat = host.transport.local_seat();
     {
-        host.frontend.input.right_mouse_down = true;
-        host.frontend
-            .pointer_capture_mut()
-            .right_button_down(clicks);
+        host.frontend.begin_right_pointer(clicks);
 
         // `has_focus` gate: a UI widget that grabbed
         // focus this frame blocks the deselection-drag
@@ -399,7 +394,7 @@ fn on_mouse_move(
             && engine.selected_action_for_seat(local_seat) == Action::NoAction
             && crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
         {
-            host.frontend.mouse_way.add_point(mouse_pt);
+            host.frontend.add_gesture_point(mouse_pt);
         }
 
         // ── Minimap hover / drag update ──
@@ -500,7 +495,7 @@ fn on_left_mouse_up(
 ) {
     let local_seat = host.transport.local_seat();
     {
-        let is_double = host.frontend.input.release_left_pointer();
+        let is_double = host.frontend.release_left_pointer();
 
         // ── Minimap click / drag-end handling ──
         // Checks dragged flag, dead zone, and dispatches
@@ -516,7 +511,7 @@ fn on_left_mouse_up(
         let minimap_handled = on_minimap
             || host.frontend.pointer_capture().minimap_drag_active()
             || host.frontend.engine_display.minimap().drag_start();
-        host.frontend.pointer_capture_mut().end_minimap_drag();
+        host.frontend.end_minimap_drag();
         if minimap_handled {
             let center_on = host.frontend.engine_display.resolve_minimap_center(
                 click_pt,
@@ -578,7 +573,7 @@ fn on_left_mouse_up(
             // over a portrait doesn't accidentally select that PC.
             let swordfight_drag =
                 crate::game_input::is_selected_unit_swordfighting(engine, local_seat)
-                    && !host.frontend.mouse_way.is_empty();
+                    && !host.frontend.mouse_way().is_empty();
 
             // Check portrait panel first (detailed sub-area hit-test).
             let portrait_hit = if swordfight_drag {
@@ -1189,13 +1184,8 @@ fn on_right_mouse_up(
     planning_held: bool,
 ) {
     let local_seat = host.transport.local_seat();
-    let right_double_click = host
-        .frontend
-        .pointer_capture_mut()
-        .take_right_double_click();
+    let right_double_click = host.frontend.release_right_pointer();
     {
-        host.frontend.input.right_mouse_down = false;
-
         if planning_held && engine.planned_action_for_seat(local_seat) != Action::NoAction {
             let cmd = PlayerCommand::CancelPlannedAction;
             dispatch_local_command(&host.transport, frame_cmds, &cmd);

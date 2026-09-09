@@ -3,6 +3,101 @@
 use crate::gfx_types::GameEvent;
 use serde::{Deserialize, Serialize};
 
+/// One owner for paired pointer metadata and the gesture sampled by that
+/// sequence. Sampled engine input stays separate, but lifecycle operations
+/// require it so cancellation cannot leave a live drag behind the capture.
+#[derive(Debug, Default, Serialize)]
+pub(crate) struct FrontendPointerSequence {
+    capture: FrontendPointerCapture,
+    mouse_way: crate::mouse_way::MouseWay,
+}
+
+impl<'de> Deserialize<'de> for FrontendPointerSequence {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "live pointer sequences cannot be restored",
+        ))
+    }
+}
+
+impl FrontendPointerSequence {
+    pub(crate) fn capture(&self) -> &FrontendPointerCapture {
+        &self.capture
+    }
+    pub(crate) fn mouse_way(&self) -> &crate::mouse_way::MouseWay {
+        &self.mouse_way
+    }
+    pub(crate) fn add_point(&mut self, point: robin_engine::coordinates::ScreenPoint) {
+        self.mouse_way.add_point(point);
+    }
+    pub(crate) fn advance_trail(&mut self, trail: &crate::mouse_trail::MouseTrailRenderer) {
+        trail.advance(&mut self.mouse_way);
+    }
+    pub(crate) fn clear_gesture(&mut self) {
+        self.mouse_way.clear();
+    }
+    pub(crate) fn begin_left(
+        &mut self,
+        input: &mut robin_engine::engine::InputState,
+        point: robin_engine::coordinates::ScreenPoint,
+        clicks: u8,
+    ) {
+        input.press_left_pointer(point, clicks);
+        self.mouse_way.clear();
+    }
+    pub(crate) fn release_left(&mut self, input: &mut robin_engine::engine::InputState) -> bool {
+        // Keep the path until release dispatch has evaluated the gesture.
+        input.release_left_pointer()
+    }
+    pub(crate) fn begin_right(&mut self, input: &mut robin_engine::engine::InputState, clicks: u8) {
+        input.right_mouse_down = true;
+        self.capture.right_button_down(clicks);
+    }
+    pub(crate) fn release_right(&mut self, input: &mut robin_engine::engine::InputState) -> bool {
+        input.right_mouse_down = false;
+        self.capture.take_right_double_click()
+    }
+    pub(crate) fn cancel_left(&mut self, input: &mut robin_engine::engine::InputState) {
+        input.cancel_left_pointer();
+        self.capture.touch_plan_captured = false;
+        if self.capture.hud_button == Some(1) {
+            self.capture.hud_button = None;
+        }
+        self.capture.end_minimap_drag();
+        self.mouse_way.clear();
+    }
+    pub(crate) fn reset(&mut self, input: &mut robin_engine::engine::InputState) {
+        input.reset_pointer_sequence();
+        self.capture.cancel_sequence();
+        self.mouse_way.clear();
+    }
+    pub(crate) fn reset_modal(&mut self, input: &mut robin_engine::engine::InputState) {
+        // Preserve the engine's held-without-drag/suppression semantics.
+        input.reset_modal_input();
+        self.capture.cancel_sequence();
+        self.mouse_way.clear();
+    }
+    pub(crate) fn begin_minimap_drag(&mut self, camera: bool) {
+        self.capture.begin_minimap_drag(camera);
+    }
+    pub(crate) fn end_minimap_drag(&mut self) {
+        self.capture.end_minimap_drag();
+    }
+    pub(crate) fn route_hud_event(&mut self, event: &GameEvent, hit: bool) -> bool {
+        self.capture.route_hud_event(event, hit)
+    }
+    pub(crate) fn route_touch_plan_event(
+        &mut self,
+        planning: &mut FrontendPlanning,
+        event: &GameEvent,
+        admit_touch: bool,
+        hit_test: impl FnOnce(i32, i32) -> bool,
+    ) -> TouchPlanRoute {
+        self.capture
+            .route_touch_plan_event(planning, event, admit_touch, hit_test)
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct FrontendPlanning {
     preference_enabled: bool,
@@ -172,6 +267,45 @@ impl FrontendPointerCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_preserves_gesture_for_dispatch_and_next_press_retires_it() {
+        let mut sequence = FrontendPointerSequence::default();
+        let mut input = robin_engine::engine::InputState::default();
+        sequence.begin_left(&mut input, Default::default(), 2);
+        sequence.add_point(Default::default());
+        assert!(sequence.release_left(&mut input));
+        assert!(!input.left_mouse_down());
+        assert!(!sequence.mouse_way().is_empty());
+        assert!(!sequence.release_left(&mut input));
+        sequence.begin_left(&mut input, Default::default(), 1);
+        assert!(sequence.mouse_way().is_empty());
+    }
+
+    #[test]
+    fn touch_takeover_cancels_left_sequence_without_consuming_right_release() {
+        let mut sequence = FrontendPointerSequence::default();
+        let mut input = robin_engine::engine::InputState::default();
+        sequence.begin_left(&mut input, Default::default(), 2);
+        sequence.begin_right(&mut input, 2);
+        sequence.begin_minimap_drag(true);
+        sequence.add_point(Default::default());
+        sequence.cancel_left(&mut input);
+        assert!(!input.left_mouse_down());
+        assert!(!sequence.capture().minimap_drag_active());
+        assert!(sequence.mouse_way().is_empty());
+        assert!(!sequence.release_left(&mut input));
+        assert!(input.right_mouse_down);
+        assert!(sequence.release_right(&mut input));
+        assert!(!sequence.release_right(&mut input));
+    }
+
+    #[test]
+    fn pointer_diagnostic_cannot_recreate_live_sequence() {
+        let sequence = FrontendPointerSequence::default();
+        let bytes = serde_json::to_vec(&sequence).unwrap();
+        assert!(serde_json::from_slice::<FrontendPointerSequence>(&bytes).is_err());
+    }
 
     #[test]
     fn hud_press_captures_drag_and_release_across_frames() {
