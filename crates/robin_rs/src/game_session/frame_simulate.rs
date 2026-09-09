@@ -1607,12 +1607,12 @@ impl InteractiveFrameSimulation {
             }
         } else if keyboard_step == KeyboardStep::Back {
             if let Some(target) = runtime.current_frame().previous()
-                && let Some(oldest) = runtime.rewind_buffer.oldest_reachable_frame()
+                && let Some(oldest) = runtime.retained_history().oldest_reachable_frame()
                 && target.number() >= oldest
             {
-                runtime.rewind_buffer.begin_session();
+                runtime.begin_rewind_session();
                 let restored = runtime.restore_retained_frame(manager, assets, target);
-                runtime.rewind_buffer.end_session();
+                runtime.end_rewind_session();
                 if !restored {
                     tracing::warn!("step-back: rewind_to({}) failed", target.number());
                 }

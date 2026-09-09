@@ -493,15 +493,14 @@ mod tests {
         let checkpoint = mission
             .runtime
             .timeline
-            .rewind_buffer
-            .rewind_to(&assets, 0)
+            .reconstruct_history_fixture(&assets, 0)
             .expect("frame-0 pre-command checkpoint");
         assert_eq!(robin_engine::replay::state_hash(&checkpoint), initial_hash);
         assert_eq!(
             mission
                 .runtime
                 .timeline
-                .rewind_buffer
+                .retained_history()
                 .commands_for(0)
                 .map(|commands| commands.len()),
             Some(1)
@@ -594,7 +593,7 @@ mod tests {
             mission
                 .runtime
                 .timeline
-                .rewind_buffer
+                .retained_history()
                 .commands_for(0)
                 .is_some()
         );
@@ -602,7 +601,7 @@ mod tests {
             mission
                 .runtime
                 .timeline
-                .rewind_buffer
+                .retained_history()
                 .commands_for(1)
                 .is_some()
         );

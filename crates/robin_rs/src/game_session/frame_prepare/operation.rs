@@ -288,10 +288,8 @@ pub(super) async fn process_operation_and_save(
             profiles,
             pending_thumbnail.clone(),
         );
-        if save_load.processed()
-            && let Some(ref mut checker) = runtime.rollback_checker
-        {
-            checker.reset();
+        if save_load.processed() {
+            runtime.reset_rollback_checker();
         }
         if let Some(event) = save_load.event {
             runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
@@ -329,10 +327,8 @@ pub(super) async fn process_operation_and_save(
         profiles,
         pending_thumbnail,
     );
-    if save_load.processed()
-        && let Some(ref mut checker) = runtime.rollback_checker
-    {
-        checker.reset();
+    if save_load.processed() {
+        runtime.reset_rollback_checker();
     }
     if let Some(event) = save_load.event {
         runtime.note_save_load_event(event, &mut frame, &manager.engine, assets.as_ref());
