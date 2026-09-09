@@ -12,3 +12,12 @@ This player review rates the game 8 and appreciates accessible controls and the 
 The drawbacks are repeated locations, deteriorating image quality when zoomed in, repetitive audio, and limited replay value beyond difficulty changes. The reviewer would have liked an editor or additional modes.
 
 Enemy-class descriptions are player observations rather than verified behavioral rules. The original numeric date is retained without imposing a day/month interpretation.
+
+## Converted text from the original HTML
+
+
+### reviews__gamefaqs-guybrush999.html
+
+_Source: `originals/reviews__gamefaqs-guybrush999.html`._
+
+Enable JavaScript and cookies to continue

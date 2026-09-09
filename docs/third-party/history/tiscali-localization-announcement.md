@@ -12,3 +12,12 @@ This report says CD Projekt signed with Wanadoo for exclusive Czech and Slovak d
 A two-minute silent gameplay video was offered in 720×540 and 360×270 versions. The files were not downloaded or watched here.
 
 The report provides provenance for regional publishing and promotional assets. Its North American paragraph mentions Infogrames despite the Strategy First contact; that inconsistency remains unresolved. Compare the localization announcement with Sector's later firsthand Czech-edition report.
+
+## Converted text from the original HTML
+
+
+### history__tiscali-localization-announcement.html
+
+_Source: `originals/history__tiscali-localization-announcement.html`._
+
+Access is forbidden.

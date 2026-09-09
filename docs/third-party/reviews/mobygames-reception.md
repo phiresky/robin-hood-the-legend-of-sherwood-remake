@@ -25,3 +25,13 @@ Retrieved from the Wayback Machine capture of 2024-12-08 (the live page returns 
 - **Player reviews:** average 3.9 out of 5 from 19 ratings, 1 written review.
 - The single player review, "Great Historical game, kind of struggling." by Andrew Shepard (Windows, 2005): bought a $5 copy; likes fighting Prince John's guards and the easy, fun bow; dislikes how long sword fights take and that both mouse buttons attack the same way; bottom line recommends it to fans of the medieval age who "love good 3D graphics" (the reviewer's wording).
 - Critic entries were contributed by thirteen named MobyGames users; the individual publication rows were not present in the capture's HTML (they load separately), so they remain TODO.
+
+## Converted text from the original HTML
+
+
+
+### reviews__mobygames-reception.html
+
+_Source: `originals/reviews__mobygames-reception.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

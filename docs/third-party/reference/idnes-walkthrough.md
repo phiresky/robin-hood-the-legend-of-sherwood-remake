@@ -32,3 +32,13 @@ Continue with [part 2](../guides/idnes-part-2.md). A [third installment](https:/
 6. *Záchrana Willa Scarletta* (Scarlet Night): known from the demo, but at night; about half an hour; bring a lockpicker, a carrier and a healer; bridge guards, the five-man patrol lured with a purse, the beggar quest at the mill, a stone from which to jump to the wall and a creeper into the castle, the woman at the pier's quest, beggar's scroll reveals Will; Robin climbs in, clears the wall to the gate tower and the archer, lowers the bridge; free Will; the northernmost tower holds several thousand gold; three new guards at the gate on the way out.
 7. *Šerifův přítelíček* (an ambush on a friend of the sheriff, on Robin's birthday): two guards fall into traps, jump onto the rock, use the pole on the men around the target, let him hide behind a tree, circle and punch him for £3,000.
 8. *Výběrčí daní* (tax collector ambush): first soldiers caught by traps; punch or staff the rest; at the bridge shoot the archers first and lure the soldiers to the hidden trio; arrows are useless on the mounted knight, use the staff; punch and rob the collector.
+
+## Converted text from the original HTML
+
+
+
+### reference__idnes-walkthrough.html
+
+_Source: `originals/reference__idnes-walkthrough.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

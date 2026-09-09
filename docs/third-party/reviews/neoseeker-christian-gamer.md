@@ -12,3 +12,12 @@ The writer gives an enthusiastic assessment of the gameplay, mission design, pre
 A distinctive observation concerns money distribution: the author describes repeatedly revising assumptions about which guards or civilians carry valuables as the campaign progresses. That is useful as a lead for mission-specific loot research, but it is a player's account rather than a verified sequence of loot rules.
 
 The review values patient observation and learning changing behavior patterns. Its incidental description of the royal family should not be used as historical reference.
+
+## Converted text from the original HTML
+
+
+### reviews__neoseeker-christian-gamer.html
+
+_Source: `originals/reviews__neoseeker-christian-gamer.html`._
+
+Enable JavaScript and cookies to continue

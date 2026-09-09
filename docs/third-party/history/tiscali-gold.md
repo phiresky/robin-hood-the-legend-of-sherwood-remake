@@ -12,3 +12,12 @@ The report attributes a completion announcement to Strategy First and says North
 The distinction between completion, planned retail arrival, and regional localization is the record's main value. These dates are reported expectations, not independently confirmed shipment dates.
 
 The article links a press release through Blue's News, but that linked text was unreadable in this pass. Character descriptions reproduced alongside the news should not be treated as a final technical specification.
+
+## Converted text from the original HTML
+
+
+### history__tiscali-gold.html
+
+_Source: `originals/history__tiscali-gold.html`._
+
+Access is forbidden.

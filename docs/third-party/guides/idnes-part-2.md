@@ -12,3 +12,12 @@ This continuation covers missions numbered 9–25 in the author's route, includi
 Inspected passages discuss nonlethal handling of Ranulph, securing incapacitated enemies, and using allied formations during a castle assault by drawing opponents toward them. The article also discusses blazons in connection with Derby.
 
 Read alongside [part 1](../reference/idnes-walkthrough.md) and other campaign guides to compare alternative solutions. Search-index access does not guarantee that every map, caption, or step has been inspected.
+
+## Converted text from the original HTML
+
+
+### guides__idnes-part-2.html
+
+_Source: `originals/guides__idnes-part-2.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

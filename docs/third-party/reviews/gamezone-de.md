@@ -21,3 +21,13 @@ The opening places the game in the medieval struggle against Prince John and fra
 - Web search: the result snippet for this URL says the review presents the game as proof that 2D graphics remain viable and as a genuine real-time tactics game with several forward-looking improvements that give the player more freedom than Desperados. No author credit or score appears in the snippet.
 
 **Still unverified:** author (earlier pass recorded "GreenAcid"), date (earlier pass recorded 2002-11-15), score and verdict. Wikipedia's reception table lists "GameZone 8.5/10", but that citation is the US site gamezone.com (Michael Lafferty, 11 November 2002), not Gamezone.de. TODO: retry the page from a browser with a challenge-capable client.
+
+## Converted text from the original HTML
+
+
+
+### reviews__gamezone-de.html
+
+_Source: `originals/reviews__gamezone-de.html`._
+
+Enable JavaScript and cookies to continue

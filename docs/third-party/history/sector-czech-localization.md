@@ -10,3 +10,12 @@
 The writer reports having inspected the Czech edition and praises the dubbed introduction, character voices, translated text, and scrolls. The short report recommends the game particularly to readers who found Commandos or Desperados too difficult.
 
 This is useful firsthand evidence about the localization actually encountered, rather than an announcement of a future translation. The page also advertises screenshots of that edition; those images were not visually inspected here. Its historical shop price is not a current offer.
+
+## Converted text from the original HTML
+
+
+### history__sector-czech-localization.html
+
+_Source: `originals/history__sector-czech-localization.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

@@ -12,3 +12,12 @@ The game's community hub separates full-game and individual-level records and pr
 Forum topics include a secret Attack on Lincoln level, missing ambushes, and hotkey blocking. These are useful leads for conditional mission availability and input behavior, but thread titles alone do not establish the answers.
 
 Leaderboard counts and records change. No run has been watched or its route reproduced for this record, and the number of leaderboard levels should not be substituted for a canonical campaign mission count.
+
+## Converted text from the original HTML
+
+
+### reference__speedrun-community.html
+
+_Source: `originals/reference__speedrun-community.html`._
+
+Enable JavaScript and cookies to continue

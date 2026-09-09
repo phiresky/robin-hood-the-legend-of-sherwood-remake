@@ -16,3 +16,12 @@ Gameplay discussion covers profiles, configurable controls, display settings, di
 The article states that RuneSoft released the MorphOS version in October 2006.
 
 **Research use:** port-specific packaging, installation, library dependencies, and interface observations. These findings should not be generalized to Windows or later rereleases; no fix was executed here.
+
+## Converted text from the original HTML
+
+
+### reviews__ppa-morphos.html
+
+_Source: `originals/reviews__ppa-morphos.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

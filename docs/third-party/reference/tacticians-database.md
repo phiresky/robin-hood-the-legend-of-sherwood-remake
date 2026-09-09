@@ -12,3 +12,10 @@ The retrieved title identifies Robin Hood The Legend of Sherwood; 2002 Stealth S
 The browser returned an empty text body. A direct HTML fetch also yielded only the page title after extracting visible text. No review content, rating, or substantive argument could be verified.
 
 **TODO:** inspect an accessible archived capture or restored original before adding a summary. The date is inferred only from the URL's year/month path.
+
+## Converted text from the original HTML
+
+
+### reference__tacticians-database.html
+
+_Source: `originals/reference__tacticians-database.html`._

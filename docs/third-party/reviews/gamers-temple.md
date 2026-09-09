@@ -10,3 +10,87 @@
 Jordan presents the game as a tactical puzzle with more room to recover from mistakes than Desperados. Being spotted can lead to a fight rather than an immediate collapse of the plan. Guards respond to sights and sounds and seek assistance, while Robin's arrows, punches, and money distractions provide different approaches.
 
 The review values the recognizable setting and individual character abilities. Its recommendation is aimed at players who enjoy solving small tactical problems, rather than those looking to command large armies. Useful as a favorable comparison with the stricter stealth expectations expressed in other reviews.
+
+## Converted text from the original HTML
+
+
+### reviews__gamers-temple.html
+
+_Source: `originals/reviews__gamers-temple.html`._
+
+[Home](https://www.gamerstemple.com/)
+
+1
+
+2
+
+  * [Home](https://www.gamerstemple.com) * 
+  * [News](/news) * 
+  * [Reviews](https://www.gamerstemple.com/reviews) * 
+  * [Newsletter](/nl/subscribe.asp)
+
+
+
+  * Robin Hood: The Legend of Sherwood on PC: 
+  *  [Game Hub](https://www.gamerstemple.com/games/pc/408/robin-hood-the-legend-of-sherwood)
+  *  * [Discuss](https://www.gamerstemple.com/games/pc/408/robin-hood-the-legend-of-sherwood#discuss)
+  *  * [Articles & Features](https://www.gamerstemple.com/games/pc/408/robin-hood-the-legend-of-sherwood#news)
+  *  * [Review](https://www.gamerstemple.com/game-reviews/pc/408/robin-hood-the-legend-of-sherwood-review)
+  *  * [Cheats](https://www.gamerstemple.com/games2/000408/000408c.asp)
+
+
+
+ 
+
+# Robin Hood: The Legend of Sherwood Review
+
+By Ned Jordan
+
+Date: 7/19/2005
+
+If you've ever played the game Desperados, then Robin Hood will seem a little familiar to you. Desperados was a real-time strategy game that emphasized stealth and teamwork over combat. Each of the levels in Desperados played out as a puzzle, with a definite solution to each. Straying from the developers' intended path would result in detection by the enemy, which meant certain death and failure of the mission. Robin Hood is developed by the same team, but the game is more than Desperados set in Merry Olde England. The gameplay has undergone some changes that give you more leeway when completing the missions, and also makes it possible for you to fight your way out of a jam.
+
+Robin Hood is a squad-based strategy game that puts you in the role of Robin Hood. You will be given the chance to select a few of the Merry Men to join you as you rob from the rich, fight injustice, and in general make things difficult for King John. The missions take place in real-time in the towns and country surrounding Lincoln and Sherwood Forest. Opposing you are the town guards and knights loyal to King John, who would be perfectly happy putting an end to Robin's life rather than going through the bother of arresting him. The guards in the game will be going about their business patrolling city streets, manning castle ramparts, and, well, guarding things. They're aware of their surroundings, and will react to mysterious noises or the sight of men in tights running through the streets of their town. Since they are often wise enough to go running for help rather than trying to fight Robin man to man, it is best to stay out of sight unless you foolhardily want to take on the town's entire garrison.
+
+Each member of your team has a set of special skills to aid you in avoiding or disabling guards. Robin himself can fire arrows with great accuracy, knock guards unconscious after sneaking up on them, or toss a bag of coins on the ground causing greedy guards to fight over the booty. Other Merry Men can whistle to distract guards, move unconscious bodies to more out of the way locations, or cast nets to capture several guards at once, among other things. Should you find yourself cornered by a vigilant guard, the game will let you fight your way out of the jam. One on one, Robin and most of the Merry Men can take on an individual guard but it is best to avoid combat when possible. First of all, the injuries that occur will eventually wear your men down. Secondly, the action will often alert other nearby enemies who will run and summon help. Fighting patrol after patrol is certain to bring a premature end to your game, especially since the patrols are often led by much tougher commanders. Finally, the game remains true to the spirit of Robin's work, and you'll score higher on the missions by taking as few lives as possible. 
+
+The fighting in the game is pretty simplistic. Battles are always initiated by the guards, and when one of your men is attacked he will switch to fighting mode. Your options at this point are either to run away or to click on the man you wish to attack. Combat is then automatic, and you are essentially a spectator as the battle plays out. Battles take a surprisingly long time to complete, as it seems that the two combatants spend most of their time missing each other. This provides another motivation for avoiding combat - you'll want to spend as little time as possible watching long swordfights play themselves out. 
+
+For the most part, the AI in the game is pretty good. The guards have fields of vision and can hear nearby noises, so they will investigate your actions should you get a little too careless. They display pretty competent situational awareness, reactinbg to bodies they find, running guards, and panicked civilians. The cones of vision are a little on the short side though, and it seems odd that a guard won't react to a swordfight taking place on the other side of a square. 
+
+The game does a good job of giving you some leeway in how you approach your mission goals. Games of this type, including the aforementioned Desperados, often have a set solution for each mission and gameplay involves a trail and error search for the solution intended by the designers. In Robin Hood there are often multiple routes through a city's streets or a forest's paths that will still allow you to complete your objectives. There are also buildings or areas on the maps that are entirely optional to explore. Doing so will often reward you with more gold or special items, but it is up to you if you want to take the extra risks to win these rewards. 
+
+Robin Hood also gives you a choice when it comes to mission selection. From your base in Sherwood Forest, you will be presented with information on nearby caravans, or the goings on in the local towns, and given your choice of which of these missions you want to accept. Some are definitely harder than others, but offer greater rewards when successfully completed. Each mission will only allow you to bring along a limited number of men, so you'll also have to make a decision on the type of skill mix to include on your team before beginning the mission. 
+
+While they will rest and heal, the Merry Men left behind in Sherwood won't be sitting on their hands while you're gone. You can assign them to production stations to have them produce arrows, healing herbs, and other items that you can then take with you on later missions. They can also train at an archery range, or work on their fighting skills, making them more valuable the next time you select them to join you on a mission. 
+
+In a world full of science fiction and fantasy based strategy games, it is nice to see one set in the unique but familiar world of Robin Hood. While it might not appeal to the strategy gamer who enjoys throwing masses of units into frenzied combat, it is an enjoyable change of pace from most other games in the genre and can also be enjoyed by those who like puzzle games. If you're looking for something a little bit different to round out your strategy game library, then you should give Robin Hood a close look. 
+
+[_Final Rating_](/ratingskey.asp): 86% \- Pull on your tights and enjoy a fun little romp through Sherwood Forest with Robin Hood and his Merry Men.
+
+ 
+
+_Note: A review code for this game was provided by the publisher._
+
+Please enable JavaScript to view the [comments powered by Disqus.](https://disqus.com/?ref_noscript)
+
+  
+
+
+  * [Features](/features/latest-features) * 
+  * [About Us](/aboutus.asp) * 
+  * [Terms & Conditions](/terms.asp) * 
+  * [Privacy](/privacy.asp) * 
+  * [Contacts](/contacts.asp) * 
+  * [Facebook](https://www.facebook.com/gamerstemple) * 
+  * [X](https://x.com/TheGamersTemple) * 
+  * [YouTube](https://www.youtube.com/c/Gamerstemple1337) * 
+  * [Instagram](https://www.instagram.com/thegamerstemple/) * 
+  * [Threads](https://www.threads.net/@thegamerstemple) * 
+  * [Mastodon](https://mastodon.social/@gamerstemple) * 
+  * [Bluesky](https://bsky.app/profile/gamerstemple.bsky.social) * 
+  * [Metacritic](https://www.metacritic.com/publication/gamers-temple?filter=games)
+
+
+
+Copyright (C) 2001 - 2026, Soltar Enterprises, All Rights Reserved

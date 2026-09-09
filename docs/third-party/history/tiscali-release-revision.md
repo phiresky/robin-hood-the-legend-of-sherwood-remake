@@ -12,3 +12,12 @@ This news item explicitly revises earlier expectations. It says sources had prev
 The report identifies Wanadoo for Europe and Strategy First for the American market, and links newly supplied screenshots. Its advertised mission and location counts are prerelease claims.
 
 This helps contextualize the 2003 estimate in the Turkish preview: conflicting schedules were circulating at the time. It does not prove that the two publications used the same source, or that development was formally accelerated.
+
+## Converted text from the original HTML
+
+
+### history__tiscali-release-revision.html
+
+_Source: `originals/history__tiscali-release-revision.html`._
+
+Access is forbidden.

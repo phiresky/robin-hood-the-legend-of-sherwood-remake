@@ -12,3 +12,12 @@ The inspected text argues that nonlethal recruitment incentives favor a small se
 Repeated visits to the same towns are judged less monotonous than the map count suggests because objectives, blocked areas, and guard placements change. Civilian reporting and soldiers seeking superior officers help make the surroundings feel responsive.
 
 These are the reviewer's judgments, not a proof that other abilities are useless. No overall verdict or score is inferred from the page title or incomplete pagination.
+
+## Converted text from the original HTML
+
+
+### reviews__pcgames.html
+
+_Source: `originals/reviews__pcgames.html`._
+
+Enable JavaScript and cookies to continue

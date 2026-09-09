@@ -14,3 +14,16 @@ The retrieved passage describes meeting Edward, Godwin's servant, and learning w
 **Research use:** Russian campaign terminology and another walkthrough account to compare against the Czech and English sources.
 
 **Coverage limit:** the full article, attribution, and any continuation pages could not be inspected. Detailed route reconstruction remains TODO.
+
+## Converted text from the original HTML
+
+
+### guides__gamez-russian.html
+
+_Source: `originals/guides__gamez-russian.html`._
+
+# 502 Bad Gateway
+
+* * *
+
+nginx/1.21.6

@@ -12,3 +12,12 @@ The archived listing identifies rh_update_1.1.exe, sized 3,072,190 bytes. Its de
 This narrow operating-system scope matters: a historical lag fix is not evidence that this executable resolves modern Windows rendering or timing problems. The uploader presents it as an archived file without support.
 
 The record preserves patch provenance and the distributor's stated purpose. No installer was downloaded, executed, or compared with the repository's game data, and the description does not supply a comprehensive changelog.
+
+## Converted text from the original HTML
+
+
+### technical__moddb-patch-1-1.html
+
+_Source: `originals/technical__moddb-patch-1-1.html`._
+
+Enable JavaScript and cookies to continue

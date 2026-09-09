@@ -12,3 +12,12 @@ Kobs praises the scenery, character-specific tricks, camp production and trainin
 The article explicitly reviews the English edition while anticipating a Japanese release from Imagineer in late February 2003. That distinction is useful: the Japanese-language review is not evidence of hands-on assessment of the Japanese localization.
 
 Its passing description of Spellbound's nationality conflicts with other records, and its mouse-button description should be compared with the actual controls. Neither detail is adopted as an implementation fact here.
+
+## Converted text from the original HTML
+
+
+### reviews__4gamer-japanese.html
+
+_Source: `originals/reviews__4gamer-japanese.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

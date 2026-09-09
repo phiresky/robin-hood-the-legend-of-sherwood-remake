@@ -12,3 +12,12 @@ Krajča surveys earlier Robin Hood games to counter the impression that Legend o
 Its closing assessment praises the new tactical game while acknowledging some repetition, and explicitly recalls the site's review score of 86%. This contextualizes the separate iDNES review already collected.
 
 The article is useful for distinguishing similarly named games during research. It does not establish direct design influence between every adaptation it lists, and its historical survey is secondary reporting.
+
+## Converted text from the original HTML
+
+
+### history__idnes-adaptations.html
+
+_Source: `originals/history__idnes-adaptations.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

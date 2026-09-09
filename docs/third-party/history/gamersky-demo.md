@@ -12,3 +12,12 @@ This prerelease listing describes Spellbound's tactical game, its connection to 
 The metadata lists an 80 MB demo and labels the interface Simplified Chinese. That language field has not been checked against the actual demo files and should not establish that a Chinese build existed. A later Chinese-language database page can describe a game without proving localization support.
 
 No demo was downloaded or executed. The record is useful for Chinese prerelease coverage and the date at which a demo was being promoted.
+
+## Converted text from the original HTML
+
+
+### history__gamersky-demo.html
+
+_Source: `originals/history__gamersky-demo.html`._
+
+[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.

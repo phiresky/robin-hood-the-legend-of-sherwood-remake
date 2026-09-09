@@ -25,3 +25,97 @@ The advertised features include more than thirty missions, five castles visited 
 - Media: eight screenshots (`RobinHood_screen1/2/4/5/7/9/12/10.jpg`), a trailer tab, a downloads tab.
 - Download: "OSX Lion Patch" at `/upload/documents/RobinHoodLionPatch.dmg`.
 - Related products shown: Ankh, Airline Tycoon Deluxe, Cultures Northland. A German version of the page exists at `/Spiele/Verffentlicht/Game-240`. Footer: Copyright Runesoft 2019, site developed by M.G.soft.
+
+## Converted text from the original HTML
+
+
+
+### history__runesoft.html
+
+_Source: `originals/history__runesoft.html`._
+
+[](/Home-201) [](https://www.facebook.com/Runesoft) [](https://twitter.com/RunesoftGmbH)
+
+[](/Spiele/Verffentlicht/Game-240 "Deutsch")
+
+  * [Company](/Company-224)
+    * [» Profile](/Company/Profile-229)
+    * [» History](/Company/History-231)
+  * News
+    * [» Current News](/News/Current_News-232)
+    * [» News Archive](/News/News_Archive-233)
+  * Games
+    * [» Coming Soon](/Games/Coming_Soon-234)
+    * [» Released](/Games/Released-235)
+  * [Service](/Service-227)
+    * [» Contact](/Service/Contact-215)
+    * [» Downloads](/Service/Downloads-228)
+    * [» Imprint](/Service/Imprint-230)
+    * [» Privacy](/Service/Privacy-263)
+
+
+
+[Home](/Home-201) » Games » [Released](/Games/Released-235) » [Robin Hood: The Legend of Sherwood](/Games/Released/Game-239/game=Robin_Hood_The_Legend_of_Sherwood-13)
+
+## Shop
+
+[](http://www.rune-soft.com/Shop-226)
+
+## Info
+
+**Release date:** 24\. November 2005.  
+**Genre:** RPG  
+**Platforms:** Linux, Mac  
+**Languages:** Deutsch, English, French  
+**Original developer:** Spellbound Entertainment  
+**System requirements:**  
+OSX: MacOS 10.6.6 or later, 1,6 GHz Intel, 512 MB RAM. 
+
+## Robin Hood: The Legend of Sherwood
+
+Do not only take on the role of the hero Robin Hood, but also the roles of his faithful vassals and take them to the battle field against the nasty Prince John Lackland. In doing so you are able to enjoy the fabulous English landscape of 1190 as well as the giant castles and funny characters.  
+The thrilling story is introduced by an award-winning introduction and transfers you directly into the hero's body with the first mission, in which you have to set the captive comrades free. Take up the battle against the oppressors and free the farmers from the Prince's reign! Be smart, be fast! Be Robin Hood!  
+  
+Features:  
+\- More than 30 non-linear missions in which, for instance, you have the duty to save Little John and Brother Tuck, to prevent a wedding between Marianne and the revolting Guy of Gisbourne or to attack the taxation collectors of the Sheriff of Nottingham  
+\- Visit five giant castles on different ways, at day- and night times, and at different weather conditions  
+\- Play with up to nine integrated characters being outstanding due to their specific abilities and qualities  
+\- Due to an innovative fighting system you are able to control the hero's sword in battles by mouse  
+\- Decide yourself which tactic appears to be the right one for you: reach the goal by creeping around the guards or fight bravely using sword and bow 
+
+Screenshots Trailer Downloads
+
+[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen1.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen2.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen4.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen5.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen7.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen9.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen12.jpg)[](upload/pictures/snapshot_images/RobinHood/RobinHood_screen10.jpg)
+
+[OSX Lion Patch](/upload/documents/RobinHoodLionPatch.dmg "OSX Lion Patch")  
+
+
+[](/Games/Released/Game-239/game=Earth_2140-15) [](/Games/Released/Game-239/game=Cultures_Northland-9) [](/Games/Released/Game-239/game=Ankh-19)
+
+[Company](/Company-224)  
+[Profile](/Company/Profile-229)  
+[History](/Company/History-231)  
+
+
+News  
+[Current News](/News/Current_News-232)  
+[News Archive](/News/News_Archive-233)  
+
+
+Games  
+[Coming Soon](/Games/Coming_Soon-234)  
+[Released](/Games/Released-235)  
+
+
+[Service](/Service-227)  
+[Contact](/Service/Contact-215)  
+[Downloads](/Service/Downloads-228)  
+[Imprint](/Service/Imprint-230)  
+[Privacy](/Service/Privacy-263)  
+
+
+Copyright (C)Runesoft 2019 
+
+Developed by [M.G.soft](http://www.phoenix-system.com/)
+
+[Imprint](/Service/Impressum-250)

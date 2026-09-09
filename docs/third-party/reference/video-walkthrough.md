@@ -21,3 +21,17 @@ A video titled Robin Hood The Legend of Sherwood Walkthrough Gameplay. Its descr
 - Published and uploaded 2016-10-08 11:47:59 (UTC−7); length 620 seconds (10:20); 7,730 views at retrieval.
 - Description lists developer Spellbound Entertainment; publishers Strategy First, Mindscape, Freeverse Software, Wanadoo, Meridian4; initial release 2002; the channel's Facebook page, a playlist (PLBoUiIRdzfJk2Xrk1OqTP-6_dwC56qct4) and a Google+ page; and a one-sentence description of the game as a 2002 stealth-based real-time tactics game by Spellbound Studios.
 - At ten minutes it cannot cover the campaign; which mission it shows is still unverified (video not watched).
+
+## Converted text from the original HTML
+
+
+
+### reference__video-walkthrough.html
+
+_Source: `originals/reference__video-walkthrough.html`._
+
+[](/ "YouTube")[](/ "YouTube")
+
+[About](https://www.youtube.com/about/)[Press](https://www.youtube.com/about/press/)[Copyright](https://www.youtube.com/about/copyright/)[Contact us](/t/contact_us/)[Creators](https://www.youtube.com/creators/)[Advertise](https://www.youtube.com/ads/)[Developers](https://developers.google.com/youtube)[Terms](/t/terms)[Privacy](/t/privacy)[Policy & Safety](https://www.youtube.com/about/policies/)[How YouTube works](https://www.youtube.com/howyoutubeworks?utm_campaign=ytgen&utm_source=ythp&utm_medium=LeftNav&utm_content=txt&u=https%3A%2F%2Fwww.youtube.com%2Fhowyoutubeworks%3Futm_source%3Dythp%26utm_medium%3DLeftNav%26utm_campaign%3Dytgen)[Test new features](/new)
+
+(C) 2026 Google LLC
