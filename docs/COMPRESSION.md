@@ -2122,7 +2122,8 @@ activating the mission. Chunks are partitioned at install time
 After `install_mission`, a `spawn_local` driver streams the deferred
 chunks on the same rayon worker pool (strict dependency dispatch on a
 sparse `Arc`-shared row clone) and publishes each decoded grid through
-the new `robin_assets::late_sprites` registry: every not-yet-decoded VQ
+the mission-owned `robin_assets::late_sprites::SpriteStreaming` context:
+every not-yet-decoded VQ
 row in the live `FrameHolder` holds a shared `OnceLock` cell
 (`PackedSprite::late_grid`), so grids appear to rendering and mouse
 hit-testing in place, with no frame-holder republish. A draw that races
@@ -2130,12 +2131,17 @@ a pending grid degrades safely: `ensure_sprite_cached`/
 `ensure_outline_cached` skip (and crucially do not cache) the sprite
 with a `skipped draw: sprite pixels still streaming` debug line, the
 `uncompress_frame*` family paints transparent instead of panicking, and
-`is_pixel_opaque` reports transparent. Determinism is untouched — the
-simulation never reads pixel data; the only pixel consumers are the
-renderer and host-side mouse focus, whose *results* are recorded into
-the replay command stream. Post-activation decode failures warn and
-leave those sprites skipped; a superseding mission install invalidates
-the tail via a registry epoch. Serial (non-cross-origin-isolated) and
+`is_pixel_opaque` reports transparent. Simulation orientation commands
+also consume opacity, so simulation-required grids must remain resident
+before activation; pending visual rows cannot supply authoritative
+simulation opacity. Post-activation decode failures warn and leave those
+sprites skipped. Each installed mission and its frame-holder clones own
+their own cells, progress and skipped-draw diagnostics. The background
+publisher holds a weak handle and rejects publication after retirement.
+A successful replacement retires only the replaced mission's stream;
+a failed replacement leaves it running. Independent asset installations
+can stream overlapping sprite IDs without resetting each other.
+Serial (non-cross-origin-isolated) and
 native installs keep the old fully-blocking behavior. Mission restarts
 reuse the registry cells, so a finished tail survives re-entry.
 
@@ -2149,11 +2155,12 @@ units through the existing `MissionLoadProgress` interface, with a
 150 ms ticker so the bar moves during long bodies). After activation,
 the deferred tail reports honest blob-byte progress as a small
 "Streaming sprites N% (done/total)" HUD line (`hud_text.rs`,
-`late_sprites::tail_status`) until it completes.
+`FrameHolder::sprite_streaming_status`) until it completes or fails.
 
-No shipping formats changed: same magics, no converter changes,
-`shipping_datadir.rs` untouched — the partition and driver reuse the
-existing `VqDecodeScheduler` entry points.
+No shipping formats changed: same magics and no converter changes. The
+mission-owned context in `shipping_datadir.rs` is runtime-only and excluded
+from serialization; the partition and driver reuse the existing
+`VqDecodeScheduler` entry points.
 
 ### What actually defers, measured
 

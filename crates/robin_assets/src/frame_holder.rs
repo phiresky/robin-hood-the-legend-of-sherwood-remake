@@ -99,7 +99,7 @@ pub struct PackedSprite {
     /// Shared late-streaming grid cell for a shipping VQ sprite whose blob
     /// decode was deferred past mission activation (browser builds). Filled
     /// in place by the background decode driver via
-    /// [`crate::late_sprites::publish_chunk`]; every `FrameHolder` clone and
+    /// [`crate::late_sprites::SpritePublisher::publish_chunk`]; every `FrameHolder` clone and
     /// the published pixel-opacity generation share the same cell, so the
     /// pixels appear without republishing. `None` for everything else.
     #[serde(skip)]
@@ -512,6 +512,8 @@ impl FrameDictionary {
 /// handles decompression and caching.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FrameHolder {
+    #[serde(skip)]
+    sprite_streaming: Option<crate::late_sprites::SpriteStreaming>,
     /// All packed sprites loaded from the bank.
     sprites: Vec<PackedSprite>,
 
@@ -634,6 +636,19 @@ impl UsageTracker {
 }
 
 impl FrameHolder {
+    pub fn sprite_streaming_status(&self) -> Option<(f32, usize, usize)> {
+        self.sprite_streaming
+            .as_ref()
+            .and_then(|streaming| streaming.tail_status())
+    }
+
+    pub fn note_pending_sprite_draw(&self) -> u64 {
+        self.sprite_streaming
+            .as_ref()
+            .expect("pending sprite has no streaming owner")
+            .note_skipped_draw()
+    }
+
     pub fn new() -> Self {
         Self {
             shadow: 40,
@@ -1004,6 +1019,7 @@ impl FrameHolder {
         &mut self,
         bank: &crate::shipping_datadir::ShippingSpriteBank,
         dictionaries: &[FrameDictionary],
+        streaming: Option<&crate::late_sprites::SpriteStreaming>,
     ) -> Result<()> {
         const SPRITE_COUNT_LIMIT: usize = 4 * 1024 * 1024;
         bank.validate_resident_budget()?;
@@ -1014,6 +1030,15 @@ impl FrameHolder {
             ));
         }
         for (index, sprite) in &bank.sprites {
+            if streaming.is_none()
+                && sprite.dictionary_index != UNMAPPED_DICT
+                && sprite.packed_data.is_empty()
+                && (sprite.width as usize / 4) * sprite.height as usize > 0
+            {
+                return Err(anyhow!(
+                    "deferred sprite {index} has no mission streaming owner"
+                ));
+            }
             crate::packed_sprite::pixel_count(
                 usize::from(sprite.width),
                 usize::from(sprite.height),
@@ -1042,6 +1067,7 @@ impl FrameHolder {
             }
         }
         self.signature = bank.signature;
+        self.sprite_streaming = streaming.cloned();
         self.dictionaries = dictionaries.to_vec();
         self.bank = None;
         self.sprites.clear();
@@ -1069,7 +1095,16 @@ impl FrameHolder {
                 && expected_grid > 0
             {
                 late_rows += 1;
-                (None, Some(crate::late_sprites::cell(*index)))
+                (
+                    None,
+                    Some(
+                        streaming
+                            .ok_or_else(|| {
+                                anyhow!("deferred sprite {index} has no mission streaming owner")
+                            })?
+                            .cell(*index),
+                    ),
+                )
             } else {
                 (Some(Arc::clone(&sprite.packed_data)), None)
             };
@@ -1138,13 +1173,13 @@ impl FrameHolder {
         // Shipping datadir short-circuits the entire .bks/.dic read.
         if let Some(dd) = shipping
             && dd
-                .with_active_sprite_bank(|bank, dictionaries| {
+                .with_active_sprite_bank(|bank, dictionaries, streaming| {
                     tracing::info!(
                         "Sprite bank: loaded from shipping datadir ({} of {} sprites populated)",
                         bank.sprites.len(),
                         bank.sprite_count
                     );
-                    self.load_from_shipping(bank, dictionaries)
+                    self.load_from_shipping(bank, dictionaries, streaming)
                 })
                 .transpose()?
                 .is_some()
@@ -1194,6 +1229,7 @@ impl FrameHolder {
             .read_all(&dic_path)
             .map_err(|e| anyhow!("read sprite index '{dic_path}': error {e}"))?;
         self.load_sprite_index_bytes(&dic_bytes, bank_len_words, progress)?;
+        self.sprite_streaming = None;
         self.bank = Some(Arc::new(storage));
 
         tracing::info!(
@@ -1333,7 +1369,7 @@ impl FrameHolder {
             let cols = row.len().min(width);
             row[..cols].fill(transparent);
         }
-        let skips = crate::late_sprites::note_skipped_draw();
+        let skips = self.note_pending_sprite_draw();
         tracing::debug!(
             sprite_index,
             skips,
@@ -1972,6 +2008,59 @@ fn crc32_hash(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "engine-adapters")]
+    #[test]
+    fn shipping_holders_keep_their_own_pending_rows_and_diagnostics() {
+        use crate::shipping_datadir::{ShippingSprite, ShippingSpriteBank};
+        let bank = ShippingSpriteBank {
+            signature: 1,
+            sprite_count: 1,
+            dictionaries: vec![],
+            sprites: vec![(
+                0,
+                ShippingSprite {
+                    width: 4,
+                    height: 1,
+                    dictionary_index: 0,
+                    packed_data: Arc::new(vec![]),
+                    raster: None,
+                },
+            )],
+            vq_chunks: vec![],
+            rle_jxl_chunks: vec![],
+        };
+        let dictionaries = vec![FrameDictionary {
+            num_entries: 1,
+            values: vec![0x1234; 4],
+            ..Default::default()
+        }];
+        let first = crate::late_sprites::SpriteStreaming::default();
+        let second = crate::late_sprites::SpriteStreaming::default();
+        let mut a = FrameHolder::new();
+        let mut b = FrameHolder::new();
+        a.load_from_shipping(&bank, &dictionaries, Some(&first))
+            .unwrap();
+        b.load_from_shipping(&bank, &dictionaries, Some(&second))
+            .unwrap();
+        let cloned = a.clone();
+        let publisher = first.publisher(1, 10);
+        assert!(a.sprite_pixels_pending(0));
+        let mut pixels = [0xffff; 4];
+        a.uncompress_frame(&mut pixels, 4, 0, SpriteVariant::Day, 0, 16);
+        assert_eq!(pixels, [TRANSPARENT_COLOR_16; 4]);
+        assert_eq!(publisher.skipped_draws(), Some(1));
+        assert!(publisher.publish_chunk(10, &[(0, Arc::new(vec![0]))]));
+        assert!(!cloned.sprite_pixels_pending(0));
+        assert!(b.sprite_pixels_pending(0));
+        cloned.uncompress_frame(&mut pixels, 4, 0, SpriteVariant::Day, 0, 16);
+        assert_eq!(pixels, [0x1234; 4]);
+        assert!(
+            FrameHolder::new()
+                .load_from_shipping(&bank, &dictionaries, None)
+                .is_err()
+        );
+    }
 
     #[allow(dead_code)]
     mod original_data {

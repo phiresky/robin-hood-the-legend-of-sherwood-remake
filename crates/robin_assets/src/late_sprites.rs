@@ -1,212 +1,172 @@
-//! Post-activation sprite-grid streaming registry.
+//! Mission-owned post-activation sprite streaming. Simulation-required opacity
+//! must already be resident before activation; pending visual rows may skip draws.
 //!
-//! The browser (wasm-threads) mission installer activates a mission once the
-//! *critical* VQ sprite chunks — everything referenced by entities present at
-//! mission start — are materialized, and streams the remaining chunks
-//! (reinforcement characters and their variants) on the worker pool while the
-//! mission is already interactive. This registry is the hand-off point
-//! between that background decode driver and every live [`FrameHolder`]:
-//!
-//! - [`FrameHolder::load_from_shipping`] wires each not-yet-materialized VQ
-//!   sprite row to a shared [`LateGridCell`] obtained from [`cell`].
-//! - The background driver publishes each decoded chunk's grids through
-//!   [`publish_chunk`], filling those cells in place. `FrameHolder` clones and
-//!   the published pixel-opacity generation all share the same cells, so the
-//!   grids become visible to rendering and hit-testing without republishing a
-//!   new frame-holder generation.
-//!
-//! Deterministic orientation commands also read sprite opacity. The mission
-//! loader must keep chunks needed by simulation resident before activation;
-//! this registry does not provide opacity for pending grids.
-//!
-//! Epochs guard against a mission switch racing a still-running background
-//! driver: [`begin_epoch`] (called when a fresh mission install starts)
-//! invalidates every outstanding cell and publish handle.
-//!
-//! [`FrameHolder`]: crate::frame_holder::FrameHolder
-//! [`FrameHolder::load_from_shipping`]: crate::frame_holder::FrameHolder
-
+//! The installed mission and its frame-holder generations share [`SpriteStreaming`].
+//! A [`SpritePublisher`] holds only a weak handle: abandoned preparations do not
+//! survive solely because a background decode is still running. Successful mission
+//! replacement retires the old handle; failed replacement leaves it usable. Neither
+//! operation affects a stream belonging to another asset installation.
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
-/// Shared once-cell holding one sprite's decoded VQ index grid.
-///
-/// Empty until the background driver publishes the grid; readers
-/// (`FrameHolder::sprite_packed_slice`) treat an empty cell as "pixels not
-/// yet streamed" and degrade to a skipped draw / transparent hit test.
+/// One decoded sprite grid, filled at most once and shared by holder clones.
 pub type LateGridCell = Arc<OnceLock<Arc<Vec<u16>>>>;
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct Registry {
-    epoch: u64,
     cells: HashMap<u32, LateGridCell>,
-    /// Deferred-tail bookkeeping for the current epoch, weighted by the
-    /// chunk blob bytes (decode time tracks blob size closely).
-    tail_blob_total: u64,
-    tail_blob_done: u64,
-    tail_chunks_total: usize,
-    tail_chunks_done: usize,
-    /// The tail driver gave up (decode error / stuck dependency). The
-    /// warn log carries the details; the HUD indicator stops instead of
-    /// sitting on a frozen fraction forever.
-    tail_failed: bool,
+    retired: bool,
+    failed: bool,
+    total_bytes: u64,
+    done_bytes: u64,
+    total_chunks: usize,
+    done_chunks: usize,
+    skipped_draws: u64,
 }
 
-fn registry() -> &'static Mutex<Registry> {
-    static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| Mutex::new(Registry::default()))
+/// Shared by one installed mission and its immutable frame-holder generations.
+/// Serialization never persists runtime publication or progress state.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SpriteStreaming {
+    #[serde(skip)]
+    registry: Arc<Mutex<Registry>>,
 }
 
-/// Draw calls skipped because a sprite's pixels were still streaming.
-/// Diagnostic only; summarized when the tail completes.
-static SKIPPED_DRAWS: AtomicU64 = AtomicU64::new(0);
-
-/// Start a fresh mission-install epoch: drops every cell of the previous
-/// mission and invalidates outstanding publish handles. Returns the new
-/// epoch token the background driver must present when publishing.
-pub fn begin_epoch() -> u64 {
-    let mut reg = registry().lock().expect("late-sprite registry poisoned");
-    reg.epoch += 1;
-    reg.cells.clear();
-    reg.tail_blob_total = 0;
-    reg.tail_blob_done = 0;
-    reg.tail_chunks_total = 0;
-    reg.tail_chunks_done = 0;
-    reg.tail_failed = false;
-    SKIPPED_DRAWS.store(0, Ordering::Relaxed);
-    reg.epoch
+/// Background work does not keep an abandoned mission alive.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SpritePublisher {
+    #[serde(skip)]
+    registry: Weak<Mutex<Registry>>,
 }
 
-/// Get (or create) the shared grid cell for one bank sprite id.
-pub fn cell(sprite_id: u32) -> LateGridCell {
-    let mut reg = registry().lock().expect("late-sprite registry poisoned");
-    Arc::clone(reg.cells.entry(sprite_id).or_default())
-}
-
-/// Record the deferred tail's total work for the given epoch (chunk count
-/// and summed blob bytes). No-op when the epoch is stale.
-pub fn set_tail_work(epoch: u64, chunks: usize, blob_bytes: u64) {
-    let mut reg = registry().lock().expect("late-sprite registry poisoned");
-    if reg.epoch != epoch {
-        return;
+impl SpriteStreaming {
+    pub fn cell(&self, sprite_id: u32) -> LateGridCell {
+        let mut reg = self.registry.lock().expect("sprite streaming poisoned");
+        Arc::clone(reg.cells.entry(sprite_id).or_default())
     }
-    reg.tail_chunks_total = chunks;
-    reg.tail_blob_total = blob_bytes;
-}
 
-/// Publish one decoded chunk's grids. Returns `false` when the epoch is
-/// stale (a different mission started installing); the caller must stop.
-pub fn publish_chunk(epoch: u64, blob_bytes: u64, grids: &[(u32, Arc<Vec<u16>>)]) -> bool {
-    let mut reg = registry().lock().expect("late-sprite registry poisoned");
-    if reg.epoch != epoch {
-        return false;
+    pub fn publisher(&self, chunks: usize, blob_bytes: u64) -> SpritePublisher {
+        let mut reg = self.registry.lock().expect("sprite streaming poisoned");
+        assert!(!reg.retired, "cannot start a retired sprite stream");
+        assert_eq!(reg.total_chunks, 0, "sprite tail already started");
+        reg.total_chunks = chunks;
+        reg.total_bytes = blob_bytes;
+        SpritePublisher {
+            registry: Arc::downgrade(&self.registry),
+        }
     }
-    for (sprite_id, grid) in grids {
-        // A sprite listed by two chunks decodes identically (validated by
-        // the strict install path), so a lost set race is harmless.
-        let _ = reg
-            .cells
-            .entry(*sprite_id)
-            .or_default()
-            .set(Arc::clone(grid));
+
+    /// Called only after a replacement mission successfully commits.
+    pub fn retire(&self) {
+        self.registry
+            .lock()
+            .expect("sprite streaming poisoned")
+            .retired = true;
     }
-    reg.tail_chunks_done += 1;
-    reg.tail_blob_done += blob_bytes;
-    true
-}
 
-/// Mark the tail as abandoned for this epoch (details go to the caller's
-/// warn log). Hides the progress indicator rather than freezing it.
-pub fn fail_tail(epoch: u64) {
-    let mut reg = registry().lock().expect("late-sprite registry poisoned");
-    if reg.epoch != epoch {
-        return;
+    pub fn tail_status(&self) -> Option<(f32, usize, usize)> {
+        let reg = self.registry.lock().expect("sprite streaming poisoned");
+        if reg.retired || reg.failed || reg.total_chunks == 0 || reg.done_chunks >= reg.total_chunks
+        {
+            return None;
+        }
+        let fraction = if reg.total_bytes == 0 {
+            0.0
+        } else {
+            (reg.done_bytes as f64 / reg.total_bytes as f64) as f32
+        };
+        Some((fraction, reg.done_chunks, reg.total_chunks))
     }
-    reg.tail_failed = true;
-}
 
-/// Progress of the background sprite-streaming tail, blob-byte weighted:
-/// `(fraction, chunks_done, chunks_total)`. `None` when no tail is running
-/// (nothing deferred, tail finished, or tail abandoned).
-pub fn tail_status() -> Option<(f32, usize, usize)> {
-    let reg = registry().lock().expect("late-sprite registry poisoned");
-    if reg.tail_failed
-        || reg.tail_chunks_total == 0
-        || reg.tail_chunks_done >= reg.tail_chunks_total
-    {
-        return None;
+    pub fn note_skipped_draw(&self) -> u64 {
+        let mut reg = self.registry.lock().expect("sprite streaming poisoned");
+        reg.skipped_draws += 1;
+        reg.skipped_draws
     }
-    let fraction = if reg.tail_blob_total == 0 {
-        0.0
-    } else {
-        (reg.tail_blob_done as f64 / reg.tail_blob_total as f64) as f32
-    };
-    Some((fraction, reg.tail_chunks_done, reg.tail_chunks_total))
 }
 
-/// Count one draw call skipped because the sprite's grid has not streamed
-/// in yet. Returns the running total.
-pub fn note_skipped_draw() -> u64 {
-    SKIPPED_DRAWS.fetch_add(1, Ordering::Relaxed) + 1
-}
+impl SpritePublisher {
+    pub fn is_retired(&self) -> bool {
+        self.registry
+            .upgrade()
+            .is_none_or(|registry| registry.lock().expect("sprite streaming poisoned").retired)
+    }
 
-/// Total draw calls skipped since the current epoch began.
-pub fn skipped_draws() -> u64 {
-    SKIPPED_DRAWS.load(Ordering::Relaxed)
+    pub fn publish_chunk(&self, blob_bytes: u64, grids: &[(u32, Arc<Vec<u16>>)]) -> bool {
+        let Some(registry) = self.registry.upgrade() else {
+            return false;
+        };
+        let mut reg = registry.lock().expect("sprite streaming poisoned");
+        if reg.retired {
+            return false;
+        }
+        for (id, grid) in grids {
+            // The strict decoder validates duplicate sprite rows as identical.
+            let _ = reg.cells.entry(*id).or_default().set(Arc::clone(grid));
+        }
+        reg.done_chunks += 1;
+        reg.done_bytes += blob_bytes;
+        true
+    }
+
+    pub fn fail_tail(&self) {
+        if let Some(registry) = self.registry.upgrade() {
+            registry.lock().expect("sprite streaming poisoned").failed = true;
+        }
+    }
+
+    pub fn skipped_draws(&self) -> Option<u64> {
+        self.registry.upgrade().map(|registry| {
+            registry
+                .lock()
+                .expect("sprite streaming poisoned")
+                .skipped_draws
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The registry is process-global; serialize the tests that reset it.
-    fn test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("late-sprite test lock poisoned")
+    #[test]
+    fn overlapping_ids_and_retirement_are_mission_local() {
+        let first = SpriteStreaming::default();
+        let second = SpriteStreaming::default();
+        let old_cell = first.cell(7);
+        let new_cell = second.cell(7);
+        let old = first.publisher(2, 100);
+        let new = second.publisher(2, 100);
+        assert!(old.publish_chunk(75, &[(7, Arc::new(vec![1]))]));
+        assert_eq!(first.tail_status(), Some((0.75, 1, 2)));
+        assert!(new_cell.get().is_none());
+        first.note_skipped_draw();
+        assert_eq!(old.skipped_draws(), Some(1));
+        assert_eq!(new.skipped_draws(), Some(0));
+        first.retire();
+        assert!(!old.publish_chunk(25, &[(8, Arc::new(vec![3]))]));
+        assert!(new.publish_chunk(75, &[(7, Arc::new(vec![2]))]));
+        assert_eq!(old_cell.get().unwrap().as_slice(), &[1]);
+        assert_eq!(new_cell.get().unwrap().as_slice(), &[2]);
+        assert_eq!(first.tail_status(), None);
+        assert_eq!(second.tail_status(), Some((0.75, 1, 2)));
+        assert!(new.publish_chunk(25, &[]));
+        assert_eq!(second.tail_status(), None);
     }
 
     #[test]
-    fn stale_epoch_publish_is_rejected_and_cells_reset() {
-        let _guard = test_lock();
-        let old = begin_epoch();
-        let cell_before = cell(7);
-        let grid = Arc::new(vec![1u16, 2, 3]);
-        assert!(publish_chunk(old, 10, &[(7, Arc::clone(&grid))]));
-        assert_eq!(cell_before.get(), Some(&grid));
-
-        let new = begin_epoch();
-        assert_ne!(old, new);
-        // The old cell handle stays filled (harmless — its FrameHolder is
-        // being replaced), but the registry no longer hands it out.
-        assert!(cell(7).get().is_none());
-        assert!(!publish_chunk(old, 10, &[(7, grid)]));
-    }
-
-    #[test]
-    fn tail_status_tracks_blob_weighted_progress() {
-        let _guard = test_lock();
-        let epoch = begin_epoch();
-        assert_eq!(tail_status(), None);
-        set_tail_work(epoch, 2, 100);
-        assert_eq!(tail_status(), Some((0.0, 0, 2)));
-        assert!(publish_chunk(epoch, 75, &[(1, Arc::new(vec![0u16]))]));
-        let (fraction, done, total) = tail_status().expect("tail running");
-        assert!((fraction - 0.75).abs() < 1e-6);
-        assert_eq!((done, total), (1, 2));
-        assert!(publish_chunk(epoch, 25, &[(2, Arc::new(vec![0u16]))]));
-        assert_eq!(tail_status(), None);
-    }
-
-    #[test]
-    fn failed_tail_hides_the_indicator() {
-        let _guard = test_lock();
-        let epoch = begin_epoch();
-        set_tail_work(epoch, 3, 300);
-        assert!(tail_status().is_some());
-        fail_tail(epoch);
-        assert_eq!(tail_status(), None);
+    fn failed_tail_and_dropped_owner_do_not_affect_another_mission() {
+        let first = SpriteStreaming::default();
+        let second = SpriteStreaming::default();
+        let old = first.publisher(3, 300);
+        let new = second.publisher(3, 300);
+        old.fail_tail();
+        assert_eq!(first.tail_status(), None);
+        assert!(second.tail_status().is_some());
+        drop(first);
+        assert!(old.is_retired());
+        assert!(!old.publish_chunk(100, &[]));
+        assert!(!new.is_retired());
     }
 }

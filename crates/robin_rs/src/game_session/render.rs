@@ -1945,6 +1945,10 @@ fn render_frame_with_hud(
     // ── GPU phase: HUD text ──
     if let Some(fonts) = hud_fonts {
         crate::hud_text::render_hud_text(
+            host.frontend
+                .resources
+                .frame_holder()
+                .sprite_streaming_status(),
             engine,
             local_seat,
             host.viewport(),

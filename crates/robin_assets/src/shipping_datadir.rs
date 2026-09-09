@@ -348,6 +348,8 @@ pub struct ShippingMission {
     pub payload: ShippingMissionPayload,
     #[serde(skip)]
     raw_bundle: OnceLock<Arc<robin_util::asset_fs::Bundle>>,
+    #[serde(skip)]
+    sprite_streaming: crate::late_sprites::SpriteStreaming,
 }
 
 impl std::ops::Deref for ShippingMission {
@@ -2046,6 +2048,9 @@ impl ShippingDatadir {
             .expect("shipping mission lock poisoned");
         // Prepare and validate before replacing the retained parsed generation.
         self.publish_mission(mission, &prepared.mission)?;
+        for previous in loaded.values() {
+            previous.sprite_streaming.retire();
+        }
         loaded.clear();
         loaded.insert(mission.to_owned(), Arc::new(prepared.mission));
         Ok(())
@@ -2232,7 +2237,11 @@ impl ShippingDatadir {
 
     pub fn with_active_sprite_bank<R>(
         &self,
-        use_bank: impl FnOnce(&ShippingSpriteBank, &[FrameDictionary]) -> R,
+        use_bank: impl FnOnce(
+            &ShippingSpriteBank,
+            &[FrameDictionary],
+            Option<&crate::late_sprites::SpriteStreaming>,
+        ) -> R,
     ) -> Option<R> {
         let loaded = self.active_mission_payload();
         let bank = loaded
@@ -2244,7 +2253,11 @@ impl ShippingDatadir {
         } else {
             &bank.dictionaries
         };
-        Some(use_bank(bank, dictionaries))
+        Some(use_bank(
+            bank,
+            dictionaries,
+            loaded.as_ref().map(|mission| mission.sprite_streaming()),
+        ))
     }
 
     pub fn active_mission_name(&self) -> Option<String> {
@@ -2409,7 +2422,17 @@ impl ShippingMission {
         Self {
             payload,
             raw_bundle: OnceLock::new(),
+            sprite_streaming: Default::default(),
         }
+    }
+
+    /// Runtime handoff for an installed mission, never an independently decoded part.
+    pub fn sprite_streaming(&self) -> &crate::late_sprites::SpriteStreaming {
+        assert!(
+            self.raw_bundle.get().is_some(),
+            "sprite streaming requires an installed mission"
+        );
+        &self.sprite_streaming
     }
 
     /// Consume staging ownership before publishing runtime data. No installed
@@ -3063,6 +3086,66 @@ mod tests {
                 .is_err()
         );
         assert_eq!(datadir.preloaded_file("payload").unwrap().as_slice(), &[1]);
+    }
+
+    #[test]
+    fn mission_replacement_retires_only_its_own_stream_after_success() {
+        fn payload(name: &str) -> ShippingMission {
+            let level = LoadedLevel::hackable_from_json(
+                br#"{
+                "map_filename":"test", "spawn":[5,5],
+                "walkable_polygon":[[0,0],[100,0],[100,100],[0,100]]
+            }"#,
+            )
+            .unwrap();
+            let mut mission = ShippingMission::default();
+            mission.levels.insert(name.into(), level);
+            mission
+        }
+        let first = ShippingAssets::install(
+            Arc::new(ShippingDatadir::default()),
+            Arc::new(AssetVfs::new()),
+        )
+        .unwrap();
+        let second = ShippingAssets::install(
+            Arc::new(ShippingDatadir::default()),
+            Arc::new(AssetVfs::new()),
+        )
+        .unwrap();
+        first
+            .datadir()
+            .install_mission("old", payload("old"))
+            .unwrap();
+        second
+            .datadir()
+            .install_mission("old", payload("old"))
+            .unwrap();
+        let retained = first.datadir().loaded_mission("old").unwrap();
+        let old = retained.sprite_streaming().publisher(3, 300);
+        let independent = second
+            .datadir()
+            .loaded_mission("old")
+            .unwrap()
+            .sprite_streaming()
+            .publisher(3, 300);
+        let mut invalid = payload("bad");
+        invalid.raw.insert("../escape".into(), vec![1]);
+        assert!(first.datadir().install_mission("bad", invalid).is_err());
+        assert!(!old.is_retired());
+        assert!(old.publish_chunk(100, &[(7, Arc::new(vec![1]))]));
+        first.datadir().activate_mission("old").unwrap();
+        assert!(
+            !old.is_retired(),
+            "same mission restart preserves publication"
+        );
+        first
+            .datadir()
+            .install_mission("new", payload("new"))
+            .unwrap();
+        assert!(old.is_retired());
+        assert!(!old.publish_chunk(100, &[(8, Arc::new(vec![2]))]));
+        assert!(!independent.is_retired());
+        assert!(independent.publish_chunk(100, &[(7, Arc::new(vec![3]))]));
     }
 
     #[test]
