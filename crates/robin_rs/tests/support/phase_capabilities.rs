@@ -37,7 +37,7 @@ fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
         if let syn::Item::Impl(item) = item
             && let syn::Type::Path(ty) = item.self_ty.as_ref()
             && ty.path.is_ident("MissionFrame")
-            && let Some((_, trait_path, _)) = &item.trait_
+            && let Some((trait_path, _)) = &item.trait_
         {
             assert!(
                 !trait_path
