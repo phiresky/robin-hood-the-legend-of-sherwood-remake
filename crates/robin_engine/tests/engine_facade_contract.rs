@@ -4,7 +4,7 @@
 //! `EngineInner`; all mutation has to pass through a named facade operation.
 //! These source-structural checks make that property fail in CI if a future
 //! refactor accidentally adds mutable dereferencing, exposes the wrapped
-//! value, or starts using `EngineInner` directly from the host crate.
+//! value, or gives host code owned or mutable `EngineInner` access.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -376,7 +376,14 @@ struct EngineInnerOwnershipVisitor<'a> {
 impl Visit<'_> for EngineInnerOwnershipVisitor<'_> {
     fn visit_item_struct(&mut self, item_struct: &syn::ItemStruct) {
         if item_struct.ident == "EngineInner" {
-            for forbidden in ["Clone", "Default", "Deserialize", "Encode", "Decode"] {
+            for forbidden in [
+                "Clone",
+                "Default",
+                "Serialize",
+                "Deserialize",
+                "Encode",
+                "Decode",
+            ] {
                 if derives_trait(&item_struct.attrs, forbidden) {
                     self.offenders.push(format!(
                         "EngineInner derives {forbidden} in {}",
@@ -396,9 +403,16 @@ impl Visit<'_> for EngineInnerOwnershipVisitor<'_> {
 
         if let Some((trait_path, _)) = &item_impl.trait_
             && let Some(trait_name) = trait_path.segments.last()
-            && ["Clone", "Default", "Deserialize", "Encode", "Decode"]
-                .iter()
-                .any(|forbidden| trait_name.ident == forbidden)
+            && [
+                "Clone",
+                "Default",
+                "Serialize",
+                "Deserialize",
+                "Encode",
+                "Decode",
+            ]
+            .iter()
+            .any(|forbidden| trait_name.ident == forbidden)
             && !is_test_only(&item_impl.attrs)
         {
             self.offenders.push(format!(
@@ -802,65 +816,130 @@ fn facade_guard_finds_nested_trait_and_owned_wrapper_escapes() {
     );
 }
 
-#[derive(Default)]
 struct EngineInnerUseVisitor {
     found: bool,
+    names: Vec<String>,
 }
 
 impl<'ast> Visit<'ast> for EngineInnerUseVisitor {
+    fn visit_type_reference(&mut self, reference: &'ast syn::TypeReference) {
+        // Only a directly shared projection is exempt. Do not skip arbitrary
+        // borrowed containers: &Vec<EngineInner> still owns inner engines.
+        if reference.mutability.is_none()
+            && let Type::Path(ty) = reference.elem.as_ref()
+            && ty.qself.is_none()
+            && ty.path.segments.last().is_some_and(|segment| {
+                self.names.iter().any(|name| segment.ident == name)
+                    && matches!(segment.arguments, syn::PathArguments::None)
+            })
+        {
+            return;
+        }
+        visit::visit_type_reference(self, reference);
+    }
+
     fn visit_path(&mut self, path: &'ast syn::Path) {
         if path
             .segments
             .iter()
-            .any(|segment| segment.ident == "EngineInner")
+            .any(|segment| self.names.iter().any(|name| segment.ident == name))
         {
             self.found = true;
         }
         visit::visit_path(self, path);
     }
 
-    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-        self.found |= use_tree_mentions_ident(&item.tree, "EngineInner");
-        visit::visit_item_use(self, item);
+    fn visit_item_use(&mut self, _item: &'ast syn::ItemUse) {
+        // Imports themselves confer no ownership. A separate prepass records
+        // aliases so renamed imports cannot conceal owned/mutable uses.
     }
 }
 
-fn use_tree_mentions_ident(tree: &UseTree, expected: &str) -> bool {
+fn collect_engine_inner_aliases(tree: &UseTree, names: &mut Vec<String>) {
     match tree {
-        UseTree::Path(path) => {
-            path.ident == expected || use_tree_mentions_ident(&path.tree, expected)
+        UseTree::Path(path) => collect_engine_inner_aliases(&path.tree, names),
+        UseTree::Rename(rename) => {
+            if names.iter().any(|name| rename.ident == name)
+                && !names.iter().any(|name| rename.rename == name)
+            {
+                names.push(rename.rename.to_string());
+            }
         }
-        UseTree::Name(name) => name.ident == expected,
-        UseTree::Rename(rename) => rename.ident == expected,
-        UseTree::Group(group) => group
-            .items
-            .iter()
-            .any(|tree| use_tree_mentions_ident(tree, expected)),
-        UseTree::Glob(_) => false,
+        UseTree::Group(group) => {
+            for item in &group.items {
+                collect_engine_inner_aliases(item, names);
+            }
+        }
+        UseTree::Name(_) | UseTree::Glob(_) => {}
     }
 }
 
-fn source_uses_engine_inner(source: &str) -> bool {
-    let syntax = syn::parse_file(source).expect("synthetic Rust source parses");
-    let mut visitor = EngineInnerUseVisitor::default();
-    visitor.visit_file(&syntax);
+struct EngineInnerImportVisitor {
+    names: Vec<String>,
+}
+
+impl<'ast> Visit<'ast> for EngineInnerImportVisitor {
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        collect_engine_inner_aliases(&item.tree, &mut self.names);
+    }
+}
+
+fn source_has_forbidden_engine_inner_use(syntax: &syn::File) -> bool {
+    let mut imports = EngineInnerImportVisitor {
+        names: vec!["EngineInner".to_owned()],
+    };
+    loop {
+        let before = imports.names.len();
+        imports.visit_file(syntax);
+        if imports.names.len() == before {
+            break;
+        }
+    }
+    let mut visitor = EngineInnerUseVisitor {
+        found: false,
+        names: imports.names,
+    };
+    visitor.visit_file(syntax);
     visitor.found
 }
 
 #[test]
-fn host_guard_detects_direct_and_renamed_engine_inner_imports() {
-    assert!(source_uses_engine_inner(
-        "use robin_engine::engine::EngineInner;"
-    ));
-    assert!(source_uses_engine_inner(
-        "use robin_engine::engine::EngineInner as MutableEngine;"
-    ));
-    assert!(source_uses_engine_inner(
-        "use robin_engine::engine::{Engine, EngineInner as MutableEngine};"
-    ));
-    assert!(!source_uses_engine_inner(
-        "use robin_engine::engine::{Engine, HostDisplayState};"
-    ));
+fn host_guard_allows_only_shared_readonly_engine_inner_projections() {
+    for source in [
+        "use robin_engine::engine::EngineInner;",
+        "use robin_engine::engine::{Engine, EngineInner as View}; fn render(view: &View) {}",
+        "fn render(view: &robin_engine::engine::EngineInner) {}",
+        "struct Frame<'a> { view: Option<&'a EngineInner> }",
+        "type View<'a> = &'a EngineInner;",
+        "fn render<'a>(views: &[&'a EngineInner]) -> Option<&'a EngineInner> { None }",
+    ] {
+        let syntax = syn::parse_file(source).expect("positive fixture parses");
+        assert!(
+            !source_has_forbidden_engine_inner_use(&syntax),
+            "rejected {source}"
+        );
+    }
+    for source in [
+        "fn mutate(view: &mut EngineInner) {}",
+        "fn own(view: EngineInner) {}",
+        "fn produce() -> Option<EngineInner> { None }",
+        "struct Frame { world: Box<EngineInner> }",
+        "fn nested(view: &Vec<EngineInner>) {}",
+        "fn raw(view: *const EngineInner) {}",
+        "fn construct() { let _ = robin_engine::engine::EngineInner::new(); }",
+        "type Owned = EngineInner;",
+        "use robin_engine::engine::EngineInner as View; fn mutate(view: &mut View) {}",
+        "use robin_engine::engine::{Engine, EngineInner as View}; fn own(view: View) {}",
+        "use View as Other; use robin_engine::engine::EngineInner as View; fn own(view: Other) {}",
+        "use robin_engine::engine::EngineInner as View; fn construct() { View::new(); }",
+        "impl Mutator for EngineInner { fn mutate(&mut self) {} }",
+    ] {
+        let syntax = syn::parse_file(source).expect("negative fixture parses");
+        assert!(
+            source_has_forbidden_engine_inner_use(&syntax),
+            "missed {source}"
+        );
+    }
 }
 
 #[test]
@@ -882,9 +961,7 @@ fn host_crate_targets_use_engine_facade_instead_of_engine_inner() {
     let mut offenders = Vec::new();
     for path in files {
         let syntax = parse_rust_path(&path);
-        let mut visitor = EngineInnerUseVisitor::default();
-        visitor.visit_file(&syntax);
-        if visitor.found {
+        if source_has_forbidden_engine_inner_use(&syntax) {
             offenders.push(
                 path.strip_prefix(manifest.join("../.."))
                     .unwrap_or(&path)
@@ -896,6 +973,6 @@ fn host_crate_targets_use_engine_facade_instead_of_engine_inner() {
 
     assert!(
         offenders.is_empty(),
-        "host code must mutate simulation only through Engine; direct EngineInner uses found in {offenders:?}"
+        "host code may use EngineInner only through shared read-only projections; owned/mutable/constructor uses found in {offenders:?}"
     );
 }
