@@ -6,7 +6,10 @@ A list of which additional features we have added, which ones we might still wan
 
 - **Mission details and previous plays:** Campaign Manager's Mission Details tab
   combines the original localized briefing, entry requirements, and a complete
-  paginated history across saved and archived campaigns. Outcomes, dates,
+  history across saved and archived campaigns. The briefing and play-history
+  columns scroll independently under the pointer, with scroll-position indicators.
+  Double-clicking a mission in the tree or gallery opens its details, including
+  locked missions. Active unfinished missions are labeled In progress. Outcomes, dates,
   durations, and practice runs remain visible even without a recording.
   Watch Replay opens an available recording in a separate desktop viewer while
   preserving the current session. New terminal recordings are linked by exact
@@ -18,7 +21,7 @@ A list of which additional features we have added, which ones we might still wan
   stage-grouped story branches, optional missions, and ambushes. Training and
   campaign events are labeled separately; unused map placeholders are omitted
   unless they hold archived results. Mission Details explains actual money,
-  gang, mission, expiry, and story restrictions, with keyboard and mouse paging.
+  gang, mission, expiry, and story restrictions, with keyboard and mouse scrolling.
   Achievement cards describe exact conditions and campaign-versus-mission scope.
   These presentation changes preserve campaign selection and award eligibility.
 

@@ -26,9 +26,23 @@ pub(crate) fn combined_mission_badges(
 pub enum MissionProgressState {
     Locked,
     Available,
+    InProgress,
     Completed,
     Lost,
     Expired,
+}
+
+impl MissionProgressState {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Locked => "Locked",
+            Self::Available => "Available",
+            Self::InProgress => "In progress",
+            Self::Completed => "Completed",
+            Self::Lost => "Lost",
+            Self::Expired => "Expired",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -311,9 +325,9 @@ pub struct CampaignProgressNode {
 impl CampaignProgressNode {
     pub fn summary(&self, include_badges: bool) -> String {
         let mut summary = format!(
-            "{}  |  {:?}  |  {} attempt{} / {} win{}",
+            "{}  |  {}  |  {} attempt{} / {} win{}",
             self.name,
-            self.state,
+            self.state.label(),
             self.attempt_count,
             if self.attempt_count == 1 { "" } else { "s" },
             self.win_count,
@@ -385,6 +399,8 @@ impl CampaignProgressGraph {
             let expired = mission.age >= profile.life_time;
             let state = if current_has_win {
                 MissionProgressState::Completed
+            } else if campaign.current_mission_idx == Some(mission_idx) && !mission.is_done() {
+                MissionProgressState::InProgress
             } else if accessible {
                 MissionProgressState::Available
             } else if mission.status == MissionStatus::Lost {
@@ -434,7 +450,11 @@ impl CampaignProgressGraph {
                 state,
                 kind,
                 on_spine: false,
-                availability_notes: availability_notes(campaign, profiles, mission_idx),
+                availability_notes: if state == MissionProgressState::InProgress {
+                    vec!["You are currently playing this mission.".into()]
+                } else {
+                    availability_notes(campaign, profiles, mission_idx)
+                },
                 prerequisite_nodes: Vec::new(),
                 depth: 0,
                 lane: 0,
@@ -894,6 +914,67 @@ mod tests {
         assert_eq!(partial.nodes[1].name, "Epilogue");
         assert!(partial.nodes[1].depth > partial.nodes[0].depth);
         assert!(partial.nodes[1].prerequisite_nodes.is_empty());
+    }
+
+    #[test]
+    fn active_mission_is_in_progress_after_leaving_the_offered_list() {
+        let mut profiles = ProfileManager::new();
+        for (id, name) in [
+            (1, "Sherwood"),
+            (10, "Robin's Godfather"),
+            (20, "Next mission"),
+        ] {
+            profiles.missions.push(MissionProfile {
+                id,
+                mission_name: name.into(),
+                life_time: 10,
+                ..Default::default()
+            });
+        }
+        let mut campaign = Campaign::default();
+        for idx in 0..3 {
+            campaign.missions.push(Mission {
+                profile_idx: Some(idx),
+                ..Mission::new()
+            });
+        }
+        campaign.accessible_mission_indices.push(1);
+        assert_eq!(
+            CampaignProgressGraph::build(&campaign, &profiles, None).nodes[0].state,
+            MissionProgressState::Available
+        );
+
+        campaign.current_mission_idx = Some(1);
+        campaign.remove_accessible_mission(1);
+        let graph = CampaignProgressGraph::build(&campaign, &profiles, None);
+        let active = &graph.nodes[0];
+        assert_eq!(active.state, MissionProgressState::InProgress);
+        assert!(active.summary(false).contains("In progress"));
+        assert_eq!(
+            active.availability_notes,
+            ["You are currently playing this mission."]
+        );
+        assert!(!active.selectable);
+        assert!(!active.history_replay);
+        assert_eq!(graph.nodes[1].state, MissionProgressState::Locked);
+        assert!(campaign.accessible_mission_indices.is_empty());
+
+        for (status, expected) in [
+            (MissionStatus::Won, MissionProgressState::Completed),
+            (MissionStatus::Lost, MissionProgressState::Lost),
+        ] {
+            campaign.missions[1].status = status;
+            assert_eq!(
+                CampaignProgressGraph::build(&campaign, &profiles, None).nodes[0].state,
+                expected
+            );
+        }
+        campaign.missions[1].status = MissionStatus::Available;
+        campaign.current_mission_idx = Some(0);
+        assert_eq!(
+            CampaignProgressGraph::build(&campaign, &profiles, None).nodes[0].state,
+            MissionProgressState::Locked
+        );
     }
 
     #[test]

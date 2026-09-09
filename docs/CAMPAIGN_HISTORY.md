@@ -98,8 +98,8 @@ TODO: Replace legacy filename conventions for tutorial/outro/unused slots with
 content-authored presentation metadata when available.
 
 Hall of Deeds shows twelve entries per page.
-Click once to select and read details. Enter, the Inspect button, or a double-click
-opens an available mission in Sherwood; the main-menu and pause-menu views remain
+Click once to select; double-click opens Mission Details, including locked missions.
+Enter or the Inspect button opens an available mission in Sherwood; the main-menu and pause-menu views remain
 browse-only. Arrow keys navigate, Page Up/Down or the mouse wheel change pages,
 and the Previous/Next buttons work with mouse or touch. Tab switches tree/gallery;
 A or the Achievements tab shows permanent awards and current campaign progress. Back/Escape
@@ -108,14 +108,16 @@ returns to the originating screen.
 **D / Mission Details** replaces the Requirements tab. It combines original
 localized mission text (the same short description and full briefing used by the
 game) with actual entry restrictions and the complete recorded play history.
-Missing briefings are explicitly identified. Page Up/Down, the mouse wheel, and
-the left Previous/Next buttons page through briefing and requirements; Left/Right
+Missing briefings are explicitly identified. The mouse wheel scrolls the column
+under the pointer independently; Page Up/Down scrolls that column by a screenful
+(defaulting to the briefing column). Scroll indicators show each position. Left/Right
 selects another mission. Back/Escape returns to the mission cards.
 
 The right-hand list contains distinct plays from both the active save and the
 player's permanent archive, newest first. Every play retains its outcome,
 recorded date, duration, and campaign/practice designation; unavailable imported
-values remain unknown. Up/Down or the Newer/Older buttons reach every play.
+values remain unknown. Scroll over the right column to browse every play;
+Up/Down moves the selection and keeps the selected play visible.
 Click selects a play; double-click, Enter, or Watch selected replay opens its
 recording in a separate desktop game window, preserving the paused live session.
 The viewer uses the normal replay loader and disables its RPC listener.
