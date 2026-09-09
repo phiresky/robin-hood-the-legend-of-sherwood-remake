@@ -19,9 +19,9 @@ mod selection;
 
 #[cfg(test)]
 use combat::legacy_random_input_sword_seek_distance;
+pub(crate) use interaction_route::command_action_distance_animation;
 #[cfg(test)]
-use interaction_route::target_interaction_assert_source_sector;
-pub(crate) use interaction_route::{command_action_distance_animation, interaction_distance};
+use interaction_route::{interaction_distance, target_interaction_assert_source_sector};
 #[cfg(test)]
 use object_use::determine_use_command;
 pub(super) use object_use::is_pc_takable;
