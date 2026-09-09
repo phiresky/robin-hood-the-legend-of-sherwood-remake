@@ -677,31 +677,15 @@ impl MissionRuntime {
 
     /// Drain host RPC requests at the shared post-tick boundary.
     pub(super) fn drain_host_rpc(&mut self, frame: &mut MissionFrame) {
-        let pending_actions = frame.unapplied_post_external_actions().to_vec();
-        if !pending_actions.is_empty() {
-            let mut display = std::mem::take(&mut self.world.host.frontend.engine_display);
-            crate::sim_timeline::run_post_external_action_stage(
-                &mut self.world.host,
-                &mut display,
-                &self.world.assets,
-                &mut self.world.manager.engine,
-                &mut self.world.dev,
-                &pending_actions,
-            );
-            self.world.host.frontend.engine_display = display;
-            frame.mark_post_external_actions_applied();
-        }
-        let actions = self.http.drain(
+        drain_post_tick_rpc(
+            &mut self.http,
+            &mut self.timeline,
+            &mut self.world.host,
             &mut self.world.manager.engine,
-            &mut self.world.host.frontend,
-            self.world.host.transport.local_seat(),
-            self.world.host.transport.net(),
             &self.world.assets,
-            &mut frame.post_commands,
+            &mut self.world.dev,
+            frame,
         );
-        self.timeline
-            .record_input_taints(self.http.take_pending_replay_taints());
-        frame.record_applied_post_external_actions(actions);
         self.timeline
             .trace(FrameContractStage::HostRpcAndTimelineCommit);
     }
@@ -732,6 +716,45 @@ impl MissionRuntime {
         frame.run_post_initialize = initialized;
         initialized
     }
+}
+
+/// Shared post-tick effect/RPC boundary. Neither driver grants access to Game,
+/// EngineManager (snapshot replacement), mission UI, or process resources here.
+/// Recorded effects must precede new requests; taints and applied actions must
+/// enter this same frame before its timeline or recording is committed.
+pub(super) fn drain_post_tick_rpc(
+    http: &mut crate::http_server::SessionIngress,
+    timeline: &mut TimelineRuntime,
+    host: &mut Host,
+    engine: &mut Engine,
+    assets: &LevelAssets,
+    dev: &mut DevState,
+    frame: &mut MissionFrame,
+) {
+    let pending_actions = frame.unapplied_post_external_actions().to_vec();
+    if !pending_actions.is_empty() {
+        let mut display = std::mem::take(&mut host.frontend.engine_display);
+        crate::sim_timeline::run_post_external_action_stage(
+            host,
+            &mut display,
+            assets,
+            engine,
+            dev,
+            &pending_actions,
+        );
+        host.frontend.engine_display = display;
+        frame.mark_post_external_actions_applied();
+    }
+    let actions = http.drain(
+        engine,
+        &mut host.frontend,
+        host.transport.local_seat(),
+        host.transport.net(),
+        assets,
+        &mut frame.post_commands,
+    );
+    timeline.record_input_taints(http.take_pending_replay_taints());
+    frame.record_applied_post_external_actions(actions);
 }
 
 /// Driver-owned policy for the common engine-tick phase.

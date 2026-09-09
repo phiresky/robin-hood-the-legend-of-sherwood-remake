@@ -663,9 +663,11 @@ impl InteractiveMission {
         let outcome = InteractiveFrameSimulation::new(
             frame,
             FrameSimulationFlags {
-                rewind_active,
-                paused,
-                consumed_buffered,
+                execution: super::frame_simulate::FrameExecutionMode::admitted(
+                    rewind_active,
+                    paused,
+                    consumed_buffered,
+                ),
                 shift_held,
                 modal_rendered,
             },
@@ -728,8 +730,10 @@ impl InteractiveMission {
                     &mut self.frontend.presentation,
                     &mut self.frontend.input,
                     terminal_pending,
-                    step_forward_pressed,
-                    step_back_pressed,
+                    super::frame_simulate::KeyboardStep::from_pressed(
+                        step_forward_pressed,
+                        step_back_pressed,
+                    ),
                 );
                 FrameControl::Continue
             }
