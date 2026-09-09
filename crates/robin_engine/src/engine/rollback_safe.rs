@@ -333,10 +333,25 @@ impl Engine {
 /// use robin_engine::engine::{EngineInner, PresentationEngine};
 /// fn forbidden(view: &mut PresentationEngine) -> &mut EngineInner { view.view() }
 /// ```
-#[derive(serde::Serialize)]
 pub struct PresentationEngine {
-    // Use a tagged diagnostic envelope, never Engine's transparent wire shape.
     presentation: EngineInner,
+}
+
+impl serde::Serialize for PresentationEngine {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        // Diagnostics deliberately omit persisted simulation state. Do not
+        // serialize the inner world under a tag: extracting that tag would
+        // otherwise yield a restorable engine snapshot with interpolated poses.
+        let mut diagnostic = serializer.serialize_struct("PresentationEngine", 2)?;
+        diagnostic.serialize_field("frame", &self.presentation.frame_counter())?;
+        diagnostic.serialize_field("entity_count", &self.presentation.entities_iter().count())?;
+        diagnostic.end()
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for PresentationEngine {
@@ -5849,7 +5864,8 @@ mod tests {
         let (engine, _, _, _) = selection_boundary_fixture();
         let presentation = PresentationEngine::new(&engine);
         let diagnostic = serde_json::to_value(&presentation).expect("presentation diagnostic");
-        assert!(diagnostic.get("presentation").is_some());
+        assert_eq!(diagnostic["frame"], engine.frame_counter());
+        assert_eq!(diagnostic.as_object().expect("diagnostic object").len(), 2);
         assert!(serde_json::from_value::<PresentationEngine>(diagnostic.clone()).is_err());
         assert!(serde_json::from_value::<Engine>(diagnostic).is_err());
     }
