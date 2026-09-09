@@ -10,25 +10,25 @@ use crate::ui::{MouseButtons, UiEvent};
 use crate::widget::FrameWnd;
 use serde::{Deserialize, Serialize};
 
-pub(in crate::ingame_menu) const ID_LOAD_SAVE: u32 = 0;
-pub(in crate::ingame_menu) const ID_DELETE: u32 = 1;
-pub(in crate::ingame_menu) const ID_CANCEL: u32 = 2;
+pub(crate) const ID_LOAD_SAVE: u32 = 0;
+pub(crate) const ID_DELETE: u32 = 1;
+pub(crate) const ID_CANCEL: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::ingame_menu) enum PickerTarget {
+pub(crate) enum PickerTarget {
     New,
     Existing(SlotName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(in crate::ingame_menu) enum PickerAction {
+pub(crate) enum PickerAction {
     Accept(PickerTarget),
     ConfirmDelete(SlotName),
     Cancel,
 }
 
 /// Runtime capture/widget ownership is not reconstructed from serialized data.
-pub(in crate::ingame_menu) struct PickerController {
+pub(crate) struct PickerController {
     pub input: ModalInputState,
     frame: FrameWnd,
     pending: Option<PickerAction>,

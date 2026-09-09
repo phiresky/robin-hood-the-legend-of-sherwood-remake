@@ -7,18 +7,18 @@ use super::save_load::SaveLoadMode;
 use crate::savegame::SlotName;
 
 mod controller;
-pub(super) use controller::{
+pub(crate) use controller::{
     ID_CANCEL, ID_DELETE, ID_LOAD_SAVE, PickerAction, PickerController, PickerTarget,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum ListRow {
+pub(crate) enum ListRow {
     New,
     Existing(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct PickerSlot {
+pub(crate) struct PickerSlot {
     pub name: SlotName,
     pub manager_index: usize,
     pub special: bool,
@@ -34,7 +34,7 @@ enum Selection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct PickerModel {
+pub(crate) struct PickerModel {
     mode: SaveLoadMode,
     multiplayer_connected: bool,
     slots: Vec<PickerSlot>,
@@ -276,7 +276,7 @@ impl PickerModel {
 }
 
 /// A thumbnail is valid for an identity, not whichever row now has its index.
-pub(super) fn retire_thumbnail(cached: Option<&SlotName>, selected: Option<&SlotName>) -> bool {
+pub(crate) fn retire_thumbnail(cached: Option<&SlotName>, selected: Option<&SlotName>) -> bool {
     cached.is_some() && cached != selected
 }
 
