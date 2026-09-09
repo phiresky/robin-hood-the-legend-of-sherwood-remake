@@ -223,19 +223,13 @@ pub(super) fn resolve_short_briefings(
     // In particular, never silently discard an authored text ID because
     // its entry failed to decode.
     if text_res.has_resource(table_id) {
-        let count = text_res.get_string_count(table_id).map_err(|error| {
+        let table = text_res.get_strings(table_id).map_err(|error| {
             ResourcePreparationError::malformed(
                 "Data/Text/Level.res",
                 format!("short-briefing table {table_id}: {error:#}"),
             )
         })?;
-        for index in 0..count {
-            let text = text_res.get_string(table_id, index).map_err(|error| {
-                ResourcePreparationError::malformed(
-                    "Data/Text/Level.res",
-                    format!("short-briefing table {table_id}, entry {index}: {error:#}"),
-                )
-            })?;
+        for (index, text) in table.iter().enumerate() {
             resolved.insert(index as u32, text.to_owned());
         }
     } else {

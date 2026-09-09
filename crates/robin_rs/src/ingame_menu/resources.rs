@@ -408,14 +408,8 @@ impl MenuText {
 
         let mut strings: Vec<String> = Vec::new();
         for &id in &tables {
-            if let Ok(count) = res.get_string_count(id) {
-                strings = (0..count)
-                    .map(|i| {
-                        res.get_string(id, i)
-                            .map(str::to_string)
-                            .unwrap_or_default()
-                    })
-                    .collect();
+            if let Ok(table) = res.get_strings(id) {
+                strings = table.to_vec();
                 tracing::info!(
                     "MenuText: loaded table {} with {} entries",
                     id,

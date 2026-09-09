@@ -1113,26 +1113,26 @@ impl ResourceManager {
 
     /// Get a string by resource ID and sub-index.
     pub fn get_string(&mut self, id: ResourceId, sub_id: usize) -> Result<&str> {
-        self.ensure_strings_loaded(id)?;
-        let strings = self
-            .data
-            .strings
-            .get(&id)
-            .ok_or_else(|| anyhow!("string resource {id}: not found"))?;
+        let strings = self.get_strings(id)?;
         strings
             .get(sub_id)
             .map(|s| s.as_str())
             .ok_or_else(|| anyhow!("string resource {id}: sub_id {sub_id} out of range"))
     }
 
-    /// Number of strings in a string-table resource.
-    pub fn get_string_count(&mut self, id: ResourceId) -> Result<usize> {
+    /// Borrow a whole text table after resolving its source once.
+    pub fn get_strings(&mut self, id: ResourceId) -> Result<&[String]> {
         self.ensure_strings_loaded(id)?;
         self.data
             .strings
             .get(&id)
-            .map(|v| v.len())
+            .map(Vec::as_slice)
             .ok_or_else(|| anyhow!("string resource {id}: not found"))
+    }
+
+    /// Number of strings in a string-table resource.
+    pub fn get_string_count(&mut self, id: ResourceId) -> Result<usize> {
+        self.get_strings(id).map(<[String]>::len)
     }
 
     /// Number of strings already resident in a decoded resource manager.

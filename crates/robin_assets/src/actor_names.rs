@@ -371,35 +371,17 @@ fn load_mission_texts(
     // Popup scroll texts.
     let popup_table = descriptors.popup_text.text_table_id;
     if popup_table != 0
-        && let Ok(count) = text_res.get_string_count(popup_table)
+        && let Ok(table) = text_res.get_strings(popup_table)
     {
-        names.popup_texts.reserve(count);
-        for i in 0..count {
-            match text_res.get_string(popup_table, i) {
-                Ok(s) => names.popup_texts.push(s.to_owned()),
-                Err(e) => {
-                    tracing::debug!("popup text {popup_table}/{i}: {e}");
-                    names.popup_texts.push(String::new());
-                }
-            }
-        }
+        names.popup_texts.extend_from_slice(table);
     }
 
     // Short-briefing texts.
     let sb_table = descriptors.short_briefing.text_table_id;
     if sb_table != 0
-        && let Ok(count) = text_res.get_string_count(sb_table)
+        && let Ok(table) = text_res.get_strings(sb_table)
     {
-        names.short_briefing_texts.reserve(count);
-        for i in 0..count {
-            match text_res.get_string(sb_table, i) {
-                Ok(s) => names.short_briefing_texts.push(s.to_owned()),
-                Err(e) => {
-                    tracing::debug!("short briefing text {sb_table}/{i}: {e}");
-                    names.short_briefing_texts.push(String::new());
-                }
-            }
-        }
+        names.short_briefing_texts.extend_from_slice(table);
     }
 }
 
