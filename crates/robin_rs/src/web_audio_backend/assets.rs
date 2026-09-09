@@ -384,7 +384,14 @@ mod browser_ownership_tests {
                 bundle_offset: Some(0),
             },
         );
-        BrowserAudioSession::new(Arc::new(SbFileSystem::new(vfs)), Arc::new(catalog)).unwrap()
+        let installed =
+            robin_assets::shipping_datadir::ShippingAssets::install(Arc::new(catalog), vfs.clone())
+                .unwrap();
+        BrowserAudioSession::new(
+            Arc::new(SbFileSystem::new(vfs)),
+            installed.datadir().clone(),
+        )
+        .unwrap()
     }
 
     async fn decode(session: &BrowserAudioSession) -> AudioBuffer {

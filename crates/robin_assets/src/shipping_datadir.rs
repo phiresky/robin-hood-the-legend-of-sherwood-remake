@@ -8,7 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -87,10 +87,12 @@ struct ShippingRuntime {
     source_dir: Option<PathBuf>,
     /// Runtime-only HTTP base used by the browser build.
     remote_base_url: Option<String>,
-    /// Runtime shared-byte view of boot `raw`. Installation moves into this
-    /// bundle when the manifest has a unique owner, avoiding a second copy.
+    /// Runtime VFS and shared boot bytes are published together after a
+    /// successful mount, never independently during a failed installation.
     #[serde(skip)]
-    boot_raw_bundle: OnceLock<Arc<robin_util::asset_fs::Bundle>>,
+    installed: OnceLock<ShippingInstallation>,
+    #[serde(skip)]
+    installation_lock: Mutex<()>,
     /// Payloads already installed for this process. Kept out of the manifest.
     #[serde(skip)]
     loaded_missions: RwLock<BTreeMap<String, Arc<ShippingMission>>>,
@@ -102,11 +104,6 @@ struct ShippingRuntime {
     /// Exact static + dynamic exclamation closure for the active mission.
     #[serde(skip)]
     active_exclamation_ids: RwLock<BTreeSet<u32>>,
-    /// Runtime-only canonical locale selected for parsed-resource lookups.
-    /// The corresponding raw overlay lives in `AssetVfs`' replaceable locale
-    /// slot; both are changed by `set_active_locale*`.
-    #[serde(skip)]
-    vfs: OnceLock<Arc<robin_util::asset_fs::AssetVfs>>,
     /// Runtime-only, lazily shared copies of locale raw-file bundles. Locale
     /// switching can mount these on native, browser, and Android VFSes without
     /// re-cloning every byte on each switch.
@@ -114,7 +111,8 @@ struct ShippingRuntime {
     locale_bundle_cache: RwLock<BTreeMap<String, Arc<robin_util::asset_fs::Bundle>>>,
 }
 
-/// Installed shipping assets. The payload alone owns the v16 wire layout.
+/// Decoded shipping data. Runtime lookups require a successful
+/// `ShippingAssets::install`; decoding alone grants no filesystem authority.
 /// Runtime caches and publication state never participate in shipping bytes.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ShippingDatadir {
@@ -148,13 +146,16 @@ impl ShippingDatadir {
             .expect("shipping installation identity exhausted")
         })
     }
-    /// Uninstalled legacy tools retain their process facade. Installed assets
-    /// always select through the VFS supplied to ShippingAssets::install.
+    /// Explicitly installed runtime authority. Decoded converter data has none.
     pub fn asset_vfs(&self) -> &Arc<robin_util::asset_fs::AssetVfs> {
-        self.runtime
-            .vfs
+        &self
+            .runtime
+            .installed
             .get()
-            .unwrap_or_else(|| robin_util::asset_fs::global())
+            .expect(
+                "runtime shipping lookup requires ShippingAssets::install; decoded data has no VFS",
+            )
+            .vfs
     }
 
     pub fn selection_snapshot(&self) -> robin_util::asset_fs::AssetSelection {
@@ -2374,9 +2375,9 @@ impl ShippingDatadir {
     pub fn raw_asset(&self, key: &str) -> Option<&[u8]> {
         self.raw.get(key).map(Vec::as_slice).or_else(|| {
             self.runtime
-                .boot_raw_bundle
+                .installed
                 .get()
-                .and_then(|bundle| bundle.get(key))
+                .and_then(|installed| installed.boot_raw_bundle.get(key))
                 .map(|bytes| bytes.as_ref())
         })
     }
@@ -2808,7 +2809,7 @@ pub fn try_load_from(
 }
 
 // ---------------------------------------------------------------------------
-//  Process-global accessor
+//  Explicit installation and legacy process-global adapter
 // ---------------------------------------------------------------------------
 
 /// A parsed shipping payload and the VFS it was mounted into.
@@ -2821,12 +2822,29 @@ pub struct ShippingAssets {
     vfs: Arc<robin_util::asset_fs::AssetVfs>,
 }
 
+/// Published as one unit only after the raw mount succeeds. Runtime-only;
+/// serde deliberately excludes this capability from the shipping wire format.
+#[derive(Debug, Serialize, Deserialize)]
+struct ShippingInstallation {
+    #[serde(skip)]
+    vfs: Arc<robin_util::asset_fs::AssetVfs>,
+    #[serde(skip)]
+    boot_raw_bundle: Arc<robin_util::asset_fs::Bundle>,
+}
+
 impl ShippingAssets {
+    /// Bind decoded data once. Validation failure publishes neither a mount
+    /// nor an installation; retained callers may correct and retry the decode.
+    /// Concurrent attempts on the same decode are serialized: exactly one
+    /// succeeds, and losing VFSes are not modified. Distinct decodes may be
+    /// installed independently, including into independent application VFSes.
     pub fn install(
         mut datadir: Arc<ShippingDatadir>,
         vfs: Arc<robin_util::asset_fs::AssetVfs>,
     ) -> Result<Self> {
-        if datadir.runtime.vfs.get().is_some() {
+        // Reject ordinary duplicate calls before copying a shared boot bundle.
+        // The locked check below also covers two first-time concurrent callers.
+        if datadir.runtime.installed.get().is_some() {
             return Err(anyhow!("shipping datadir is already bound to a VFS"));
         }
         let raw: robin_util::asset_fs::Bundle = if let Some(unique) = Arc::get_mut(&mut datadir) {
@@ -2842,18 +2860,25 @@ impl ShippingAssets {
                 .collect()
         };
         let raw = Arc::new(raw);
-        datadir
+        let installation = datadir
             .runtime
-            .boot_raw_bundle
-            .set(raw.clone())
-            .map_err(|_| anyhow!("shipping boot raw bundle was already installed"))?;
-        vfs.mount_bundle_first(raw)
+            .installation_lock
+            .lock()
+            .expect("shipping installation lock poisoned");
+        if datadir.runtime.installed.get().is_some() {
+            return Err(anyhow!("shipping datadir is already bound to a VFS"));
+        }
+        vfs.mount_bundle_first(raw.clone())
             .context("mount shipping raw asset bundle")?;
         datadir
             .runtime
-            .vfs
-            .set(vfs.clone())
-            .map_err(|_| anyhow!("shipping datadir concurrently bound to a VFS"))?;
+            .installed
+            .set(ShippingInstallation {
+                vfs: vfs.clone(),
+                boot_raw_bundle: raw,
+            })
+            .expect("shipping installation is serialized");
+        drop(installation);
         Ok(Self { datadir, vfs })
     }
 
@@ -2876,10 +2901,14 @@ mod v16_contract;
 #[path = "shipping_v8_contract.rs"]
 mod v8_contract;
 
-/// Install a shipping datadir as the process-wide instance so lower-level
+/// Explicit legacy adapter: install a shipping datadir as the process-wide instance so lower-level
 /// loaders can consult it for pre-parsed data. Installation and VFS mount
 /// failures are returned to the startup boundary.
 pub fn install_global(dd: Arc<ShippingDatadir>) -> Result<Arc<ShippingDatadir>> {
+    static INSTALL_LOCK: Mutex<()> = Mutex::new(());
+    let _installation = INSTALL_LOCK
+        .lock()
+        .expect("global shipping installation lock poisoned");
     if GLOBAL.get().is_some() {
         return Err(anyhow!("shipping datadir already installed"));
     }
@@ -2910,12 +2939,19 @@ mod tests {
     use super::*;
     use robin_util::asset_fs::{AssetVfs, Bundle};
 
+    fn install_fixture(datadir: ShippingDatadir) -> ShippingDatadir {
+        let ShippingAssets { datadir, .. } =
+            ShippingAssets::install(Arc::new(datadir), Arc::new(AssetVfs::new())).unwrap();
+        Arc::try_unwrap(datadir).unwrap()
+    }
+
     #[test]
     #[ignore = "requires ROBIN_BROWSER_CONTENT_FIXTURE pointing to the retained Demo shipping blob"]
     fn retained_demo_descriptor_resolves_actual_localized_popup_and_briefing() {
         let path = std::env::var("ROBIN_BROWSER_CONTENT_FIXTURE")
             .expect("set ROBIN_BROWSER_CONTENT_FIXTURE to the retained Demo shipping blob");
         let datadir = ShippingDatadir::load_from_file(Path::new(&path)).unwrap();
+        let datadir = install_fixture(datadir);
         datadir.set_active_locale(Some("1033")).unwrap();
         assert!(datadir.active_level_descriptors("RHLevelSB.red").is_none());
         let descriptor = datadir
@@ -2952,6 +2988,7 @@ mod tests {
         datadir
             .locales
             .insert("de-DE".into(), ShippingLocale::default());
+        let mut datadir = install_fixture(datadir);
         datadir.set_active_locale(Some("1033")).unwrap();
         let resolved = datadir
             .localized_level_descriptors("Data\\Text\\RHLevelSB.red")
@@ -2986,6 +3023,7 @@ mod tests {
             .push(Some("Localized objective".into()));
         locale.red_files.insert("rhlevelsb.red".into(), translated);
         datadir.locales.insert("de-DE".into(), locale);
+        let datadir = install_fixture(datadir);
         datadir.set_active_locale(Some("de-DE")).unwrap();
         let resolved = datadir
             .localized_level_descriptors("RHLevelSB.red")
@@ -3007,6 +3045,7 @@ mod tests {
         datadir
             .red_files
             .insert("rhlevelsb.red".into(), LevelDescriptors::default());
+        let datadir = install_fixture(datadir);
         datadir.localized_level_descriptors("RHLevelSB.red");
     }
 
@@ -3021,6 +3060,7 @@ mod tests {
         datadir
             .locales
             .insert("de-DE".into(), ShippingLocale::default());
+        let datadir = install_fixture(datadir);
         datadir.set_active_locale(Some("de-DE")).unwrap();
         assert!(
             datadir
@@ -3067,8 +3107,7 @@ mod tests {
 
     #[test]
     fn mission_publication_rejects_invalid_raw_before_replacing_selection() {
-        let datadir = ShippingDatadir::default();
-        datadir.runtime.vfs.set(Arc::new(AssetVfs::new())).unwrap();
+        let datadir = install_fixture(ShippingDatadir::default());
         let good = ShippingMission::default();
         good.raw_bundle
             .set(Arc::new(BTreeMap::from([("old".into(), vec![1].into())])))
@@ -3100,8 +3139,7 @@ mod tests {
         use robin_engine::coordinates::{SpriteAnchor, SpriteSize};
         use robin_engine::sprite_script::{FrameKind, SpriteScriptor};
 
-        let datadir = ShippingDatadir::default();
-        datadir.runtime.vfs.set(Arc::new(AssetVfs::new())).unwrap();
+        let datadir = install_fixture(ShippingDatadir::default());
         for (name, width) in [("first", 12.0), ("second", 24.0)] {
             let mut mission = ShippingMission::default();
             mission.raw_bundle.set(Arc::new(BTreeMap::new())).unwrap();
@@ -3149,8 +3187,7 @@ mod tests {
 
     #[test]
     fn mission_snapshots_pin_matching_parsed_and_raw_payloads() {
-        let datadir = Arc::new(ShippingDatadir::default());
-        datadir.runtime.vfs.set(Arc::new(AssetVfs::new())).unwrap();
+        let datadir = Arc::new(install_fixture(ShippingDatadir::default()));
         for name in ["first", "second"] {
             let payload = ShippingMission::default();
             payload
@@ -4001,8 +4038,7 @@ mod tests {
 
     #[test]
     fn audio_warmup_membership_is_exact_for_boot_and_active_mission() {
-        let mut datadir = ShippingDatadir::default();
-        datadir.runtime.vfs.set(Arc::new(AssetVfs::new())).unwrap();
+        let mut datadir = install_fixture(ShippingDatadir::default());
         for key in [
             "sounds/menu/click.opus",
             "sounds/exclamations/robin/alert.opus",
@@ -4054,11 +4090,88 @@ mod tests {
             .raw
             .insert("../escape.dat".to_string(), b"bad".to_vec());
 
-        let error = ShippingAssets::install(Arc::new(datadir), vfs).unwrap_err();
+        let datadir = Arc::new(datadir);
+        let generation = vfs.selection_snapshot().generation;
+        let error = ShippingAssets::install(datadir.clone(), vfs.clone()).unwrap_err();
         assert!(
             error
                 .to_string()
                 .contains("mount shipping raw asset bundle")
         );
+        assert!(datadir.runtime.installed.get().is_none());
+        assert!(vfs.authority_snapshot().is_empty());
+        assert_eq!(vfs.selection_snapshot().generation, generation);
+        assert_eq!(datadir.raw_asset("../escape.dat"), Some(&b"bad"[..]));
+        // A retained decode can be corrected and retried, not left half-bound.
+        let mut datadir = Arc::try_unwrap(datadir).unwrap();
+        datadir.raw.remove("../escape.dat");
+        datadir.raw.insert("valid.dat".into(), b"good".to_vec());
+        let installed = ShippingAssets::install(Arc::new(datadir), vfs).unwrap();
+        assert_eq!(installed.vfs().read("valid.dat").unwrap(), b"good");
+    }
+
+    #[test]
+    #[should_panic(expected = "decoded data has no VFS")]
+    fn decoded_data_has_no_implicit_runtime_authority() {
+        ShippingDatadir::default().asset_vfs();
+    }
+
+    #[test]
+    fn installation_state_is_excluded_from_shared_payload_wire_bytes() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.raw.insert("marker".into(), vec![42]);
+        let datadir = Arc::new(datadir);
+        let native = encode_native(&datadir);
+        let json = serde_json::to_vec(&*datadir).unwrap();
+        let installed =
+            ShippingAssets::install(datadir.clone(), Arc::new(AssetVfs::new())).unwrap();
+        assert_eq!(encode_native(installed.datadir()), native);
+        assert_eq!(serde_json::to_vec(&**installed.datadir()).unwrap(), json);
+    }
+
+    #[test]
+    fn concurrent_installation_publishes_only_one_mount() {
+        let mut datadir = ShippingDatadir::default();
+        datadir.raw.insert("marker".into(), vec![42]);
+        let datadir = Arc::new(datadir);
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let results = std::thread::scope(|scope| {
+            let jobs: Vec<_> = (0..2)
+                .map(|_| {
+                    let datadir = datadir.clone();
+                    let barrier = barrier.clone();
+                    scope.spawn(move || {
+                        let vfs = Arc::new(AssetVfs::new());
+                        let generation = vfs.selection_snapshot().generation;
+                        barrier.wait();
+                        let result = ShippingAssets::install(datadir, vfs.clone());
+                        (vfs, generation, result)
+                    })
+                })
+                .collect();
+            jobs.into_iter()
+                .map(|job| job.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            results
+                .iter()
+                .filter(|(_, _, result)| result.is_ok())
+                .count(),
+            1
+        );
+        for (vfs, generation, result) in results {
+            if let Ok(installed) = result {
+                assert!(Arc::ptr_eq(datadir.asset_vfs(), installed.vfs()));
+                assert_eq!(vfs.read("marker").unwrap(), [42]);
+                let before = vfs.selection_snapshot().generation;
+                assert!(ShippingAssets::install(datadir.clone(), vfs.clone()).is_err());
+                assert_eq!(vfs.selection_snapshot().generation, before);
+            } else {
+                assert!(vfs.read("marker").is_err());
+                assert!(vfs.authority_snapshot().is_empty());
+                assert_eq!(vfs.selection_snapshot().generation, generation);
+            }
+        }
     }
 }
