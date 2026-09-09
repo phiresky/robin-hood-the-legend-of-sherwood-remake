@@ -386,12 +386,35 @@ mod tests {
                 },
             }),
         );
+        // Save markers belong to the next dense record boundary, not an
+        // arbitrary future ordinal. Advance a real attempt before saving.
+        for frame in 0..3 {
+            assert!(lifecycle.write_frame(
+                ReplayFrameOrdinal::from_wire(frame),
+                TimelineFrame::from_wire(frame),
+                TimelineFrame::from_wire(frame + 1),
+                robin_engine::engine::SimulationFrameInput::default().with_hourglass(true),
+                Vec::new(),
+                None,
+            ));
+        }
         lifecycle.record_save(
             later,
             ReplayFrameOrdinal::from_wire(3),
-            TimelineFrame::from_wire(2),
+            TimelineFrame::from_wire(3),
             99,
         );
+        assert!(lifecycle.write_frame(
+            ReplayFrameOrdinal::from_wire(3),
+            TimelineFrame::from_wire(3),
+            TimelineFrame::from_wire(4),
+            robin_engine::engine::SimulationFrameInput::default().with_hourglass(true),
+            Vec::new(),
+            None,
+        ));
+        let valid_attempt = service.exports().snapshot().unwrap().parse_sync().unwrap();
+        assert_eq!(valid_attempt.frame_count(), 4);
+        assert!(valid_attempt.save_marker_for_frame(3).is_some());
         lifecycle.invalidate("foreign save");
         assert!(!lifecycle.is_recording());
         assert!(lifecycle.saved_frames.is_empty());
