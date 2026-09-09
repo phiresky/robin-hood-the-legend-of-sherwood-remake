@@ -364,6 +364,10 @@ async fn drive_scripted_modal_lanes(
 
     use super::session_policy::{ScriptedModalLane, take_next_scripted_batch};
     use engine_player_command::ModalKind;
+    // ModalContext borrows the frame's acknowledgement journal throughout this
+    // loop. Collect its command output separately, then admit the complete FIFO
+    // batch after that disjoint presentation borrow ends.
+    let mut modal_commands = engine_player_command::FrameCommands::new();
     loop {
         let mut processed = false;
         while !rendered && ui.active_modal.is_none() {
@@ -429,7 +433,7 @@ async fn drive_scripted_modal_lanes(
                 &manager.engine,
                 profiles,
             );
-            dispatch_active_modal_outcome(outcome, host, &mut frame.stage_post_commands());
+            dispatch_active_modal_outcome(outcome, host, &mut modal_commands);
             rendered = true;
             processed = true;
         }
@@ -439,6 +443,10 @@ async fn drive_scripted_modal_lanes(
         }
         break;
     }
+    frame
+        .stage_post_commands()
+        .commands
+        .extend(modal_commands.commands);
     rendered
 }
 
