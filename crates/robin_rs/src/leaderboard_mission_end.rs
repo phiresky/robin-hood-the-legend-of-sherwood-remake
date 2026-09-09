@@ -1489,30 +1489,21 @@ impl ActiveMissionReplayExporter {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-struct NativeReplayExportTask(std::sync::mpsc::Receiver<Result<Arc<[u8]>, String>>);
+#[derive(Serialize)]
+struct ReplayExportTask(#[serde(skip)] crate::replay_service::ExportResult);
 
-#[cfg(not(target_arch = "wasm32"))]
-impl MissionEndTask<Arc<[u8]>> for NativeReplayExportTask {
-    fn try_take(&mut self) -> Option<Result<Arc<[u8]>, String>> {
-        match self.0.try_recv() {
-            Ok(result) => Some(result),
-            Err(std::sync::mpsc::TryRecvError::Empty) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(
-                "ranked replay export worker stopped unexpectedly".to_owned(),
-            )),
-        }
+impl<'de> Deserialize<'de> for ReplayExportTask {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "replay export tasks must be constructed by their consumer",
+        ))
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-struct BrowserReplayExportTask(async_channel::Receiver<Result<Arc<[u8]>, String>>);
-
-#[cfg(target_arch = "wasm32")]
-impl MissionEndTask<Arc<[u8]>> for BrowserReplayExportTask {
+impl MissionEndTask<Arc<[u8]>> for ReplayExportTask {
     fn try_take(&mut self) -> Option<Result<Arc<[u8]>, String>> {
         match self.0.try_recv() {
-            Ok(result) => Some(result),
+            Ok(result) => Some(result.map(|compact| Arc::<[u8]>::from(compact.into_bytes()))),
             Err(async_channel::TryRecvError::Empty) => None,
             Err(async_channel::TryRecvError::Closed) => Some(Err(
                 "ranked replay export task stopped unexpectedly".to_owned(),
@@ -1524,32 +1515,9 @@ impl MissionEndTask<Arc<[u8]>> for BrowserReplayExportTask {
 impl MissionEndReplayExporter for ActiveMissionReplayExporter {
     fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
         let snapshot = self.exports.snapshot()?;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            self.exports.export_snapshot(
-                snapshot,
-                Box::new(move |result| {
-                    let _ =
-                        sender.send(result.map(|compact| Arc::<[u8]>::from(compact.into_bytes())));
-                }),
-            );
-            Ok(Box::new(NativeReplayExportTask(receiver)))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let (sender, receiver) = async_channel::bounded(1);
-            self.exports.export_snapshot(
-                snapshot,
-                Box::new(move |result| {
-                    // Exactly one result is produced for this bounded channel;
-                    // failure only means the mission-end consumer was dropped.
-                    let _ = sender
-                        .try_send(result.map(|compact| Arc::<[u8]>::from(compact.into_bytes())));
-                }),
-            );
-            Ok(Box::new(BrowserReplayExportTask(receiver)))
-        }
+        Ok(Box::new(ReplayExportTask(
+            self.exports.export_snapshot(snapshot),
+        )))
     }
 }
 
