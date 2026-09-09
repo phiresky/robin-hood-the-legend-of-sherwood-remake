@@ -3270,11 +3270,6 @@ impl Engine {
         self.inner.control.rng.replace_original_replay(draws);
     }
 
-    /// Number of original raw RNG values consumed so far, when parity replay is active.
-    pub fn original_rng_replay_cursor(&self) -> Option<usize> {
-        self.inner.control.rng.original_replay_cursor()
-    }
-
     /// Rust RNG sites which consumed a selected interval of original draws.
     pub fn original_rng_replay_sites(
         &self,
@@ -4158,11 +4153,6 @@ impl Engine {
         self.inner.mission_domain.required_campaign(context);
     }
 
-    /// Complete deterministic configuration currently owned by this Engine.
-    pub fn sim_config(&self) -> SimConfig {
-        self.inner.control.sim_config
-    }
-
     /// Attach host-only run eligibility to the exact terminal campaign
     /// attempt after its deterministic quit command has been admitted.
     pub fn promote_mission_achievement_results(
@@ -4214,14 +4204,6 @@ impl Engine {
         let sim = self.inner.control.simulation_context();
         self.inner
             .call_external_native_with_this(&sim, assets, native_name, args, this_actor)
-    }
-
-    pub fn doors(&self) -> &[crate::gate::Door] {
-        &self.inner.script_domains.interactables.doors
-    }
-
-    pub fn patches(&self) -> &[crate::patch::Patch] {
-        &self.inner.script_domains.interactables.patches
     }
 
     // ── Per-frame drains ────
@@ -4963,6 +4945,26 @@ impl ParityReplaySetup<'_> {
 
     pub fn use_external_director_completions(&mut self, enabled: bool) {
         self.engine.set_external_director_completion_replay(enabled);
+    }
+}
+
+impl EngineInner {
+    /// Number of original raw RNG values consumed so far, when parity replay is active.
+    pub fn original_rng_replay_cursor(&self) -> Option<usize> {
+        self.control.rng.original_replay_cursor()
+    }
+
+    /// Complete deterministic configuration of this read-only world view.
+    pub fn sim_config(&self) -> SimConfig {
+        self.control.sim_config
+    }
+
+    pub fn doors(&self) -> &[crate::gate::Door] {
+        &self.script_domains.interactables.doors
+    }
+
+    pub fn patches(&self) -> &[crate::patch::Patch] {
+        &self.script_domains.interactables.patches
     }
 }
 
