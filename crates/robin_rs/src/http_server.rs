@@ -547,12 +547,17 @@ mod browser_transport_tests {
             .start(0, replay.exports(), replay.launches())
             .unwrap();
         let mut ingress = transport.attach();
-        let value = serde_wasm_bindgen::to_value(
-            &serde_json::json!({"method": "set-paused", "params": {"paused": true}}),
-        )
-        .unwrap();
+        // Match the browser's plain JS object, not serde-wasm-bindgen's
+        // default Map representation of serde_json::Value objects.
+        let value =
+            js_sys::JSON::parse(r#"{"method":"set-paused","params":{"paused":true}}"#).unwrap();
         let mut promise = Box::pin(wasm_rpc::rh_rpc(value));
-        assert!(promise.as_mut().now_or_never().is_none());
+        if let Some(reply) = promise.as_mut().now_or_never() {
+            // wasm panic aborts without running Drop. Release the bridge before
+            // reporting a bad fixture so one failure cannot contaminate tests.
+            transport.stop();
+            panic!("deferred RPC completed before mission dispatch: {reply:?}");
+        }
         let request = ingress.take_requests().pop().expect("queued request");
         ingress.defer_request(
             DeferredRequest::Step(StepKind::SetPaused { paused: true }),
