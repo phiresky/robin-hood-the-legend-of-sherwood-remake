@@ -391,7 +391,9 @@ pub struct Renderer {
     resources: GpuResources,
     pipelines: PipelineStore,
     frame: FrameState,
-    capture_frame: Option<FrameState>,
+    // Keep the optional second frame out of frontend construction futures.
+    // Its allocation is reused for both the held live frame and cached target.
+    capture_frame: Option<Box<FrameState>>,
     screen_layout: wgpu::BindGroupLayout,
     /// Update-owned zoom HUD data. Kept separate from GPU ownership because
     /// throwaway screenshot and thumbnail passes must not advance it.
@@ -410,7 +412,7 @@ struct FontAtlas {
 /// draw/readback returns early (or unwinds).
 pub(crate) struct CaptureTarget<'a> {
     renderer: &'a mut Renderer,
-    live: Option<FrameState>,
+    live: Option<Box<FrameState>>,
 }
 
 impl serde::Serialize for CaptureTarget<'_> {
@@ -442,11 +444,12 @@ impl std::ops::DerefMut for CaptureTarget<'_> {
 
 impl Drop for CaptureTarget<'_> {
     fn drop(&mut self) {
-        let live = self
+        let mut live = self
             .live
             .take()
             .expect("capture scope owns its live target");
-        self.renderer.capture_frame = Some(std::mem::replace(&mut self.renderer.frame, live));
+        std::mem::swap(&mut self.renderer.frame, &mut *live);
+        self.renderer.capture_frame = Some(live);
     }
 }
 
@@ -758,21 +761,21 @@ impl Renderer {
             "capture dimensions must be positive"
         );
         let mut frame = self.capture_frame.take().unwrap_or_else(|| {
-            FrameState::offscreen(
+            Box::new(FrameState::offscreen(
                 &self.gpu,
                 &self.resources,
                 &self.screen_layout,
                 width,
                 height,
-            )
+            ))
         });
         frame.resize(&self.gpu, &self.resources, width, height);
         frame.clear_frozen_scene();
         frame.clear_recording();
-        let live = std::mem::replace(&mut self.frame, frame);
+        std::mem::swap(&mut self.frame, &mut *frame);
         CaptureTarget {
             renderer: self,
-            live: Some(live),
+            live: Some(frame),
         }
     }
 
