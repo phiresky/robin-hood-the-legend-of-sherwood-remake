@@ -127,52 +127,6 @@ impl GameKey {
         Self::AiInfo,
         Self::SherwoodTrading,
     ];
-
-    /// The action name string used in [`KeyConfig`] bindings.
-    pub fn action_name(self) -> &'static str {
-        match self {
-            Self::ZoomIn => "ZoomIn",
-            Self::ZoomOut => "ZoomOut",
-            Self::ScrollUp => "ScrollUp",
-            Self::ScrollDown => "ScrollDown",
-            Self::ScrollLeft => "ScrollLeft",
-            Self::ScrollRight => "ScrollRight",
-            Self::DisplayMap => "DisplayMap",
-            Self::SelectCharacter1 => "SelectCharacter1",
-            Self::SelectCharacter2 => "SelectCharacter2",
-            Self::SelectCharacter3 => "SelectCharacter3",
-            Self::SelectCharacter4 => "SelectCharacter4",
-            Self::SelectCharacter5 => "SelectCharacter5",
-            Self::SelectAll => "SelectAll",
-            Self::SelectNone => "SelectNone",
-            Self::CrouchDown => "CrouchDown",
-            Self::StandUp => "StandUp",
-            Self::ShowDoors => "ShowDoors",
-            Self::SwitchHiddenDisplay => "SwitchHiddenDisplay",
-            Self::Action1 => "Action1",
-            Self::Action2 => "Action2",
-            Self::Action3 => "Action3",
-            Self::MoveDuringAction => "MoveDuringAction",
-            Self::RecordQa => "RecordQa",
-            Self::StartQa => "StartQa",
-            Self::DeleteQa => "DeleteQa",
-            Self::ShowViewCone => "ShowViewCone",
-            Self::QuickSave1 => "QuickSave1",
-            Self::QuickLoad1 => "QuickLoad1",
-            Self::PlanQuickActions => "PlanQuickActions",
-            Self::ToggleCloak => "ToggleCloak",
-            Self::StartMission => "StartMission",
-            Self::DisplayMenu => "DisplayMenu",
-            Self::RecordMovie => "RecordMovie",
-            Self::PrintScreen => "PrintScreen",
-            Self::DisplayConsole => "DisplayConsole",
-            Self::SlowMotion => "SlowMotion",
-            Self::RequestInfo => "RequestInfo",
-            Self::Teleport => "Teleport",
-            Self::AiInfo => "AiInfo",
-            Self::SherwoodTrading => "SherwoodTrading",
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1145,14 +1099,5 @@ mod tests {
         assert_eq!(back.screen_width, 1024.0);
         assert_eq!(back.get_binding(GameKey::ZoomIn), Some(KeyCode::Equal));
         assert_eq!(back.dead_zones.len(), 1);
-    }
-
-    #[test]
-    fn game_key_action_names_unique() {
-        let names: Vec<&str> = GameKey::ALL.iter().map(|k| k.action_name()).collect();
-        let mut deduped = names.clone();
-        deduped.sort();
-        deduped.dedup();
-        assert_eq!(names.len(), deduped.len(), "duplicate action names found");
     }
 }

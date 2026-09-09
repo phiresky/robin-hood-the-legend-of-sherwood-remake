@@ -74,8 +74,6 @@ const KEY_NAMES: &[&str] = &[
 
 /// Number of real key bindings (excludes the Dummy sentinel).
 pub const REAL_KEY_COUNT: u16 = (KEY_NAMES.len() - 1) as u16;
-/// Total key name count including the Dummy sentinel.
-pub const KEY_NAME_COUNT: u16 = KEY_NAMES.len() as u16;
 /// Stable row/index of the rebindable planned-action modifier.
 pub const PLAN_QUICK_ACTIONS_INDEX: u16 = 28;
 /// Stable row/index of the reusable-cloak action.
@@ -144,19 +142,6 @@ impl KeyConfig {
             let secondary = self.get_binding(name).and_then(|b| b.secondary_key);
             self.set_binding(name, key, secondary);
         }
-    }
-
-    /// Reverse lookup: find the action index whose primary key matches `key`.
-    /// Returns 0xFFFF if not found.
-    pub fn get_index_for_key(&self, key: KeyCode) -> u16 {
-        for (i, &name) in KEY_NAMES.iter().enumerate().take(REAL_KEY_COUNT as usize) {
-            if let Some(b) = self.get_binding(name)
-                && b.primary_key == Some(key)
-            {
-                return i as u16;
-            }
-        }
-        0xFFFF
     }
 
     /// Copy all primary keys into a flat array, indexed by action.
