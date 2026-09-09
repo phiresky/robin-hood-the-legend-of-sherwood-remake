@@ -761,13 +761,14 @@ impl MissionEndLeaderboardController {
         backend: Box<dyn MissionEndLeaderboardBackend>,
         peer_co_signer: Box<dyn MissionEndPeerCoSigner>,
         receipt_controller_public_key: Option<PublicKey32>,
+        replay_exports: crate::replay_service::ReplayExports,
     ) -> Result<Self, MissionEndLeaderboardError> {
         let mut controller = Self::new(
             run,
             preferences,
             backend,
             Box::new(LocalMissionEndSubmissionAuthorizer),
-            Box::new(ActiveMissionReplayExporter),
+            Box::new(ActiveMissionReplayExporter::new(replay_exports)),
         )?;
         controller.peer_co_signer = Some(peer_co_signer);
         controller.peer_receipt_controller_public_key = receipt_controller_public_key;
@@ -1477,7 +1478,16 @@ impl MissionEndLeaderboardBackend for HttpMissionEndLeaderboardBackend {
 
 /// Active bounded recorder export. Snapshotting shares complete spool chunks;
 /// parsing and compact-bitcode encoding run off the graphical call stack.
-pub struct ActiveMissionReplayExporter;
+#[derive(Serialize, Deserialize)]
+pub struct ActiveMissionReplayExporter {
+    exports: crate::replay_service::ReplayExports,
+}
+
+impl ActiveMissionReplayExporter {
+    pub fn new(exports: crate::replay_service::ReplayExports) -> Self {
+        Self { exports }
+    }
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 struct NativeReplayExportTask(std::sync::mpsc::Receiver<Result<Arc<[u8]>, String>>);
@@ -1513,7 +1523,7 @@ impl MissionEndTask<Arc<[u8]>> for BrowserReplayExportTask {
 
 impl MissionEndReplayExporter for ActiveMissionReplayExporter {
     fn begin(&mut self) -> Result<Box<dyn MissionEndTask<Arc<[u8]>>>, String> {
-        let snapshot = crate::replay_service::process().snapshot()?;
+        let snapshot = self.exports.snapshot()?;
         #[cfg(not(target_arch = "wasm32"))]
         {
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
@@ -1734,6 +1744,67 @@ mod tests {
     };
     use std::collections::BTreeMap;
     use std::sync::Mutex;
+
+    #[test]
+    fn replay_exporter_diagnostics_cannot_restore_export_authority() {
+        let service = Arc::new(crate::replay_service::ReplayService::default());
+        let exporter = ActiveMissionReplayExporter::new(service.exports());
+        let diagnostic = serde_json::to_string(&exporter).unwrap();
+        assert!(serde_json::from_str::<ActiveMissionReplayExporter>(&diagnostic).is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn replay_exporter_uses_injected_service_and_freezes_its_generation() {
+        let service = Arc::new(crate::replay_service::ReplayService::default());
+        let other = Arc::new(crate::replay_service::ReplayService::default());
+        let mut recorder = robin_engine::replay::ReplayRecorder::with_writer(
+            Box::new(service.recording().begin_recording()),
+            "injected-export".to_owned(),
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "injected-export",
+                "export-map",
+                "export-map",
+            )
+            .unwrap(),
+            17,
+            robin_engine::engine::SimConfig::default(),
+            &robin_engine::campaign::Campaign::default(),
+        )
+        .unwrap();
+        assert!(recorder.write_frame(
+            0,
+            0,
+            1,
+            robin_engine::engine::SimulationFrameInput::default(),
+            Vec::new(),
+            None,
+        ));
+        let mut exporter = ActiveMissionReplayExporter::new(service.exports());
+        let mut task = exporter.begin().unwrap();
+        assert!(
+            ActiveMissionReplayExporter::new(other.exports())
+                .begin()
+                .is_err()
+        );
+        // Replacing the active generation must not replace the admitted export.
+        let _replacement = service.recording().begin_recording();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let bytes = loop {
+            if let Some(result) = task.try_take() {
+                break result.unwrap();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "export worker timed out"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        let (_, replay) =
+            robin_replay_format::decode_compact(std::str::from_utf8(&bytes).unwrap()).unwrap();
+        assert_eq!(replay.header.mission_id, "injected-export");
+        drop(recorder);
+    }
 
     struct ImmediateTask<T>(Option<Result<T, String>>);
 
@@ -2349,6 +2420,7 @@ mod tests {
                 ]),
             }),
             Some(controller_key),
+            Arc::new(crate::replay_service::ReplayService::default()).exports(),
         )
         .unwrap();
 
