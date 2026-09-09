@@ -13,12 +13,15 @@ use std::path::Path;
 pub(crate) const MAX_PRIVATE_STORE_BYTES: u64 = 1024 * 1024;
 
 pub(crate) fn read_private_utf8(path: &Path) -> io::Result<Option<String>> {
+    reject_unsafe_store_path(path)?;
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        // A regular path can become a FIFO between validation and open.
+        // Nonblocking open lets the handle-level type check reject it.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     }
 
     let mut file = match options.open(path) {
@@ -61,7 +64,7 @@ pub(crate) fn replace_private(path: &Path, prefix: &str, encoded: &[u8]) -> io::
             "leaderboard state exceeds {MAX_PRIVATE_STORE_BYTES} bytes"
         )));
     }
-    reject_unsafe_destination(path)?;
+    reject_unsafe_store_path(path)?;
 
     let parent = path.parent().ok_or_else(|| {
         io::Error::other(format!(
@@ -88,12 +91,12 @@ pub(crate) fn replace_private(path: &Path, prefix: &str, encoded: &[u8]) -> io::
 
     // Re-check immediately before the atomic rename. This catches a target
     // replaced by a symlink while the temporary file was being written.
-    reject_unsafe_destination(path)?;
+    reject_unsafe_store_path(path)?;
     temporary.persist(path).map_err(|error| error.error)?;
     sync_parent_directory(parent)
 }
 
-fn reject_unsafe_destination(path: &Path) -> io::Result<()> {
+fn reject_unsafe_store_path(path: &Path) -> io::Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
             Err(io::Error::other(format!(
@@ -189,6 +192,42 @@ mod tests {
         assert!(read_private_utf8(&path).is_err());
         assert!(replace_private(&path, ".leaderboards-", b"replacement").is_err());
         assert_eq!(std::fs::read_to_string(outside).unwrap(), "private");
+    }
+
+    #[test]
+    fn missing_directory_and_oversized_files_have_distinct_outcomes() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        assert!(read_private_utf8(&path).unwrap().is_none());
+        assert!(read_private_utf8(directory.path()).is_err());
+        File::create(&path)
+            .unwrap()
+            .set_len(MAX_PRIVATE_STORE_BYTES + 1)
+            .unwrap();
+        assert!(
+            read_private_utf8(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("exceeds")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fifo_and_dangling_symlink_are_not_treated_as_missing_regular_files() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let directory = tempfile::tempdir().unwrap();
+        let fifo = directory.path().join("state.fifo");
+        let name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: name is a valid NUL-terminated path in this test's owned tempdir.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(read_private_utf8(&fifo).is_err());
+        assert!(replace_private(&fifo, ".state-", b"replacement").is_err());
+
+        let dangling = directory.path().join("dangling.json");
+        std::os::unix::fs::symlink(directory.path().join("missing"), &dangling).unwrap();
+        assert!(read_private_utf8(&dangling).is_err());
+        assert!(replace_private(&dangling, ".state-", b"replacement").is_err());
     }
 
     #[cfg(unix)]
