@@ -37,7 +37,7 @@ use super::layout::{
 use super::resources::{IngameMenuResources, MenuSurface};
 
 /// Shared thumb geometry for the artwork renderer and scroll-view hit testing.
-/// The top is relative to the track. Keep the original listbox ratio mapping.
+/// The top is relative to the track; minimum-sized thumbs stay inside it.
 pub(crate) fn listbox_scrollbar_thumb(
     track_h: i32,
     offset: usize,
@@ -46,14 +46,18 @@ pub(crate) fn listbox_scrollbar_thumb(
     min_height: i32,
 ) -> (i32, i32) {
     assert!(total > 0, "scrollbar geometry requires content");
-    let before = (offset as f32 / total as f32).clamp(0.0, 1.0);
-    let ratio = (visible as f32 / total as f32).clamp(0.0, 1.0);
-    let usable = (track_h - 2).max(0) as f32;
-    let top = 1 + (usable * before) as i32;
-    let bottom = 1 + (usable * (before + ratio)) as i32;
-    // TODO: Coordinate minimum-thumb travel with legacy listbox drag handlers
-    // so very large lists also keep the entire minimum-size thumb in the track.
-    (top, (bottom - top).max(min_height))
+    let usable = (track_h - 2).max(0) as usize;
+    let height = (usable * visible.min(total) / total)
+        .max(min_height.max(0) as usize)
+        .min(usable);
+    let travel = usable - height;
+    let max_offset = total.saturating_sub(visible);
+    let top = if max_offset == 0 {
+        0
+    } else {
+        (travel * offset.min(max_offset) + max_offset / 2) / max_offset
+    };
+    (1 + top as i32, height as i32)
 }
 
 /// Draw an in-game listbox scrollbar from its three-slice track and

@@ -1,5 +1,5 @@
 //! Row-based scrolling for menu lists and wrapped text, independent of selection.
-use crate::gfx_types::GameEvent;
+use crate::gfx_types::{GameEvent, Keycode};
 use crate::ingame_menu::resources::MenuSurface;
 use crate::ingame_menu::{IngameMenuResources, layout::MenuTransform, widget_bridge};
 use crate::renderer::Renderer;
@@ -84,6 +84,21 @@ impl ScrollView {
             .saturating_add_signed(step)
             .min(self.max_offset());
     }
+    /// Scroll-only navigation. Selectable lists may handle arrows themselves
+    /// and call `reveal` after changing selection.
+    pub fn navigate(&mut self, key: Keycode) -> bool {
+        match key {
+            Keycode::Up => self.scroll_by(-1),
+            Keycode::Down => self.scroll_by(1),
+            Keycode::PageUp => self.scroll_by(-(self.visible_count() as isize)),
+            Keycode::PageDown => self.scroll_by(self.visible_count() as isize),
+            Keycode::Home => self.reset(),
+            Keycode::End => self.set_offset(usize::MAX),
+            _ => return false,
+        }
+        true
+    }
+
     pub fn set_wheel_step(&mut self, step: isize) {
         assert!(step > 0);
         self.wheel_step = step;
@@ -171,9 +186,20 @@ impl ScrollView {
         self.visible_range().contains(&row).then_some(row)
     }
     fn drag_to(&mut self, y: i32, grab: i32) {
-        let usable = (self.length() - 2) as usize;
-        self.offset = (((y - self.origin() - 1 - grab).max(0) as usize * self.total + usable / 2)
-            / usable)
+        let (_, height) = widget_bridge::listbox_scrollbar_thumb(
+            self.length(),
+            self.offset,
+            self.visible_count(),
+            self.total,
+            self.min_thumb_height,
+        );
+        let travel = (self.length() - 2 - height).max(0) as usize;
+        if travel == 0 {
+            return;
+        }
+        self.offset = (((y - self.origin() - 1 - grab).max(0) as usize * self.max_offset()
+            + travel / 2)
+            / travel)
             .min(self.max_offset());
     }
     /// Returns true when scrolling consumed the event. Pass the current mouse
@@ -211,7 +237,9 @@ impl ScrollView {
                     height / 2
                 };
                 self.drag_grab = Some(grab);
-                self.drag_to(self.axis(x, y), grab);
+                if !(top..top + height).contains(&relative) {
+                    self.drag_to(self.axis(x, y), grab);
+                }
                 true
             }
             GameEvent::MouseMove { x, y, .. } if self.drag_grab.is_some() => {
@@ -286,6 +314,24 @@ mod tests {
             drag_grab: None,
         }
     }
+    #[test]
+    fn minimum_thumb_stays_inside_track_and_reaches_last_row() {
+        let mut v = view();
+        v.set_total(10_000);
+        v.set_offset(usize::MAX);
+        let (top, height) = widget_bridge::listbox_scrollbar_thumb(
+            v.length(),
+            v.offset,
+            v.visible_count(),
+            v.total,
+            v.min_thumb_height,
+        );
+        assert_eq!(height, 16);
+        assert_eq!(top + height, v.length() - 1);
+        v.drag_to(v.origin() + top, 0);
+        assert_eq!(v.offset, 9995);
+    }
+
     #[test]
     fn horizontal_view_uses_x_for_dragging_and_a_bottom_scrollbar() {
         let mut v = ScrollView::with_geometry([30, 40, 400, 100], 100, 16, 16, true);

@@ -52,7 +52,6 @@ pub enum SaveLoadOutcome {
 /// tick it cooperatively so networking and automation continue between frames.
 pub struct LoadPickerModalState {
     model: PickerModel,
-    visible_rows: usize,
     thumb_widget: WidgetPicture,
     thumb_cache: Option<ThumbnailCache>,
     controller: PickerController,
@@ -91,7 +90,6 @@ impl LoadPickerModalState {
                 (LOAD_LIST_RECT.h / row_height).max(1) as usize,
                 picker_slots(save_manager),
             ),
-            visible_rows: (LOAD_LIST_RECT.h / row_height).max(1) as usize,
             thumb_widget: WidgetPicture::new(u32::MAX),
             thumb_cache: None,
             controller: PickerController::new(input_state),
@@ -198,15 +196,12 @@ impl LoadPickerModalState {
             ),
         ];
         self.controller
+            .configure_list(&mut self.model, LOAD_LIST_RECT, row_height, resources);
+        self.controller
             .begin_frame(&self.model, &btn_positions, btn_w, btn_h);
         for event in event_pump.poll_events() {
-            self.controller.handle_event(
-                &mut self.model,
-                &event,
-                transform,
-                LOAD_LIST_RECT,
-                row_height,
-            );
+            self.controller
+                .handle_event(&mut self.model, &event, transform);
         }
         let selected = self.model.selected_row();
         let widget_events = self.controller.process_widgets(&self.model);
@@ -262,7 +257,6 @@ impl LoadPickerModalState {
         if let Some(background) = resources.menu_bg[3] {
             draw_screen_background(renderer, &background);
         }
-        let total = self.model.total_rows();
         let metadata_text = EnglishSaveMetadataText;
         let now_unix = if self.detailed_metadata {
             match crate::save_file::unix_timestamp_now() {
@@ -278,28 +272,18 @@ impl LoadPickerModalState {
         } else {
             None
         };
-        let scrollbar_w = list_scrollbar_width(resources);
-        let needs_scrollbar = total > self.visible_rows && scrollbar_w > 0;
+        let view = self.controller.view();
         let row_area_x = LOAD_LIST_RECT.x + 10;
-        let row_area_w = LOAD_LIST_RECT.w - 20 - if needs_scrollbar { scrollbar_w } else { 0 };
-        let hovered_row = if LOAD_LIST_RECT.contains_virt(mouse_virt.x as i32, mouse_virt.y as i32)
-        {
-            let row_offset =
-                ((mouse_virt.y as i32 - LOAD_LIST_RECT.y - 4) / row_height).max(0) as usize;
-            self.model.row_at(self.model.scroll_offset() + row_offset)
-        } else {
-            None
-        };
-        for row_offset in 0..self.visible_rows {
-            let row_index = self.model.scroll_offset() + row_offset;
-            if row_index >= total {
-                break;
-            }
+        let row_area_w = view.content_width() - 20;
+        let hovered_row = view
+            .row_at(mouse_virt.x as i32, mouse_virt.y as i32)
+            .and_then(|row| self.model.row_at(row));
+        for row_index in view.visible_range() {
             let row = self
                 .model
                 .row_at(row_index)
                 .expect("rendered row is within model bounds");
-            let row_y = LOAD_LIST_RECT.y + 4 + row_offset as i32 * row_height;
+            let row_y = view.row_y(row_index);
             let Some(font) = resources.list_font(hovered_row == Some(row), selected == Some(row))
             else {
                 continue;
@@ -338,20 +322,7 @@ impl LoadPickerModalState {
                 }
             }
         }
-        if needs_scrollbar {
-            widget_bridge::draw_listbox_scrollbar(
-                renderer,
-                transform,
-                resources,
-                LOAD_LIST_RECT.x + LOAD_LIST_RECT.w - scrollbar_w,
-                LOAD_LIST_RECT.y,
-                scrollbar_w,
-                LOAD_LIST_RECT.h,
-                self.model.scroll_offset(),
-                self.visible_rows,
-                total,
-            );
-        }
+        view.draw_scrollbar(renderer, transform, resources);
         draw_preview(
             renderer,
             transform,
@@ -384,13 +355,6 @@ const LOAD_LIST_RECT: MenuRect = MenuRect {
     y: 10,
     w: 420,
     h: 450,
-};
-#[cfg(test)]
-const SAVE_LIST_RECT: MenuRect = MenuRect {
-    x: 30,
-    y: 10,
-    w: 420,
-    h: 420,
 };
 const THUMB_RECT: MenuRect = MenuRect {
     x: 460,
@@ -774,10 +738,6 @@ fn draw_preview(
     }
 }
 
-fn list_scrollbar_width(resources: &IngameMenuResources) -> i32 {
-    resources.list_scrollbar[0].map_or(0, |s| s.width)
-}
-
 /// Build the listbox row label. The original menu adds only
 /// original-game save text to the list box.
 fn row_label(
@@ -837,7 +797,7 @@ fn existing_save_row_detail_lines(
         ];
     }
 
-    let mission = metadata_value(&save.mission_name, text);
+    let mission = mission_with_time(save, text);
     let player = metadata_value(&save.player_name, text);
     let relative = format_relative_saved_time(&save.timestamp, now_unix, text);
     let exact = format_exact_saved_time(&save.timestamp, local_time_zone, text);
@@ -872,6 +832,9 @@ fn compact_row_detail(
 ) -> String {
     let exact = format_compact_saved_time(&save.timestamp, local_time_zone, text);
     let mut parts = vec![text.compact_saved(&exact)];
+    if let Some(seconds) = save.mission_elapsed_seconds {
+        parts.push(format!("{:02}:{:02}", seconds / 60, seconds % 60));
+    }
     if !save.mission_name.is_empty() && save.text.trim() != save.mission_name.trim() {
         parts.push(save.mission_name.clone());
     }
@@ -902,7 +865,7 @@ fn selected_metadata_lines(
     local_time_zone: Option<&TimeZone>,
     text: &impl SaveMetadataText,
 ) -> Vec<String> {
-    let mission = metadata_value(&save.mission_name, text);
+    let mission = mission_with_time(save, text);
     let player = metadata_value(&save.player_name, text);
     let relative = format_relative_saved_time(&save.timestamp, now_unix, text);
     let exact = format_exact_saved_time(&save.timestamp, local_time_zone, text);
@@ -931,6 +894,14 @@ fn selected_metadata_lines(
         lines.push(text.amulets(amulets));
     }
     lines
+}
+
+fn mission_with_time(save: &SaveGame, text: &impl SaveMetadataText) -> String {
+    let mission = metadata_value(&save.mission_name, text);
+    match save.mission_elapsed_seconds {
+        Some(seconds) => format!("{mission} ({:02}:{:02})", seconds / 60, seconds % 60),
+        None => mission,
+    }
 }
 
 fn metadata_value(value: &str, text: &impl SaveMetadataText) -> String {
@@ -1038,7 +1009,11 @@ fn relative_time_quantity(seconds: u64) -> (u64, RelativeTimeUnit) {
 /// when rendered with `font`. Oversize text gets an ASCII ellipsis so
 /// clipped metadata is visibly abbreviated instead of looking like a
 /// broken string.
-fn truncate_to_pixel_width(font: &crate::native_font::Font, text: &str, max_w: i32) -> String {
+pub(crate) fn truncate_to_pixel_width(
+    font: &crate::native_font::Font,
+    text: &str,
+    max_w: i32,
+) -> String {
     if max_w <= 0 {
         return String::new();
     }
@@ -1211,6 +1186,13 @@ mod tests {
     fn controller_leaves_committed_ime_text_and_caret_editing_to_save_adapter() {
         let mut model = PickerModel::new(SaveLoadMode::Save, false, 2, vec![]);
         let mut controller = PickerController::new(ModalInputState::new());
+        controller.scroll_view = Some(crate::scroll_view::ScrollView::with_geometry(
+            [LOAD_LIST_RECT.x, LOAD_LIST_RECT.y + 4, LOAD_LIST_RECT.w, 40],
+            20,
+            16,
+            16,
+            false,
+        ));
         let buttons = [
             (ID_LOAD_SAVE, "Save", 460, 300),
             (ID_DELETE, "Delete", 460, 350),
@@ -1228,21 +1210,13 @@ mod tests {
                     keycode: Keycode::Left,
                     physical_key: None,
                 };
-                assert!(!controller.handle_event(
-                    &mut model,
-                    &left,
-                    transform,
-                    SAVE_LIST_RECT,
-                    COMPACT_ROW_HEIGHT
-                ));
+                assert!(!controller.handle_event(&mut model, &left, transform));
                 field.move_caret_left(); // Save-only adapter remains its owner.
             }
             assert!(!controller.handle_event(
                 &mut model,
                 &GameEvent::TextInput { text: text.into() },
-                transform,
-                SAVE_LIST_RECT,
-                COMPACT_ROW_HEIGHT
+                transform
             ));
             controller.process_widgets(&model);
             feed_save_name(&mut field, &controller.input.as_widget_input(), &keyboard);
@@ -1268,7 +1242,21 @@ mod tests {
             PickerModel::new(SaveLoadMode::Load, false, 2, picker_slots(&manager));
         let mut standalone = cooperative.clone();
         let mut cooperative_input = PickerController::new(ModalInputState::new());
+        cooperative_input.scroll_view = Some(crate::scroll_view::ScrollView::with_geometry(
+            [LOAD_LIST_RECT.x, LOAD_LIST_RECT.y + 4, LOAD_LIST_RECT.w, 40],
+            20,
+            16,
+            16,
+            false,
+        ));
         let mut standalone_input = PickerController::new(ModalInputState::new());
+        standalone_input.scroll_view = Some(crate::scroll_view::ScrollView::with_geometry(
+            [LOAD_LIST_RECT.x, LOAD_LIST_RECT.y + 4, LOAD_LIST_RECT.w, 40],
+            20,
+            16,
+            16,
+            false,
+        ));
         let buttons = [
             (ID_LOAD_SAVE, "Load", 460, 300),
             (ID_DELETE, "Delete", 460, 350),
@@ -1283,6 +1271,10 @@ mod tests {
             keycode: Keycode::Up,
             physical_key: None,
         };
+        cooperative_input.input.virt_x = (LOAD_LIST_RECT.x + 10) as f32;
+        cooperative_input.input.virt_y = (LOAD_LIST_RECT.y + 10) as f32;
+        standalone_input.input.virt_x = cooperative_input.input.virt_x;
+        standalone_input.input.virt_y = cooperative_input.input.virt_y;
         let events = [
             down.clone(),
             down.clone(),
@@ -1298,25 +1290,13 @@ mod tests {
         for event in &events {
             cooperative.refresh(picker_slots(&manager));
             cooperative_input.begin_frame(&cooperative, &buttons, 150, 40);
-            cooperative_input.handle_event(
-                &mut cooperative,
-                event,
-                transform,
-                LOAD_LIST_RECT,
-                COMPACT_ROW_HEIGHT,
-            );
+            cooperative_input.handle_event(&mut cooperative, event, transform);
             cooperative_input.process_widgets(&cooperative);
             cooperative_input.input.end_frame();
         }
         standalone_input.begin_frame(&standalone, &buttons, 150, 40);
         for event in &events {
-            standalone_input.handle_event(
-                &mut standalone,
-                event,
-                transform,
-                LOAD_LIST_RECT,
-                COMPACT_ROW_HEIGHT,
-            );
+            standalone_input.handle_event(&mut standalone, event, transform);
         }
         standalone_input.process_widgets(&standalone);
         standalone_input.input.end_frame();
@@ -1380,6 +1360,29 @@ mod tests {
         save.player_profile_id = Some(12);
         save.player_name = "Alice".into();
         save
+    }
+
+    #[test]
+    fn save_info_shows_mission_minutes_without_wrapping_at_an_hour() {
+        let mut save = saved_at("123");
+        for (seconds, expected) in [(0, "00:00"), (65, "01:05"), (3903, "65:03")] {
+            save.mission_elapsed_seconds = Some(seconds);
+            for detailed in [false, true] {
+                assert!(
+                    cooperative_save_row_detail_lines(&save, detailed, Some(123), None)[0]
+                        .contains(expected)
+                );
+            }
+            assert!(
+                selected_metadata_lines(&save, Some(123), None, &EnglishSaveMetadataText)[0]
+                    .contains(expected)
+            );
+        }
+        save.mission_elapsed_seconds = None;
+        assert_eq!(
+            mission_with_time(&save, &EnglishSaveMetadataText),
+            "The Silver Arrow"
+        );
     }
 
     fn published_metadata(filename: &str) -> SaveGame {

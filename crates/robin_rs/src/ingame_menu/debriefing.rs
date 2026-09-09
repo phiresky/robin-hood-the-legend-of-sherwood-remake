@@ -7,6 +7,7 @@
 //! [`super::widget_bridge`].
 
 use crate::gfx_types::Keycode;
+use crate::scroll_view::ScrollView;
 use robin_engine::coordinates as engine_coordinates;
 #[cfg(test)]
 use robin_engine::mission_stat as engine_mission_stat;
@@ -520,8 +521,7 @@ struct DebriefingPageState {
     frame: FrameWnd,
     input_state: ModalInputState,
     tooltip: TooltipState,
-    scroll_line: usize,
-    scroll_drag_offset: Option<i32>,
+    scroll_view: ScrollView,
 }
 
 impl DebriefingPageState {
@@ -605,6 +605,16 @@ impl DebriefingPageState {
             w.base_mut().set_tooltip_text(&load_tooltip);
         }
 
+        let font = match body_font {
+            BodyFont::PopupScroll => resources.popup_font_any(),
+            BodyFont::Debrief => resources.debrief_font_any(),
+        }
+        .expect("debriefing body requires its font");
+        let scroll_view = ScrollView::new(
+            [virt_x + BODY_X, virt_y + BODY_Y, BODY_W, BODY_H],
+            font.height() as i32,
+            resources,
+        );
         let mut input_state = ModalInputState::new();
         input_state.seed_mouse_from_window(event_pump, transform);
         Self {
@@ -619,8 +629,7 @@ impl DebriefingPageState {
             frame,
             input_state,
             tooltip: TooltipState::new(),
-            scroll_line: 0,
-            scroll_drag_offset: None,
+            scroll_view,
         }
     }
 
@@ -637,23 +646,30 @@ impl DebriefingPageState {
             BodyFont::Debrief => resources.debrief_font_any(),
         }
         .expect("debriefing body requires its font");
-        let line_h = font.height() as i32;
-        let visible = (BODY_H / line_h).max(1) as usize;
-        let lines =
-            super::layout::wrap_text_for_box_font(font, &self.body, BODY_W - 20, usize::MAX).lines;
-        let max_scroll = lines.len().saturating_sub(visible);
+        let lines = super::layout::wrap_text_for_box_font(
+            font,
+            &self.body,
+            self.scroll_view.content_width() - 4,
+            usize::MAX,
+        )
+        .lines;
+        self.scroll_view.set_total(lines.len());
         let (events, transform) = super::layout::poll_events_with_transform(event_pump, renderer);
         self.transform = transform;
         for event in events {
             self.input_state.update_from_event(&event, self.transform);
+            if self.scroll_view.handle_event(
+                &event,
+                self.transform,
+                (
+                    self.input_state.virt_x as i32,
+                    self.input_state.virt_y as i32,
+                ),
+            ) {
+                continue;
+            }
             match event {
                 GameEvent::Quit => outcome = Some(PageOutcome::EmergencyEnd),
-                GameEvent::MouseWheel(delta) => {
-                    self.scroll_line = self
-                        .scroll_line
-                        .saturating_add_signed(-(delta as isize) * 3)
-                        .min(max_scroll);
-                }
                 GameEvent::KeyDown { keycode, .. }
                     if matches!(
                         keycode,
@@ -665,53 +681,8 @@ impl DebriefingPageState {
                             | Keycode::End
                     ) =>
                 {
-                    self.scroll_line = match keycode {
-                        Keycode::Up => self.scroll_line.saturating_sub(1),
-                        Keycode::Down => (self.scroll_line + 1).min(max_scroll),
-                        Keycode::PageUp => self.scroll_line.saturating_sub(visible),
-                        Keycode::PageDown => (self.scroll_line + visible).min(max_scroll),
-                        Keycode::Home => 0,
-                        Keycode::End => max_scroll,
-                        _ => unreachable!(),
-                    };
+                    self.scroll_view.navigate(keycode);
                 }
-                GameEvent::MouseDown(x, y, 1, _) => {
-                    let (x, y) = transform.from_screen(x, y);
-                    let in_track = max_scroll > 0
-                        && (self.virt_x + BODY_X + BODY_W - 16..self.virt_x + BODY_X + BODY_W)
-                            .contains(&x)
-                        && (self.virt_y + BODY_Y..self.virt_y + BODY_Y + BODY_H).contains(&y);
-                    self.scroll_drag_offset = None;
-                    if in_track {
-                        let relative_y = y - self.virt_y - BODY_Y;
-                        let usable = BODY_H - 2;
-                        let thumb_top =
-                            1 + (usable as usize * self.scroll_line / lines.len()) as i32;
-                        let min_thumb = resources.list_scrollbar[3].map_or(0, |s| s.height)
-                            + resources.list_scrollbar[5].map_or(0, |s| s.height);
-                        let thumb_h =
-                            ((usable as usize * visible / lines.len()) as i32).max(min_thumb);
-                        let offset = if (thumb_top..thumb_top + thumb_h).contains(&relative_y) {
-                            relative_y - thumb_top
-                        } else {
-                            thumb_h / 2
-                        };
-                        self.scroll_drag_offset = Some(offset);
-                        self.scroll_line =
-                            scroll_line_at_pointer(relative_y, offset, lines.len(), visible);
-                    }
-                }
-                GameEvent::MouseMove { x: _, y, .. } if self.scroll_drag_offset.is_some() => {
-                    let (_, y) = transform.from_screen(0, y);
-                    self.scroll_line = scroll_line_at_pointer(
-                        y - self.virt_y - BODY_Y,
-                        self.scroll_drag_offset.expect("drag offset was present"),
-                        lines.len(),
-                        visible,
-                    );
-                }
-                GameEvent::MouseUp(_, _, 1) => self.scroll_drag_offset = None,
-
                 GameEvent::KeyDown {
                     keycode: Keycode::Return,
                     ..
@@ -796,37 +767,27 @@ impl DebriefingPageState {
             BodyFont::Debrief => resources.debrief_font_any(),
         };
         if let Some(font) = body_font_ref {
-            let visible = (BODY_H / font.height() as i32).max(1) as usize;
-            let lines =
-                super::layout::wrap_text_for_box_font(font, &self.body, BODY_W - 20, usize::MAX)
-                    .lines;
-            self.scroll_line = self.scroll_line.min(lines.len().saturating_sub(visible));
-            let end = (self.scroll_line + visible).min(lines.len());
-            for (row, line) in lines[self.scroll_line..end].iter().enumerate() {
+            let lines = super::layout::wrap_text_for_box_font(
+                font,
+                &self.body,
+                self.scroll_view.content_width() - 4,
+                usize::MAX,
+            )
+            .lines;
+            self.scroll_view.set_total(lines.len());
+            for row in self.scroll_view.visible_range() {
                 super::layout::render_text_virt_font(
                     renderer,
                     font,
                     self.transform,
-                    line,
+                    &lines[row],
                     self.virt_x + BODY_X,
-                    self.virt_y + BODY_Y + row as i32 * font.height() as i32,
+                    self.scroll_view.row_y(row),
                 );
             }
             // Scrolling exposes the complete body; OK advances to statistics.
-            if lines.len() > visible {
-                widget_bridge::draw_listbox_scrollbar(
-                    renderer,
-                    self.transform,
-                    resources,
-                    self.virt_x + BODY_X + BODY_W - 16,
-                    self.virt_y + BODY_Y,
-                    16,
-                    BODY_H,
-                    self.scroll_line,
-                    visible,
-                    lines.len(),
-                );
-            }
+            self.scroll_view
+                .draw_scrollbar(renderer, self.transform, resources);
         }
 
         widget_bridge::draw_frame_buttons(renderer, resources, self.transform, &self.frame);
@@ -843,13 +804,6 @@ impl DebriefingPageState {
             c.draw(renderer, self.transform, &self.input_state);
         }
     }
-}
-
-// Invert the scrollbar's thumb-position mapping, preserving where it was grabbed.
-fn scroll_line_at_pointer(y: i32, grab_offset: i32, total: usize, visible: usize) -> usize {
-    let usable = (BODY_H - 2) as usize;
-    (((y - 1 - grab_offset).max(0) as usize * total + usable / 2) / usable)
-        .min(total.saturating_sub(visible))
 }
 
 #[cfg(test)]
@@ -914,16 +868,6 @@ mod tests {
             assert_eq!(matches!(state.phase, DebriefingPhase::Stat), was_on_stat);
             assert_eq!(state.body, "body");
         }
-    }
-
-    #[test]
-    fn scrollbar_drag_preserves_grab_position_and_reaches_both_ends() {
-        let total = 100;
-        let visible = 20;
-        let thumb_top = 1 + (BODY_H - 2) * 50 / total as i32;
-        assert_eq!(scroll_line_at_pointer(thumb_top + 8, 8, total, visible), 50);
-        assert_eq!(scroll_line_at_pointer(-100, 8, total, visible), 0);
-        assert_eq!(scroll_line_at_pointer(BODY_H + 100, 8, total, visible), 80);
     }
 
     #[test]
