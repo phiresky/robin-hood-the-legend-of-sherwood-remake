@@ -2052,6 +2052,7 @@ mod tests {
         .unwrap();
         let args = crate::main_entry::CliArgs {
             replay_data: Some(replay),
+            global_options: callbacks.application_context().clone(),
             ..Default::default()
         };
         let profiles = std::sync::Arc::clone(&bootstrap.loaded.assets.profile_manager);

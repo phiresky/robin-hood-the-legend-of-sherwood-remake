@@ -168,12 +168,7 @@ pub async fn run_rust_game_with_browser_preparation(
                 .await
                 .map_err(|error| format!("early replay preparation dropped: {error}"))??;
             crate::http_server::drain_pre_engine();
-            if args
-                .global_options
-                .replay_launches()
-                .pending_mission()
-                .is_some()
-            {
+            if context.replay_launches().pending_mission().is_some() {
                 // Supersession before mission construction releases and aborts
                 // the old prefix. The normal queue path takes the latest one.
                 drop(prepared);
