@@ -304,7 +304,8 @@ fn terminal_debriefing_page(
         && context
             .host
             .frontend
-            .gameplay_config
+            .preferences()
+            .gameplay_config()
             .show_achievement_debrief
         && let Some(results) = context.manager.engine.mission_achievement_results()
     {

@@ -1159,14 +1159,16 @@ pub(super) async fn setup_multiplayer_session(
                             %content_identity_sha256,
                             "browser multiplayer invitation (relay can observe participant IPs, connection times, and byte counts; game traffic remains end-to-end encrypted)"
                         );
-                        host.frontend.pending_console_output.push(format!(
-                            "Browser join code (expires after 30 minutes if unused): {}",
-                            ticket.encode()
-                        ));
                         host.frontend
-                            .pending_console_output
-                            .push(format!("Browser join link: {share_url}"));
-                        host.frontend.pending_console_output.push(format!(
+                            .diagnostics_mut()
+                            .queue_console_output(format!(
+                                "Browser join code (expires after 30 minutes if unused): {}",
+                                ticket.encode()
+                            ));
+                        host.frontend
+                            .diagnostics_mut()
+                            .queue_console_output(format!("Browser join link: {share_url}"));
+                        host.frontend.diagnostics_mut().queue_console_output(format!(
                             "Privacy: relay {} can observe IPs, timing, and byte counts; gameplay is end-to-end encrypted.",
                             ticket.payload().relay_url
                         ));

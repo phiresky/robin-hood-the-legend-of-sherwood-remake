@@ -410,7 +410,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let display_snapshot = host.frontend.engine_display.clone();
             let saved_camera = CameraPresentationPose::capture(host.frontend);
             let saved_draw_order = host.frontend.draw_order.clone();
-            let interpolation_enabled = host.frontend.native_refresh_presentation
+            let interpolation_enabled = host.frontend.preferences().native_refresh_presentation()
                 && !args.fast_forward
                 && !engine.is_fast_forward()
                 && !rewind_active;
@@ -427,7 +427,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             let render_engine = native_refresh_interpolation.engine().unwrap_or(engine);
             host.frontend.draw_order = render_engine.compute_display_order();
             sync_render_camera(host.frontend);
-            if host.frontend.info_displayed && resources.hud_fonts.is_some() {
+            if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
                 super::render::prepare_display_info(host, crate::window::process_uptime_ms());
             }
             render_frame(
@@ -569,7 +569,7 @@ impl InteractiveFrameFinish<'_, '_, '_> {
             sync_render_camera(host.frontend);
             let mut render_ctx =
                 presentation.render_context(resources, hud, input, ui, game, render_view_state);
-            if host.frontend.info_displayed && resources.hud_fonts.is_some() {
+            if host.frontend.diagnostics().info_displayed() && resources.hud_fonts.is_some() {
                 super::render::prepare_display_info(host, now_ms);
             }
             render_frame(
@@ -992,7 +992,7 @@ async fn pace_interactive_frame(
     let remaining_wait_ms =
         presentation_wait_ms(presentation_deadline_ms, crate::window::process_uptime_us());
     if remaining_wait_ms > 0 {
-        let refresh_presentation = host.frontend.native_refresh_presentation
+        let refresh_presentation = host.frontend.preferences().native_refresh_presentation()
             && target >= engine_api::FRAME_TIME_MS
             && !host.frontend.skip_render;
         if refresh_presentation {
@@ -1005,7 +1005,7 @@ async fn pace_interactive_frame(
             let mut schedule = RefreshPresentationSchedule::new(
                 presentation_start_us,
                 remaining_wait_ms * 1_000,
-                host.frontend.native_refresh_present_cost_us,
+                host.frontend.diagnostics().native_refresh_present_cost_us(),
             );
             while schedule.should_present(crate::window::process_uptime_us()) {
                 let present_start_us = crate::window::process_uptime_us();
@@ -1016,7 +1016,9 @@ async fn pace_interactive_frame(
                 let present_end_us = crate::window::process_uptime_us();
                 schedule.record_present(present_start_us, present_end_us);
             }
-            host.frontend.native_refresh_present_cost_us = schedule.observed_present_cost_us();
+            host.frontend
+                .diagnostics_mut()
+                .observe_present_cost(schedule.observed_present_cost_us());
             let residual_us = schedule.remaining_us(crate::window::process_uptime_us());
             if residual_us > 0 {
                 crate::window::sleep_ms(residual_us.div_ceil(1_000)).await;

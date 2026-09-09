@@ -208,15 +208,15 @@ pub(super) fn handle_console_overlay_events(
                 frame.record_applied_external_action(action);
                 tracing::info!("Loaded campaign values from {}", path.display());
                 host.frontend
-                    .pending_console_output
-                    .push("Campaign values loaded !".to_string());
+                    .diagnostics_mut()
+                    .queue_console_output("Campaign values loaded !".to_string());
             }
             Err(err) => {
                 tracing::error!("CAMPAIGN load failed for {}: {err:#}", path.display());
                 // Echo the open-failure message into the console.
                 host.frontend
-                    .pending_console_output
-                    .push("Kaputt !".to_string());
+                    .diagnostics_mut()
+                    .queue_console_output("Kaputt !".to_string());
             }
         }
     }

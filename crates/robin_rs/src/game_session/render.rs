@@ -231,7 +231,7 @@ pub(super) fn prepare_fixed_tick_hud(
         engine.display_ai_log_for_selected(host.frontend.selected_view_element);
     }
     ui.console_overlay
-        .drain_pending_output(&mut host.frontend.pending_console_output);
+        .consume_pending_output(host.frontend.diagnostics_mut().take_console_output());
     ui.console_overlay.tick_animation();
 }
 
@@ -862,22 +862,9 @@ fn median_filter_rgba_3x3(w: u32, h: u32, rgba: &[u8]) -> Vec<u8> {
 
 /// Sample diagnostics at the live presentation boundary, never during captures.
 pub(super) fn prepare_display_info(host: &mut HostPresentation<'_>, now: u32) {
-    let frame_ms = if host.frontend.display_info_last_tick_ms == 0 {
-        engine_api::FRAME_TIME_MS
-    } else {
-        now.saturating_sub(host.frontend.display_info_last_tick_ms)
-            .max(1)
-    };
-    host.frontend.display_info_last_tick_ms = now;
-    let cursor =
-        host.frontend.display_info_sample_cursor % host.frontend.display_info_frame_samples.len();
-    host.frontend.display_info_frame_samples[cursor] = frame_ms;
-    host.frontend.display_info_sample_cursor =
-        (cursor + 1) % host.frontend.display_info_frame_samples.len();
-    host.frontend.display_info_max_pending_sounds = host
-        .frontend
-        .display_info_max_pending_sounds
-        .max(host.sound.num_pending_sounds());
+    host.frontend
+        .diagnostics_mut()
+        .record_frame(now, host.sound.num_pending_sounds());
 }
 
 fn render_display_info_overlay(
@@ -890,13 +877,7 @@ fn render_display_info_overlay(
         renderer.is_gpu_phase(),
         "render_display_info_overlay runs after flush_base_layer"
     );
-    let sample_sum: u32 = host
-        .frontend
-        .display_info_frame_samples
-        .iter()
-        .copied()
-        .sum();
-    let avg_ms = (sample_sum / host.frontend.display_info_frame_samples.len() as u32).max(1);
+    let avg_ms = host.frontend.diagnostics().average_frame_ms();
     let fps = 1000 / avg_ms;
 
     let sw = renderer.screen_width() as i32;
@@ -966,7 +947,7 @@ fn render_display_info_overlay(
         &format!(
             "PS: {:4} MAX: {:4}",
             host.sound.num_pending_sounds(),
-            host.frontend.display_info_max_pending_sounds
+            host.frontend.diagnostics().max_pending_sounds()
         ),
         left - 24,
         top + 48,
@@ -1053,7 +1034,7 @@ pub(super) fn update_mouse_and_cursor(
         .engine_display
         .minimap()
         .is_over_widget(mouse_screen)
-        || host.frontend.pointer_capture.minimap_drag_active();
+        || host.frontend.pointer_capture().minimap_drag_active();
     let mut new_cursor = if portrait_hit.is_some() || over_minimap {
         engine_resource_ids::RHMOUSE_DEFAULT
     } else if let Some(mouse_map) = host.frontend.viewport.screen_to_map(mouse_screen) {
@@ -1547,8 +1528,12 @@ pub(super) fn render_frame(
         Some(titbit_renderer),
         shift_held,
     );
-    if host.frontend.planning.enabled() {
-        crate::touch_plan_hud::render(renderer, hud_fonts, host.frontend.planning.touch_latched());
+    if host.frontend.planning().enabled() {
+        crate::touch_plan_hud::render(
+            renderer,
+            hud_fonts,
+            host.frontend.planning().touch_latched(),
+        );
     }
 
     // ── GPU phase: blazon-bar / requirements icon strips ──
@@ -1870,7 +1855,8 @@ pub(super) fn render_frame(
                                     action,
                                     engine.sim_config().item_gameplay,
                                     host.frontend
-                                        .gameplay_config
+                                        .preferences()
+                                        .gameplay_config()
                                         .item_previews
                                         .effective_for_original_parity(
                                             engine.original_rng_replay_cursor().is_some(),
@@ -1925,7 +1911,7 @@ pub(super) fn render_frame(
         crate::achievement_hud::render_trackers(
             engine,
             local_seat,
-            host.frontend.gameplay_config,
+            host.frontend.preferences().gameplay_config(),
             renderer,
             fonts,
         );
@@ -1943,8 +1929,8 @@ pub(super) fn render_frame(
 
         // Dev-only AI speech-log overlay — draws recent accepted
         // remarks as `(prefix) Remark` lines in a top-centred band.
-        // Gated on `host.frontend.info_displayed`.
-        if host.frontend.info_displayed {
+        // Gated on `host.frontend.diagnostics().info_displayed()`.
+        if host.frontend.diagnostics().info_displayed() {
             render_display_info_overlay(host, renderer, fonts, display_info_elapsed_secs);
             crate::hud_text::render_screen_remarks(engine, renderer, fonts);
         }
@@ -2002,7 +1988,7 @@ pub(super) fn render_frame(
     };
     // The renderer owns pulse timing independently of simulation and replay time.
     let cursor_effect = cursor_renderer.quick_action_recording_effect(
-        host.frontend.quick_action_cursor_pulse,
+        host.frontend.preferences().quick_action_cursor_pulse(),
         engine.is_recording_macro(),
     );
     cursor_renderer.render_with_effect(
@@ -2116,19 +2102,16 @@ mod tests {
     fn draw_capability_reads_do_not_sample_live_diagnostics() {
         let mut host = presentation_host();
         prepare_display_info(&mut host.presentation(), 100);
-        let samples = host.frontend.display_info_frame_samples;
-        let cursor = host.frontend.display_info_sample_cursor;
-        let last_tick = host.frontend.display_info_last_tick_ms;
+        let observations = host.frontend.diagnostics().clone();
         for _ in 0..100 {
             let presentation = host.presentation();
             let draw = presentation.draw();
-            assert_eq!(draw.frontend.display_info_frame_samples, samples);
-            assert_eq!(draw.frontend.display_info_sample_cursor, cursor);
-            assert_eq!(draw.frontend.display_info_last_tick_ms, last_tick);
+            assert_eq!(draw.frontend.diagnostics(), &observations);
         }
         prepare_display_info(&mut host.presentation(), 116);
-        assert_eq!(host.frontend.display_info_frame_samples[cursor], 16);
-        assert_eq!(host.frontend.display_info_last_tick_ms, 116);
+        let mut expected = observations;
+        expected.record_frame(116, 0);
+        assert_eq!(host.frontend.diagnostics(), &expected);
     }
 
     #[test]

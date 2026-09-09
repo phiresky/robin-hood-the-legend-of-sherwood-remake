@@ -61,7 +61,8 @@ pub(crate) fn set_stone_distraction_preview(engine: &Engine, host: &mut Host, ce
         && item_preview_enabled(
             engine,
             host.frontend
-                .gameplay_config
+                .preferences()
+                .gameplay_config()
                 .item_previews
                 .stone_distraction_area,
         )
@@ -1171,7 +1172,11 @@ fn cursor_for_apple(
                     }
                     if item_preview_enabled(
                         engine,
-                        host.frontend.gameplay_config.item_previews.apple_effect,
+                        host.frontend
+                            .preferences()
+                            .gameplay_config()
+                            .item_previews
+                            .apple_effect,
                     ) && let Some(center) = target_pos
                     {
                         let (key, text) = if engine
@@ -1281,7 +1286,8 @@ fn cursor_for_stone(
                     if item_preview_enabled(
                         engine,
                         host.frontend
-                            .gameplay_config
+                            .preferences()
+                            .gameplay_config()
                             .item_previews
                             .stone_direct_effect,
                     ) && let Some(center) = target_pos
@@ -1393,7 +1399,11 @@ fn cursor_for_purse(
                 }
                 if item_preview_enabled(
                     engine,
-                    host.frontend.gameplay_config.item_previews.purse_effect,
+                    host.frontend
+                        .preferences()
+                        .gameplay_config()
+                        .item_previews
+                        .purse_effect,
                 ) && host.frontend.trajectory_preview.is_valid()
                 {
                     set_item_effect_preview(
@@ -1490,7 +1500,11 @@ fn cursor_for_wasp_nest(
                 }
                 if item_preview_enabled(
                     engine,
-                    host.frontend.gameplay_config.item_previews.wasp_area,
+                    host.frontend
+                        .preferences()
+                        .gameplay_config()
+                        .item_previews
+                        .wasp_area,
                 ) && host.frontend.trajectory_preview.is_valid()
                 {
                     let radius = if engine.sim_config().item_gameplay.wasp_reliable_acquisition {
@@ -1655,12 +1669,17 @@ fn cursor_for_net(
                 }
                 let preview_capture = item_preview_enabled(
                     engine,
-                    host.frontend.gameplay_config.item_previews.net_capture_area,
+                    host.frontend
+                        .preferences()
+                        .gameplay_config()
+                        .item_previews
+                        .net_capture_area,
                 );
                 let preview_crumple = item_preview_enabled(
                     engine,
                     host.frontend
-                        .gameplay_config
+                        .preferences()
+                        .gameplay_config()
                         .item_previews
                         .net_crumple_prediction,
                 );
@@ -1787,7 +1806,11 @@ fn cursor_for_ale(
         if engine.is_mouse_sector_valid_for_ground_target(mouse_map_pt) {
             if item_preview_enabled(
                 engine,
-                host.frontend.gameplay_config.item_previews.ale_effect,
+                host.frontend
+                    .preferences()
+                    .gameplay_config()
+                    .item_previews
+                    .ale_effect,
             ) {
                 let text = if engine.sim_config().item_gameplay.ale_reliable_distraction {
                     "Ale: zero-interest outdoor non-VIPs also accept at potency 20; authored/drunk behavior unchanged"
