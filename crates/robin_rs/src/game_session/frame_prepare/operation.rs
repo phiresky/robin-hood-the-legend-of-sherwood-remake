@@ -121,7 +121,7 @@ pub(super) async fn process_operation_and_save(
     let mission_id = current_mission_id(manager.engine.campaign(), profiles);
     let autosave_allowed = crate::autosave::session_allows_autosave(
         callbacks.autosave_enabled(),
-        host.transport.net.is_some(),
+        host.transport.net().is_some(),
         runtime.replay_player.is_some(),
         args.headless,
     );
