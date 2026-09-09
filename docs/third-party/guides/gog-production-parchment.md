@@ -1,25 +1,25 @@
-# GOG — camp production and the results parchment
+# “PRODUCED NOTHING” – WHAT GIVES
 
-- Original source: ["PRODUCED NOTHING" - WHAT GIVES](https://www.gog.com/forum/robin_hood_legend_of_sherwood/produced_nothing_what_gives)
-- Author / publication: TWOMLOW and odd_customer; GOG forum.
-- Language / date: English; opening post 2023-02-18, reply 2023-12-29.
-- Access: Full thread retrieved directly (2 posts)
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete post-by-post notes (GOG forum thread, not transcribed)
+- **Source:** [GOG.com forum — Robin Hood Legend of Sherwood](https://www.gog.com/forum/robin_hood_legend_of_sherwood/produced_nothing_what_gives)
+- **Thread:** “PRODUCED NOTHING” - WHAT GIVES
+- **Language:** English
+- **Posts:** 2
+- **Retrieved:** 2026-09-09
 
-TWOMLOW reports assigning characters to make or gather supplies but receiving no production after a mission. odd_customer replies that production appears to occur during story missions rather than generic money or shield missions, and says the parchment retains the production results of the last story mission.
+The following is the complete available thread text, converted from the archived HTML/text rendering. Site navigation, account controls, profile menus, and other unrelated GOG page chrome have been omitted.
 
-The parchment detail is a useful distinction between actual inventory changes and the displayed report. However, the thread contains no follow-up confirmation from the questioner or controlled comparison of mission types. Treat the explanation as a player claim to test alongside the [existing camp-production discussion](steam-camp-production-report.md).
+## TWOMLOW
 
-## Detailed notes
+**New User** · Registered: Jun 2013 · From United Kingdom  
+**Posted:** February 18, 2023
 
-Page facts: GOG.com forum thread "\"PRODUCED NOTHING\" - WHAT GIVES" in the Robin Hood Legend of Sherwood forum; 2 posts; not marked solved; opened February 18, 2023. Retrieved directly on 2026-09-09 (the page chrome was served in French, the posts are in English). Forum posts are not licensed for reproduction; summarised post by post.
+> In between missions setting characters to make arrowheads, purses, collect apples and herbs, etc BUT when I return from mission nothing has been produced!!!
+>
+> Anyone have any ideas please???
 
-### Posts
+## odd_customer
 
-1. **TWOMLOW** (New User, registered Jun 2013, United Kingdom), posted February 18, 2023, post 1. Between missions they set characters to make arrowheads, purses, collect apples and herbs, etc., but when they return from a mission nothing has been produced. Asks for ideas.
-2. **odd_customer** (New User, registered Jan 2011, Finland), posted December 29, 2023, post 2. Production seems to occur only during missions that advance the plot, not during generic missions for money or shields. The production parchment tells what was produced during the last plot mission. They find no mention of this in the manual, but say the question has been asked and answered before in this forum.
+**New User** · Registered: Jan 2011 · From Finland  
+**Posted:** December 29, 2023
 
-No further replies; TWOMLOW did not confirm the explanation.
+> Production seems to occur only during missions that advance the plot, not during generic missions for money or shields. The production parchment tells what was produced during the last plot mission. I find no mention of this in the manual. However, the question has been asked and answered before in this forum.

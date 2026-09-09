@@ -1,29 +1,67 @@
-# GOG — intermittent city-mission save crashes
+# Saving progress in a mission crashes the game
 
-- Original source: [Saving progress in a mission crashes the game](https://www.gog.com/forum/robin_hood_legend_of_sherwood/saving_progress_in_a_mission_crashes_the_game)
-- Author / publication: janz5, ConjurerDragon, and Kvothe43; GOG forum.
-- Language / date: English; opened 2016-10-15, last reply 2025-08-26.
-- Access: Full thread (all 6 posts) retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete post-by-post notes (forum thread, not transcribed)
+- Source: [GOG forum — “Saving progress in a mission crashes the game”](https://www.gog.com/forum/robin_hood_legend_of_sherwood/saving_progress_in_a_mission_crashes_the_game)
+- Forum: Robin Hood Legend of Sherwood
+- Thread opened by **janz5** on October 15, 2016; last post by **Kvothe43** on August 26, 2025
+- Language: English
+- The page contains six posts. No post is marked as the solution.
 
-janz5 reports intermittent saving crashes under Windows 10 with DxWnd, sometimes after incapacitating and hiding enemies. Follow-up details specify version 1.1 installed under C:\GOG Games, successful saving in Sherwood encounters, and failures during city missions. Both quick and normal saves can fail, with either new or existing filenames.
+## Original text
 
-ConjurerDragon asks about permissions, compatibility settings, background programs, and disk space. None is established as the cause. A later respondent reports the same symptom. This is stronger reproduction context than a generic missing-save complaint, but the inspected discussion supplies no confirmed fix.
+### Post 1 — janz5 — October 15, 2016
 
-## Detailed notes
+Hi,
 
-Page facts: GOG forum thread "Saving progress in a mission crashes the game" in the Robin Hood Legend of Sherwood subforum; 6 posts on one page; opened by janz5 on 2016-10-15, last post 2025-08-26; no post marked as the solution. Retrieved directly from gog.com on 2026-09-09. Forum threads are not licensed for reproduction, so the posts are summarised post by post.
+I have bought the game and installed it on W10, in a default install directory. The game was slow, but I have solved it using the dxwnd method described somewhere in this forum.
 
-| # | Poster (profile details shown) | Date | Content |
-|---|---|---|---|
-| 1 | janz5 (New User; registered Apr 2016; Czech Republic; signs "jan") | 2016-10-15 | Bought and installed the game on Windows 10 in the default install directory. Game was slow; fixed with the DxWnd method described elsewhere on the forum. Separate problem: sometimes saving crashes the game to desktop. It always crashes at certain points within any mission, for example after knocking out several enemies and hiding them in a nearby building; the crash happens while in the save-game dialog. Cannot predict when, but it recurs at the same point. Continuing without saving allows saving later, but a crash can recur at another later point, losing all progress. Asks whether others have it. |
-| 2 | ConjurerDragon (Generalissimus; registered Sep 2011; Germany) | 2018-05-21 | On Windows 7 and newer, older games installed under C:\Programs need administrator rights to run properly, otherwise they may lack rights to alter their own files. Recommends installing elsewhere (own install is K:\Spiele\Robin Hood). Also suggests checking the game is version 1.1, shown in the upper right of the screen when starting a game. |
-| 3 | janz5 | 2018-06-11 | Running version 1.1. Installed in C:\GOG Games\, the default GOG location, not C:\Program Files; the program still needs administrator rights to run. Clarifies the problem is intermittent, not total: saving in the Sherwood mini-games never fails; failures occur only within the city missions and are unpredictable. Asks whether ConjurerDragon uses compatibility settings. |
-| 4 | ConjurerDragon | 2018-06-11 | Does not use Windows 10. Has "Windows 98/Me" compatibility mode enabled and "enhanced text services" disabled (German: "erweiterte Textdienste"). Notes city-mission maps are larger and asks: enough free disk space? Normal saves only, or quicksaves too? Other background programs such as the Windows Indexing Service? Does it fail only when overwriting an existing savegame name (rights issue) or also with a completely new name? |
-| 5 | janz5 | 2018-06-13 | Asked about compatibility settings because it reportedly helped another problem; will try the Win98/Me setting, which had not been tried. About 10+ GB free. Both normal and quick saves fail, and it makes no difference whether the name is existing or new. Concludes it is probably his PC, maybe an old HDD. Thanks for the advice. |
-| 6 | Kvothe43 (New User; registered Dec 2013; Spain) | 2025-08-26 | "Very late to the party", but says it was definitely not janz5's PC: has the exact same issue. Asks whether it was ever solved. |
+But my problem is a different one - sometimes, when I try to save the progress, the game crashes and exits. What is interesting, it crashes always at certain points within any mission. For example, I deal with a certain situation in the game like knocking out several enemies and hiding them in any building around that place, but when I want to save the progress, the game crashes while in the save game dialog. I do not know when this would happen, it just happens at the same point in a game.
 
-Facts usable for parity work: crash reproduces at consistent game states within city missions; both quick save and dialog save paths crash; Sherwood mini-game saves never crash; version 1.1 GOG build under DxWnd on Windows 10; a second independent report seven years later with no fix.
+If I continue in the game withou saving, I can save it later. But even this is not always help, because the crash may happen again at another point later in the game and I lose all the progress so far.
+
+Do you have the similar problems? Can anybody help, please? Thank you.
+
+jan
+
+### Post 2 — ConjurerDragon — May 21, 2018
+
+In Windows 7 and newer, if you install older games in `C:\Programs\...` they need administrator rights to run properly. Without they might not have the rights to alter some of their files.
+
+Best to install games elsewhere. I have for example installed the game in:
+
+`K:\Spiele\Robin Hood`
+
+And perhaps check that you are running version 1.1 of the game (is shown in the upper right of the screen when you start a game).
+
+### Post 3 — janz5 — June 11, 2018
+
+Hi,
+
+Thank you for the reply.
+
+I am running version 1.1 and the game is installed in `C:\GOG Games\` directory, which I believe is a default install option for games from GOG, because all my games get installed there, not `C\Program Files`. The program, however, still needs administrator rights to run.
+
+The problem is not with "not being able to save games at all", but rather sometimes. Moreover if I save in the minigames taking place in Sherwood, there is no problem at all. It is only within the city missions, where the problem occurs and it is not predictable.
+
+Are you running the game with any compatibility settings?
+
+### Post 4 — ConjurerDragon — June 11, 2018
+
+I do not use Windows 10 so my compatibility options may be different than yours. I have checked the boxes for the game to run in "Windows 98/Me" compatiblity mode and to disable "enhanced textservices" (or whatever else that is called in english - in german "erweiterte Textdienste").
+
+The map is larger in those citymissions - you do have enough free space on the harddisk where you installed the game? Is that just normal saving but quicksaves too that cause trouble? Do you have any other programs running in the background (e.g. the Windows Indexing Service)? Do you have trouble saving only when trying to save a game while using a name for the savegame that already exists (= you lack the rights to overwrite an existing savegame)? Or does it happen too, if you try to save a game with a completely new name?
+
+### Post 5 — janz5 — June 13, 2018
+
+I asked about the compatibility settings because I have seen somewhere that it helped with some other problem, so I thought, hey, maybe this will work. I will try the settings you have, I think I have not tried the win98/me settings.
+
+I have somthing like 10+ GB of free space on harddrive. Problem is caused by normal and quick saving alike and the problem is regardless if I use an existing name or a new name for the savegame.
+
+It just seems that the problem is with my PC. Maybe an old HDD or something like that.
+
+Thanks for the advice.
+
+### Post 6 — Kvothe43 — August 26, 2025
+
+I am very late to the party but this was definitely not your PC's fault, I have the exact same issue. Did you ever solve it?
+
+> **Editorial note:** The HTML source repeats earlier posts as quoted text inside later posts. Those repeated copies are omitted here; each unique post is retained once. Site navigation, account controls, ads, and footer content are omitted.

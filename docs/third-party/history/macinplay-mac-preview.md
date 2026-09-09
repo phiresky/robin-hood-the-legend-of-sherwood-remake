@@ -2,47 +2,48 @@
 
 - Original source: [macinplay — German Mac preview](https://macinplay.de/spiele-tests/macintosh-games/robin-hood-die-legende-von-sherwood-vorschau/)
 - Author / publication: Sven Wernicke / macinplay
-- Language / date: German; publication date not verified
-- Access: Article text inspected
+- Language / date: German; 2010-05-13
+- Access: Complete article text inspected in the original HTML
 - Checked: 2026-09-09
-- Format: header notes, then the page text converted from the original HTML
+- Format: complete English translation followed by the preserved German original
 
-## Converted text from the original HTML
+## English translation
 
-### history__macinplay-mac-preview.html
+### Robin Hood: The Legend of Sherwood (Preview)
 
-_Source: `originals/history__macinplay-mac-preview.html`._
+What do Errol Flynn, Kevin Costner, and Cary Elwes have in common? That’s right: in more or less serious film adaptations of “Robin Hood,” they all played the heroes in tights. As an ordinary person one will not earn this honor, but soon Mac players will at least have the opportunity to slip virtually into the role of Robin Hood and his friends Friar Tuck, Lady Marian, or Little John. e.p.i.c. interactive will shortly release the real-time strategy game “Robin Hood: The Legend of Sherwood,” which has been available for PC since November 2002. The traditional German game developer **Spellbound** created the game and already received very good reviews from the specialist press at the time.
 
-Zum Inhalt springen
+As if time had stood still, not much has been changed for the Mac version. Robin Hood: The Legend of Sherwood is a classic 2D real-time strategy game. This means that the player is given the impression of a pseudo-3D environment, although in reality it is a 2D surface that can be explored.
 
-[](https://macinplay.de/)
+As the name already suggests, the adventure takes place in 11th-century England. King Richard the Lionheart is currently fighting in the Crusades to “civilize” the Orient, while his brother Prince John is stirring up unrest in his own realm. He oppresses the population with the aim of seizing power for himself. But fortunately there is a man who can restore justice—a man who is an outlaw, wears tights, and lives in the forest—his name: Robin of Locksley. When he returns home from the Crusades, he angrily discovers that the Norman barbarians are oppressing and unjustly exploiting the innocent, poor peasants. His Anglo-Saxon father also fell victim to assassination—and Robin promptly decides to free the poor, fleece the rich, and wait for the return of the Lionheart.
 
-[macinplay.de](https://macinplay.de/)
+Just as the legend of one of the Middle Ages’ first resistance fighters already tells it, the game continues the events as an ongoing story. The full version will contain 30 missions, most of them non-linear, leaving the player to decide which tasks to complete and when. Using an overview map, a section can be started, and up to five characters can explore the expansive environments or use the special abilities of Robin, Tuck, or Little John. In the retail version, after the first missions a camp is established in the infamous Sherwood Forest, becoming the hub of all activities. Weapons for future levels can be crafted here, new friends can be won over, and the characters who can then be controlled in the actual game mission can be selected. It is also possible to train your own soldiers or yourself in order to have any chance against the later enemies.
 
-Games, für Mac, iPhone, iPad und Apple TV
+Robin Hood places great emphasis on variety, however: besides normal attacks, you will often have to plan an ambush, sneak into castles, protect or raid convoys, and even prevent Marian’s marriage to Guy of Gisbourne. Up to nine different characters can be selected, five of whom are heroes who can be selected and controlled via hotkeys or the mouse. Helpful scrolls containing tips and advice for completing missions are always found in the English areas. In addition, emotion symbols and fields of vision represent the enemies’ thoughts and viewing directions—so you can immediately see whether Robin and his friends have been discovered. If a fight does break out, your hero automatically defends himself. Using various character-specific abilities, talking to other figures, and interacting with the environment (climbing, jumping, etc.) are also very easy. Based on the demo, the Mac version appears to be optimized for one-button mouse control; it is still unclear whether the full version will also support two-button mice. What is certain, however, is that the controls are extremely logical and intuitive—even inexperienced players will quickly find their way around, although the retail version contains no tutorial.
 
-Menü
+The Mac demo did not yet allow this to be set, but the full version will offer three different difficulty levels. These are very sensible, too, because Robin Hood: The Legend of Sherwood is not exactly simple. Instead, the missions are repeatedly a substantial challenge, and genre fans will be entertained appropriately. Beginners, however, will have to repeat certain tasks several times before they master them.
 
-  * [News](/)
-  * [Hardware-Tests](/hardware-tests)
-  * [Features](/features/)
-  * [App-Tests ](/anwendungen-tests/)
-    * [Macintosh-Apps](/anwendungen-tests/macintosh/)
-    * [iPhone-Apps](/anwendungen-tests/iphone-ipod-touch/)
-    * [iPad-Apps](/anwendungen-tests/ipad/)
-  * [Spiele-Tests ](/spiele-tests/)
-    * [Macintosh-Games](/spiele-tests/macintosh-games/)
-    * [iPhone-Games](/spiele-tests/iphone-ipod-touch/)
-    * [iPad-Games](/spiele-tests/ipad/)
-  * [Über macinplay ](https://macinplay.de/about/)
-    * [Das Team](https://macinplay.de/about/team/)
-  * [Impressum](https://macinplay.de/about/impressum/)
-  * [Datenschutz](https://macinplay.de/about/datenschutzerklaerung/)
+Technically, Robin Hood is naturally not quite up to date because of its age. Nevertheless, the lovingly drawn landscapes still impress with their details, animations, and areas that create a sense of recognition somewhere. It is also possible to zoom in closer to the action; at one of the lower screen resolutions (640×480), the figures can look quite pixelated, while higher resolutions up to 1024×768 are available. The full version will be entirely in German, meaning that Robin and company will each have German voice actors. Most of these were already well received on the PC. The vastly different system requirements, on the other hand, are incomprehensible. While the Windows version of Robin Hood: The Legend of Sherwood already ran on a 233 MHz Pentium (smoothly from around 500 MHz), the Mac version requires a 300 MHz G3, or preferably a 500 MHz G4. Yet even on a 700 MHz G3 the game still ran somewhat jerkily at a low screen resolution (640×480). Fortunately, almost every Mac player nowadays has a well-equipped computer—there should be no problems at a clock speed of 800 MHz or more.
 
+### Conclusion
 
-# Robin Hood: Die Legende von Sherwood (Vorschau)
+Considering the Mac demo and the full PC version, we can look forward to an enjoyable, if not entirely easy, 2D real-time strategy game. Although the title cannot be compared with fully 3D games such as “[Command & Conquer: Generals](http://www.macinplay.de/wordpress/spiele-tests/macintosh-games/command-conquer-generale/),” “Robin Hood” clearly proves that classic 2D environments can still be attractive and rich in gameplay. Thanks to the likeable story, the varied and non-linear missions, the appealing graphics, and the perfectly fitting sound, you will not want to leave the computer for many hours. The controls will be quickly understood, and despite the complexity you are unlikely to feel overwhelmed. Anyone who likes Robin Hood will not find an alternative anyway. “Robin Hood: The Legend of Sherwood” is certainly no graphical showpiece, but it is an exciting real-time strategy game with gameplay depth and a few pinches of humor. So look forward to a successful adventure. The only thing missing for longer-lasting fun will be a multiplayer mode.
 
-Was haben Errol Flynn, Kevin Costner und Cary Elwes miteinander gemeinsam? Richtig, sie alle waren in mehr oder weniger ernsthaften „Robin Hood"–Kinoverfilmungen die Helden in Strumpfhosen. Als normalsterblicher Mensch wird man zwar nicht zu dieser Ehre kommen, doch demnächst werden Mac-Spieler die Möglichkeit erhalten, zumindest virtuell in die Rolle von Robin Hood und seinen Freunden Bruder Tuck, Lady Marian oder Little John zu schlüpfen. e.p.i.c. interactive veröffentlicht in Kürze das Echtzeitstrategiespiel „Robin Hood: Die Legende von Sherwood", welches seit November 2002 für den PC erhältlich ist. Die traditionsreiche deutsche Spieleschmiede **Spellbound** entwickelte das Game und konnte schon damals von der Fachpresse sehr gute Wertungen einheimsen.
+_Sven Wernicke_
+
+### Availability
+
+The product is available [in the macinplay shop](http://astore.amazon.de/macinplayde-21/search?__mk_de_DE=ÅMÅZÕÑ&node=87&keywords=Robin+Hood%3A+Die+Legende+von+Sherwood&x=0&y=0&preview=&tag=macinplayde-21).
+
+### Images (click for more)
+
+Do you have your own images of it? [Send them to us!](mailto:screenshots@macinplay.de)
+
+## Original text
+
+### Robin Hood: Die Legende von Sherwood (Vorschau)
+
+Was haben Errol Flynn, Kevin Costner und Cary Elwes miteinander gemeinsam? Richtig, sie alle waren in mehr oder weniger ernsthaften „Robin Hood“–Kinoverfilmungen die Helden in Strumpfhosen. Als normalsterblicher Mensch wird man zwar nicht zu dieser Ehre kommen, doch demnächst werden Mac-Spieler die Möglichkeit erhalten, zumindest virtuell in die Rolle von Robin Hood und seinen Freunden Bruder Tuck, Lady Marian oder Little John zu schlüpfen. e.p.i.c. interactive veröffentlicht in Kürze das Echtzeitstrategiespiel „Robin Hood: Die Legende von Sherwood“, welches seit November 2002 für den PC erhältlich ist. Die traditionsreiche deutsche Spieleschmiede **Spellbound** entwickelte das Game und konnte schon damals von der Fachpresse sehr gute Wertungen einheimsen.
 
 Als wäre die Zeit stehen geblieben wurde an der Mac-Version nicht viel geändert. Bei Robin Hood: Die Legende von Sherwood handelt es sich um ein klassisches 2D-Echtzeitstrategiespiel. Dies bedeutet, dass dem Spieler eine Pseudo-3D-Umgebung suggeriert wird, es sich jedoch in Wirklichkeit um eine 2D-Oberfläche handelt, die erkundet werden kann.
 
@@ -58,7 +59,7 @@ Technisch ist Robin Hood natürlich aufgrund des Alters nicht ganz auf dem aktue
 
 ### Fazit:
 
-Betrachtet man die Mac-Demo und die PC-Vollversion, so können wir uns auf ein spaßiges, wenn auch nicht ganz einfaches, 2D-Echtzeitstrategiespiel freuen. Zwar kann man den Titel nicht mit komplett in 3D dargestellten Spielen wie „[Command & Conquer: Generäle](http://www.macinplay.de/wordpress/spiele-tests/macintosh-games/command-conquer-generale/)" vergleichen, doch „Robin Hood" beweist deutlich, dass auch klassische 2D-Umgebungen nach wie vor attraktiv und spielerisch gehaltvoll sein können. Dank der sympathischen Story, den abwechslungsreichen und nicht linearen Missionen, den ansehnlichen Grafiken und der perfekt dazu passenden Akustik wird man viele Stunden nicht vom Rechner loskommen. Die Steuerung wird man schnell verstanden haben und trotz der Komplexität nicht dazu neigen, sich überfordert zu fühlen. Wer Robin Hood mag, wird ohnehin keine Alternative finden. „Robin Hood: Die Legende von Sherwood" ist mit Sicherheit kein Grafikblender, dafür aber ein spannendes Echtzeitstrategiespiel mit spielerischem Tiefgang und einigen Prisen Humor. Freut euch also auf ein gelungenes Abenteuer. Für längeren Spielspaß wird man einzig einen Mehrspielermodus vermissen.
+Betrachtet man die Mac-Demo und die PC-Vollversion, so können wir uns auf ein spaßiges, wenn auch nicht ganz einfaches, 2D-Echtzeitstrategiespiel freuen. Zwar kann man den Titel nicht mit komplett in 3D dargestellten Spielen wie „[Command & Conquer: Generäle](http://www.macinplay.de/wordpress/spiele-tests/macintosh-games/command-conquer-generale/)“ vergleichen, doch „Robin Hood“ beweist deutlich, dass auch klassische 2D-Umgebungen nach wie vor attraktiv und spielerisch gehaltvoll sein können. Dank der sympathischen Story, den abwechslungsreichen und nicht linearen Missionen, den ansehnlichen Grafiken und der perfekt dazu passenden Akustik wird man viele Stunden nicht vom Rechner loskommen. Die Steuerung wird man schnell verstanden haben und trotz der Komplexität nicht dazu neigen, sich überfordert zu fühlen. Wer Robin Hood mag, wird ohnehin keine Alternative finden. „Robin Hood: Die Legende von Sherwood“ ist mit Sicherheit kein Grafikblender, dafür aber ein spannendes Echtzeitstrategiespiel mit spielerischem Tiefgang und einigen Prisen Humor. Freut euch also auf ein gelungenes Abenteuer. Für längeren Spielspaß wird man einzig einen Mehrspielermodus vermissen.
 
 _Sven Wernicke_
 

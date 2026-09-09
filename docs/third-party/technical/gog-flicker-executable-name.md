@@ -1,33 +1,81 @@
-# GOG — executable naming and flickering report
+# Movies and menu and all animated things in-game flickering? Here's a solution! (Win7)
 
-- Original source: [Movies and menu and all animated things in-game flickering? Here's a solution! (Win7)](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7)
-- Author / publication: Tarthur, Korell, and redacity; GOG forum.
-- Language / date: English; 2014-06-30 to 2014-12-31.
-- Access: Full thread (all 5 posts) retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete post-by-post notes (forum thread, not transcribed)
+- **Source:** [GOG forum thread](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7)
+- **Forum:** Robin Hood Legend of Sherwood
+- **Posts:** 5
+- **Date range:** June 30, 2014 – December 31, 2014
+- **Language:** English
 
-Tarthur reports that renaming Game.exe stopped intro and menu flickering on a Windows 7 laptop with a GeForce 630M. Further testing says the replacement name need not follow a particular pattern. redacity independently reports success.
+## Post 1
 
-Korell proposes that the new filename avoids an NVIDIA driver profile associated with Game.exe, and reports inspecting such a profile with NVIDIA Inspector. That mechanism remains a participant’s explanation rather than a proven diagnosis. The opening’s prediction about in-game character flicker was inferred from Desperados before entering a mission; it should not be counted as an observed Robin Hood symptom.
+**Tarthur** — New User; registered October 2012; from Finland. Posted June 30, 2014. [Permalink](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7/post1)
 
-## Detailed notes
+My problem was, that the intro movie was flickering, and also all the menus in the starting screen. Didn't bother to go ingame, because I had this exact same problem with Desperados - Wanted Dead or Alive, which is another game from the company that made this game. I KNOW the terrain would have been OK, but all the characters (animated things) flicker. Guess this is their signature bug/error in their games, heh?
 
-Page facts: GOG forum thread "Movies and menu and all animated things in-game flickering? Here's a solution! (Win7)" in the Robin Hood Legend of Sherwood subforum; 5 posts on a single page; opened by Tarthur on 2014-06-30, last post 2014-12-31; no post marked as the solution. Retrieved directly from gog.com on 2026-09-09. Forum threads are not licensed for reproduction, so the posts are summarised post by post.
+The solution is: **RENAME YOUR GAME.EXE.** I renamed it `Robinhood_game.exe` (and the desperados game `desperados_game.exe`), and everything works like a charm.
 
-| # | Poster (profile details shown) | Date | Content |
-|---|---|---|---|
-| 1 | Tarthur (New User; registered Oct 2012; Finland) | 2014-06-30 | Intro movie and all start-screen menus flickered. Did not go in-game because the same problem occurred with Desperados: Wanted Dead or Alive (same developer); assumes terrain would be fine but all animated things (characters) would flicker, calling it the developer's "signature bug". Solution: rename Game.exe. Renamed it Robinhood_game.exe (and Desperados to desperados_game.exe); "everything works like a charm". Hardware: Lenovo ThinkPad Edge, Windows 7, Intel i7, 8 GB RAM, NVIDIA GeForce 630M. |
-| 2 | Korell (registered Jun 2009; United Kingdom) | 2014-07-01 | Asks whether the name must be `<name>_game.exe` or can be anything. Hypothesis: the issue is caused by NVIDIA game profiles in the driver software; renaming the executable stops the driver applying the per-game profile, so the general settings are used instead. |
-| 3 | Tarthur | 2014-08-16 (edited same day) | Any name works; tried `platypushood_game` successfully. Wanted to test reverting to game.exe but found a second game.exe with 0 bytes already in the folder and did not delete it; suggests others check whether they have two game.exe files. Guesses the two get mixed up. Edit: calls himself an idiot and confirms the name can be anything, `[name].exe` works, no `_game` suffix needed. |
-| 4 | redacity (New User; registered Sep 2011; United States) | 2014-12-30 | Quotes post 1. Says he is a computer scientist and cannot figure out why this should work, but it worked for him. |
-| 5 | Korell | 2014-12-31 | From what he knows of NVIDIA GeForce drivers, it is the game profile in the graphics drivers. Using NVIDIA Inspector he can see a built-in profile for Game.exe, whose settings apply when the original exe name is used; with Robinhood_game.exe there is no matching profile so the global profile is used, and there are differences between the two profiles. |
+Running a Lenovo Thinkpad Edge with Windows 7 and Intel i7 and 8gbram + nvidia geforce 630m.
 
-Points to keep in mind:
+I hope this helps someone with their game. :)
 
-- Only two players report the fix working (Tarthur, redacity); both on unspecified or NVIDIA hardware. Nobody in the thread tested on AMD or Intel graphics.
-- The Windows 7 label comes from the thread title and Tarthur's system; no other OS is discussed.
-- The "0 byte game.exe" observation in post 3 is unexplained and retracted in tone by the edit, but it is the only mention of file-system state.
-- Korell's NVIDIA-profile explanation is a hypothesis backed by an NVIDIA Inspector observation, not by a before/after comparison of specific profile settings.
+## Post 2
+
+**Korell** — registered June 2009; from the United Kingdom. Posted July 1, 2014. [Permalink](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7/post2)
+
+> **Tarthur:** My problem was, that the intro movie was flickering, and also all the menus in the starting screen. Didn't bother to go ingame, because I had this exact same problem with Desperados - Wanted Dead or Alive, which is another game from the company that made this game. I KNOW the terrain would have been OK, but all the characters (animated things) flicker. Guess this is their signature bug/error in their games, heh?
+>
+> The solution is: RENAME YOUR GAME.EXE. I renamed it Robinhood_game.exe (and the desperados game desperados_game.exe), and everything works like a charm.
+>
+> Running a Lenovo Thinkpad Edge with Windows 7 and Intel i7 and 8gbram + nvidia geforce 630m.
+>
+> I hope this helps someone with their game. :)
+
+Out of interest, does it have to be `<name>_game.exe` or can you rename it to anything different? Only I'm wondering if this issue is due to the nvidia game profiles in the driver software, and by renaming the executable it doesn't use the profile that the drivers have set up for them but the general settings instead.
+
+## Post 3
+
+**Tarthur** — New User; registered October 2012; from Finland. Posted August 16, 2014. [Permalink](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7/post3)
+
+> **Tarthur:** My problem was, that the intro movie was flickering, and also all the menus in the starting screen. Didn't bother to go ingame, because I had this exact same problem with Desperados - Wanted Dead or Alive, which is another game from the company that made this game. I KNOW the terrain would have been OK, but all the characters (animated things) flicker. Guess this is their signature bug/error in their games, heh?
+>
+> The solution is: RENAME YOUR GAME.EXE. I renamed it Robinhood_game.exe (and the desperados game desperados_game.exe), and everything works like a charm.
+>
+> Running a Lenovo Thinkpad Edge with Windows 7 and Intel i7 and 8gbram + nvidia geforce 630m.
+>
+> I hope this helps someone with their game. :)
+
+> **Korell:** Out of interest, does it have to be `<name>_game.exe` or can you rename it to anything different? Only I'm wondering if this issue is due to the nvidia game profiles in the driver software, and by renaming the executable it doesn't use the profile that the drivers have set up for them but the general settings instead.
+
+Hello
+
+Seems like you can rename it in any ways, tried `platypushood_game`, worked like a charm. I was about to test reverting the file back to just `game.exe`, but there already was a `game.exe` with 0 bit data. DIdn't want to go there deleting the extra file, but seemed a bit strange. You might want to check if you have two `game.exe` files in the folder. I'd guess that the two get mixed up in the PC, when it tries to contact the real `game.exe`.
+
+**EDIT:**
+
+Whoa boy, am I a big idiot or what?
+
+Yeah, you can name it anything, doesn't have to be `[name]_game.exe`, just `[name].exe` works fine.
+
+*Post edited August 16, 2014 by Tarthur.*
+
+## Post 4
+
+**redacity** — New User; registered September 2011; from the United States. Posted December 30, 2014. [Permalink](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7/post4)
+
+> **Tarthur:** My problem was, that the intro movie was flickering, and also all the menus in the starting screen. Didn't bother to go ingame, because I had this exact same problem with Desperados - Wanted Dead or Alive, which is another game from the company that made this game. I KNOW the terrain would have been OK, but all the characters (animated things) flicker. Guess this is their signature bug/error in their games, heh?
+>
+> The solution is: RENAME YOUR GAME.EXE. I renamed it Robinhood_game.exe (and the desperados game desperados_game.exe), and everything works like a charm.
+>
+> Running a Lenovo Thinkpad Edge with Windows 7 and Intel i7 and 8gbram + nvidia geforce 630m.
+>
+> I hope this helps someone with their game. :)
+
+I am a computer scientist and I CANNOT figure out why this should work. But it worked for me. Thanks!
+
+## Post 5
+
+**Korell** — registered June 2009; from the United Kingdom. Posted December 31, 2014. [Permalink](https://www.gog.com/forum/robin_hood_legend_of_sherwood/movies_and_menu_and_all_animated_things_ingame_flickering_heres_a_solution_win7/post5)
+
+> **redacity:** I am a computer scientist and I CANNOT figure out why this should work. But it worked for me. Thanks!
+
+From the way it is described, and from what little I know of NVIDIA GeForce drivers, I'd say it is the game profile in the graphics drivers. Using NVIDIA Inspector I can see that there is a built in profile for `Game.exe` so this profile's settings will be used when playing with the original exe name. But by renaming it to `Robinhood_game.exe` there is no matching profile in the drivers and so it uses the global profile instead. And there are some differences between these two profiles.

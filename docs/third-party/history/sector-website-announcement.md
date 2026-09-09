@@ -1,24 +1,57 @@
-# Sector — original website announcement
+# Sector — Robin Hood site
 
 - Original source: [Robin Hood site](https://www.sector.sk/novinka/12997/robin-hood-site.htm)
-- Author / publication: saver; Sector.sk.
-- Language / date: Slovak; 2002-08-18.
-- Access: Full news item retrieved directly
+- Author / publication: saver; Sector.sk
+- Publication date: 18 August 2002, 18:08
+- Category: games > news
+- Original language: Slovak
+- Source status: full article text available; no reader comments were present
 - Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete factual notes (commercial news item, not transcribed)
 
-This dated news item reports that Spellbound opened an official website for its forthcoming Robin Hood game. It describes a medieval tactical game and lists promotional material available on the website, including screenshots, music, and screensavers.
+## English translation
 
-The report provides a lead for investigating the original promotional assets and their archived availability. It does not establish that those downloads remain accessible, and no files from the original website were recovered or inspected in this pass.
+### Robin Hood site
 
-## Detailed notes
+Added by [saver](https://www.sector.sk/redaktor/saver.htm) on 18 August 2002 at 18:08 under games.
 
-Page facts: title "Robin Hood site"; posted by saver on 18.8.2002 at 18:08 under "hry" news; retrieved directly from sector.sk. A three-sentence news item; no comments shown. Slovak commercial news, not transcribed.
+**GAMES > NEWS**
 
-- Spellbound opened an official website for its forthcoming tactical strategy "Robin Hood The Legend of Sherwood"; the link given is www.robinhood-game.com.
-- The game is described as "something in the style of Commandos or Desperados", moved to medieval England, where the player must gather enough gold with Robin Hood and his band to ransom the king from captivity.
-- The site is said to contain a game description, several screensavers, music, and screenshots ("shoty").
-- No downloads were inspected in this pass; the domain's current state was not checked here.
-- Sidebar lists the same six related Sector news items (17.2.2003 to 16.10.2002) as the other Sector pages, not retrieved.
+[Spellbound opened the official website](http://www.robinhood-game.com/) for its upcoming tactical strategy game *Robin Hood The Legend of Sherwood*. The game will be something in the style of *Commandos* or *Desperados*, only this time set in medieval England, where, together with Robin Hood and his band, you will have to collect enough gold to ransom the king from captivity. On the website you will find a description of the game, several screensavers, music, and screenshots.
+
+Image gallery (all captions: “Robin Hood site”):
+
+- [Robin Hood site — image 1](https://imgs.sector.sk/files/novinky/2002818187/1.jpg)
+- [Robin Hood site — image 2](https://imgs.sector.sk/files/novinky/2002818187/2.jpg)
+- [Robin Hood site — image 3](https://imgs.sector.sk/files/novinky/2002818187/3.jpg)
+- [Robin Hood site — image 4](https://imgs.sector.sk/files/novinky/2002818187/4.jpg)
+- [Robin Hood site — image 5](https://imgs.sector.sk/files/novinky/2002818187/5.jpg)
+- [Robin Hood site — image 6](https://imgs.sector.sk/files/novinky/2002818187/6.jpg)
+- [Robin Hood site — image 7](https://imgs.sector.sk/files/novinky/2002818187/7.jpg)
+- [Robin Hood site — image 8](https://imgs.sector.sk/files/novinky/2002818187/8.jpg)
+- [Robin Hood site — image 9](https://imgs.sector.sk/)
+
+Tag: [ati](https://www.sector.sk/tag/ati)
+
+## Original text
+
+### Robin Hood site
+
+pridal [saver](https://www.sector.sk/redaktor/saver.htm) 18.8.2002 o 18:08 pod hry
+
+**HRY > NOVINKY**
+
+Spellbound [otvoril oficiálnu sajtu](http://www.robinhood-game.com/) pre svoju prichádzajúcu taktickú stratégiu *Robin Hood The Legend of Sherwood*. Hra bude niečo na štýl *Commandos* alebo *Desperados*, len tentoraz presunuté do prostredia stredovekého Anglicka kde budete musieť s Robinom Hoodom a jeho druživo vyzbierať dostatok zlata na vykúpenie kráľa zo zajatia. Na stránke nájdete popis hry, niekoľko screensaverov, hudbu a shoty.
+
+Galéria obrázkov (všetky popisy: „Robin Hood site“):
+
+- [Robin Hood site — obrázok 1](https://imgs.sector.sk/files/novinky/2002818187/1.jpg)
+- [Robin Hood site — obrázok 2](https://imgs.sector.sk/files/novinky/2002818187/2.jpg)
+- [Robin Hood site — obrázok 3](https://imgs.sector.sk/files/novinky/2002818187/3.jpg)
+- [Robin Hood site — obrázok 4](https://imgs.sector.sk/files/novinky/2002818187/4.jpg)
+- [Robin Hood site — obrázok 5](https://imgs.sector.sk/files/novinky/2002818187/5.jpg)
+- [Robin Hood site — obrázok 6](https://imgs.sector.sk/files/novinky/2002818187/6.jpg)
+- [Robin Hood site — obrázok 7](https://imgs.sector.sk/files/novinky/2002818187/7.jpg)
+- [Robin Hood site — obrázok 8](https://imgs.sector.sk/files/novinky/2002818187/8.jpg)
+- [Robin Hood site — obrázok 9](https://imgs.sector.sk/)
+
+Zaradené pod: [ati](https://www.sector.sk/tag/ati)

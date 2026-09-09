@@ -1,125 +1,102 @@
-# Gamekult — Robin Hood : le desperado des bois
+# Gamekult — Robin Hood: the desperado of the woods
 
 - Original source: [Gamekult — Robin Hood : le desperado des bois](https://www.gamekult.com/jeux/robin-hood-la-legende-de-sherwood-21697/test.html)
 - Author / publication: Gaël Fouquet (Poischich) / Gamekult
 - Language / date: French; 2002-11-22
 - Access: Full page retrieved directly
 - Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML
+- Format: complete article text converted from the original HTML, with a faithful English translation above the original
 
-## Converted text from the original HTML
+## English translation
 
+### Review: Robin Hood: the desperado of the woods
 
-### reviews__gamekult.html
+Reviewed for PC
 
-_Source: `originals/reviews__gamekult.html`._
+By [Poischich](https://www.gamekult.com/auteur/55/poischich.html "Poischich") ([@Poischich](https://twitter.com/Poischich)), published November 22, 2002 at 11:38 a.m.
 
-Soutenez Gamekult et découvrez tous nos contenus sans publicité
+Already responsible for [**Desperados**](https://www.gamekult.com/jeux/desperados-1418.html), a title very much in the line of Commandos, the Germans at [Spellbound](https://www.gamekult.com/societe/spellbound-entertainment-ag-345.html) return today with **Robin Hood: The Legend of Sherwood**, hoping to correct the mistakes of its predecessor. But competition is fierce in this niche created by [Pyro Studios](https://www.gamekult.com/societe/pyro-studios-19.html), and [**Commandos 2: Men of Courage**](https://www.gamekult.com/jeux/commandos-2-men-of-courage-3010000031.html) clearly marked a new stage last year. Fortunately, **Robin** has more than one trick up his sleeve, so we were eager to get our hands on this title published by [Wanadoo](https://www.gamekult.com/societe/wanadoo-edition-969.html). The result is fairly mixed.
 
-[ 2,50€ par mois ](/utilisateur/s-abonner.html)
+Test conditions: tested using a commercial version.
 
-[](/utilisateur/s-abonner.html)
+In the Year of Our Lord 1190, the young Robin of Locksley returns from the Crusades and discovers an England slightly different from the one he had known: King Richard the Lionheart has not returned from the Holy Land, and Prince John has taken the throne in his absence. He does, however, have a few problems with authority, which the Sheriff of Nottingham exploits by imposing numerous taxes on poor villagers. He has also passed Robin off as dead to the population in order to claim his lands. This is too much for our hero, who, without even bothering to shave his goatee, puts on his fine green justice-bringer's outfit and decides to settle a few scores. After one or two skirmishes with the sheriff's forces, he must nevertheless go underground and meets a group of rebels who, settled in Sherwood Forest, continue to fight the impostors while awaiting the return of their beloved sovereign. There is no doubt that this will be valuable help to exploit in more than thirty mad missions... at least in theory.
 
-[Gamekult](/ "Gamekult")
+### A little air of déjà vu
 
-[ S'abonner ](/utilisateur/s-abonner.html)
+From a _gameplay_ perspective, the title immediately brings to mind the first [**Commandos**](https://www.gamekult.com/jeux/commandos-derriere-les-lignes-ennemies-91.html), or more simply the developer's previous title, [**Desperados**](https://www.gamekult.com/jeux/desperados-1418.html). We control a group of characters, each with different abilities, and we have to use them wisely to complete every mission without a hitch. There are nine in all, including Robin, so we can take control of Friar Tuck, Little John, or Lady Marianne, each of whom has very specific strengths: Friar Tuck can set a wasps' nest, Little John can give someone a boost, and Lady Marianne can listen at doors. Of the group, three are "generic" companions (the moustached one, the fierce one, and the strong one), who duplicate some of the others' talents. Thus, the moustached companion can shoot a bow, like Robin Hood and Lady Marianne, and tie up villains as the sober Friar Tuck would. The gang's true headquarters, Sherwood Forest is the starting point for every mission except the first two. In general, there is a choice between two types: ambushes, which earn money, and important missions, which advance the story. The former are genuinely innovative: a group of soldiers is escorting a large sum of gold and, with traps triggered by arrows and a little combat skill, we are supposed to get rid of them and recover the money. Completely new, these sequences are distinctly pitiful and bring little besides a bit of boredom, both because of their clumsy staging and because the game engine is poorly suited to so much action. The second mission type is more interesting and more traditional: we are given a few clear objectives (talk to Lady Marianne, for example, with several sub-objectives to make this easier) and have to manage on our own. Sometimes it is a well-defended enemy castle that must be besieged, but the principle remains the same. Before each mission, we select the group we want to send, and it is then possible to have the companions remaining in the forest make arrows, apples, nets, and other healing salves. This keeps them occupied and makes the game easier.
 
-[ S'abonner ](/utilisateur/s-abonner.html)
+In these missions, we are quickly put into the situation: our small group (freely assembled beforehand, or almost) starts at one point on the map, the main objective is at the other end (it can of course change during the mission), and in between there are all kinds of guards whom we should avoid whenever possible and neutralize if necessary. We have a relatively simple way of checking their field of vision (shown as a green cone), so we must avoid being seen or heard lest they raise the alarm and summon their colleagues. In theory, then, we have an entire arsenal for getting rid of them without too many deaths: each mission earns us sympathizers, directly in proportion to the number of guards our group has not killed, and it is with these people that we recruit moustached, fierce, or strong companions. In practice, things are quite different: there are many guards, and it takes enormous patience and a good deal of perseverance to finish a mission without fighting at least a few of them. The missions are particularly tortuous when we want to do things properly, and the little freedom given to the player does not help. We are a long way from [**Commandos 2: Men of Courage**](https://www.gamekult.com/jeux/commandos-2-men-of-courage-3010000031.html), with level _design_ that instead steers the player toward a forceful solution. The developers have also emphasized this aspect by incorporating a real combat system. There is a health and energy bar, several attacks and a few parries, as well as special moves that are very useful for ending a brawl quickly.
 
-  * [Mon compte](/utilisateur/connexion.html)
+In principle, this is a good idea that introduces a little more action into a rather cerebral genre. In practice, things go somewhat wrong, with relatively random combat handling, an artificial intelligence that will not let go once the player has been spotted but is a little ridiculous when it comes to fighting, and above all, catastrophic handling of combat when it involves more than one player-controlled character. Duels are clear and straightforward, but larger battles involving more characters are as muddled as possible, not particularly interesting, and nevertheless easy to win. Faced with slow and painful deliberation and the brute-force solution, we will often tend to choose the second option... and in that light, the value of controlling five characters with different skills is more of a hindrance than anything else.
 
+### Hide-and-seek in Sherwood
 
+From a technical point of view, the developers have retained the 2D that gives this kind of game its charm, in environments that are somewhat cluttered but superb. The towns, castles, and Sherwood Forest are colorful and quite attractive, while supporting three zoom levels. On the other hand, it is impossible to turn the view in any direction other than the default one, so we are forced to guess where certain doors are, spot guards by their shadows, or imagine the path that must pass behind this section of wall. Some interiors can be visited, but not all, and so they are used only for hiding. To help the player who keeps losing characters in the scenery, [Spellbound](https://www.gamekult.com/societe/spellbound-entertainment-ag-345.html) thought to assign an "action map" to the Shift key, clearly showing doors and places where the player can interact with the environment, such as climbing onto a roof. This feature partially fills the major problem of the fixed camera, but we are still reduced to guessing in heated situations: a fight involving several characters behind part of a building will take place as a shadow play... very practical. Fortunately, we can rely on excellent _pathfinding_ which, besides getting the character safely from point A to point B, also shows them where they can go. A tool that is a little too powerful and, together with the deficient camera and the unwelcoming level _design_, strongly encourages the player to charge into the fray, even if that means getting rid of troublesome guards along the way. And that is a shame. It should be noted that the French version of the title received considerable care, and the voices, like the text, are quite successful.
 
-En ce moment
+#### Pros
 
-[Marvel's Wolverine ](https://www.gamekult.com/jeux/marvel-s-wolverine-3050884481.html) [Onimusha : Way of the Sword ](https://www.gamekult.com/jeux/onimusha-way-of-the-sword-3050888102.html) [The Blood of Dawnwalker ](https://www.gamekult.com/jeux/dawnwalker-3050887336.html) [007 First Light ](https://www.gamekult.com/jeux/project-007-3050883039.html) [Saros ](https://www.gamekult.com/jeux/saros-3050888242.html) [Pragmata ](https://www.gamekult.com/jeux/pragmata-3050882343.html)
+- A large number of characters
+- Fairly large levels
+- Rather attractive
 
-  * [Gamescom 2026](/actualite/gamescom-2026-gc2026.html)
-  * [Émissions](/emissions.html)
-  * [News](/actualite.html)
-  * [Jeux](/jeux.html)
-  * [Guides d'achat](/guide-achat.html)
-  * [Bons Plans](/bons-plans.html)
-  * [Soluces](/soluces.html)
-  * [Dossiers](/contenus-abonne.html)
-  * [Forum](/forum)
-  * [Boutique](https://shop.spreadshirt.fr/gamekult/)
-  * [Les Numériques](https://www.lesnumeriques.com/)
+#### Cons
 
+- A little dated
+- Muddled
+- Too many and too-easy fights
+- The fixed camera
+- Commandos 2 has come along
 
-  * [Switch 2](/plateforme/switch-2-160123.html)
-  * [PS5](/plateforme/ps5-160113.html)
-  * [Xbox X|S](/plateforme/xbox-x-s-160115.html)
-  * [Switch](/plateforme/switch-160106.html)
-  * [PC](/plateforme/pc-160001.html)
-  * [GFN](/plateforme/gfn-160124.html)
-  * [Matos](/materiel.html)
+### PC verdict
 
+**Score: 5/10 — Average**
 
+Ultimately, this new attempt by [Spellbound](https://www.gamekult.com/societe/spellbound-entertainment-ag-345.html) proves thorough, but somewhat misses its target. The changes brought to the genre are minimal (some, such as the ambushes, are even rather questionable) and the _gameplay_ lacks fluidity. The possibilities of the different characters are well explained in the manual, but not very visible in the game; the levels are attractive but unnecessarily complex, and the fights are muddled and too easy for a genre focused mainly on stealth. The patient player who loves the genre may perhaps be tempted, but **Robin Hood: The Legend of Sherwood** is far behind [**Commandos 2: Men of Courage**](https://www.gamekult.com/jeux/commandos-2-men-of-courage-3010000031.html) in almost every respect, and that is a shame, one year later.
 
+## Original text
 
+### Test : Robin Hood : le desperado des bois
 
+Testé pour PC
 
-__ Menu
+Par [Poischich](https://www.gamekult.com/auteur/55/poischich.html "Poischich") ([@Poischich](https://twitter.com/Poischich)), publié le 22 novembre 2002 à 11h38
 
-__ Recherche
+Déjà responsables de [**Desperados**](https://www.gamekult.com/jeux/desperados-1418.html), un titre dans la droite lignée de Commandos, les Allemands de chez [Spellbound](https://www.gamekult.com/societe/spellbound-entertainment-ag-345.html) reviennent aujourd'hui avec **Robin Hood : La légende de Sherwood** en espérant corriger les erreurs de son prédécesseur. Mais la concurrence est rude sur ce créneau créé par [Pyro Studios](https://www.gamekult.com/societe/pyro-studios-19.html) et [**Commandos 2 : Men of Courage**](https://www.gamekult.com/jeux/commandos-2-men-of-courage-3010000031.html) a clairement marqué une nouvelle étape l'année dernière. Heureusement, **Robin** a plus d'un tour dans son sac et il nous tardait donc de mettre la main sur ce titre édité par [Wanadoo](https://www.gamekult.com/societe/wanadoo-edition-969.html). Avec un résultat relativement mitigé à l'arrivée.
 
-__ Abonnés
-
-__ L'actualité
-
-  * [Accueil](/)
-  * [Jeux Vidéo](/jeux.html)
-  * [Robin des Bois](/jeux/robin-des-bois/franchise.html)
-  * [Robin Hood : La Légende de Sherwood](/jeux/robin-hood-la-legende-de-sherwood-21697.html)
-  * Test
-
-
-
-[ ](/jeux/robin-hood-la-legende-de-sherwood-21697.html)
-
-  * PC
-
-**[ Robin Hood : La Légende de Sherwood ](/jeux/robin-hood-la-legende-de-sherwood-21697.html) ** Genre : Action \- Tactique | Licence : [ Robin des Bois ](/jeux/robin-des-bois/franchise.html) | Éditeur : [ Wanadoo Edition ](/societe/wanadoo-edition-969.html) | Disponible : 15 novembre 2002 
-
-Menu
-
-  * [Actus](/jeux/robin-hood-la-legende-de-sherwood-21697.html)
-  * [Test](/jeux/robin-hood-la-legende-de-sherwood-21697/test.html)
-  * [Critiques](/jeux/robin-hood-la-legende-de-sherwood-21697/joueurs.html)
-  * [Images](/jeux/robin-hood-la-legende-de-sherwood-21697/images.html)
-
-
-
-# Test : Robin Hood : le desperado des bois
-
-Testé pour PC 
-
-Par  [Poischich](/auteur/55/poischich.html "Poischich") (  [@Poischich](https://twitter.com/Poischich) ) ,  publié le 22 novembre 2002 à 11h38 
-
-Déjà responsables de [**Desperados**](/jeux/desperados-1418.html), un titre dans la droite lignée de Commandos, les Allemands de chez [Spellbound](/societe/spellbound-entertainment-ag-345.html) reviennent aujourd'hui avec **Robin Hood : La légende de Sherwood** en espérant corriger les erreurs de son prédécesseur. Mais la concurrence est rude sur ce créneau créé par [Pyro Studios](/societe/pyro-studios-19.html) et [**Commandos 2 : Men of Courage**](/jeux/commandos-2-men-of-courage-3010000031.html) a clairement marqué une nouvelle étape l'année dernière. Heureusement, **Robin** a plus d'un tour dans son sac et il nous tardait donc de mettre la main sur ce titre édité par [Wanadoo](/societe/wanadoo-edition-969.html). Avec un résultat relativement mitigé à l'arrivée.
-
-Condition de test :   
-Testé à partir d'une version commerciale. 
-
-Partager
-
-[](//www.facebook.com/sharer.php?u=https://www.gamekult.com/jeux/robin-hood-la-legende-de-sherwood-21697/test.html "Partager sur Facebook") [](//twitter.com/intent/tweet?original_referer=https://www.gamekult.com/jeux/robin-hood-la-legende-de-sherwood-21697/test.html&url=https://www.gamekult.com/jeux/robin-hood-la-legende-de-sherwood-21697/test.html&text=Robin%20Hood%20%3A%20le%20desperado%20des%20bois via @Gamekult "Partager sur Twitter")
-
-Ajoutez-nous à vos favoris Google
-
-[ ](/jeux/robin-hood-la-legende-de-sherwood-21697.html)
-
-[Robin Hood : La Légende de Sherwood](/jeux/robin-hood-la-legende-de-sherwood-21697.html) Action, Tactique  15 novembre 2002 Franchise : [Robin des Bois](/jeux/robin-des-bois/franchise.html)
-
-  * PC
-
-
-
-Soyez le premier à commenter
-
-Commenter 
+Condition de test : testé à partir d'une version commerciale.
 
 En l'an de Grâce 1190, le jeune Robin de Locksley revient des Croisades et découvre une Angleterre légèrement différente de celle qu'il avait connu : le roi Richard Coeur de Lion n'est pas rentré de la Terre Sainte et le prince Jean s'est installé sur le trône en son absence. Il a cependant quelques problèmes d'autorité dont profite le shérif de Nottingham en imposant moultes taxes sur les pauvres villageois. Il a de plus fait passer Robin pour mort auprès de la population pour s'approprier ses terres. C'en est trop pour notre héros qui, sans prendre la peine de raser son bouc, enfile son joli costume vert de justicier et décide d'aller régler quelques comptes. Après une ou deux échauffourées avec les forces du shérif, il doit cependant sombrer dans la clandestinité et fait la connaissance d'un groupe de rebelles qui, installé dans la forêt de Sherwood, lutte encore et toujours contre les imposteurs en attendant le retour du souverain chéri. Voilà sans conteste une aide précieuse qu'il va falloir exploiter dans plus d'une trentaine de missions de folie... enfin a priori.
+
+### Un petit air de déjà-vu
+
+D'un point de vue _gameplay_ , le titre rappelle immédiatement le premier [**Commandos**](https://www.gamekult.com/jeux/commandos-derriere-les-lignes-ennemies-91.html), ou plus simplement le précédent titre du développeur, [**Desperados**](https://www.gamekult.com/jeux/desperados-1418.html). On dirige un groupe de personnages possédant chacun des aptitudes différentes et il va falloir les utiliser à bon escient pour terminer chaque mission sans coup férir. Il y en a 9 en tout, dont Robin, et on pourra ainsi prendre le contrôle de Frère Tuck, de Petit Jean ou de Lady Marianne, chacun d'entre eux possédant des atouts bien spécifiques : Frère Tuck pourra poser un nid de guêpes, Petit Jean fera la courte échelle et Lady Marianne se permettra d'écouter aux portes. Dans le lot, trois sont des compagnons "génériques" (le moustachu, le hargneux et le fort) qui font office de doublon pour certains talents des autres. Ainsi, le compagnon moustachu peut tirer à l'arc, comme Robin des Bois et Lady Marianne, et ligoter les vilains comme le ferait le sobre Frère Tuck. Véritable quartier général de la bande, la forêt de Sherwood est le point de départ de toutes les missions, sauf les deux premières. On a en général le choix entre deux types : les embuscades, qui rapportent de l'argent, et les missions importantes, qui font progresser l'histoire. Les premières sont véritablement innovantes : un groupe de soldats escorte une grosse somme d'or et, à l'aide de pièges déclenchés par des flèches et un peu d'aptitude au combat, il convient de s'en débarrasser et de récupérer les sous. Toutes nouvelles, ces phases sont pour le moins piteuses et n'apportent pas grand-chose, si ce n'est un peu d'ennui, tant par leur mise en scène bancale que par le manque d'affinités du moteur du jeu avec autant d'action. Le deuxième type de mission est lui plus intéressant et plus classique : on nous donne quelques objectifs clairs (parler à Lady Marrianne, par exemple, avec plusieurs sous-objectifs pour y parvenir plus facilement) et on doit se débrouiller. Il s'agit parfois d'un château ennemi bien défendu qu'il faut assiéger, mais le principe reste le même. Pour chaque mission, on sélectionne au préalable le groupe que l'on veut envoyer et il est alors possible de faire fabriquer flèches, pommes, filets et autres onguents de soin aux compagnons qui restent dans la forêt. Ca les occupe et ça rend la partie plus facile.
+
+On se retrouve dans ces missions rapidement mis en situation : notre petit groupe (librement composé au préalable, ou presque) démarre dans un point de la carte, l'objectif principal est à un autre bout (il peut évidemment varier au cours de la mission) et au milieu, on trouve tout un tas de gardes qu'il va falloir éviter au possible et neutraliser si besoin est. On dispose d'un moyen relativement simple de vérifier leur champ de vision (représenté par un cône vert) et il faut donc éviter de se faire voir, ou entendre, pour ne pas qu'ils déclenchent l'alarme et ne rameutent leurs collègues. En théorie, donc, on dispose de tout un arsenal pour s'en débarrasser sans faire trop de morts : chaque mission nous rapporte des sympathisants, directement proportionnels au nombre de gardes que notre groupe n'a pas zigouillé, et c'est avec ces gens-là que l'on récupère des compagnons moustachus, hargneux ou forts. Dans la pratique, les choses sont bien différentes : les gardes sont nombreux et il faut énormément de patience et une bonne dose de persévérance pour parvenir à terminer une mission sans avoir combattu au moins quelques gardes. Les missions sont particulièrement tortueuses quand on veut faire les choses proprement et le peu de liberté laissée au joueur n'arrange pas les choses. On est bien loin d'un [**Commandos 2 : Men of Courage**](https://www.gamekult.com/jeux/commandos-2-men-of-courage-3010000031.html), avec un _design_ des niveaux qui oriente plutôt le joueur vers la solution de force. Les développeurs ont d'ailleurs mis l'accent sur ce thème, en incorporant un vrai système de combat. Une barre de vie et d'énergie est présente, plusieurs coups et quelques parades sont prévus, ainsi que des coups spéciaux bien pratiques pour terminer vite une baston.
+
+Dans l'esprit, c'est une bonne idée qui introduit un peu plus d'action à un genre plutôt cérébral. En situation, ça se gâte un peu avec une gestion relativement aléatoire des combats, une intelligence artificielle qui ne lâche pas le morceau une fois le joueur repéré mais un peu ridicule quand il s'agit de se battre et surtout, une gestion catastrophique des combats quand il implique plus d'un personnage contrôlé par le joueur. Les duels sont clairs et nets, mais les batailles de plus grande envergure impliquant plus de personnages sont fouillis au possible, pas franchement intéressantes et malgré tout faciles à remporter. Devant une réflexion lente et pénible, et la solution de bourrin, on aura bien souvent tendance à prendre la deuxième option... et l'intérêt de contrôler cinq personnages aux compétences différentes est plutôt gênant qu'autre chose dans cette optique.
+
+### Cache-cache à Sherwood
+
+D'un point de vue technique, les développeurs ont conservé la 2D qui fait le charme de ce genre de jeu, dans des environnements un peu encombrés mais superbes. Les villes, les châteaux et la forêt de Sherwood sont colorés et assez jolis, tout en supportant 3 niveaux de zoom. Par contre, il n'est pas possible d'orienter la vue dans une autre direction que celle de base et on est donc obligés de deviner certaines portes, de repérer des gardes à leur ombre ou d'imaginer le chemin qui doit passer derrière ce pan de mur. Certains intérieurs sont visitables, mais pas tous, et on s'en sert donc uniquement pour se cacher. Pour aider un peu le joueur qui n'arrête pas de perdre ses personnages dans le décor, [Spellbound](https://www.gamekult.com/societe/spellbound-entertainment-ag-345.html) a pensé à affecter à la touche Maj une "carte des actions" qui montre clairement les portes et les endroits où le joueur peut agir avec l'environnement, monter sur un toit par exemple. Cette fonctionnalité comble partiellement le gros problème de la caméra fixe mais on en est tout de même réduit aux devinettes dans des situations chaudes : un combat à plusieurs personnages derrière un bout de bâtiment se fera en ombres chinoises... très pratique. On peut heureusement compter sur un _pathfinding_ des plus réussis qui, non content d'amener le personnage à bon port d'un point A à un point B, lui montre également par où il peut passer. Un outil un peu trop puissant qui, avec la caméra déficiente et le _design_ peu avenant des niveaux, pousse énormément le joueur à foncer dans le tas, quitte à se débarrasser des gardes gênants au passage. Et c'est un peu dommage. A noter que la version française du titre a reçu un certain soin et les voix, tout comme le texte, sont assez réussis.
+
+#### Les Plus
+
+- Un nombre important de personnages
+- Niveaux assez grands
+- Plutôt joli
+
+#### Les Moins
+
+- Un peu daté
+- Fouillis
+- Combats trop nombreux et trop faciles
+- La caméra fixe
+- Commandos 2 est passé par là
+
+### Verdict PC
+
+[ 5 ](https://www.gamekult.com/notation.html)
+
+Moyen
+
+Au final, ce nouvel essai de [Spellbound](https://www.gamekult.com/societe/spellbound-entertainment-ag-345.html) se montre fouillé, mais manque un peu sa cible. Les évolutions apportées au genre sont minimes (certaines, comme les embuscades, étant même relativement discutables) et le _gameplay_ manque de fluidité. Les possibilités des différents personnages sont bien expliquées dans le livret, mais peu visibles en jeu, les niveaux sont jolis mais inutilement complexes et les combats sont fouillis et trop faciles pour un genre axé principalement sur la discrétion. Le joueur patient et amoureux du genre pourra peut-être se laisser tenter, mais **Robin Hood : La légende de Sherwood** est loin derrière [**Commandos 2 : Men of Courage**](https://www.gamekult.com/jeux/commandos-2-men-of-courage-3010000031.html) sur à peu près tous les points et c'est bien dommage, un an après.

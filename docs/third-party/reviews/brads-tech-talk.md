@@ -1,19 +1,23 @@
-# Brad's Tech Talk — playthrough impressions and tips
+# Robin Hood: Legend of Sherwood
 
-- Original source: [Brad's Tech Talk — playthrough impressions and tips](https://blog.becc.us/2011/04/06/robin-hood-legend-of-sherwood)
-- Author / publication: Brad / Brad's Tech Talk
-- Language / date: English; 2011-04-06
-- Access: Full page retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML
+- Original source: [Brad's Tech Talk](https://blog.becc.us/2011/04/06/robin-hood-legend-of-sherwood/)
+- Author: Brad
+- Published: April 6, 2011
+- Category: [Games](https://blog.becc.us/category/games)
+- Language: English
 
-## Converted text from the original HTML
+I just finished this game which came out several years ago. I played it on Windows 7 x86 and x64 with no problems. Robin Hood is a pretty good tactical strategy game in real time. You control up to five characters at a time in missions to rescue people, steal gold, and liberate towns.
 
+There are several main characters, some of whom you begin the game with and some of whom you find or rescue as you progress through the game. The game uses clovers as lives; you can collect clovers in missions either on the ground or typically after completing a quest. You can have up to 10 clovers at a time and you can use these to resurrect your main characters at half strength if they are killed.
 
-### reviews__brads-tech-talk.html
+You also recruit merry men throughout the game. Merry men can accompany you on missions as well as playable characters. There are 3 different merry men: strong, aggressive and mustachioed. The mustachioed (archers) are the most useless of the 3 and you won't use them for long. Strong men are useful for a while because they can knock out opponents and carry them around (for hiding). They are eventually replaced by Little John. The aggressive men can fight as well, can kill knocked out opponents, and most importantly can heal characters with herbs (they can carry up to 10 herbs at a time).
 
-_Source: `originals/reviews__brads-tech-talk.html`._
+The game can be interesting (and frustrating) in the beginning as your characters are weak (you can train characters between missions by leaving them in Sherwood Forest with a trainer; alternatively they can make herbs, nets, meat, arrows, and other items instead) and must sneak around towns and employ tactics such as throwing money bags and bee nests to distract enemies, whistling, throwing stones and nets, etc. Towards the end of the game, though, missions tend to involve Little John (a beefed up strong merry) knocking out enemies left and right while Friar Tuck (or Stutely) ties them up for Little John to deposit them in the nearest building. This makes the last missions more of a grind than anything else.
 
-[ Brad's Tech Talk ](https://blog.becc.us/)
+The game also leads you to believe knocking out and tying up enemies is preferable to killing them by giving you an overall percentage of kills after each mission. I didn't see any difference in finishing the game by killing or not killing enemies (my percentage was around 85% non-kills) and having to tow people into buildings takes up a lot of time in the game with no real benefit (other than not alerting other guards or allowing other guards to free soldiers who are tied up, which is another reason possibly to just kill enemies). Finally, in a couple of missions where you have to take over towns and receive help from friendly troops, your "friends" kill enemy troops whenever possible, even those you tied up. With this in mind, what is the point of not killing enemies?
+
+Here are some other tips for playing: with the 3 defensive missions try to send merry men to produce blazons instead of paying or going on the missions (3 merry men equal 1 blazon). By the end of the game you will have more merry men than you need and even have maxed out supplies of items (the most important of which to produce are herbs, arrows, and meat). Try to send Friar Tuck to be a distraction later in the game when you have him as he can heal himself by eating meat (he can carry 6) so he won't use herbs. It took me a while to figure out how to eat meat but what you do is press the key to select the action; this puts OK on the screen, then click once and wait a few seconds for him to eat the meat. This is the same method you use for Maid Marian's spying skill (very useful for identifying shaded enemies). After you get Maid Marian take her and the aggressive merry for a lot of healing (she can carry up to 12 herbs). In most battles between Robin and an important enemy (like the Sheriff) Robin can retreat from the battle and get healed if necessary, then rejoin the battle. Furthermore, on the second to last mission where you take York I think, you can send merry men for blazons (you may have been able to do this on the other attack mission but I didn't try it). By getting about 5 blazons (whatever was the max) before the mission, I actually finished the mission without taking over the whole town because I earned enough blazons before that. Finally, after you collect the $100,000 gold to ransom the king, don't bother with ambush missions anymore.
+
+The only bug I encountered was when Robin overhears the Prince at the end of one of the last missions tell someone to take a letter saying he will not pay the king's ransom. Then you are supposed to fight the letter delivery man after the Prince leaves. In my game, the game did not return control of the characters to me after the cut scene and I had to use a cheat code to end the mission. There is also a pretty good walkthrough on [gamefaqs.com](http://www.gamefaqs.com/pc/562021-robin-hood-the-legend-of-sherwood/faqs).
+
+I enjoyed this game for the most part, but by the end I grew a little tired of the grind of knocking out, tying up, and hiding dozens of soldiers each mission. If you are looking for a strategy game that's little different, give Robin Hood a try.

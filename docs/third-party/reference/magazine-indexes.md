@@ -1,131 +1,108 @@
-# Print review and cover-disc leads
+# Magazine references for *Robin Hood: Die Legende von Sherwood*
 
-- Original source: [Print review and cover-disc leads](https://www.pcgamesdatabase.de/gameinfo.php?id=37738&sort=2)
-- Author / publication: PC Games Database
-- Language / date: German; dynamic index checked 2026-09-09
-- Access: Record page retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: none found in the Wayback Machine (checked 2026-09-09)
-- Format: header notes, then the page text converted from the original HTML
+- Original source: [PC Games Database game/video page](https://www.pcgamesdatabase.de/gameinfo.php?id=37738&sort=2)
+- Source file: `originals/reference__magazine-indexes.html` (the accompanying `.txt` rendering contains the same page text)
+- Publisher/site: PC Games Database; page author metadata: Stefan Schaedel
+- Source language: German
+- Capture status: available and substantially complete for the relevant page content
 
-## Converted text from the original HTML
+> **Editorial note:** Despite the assigned “magazine indexes” label, this capture is not a magazine-index page. It is a game/video detail page for *Robin Hood: Die Legende von Sherwood*. Its only magazine-index-like content is a sidebar headed “In diesen Ausgaben wurde … getestet” (“Issues in which … was reviewed”), listing three issue links. No issue table of contents, review text, scores, or page numbers is present in this capture.
 
+## English translation
 
+### Game record
 
-### reference__magazine-indexes.html
+### *Robin Hood: The Legend of Sherwood*
 
-_Source: `originals/reference__magazine-indexes.html`._
+- Release: 15 November 2002
+- Rating shown: 82.3%
+- Genre: Real-time tactics
+- Theme: —
+- Developer: [Black Forest Games (Spellbound)](https://www.pcgamesdatabase.de/company.php?pid=192)
+- Publisher: [Wanadoo](https://www.pcgamesdatabase.de/company.php?pid=273)
+- More: [Official product page](http://www.robinhood-game.com/)
+- Best of 2002: place 61
+- Best of all time: place 1807
 
-|  |  |  |  .:: Wir sammeln PC-Reviews seit 1999 ::.  | .:: Momentan sind  212  User online ::.   
----|---  
-| [](home.php)  
----  
-|  | Suche  in  Spieletitel  Spieleinfos  Artikeln  Downloads  Videos  |   
----|---|---  
-|  .: Datenbank Inhalt: 7172 Spiele | 41185 Reviews | 56025 Screenshots | 4089 Downloads | 69697 Videos | 1529 Playlists | 976 Artikel | 397 Easter Eggs | 767 Fanseiten :.   
----  
-| UNNÜTZES WISSEN:|  Disko-Aufzug-Easteregg in [Crysis 2](gameinfo.php?game_id=2599): In der Mission »Dead Man Walking« feiern zwei Soldaten eine wilde Party zu herrlich trashiger Disco-Mukke.  
----|---  
-|  |   
----  
-[STARTSEITE](home.php)    
-[NEWSTICKER](news.php)    
-[RELEASELISTEN](releaselist.php) NEU    
-[COMING SOON](comingsoon.php)    
-[REVIEWS](reviews.php)    
-[NEUE VIDEOS](newvideos.php)    
-[TOP 100 VIDEOS](topvideos.php)    
-[TOP 50 VIDEOARCHIVE](topvideoarchive.php)    
-[NEUE SCREENSHOTS](neuescreenshots.php)    
-[ALLE ARTIKEL](alleartikel.php)    
-[PREVIEWS](alleartikel.php?sort=4&sort2=0)    
-[TESTS / REVIEWS](alleartikel.php?sort=2&sort2=0)    
-[SPECIALS](alleartikel.php?sort=1&sort2=0)    
-[TOP 10 BESTENLISTEN](alleartikel.php?sort=6&sort2=0)    
-[TIPPS & TRICKS](alleartikel.php?sort=8&sort2=0)    
-[RESTPOSTEN](restposten.php)    
-[GAMES OF THE YEAR](top3.php)    
-[BEST OF ALL TIME](bestofalltime.php)    
-[REFERENZEN](games_referenzen.php)    
-[THEMEN](themes.php)    
-[BESUCHER TOP 100](games_mostvisits.php)    
-[MOST WANTED](games_mostwanted.php)    
-[ACTION SPIELE](games_genre.php?genre=1)    
-[SHOOTER](games_genre.php?genre=9)    
-[STRATEGIE SPIELE](games_genre.php?genre=2)    
-[SPORT SPIELE](games_genre.php?genre=3)    
-[SIMULATIONEN](games_genre.php?genre=4)    
-[ADVENTURES](games_genre.php?genre=5)    
-[ROLLENSPIELE](games_genre.php?genre=10)    
-[MASSIVE MP ONLINE](games_genre.php?genre=6)    
-[RENNSPIELE](games_genre.php?genre=7)    
-[MANAGER SIMS](games_genre.php?genre=8)    
-[FREE-2-PLAY](free2play.php)    
-[PLAY ANYWHERE](playanywhere.php)    
-[REMASTER](remaster.php)    
-[REMAKES](remakes.php)    
-[CROSSPLAY](crossplay.php)    
-[ÜBERSICHT VR](vr_games.php)    
-[BESTENLISTE VR](vr_games_bestenliste.php)    
-[RELEASELISTE VR](vr_releaseliste.php)    
-[ÜBERSICHT](downloads.php)    
-[PATCHES / UPDATES](downloads_patches.php)    
-[DEMOS](downloads_demos.php)    
-[VOLLVERSIONEN](downloads_vollversion.php)    
-[VIDEOS](downloads_videos.php)    
-[ADDONS](downloads_addons.php)    
-[MAPPACKS](downloads_mappacks.php)    
-[MODS](downloads_mods.php)    
-[SDK / EDITOR](downloads_editor.php)    
-[FANSEITEN](fanseiten.php)    
-[BANNER](banner.php)    
-[](heftarchive.php)  
-[ÜBERSICHT](heftarchive.php) **•**     
-[POWER PLAY](powerplay.php) **•**     
-[PC JOKER](pcjoker.php) **•**     
-[PC GAMES](pcgames.php) **•**     
-[PC PLAYER](pcplayer.php) **•**     
-[PC ACTION](pcaction.php) **•**     
-[GAMESTAR](gamestar.php) **•**     
-[GAMES AKTUELL](gamesaktuell.php) **•**     
-[PC POWERPLAY](pcpowerplay.php) **•**     
-[GAMERS.AT](gamersat.php) **•**     
-[BUFFED](buffed.php) **•**     
-[GAMES-TM](gamestm.php) **•**     
-  
-  
+### Video archive
 
+### *Robin Hood: The Legend of Sherwood*: Robin Hood, but on Windows 98 — Gameplay with HandOfBlood
 
-  
-[](https://www.retropoly.de)  
-[](https://www.kultboy.com)   
-  
-|   
----  
-|  | 
+[Click here to watch this video on YouTube](https://www.youtube.com/watch?v=IZp4XL5SJa0).
 
-# **Robin Hood: Die Legende von Sherwood**  
-  
----  
-| [Spielinfos](gameinfo.php?game_id=1488&sort=1) | Videos [4] | [Screenshots [7]](gameinfo.php?game_id=1488&sort=3) | [Pro & Contra](gameinfo.php?game_id=1488&sort=7) | [Reviews [3]](gameinfo.php?game_id=1488&sort=4) | Downloads | Fanseiten  
----|---|---|---|---|---|---  
-|  |  [  
-](titles/2002/robinhood/packshot.jpg "Robin Hood: Die Legende von Sherwood - Offizieller \(deutscher\) Packshot")  
-|  |  | Release: | 15.11.2002 |  |  |  |   
----|---  
-|  | 82.3%  
----  
-|   
-Genre: | [Echtzeit-Taktik](games_top10subgenre.php?genre_id=63) |   
-Thema: | \-- |   
-Entwickler: | [Black Forest Games (Spellbound)](company.php?pid=192) |   
-Publisher: | [Wanadoo](company.php?pid=273) |   
-Mehr: | [Zur offiziellen Produktseite](http://www.robinhood-game.com/) |   
-Kaufen: |  |  [](https://www.amazon.de/s/ref=nb_ss_w/028-9393147-8546910?__mk_de_DE=%C5M%C5Z%D5%D1&tag=pcgamesdata00-21&url=search-alias%3Daps&field-keywords=Robin Hood: Die Legende von Sherwood) | [](https://store.steampowered.com/search/?term=Robin+Hood+Die+Legende+von+Sherwood) | [](https://www.epicgames.com/store/de/browse?q=Robin Hood: Die Legende von Sherwood&sortBy=relevancy&sortDir=DESC&count=40) | [](https://www.gog.com/games?query=Robin+Hood+Die+Legende+von+Sherwood&order=desc:score) | [](https://www.xbox.com/de-de/Search?q=Robin+Hood+Die+Legende+von+Sherwood) | [](https://store.playstation.com/de-de/search/Robin%20Hood%20Die%20Legende%20von%20Sherwood) | [](https://www.nintendo.de/Suche-/Suche-299117.html?q=Robin%20Hood%20Die%20Legende%20von%20Sherwood&f=147393)  
----|---|---|---|---|---|---  
-|  | [Best of 2002](gamesoftheyear.php?tmpx=2002): |  Platz 61   
----|---  
-[Best of Alltime](bestofalltime.php?sp=1806): |  Platz 1807   
-|  |   
-|
+The following videos for *Robin Hood: The Legend of Sherwood* are in our video archive:
+
+Videos sorted by **date (newest first)** | [number of views (most viewed first)](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&sort2=1&game_id=1488#player)
+
+- 13 May 2024: [Robin Hood, but on Windows 98 — Gameplay with HandOfBlood](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=37738&sort2=0#player)
+- 6 March 2020: [19 minutes of gameplay](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=37739&sort2=0#player)
+- 20 November 2002: [Review | GameStar 12/2002 issue-DVD feature](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=62502&sort2=0#player)
+- 20 May 2002: [Preview | GameStar 06/2002 issue-DVD feature](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=62614&sort2=0#player)
+
+### Article associated with the game
+
+### [Top 200 — The most-viewed videos of 2002](https://www.pcgamesdatabase.de/artikel.php?aid=961)
+
+1 January 2003
+
+More than 150 games and 25 DLCs were released in 2002 — it was a memorable year, if one thinks only of *Star Wars: Jedi Knight 2 — Jedi Outcast*, *GTA 3*, *Warcraft 3: Reign of Chaos*, *Mafia*, and *UT 2003*. Here we show you the 200 most popular videos from that year.
+
+### Issues listed as containing a review
+
+**The issues in which *Robin Hood: The Legend of Sherwood* was reviewed:**
+
+- [PC Games 12/2002](https://www.pcgamesdatabase.de/pcgames.php?mag=pcgames&vol=12/2002#pcgames) — the linked image is captioned “Show all ratings from this issue.”
+- [PC Action 12/2002](https://www.pcgamesdatabase.de/pcaction.php?mag=pcaction&vol=12/2002#pcaction) — the linked image is captioned “Show all ratings from this issue.”
+- [GameStar 12/2002](https://www.pcgamesdatabase.de/gamestar.php?mag=gamestar&vol=12/2002#gamestar) — the linked image is captioned “Show all ratings from this issue.”
+
+The capture provides no magazine contents, review prose, score details, or page numbers beyond these three issue references.
+
+## Original text
+
+### Spieledatensatz
+
+### **Robin Hood: Die Legende von Sherwood**
+
+- Release: 15.11.2002
+- Wertung: 82.3%
+- Genre: [Echtzeit-Taktik](https://www.pcgamesdatabase.de/games_top10subgenre.php?genre_id=63)
+- Thema: —
+- Entwickler: [Black Forest Games (Spellbound)](https://www.pcgamesdatabase.de/company.php?pid=192)
+- Publisher: [Wanadoo](https://www.pcgamesdatabase.de/company.php?pid=273)
+- Mehr: [Zur offiziellen Produktseite](http://www.robinhood-game.com/)
+- [Best of 2002](https://www.pcgamesdatabase.de/gamesoftheyear.php?tmpx=2002): Platz 61
+- [Best of Alltime](https://www.pcgamesdatabase.de/bestofalltime.php?sp=1806): Platz 1807
+
+### Videoarchiv
+
+### **Robin Hood: Die Legende von Sherwood: Robin Hood, aber auf Windows 98 - Gameplay mit HandOfBlood**
+
+[Hier klicken, um dieses Video bei YouTube anzuschauen](https://www.youtube.com/watch?v=IZp4XL5SJa0).
+
+Folgende Videos zu Robin Hood: Die Legende von Sherwood haben wir in unserem Videoarchiv:
+
+Videos sortiert nach **Datum (neueste oben)** | [Anzahl der Views (meistgesehene oben)](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&sort2=1&game_id=1488#player)
+
+- [13.05.2024: Robin Hood, aber auf Windows 98 - Gameplay mit HandOfBlood](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=37738&sort2=0#player)
+- [06.03.2020: 19 Minuten Gameplay](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=37739&sort2=0#player)
+- [20.11.2002: Test | GameStar 12/2002 Heft-DVD Beitrag](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=62502&sort2=0#player)
+- [20.05.2002: Preview | GameStar 06/2002 Heft-DVD Beitrag](https://www.pcgamesdatabase.de/gameinfo.php?sort=2&id=62614&sort2=0#player)
+
+### Zum Spiel gehörender Artikel
+
+### [**Top 200 - Die meistgesehenen Videos des Jahres 2002**](https://www.pcgamesdatabase.de/artikel.php?aid=961)
+
+01.01.2003
+
+Über 150 Spiele und 25 DLCs wurden 2002 veröffentlicht - das war ein denkwürdiger Jahrgang, wenn man alleine nur an Star Wars: Jedi Knight 2 - Jedi Outcast, GTA 3, Warcraft 3: Reign of Chaos, Mafia und UT 2003 denkt. Hier zeigen wir euch die 200 beliebtesten Videos dieses Jahres.
+
+### Aufgeführte Ausgaben mit Test
+
+**In diesen Ausgaben wurde
+Robin Hood: Die Legende von Sherwood getestet:**
+
+- [PC Games 12/2002](https://www.pcgamesdatabase.de/pcgames.php?mag=pcgames&vol=12/2002#pcgames) — Bildtitel: „Zeige alle Wertungen dieser Ausgabe“.
+- [PC Action 12/2002](https://www.pcgamesdatabase.de/pcaction.php?mag=pcaction&vol=12/2002#pcaction) — Bildtitel: „Zeige alle Wertungen dieser Ausgabe“.
+- [GameStar 12/2002](https://www.pcgamesdatabase.de/gamestar.php?mag=gamestar&vol=12/2002#gamestar) — Bildtitel: „Zeige alle Wertungen dieser Ausgabe“.
+
+Die Quelle enthält über diese drei Ausgaben hinaus keine Inhaltsverzeichnisse, Testtexte, Wertungsdetails oder Seitenzahlen.

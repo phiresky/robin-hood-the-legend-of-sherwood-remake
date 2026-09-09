@@ -1,24 +1,31 @@
-# Steam — castle access after rescuing Stuteley
+# How can i enter the castle after saving Stuteley and the others
 
-- Original source: [How can i enter the castle after saving Stuteley and the others](https://steamcommunity.com/app/46560/discussions/0/598537219702096436/)
-- Author / publication: Connect2G, KarafurunaRaito, and Kabrael; Steam Community.
-- Language / date: English; opened 2025-09-08.
-- Access: Full thread retrieved directly (opening post and 2 replies)
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete post-by-post notes (Steam discussion, not transcribed)
+- **Source:** [Steam Community — Robin Hood General Discussions](https://steamcommunity.com/app/46560/discussions/0/598537219702096436/)
+- **Game:** [Robin Hood](https://steamcommunity.com/app/46560)
+- **Author:** [Connect2G](https://steamcommunity.com/id/Connect2G)
+- **Date posted:** 8 Sep, 2025 @ 3:28am
+- **Posts:** 2
 
-Connect2G asks how to enter the locked castle after rescuing Stuteley and the other prisoners in the second episode. KarafurunaRaito says it cannot be entered during that episode, but becomes accessible in later missions; Kabrael agrees.
+## Opening post
 
-This is a small, specific progression hint rather than a walkthrough. It records player testimony about mission-dependent access, without demonstrating a hidden entrance, teleport method, or the underlying gate script.
+**Connect2G** — 8 Sep, 2025 @ 3:28am
 
-## Detailed notes
+Theres only one entrance but its locked. Is there a way to unlock it or teleport our characters inside. Im curious whats inside in episode 2
 
-Page facts: Steam Community thread "How can i enter the castle after saving Stuteley and the others" in Robin Hood (app 46560) > General Discussions; opened by Connect2G on 8 Sep, 2025 @ 3:28am; "Posts: 2", showing 1-2 of 2 comments. Retrieved directly on 2026-09-09. Not licensed for reproduction; summarised.
+## Comments
 
-### Posts
+### #1
 
-1. **Connect2G** (8 Sep, 2025 @ 3:28am), opening post: after saving Stuteley and the others there is only one entrance to the castle and it is locked; asks whether it can be unlocked or the characters teleported inside, being curious what is inside in "episode 2".
-2. **KarafurunaRaito** (12 Sep, 2025 @ 2:21pm), #1: there is no way inside in episode 2; with patience, access to it comes in later missions.
-3. **Kabrael** (13 Nov, 2025 @ 2:14am), #2: quotes KarafurunaRaito and confirms "it's true".
+**[KarafurunaRaito](https://steamcommunity.com/id/Katafurun)** — 12 Sep, 2025 @ 2:21pm
+
+Sadly, there is no way inside in episode 2. But if you ' re patient, then in later missions, you ' ll get access to it.
+
+### #2
+
+**[Kabrael](https://steamcommunity.com/profiles/76561198052623105)** — 13 Nov, 2025 @ 2:14am
+
+> Originally posted by **[KarafurunaRaito](#c517472842923725654):**
+>
+> Sadly, there is no way inside in episode 2. But if you ' re patient, then in later missions, you ' ll get access to it.
+
+it's true

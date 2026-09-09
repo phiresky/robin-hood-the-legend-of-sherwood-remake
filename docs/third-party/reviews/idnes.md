@@ -6,46 +6,98 @@
 - Access: Full article retrieved with a crawler user agent (browser requests get a consent wall)
 - Checked: 2026-09-09
 - Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
+- Archived copy: lookup returned HTTP 000; not confirmed
 - Format: header notes, then the page text converted from the original HTML
 
-## Converted text from the original HTML
+## English translation
 
+### Robin Hood: Legend of Sherwood
 
-### reviews__idnes.html
+Tomáš Krajča — 18 November 2002, updated 31 March 2003
 
-_Source: `originals/reviews__idnes.html`._
+The story of Robin of Locksley, loyal subject of King Richard the Lionheart, and his rebellion against the wicked self-proclaimed King John and his right-hand man, the uncompromising villain the Sheriff of Nottingham, is excellent material for a Commandos-style strategy game. When it is made by the authors of the excellent Desperados as well, there is nothing to debate.
 
-[93mWarning:[0m Use the [92m--decode-errors=ignore[0m flag.
+#### What does the game look like?
 
+Although this may not have seemed entirely likely at the time of its release, Commandos influenced many projects that followed it. It essentially defined a new category of tactical strategies in which the player controls a small group of soldiers with different abilities; this also brings the whole thing closer to the principles of puzzle games such as Lost Vikings. A good idea and charming presentation brought equally charming and good sales, so it is no surprise that a second installment arrived, a third sequel is in preparation, and a series of clones appeared that imitated the original game with almost conspicuous obviousness. Among the best known are the fine Star Trek: Away Team; the western Desperados stand out above all in quality. And those are what concern us now—or, to be precise, their authors. The story of John Cooper and the villain named El Diablo sprang from the minds of the same people who also worked on Robin Hood. Spellbound Studios, as its choice of subjects might suggest, are neither from the USA nor Great Britain, but Germany. I would not mention this if it did not show in certain typical traits, such as maniacally detailed and almost kitschily cute comic-book graphics and meticulous game design. And that is not all. The first non-playable demonstrations already breathed the right Hood atmosphere; first impressions of the playable demo then took the form of “no game has entertained us this much in a long time.” Since playing the full version once again gave me, after a long while, nights ending in disbelief at a clock showing three or four o’clock more than it should, this review will have an admiring, even celebratory tone.
 
-### reviews__idnes.txt
+#### A little about the story
 
-_Source: `originals/reviews__idnes.txt`._
+I do not suppose it is necessary to analyze the Hood legend in particular detail. A brief introduction to the story can do no harm, however. The situation in the English kingdom is roughly this: King Richard the Lionheart is on crusade, and his half-brother John has appropriated power for the time being. Under his not especially firm rule, the country has fallen into total anarchy. Wicked nobles squeeze the last money from their serf subjects; the fearsome and dreaded Sheriff of Nottingham’s men ride through the villages; poverty and fear rule everywhere. Into this setting returns the story’s protagonist: Robin of Locksley, or Robin Hood. In the game we experience his flight into Sherwood Forest, the rescue of some future members of his outlaw band, and his meeting with his love Marian. The story soon unfolds to unexpected breadth: as individual outlaws we organize forest ambushes, rob the sheriff’s men, rescue innocent victims, and at the very end face the principal villains as well.
 
----  
-  
-[ ](https://www.idnes.cz/ "iDNES.cz")
+#### What the game offers
 
-[Premium](https://www.idnes.cz/ucet/platba-mesicni-a5po19n99?zdroj=topmenu)
+Robin Hood is a story-driven game offering one very long campaign of exactly forty missions. The campaign is not completely linear: occasionally you choose between two story branches and decide which to complete first (although in time you will also reach the one you skipped); you are entirely free to decide whether and whom to ambush in the forest. You will spend your time on three activities: managing party members in Sherwood, staging short ambushes, and completing long, story-related tasks. You always begin at your base hidden deep in the forest. You choose a mission, and the game tells you something like, “you may take this many men; one of them must know how to pick locks.” On that basis and your own judgment, you select the commando for the action and assign the others jobs: one makes arrows, another grows medicinal herbs, someone trains in combat, another in archery, and someone may roast boar haunches over the fire. You feel the results of their work when you return from the mission.
 
-Mimořádně jen 19 Kč/měsíc  
-na prvních 5 měsíců
+#### Characters in the game: Robin Hood & Lady Marian
 
-  * [Přihlásit](https://www.idnes.cz/ucet/prihlasit?url=https%3a%2f%2fwww.idnes.cz%2fhry%2frecenze%2frobin-hood-legend-of-sherwood.A021116_robinhoodlegendofsherwood_bw) [Můj účet](https://www.idnes.cz/ucet)
-  * Menu
+*Robin Hood* — Who would not know Robin of Locksley, faithful servant of the just and powerful King Richard the Lionheart? Robin is the charismatic leader of the entire band of Sherwood outlaws. His favorite weapons are wooden staffs, used during forest ambushes; swords, with which he fights in towns; and a very long bow, with which he is extraordinarily skilled. He has three special abilities: he can knock out an enemy with a single punch (a true predecessor of the no less righteous Old Shatterhand), he is the most agile of the group and can climb vines to inaccessible places, and he can throw a small purse of gold to distract a guard.
 
-  * [Magazíny](https://www.idnes.cz/magaziny "Magazíny")
-  * [Bonusweb](https://www.idnes.cz/hry "Bonusweb")
+*Lady Marian* — Robin’s love did not move to Sherwood Forest; she supports the outlaw band as a member of the royal court. From time to time she joins you on a mission, and later… but I will not give that away. Although she dislikes fighting, she always carries a short sword and bow for emergencies. Among her most useful special abilities is healing, allowing her to use the green herbs scattered throughout the levels to speed the healing of battle wounds. Her trained hearing and espionage skills will certainly be useful too.
 
-  * [ Recenze](https://www.idnes.cz/hry/recenze "Recenze")
-  * [ Novinky](https://www.idnes.cz/hry/novinky "Novinky")
-  * [ Magazín](https://www.idnes.cz/hry/magazin "Magazín")
-  * [ Retro](https://www.idnes.cz/hry/retro "Retro")
-  * [ Preview](https://www.idnes.cz/hry/preview "Preview")
-  * [ Jízdní řád](https://bonusweb.idnes.cz/JizdniRad.aspx "Jízdní řád")
+#### We ambush innocent travelers
 
-# Robin Hood: Legend of Sherwood
+Although they are more numerous, the missions in which you ambush “poor” and “honest” travelers in Sherwood are mainly a pleasant diversion, because the time they take cannot compare with story missions. Every ambush follows a similar scenario: someone carrying a lot of money travels through the forest—a rich, corrupt merchant, the sheriff’s right-hand man, a tax collector, or somebody else. The game prepares many traps for him and his escort, and you decide when to trigger them by shooting Robin’s bow at prepared targets on the trees. For an example, a rich merchant is traveling through the forest. First you destroy his wagon with a cleverly camouflaged pothole. The merchant panics and runs with his escort to the other end of the map, while his men spread across the level. You then try to reach the wagon and get rid of the annoying enemies: you can lead them to a place where they are caught in a classic net, fall into a pit, or are jumped by three disguised archers who fill them with arrows before they can even say “Ambush!” The levels are not oversized, and with a little luck you can finish one in five minutes. It therefore matters less that the traps repeat fairly often and stereotyping soon sets in.
+
+#### Time for some serious action
+
+The life of an ordinary outlaw may consist only of forest fights and ambushing travelers with ingenious traps, but Robin Hood is no ordinary outlaw. His chief task is not, precisely in socialist rhetoric, “take from the rich and give to the poor,” but to regain his power and property and prepare the way for King Richard’s return. That cannot be done without kicking the backsides of two very powerful figures: the self-proclaimed traitorous King John and his “loyal” Sheriff of Nottingham. Story missions take place in five supposedly historically faithful cities: Lincoln, Derby, Leicester, Nottingham, and York. There you perform varied tasks: one time you must find the house where Marian lives; another time free Stutley and his companions; or lead Lord Godwin out of the dark dungeon of his own castle and help him clear it of traitorous soldiers. It can be said that, although the authors did not let their imagination loose on the story (and it is questionable whether that would have helped), they indulged themselves in translating Robin’s fight for justice into a game. In other words, mission design is absolutely perfect, and I guarantee that despite their large number (forty in all, including ambushes) you will not get bored or uninstall the game before finally finishing it after more than twenty hours. The creators were limited by the number of environments, yet still made them distinctive. Someone might find it silly to return to the same castle three times—but what if you flee it by day once, sneak through it under cover of darkness to free a prisoner another time, and return a third time hidden by fog for an entirely different task?
+
+#### Characters and enemies
+
+Since the characters are covered in more detail in the tables surrounding this review, we will not say much about them here. Just this: do not worry. You really will meet all the familiar members of Robin’s band: the big Little John, the friendly though somewhat overweight Friar Tuck, the petty thief Stutley, the brave Will Scarlett, and Robin’s love Marian. You can also add various other, story-unimportant outlaws to your party; they have special abilities too (always only two, while the main characters have three, so it is worth taking them on missions). Most levels contain many neutral NPCs. You can ignore ordinary residents, but some want to speak with you—do not skip or ignore them, as they usually have an interesting optional task. Beggars are a chapter of their own. For a small bribe they reveal one very useful piece of information, so visiting them certainly pays off.
+
+#### Characters in the game: Little John & Friar Tuck
+
+*Little John* — Despite his name, Little John is the largest and strongest member of the entire outlaw party. How did Robin find him? One day he rescued him from the ruins of his home village, which the sheriff’s men were plundering. John was the only one able to stand up to them and was to be punished, but Robin rescued him in the meantime. Little John fights only with a wooden staff, with which he delivers terrible blows. He can also knock out an enemy with a punch, carry dead or unconscious bodies, beg for mercy (useful, right? :o), and, when needed, make himself into “living stairs,” allowing someone to climb over his back to an otherwise inaccessible roof.
+
+*Friar Tuck* — Friar Tuck is Lady Marian’s confessor. You meet him almost at the beginning and then not again until rather late, so I will not reveal much about the circumstances in which he joins you (I would give away the plot of one of the game’s nicest missions). Back to what he can do: he is very good at eating boar haunches, which is not entirely pointless, since this heals the wounds on his fat-covered body. His discarded bottle of moonshine is useful against enemies—an intoxicated enemy fights differently at once. The wasp nests he throws are unpleasant too, and his ability to bind unconscious enemies is enormously useful. In an emergency he defends himself with a mace.
+
+As for enemies, we meet many types of soldiers, from poorly equipped basic militia, through foot knights in plate armor, to fearsome horsemen and royal guards. Archers and crossbowmen are also present. Their artificial intelligence is at a respectable level. It essentially rests on two pillars: they can see or hear you. When that happens, a small green question mark flashes above their head. If you do not immediately quiet down or disappear from sight, it turns yellow, orange, and red. A red question mark means they see you; depending on the situation they either charge with a battle cry or turn the other way for reinforcements. Fortunately, as in Commandos, you can determine where a guard is looking and how far he can see.
+
+#### Combat handled unconventionally
+
+From time to time you cannot get past an enemy with a silent knockout from behind and must fight him “fairly” (which does not mean “you are one, you have nothing, we have knives and there are ten of us,” as around the Holešovice market late at night). Combat in Robin Hood is handled in a fairly original and interesting way. Ranged shooting works like a special action: select it from the menu, move the mouse over the target, and the game determines whether you can hit him, showing either a green or red arrow. You then decide whether to shoot. That would not be miraculous, but there is also sword/staff/mace combat. Press the mouse button and draw an interesting curve by dragging the cursor; your character swings the weapon exactly along that curve. You can create different spectacular and effective combos, eliminate several characters, and indirectly decide whether to knock an enemy out or kill him (you cannot knock anyone out with a sword, and killing someone with a stick requires great strength). Otherwise the controls are standard and mouse-based; as in other games of this type, keyboard shortcuts are worthwhile, and—thank goodness—you can configure them yourself.
+
+#### Audio-visual presentation
+
+Not discussing sound and graphics is considered a serious reviewer’s lapse, so we will not try to avoid the obligatory technical paragraph. The game’s graphics are 2D, which we consider—and pay attention—a HUGE PLUS! It is hard to imagine anyone creating graphics in 3D that were so maniacally detailed, cute, and precise. You can judge the screenshots best yourself, but believe me: just as the static objects are flawless, so are the character animations and video sequences.
+
+The game contains several, at first listen rather unremarkable, musical tracks that accompany you throughout. You soon get used to them and take their pleasant accompaniment for granted. There is essentially nothing to ruin in the sound—and so it is no surprise that Spellbound did not ruin it. You hear the clatter of guards’ heavy boots, the clash of sword on sword, the hiss of a fired arrow—everything exactly as you imagine it. I would rate the voice acting as slightly above average, although some voices seemed to express the speaker’s character too exaggeratedly: good Lord Godwin consequently sounds like a senile old man who cannot even articulate properly, which is not exactly a realistic image.
+
+#### Errors and imperfections
+
+By now you may have formed the impression that Robin Hood: Legend of Sherwood is a perfectly flawless game. Although it is unquestionably an excellent title, I did find a few blemishes. It is nice that you can zoom the image in and out, but the “blurring” effect here is perhaps even greater than in the notorious Industry Giant 2, and that is saying something. More serious problems concern gameplay, or rather its duration. The campaign has forty missions, which is quite a lot, but you will still conquer them in some 20–25 hours and then have nothing to do, because the game’s nonlinearity is too limited to make replaying from the beginning worthwhile, and it contains no other single-player mode, let alone multiplayer.
+
+Only these flaws ultimately kept the score from crossing the magical ninety-percent mark. In conclusion, though, one thing must be said: do not take the shortcomings in the penultimate paragraph too seriously, and especially if you liked Commandos, be sure to buy Robin Hood. You certainly will not be disappointed.
+
+#### Characters in the game: Will Scarlett & Stutley
+
+*Will Scarlett* — Will Scarlett is Robin’s cousin, a strong and brave young man. He earned his nickname by developing a fondness for wearing red clothing (otherwise he is normal, do not worry). His only weapon is a flail, but his abilities are more varied and considerably more useful. Apart from the ability to finish off an unconscious enemy (a member of Robin’s band would surely not stoop to that!), he can use a catapult, strangle opponents, and protect himself from enemy arrows with his shield.
+
+*Stutley* — Stutley is the first character to join Robin, after Robin saves him from the gallows. He was originally the leader of the Sherwood outlaws, but—as you may have guessed from the preceding sentence—not a very successful one, so he gladly gives his position to Robin. He fights skillfully with an axe, but fighting is not his strength. He is important for his ability to tie up unconscious enemies; when necessary he can disguise himself as a beggar and deceive enemies, provoke soldiers by throwing apples, and catch larger numbers of opponents in a net.
+
+#### Robin Hood: Legend of Sherwood — game information
+
+| Field | Details |
+|---|---|
+| Developer | [Spellbound Games](http://www.spellbound.de) |
+| Publisher | [Wanadoo](http://www.wanadoo-edition.com) |
+| Czech distribution | CD Projekt, fully in Czech |
+| Downloads | [demo](http://bonusweb.idnes.cz/robin-hood-demo-0gj-/Clanek.aspx?c=A021015_robinhooddemo_bw), [screenshots](http://bonusweb.idnes.cz/robin-hood-screenshoty-0vd-/Clanek.aspx?c=A020522_robinhoodscr020522_bw), [screenshots](http://bonusweb.idnes.cz/robin-hood-legend-of-sherwood-screenshoty-fiz-/Clanek.aspx?c=A021105_robinhoodscr021105_bw), [screenshots](http://bonusweb.idnes.cz/robin-hood-legend-of-sherwood-screenshoty-fiz-/Clanek.aspx?c=A021101_robindemos_bw) |
+| Official homepage | www.robinhood-game.com |
+| Minimum configuration | 233 MHz processor, 64 MB RAM |
+| Recommended configuration | 500 MHz processor, 128 MB RAM |
+| 3D cards | No |
+| Multiplayer | No |
+| Verdict | A great Commandos clone that lacks only more modes and a longer game. |
+| Rating | **86%** |
+
+## Original text
+
+_Source: `originals/reviews__idnes.txt`; HTML was checked where needed. The source provides a discussion link for 112 posts but no comment text, so there are no comments to transcribe._
+
+### Robin Hood: Legend of Sherwood
 
 Tomáš Krajča
 
@@ -53,65 +105,59 @@ Tomáš Krajča
 
 [Diskuse (112)](https://www.idnes.cz/hry/recenze/robin-hood-legend-of-sherwood.A021116_robinhoodlegendofsherwood_bw/diskuse)
 
-[Uloženo na přečtení](javascript:; "Odebrat z uložených")
-
-[Přečíst později](javascript:; "Uložit na později")
-
-[Sdílet](https://www.idnes.cz/hry/recenze/robin-hood-legend-of-sherwood.A021116_robinhoodlegendofsherwood_bw)
-
 Příběh Robina z Locksley, věrného poddaného krále Richarda Lví srdce, o jeho odboji proti zlotřilému samozvanému králi Janu a jeho pravé ruce, nekompromisnímu zloduchovi v podobě osoby šerifa z Nottinghamu, je skvělou látkou pro strategickou hru ve stylu Commandos. Když ji navíc dělali autoři skvělých Desperados, není co řešit. 
 
-**Jak vypadá obal hry?**  
-  
+##### Jak vypadá obal hry?
+
 ---  
 Ač se to možná v době vydání nezdálo úplně pravděpodobné, hra _Commandos_ v mnohém ovlinila řadu projektů, které přišly po ní. V podstatě definovala novou škatulku taktických strategií, kde hráč ovládá malou skupinku vojáků s různými schopnostmi, čímž se zároveň celá věc přibližuje principům logických her a la _Lost Vikings_. Dobrý nápad a roztomilé zpracování znamenalo neméně roztomilé a dobré prodeje – a tak není divu, že přišel díl druhý, chystá se třetí pokračování a vyšla také řada na první pohled až okatě původní hru napodobujících klonů. Mezi ty nejznámější se řadí například pěkný _Star Trek: Away Team_ , kvalitativně vynikají především westernoví _Desperados_. A o ty nám právě nyní půjde – či, abych byl přesný, o jejich autory. Příběh Johna Coopera a padoucha jménem El Diablo totiž vznikl v mozcích stejných lidí, kteří se podíleli i na _Robinu Hoodovi_. Spellbound Studios, jak by se podle výběru témat mohlo zdá, nejsou ani z USA, ani z Velké Británie, nýbrž z Německa. Ani bych o tom nemluvil, kdyby se to neprojevovalo v některých typických znacích, jako je maniakiálně detailní a až kýčovitě roztomilá komiksová grafika  či detailní propracovanost hry. A to není vše. Už z prvních nehratelných ukázek na nás dýchla ta správná hoodovská atmosféra, první dojmy z hratelné demoverze se pak nesly ve stylu "dlouho nás žádná hra takhle nepobavila". A protože jsem si při hraní plné verze opět po delší době vyzkoušel noční zapářky končící nevěřícným pohledem na hodiny ukazující asi tak o tři čtyři více, než by mělo podle všeho být, ponese se následující recenze v duchu obdivném až oslavném. 
 
-**Něco málo k příběhu**  
+##### Něco málo k příběhu
 Nepředpokládám, že by bylo nutné nějak zvlášť rozebírat hoodovskou legendu. Krátký úvod do příběhu však jistě neuškodí. Situace v anglickém království je asi následující: král Richard Lví srdce je na křížové výpravě a moc si zatím přivlastnil jeho nevlastní bratr Jan. Pod jeho ne zrovna pevnou rukou se země dostala do totální anarchie. Zlotřilí šlechtici ždímají z poddaných robotníků poslední peníze, vesnicemi projíždí zbrojnoši strašlivého a obávaného šerifa z Nottinghamu, všude vládne bída a strach. Do tohoto prostředí se vrací hlavní hrdina příběhu: Robin z Locksley, neboli Robin Hood. Už ve hře si prožijeme jeho útěk do Sherwoodského lesa, záchranu některých budoucích členů jeho zbojnické bandy, setkání s láskou Marian. Brzy se příběh rozvine do nečekané šíře a my budeme v roli jednotlivých zbojníků pořádat lesní přepadení,  okrádat šerifovy muže, zachraňovat nevinné oběti a v samotném závěru dojde i na hlavní padouchy. 
 
-**Co nám hra nabízí**  
+##### Co nám hra nabízí
 _Robin Hood_ je příběhově založená hra, která nám nenabídne nic než jednu dlouhatanánskou kampaň čítající rovných čtyřicet misí. Kampaň není úplně lineární, občas dostanete na výběr mezi dvěma větvemi příběhu a bude na vás, kterou splníte dřív (nicméně postupem času dojde i na tu, kterou jste zatím vynechali), o tom, zda a koho budete v lese přepadat, pak rozhodujete zcela svobodně. Celkem tak budete čas trávit třemi činnostmi: manažování členů party v Sherwoodu, pořádáním krátkých přepadení a plněním dlouhých, s příběhem souvisejících úkolů. Vždy začínáte ve své základně ukryté hluboko v lese. Vyberete si misi, hra vám následně řekne něco ve stylu "můžeš si vzít tolik a tolik mužů, jeden z nich musí umět páčit zámky". Vy na základě této informace a vlastního úsudku vyčleníte komando, které akci podnikne, a ostatním rozdělíte úkoly – někdo bude vyrábět šípy, jiný zase pěstovat léčivé byliny, někdo se bude cvičit v boji, jiný v lukostřelbě – a někdo bude třeba opékat kančí kýty nad ohněm. Výsledky jejich práce pocítíte po návratu z mise. 
 
-**Postavy ve hře: Robin Hood & Lady Marian**  
+##### Postavy ve hře: Robin Hood & Lady Marian
 ---  
 _Robin Hood_ \- kdo by neznal Robina z Locksley, věrného služebníka spravedlivého a mocného krále Richarda Lví srdce? Robin je charismatickým vůdcem celé skupiny banditů z Sherwoodu, jeho nejoblíbenějšími zbraněmi jsou dřevěné hole, které používá při přepadeních v lese, meče, kterými bojuje ve městech a dlouhatánský luk, se kterým to umí setsakramentsky dobře. Jeho speciální schopnosti jsou tři: umí omráčit nepřítele pouhou ranou pěsti (jakožto věrný předchůdce neméně spravedlivého Old Shatterhanda), je z celé skupiny nejhbitější, a tak může šplhat po popínavých rostlinách a dostat se na nedostupná místa a může hodit malý měšec zlaťáků a odlákat jím pozornost stráže.  |  _Lady Marian_ \- Robinova láska se do Sherwoodského lesa nepřestěhovala - podporuje tlupu zbojníků jako členka královského dvora. Čas od času se k vám ale připojí i na misi a později... ale to nebudu prozrazovat. Ačkoliv bojuje nerada, nosí sebou vždy krátký meč a luk pro případ potřeby. Mezi její nejužitečnější speciální schopnosti jistě patří léčitelství, díky kterému může využít po úrovních hojně se válících zelených bylin k urychlenému zahojení bitevních šrámů. Hodit se určitě bude i její vycvičený sluch a schopnosti špionáže.   
 ---|---  
-  
-**Přepadáme nevinné pocestné**  
+
+##### Přepadáme nevinné pocestné
 Ačkoli jich je co do kvantity více, jsou mise, kdy v Sherwoodu přepadáte "chudé" a "počestné" pocestné spíše jen takovým příjemným zpestřením, neboť čas u nich strávený se s tím, který vám zaberou příběhové mise, nedá vůbec srovnávat. Každé přepadení probíhá podle podobného scénáře: lesem projíždí někdo, kdo má u sebe hodně peněz: bohatý a zkorumpovaný kupec, šerifova pravá ruka, výběrčí daní či někdo úplně jiný. Hra na něj a jeho ochranku nachystá spoustu pastí a je na vás, kdy je spustíte – provádí se to střelbou z Robinova luku do připravených terčů na stromech. Abyste měli představu, uvedeme si příklad: lesem projíždí bohatý kupec. Nejprve mu zničíte vůz chytře zamaskovaným výmolem. Kupec se lekne, odběhne se svou ochrankou na druhý konec mapy a jeho muži se rozmístí po úrovni. A vy jdete a snažíte se dostat k vozu a zbavit se dotěrných nepřátel – můžete je třeba zavést na místo, kde se chytí do klasické sítě, spadnou do jámy, nebo na ně vyskočí tři maskovaní lučištníci a nasázejí do nich šípy jako do jehelníčku než vůbec stačí říci "Přepadení!". Velikost úrovní, kde se přepadení odehrávají, není přehnaná a s trochou štěstí s nimi můžete být hotovi i za pět minut. Nevadí proto ani tolik, že se pasti docela opakují a brzy nastoupí stereotyp.
 
-**Je čas na pořádnou akci**  
+##### Je čas na pořádnou akci
 Život obyčejného zbojníka se možná skládá jen z bitek v lese a přepadání pocestných za pomoci rafinovaných pastí, Robin Hood ovšem není žádný obyčejný zbojník. Jeho hlavním úkolem není přesně ve stylu socialistické rétoriky "bohatým brát a chudým dávat", ale získat si zpět svou moc, majetek a připravit půdu pro návrat krále Richarda. A to nepůjde jinak, než nakopáním zadnic dvou velice mocných postav: samozvaného zrádcovského krále Jana a jeho "věrného" šerifa z Nottinghamu. Příběhové mise se odehrávají v pěti prý historicky věrně zpracovaných městech: Lincolnu, Derby, Leicesteru, Nottinghamu a Yorku. V nich plníte různorodé úkoly, jednou máte nalézt dům, kde bydlí Marian, jindy je vaším cílem osvobodit Stutleyho a jeho kumpány či vyvést z temné kobky vlastního hradu lorda Godwina a pomoci mu zbavit hrad zrádcovských vojáků. Dá se říci, že když už autoři nepopustili uzdu své fantazii u příběhu (navíc je otázka, zda by to bylo pro dobro věci), vyřádili se při převádění Robinova boje za spravedlnost do hry. Jinak řečeno, design misí je zcela perfektní a zaručuji vám, že se i přes jejich velký počet (celkem je jich 40, ale do tohoto počtu se počítají i přepadení) nezačnete nudit a hru neodinstalujete dříve, než ji po dvou desítkách hodin konečně dotáhnete do konce. Tvůrci byli limitováni počtem prostředí, přesto je dokázali ozvláštnit.  Někomu by se zdálo hloupé vracet se třikrát do stejného hradu, ale co když jednou odtamtud budete ve dne utíkat, jednou se tam budete plížit pod rouškou tmy, abyste osvobodili zajatce a potřetí se tam vrátíte kryti mlhou za splněním úkolu úplně jiného ražení?
 
-**Postavy a nepřátelé**  
+##### Postavy a nepřátelé
 Protože se jednotlivým postavám blíže věnujeme v tabulkách obklopujících tuto recenzi, nebudeme se o nich v tomto místě příliš rozepisovat. Snad jen: nemusíte se bát. Skutečně se potkáte se všemi známými členy Robinovy bandy: velkým Malým Johnem, sympatickým, byť poněkud obézním bratrem Tuckem, zlodějíčkem Stutleym, statečným Willem Scarlettem i Robinovou láskou Marian. Dále budete moci do své party přibrat řadu jiných, pro příběh nedůležitých banditů, kteří mají také své zvláštní schopnosti (vždy ale jen dvě, zatímco hlavní charaktery mají po třech, takže se vyplatí brát na mise spíše je). Ve většině úrovní potkáte řadu neutrálních NPC postav. Obyčejných obyvatel si všímat nemusíte, někteří z nich si s vámi ale chtějí promluvit – ty nevynechávejte a neignorujte, většinou pro vás mají nějaký zajímavý nepovinný úkol. Kapitolu samu pro sebe tvoří žebráci. Ti vám prozradí za malý úplatek jednu velmi užitečnou informaci, a tak se jejich návštěva určitě vyplatí. 
 
-**Postavy ve hře: Malý John & Bratr Tuck**  
+##### Postavy ve hře: Malý John & Bratr Tuck
 ---  
 _Malý John_ \- Malý John je navzdory svému jménu největším a nejsilnějším členem celé zbojnické party. Jak k němu Robin přišel? Jednoho dne ho zachránil z trosek jeho rodné vesnice, kterou právě plundrovali šerifovi muži. John se jim jako jediný dokázal postavit a měl za to být potrestán - mezitím byl ale zachráněn Robinem. Malý John nebojuje ničím jiným, než dřevěnou holí, se kterou ale zasazuje strašlivé rány. Mimoto umí omráčit nepřítele ranou pěsti, umí nosit mrtvá či omráčená těla, umí prosit o milost (užitečné, že? :o) a když je třeba, udělá ze sebe "živé schody" - někdo může přes jeho záda vyšplhat třeba na jinak nedostupnou střechu.  |  _Bratr Tuck_ \- Bratr Tuck je zpovědníkem Lady Marian, ve hře ho potkáte takřka na začátku a pak až zase docela pozdě, takže vám raději nebudu nic moc prozrazovat o okolnostech, za jakých se k vám připojí (vyžblebtnul bych tak zápletku jedné z nejhezčích misí hry). Nicméně zpět k tomu co umí. Umí velmi dobře pojídat kančí kýty, což není tak úplně bezúčelné, jelikož si tím léčí šrámy na svém špeky oplývajícím těle. Proti nepřátelům se určitě bude hodit jeho pohozená lahvička se samohonkou - takový ožralý nepřítel hned bojuje jinak... Nepříjemná jsou i vosí hnízda, která hází, obrovsky užitečná je jeho schopnost spoutat omráčené nepřátele. V případě nouze se brání palcátem.   
 ---|---  
-  
+
 Co se nepřátel týče, setkáme se s mnoha typy zbrojnošů, od základní chabě vyzbrojené milice, přes pěší rytíře v plátovém brnění až po strašlivé jezdce na koních či královské stráže. Nechybí ani lučištníci a vojáci s kuší. Jejich umělá inteligence je na slušné úrovni. V zásadě funguje na dvou pilířích: mohou vás vidět či slyšet. Když se tak stane, začne jim nad hlavou blikat malý zelený otazníček. Když se okamžitě neutišíte nebo nezmizíte z dohledu, stane se z něj otazníček žlutý, oranžový a červený. Červený otazník znamená, že vás vidí – a dle situace buď vyrazí proti vám s bojovým pokřikem, nebo se otočí opačným směrem pro posily. Naštěstí zde funguje možnost podobně jako v _Commandos_ zjistit, kam se právě strážný kouká a jak daleko dohlédne. 
 
-**Netradičně zpracovaný boj**  
+##### Netradičně zpracovaný boj
 Čas od času se stane, že se přes nepřítele nedostanete pomocí tichého omráčení zezadu, ale budete si to s ním muset rozdat "na férovku" (což neznamená "ty jsi jeden, nemáš nic, my máme nože a je nás deset" jako v okolí Holešovické tržnice v pozdních nočních hodinách). Boje jsou v _Robinu Hoodovi_ zpracovány poměrně originálně a zajímavě: střelba na dálku probíhá stejně jako speciální akce:  vyberete ji z nabídky, najedete myší na cíl a hra vyhodnotí, zda je možné ho zasáhnout, a podle toho vám ukáže buď zelenou šipku nebo červenou. Vy se podle toho rozhodnete, zda vystřelit, či nikoliv. To by nebylo nic tak zázračného, je tu ale ještě boj na meče/hole/palcáty. Ten probíhá tak, že stisknete tlačítko myši a vytvoříte tažením kurzoru nějakou zajímavou křivku. Vaše postava pak mávne svou zbraní přesně podle této křivky. Můžete tak vytvořit různé efektní i efektivní komba, zbavit se více postav, zprostředkovaně tím i rozhodnout, zda nepřítele omráčíte či rovnou zabijete (i když mečem nikoho neomráčíte a abyste někoho zabili klackem, musíte mít hodně velkou sílu). Jinak je ovládání standardní, myšoidní, podobně jako v ostatních hrách stejného typu se vyplatí používat klávesové zkratky, které si – díky bohu! – můžete sami nastavit.
 
-**Audiovizuální zpracování**  
+##### Audiovizuální zpracování
 Nerozebrat zvuky a grafiku je považováno za pořádný recenzentský lapsus, takže se raději nebudeme pokoušet se nezbytnému technologickému odstavečku vyhnout. Grafika hry je 2D, což považujeme – a teď pozor – ZA OBROVSKÉ PLUS! Jen těžko si dovedu představit, že by někdo vytvořil ve 3D prostředí grafiku tak maniakiálně detailní, roztomilou a precizní. Ze screenshotů to asi sami posoudíte nejlépe,  ale věřte mi, že stejně jako nemají chybu statické objekty, nemají chybu ani animace postav a videosekvence. 
 
 Hra obsahuje několik na první poslech poměrně nevýrazných hudebních stop, které vás budou provázet po celou dobu. Brzy si na ně zvyknete a budete jejich příjemný doprovod považovat za samozřejmý. Na zvucích v podstatě není co zkazit – a tak není divu, že Spellbound ani nezkazili. Ozývá se klapání těžkých bot strážných, třeskot meče o meč, svistot vystřeleného šípu – všechno přesně tak, jak si to asi představujete. Namluvení bych hodnotil jako lehce nadprůměrné, byť některé hlasy mi přišly, že až příliš přehnaně vyjadřují charakter mluvčího – dobrý lord Godwin tak podle hlasu vypadá jako senilní dědek, který se ani neumí pořádně vyžvejknout, což není zrovna realitě odpovídající obraz.
 
-**Chyby a nedokonalosti**  
+##### Chyby a nedokonalosti
 Zatím byste mohli nabýt dojmu, že je _Robin Hood: Legend of Sherwood_ hra zcela dokonalá bez jediné vady na kráse. Ačkoliv se beze všech pochyb jedná o vynikající titul, nějakou tu mušku jsem přeci jen objevil. Je hezké, že si můžete zazoomovat či odzoomovat obraz,  ale efekt "rozpliznutí" je zde snad ještě větší než u tímto nechvalně proslulého _Industry Giantu 2_ , a to je co říct. Vážnější problémy se ale týkají hratelnosti, či spíše doby hratelnosti. Kampaň má 40 misí, což je docela dost, ale za nějakých 20 – 25 hodin je stejně pokoříte a nebudete mít co dělat, protože nelinearita hry je příliš malá na to, aby vám stálo za to hrát zase znovu od začátku a jiný mód pro jednoho hráče, natož multiplayer, hra neobsahuje.
 
 Jenom tyto chyby nakonec zabránily tomu, aby hodnocení přelezlo magickou hodnotu devadesáti procent. Nicméně na závěr musí zaznít jediné: neberte nedostatky v předposledním odstavci příliš vážně a zvlášť jestli se vám líbili _Commandos_ , _Robina Hooda_ si určitě pořiďte. Zklamáni rozhodně nebudete.
 
-**Postavy ve hře: Will Scarlett & Stutley**  
+##### Postavy ve hře: Will Scarlett & Stutley
 ---  
 _Will Scarlett_ \- Will Scarlett je Robinův bratranec, silný a statečný mladý muž. Svou přezdívku si vysloužil tím, že nalezl zálibu v nošení červeného oblečení (jinak je ale normální, nebojte). Jeho jedinou zbraní je řemdich, jeho schopnosti jsou už ale variabilnější a o poznání užitečnější. Když nepočítám schopnost dorazit omráčeného nepřítele (k tomu by se přece člen Robinovy bandy nesnížil!), umí ještě používat katapult, umí škrtit protivníky a umí se krýt proti nepřátelským šípům pomocí svého štítu.  |  _Stutley_ \- Stutley je první postavou, která se k Robinovi přidá, a to poté, kdy ho zachrání ze šibenice. Právě on byl původně vůdcem zbojníků z Sherwoodu, avšak - jak už asi tušíte z předchozí věty - nepříliš úspěšným, a tak Robinovi rád své místo přenechá. Bojuje zručně se sekerou, avšak jeho síla není v boji. Je důležitý pro svou schopnost svazovat omráčené nepřátele, když je třeba, umí se vydávat ze žebráka a oklamat tím nepřátele, může vyprovokovat vojáky házením jablek a umí také chytat větší množství protivníků do sítě.   
 ---|---  
-  
-**Robin Hood: Legend of Sherwood**  
+
+##### Robin Hood: Legend of Sherwood
 ---  
 | **Výrobce:** | [Spellbound Games](http://www.spellbound.de)  
 ---|---  
@@ -127,20 +173,4 @@ _Will Scarlett_ \- Will Scarlett je Robinův bratranec, silný a statečný mlad
 | **Verdikt:** | Parádní klon Commandos, kterému chybí jen více módů a delší herní doba.  
 ---|---  
 | **Hodnocení** | **86%**  
----|---  
-  
-[Vstoupit do  diskuse (112 příspěvků)](https://www.idnes.cz/hry/recenze/robin-hood-legend-of-sherwood.A021116_robinhoodlegendofsherwood_bw/diskuse)
-
-[Uloženo na přečtení](javascript:; "Odebrat z uložených")
-
-[Přečíst později](javascript:; "Uložit na později")
-
-[Sdílet článek](https://www.idnes.cz/hry/recenze/robin-hood-legend-of-sherwood.A021116_robinhoodlegendofsherwood_bw)
-
-**Témata:** [bitka](https://www.idnes.cz/zpravy/archiv/bitka.K481564), [Diablo](https://www.idnes.cz/hry/archiv/diablo.K524005), [Srdce](https://www.idnes.cz/zpravy/archiv/srdce.K481537)
-
-* * *
-
-[Komerční sdělení](http://sdeleni.idnes.cz/sdeleni-redir.aspx?idostrova=bonusweb)
-
-* * *
+---|---

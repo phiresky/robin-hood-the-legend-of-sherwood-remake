@@ -3,594 +3,179 @@
 - Original source: [Steam — Naxyň's Polish localization package](https://steamcommunity.com/sharedfiles/filedetails/?id=2009175775)
 - Author / publication: Naxyň / Steam Community
 - Language / date: Polish; posted 2020-02-28, updated 2024-12-07
-- Access: Full guide retrieved directly; only the newest 10 of 55 comments included
+- Access: Full guide retrieved directly; the source page exposes the newest 10 of 55 comments
 - Checked: 2026-09-09
 - Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, then the page text converted from the original HTML
+- Archived copy: [Wayback Machine, 2025-08-31](https://web.archive.org/web/20250831155444/https://steamcommunity.com/sharedfiles/filedetails/?id=2009175775)
 
-## Converted text from the original HTML
+## English translation
 
+### Guide
 
-### technical__steam-polish-localization.html
-
-_Source: `originals/technical__steam-polish-localization.html`._
-
-[ Sign in ](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2009175775) [ Store ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ Community ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
-
-Change language 
-
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
-
-View desktop website 
-
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
-
-[ ](https://store.steampowered.com/)
-
-[ ](https://store.steampowered.com/)
-
-[ STORE ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ COMMUNITY ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
-
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2009175775)  |  language
-
-[ 简体中文 (Simplified Chinese) ](?l=schinese&id=2009175775) [ 繁體中文 (Traditional Chinese) ](?l=tchinese&id=2009175775) [ 日本語 (Japanese) ](?l=japanese&id=2009175775) [ 한국어 (Korean) ](?l=koreana&id=2009175775) [ ไทย (Thai) ](?l=thai&id=2009175775) [ Bahasa Indonesia (Indonesian) ](?l=indonesian&id=2009175775) [ Bahasa Melayu (Malay) BETA ](?l=malay&id=2009175775) [ Български (Bulgarian) ](?l=bulgarian&id=2009175775) [ Čeština (Czech) ](?l=czech&id=2009175775) [ Dansk (Danish) ](?l=danish&id=2009175775) [ Deutsch (German) ](?l=german&id=2009175775) [ Español - España (Spanish - Spain) ](?l=spanish&id=2009175775) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam&id=2009175775) [ Ελληνικά (Greek) ](?l=greek&id=2009175775) [ Français (French) ](?l=french&id=2009175775) [ Italiano (Italian) ](?l=italian&id=2009175775) [ Magyar (Hungarian) ](?l=hungarian&id=2009175775) [ Nederlands (Dutch) ](?l=dutch&id=2009175775) [ Norsk (Norwegian) ](?l=norwegian&id=2009175775) [ Polski (Polish) ](?l=polish&id=2009175775) [ Português (Portuguese - Portugal) ](?l=portuguese&id=2009175775) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian&id=2009175775) [ Română (Romanian) ](?l=romanian&id=2009175775) [ Русский (Russian) ](?l=russian&id=2009175775) [ Suomi (Finnish) ](?l=finnish&id=2009175775) [ Svenska (Swedish) ](?l=swedish&id=2009175775) [ Türkçe (Turkish) ](?l=turkish&id=2009175775) [ Tiếng Việt (Vietnamese) ](?l=vietnamese&id=2009175775) [ Українська (Ukrainian) ](?l=ukrainian&id=2009175775) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
-
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_100100_100101_100106_apphubheader)
-
-Robin Hood
-
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
-
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
-
-### Robin Hood
-
-[ Store Page ](https://store.steampowered.com/app/46560)
-
-[Robin Hood](https://steamcommunity.com/app/46560) > [Guides](https://steamcommunity.com/app/46560/guides/) > [Naxyň's Guides](https://steamcommunity.com/id/naxynpl/myworkshopfiles/?section=guides&appid=46560)
-
-This item has been removed from the community because it violates Steam Community & Content Guidelines. It is only visible to you. If you believe your item has been removed by mistake, please contact [Steam Support](https://help.steampowered.com/en/wizard/HelpWithSteamIssue/?issueid=415). 
-
-This item is incompatible with Robin Hood. Please see the [instructions page](https://steamcommunity.com) for reasons why this item might not work within Robin Hood. 
-
-231 ratings
-
-[PL] Pełne Spolszczenie Robin Hood Legenda Sherwood - Dubbing, Napisy, Polskie Znaki, FPS Fix. Aktualny
+**[PL] Full Polish localization of Robin Hood: The Legend of Sherwood — dubbing, subtitles, Polish characters, FPS fix. Current**
 
 By Naxyň
 
-Witajcie  
-  
-Postanowiłem stworzyć pełne spolszczenie do gry Robin Hood Legenda Sherwood.   
-Zapraszam
+Hello,
 
-3
+I decided to create a full Polish localization for the game *Robin Hood: The Legend of Sherwood*.
 
-1
+Enjoy.
 
-1
+### Localization
 
-1
+The files I used are not mine; they come from the Polish version of the game, which contains:
 
-1
+- Polish dubbing
+- Polish dialogue
+- Polish subtitles with Polish characters
+- Polish versions of the intro and outro
 
-1
+The full installation instructions are in the archive hosted on Google Drive.
 
-31
+Link: [Click to open the page and download the Polish localization](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1V7q-lKJOK3Sb8dUelswdG0uHRCYRmJRo) ([drive.google.com](https://drive.google.com/file/d/1V7q-lKJOK3Sb8dUelswdG0uHRCYRmJRo))
 
-9
+*(Move the folder here.)*
 
-8
+![Screenshot showing where to move the folder](https://images.steamusercontent.com/ugc/1616185079746234515/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)
 
-4
+### Windows 10 & 11 — FPS fix / startup problem repair
 
-3
+If you have a problem with a low FPS count on Windows 10 or Windows 11, or the game starts incorrectly or does not work, download the files and put them in the game's main folder. The files are hosted on Google Drive.
 
-3
+Link: [Click to open the page and download the FPS fix](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1xILcnCt8_EQhXSPNUOOmLN3yGt8xHmW_) ([drive.google.com](https://drive.google.com/file/d/1xILcnCt8_EQhXSPNUOOmLN3yGt8xHmW_))
 
-3
+Downloading this lag fix will additionally restore the original font from the CD version.
 
-2
+**If I helped, don't forget to rate it or give it an award :)**
 
-1
+Regards.
 
-1
+### Comments (10 captured of 55)
 
-1
+#### Mckw — 10 Jun @ 10:55pm
 
-1
+There is another version of the Polish localization for people who also had problems with it: [https://forum.cdaction.pl/topic/261889-robin-hood-legenda-sherwood-spolszczenie/](https://forum.cdaction.pl/topic/261889-robin-hood-legenda-sherwood-spolszczenie/)
 
-1
+#### Mckw — 10 Jun @ 10:48pm
 
-68
+The dubbing is there, but Polish characters are missing, which makes all the text unreadable.
 
-   
+#### pajur — 8 Jun @ 2:47am
 
-Award
+I used the launcher that someone linked below. No matter what configuration I set, the game still runs at around 20 FPS. At this point I think the game's clock is designed around the FPS, like in other old games. A higher FPS count could make normal play impossible in that case. However, if I am wrong and there is a way to get more FPS, please let me know.
 
-Favorite
+As for Polish characters, applying the FPS fix from this post adds Polish characters for some reason, at least for me.
 
-Favorited
+#### Standartenführer SS — 13 Jan @ 4:41pm
 
-Unfavorite
+I have 20 FPS, but the game runs like it used to.
 
-Share
+#### krzysztof.lisicki1998 — 1 Dec, 2025 @ 10:15am
 
-This item has been added to your [Favorites](https://steamcommunity.com/my/myworkshopfiles/?section=guides&browsefilter=myfavorites).
+Does anyone have an idea what to do with the mission in York, where you have to use the secret passage to get Longchamps's body from the fortress? Unfortunately, I have this passage blocked.
 
-Created by
+#### _Oszi+ — 30 Sep, 2025 @ 11:25am
 
-[](https://steamcommunity.com/id/naxynpl)
+The Polish localization works, but I do not have Polish characters. Does anyone know how to fix this?
 
-Naxyň  
-Offline 
+#### MisterGelwe — 19 Jun, 2025 @ 3:19pm
 
-Category: [Maps or Levels](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Maps+or+Levels), [Modding or Configuration](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Modding+or+Configuration), [Story or Lore](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Story+or+Lore), [Walkthroughs](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Walkthroughs)
+Download the launcher from the RH Discord; I posted the link a few comments below. Thanks to it, there are no FPS problems.
 
-Languages: [Polish](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Polish)
+#### Matush — 19 Jun, 2025 @ 3:00pm
 
-Posted 
+I get 144 FPS in the menu, but in the game itself it drops to 20; the fix did not help, but the Polish localization and font work.
 
-Updated 
+#### osi — 23 May, 2025 @ 5:35am
 
-28 Feb, 2020 @ 3:07am
+11/10. You reminded me of my entire childhood with this outstanding dubbing <3
 
-7 Dec, 2024 @ 12:14am
+#### achojnacki — 15 Feb, 2025 @ 4:54am
 
-6,360 | Unique Visitors  
----|---  
-135 | Current Favorites  
-  
-Guide Index
+Thank you very much. What a feeling—to travel back in time, return home after primary-school classes, and hear that voice. I get shivers of excitement!
 
-Overview
+## Original text
 
-Spolszczenie 
-
-Windows 10 & 11 - Naprawa FPS/Problem z Uruchomieniem 
-
-Comments
-
-Spolszczenie 
-
-Pliki które wykorzystałem nie są moje lecz pochodzą z polskiej wersji gry, która zawiera:  
-
-
-  * Polski Dubbing  
-
-  * Polskie Dialogi  
-
-  * Polskie Napisy wraz z polskimi znakami  
-
-  * Intro/Outro w wersji polskiej
-
-  
-Pełna instrukcja instalacji znajduję się w archiwum zamieszczonym na google drive  
-Link: [ Kliknij, aby otworzyć stronę i pobrać spolszczenie ](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1V7q-lKJOK3Sb8dUelswdG0uHRCYRmJRo)[drive.google.com]  
-  
-(Tutaj należy przenieść folder)  
-[](https://images.steamusercontent.com/ugc/1616185079746234515/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)  
-
-
-Windows 10 & 11 - Naprawa FPS/Problem z Uruchomieniem 
-
-Jeśli masz problem z małą ilością FPS na Windows 10 lub Windows 11 bądź gra się źle uruchamia, nie działa, należy pobrać pliki i wrzucić do głównego folderu z grą. Pliki zamieszczone są na google drive.  
-Link: [ Kliknij, aby otworzyć stronę i pobrać FPS Fix ](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1xILcnCt8_EQhXSPNUOOmLN3yGt8xHmW_)[drive.google.com]   
-  
-Ściągając tego lag fixa dodatkowo zostanie przywrócona oryginalna czcionka z wersji na płytach  
-CD.  
-  
-**Jeśli pomogłem nie zapomnij ocenić lub przyznać odznaki :)**  
-Pozdrawiam 
-
-55 Comments 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-[ ](https://steamcommunity.com/profiles/76561198027964962)
-
-[ Mckw](https://steamcommunity.com/profiles/76561198027964962)
-
-10 Jun @ 10:55pm 
-
-Tu jest inna wersja spolszczcenia dla osób które z tym również miały problemy: [https://forum.cdaction.pl/topic/261889-robin-hood-legenda-sherwood-spolszczenie/](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fforum.cdaction.pl%2Ftopic%2F261889-robin-hood-legenda-sherwood-spolszczenie%2F)
-
-[ ](https://steamcommunity.com/profiles/76561198027964962)
-
-[ Mckw](https://steamcommunity.com/profiles/76561198027964962)
-
-10 Jun @ 10:48pm 
-
-Dubbing jest, ale brakuje polskich znaków przez co cały tekst przestaje być czytelny. 
-
-[ ](https://steamcommunity.com/id/yngpajur)
-
-[ pajur](https://steamcommunity.com/id/yngpajur)
-
-8 Jun @ 2:47am 
-
-uzyłem launchera ktorego podlinkował ktoś niżej. nie ważne jaką konfigurację ustawię, gra chodzi i tak w okolicach 20 fpsów. at this point myślę że zegar gry jest zaprojektowany dookoła fpsów jak inne stare gry. większa ilość fpsów w takim przypadku mogła by uniemożliwić normalną grę. jeśli jednak się mylę i jest jakiś sposób na więcej fpsów to proszę o info.  
-Jak chodzi o polskie znaki to zastosowanie fps fixa z tego posta z jakiegoś powodu dodaje polskie znaki, przynajmniej u mnie. 
-
-[ ](https://steamcommunity.com/profiles/76561199116679870)
-
-[ Standartenführer SS](https://steamcommunity.com/profiles/76561199116679870)
-
-13 Jan @ 4:41pm 
-
-Mam 20 fps ale ta gra smiga jak kiedyś 
-
-[ ](https://steamcommunity.com/profiles/76561199010098863)
-
-[ krzysztof.lisicki1998](https://steamcommunity.com/profiles/76561199010098863)
-
-1 Dec, 2025 @ 10:15am 
-
-Ma ktoś pomysł co zrobić z misją w York gdy tajnym przejściem trzeba wejść po ciało Longchampsa do twierdzy mam to przejście zablokowane niestety 
-
-[ ](https://steamcommunity.com/id/oszipluss)
-
-[ _Oszi+](https://steamcommunity.com/id/oszipluss)
-
-30 Sep, 2025 @ 11:25am 
-
-Spolszczenie działa, ale nie mam Polskich znaków. Ktoś wie jak to naprawić ? 
-
-[ ](https://steamcommunity.com/id/mistergelwe)
-
-[ MisterGelwe](https://steamcommunity.com/id/mistergelwe)
-
-19 Jun, 2025 @ 3:19pm 
-
-Pobierz sobie launchera z discorda RH, link dałem kilka komentarzy niżej, dzięki niemu nie problemów z fpsami. 
-
-[ ](https://steamcommunity.com/profiles/76561198908883140)
-
-[ Matush](https://steamcommunity.com/profiles/76561198908883140)
-
-19 Jun, 2025 @ 3:00pm 
-
-w menu mam 144fps, ale w samej grze spada juz do 20, fix nie pomógł, ale spolszczenie i font działa 
-
-[ ](https://steamcommunity.com/profiles/76561199019986268)
-
-[ osi](https://steamcommunity.com/profiles/76561199019986268)
-
-23 May, 2025 @ 5:35am 
-
-11/10 Przypomniałeś mi całe dzieciństwo tym wybitnym dubbingiem  <3 
-
-[ ](https://steamcommunity.com/profiles/76561198999466484)
-
-[ achojnacki](https://steamcommunity.com/profiles/76561198999466484)
-
-15 Feb, 2025 @ 4:54am 
-
-Pięknie dziękuję. To uczucie, cofnąć się w czasie, wrócić po zajęciach w podstawówce i usłyszeć ten głos. Aż mam ciary z ekscytacji! 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-Share to your Steam activity feed
-
-[]( "Share on Facebook")
-
-[]( "Share on Twitter")
-
-[]( "Share on Reddit")
-
-Link: 
-
-You need to sign in or create an account to do that.
-
-[Sign In](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2009175775%26insideModal%3D0%26requirelogin%3D1) [Create an Account](https://store.steampowered.com/join) Cancel
-
-[Update](javascript:UpdateKVTagsSingle\(\);)
-
-
-### technical__steam-polish-localization.txt
-
-_Source: `originals/technical__steam-polish-localization.txt`._
-
-[ Sign in ](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2009175775) [ Store ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ Community ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
-
-Change language 
-
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
-
-View desktop website 
-
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
-
-[ ](https://store.steampowered.com/)
-
-[ ](https://store.steampowered.com/)
-
-[ STORE ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ COMMUNITY ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
-
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2009175775)  |  language
-
-[ 简体中文 (Simplified Chinese) ](?l=schinese&id=2009175775) [ 繁體中文 (Traditional Chinese) ](?l=tchinese&id=2009175775) [ 日本語 (Japanese) ](?l=japanese&id=2009175775) [ 한국어 (Korean) ](?l=koreana&id=2009175775) [ ไทย (Thai) ](?l=thai&id=2009175775) [ Bahasa Indonesia (Indonesian) ](?l=indonesian&id=2009175775) [ Bahasa Melayu (Malay) BETA ](?l=malay&id=2009175775) [ Български (Bulgarian) ](?l=bulgarian&id=2009175775) [ Čeština (Czech) ](?l=czech&id=2009175775) [ Dansk (Danish) ](?l=danish&id=2009175775) [ Deutsch (German) ](?l=german&id=2009175775) [ Español - España (Spanish - Spain) ](?l=spanish&id=2009175775) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam&id=2009175775) [ Ελληνικά (Greek) ](?l=greek&id=2009175775) [ Français (French) ](?l=french&id=2009175775) [ Italiano (Italian) ](?l=italian&id=2009175775) [ Magyar (Hungarian) ](?l=hungarian&id=2009175775) [ Nederlands (Dutch) ](?l=dutch&id=2009175775) [ Norsk (Norwegian) ](?l=norwegian&id=2009175775) [ Polski (Polish) ](?l=polish&id=2009175775) [ Português (Portuguese - Portugal) ](?l=portuguese&id=2009175775) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian&id=2009175775) [ Română (Romanian) ](?l=romanian&id=2009175775) [ Русский (Russian) ](?l=russian&id=2009175775) [ Suomi (Finnish) ](?l=finnish&id=2009175775) [ Svenska (Swedish) ](?l=swedish&id=2009175775) [ Türkçe (Turkish) ](?l=turkish&id=2009175775) [ Tiếng Việt (Vietnamese) ](?l=vietnamese&id=2009175775) [ Українська (Ukrainian) ](?l=ukrainian&id=2009175775) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
-
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_100100_100101_100106_apphubheader)
-
-Robin Hood
-
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
-
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
-
-### Robin Hood
-
-[ Store Page ](https://store.steampowered.com/app/46560)
-
-[Robin Hood](https://steamcommunity.com/app/46560) > [Guides](https://steamcommunity.com/app/46560/guides/) > [Naxyň's Guides](https://steamcommunity.com/id/naxynpl/myworkshopfiles/?section=guides&appid=46560)
-
-This item has been removed from the community because it violates Steam Community & Content Guidelines. It is only visible to you. If you believe your item has been removed by mistake, please contact [Steam Support](https://help.steampowered.com/en/wizard/HelpWithSteamIssue/?issueid=415). 
-
-This item is incompatible with Robin Hood. Please see the [instructions page](https://steamcommunity.com) for reasons why this item might not work within Robin Hood. 
-
-231 ratings
-
-[PL] Pełne Spolszczenie Robin Hood Legenda Sherwood - Dubbing, Napisy, Polskie Znaki, FPS Fix. Aktualny
+### [PL] Pełne Spolszczenie Robin Hood Legenda Sherwood - Dubbing, Napisy, Polskie Znaki, FPS Fix. Aktualny
 
 By Naxyň
 
-Witajcie  
-  
-Postanowiłem stworzyć pełne spolszczenie do gry Robin Hood Legenda Sherwood.   
+Witajcie
+
+Postanowiłem stworzyć pełne spolszczenie do gry Robin Hood Legenda Sherwood.
+
 Zapraszam
 
-3
+### Spolszczenie
 
-1
+Pliki które wykorzystałem nie są moje lecz pochodzą z polskiej wersji gry, która zawiera:
 
-1
+- Polski Dubbing
+- Polskie Dialogi
+- Polskie Napisy wraz z polskimi znakami
+- Intro/Outro w wersji polskiej
 
-1
+Pełna instrukcja instalacji znajduję się w archiwum zamieszczonym na google drive.
 
-1
+Link: [Kliknij, aby otworzyć stronę i pobrać spolszczenie](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1V7q-lKJOK3Sb8dUelswdG0uHRCYRmJRo) [drive.google.com](https://drive.google.com/file/d/1V7q-lKJOK3Sb8dUelswdG0uHRCYRmJRo)
 
-1
+(Tutaj należy przenieść folder)
 
-31
+![Obraz pokazujący, gdzie przenieść folder](https://images.steamusercontent.com/ugc/1616185079746234515/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)
 
-9
+### Windows 10 & 11 - Naprawa FPS/Problem z Uruchomieniem
 
-8
+Jeśli masz problem z małą ilością FPS na Windows 10 lub Windows 11 bądź gra się źle uruchamia, nie działa, należy pobrać pliki i wrzucić do głównego folderu z grą. Pliki zamieszczone są na google drive.
 
-4
+Link: [Kliknij, aby otworzyć stronę i pobrać FPS Fix](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1xILcnCt8_EQhXSPNUOOmLN3yGt8xHmW_) [drive.google.com](https://drive.google.com/file/d/1xILcnCt8_EQhXSPNUOOmLN3yGt8xHmW_)
 
-3
+Ściągając tego lag fixa dodatkowo zostanie przywrócona oryginalna czcionka z wersji na płytach CD.
 
-3
+**Jeśli pomogłem nie zapomnij ocenić lub przyznać odznaki :)**
 
-3
+Pozdrawiam
 
-2
+### Comments (55; 10 captured in the source)
 
-1
-
-1
-
-1
-
-1
-
-1
-
-68
-
-   
-
-Award
-
-Favorite
-
-Favorited
-
-Unfavorite
-
-Share
-
-This item has been added to your [Favorites](https://steamcommunity.com/my/myworkshopfiles/?section=guides&browsefilter=myfavorites).
-
-Created by
-
-[](https://steamcommunity.com/id/naxynpl)
-
-Naxyň  
-Offline 
-
-Category: [Maps or Levels](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Maps+or+Levels), [Modding or Configuration](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Modding+or+Configuration), [Story or Lore](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Story+or+Lore), [Walkthroughs](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Walkthroughs)
-
-Languages: [Polish](https://steamcommunity.com/app/46560/guides/?browsesort=trend&filetype=11&requiredtags%5B%5D=Polish)
-
-Posted 
-
-Updated 
-
-28 Feb, 2020 @ 3:07am
-
-7 Dec, 2024 @ 12:14am
-
-6,360 | Unique Visitors  
----|---  
-135 | Current Favorites  
-  
-Guide Index
-
-Overview
-
-Spolszczenie 
-
-Windows 10 & 11 - Naprawa FPS/Problem z Uruchomieniem 
-
-Comments
-
-Spolszczenie 
-
-Pliki które wykorzystałem nie są moje lecz pochodzą z polskiej wersji gry, która zawiera:  
-
-
-  * Polski Dubbing  
-
-  * Polskie Dialogi  
-
-  * Polskie Napisy wraz z polskimi znakami  
-
-  * Intro/Outro w wersji polskiej
-
-  
-Pełna instrukcja instalacji znajduję się w archiwum zamieszczonym na google drive  
-Link: [ Kliknij, aby otworzyć stronę i pobrać spolszczenie ](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1V7q-lKJOK3Sb8dUelswdG0uHRCYRmJRo)[drive.google.com]  
-  
-(Tutaj należy przenieść folder)  
-[](https://images.steamusercontent.com/ugc/1616185079746234515/1C47EFCC166E53E376C7F41AC33241DB1BBC6C18/)  
-
-
-Windows 10 & 11 - Naprawa FPS/Problem z Uruchomieniem 
-
-Jeśli masz problem z małą ilością FPS na Windows 10 lub Windows 11 bądź gra się źle uruchamia, nie działa, należy pobrać pliki i wrzucić do głównego folderu z grą. Pliki zamieszczone są na google drive.  
-Link: [ Kliknij, aby otworzyć stronę i pobrać FPS Fix ](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fdrive.google.com%2Ffile%2Fd%2F1xILcnCt8_EQhXSPNUOOmLN3yGt8xHmW_)[drive.google.com]   
-  
-Ściągając tego lag fixa dodatkowo zostanie przywrócona oryginalna czcionka z wersji na płytach  
-CD.  
-  
-**Jeśli pomogłem nie zapomnij ocenić lub przyznać odznaki :)**  
-Pozdrawiam 
-
-55 Comments 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-[ ](https://steamcommunity.com/profiles/76561198027964962)
-
-[ Mckw](https://steamcommunity.com/profiles/76561198027964962)
-
-10 Jun @ 10:55pm 
+#### Mckw — 10 Jun @ 10:55pm
 
 Tu jest inna wersja spolszczcenia dla osób które z tym również miały problemy: [https://forum.cdaction.pl/topic/261889-robin-hood-legenda-sherwood-spolszczenie/](https://steamcommunity.com/linkfilter/?u=https%3A%2F%2Fforum.cdaction.pl%2Ftopic%2F261889-robin-hood-legenda-sherwood-spolszczenie%2F)
 
-[ ](https://steamcommunity.com/profiles/76561198027964962)
+#### Mckw — 10 Jun @ 10:48pm
 
-[ Mckw](https://steamcommunity.com/profiles/76561198027964962)
+Dubbing jest, ale brakuje polskich znaków przez co cały tekst przestaje być czytelny.
 
-10 Jun @ 10:48pm 
+#### pajur — 8 Jun @ 2:47am
 
-Dubbing jest, ale brakuje polskich znaków przez co cały tekst przestaje być czytelny. 
+uzyłem launchera ktorego podlinkował ktoś niżej. nie ważne jaką konfigurację ustawię, gra chodzi i tak w okolicach 20 fpsów. at this point myślę że zegar gry jest zaprojektowany dookoła fpsów jak inne stare gry. większa ilość fpsów w takim przypadku mogła by uniemożliwić normalną grę. jeśli jednak się mylę i jest jakiś sposób na więcej fpsów to proszę o info.
 
-[ ](https://steamcommunity.com/id/yngpajur)
+Jak chodzi o polskie znaki to zastosowanie fps fixa z tego posta z jakiegoś powodu dodaje polskie znaki, przynajmniej u mnie.
 
-[ pajur](https://steamcommunity.com/id/yngpajur)
+#### Standartenführer SS — 13 Jan @ 4:41pm
 
-8 Jun @ 2:47am 
+Mam 20 fps ale ta gra smiga jak kiedyś
 
-uzyłem launchera ktorego podlinkował ktoś niżej. nie ważne jaką konfigurację ustawię, gra chodzi i tak w okolicach 20 fpsów. at this point myślę że zegar gry jest zaprojektowany dookoła fpsów jak inne stare gry. większa ilość fpsów w takim przypadku mogła by uniemożliwić normalną grę. jeśli jednak się mylę i jest jakiś sposób na więcej fpsów to proszę o info.  
-Jak chodzi o polskie znaki to zastosowanie fps fixa z tego posta z jakiegoś powodu dodaje polskie znaki, przynajmniej u mnie. 
+#### krzysztof.lisicki1998 — 1 Dec, 2025 @ 10:15am
 
-[ ](https://steamcommunity.com/profiles/76561199116679870)
+Ma ktoś pomysł co zrobić z misją w York gdy tajnym przejściem trzeba wejść po ciało Longchampsa do twierdzy mam to przejście zablokowane niestety
 
-[ Standartenführer SS](https://steamcommunity.com/profiles/76561199116679870)
+#### _Oszi+ — 30 Sep, 2025 @ 11:25am
 
-13 Jan @ 4:41pm 
+Spolszczenie działa, ale nie mam Polskich znaków. Ktoś wie jak to naprawić ?
 
-Mam 20 fps ale ta gra smiga jak kiedyś 
+#### MisterGelwe — 19 Jun, 2025 @ 3:19pm
 
-[ ](https://steamcommunity.com/profiles/76561199010098863)
+Pobierz sobie launchera z discorda RH, link dałem kilka komentarzy niżej, dzięki niemu nie problemów z fpsami.
 
-[ krzysztof.lisicki1998](https://steamcommunity.com/profiles/76561199010098863)
+#### Matush — 19 Jun, 2025 @ 3:00pm
 
-1 Dec, 2025 @ 10:15am 
+w menu mam 144fps, ale w samej grze spada juz do 20, fix nie pomógł, ale spolszczenie i font działa
 
-Ma ktoś pomysł co zrobić z misją w York gdy tajnym przejściem trzeba wejść po ciało Longchampsa do twierdzy mam to przejście zablokowane niestety 
+#### osi — 23 May, 2025 @ 5:35am
 
-[ ](https://steamcommunity.com/id/oszipluss)
+11/10 Przypomniałeś mi całe dzieciństwo tym wybitnym dubbingiem  <3
 
-[ _Oszi+](https://steamcommunity.com/id/oszipluss)
+#### achojnacki — 15 Feb, 2025 @ 4:54am
 
-30 Sep, 2025 @ 11:25am 
-
-Spolszczenie działa, ale nie mam Polskich znaków. Ktoś wie jak to naprawić ? 
-
-[ ](https://steamcommunity.com/id/mistergelwe)
-
-[ MisterGelwe](https://steamcommunity.com/id/mistergelwe)
-
-19 Jun, 2025 @ 3:19pm 
-
-Pobierz sobie launchera z discorda RH, link dałem kilka komentarzy niżej, dzięki niemu nie problemów z fpsami. 
-
-[ ](https://steamcommunity.com/profiles/76561198908883140)
-
-[ Matush](https://steamcommunity.com/profiles/76561198908883140)
-
-19 Jun, 2025 @ 3:00pm 
-
-w menu mam 144fps, ale w samej grze spada juz do 20, fix nie pomógł, ale spolszczenie i font działa 
-
-[ ](https://steamcommunity.com/profiles/76561199019986268)
-
-[ osi](https://steamcommunity.com/profiles/76561199019986268)
-
-23 May, 2025 @ 5:35am 
-
-11/10 Przypomniałeś mi całe dzieciństwo tym wybitnym dubbingiem  <3 
-
-[ ](https://steamcommunity.com/profiles/76561198999466484)
-
-[ achojnacki](https://steamcommunity.com/profiles/76561198999466484)
-
-15 Feb, 2025 @ 4:54am 
-
-Pięknie dziękuję. To uczucie, cofnąć się w czasie, wrócić po zajęciach w podstawówce i usłyszeć ten głos. Aż mam ciary z ekscytacji! 
-
-[<](javascript:void\(0\);) [>](javascript:void\(0\);)
-
-Share to your Steam activity feed
-
-[]( "Share on Facebook")
-
-[]( "Share on Twitter")
-
-[]( "Share on Reddit")
-
-Link: 
-
-You need to sign in or create an account to do that.
-
-[Sign In](https://steamcommunity.com/login/home/?goto=sharedfiles%2Ffiledetails%2F%3Fid%3D2009175775%26insideModal%3D0%26requirelogin%3D1) [Create an Account](https://store.steampowered.com/join) Cancel
-
-[Update](javascript:UpdateKVTagsSingle\(\);)
+Pięknie dziękuję. To uczucie, cofnąć się w czasie, wrócić po zajęciach w podstawówce i usłyszeć ten głos. Aż mam ciary z ekscytacji!

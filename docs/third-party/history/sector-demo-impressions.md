@@ -1,27 +1,48 @@
-# Sector — October 2002 demo impressions
+# Sector — “Robin hood” (demo impressions)
 
-- Original source: [Robin hood](https://www.sector.sk/novinka/13467/robin-hood.htm)
-- Author / publication: saver; Sector.sk.
-- Language / date: Slovak; 2002-10-09.
-- Access: Full news item retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
-- Archived copy: lookup failed (archive.org rate limit); not checked
-- Format: header notes, original summary, then complete factual notes (commercial news item, not transcribed)
+- Source: [Sector.sk — Robin hood](https://www.sector.sk/novinka/13467/robin-hood.htm)
+- Author: saver
+- Published: 9 October 2002 at 08:38 (under games news)
+- Original language: Slovak
+- Retrieval: Full article available in the supplied HTML/text captures; checked 9 September 2026.
+- Editorial note: The page contains no substantive reader comments; commenting is restricted to logged-in users. Site navigation, advertisements, login prompts, and unrelated recommendation lists have been omitted.
 
-After playing the demo, saver describes an improvement over Desperados while judging its presentation below Commandos 2. The report singles out automatic self-defense when characters are attacked and the use of indistinct silhouettes for enemies beyond clear sight; approaching them reveals their type.
+## English translation
 
-These observations make the item useful for comparing prerelease behavior with the finished game. It also highlights the complementary abilities of the familiar outlaw team. The observations apply to the demo the writer played; the article does not identify its exact build, and this record does not infer behavior across all released versions.
+### Robin hood
 
-## Detailed notes
+Posted by [saver](https://www.sector.sk/redaktor/saver.htm), 9 October 2002 at 08:38, under games.
 
-Page facts: title "Robin hood"; posted by saver ("pridal saver") on 9.10.2002 at 8:38 under "hry" (games) news; retrieved directly from sector.sk. One-paragraph news item with five screenshot thumbnails (files snapx002951 to snapx002955 in the site's 2002109826 news folder); tagged "ati"; no comments shown (commenting requires login). Slovak-language commercial news, not transcribed.
+I played the [demo of **Robin Hood**](http://www.plnehry.sk/hra.asp?id=785) by Spellbound and it is quite nice. It does not match [Commandos 2](http://www.sector.sk/clanok.asp?id=2870), but they have certainly improved over [Desperados](http://www.sector.sk/clanok.asp?id=2165). This time the graphics are noticeably better, and they also reworked the entire strategic section. For example, the characters no longer just stand idly by and wait when someone attacks them: they always draw their swords and defend themselves. You can no longer see enemies outside your field of view so clearly; you only see shadows, so you cannot determine what type of enemy it is. Only when you come closer does the character appear in full. Naturally, your party includes Robin Hood’s familiar band, including Marion, Tuck, Will, and Little John; each naturally has their own specialities and is suited to different actions. The story is about obtaining the gold needed to ransom the king from captivity in Jerusalem.
 
-- The writer looked at the Robin Hood demo from Spellbound (linked on plnehry.sk, game id 785) and calls it "quite nice".
-- Comparison: it does not reach Commandos 2, but is definitely an improvement over Desperados (both linked to Sector's own articles).
-- Graphics are described as markedly better this time, and the whole strategic part was reworked.
-- Behaviour noted from the demo: characters no longer stand idle when attacked; they always draw their sword and defend themselves on their own.
-- Enemies out of sight are no longer seen clearly; only shadows are shown, from which the enemy type cannot be determined; when the player gets closer the figure is displayed in full.
-- The party is the familiar Robin Hood band: Marion, Tuck, Will and Little John are named, each with their own specialities suited to different actions.
-- Story as stated: obtaining the gold needed to ransom the king from captivity "in Jerusalem" (the item's own wording).
-- Sidebar of related Sector news about the game (with dates): "Robin Hood CZ look" 17.2.2003; "Robin hood zľava v novom Gamestare" (discount in the new Gamestar) 3.2.2003; "Robin Hood - Legend of Sherwood ďalšie shoty" (more screenshots) 6.11.2002; "Robin Hood dokončený" (completed) 28.10.2002; "CDprojekt: Robin Hood" 16.10.2002; "Robin Hood shoty a video" 16.10.2002. These were not retrieved.
+![Robin hood — screenshot 1](https://imgs.sector.sk/files/novinky/2002109826/snapx002951.jpg)
+
+![Robin hood — screenshot 2](https://imgs.sector.sk/files/novinky/2002109826/snapx002952.jpg)
+
+![Robin hood — screenshot 3](https://imgs.sector.sk/files/novinky/2002109826/snapx002953.jpg)
+
+![Robin hood — screenshot 4](https://imgs.sector.sk/files/novinky/2002109826/snapx002954.jpg)
+
+![Robin hood — screenshot 5](https://imgs.sector.sk/files/novinky/2002109826/snapx002955.jpg)
+
+Categorized under: [ati](https://www.sector.sk/tag/ati)
+
+## Original text
+
+### Robin hood
+
+pridal [saver](https://www.sector.sk/redaktor/saver.htm) 9.10.2002 o 8:38 pod hry
+
+Pozrel som [demo na **Robina Hooda**](http://www.plnehry.sk/hra.asp?id=785) od Spellboundu a ono to je celkom pekné, síce na [Commandos 2](http://www.sector.sk/clanok.asp?id=2870) to nemá ale určite si polepšili oproti [Desperadom](http://www.sector.sk/clanok.asp?id=2165). Tentoraz tu je grafika výrazne kvalitnejšia a prepracovali aj celú strategickú časť. Napríklad postavy vám už len tak nečinne nestoja a nečakajú keď na nich niekto útočí, vždy vytasia meč a samé sa bránia. Nepriateľov mimo dohľadu už nevidíte tak jasne a teda vidíte len tiene podľa čoho nemôžete určiť o aký typ nepriateľa sa jedná, až keď prídete bližšie postava sa vám zobrazí celá. Samozrejme v družine máte známu partu Robina Hooda kde nechýba Marion, Tuck, Will, Little John každý má samozrejme svoje špeciality a je vhodný na iné akcie. V príbehu ide o získanie zlata potrebného na vykúpenie kráľa zo zajatia v Jeruzaleme.
+
+![Robin hood — screenshot 1](https://imgs.sector.sk/files/novinky/2002109826/snapx002951.jpg)
+
+![Robin hood — screenshot 2](https://imgs.sector.sk/files/novinky/2002109826/snapx002952.jpg)
+
+![Robin hood — screenshot 3](https://imgs.sector.sk/files/novinky/2002109826/snapx002953.jpg)
+
+![Robin hood — screenshot 4](https://imgs.sector.sk/files/novinky/2002109826/snapx002954.jpg)
+
+![Robin hood — screenshot 5](https://imgs.sector.sk/files/novinky/2002109826/snapx002955.jpg)
+
+Zaradené pod: [ati](https://www.sector.sk/tag/ati)

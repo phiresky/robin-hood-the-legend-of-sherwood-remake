@@ -4,312 +4,91 @@
 - Author / publication: Steam Community authors
 - Language / date: Multiple languages; index checked 2026-09-09
 - Access: Guide hub retrieved directly
-- Checked: 2026-09-09
-- Retrieved: 2026-09-09
+- Checked / retrieved: 2026-09-09
 - Archived copy: [Wayback Machine, 2026-02-17](http://web.archive.org/web/20260217082202/https://steamcommunity.com/app/46560/guides/)
-- Format: header notes, then the page text converted from the original HTML
 
-## Converted text from the original HTML
+The source is a mixed-language guide index. English passages are retained below; non-English guide titles and descriptions are translated in the English section, with the complete source-language index preserved under **Original text**.
 
-
-
-### reference__steam-guide-index.html
-
-_Source: `originals/reference__steam-guide-index.html`._
-
-[ Sign in ](https://steamcommunity.com/login/home/?goto=app%2F46560%2Fguides%2F) [ Store ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ Community ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
-
-Change language 
-
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
-
-View desktop website 
-
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
-
-[ ](https://store.steampowered.com/)
-
-[ ](https://store.steampowered.com/)
-
-[ STORE ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ COMMUNITY ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
-
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=app%2F46560%2Fguides%2F)  |  language
-
-[ 简体中文 (Simplified Chinese) ](?l=schinese) [ 繁體中文 (Traditional Chinese) ](?l=tchinese) [ 日本語 (Japanese) ](?l=japanese) [ 한국어 (Korean) ](?l=koreana) [ ไทย (Thai) ](?l=thai) [ Bahasa Indonesia (Indonesian) ](?l=indonesian) [ Bahasa Melayu (Malay) BETA ](?l=malay) [ Български (Bulgarian) ](?l=bulgarian) [ Čeština (Czech) ](?l=czech) [ Dansk (Danish) ](?l=danish) [ Deutsch (German) ](?l=german) [ Español - España (Spanish - Spain) ](?l=spanish) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam) [ Ελληνικά (Greek) ](?l=greek) [ Français (French) ](?l=french) [ Italiano (Italian) ](?l=italian) [ Magyar (Hungarian) ](?l=hungarian) [ Nederlands (Dutch) ](?l=dutch) [ Norsk (Norwegian) ](?l=norwegian) [ Polski (Polish) ](?l=polish) [ Português (Portuguese - Portugal) ](?l=portuguese) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian) [ Română (Romanian) ](?l=romanian) [ Русский (Russian) ](?l=russian) [ Suomi (Finnish) ](?l=finnish) [ Svenska (Swedish) ](?l=swedish) [ Türkçe (Turkish) ](?l=turkish) [ Tiếng Việt (Vietnamese) ](?l=vietnamese) [ Українська (Ukrainian) ](?l=ukrainian) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
-
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_9_100009__apphubheader)
-
-Robin Hood
-
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
-
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
+## English translation
 
 ### Robin Hood
 
-[ Store Page ](https://store.steampowered.com/app/46560)
-
 Browse and rate player-created guides for this game. Or create your own and share your tips with the community.
 
-[Create your own](https://steamcommunity.com/sharedfiles/editguide/?appid=46560)
-
-Filter by Category 
-
-Show items tagged with all of the selected terms:
-
-Category
-
-Achievements 
-
-Characters 
-
-Classes 
-
-Co-op 
-
-Crafting 
-
-Game Modes 
-
-Gameplay Basics 
-
-Loot 
-
-Maps or Levels 
-
-Modding or Configuration 
-
-Multiplayer 
-
-Secrets 
-
-Story or Lore 
-
-Trading 
-
-Walkthroughs 
-
-Weapons 
-
-Workshop 
-
-Languages
-
-< none specified > Bulgarian Simplified Chinese Traditional Chinese Czech Danish Dutch English Finnish French German Greek Hungarian Italian Japanese Korean Norwegian Polish Portuguese Portuguese (Brazil) Romanian Russian Spanish Swedish Thai Turkish Ukrainian Spanish-Latin America Vietnamese
-
-Browse by:
-
-[Home](?browsesort=home&browsefilter=home&requiredtags%5B0%5D=english&p=1)
-
-[Most Popular](?browsesort=trend&browsefilter=trend&requiredtags%5B0%5D=english&p=1)
-
-[Top Rated All Time](?browsesort=toprated&browsefilter=toprated&requiredtags%5B0%5D=english&p=1)
-
-[Most Recent](?browsesort=mostrecent&browsefilter=mostrecent&requiredtags%5B0%5D=english&p=1)
-
-More About Guides
-
-Click here to learn more about Steam Guides
-
-[View All (17)](javascript:ShowAllCategories\(\))
-
-Popular Categories (17)
-
-[ Modding Or Configuration 26 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Modding or Configuration&requiredtags\[\]=english) [ Gameplay Basics 19 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Gameplay Basics&requiredtags\[\]=english) [ Walkthroughs 17 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Walkthroughs&requiredtags\[\]=english) [ Secrets 14 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Secrets&requiredtags\[\]=english) [ Maps Or Levels 10 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Maps or Levels&requiredtags\[\]=english) [ Achievements 8 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Achievements&requiredtags\[\]=english) [ Game Modes 7 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Game Modes&requiredtags\[\]=english) [ Characters 7 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Characters&requiredtags\[\]=english) [ Story Or Lore 7 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Story or Lore&requiredtags\[\]=english) [ Loot 6 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Loot&requiredtags\[\]=english) [ Classes 5 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Classes&requiredtags\[\]=english) [ Workshop 5 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Workshop&requiredtags\[\]=english) [ Weapons 4 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Weapons&requiredtags\[\]=english) [ Crafting 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Crafting&requiredtags\[\]=english) [ Trading 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Trading&requiredtags\[\]=english) [ Co-op 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Co-op&requiredtags\[\]=english) [ Multiplayer 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Multiplayer&requiredtags\[\]=english)
-
-[View All (38)](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&filetype=11&requiredtags\[\]=english)
-
-Popular Steam Guides Written guides, references, and walkthroughs
-
-[ CODIGOS SECRETOS PARA "ROBIN HOOD" by BROLY5783 Trucos para el juego Robin Hood. ... ](https://steamcommunity.com/sharedfiles/filedetails/?id=1526860884)
-
-[ [PL] Pełne Spolszczenie Robin Hood Legenda Sherwood - Dubbing, Napisy, Polskie Znaki, FPS Fix. Aktualny  by Naxyň Witajcie Postanowiłem stworzyć pełne spolszczenie do gry Robin Hood Legenda Sherwood. Zapraszam... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2009175775)
-
-[ Play on Windows 7-11 with improved compatibility and fixes (NEW 2024)  by LuKeSt0rm Play the game easy and with improved compatibility on modern Windows systems. (no dxwnd/dgvoodoo)... ](https://steamcommunity.com/sharedfiles/filedetails/?id=3290654040)
-
-[ Robin Hood Legend of Sherwood - Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED - Game Fixed by Devs)  by Naxyň Now the problem has been patched by the publisher, you don't need to download anything, the game runs at 22 fps on windows 10 and 11. If you still have problems with the game, you can still try my method :) Hi! Do you have FPS performance issues on windows... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2227664168)
-
-[ [Ru] Руководство по комфортному запуску Robin Hood: Legend of Sherwood на Windows 10.  by Я - руинер Руководство по устранению проблем при запуске игры Robin Hood: Legend of Sherwood на Windows 10.... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2893277221)
-
-[ Robin Hood: How to get the secret ending  by xXDylanXWithinXx In addition to the main story of Robin Hood, there are collectables that you can find through the game that add a little more challenge to the game. These collectables unlock a secret ending. In this guide I will teach you where and how to get them.... ](https://steamcommunity.com/sharedfiles/filedetails/?id=792309796)
-
-[ How to run the game on Windows 10/11  by Kisa ♥ How to start the game in Win10 and getting playable FPS... ](https://steamcommunity.com/sharedfiles/filedetails/?id=640978579)
-
-[ Combat Guide  by OlogGuy7 Here are a few tips and tricks on the fighting system in this game which will hopefully aid you in your playthrough!... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2930272620)
-
-[ Robin Hood Language & Texts  by Psojed A short guide about changing the game language and fonts... ](https://steamcommunity.com/sharedfiles/filedetails/?id=1349014146)
-
-[ Русификаторы  by ◥牵Pit8ull牵◤ Русификаторы полный(с озвучкой) и текстовый... ](https://steamcommunity.com/sharedfiles/filedetails/?id=568553866)
-
-Subscribed
-
-Favorited
-
-Played
-
-
-### reference__steam-guide-index.txt
-
-_Source: `originals/reference__steam-guide-index.txt`._
-
-[ Sign in ](https://steamcommunity.com/login/home/?goto=app%2F46560%2Fguides%2F) [ Store ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ Community ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ Support ](https://help.steampowered.com/en/)
-
-Change language 
-
-[Get the Steam Mobile App](https://store.steampowered.com/mobile)
-
-View desktop website 
-
-© Valve Corporation. All rights reserved. All trademarks are property of their respective owners in the US and other countries.  [Privacy Policy](https://store.steampowered.com/privacy_agreement/)  |  [Legal](http://www.valvesoftware.com/legal.htm)  |  [Accessibility](https://help.steampowered.com/faqs/view/10BB-D27A-6378-4436)  |  [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/)  |  [Refunds](https://store.steampowered.com/steam_refunds/)  |  [Cookies](https://store.steampowered.com/account/cookiepreferences/)
-
-[ ](https://store.steampowered.com/)
-
-[ ](https://store.steampowered.com/)
-
-[ STORE ](https://store.steampowered.com/)
-
-[ Home ](https://store.steampowered.com/) [ Discovery Queue ](https://store.steampowered.com/explore/) [ Wishlist ](https://store.steampowered.com/wishlist/) [ Points Shop ](https://store.steampowered.com/points/shop/) [ News ](https://store.steampowered.com/news/) [ Charts ](https://store.steampowered.com/stats/)
-
-[ COMMUNITY ](https://steamcommunity.com/)
-
-[ Home ](https://steamcommunity.com/) [ Discussions ](https://steamcommunity.com/discussions/) [ Workshop ](https://steamcommunity.com/workshop/) [ Market ](https://steamcommunity.com/market/) [ Broadcasts ](https://steamcommunity.com/?subsection=broadcasts)
-
-[ About ](https://store.steampowered.com/about/) [ SUPPORT ](https://help.steampowered.com/en/)
-
-[ Install Steam  ](https://store.steampowered.com/about/) [sign in](https://steamcommunity.com/login/home/?goto=app%2F46560%2Fguides%2F)  |  language
-
-[ 简体中文 (Simplified Chinese) ](?l=schinese) [ 繁體中文 (Traditional Chinese) ](?l=tchinese) [ 日本語 (Japanese) ](?l=japanese) [ 한국어 (Korean) ](?l=koreana) [ ไทย (Thai) ](?l=thai) [ Bahasa Indonesia (Indonesian) ](?l=indonesian) [ Bahasa Melayu (Malay) BETA ](?l=malay) [ Български (Bulgarian) ](?l=bulgarian) [ Čeština (Czech) ](?l=czech) [ Dansk (Danish) ](?l=danish) [ Deutsch (German) ](?l=german) [ Español - España (Spanish - Spain) ](?l=spanish) [ Español - Latinoamérica (Spanish - Latin America) ](?l=latam) [ Ελληνικά (Greek) ](?l=greek) [ Français (French) ](?l=french) [ Italiano (Italian) ](?l=italian) [ Magyar (Hungarian) ](?l=hungarian) [ Nederlands (Dutch) ](?l=dutch) [ Norsk (Norwegian) ](?l=norwegian) [ Polski (Polish) ](?l=polish) [ Português (Portuguese - Portugal) ](?l=portuguese) [ Português - Brasil (Portuguese - Brazil) ](?l=brazilian) [ Română (Romanian) ](?l=romanian) [ Русский (Russian) ](?l=russian) [ Suomi (Finnish) ](?l=finnish) [ Svenska (Swedish) ](?l=swedish) [ Türkçe (Turkish) ](?l=turkish) [ Tiếng Việt (Vietnamese) ](?l=vietnamese) [ Українська (Ukrainian) ](?l=ukrainian) [Report a translation problem](https://www.valvesoftware.com/contact?contact-person=Translation%20Team%20Feedback)
-
-[ Store Page ](https://store.steampowered.com/app/46560?snr=2_9_100009__apphubheader)
-
-Robin Hood
-
-[All](https://steamcommunity.com/app/46560) [Discussions](https://steamcommunity.com/app/46560/discussions/) [Screenshots](https://steamcommunity.com/app/46560/screenshots/) [Artwork](https://steamcommunity.com/app/46560/images/) [Broadcasts](https://steamcommunity.com/app/46560/broadcasts/) [Videos](https://steamcommunity.com/app/46560/videos/) [News](https://steamcommunity.com/app/46560/allnews/) [Guides](https://steamcommunity.com/app/46560/guides/) [Reviews](https://steamcommunity.com/app/46560/reviews/)
-
-All  Discussions  Screenshots  Artwork  Broadcasts  Videos  News  Guides  Reviews 
+#### Popular Categories (17)
+
+- [Modding Or Configuration — 26 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Modding%20or%20Configuration&requiredtags%5B%5D=english)
+- [Gameplay Basics — 19 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Gameplay%20Basics&requiredtags%5B%5D=english)
+- [Walkthroughs — 17 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Walkthroughs&requiredtags%5B%5D=english)
+- [Secrets — 14 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Secrets&requiredtags%5B%5D=english)
+- [Maps Or Levels — 10 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Maps%20or%20Levels&requiredtags%5B%5D=english)
+- [Achievements — 8 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Achievements&requiredtags%5B%5D=english)
+- [Game Modes — 7 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Game%20Modes&requiredtags%5B%5D=english)
+- [Characters — 7 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Characters&requiredtags%5B%5D=english)
+- [Story Or Lore — 7 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Story%20or%20Lore&requiredtags%5B%5D=english)
+- [Loot — 6 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Loot&requiredtags%5B%5D=english)
+- [Classes — 5 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Classes&requiredtags%5B%5D=english)
+- [Workshop — 5 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Workshop&requiredtags%5B%5D=english)
+- [Weapons — 4 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Weapons&requiredtags%5B%5D=english)
+- [Crafting — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Crafting&requiredtags%5B%5D=english)
+- [Trading — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Trading&requiredtags%5B%5D=english)
+- [Co-op — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Co-op&requiredtags%5B%5D=english)
+- [Multiplayer — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Multiplayer&requiredtags%5B%5D=english)
+
+#### Popular Steam Guides
+
+Written guides, references, and walkthroughs:
+
+1. [SECRET CODES FOR “ROBIN HOOD”](https://steamcommunity.com/sharedfiles/filedetails/?id=1526860884) — **BROLY5783**. Cheats/tricks for the Robin Hood game.
+2. [Full Polish translation of Robin Hood: Legend of Sherwood — Dubbing, Subtitles, Polish characters, FPS Fix. Current](https://steamcommunity.com/sharedfiles/filedetails/?id=2009175775) — **Naxyň**. “Hello. I decided to create a complete Polish translation for Robin Hood: Legend of Sherwood. Welcome…”
+3. [Play on Windows 7–11 with improved compatibility and fixes (NEW 2024)](https://steamcommunity.com/sharedfiles/filedetails/?id=3290654040) — **LuKeSt0rm**. Play the game easily with improved compatibility on modern Windows systems (no dxwnd/dgvoodoo)…
+4. [Robin Hood: Legend of Sherwood — Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED — Game Fixed by Devs)](https://steamcommunity.com/sharedfiles/filedetails/?id=2227664168) — **Naxyň**. The publisher has patched the problem, so you do not need to download anything; the game runs at 22 FPS on Windows 10 and 11. If you still have problems, you can try this method. “Hi! Do you have FPS performance issues on Windows…”
+5. [Guide to comfortable launching of Robin Hood: Legend of Sherwood on Windows 10](https://steamcommunity.com/sharedfiles/filedetails/?id=2893277221) — **Я - руинер**. Guide to resolving problems when launching Robin Hood: Legend of Sherwood on Windows 10…
+6. [Robin Hood: How to get the secret ending](https://steamcommunity.com/sharedfiles/filedetails/?id=792309796) — **xXDylanXWithinXx**. In addition to the main story, collectables found throughout the game add a little more challenge. These collectables unlock a secret ending. This guide teaches where and how to get them…
+7. [How to run the game on Windows 10/11](https://steamcommunity.com/sharedfiles/filedetails/?id=640978579) — **Kisa ♥**. How to start the game in Windows 10 and get playable FPS…
+8. [Combat Guide](https://steamcommunity.com/sharedfiles/filedetails/?id=2930272620) — **OlogGuy7**. A few tips and tricks for the fighting system that will hopefully aid your playthrough…
+9. [Robin Hood Language & Texts](https://steamcommunity.com/sharedfiles/filedetails/?id=1349014146) — **Psojed**. A short guide about changing the game language and fonts…
+10. [Russian localizers](https://steamcommunity.com/sharedfiles/filedetails/?id=568553866) — **◥牵Pit8ull牵◤**. Full Russian localizers (with voice acting) and a text-only one…
+
+## Original text
 
 ### Robin Hood
 
-[ Store Page ](https://store.steampowered.com/app/46560)
-
 Browse and rate player-created guides for this game. Or create your own and share your tips with the community.
 
-[Create your own](https://steamcommunity.com/sharedfiles/editguide/?appid=46560)
+#### Popular Categories (17)
 
-Filter by Category 
+- [Modding Or Configuration — 26 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Modding%20or%20Configuration&requiredtags%5B%5D=english)
+- [Gameplay Basics — 19 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Gameplay%20Basics&requiredtags%5B%5D=english)
+- [Walkthroughs — 17 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Walkthroughs&requiredtags%5B%5D=english)
+- [Secrets — 14 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Secrets&requiredtags%5B%5D=english)
+- [Maps Or Levels — 10 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Maps%20or%20Levels&requiredtags%5B%5D=english)
+- [Achievements — 8 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Achievements&requiredtags%5B%5D=english)
+- [Game Modes — 7 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Game%20Modes&requiredtags%5B%5D=english)
+- [Characters — 7 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Characters&requiredtags%5B%5D=english)
+- [Story Or Lore — 7 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Story%20or%20Lore&requiredtags%5B%5D=english)
+- [Loot — 6 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Loot&requiredtags%5B%5D=english)
+- [Classes — 5 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Classes&requiredtags%5B%5D=english)
+- [Workshop — 5 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Workshop&requiredtags%5B%5D=english)
+- [Weapons — 4 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Weapons&requiredtags%5B%5D=english)
+- [Crafting — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Crafting&requiredtags%5B%5D=english)
+- [Trading — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Trading&requiredtags%5B%5D=english)
+- [Co-op — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Co-op&requiredtags%5B%5D=english)
+- [Multiplayer — 3 Guides](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags%5B%5D=Multiplayer&requiredtags%5B%5D=english)
 
-Show items tagged with all of the selected terms:
+#### Popular Steam Guides
 
-Category
+Written guides, references, and walkthroughs:
 
-Achievements 
+1. [CODIGOS SECRETOS PARA "ROBIN HOOD"](https://steamcommunity.com/sharedfiles/filedetails/?id=1526860884) by **BROLY5783** — *Trucos para el juego Robin Hood. ...*
+2. [[PL] Pełne Spolszczenie Robin Hood Legenda Sherwood - Dubbing, Napisy, Polskie Znaki, FPS Fix. Aktualny](https://steamcommunity.com/sharedfiles/filedetails/?id=2009175775) by **Naxyň** — *Witajcie Postanowiłem stworzyć pełne spolszczenie do gry Robin Hood Legenda Sherwood. Zapraszam...*
+3. [Play on Windows 7-11 with improved compatibility and fixes (NEW 2024)](https://steamcommunity.com/sharedfiles/filedetails/?id=3290654040) by **LuKeSt0rm** — *Play the game easy and with improved compatibility on modern Windows systems. (no dxwnd/dgvoodoo)...*
+4. [Robin Hood Legend of Sherwood - Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED - Game Fixed by Devs)](https://steamcommunity.com/sharedfiles/filedetails/?id=2227664168) by **Naxyň** — *Now the problem has been patched by the publisher, you don't need to download anything, the game runs at 22 fps on windows 10 and 11. If you still have problems with the game, you can still try my method :) Hi! Do you have FPS performance issues on windows...*
+5. [[Ru] Руководство по комфортному запуску Robin Hood: Legend of Sherwood на Windows 10.](https://steamcommunity.com/sharedfiles/filedetails/?id=2893277221) by **Я - руинер** — *Руководство по устранению проблем при запуске игры Robin Hood: Legend of Sherwood на Windows 10....*
+6. [Robin Hood: How to get the secret ending](https://steamcommunity.com/sharedfiles/filedetails/?id=792309796) by **xXDylanXWithinXx** — *In addition to the main story of Robin Hood, there are collectables that you can find through the game that add a little more challenge to the game. These collectables unlock a secret ending. In this guide I will teach you where and how to get them....*
+7. [How to run the game on Windows 10/11](https://steamcommunity.com/sharedfiles/filedetails/?id=640978579) by **Kisa ♥** — *How to start the game in Win10 and getting playable FPS...*
+8. [Combat Guide](https://steamcommunity.com/sharedfiles/filedetails/?id=2930272620) by **OlogGuy7** — *Here are a few tips and tricks on the fighting system in this game which will hopefully aid you in your playthrough!...*
+9. [Robin Hood Language & Texts](https://steamcommunity.com/sharedfiles/filedetails/?id=1349014146) by **Psojed** — *A short guide about changing the game language and fonts...*
+10. [Русификаторы](https://steamcommunity.com/sharedfiles/filedetails/?id=568553866) by **◥牵Pit8ull牵◤** — *Русификаторы полный(с озвучкой) и текстовый...*
 
-Characters 
-
-Classes 
-
-Co-op 
-
-Crafting 
-
-Game Modes 
-
-Gameplay Basics 
-
-Loot 
-
-Maps or Levels 
-
-Modding or Configuration 
-
-Multiplayer 
-
-Secrets 
-
-Story or Lore 
-
-Trading 
-
-Walkthroughs 
-
-Weapons 
-
-Workshop 
-
-Languages
-
-< none specified > Bulgarian Simplified Chinese Traditional Chinese Czech Danish Dutch English Finnish French German Greek Hungarian Italian Japanese Korean Norwegian Polish Portuguese Portuguese (Brazil) Romanian Russian Spanish Swedish Thai Turkish Ukrainian Spanish-Latin America Vietnamese
-
-Browse by:
-
-[Home](?browsesort=home&browsefilter=home&requiredtags%5B0%5D=english&p=1)
-
-[Most Popular](?browsesort=trend&browsefilter=trend&requiredtags%5B0%5D=english&p=1)
-
-[Top Rated All Time](?browsesort=toprated&browsefilter=toprated&requiredtags%5B0%5D=english&p=1)
-
-[Most Recent](?browsesort=mostrecent&browsefilter=mostrecent&requiredtags%5B0%5D=english&p=1)
-
-More About Guides
-
-Click here to learn more about Steam Guides
-
-[View All (17)](javascript:ShowAllCategories\(\))
-
-Popular Categories (17)
-
-[ Modding Or Configuration 26 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Modding or Configuration&requiredtags\[\]=english) [ Gameplay Basics 19 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Gameplay Basics&requiredtags\[\]=english) [ Walkthroughs 17 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Walkthroughs&requiredtags\[\]=english) [ Secrets 14 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Secrets&requiredtags\[\]=english) [ Maps Or Levels 10 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Maps or Levels&requiredtags\[\]=english) [ Achievements 8 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Achievements&requiredtags\[\]=english) [ Game Modes 7 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Game Modes&requiredtags\[\]=english) [ Characters 7 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Characters&requiredtags\[\]=english) [ Story Or Lore 7 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Story or Lore&requiredtags\[\]=english) [ Loot 6 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Loot&requiredtags\[\]=english) [ Classes 5 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Classes&requiredtags\[\]=english) [ Workshop 5 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Workshop&requiredtags\[\]=english) [ Weapons 4 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Weapons&requiredtags\[\]=english) [ Crafting 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Crafting&requiredtags\[\]=english) [ Trading 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Trading&requiredtags\[\]=english) [ Co-op 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Co-op&requiredtags\[\]=english) [ Multiplayer 3 Guides ](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&requiredtags\[\]=Multiplayer&requiredtags\[\]=english)
-
-[View All (38)](https://steamcommunity.com/app/46560/guides/?browsefilter=trend&filetype=11&requiredtags\[\]=english)
-
-Popular Steam Guides Written guides, references, and walkthroughs
-
-[ CODIGOS SECRETOS PARA "ROBIN HOOD" by BROLY5783 Trucos para el juego Robin Hood. ... ](https://steamcommunity.com/sharedfiles/filedetails/?id=1526860884)
-
-[ [PL] Pełne Spolszczenie Robin Hood Legenda Sherwood - Dubbing, Napisy, Polskie Znaki, FPS Fix. Aktualny  by Naxyň Witajcie Postanowiłem stworzyć pełne spolszczenie do gry Robin Hood Legenda Sherwood. Zapraszam... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2009175775)
-
-[ Play on Windows 7-11 with improved compatibility and fixes (NEW 2024)  by LuKeSt0rm Play the game easy and with improved compatibility on modern Windows systems. (no dxwnd/dgvoodoo)... ](https://steamcommunity.com/sharedfiles/filedetails/?id=3290654040)
-
-[ Robin Hood Legend of Sherwood - Windows 10 & 11 Best FPS/FONT FIX! (OUTDATED - Game Fixed by Devs)  by Naxyň Now the problem has been patched by the publisher, you don't need to download anything, the game runs at 22 fps on windows 10 and 11. If you still have problems with the game, you can still try my method :) Hi! Do you have FPS performance issues on windows... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2227664168)
-
-[ [Ru] Руководство по комфортному запуску Robin Hood: Legend of Sherwood на Windows 10.  by Я - руинер Руководство по устранению проблем при запуске игры Robin Hood: Legend of Sherwood на Windows 10.... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2893277221)
-
-[ Robin Hood: How to get the secret ending  by xXDylanXWithinXx In addition to the main story of Robin Hood, there are collectables that you can find through the game that add a little more challenge to the game. These collectables unlock a secret ending. In this guide I will teach you where and how to get them.... ](https://steamcommunity.com/sharedfiles/filedetails/?id=792309796)
-
-[ How to run the game on Windows 10/11  by Kisa ♥ How to start the game in Win10 and getting playable FPS... ](https://steamcommunity.com/sharedfiles/filedetails/?id=640978579)
-
-[ Combat Guide  by OlogGuy7 Here are a few tips and tricks on the fighting system in this game which will hopefully aid you in your playthrough!... ](https://steamcommunity.com/sharedfiles/filedetails/?id=2930272620)
-
-[ Robin Hood Language & Texts  by Psojed A short guide about changing the game language and fonts... ](https://steamcommunity.com/sharedfiles/filedetails/?id=1349014146)
-
-[ Русификаторы  by ◥牵Pit8ull牵◤ Русификаторы полный(с озвучкой) и текстовый... ](https://steamcommunity.com/sharedfiles/filedetails/?id=568553866)
-
-Subscribed
-
-Favorited
-
-Played
+Subscribed · Favorited · Played

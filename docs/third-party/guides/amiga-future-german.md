@@ -1,932 +1,204 @@
-# Amiga Future — German complete-solution lead
+# Robin Hood – Die Legende von Sherwood
 
-- Original source: [Amiga Future — German complete-solution lead](https://www.amigafuture.de/app.php/GTT/view/R/1363/5)
-- Author / publication: Georg Breitsprecher; revised by Ampow / Amiga Future
-- Language / date: German; web listing dated 2025-11-28; originally issues 69–71
-- Access: Indexed attribution and opening inspected; direct retrieval failed
-- Checked: 2026-09-09
-- Format: original summary and research notes; not a transcript.
+- Original source: [Amiga Future — Solutions](https://www.amigafuture.de/app.php/GTT/view/R/1363/5)
+- System: MOS
+- Author: Georg Breitsprecher; Überarbeitung von Ampow
+- Original publication: *Amiga Future* issues 69/70/71
+- Web entry: 28.11.2025, 15:15
+- Language: German
 
-The search listing identifies a complete solution originally published across Amiga Future issues 69, 70, and 71, later revised for the website. Its platform category is MOS.
+_The following is the complete available article text. Site navigation, advertisements, login controls, and footer have been omitted._
 
-The introduction presents the route as one of multiple possible solutions. It emphasizes concealment and deception against superior enemy numbers, then begins the opening mission with Robin sneaking behind a guard, knocking him out, and climbing a wall.
+## English translation
 
-**Research use:** a substantial German walkthrough and a bridge to the print archive.
+Robin Hood and his followers face an overwhelming force in this game. To avoid simply being overrun, they must act from hiding and, in part, with cunning and deception. This walkthrough shows one of many ways to deal with the men of the Sheriff of Nottingham and his allies.
 
-**Coverage limit:** only indexed attribution and opening material were inspected. The full route, its illustrations, and any differences specific to MorphOS remain TODO. The modern website timestamp is not the original magazine publication date.
+### Mission 1
 
-## Converted text from the original HTML
+Robin's campaign against the conspirators around Prince John begins fairly quietly, with few fights. Right at the start he uses his most important abilities by sneaking up behind the guard, knocking him down with a punch, and then climbing the wall. At the top he fires an arrow at one of the targets, thereby ensuring that the leader finally gives his incompetent subordinate a break. One of the soldiers loses a great deal of money in the process, which Robin naturally does not let escape him. He gives a few coins of it to the beggar and receives a tip about where to find a purse. These prove very useful as thrown weapons, because many a soldier completely forgets his duties when suddenly faced with riches and even knocks down colleagues who have also set their eyes on it. Another of these purses can be found in the yard by the soldiers on the right. Robin therefore climbs the wall to which the beggar directed him and lands below a guard. He waits for a moment when the fellow is on the left and knocks him down from behind. The man in the building to the north should also be removed in this way; if he spots Robin sneaking up, however, he can quickly be defeated with the sword. From here the way continues west, where our hero meets Godwin. From there it is worth making a detour to the northwestern tower, where a heap of gold ends up in the master thief's pockets. Now it is time to get away, using either the eastern or western gate. Although the route is longer, escaping east is advisable: Robin encounters only a few opponents there, who can generally be dealt with using his fists. Once he has crossed the wall, he can reach the other gate unseen by keeping close to the walls. A little farther on he waits until the soldier turns to leave, then knocks him and his colleagues down. Only the guards on the bridge now stand between Robin and freedom, but a well-aimed purse easily resolves that problem.
 
+### Mission 2
 
-### guides__amiga-future-german.html
+First Robin goes over to the beggar by the wall and lets his fists speak to the two inattentive gate guards. Before entering the area, he picks up the purse lying on the ground. It serves him well: as soon as the guard opposite the gate has his back turned to Robin, he throws the gold to the right of the prisoners and immediately retreats into the gate's shadow. There he waits for the brawl to end and sends the remaining guards to the land of dreams as well, so that he can turn to freeing the prisoners. They immediately hide in one of the houses. To keep the unconscious men from attracting attention, Stuteley should bind them and the strong companion should drag them into the doorway. The same combination—punch, bind, and carry away—is used to remove the man opposite the church entrance.
 
-_Source: `originals/guides__amiga-future-german.html`._
+Next the strong companion stands in the middle of the square, draws the guards' attention with a whistle, and hides again. Once the patrol has marched past, the whole team can continue and enter the church. While the others wait in the cemetery, Stuteley picks the lock of the next house, into which everyone now moves. When the coast is clear, Robin goes through the rear exit and knocks out the guard there (who is hidden as usual). Only two soldiers and the two gate guards now stand in the way. Robin can knock down the first with his fist, but the second immediately notices, so he deals with him using an arrow. He can also deal with one of the two men at the gate by hand. Once the other has been defeated in sword combat, it is time for the whole group to flee to Sherwood Forest.
 
-[ ](https://www.amigafuture.de "Amiga Future")
+### Raid
 
-__Search [ __Advanced search ](./../../../../../search.php?sid=30af39b9367362155d43ff4810ab7071 "Advanced search")
+Before continuing with the next mission, a few money-raising measures are needed. It begins with a raid on a coach, which Robin can carry out without the companions in camp. After all, quite a few men are hidden in the forest to support him. Meanwhile, arrows and purses should be produced in Sherwood Forest and sword fighting trained. After the coach stops, the soldiers spread out and Robin can begin taking them out one by one from ambush. First he triggers the net trap with the target by the bridge and then balances across the tree trunk to the other side of the stream. Here he can cautiously lure one or another opponent into the pits. Next he should trigger the trap by the coach to call some fighters to his aid; a shot at the target behind it additionally brings some archers as support. Any opponents left over can now be overcome without difficulty in sword combat. The men farther to the right are very close to more hidden archers, to whom Robin now gives the signal to attack with a shot. All that remains is to plunder the coach before returning to camp.
 
-[](/app.php/boardheaderads/?ads_id=4&sid=30af39b9367362155d43ff4810ab7071) [](/app.php/boardheaderads/?ads_id=13&sid=30af39b9367362155d43ff4810ab7071) [](/app.php/boardheaderads/?ads_id=6&sid=30af39b9367362155d43ff4810ab7071)
+After another raid, two missions are available: Robin must meet Lady Marian on the one hand, and free his nephew Will from the dungeon in Leicester on the other. As a gentleman, he naturally does not leave the lady waiting and sets off for Nottingham at once.
 
-  
+### Mission 3
 
+In this mission Robin should again operate from hiding. Two companions are therefore enough: the moustached fellow, who can bind unconscious opponents, and a strong man to carry them into an unobserved corner. Robin first speaks with the woman in front of the nearby hut and then takes the soldier on the road out of action with a punch. Almost all soldiers can be eliminated in this way nearly to the end of the mission (naturally without forgetting to bind and hide them). Once the patrol is out of sight, the three heroes can cross the road and gradually deal with all the opponents there in order to carry the farmer's dead son back home. They then return in front of the town gate, where the guards are lured away one by one with a whistle and knocked out. They must watch for soldiers who come to check on things in front of the gate while looking for their colleagues. After speaking with the beggar, Robin enters the town and also incapacitates the two men near the gate from behind. After giving a few coins to another beggar, the three continue stealthily east, where they see a sleeping soldier and several men in an alley. While his two companions rush into the alley and thereby prevent the archers from escaping, Robin first knocks down the sleeper and then the opponents involved in the fight. To obtain the beggar's message, the leader of the soldiers in the square must be knocked out and carried away before the patrol returns. Robin can obtain the next beggar's message only by boxing down some soldiers whom his companions have drawn into a fight. He reaches the last of the town beggars via the wall, where he knocks down another guard. At last he receives a clue as to how he can meet Marian. To do this he sends the monk in the church to the land of dreams and, with the help of his companions, carries the bound clergyman into the sacristy. After a brief conversation with the lady, it is already time to leave the town. Robin first hides in the house opposite the church. Quite a lot of guards are stationed near the gate, so his companion lures most of them into the alley on the right with a whistle. As soon as the way is reasonably clear, the three overrun the rest and flee to camp.
 
-Weekly Overview
+### Mission 4
 
-Wednesday, 09. 
+To avoid the gaze of the many guards marching back and forth, Robin and his followers head right across the fields. After speaking with the man by the mill, they follow the ditch to the edge of the village. There they take out all the guards and drag them, bound, into one of the houses. In particular, the men harassing the beggar should be dealt with this way. In thanks for a few gold coins, he reveals several secrets, including Will's location. A clover behind the castle should also be picked up. Robin now separates from his men, crosses the ditch by the windmill, and climbs the walls. At the top he turns left to open the gate, then disappears again by the same route. Outside he gathers his companions, disables the two men at the gate, and waits in the shadow of the archway until the guards pass. The lone sentry can then be knocked down and carried into the building on the left. From there only a few opponents separate the heroes from the tower where Will is held; his dungeon is beneath the trapdoor in the tower. The whole group is then sent to the church while avoiding the guards. Anyone who wishes can also detour to the tower treasury. The soldiers can simply be overrun; Will's fighting power is useful here while Robin knocks out the opponents involved in the fight with his fists. A handsome sum is the reward. With it in his pocket, the group returns to the secret passage Will described. There are too many soldiers nearby to reach it secretly, so the companions draw them into fights in small groups until Robin can knock them down. Escaping through the passage and reaching Sherwood Forest is then easy.
 
-Wednesday
+### Mission 5
 
-09\. 
+By now there are plenty of companions available, so Robin sets out with one of every type. Lady Marian also joins Robin's band in Derby. Meanwhile Will practises close combat, like all the other robbers not needed for production. At the town gate Robin knocks down the guard on the right. The remaining soldiers cannot be eliminated secretly one by one, so all the companions attack together—except Robin, who continues swinging his fists. At this point Quick Actions should be used to coordinate such situations better. Select each companion individually and assign an opponent with a click on the symbol at the lower right. Double-clicking the soldier makes the attack a running one, allowing archers in particular to be caught off guard. If there are more enemies than fighters, melee fighters should be attacked first so Robin does not have to use his sword himself. He can then knock down the enemies one after another, beginning with the strongest fighters and archers. In this situation too, begin with the archers so they cannot flee.
 
-Thursday, 10. 
+Robin now climbs the wall and, since the passage is closed, continues west. Only a few guards are posted there, and he can knock them down easily. He must not let the patrol in the courtyard see him, however, or he will face all the enemies at once. Once he reaches the end of the wall, the companions can follow and bind and gag his unconscious victims. The guards at the gate are lured away and likewise disabled—but only after the patrolling soldiers have passed. Everyone then attacks that patrol together, while Robin takes them out with his fists. The guard on the eastern wall suffers the same fate. Robin speaks with the woman and heals her son with some herbs. After this good deed he resumes punching, knocking out the guard in the gate (who must be hidden from the men in the courtyard) and his colleagues on the wall; he leaves the crossbowmen and the knight for later. The archers are lured through the gate and dealt with together. The crossbowmen and knight are now easy prey as well. From the wall the companions can see the heavily guarded northern courtyard. At least the marching swordsmen must be removed, so Robin lures them south through the gate, where his men are waiting in ambush. Once all opponents are dead or unconscious, Robin and Marian return to the eastern courtyard and climb the wall. After sneaking past the knights, only a few men remain on the wall, and they are soon knocked out. Passing through the tower, Robin frees the prisoner and then enters the roof with Marian. Here too there are few enemies, so the pair have little trouble reaching the main building. They enter the throne-room balcony and listen to the conspirators. Before returning below, they visit the little tower and take a sizeable amount of gold from its soldiers. Back on the walls, everyone gathers before the heavily guarded room where the sceptre is kept. The assault proceeds as before: everyone charges the opponents with weapons drawn, while Robin swings his fists.
 
-Thursday
+### Mission 6
 
-10\. 
+As usual, another raid takes place between the missions. A larger group of soldiers has attacked a village and is holding a young man named Little John. There are too many opponents to cross the forest secretly, so Robin and his companions attack the soldiers group by group.
 
-[ DoReCo ](./../../../../../viewtopic.php?d=1788998400&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1788998400&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
+After the rougher approach used to free John, Robin and his followers must act more carefully again. No soldiers may be killed, lest Ranulph be angered. Thus, besides Robin and Marian, a bearded companion and a strong one should join them. They again use the secret passage that served as an escape route in the fourth mission to enter the castle. On the way there, every guard is stunned with a solid punch and left bound; larger groups are attacked together as usual and knocked down by Robin. Before going to the mill, Robin also visits the miller and her husband, whom he rescued in Derby (provided that task was not skipped). Once inside the castle, there are too few soldiers in the courtyard to cause major trouble, but too many to pass unnoticed. The guards in front of the church, by the archway north of it, and the leader are therefore eliminated first. Marian and Robin visit Ranulph and win his support. He also gives a tip about an item guarded in the west tower. To reach it, the soldiers near the entrance are knocked down as well. With no danger of an attack from behind, they storm the tower while Robin again swings his fists. The opponents are quickly dealt with and the book seized, leaving only the escape. The shortest route is through the main gate, so Robin cuts the rope with a sword stroke and the way is clear.
 
+### Mission 7
 
-Friday, 11. 
+This time the mission begins quite simply, and Robin should be accompanied by as many companions as possible. This allows groups of opponents to be drawn into fights easily and gives Robin another chance to take enemies out of action with his fists. At the very beginning he overruns several soldiers holding a farmer captive and receives another clover in thanks. He follows the road first south and then east, knocking out all the other soldiers. Robin then climbs the wall with a companion and follows it to the southern gate, which he opens for followers unable to climb. In the courtyard the nearby guards are knocked down, and the heroes turn west. A staircase leads into the main building, where a considerable amount of gold is found in a room guarded by a knight. In a courtyard to the west stands the traitor Gisbourne, but he immediately runs away when he sees Robin on the wall. The way to Sir Godwin, languishing in the dungeon in the west of the castle, is now almost clear. Robin's task is not complete with the rescue, however: before returning to Sherwood, Gisbourne's soldiers must be taken out of action. With the help of Godwin's followers, whose locations he reveals when Robin asks, this is quickly accomplished.
 
-Friday
+### Mission 8
 
-11\. 
+By now Little John should have perfected his close-combat skills, making Robin's men considerably more formidable. Besides John and Robin, a companion skilled at binding should travel to Derby. Using their fists, they first stun all guards on the section of wall east of the gate, bind them, and hide them from prying eyes in the guard room above the gate. Then John's great moment arrives: he simply storms into the middle of the patrolling soldiers and clears them out with one or two sweeping blows of his staff. The remaining guards in this courtyard are no problem either. Once all have been bound and dragged into a doorway, Robin promises the man on the wall that he will find something to eat. They can now continue into the eastern area. Several archers are posted on the walls there, so Robin and his men proceed more cautiously: John uses whistles to lure one soldier, or a few, at a time until at least the ranged fighters have been removed. The rest can then simply be attacked and knocked down by John and Robin, opening the way to Brother Tuck in the eastern tower. Before continuing, the cleric takes some useful items such as the wasp nests, strengthens himself with a roast in the banquet hall, and also supplies food to the hungry villager. Together with John he now sneaks north along the wall, with every opponent ending up bound in the room above the archway. Entering the building risks being spotted by the numerous guards, however, so the guards in the courtyard should be attacked as well. Since they greatly outnumber the heroes, Brother Tuck creates considerable confusion with his wasp nests and Robin with purses, after which everyone throws themselves into the fight.
 
-[ DoReCo ](./../../../../../viewtopic.php?d=1789084800&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1789084800&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
+Alternatively, the two can charge into the tower in full view of the soldiers standing by the stairs; the opponents immediately give chase and come up the stairs. Little John can then step into their midst and send most of them to the land of dreams with a spinning blow. Brother Tuck can hold the rest off long enough for John to use his fists. The two can also manage alone on the roof without difficulty. Before sneaking into the throne room, Tuck climbs the highest tower. A fairly strong knight is waiting there, but John knocks him down from behind, causing him to drop the coronation spoon. Carrying this valuable item, the two listen to the assembly and then return to the other men to set out for Sherwood Forest.
 
+### Lincoln's defence
 
-Saturday, 12. 
+Before the offensive can begin, Robin and his men must help their allies defend Lincoln. A total of three “shields” must be acquired, which can be done in three different ways: Robin can sacrifice a larger sum of gold or some companions to support the defenders, or he can raid the enemy soldiers. A combination is also possible. Since Sherwood Forest should by now be quite full, Robin can safely send six men away and obtain the missing shield in a coach raid; this also puts some gold for the ransom into the coffers.
 
-Saturday
+### Mission 9
 
-12\. 
+The next mission is considerably harder than those before it, not least because Robin initially travels alone. After winning the tournament, he is exposed and challenged to a duel by the Sheriff. As soon as the villain is defeated and flees, Robin rushes to the staircase to the west and meets Lady Marian in the tower. Since she cannot climb and therefore cannot help with the escape, Robin returns below alone. He waits until no soldier searching for him is nearby, climbs down the wall to his opponent from the tournament, and allies himself with him. The two follow the wall, with Robin knocking the guards unconscious. Behind the gate his new companion draws the attention of all the guards, giving Robin an opportunity to distribute his punches. The guards in the marketplace are removed using the same method, allowing the prisoner to be freed. With another new companion in tow, Robin enters the church where the state sword is kept. Before he can claim this further piece of the crown jewels, several dangerous opponents must be removed; here too the familiar diversion-and-fist-fighting tactic is used. A large number of soldiers must be defeated to collect the strong companion. Robin and his men take up position in the house north of the square and first ambush the archer patrol in the left alley. As soon as the last opponent is out of action, the pikemen notice what is happening. Once they too are bound and gagged, the final and strongest group can be attacked. Robin reduces their number with his purse trick, after which everyone overwhelms the soldiers together. The strong companion can then join Robin's group and demonstrate his usefulness by hiding the fallen enemies in doorways. This prevents hysterical women from constantly calling for soldiers. There is even an advantage to that: as soon as the men guarding the castle courtyard are alerted, they fan out and can also be removed easily. Only one group at the castle entrance remains in the way; it too is easily overcome after Robin throws another purse at their feet. The few guards left are easily defeated, so the silver arrow comes into Robin's possession and Lady Marian joins the group.
 
-[ Belgian Retro Computing Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71700&sid=30af39b9367362155d43ff4810ab7071#p71700 "Belgian Retro Computing Meeting") [ Belgian Retro Computing Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71700&sid=30af39b9367362155d43ff4810ab7071#p71700)   
-[ 2\. Dessauer Amiga Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71697&sid=30af39b9367362155d43ff4810ab7071#p71697 "2. Dessauer Amiga Meeting") [ 2\. Dessauer Amiga Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71697&sid=30af39b9367362155d43ff4810ab7071#p71697)   
-[ DoReCo ](./../../../../../viewtopic.php?d=1789171200&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1789171200&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
+### Raid on Derby
 
+Next comes a major offensive whose objective is to capture Derby. Robin again has three options for helping the allies: he can provide financial support, send men, or take part in the assault on the castle with his followers. It is relatively easy to acquire the full number of shields, so generally the first two alternatives can be avoided. This mission does have one disadvantage, however: the allied soldiers take no prisoners and even kill enemies who have already been bound. Anyone wishing to keep the number of dead opponents low should therefore get bound soldiers into houses as quickly as possible and take the shields as late as possible. This prevents the allied soldiers from advancing immediately and lets Robin's men disable the enemies using their proven method. On the highest battlement Robin finally encounters Scathlock, a serious opponent. If Robin manages to force him into a corner, he can defeat him with repeated sweeping attacks followed by another blow as he gets up.
 
-Sunday, 13. 
+### Mission 10
 
-Sunday
+To save Lady Marian from a forced marriage, Robin and his companions must now travel to York. The city is large and teeming with guards and citizens loyal to the prince. On the other hand, there are opportunities everywhere to disappear unnoticed into a doorway, so almost no fighting is initially necessary. The beggar cannot give Robin any particularly important information, but names the locations of two more beggars who should be visited first. Apart from one soldier and one citizen, who are stunned, bound, and hidden as usual, this requires no fighting. The man tells of his trouble with a moneylender, whereupon Robin helps him out with a generous donation and then takes the money back from the usurer. Visiting the third beggar is worthwhile too, as he points to a high-ranking officer carrying the so-called Ampulla. To acquire this additional state treasure, John knocks down the husband of the officer's friend and moves him out of the way. As soon as the two lovebirds feel unobserved and meet, John knocks down the soldier and Robin knocks down the woman. It is time to return to the actual task, beginning by infiltrating the fortress. Robin and Brother Tuck sneak past the soldiers on the south side of the river and climb the wall. Tuck lures the last soldier far enough away from the fortress that he cannot be seen from above and the fight attracts no attention. Robin can then climb the ivy-covered wall unnoticed, knock out the guard, and follow the wall. He cannot avoid fighting the other soldiers, but soon reaches the flag and raises Richard's banner. As intended, this draws a great deal of attention to the fortress, so he immediately climbs down. He takes the route through the building and sends the soldiers to the land of dreams. This not only saves time but also lets him collect a handsome sum. Together with the monk he returns to the other companions, often taking shelter in buildings because of the enemies spreading out. In this way they all work their way to the northern bridge. The cathedral directly opposite is still swarming with soldiers. After luring and quieting one group of opponents after another, the companions throw themselves into the fight, relying especially on John's combat power and sweeping attacks and on Robin's punches. Once all guards are dealt with, Robin lures the two fighters in the cathedral outside to his companions, allowing him to deal with Guisbourne. As usual, Guisbourne can be defeated with a sweeping attack followed by a final thrust. Robin rejoins his companions with Marian and the gold lying around and heads for the town gate. He can still avoid the enemies, but the group of men at the gate must be overrun.
 
-13\. 
+### Mission 11
 
-[ DoReCo ](./../../../../../viewtopic.php?d=1789257600&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1789257600&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
+In this mission Lady Marian should be accompanied, as usual, by Brother Tuck and Little John, as well as Will Scarlet or another companion who knows how to use healing herbs. First they visit the tower outside the city. It contains only a Black Knight (who goes down to a blow from John) and a prisoner who reveals Robin's whereabouts. Marian and her companions therefore go to the town gate, where the two guards and the officer are also stunned. It is important not to raise the alarm, or a large number of soldiers will arrive shortly. As soon as a guard becomes suspicious and heads towards the gate, he should be lured out of the city and knocked down. The same applies to further patrols that appear nearby; for this purpose one companion initially remains standing in the gate. The remaining soldiers are eliminated in groups and hidden as usual. In this way Marian and her companions fight their way first east and then to the northern city wall.
 
+On the way, however, they take time to take the 5,000-pound reward from the man who betrayed Robin to the Sheriff's henchmen and to speak with the beggar. He points to the king's seal, which can be found in the Sheriff's chambers but would be much safer in Sherwood Forest. Once the companions reach the wall, they follow it west to the tower where Robin is languishing in a cell. After freeing him, they defeat the few soldiers in the castle courtyard so that Robin can take the seal undisturbed. Escaping the city is then child's play.
 
-Monday, 14. 
+### Mission 12
 
-Monday
+In this mission it is advantageous for Robin to be accompanied by Little John, Brother Tuck, and two men who can climb walls—for example Will Scarlet and an aggressive companion. Thanks to the fishermen, Robin and his followers begin their visit to York in the middle of the city, with several guards immediately nearby. Little John and Robin wait for an inattentive moment from the soldier on the wall and enter the northeastern alley to beat up the men stationed there. Once these men have been bound and stored in a building, everyone climbs to the cathedral to remove the opponents there as well. As usual, it is enough to involve as many as possible in a fight at once while Robin and John swing their fists. The men use the same method against the guards at the bridge and in the alley beyond it. Since the companions will return here later and make several other trips through the city, all unconscious enemies should, as usual, be bound and hidden.
 
-14\. 
+From this point Robin and his men can act largely from hiding. First they should visit the two beggars, receiving a great many tips in exchange for a generous donation of gold. The most important concerns the cathedral. Besides a few soldiers who pose no significant problem, it contains two hiding places holding a considerable sum of gold and the last of the royal insignia, the crown. Another detour takes Robin to the former beggar whom he helped financially on his last visit to York; the man now repays the money. The companions should then remember the real reason for visiting the city and seek out Allan. He points to an important meeting in the fortress, so Robin and all the men able to climb head for the wall south of the fortress. Meanwhile John and Tuck approach the main entrance from the south and hide there.
 
-[ Amiga-Club Hamburg ](./../../../../../viewtopic.php?d=1789344000&p=70762&sid=30af39b9367362155d43ff4810ab7071#p70762 "Amiga-Club Hamburg wöchentliches Treffen") [ Amiga-Club Hamburg wöchentliches Treffen ](./../../../../../viewtopic.php?d=1789344000&p=70762&sid=30af39b9367362155d43ff4810ab7071#p70762)   
+With his companions' support, Robin knocks out the guards on the way to the conspirators so that he can hear Prince John's plans undisturbed. Longchamps remains behind, and Robin defeats him in a duel. Now the body must be removed from the city unnoticed. To do so, Little John must be brought into the castle by opening the main gate. Even the inattentive guards notice this action, so John and his companions cannot avoid a small brawl. While John throws himself into the middle of the opponents and clears their ranks with sweeping attacks, Robin storms out of the castle with his men and attacks the soldiers from behind to add a few punches. The rest of the way is then child's play.
 
+### Raid on York
 
-Tuesday, 15. 
+An attack on York now begins, with the aim of capturing the city for the king's loyal allies. Once again most of the work must be done by Robin and his followers, so there is a great deal to do—especially if no shields were acquired beforehand. The southwestern district is not heavily guarded: the soldiers are weaker, scattered in small groups, and patrol very little, so they can often be ambushed and stunned from behind. The attackers' first objective is therefore to remove the soldiers in the south and then the west. This allows Robin and company to enter the square in front of the cathedral through the northern door and remove the two guards there without attracting attention. After Robin and John have knocked down the soldiers in the cathedral and everything has been safely hidden, they can turn to the bridge. The following tactic can be used through Quick Actions: first John and Robin approach the opponents and punch out two of the most dangerous men in the back row. Once that is done, step two follows: everyone else attacks at once (especially the remaining paladin), while Robin and John retreat at a run. This keeps them out of the fight, allowing them to return a moment later and remove the crossbowmen before they become dangerous.
 
-Tuesday
+The next route leads east, where a handful of opponents are dealt with and the gates opened—nothing particularly difficult. Robin and his companions cross the wall to the northern bank and ambush the patrol there. The riverside door leads directly into the fortress, where the guards on the wall seem to have been struck deaf, since they notice nothing as their colleagues below are beaten up in the courtyard. The enemy general is among the men on the wall, so they are the next target. Once the entire castle garrison lies bound and gagged in the buildings, Robin opens the gate and knocks down the guards outside with John. A large group of soldiers waits on the bridge, but they can be handled like their colleagues on the northern bridge. Finally, the guards at the north gate must be defeated, which is easy, and Ranulph's men can be sent into the city using the agreed signals.
 
-15\. 
+### Mission 13
 
-[Events switch off for today ](/app.php/GTT/view/R/1363/5?dc=off&sid=30af39b9367362155d43ff4810ab7071)
+After York has fallen, Robin Hood has only one task left: to put an end to the Sheriff of Nottingham and capture the prince, preparing everything for the king's return. This mission takes place under difficult circumstances. Robin has already sneaked into the city, while two helpers approach from the north and two more from the south. It is therefore important not only to decide who is assigned to the task, but also to select the companions in the correct order. A sensible selection is Robin, Little John, Lady Marian, Brother Tuck, and Will Scarlet, in that order; this makes John and Tuck start in the south and meet Robin early.
 
-  * [__Amiga Future](https://www.amigafuture.de) [Community](./../../../../../index.php?sid=30af39b9367362155d43ff4810ab7071) [Amiga Cheats](/app.php/GTT?sid=30af39b9367362155d43ff4810ab7071) [Software Index R](/app.php/GTT/view/R?sid=30af39b9367362155d43ff4810ab7071) [Solutions](/app.php/GTT/view/R/1363/5?sid=30af39b9367362155d43ff4810ab7071)
-  * [ __Search ](./../../../../../search.php?sid=30af39b9367362155d43ff4810ab7071 "View the advanced search options")
+This meeting is the first important mission objective, so all side missions are initially ignored. Instead, the two use their familiar division of labour—distract, knock down, bind, and carry—to fight their way towards the town gate. Since several archers are stationed on the walls, they lure the two posts at the gate away and deal with them out of sight. They then slip through the gate unnoticed and stand in its shadow. The overriding rule now is not to attract the guards' attention. As a distraction, Brother Tuck throws a wasp nest between the two nearest posts. As soon as the two are busy with the aggressive insects, Tuck, John, and Robin of course run off and disappear among the houses east of the gate. A soldier is waiting there, but he is quickly defeated and carried into the house (fighters are waiting there too). To protect Will and Marian as much as possible from attacks by the soldiers spreading out, they should wait a long way from the gate. Meanwhile Robin and his companions try to make their way unseen towards the church. Since they are very likely to be discovered or betrayed by citizens, they should be ready to retreat among the houses by the southern city wall and deal with every soldier searching for the intruders there. As always, it is useful to speak with the beggar, a former guard, and heed his warning to stay away from the other beggars in this mission.
 
+Once they finally reach the cathedral, Robin speaks with old Applegoad, who tells him about his son, loyal to the king, among the guards. A possible route has thus been found, but the three must first fight their way to Marian and Will. They choose the eastern of the two alleys to the gate in order to avoid the treacherous beggar and attack the soldiers there. Apart from the leader, these are all archers, so a few punches quickly remove them. The three should not show themselves too close to the northern gate, however, or the gate guards will also be drawn into the fight. First the soldiers lying in ambush by the beggar must be dealt with. Tuck enters one of the houses, brings out the fighters, and keeps them at bay so John and Robin can swing their fists. The men in the other house are handled in the same way, and then it is time for the gate guards. Robin and his companions have little difficulty with them, since Will and Marian come to their aid from the north.
 
+Reunited, everyone sets out for the young Applegoad on the city wall in order to enter the fortress over the wall. Only a few opponents are waiting in the watchtower, so the distraction-and-knockout tactic works wonderfully here too. The archers on the towers can easily be stunned from behind, although they notice nothing of what is happening in the courtyard anyway. Only a few soldiers are waiting there, so Robin and John initially keep discreetly in the background and punch their way into the main building. There the Sheriff is the only thing standing in Robin's way, and he must be defeated in a sword duel. If Robin is wounded during the fight, he can simply withdraw from his opponent and have Marian treat him with her healing herbs. After a short time the Sheriff lies in the dust, and nothing stands in the way of arresting the traitor and winning the game.
 
-  
-
-
- 
-
- 
-
- 
-
-__Navigation
-
-**«**  
-
-## Anonymous
-
-  
-
-
-  
-[]()  
-[Register](./../../../../../ucp.php?mode=register&sid=30af39b9367362155d43ff4810ab7071)  
-[Login](./../../../../../ucp.php?mode=login&redirect=app.php%2FGTT%2Fview%2FR%2F1363%2F5&sid=30af39b9367362155d43ff4810ab7071)
-
-**«**  
-
-[Nachrichten Portal](https://www.amigafuture.de)  
-[Heft Mitglied](https://www.amigafuture.de/viewtopic.php?t=1172)  
-[Everywhere](https://www.amigafuture.de/app.php/everywhere/)  
-
-
-**«**  
-
-## Amiga Future
-
-[40](https://www.amigashop.org/index.php?cPath=52)  
-[Info](https://www.amigafuture.de/app.php/info/)  
-[Shop](https://www.amigashop.org)  
-[Inhaltsangaben](https://www.amigafuture.de/app.php/kb/index?c=13)  
-[Patreon](https://www.patreon.com/amigafuture)  
-[Artikeldatenbank](https://www.amigafuture.de/app.php/kb/index)  
-[Downloads](https://www.amigafuture.de/app.php/dlext/index)  
-
-
-**«**  
-
-## Community
-
-[Forum](https://www.amigafuture.de/index.php)  
-[Gallery](https://www.amigafuture.de/app.php/gallery)  
-[Kalender](https://www.amigafuture.de/app.php/calendar/)  
-[Kalendertermin melden](https://www.amigafuture.de/posting.php?mode=post&f=41)  
-
-
-**«**  
-
-## Wissen
-
-[Amiga Software](https://www.amigafuture.de/app.php/asd/)  
-[Amiga Cheats](https://www.amigafuture.de/app.php/GTT)  
-[Amiga FAQ](https://www.amigafuture.de/app.php/kb/index?c=34)  
-[Forum FAQ](https://www.amigafuture.de/app.php/help/faq)  
-[Linksammlung](https://www.amigafuture.de/app.php/links/)  
-
-
-**«**  
-
-## Aktuelles Heft
-
-[](https://www.amigafuture.de/app.php/kb/index?c=13)   
-  
-[](https://www.amigashop.org/index.php?cPath=23&language=de)   
-[](https://www.amigashop.org/index.php?cPath=41&language=de)   
-  
-The Amiga Future 182 was released on the September 4th.   
-[More informations](https://www.amigafuture.de/app.php/kb/index?c=13)
-
-[]()  
-
-
-**«**  
-
-## Service
-
-[Jobs](https://www.amigafuture.de/app.php/jobs/)  
-[Webmaster](https://www.amigafuture.de/app.php/webmaster/)  
-[Werbung](https://www.amigafuture.de/app.php/ads/)  
-[Kontakt/Impressum](https://www.amigafuture.de/app.php/impress/)  
-[Datenschutz](https://www.amigafuture.de/app.php/privacy/)  
-
-
-**«**  
-
-## Suche
-
-  
-Nachrichten  
-Forum  
-ASD  
-Artikel  
-Heft-Index  
-FAQ  
-Gallery  
-Downloads  
-Amazon  
-  
-  
-[Advanced search](./../../../../../search.php?sid=30af39b9367362155d43ff4810ab7071)  
-  
-[Unanswered topics](./../../../../../search.php?search_id=unanswered&sid=30af39b9367362155d43ff4810ab7071)  
-[Active topics](./../../../../../search.php?search_id=active_topics&sid=30af39b9367362155d43ff4810ab7071)
-
-**«**  
-
-## Soziale Medien
-
-[](https://www.twitter.com/AmigaFuture) [](https://www.amigafuture.de/app.php/everywhere/) [](https://www.facebook.com/amigafuture.de) [](https://www.amigafuture.de/app.php/rss_de) [](https://www.amigafuture.de/app.php/rss_en) [](https://www.instagram.com/amigafuture/) [](https://youtube.com/c/AmigaFuture) [](https://whatsapp.com/channel/0029VaZSSr4AjPXJSBFir00n) [](https://www.threads.net/@amigafuture) [](https://bsky.app/profile/amigafuture.bsky.social) [](https://discord.gg/bhvdF5QDc4) [](https://www.patreon.com/amigafuture) [](https://www.twitch.tv/amigafuture)
-
-**«**  
-
-## Newsletter
-
-[Newsletter abonnieren](mailto:news-deutsch-subscribe@as-2.de?subject=Amigafuture-Newsletter abonnieren)  
-
-
-**«**  
-
-## Anzeigen
-
-[](https://www.amazon.de/?_encoding=UTF8&camp=1638&creative=6742&linkCode=ur2&site-redirect=de&tag=amigafuture0a-21)
-
-  
-
-
-[](https://www.patreon.com/amigafuture)
-
-  
-
-
-**«**  
-
-## Partnerlinks
-
-[APC&TCP](http://www.apc-tcp.de)  
-[Amazon](https://www.amazon.de/gp/homepage.html/028-5831194-1965337?ie=UTF8&tag=amigafuture0a-21&link%5Fcode=hom)  
-[CygnusED](http://www.cygnused.de)  
-[DigiBooster](http://www.digibooster.de)  
-[Oxpus](https://www.oxpus.de)  
-[Roadshow](http://roadshow.apc-tcp.de)  
-[RESHOOT R](http://reshootr.richard-loewenstein.de/)  
-[Tippe New Media](https://www.tippenewmedia.com/)  
-[Torque's Amiga Kanal](https://www.youtube.com/Torque_live)  
-[8-Bit-Nirvana](https://www.zock.com/)  
-[AmigaPortal](https://www.amigaportal.de)  
-
-
-## Amiga Cheats :: Solutions
-
-  *     * [__Start page](/app.php/GTT?sid=30af39b9367362155d43ff4810ab7071)
-    * [#](/app.php/GTT/view/-?sid=30af39b9367362155d43ff4810ab7071)
-    * [A](/app.php/GTT/view/A?sid=30af39b9367362155d43ff4810ab7071)
-    * [B](/app.php/GTT/view/B?sid=30af39b9367362155d43ff4810ab7071)
-    * [C](/app.php/GTT/view/C?sid=30af39b9367362155d43ff4810ab7071)
-    * [D](/app.php/GTT/view/D?sid=30af39b9367362155d43ff4810ab7071)
-    * [E](/app.php/GTT/view/E?sid=30af39b9367362155d43ff4810ab7071)
-    * [F](/app.php/GTT/view/F?sid=30af39b9367362155d43ff4810ab7071)
-    * [G](/app.php/GTT/view/G?sid=30af39b9367362155d43ff4810ab7071)
-    * [H](/app.php/GTT/view/H?sid=30af39b9367362155d43ff4810ab7071)
-    * [I](/app.php/GTT/view/I?sid=30af39b9367362155d43ff4810ab7071)
-    * [J](/app.php/GTT/view/J?sid=30af39b9367362155d43ff4810ab7071)
-    * [K](/app.php/GTT/view/K?sid=30af39b9367362155d43ff4810ab7071)
-    * [L](/app.php/GTT/view/L?sid=30af39b9367362155d43ff4810ab7071)
-    * [M](/app.php/GTT/view/M?sid=30af39b9367362155d43ff4810ab7071)
-    * [N](/app.php/GTT/view/N?sid=30af39b9367362155d43ff4810ab7071)
-    * [O](/app.php/GTT/view/O?sid=30af39b9367362155d43ff4810ab7071)
-    * [P](/app.php/GTT/view/P?sid=30af39b9367362155d43ff4810ab7071)
-    * [Q](/app.php/GTT/view/Q?sid=30af39b9367362155d43ff4810ab7071)
-    * R
-    * [S](/app.php/GTT/view/S?sid=30af39b9367362155d43ff4810ab7071)
-    * [T](/app.php/GTT/view/T?sid=30af39b9367362155d43ff4810ab7071)
-    * [U](/app.php/GTT/view/U?sid=30af39b9367362155d43ff4810ab7071)
-    * [V](/app.php/GTT/view/V?sid=30af39b9367362155d43ff4810ab7071)
-    * [W](/app.php/GTT/view/W?sid=30af39b9367362155d43ff4810ab7071)
-    * [X](/app.php/GTT/view/X?sid=30af39b9367362155d43ff4810ab7071)
-    * [Y](/app.php/GTT/view/Y?sid=30af39b9367362155d43ff4810ab7071)
-    * [Z](/app.php/GTT/view/Z?sid=30af39b9367362155d43ff4810ab7071)
-    * [__Amiga Cheats Updates](/app.php/GTT/new/2026?sid=30af39b9367362155d43ff4810ab7071)
-
-
-
-
-  
-
-
-**Robin Hood - Die Legende von Sherwood**
-
-[« back to character R](/app.php/GTT/view/R?sid=30af39b9367362155d43ff4810ab7071#1363)
-
-  
-  
-System: MOS |  Cheats  |  Levelcodes  |  Freezer  |  Maps  |  **Solutions** |  |  Downloads  |    |  [Info](/app.php/GTT/view/R/1363/7?sid=30af39b9367362155d43ff4810ab7071)  
----|---|---|---|---|---|---|---|---|---  
-  
-Diese Komplettlösung wurde erstellt von Georg Breitsprecher  
-(Originaltext aus der AMIGA FUTURE #69/70/71)  
-Überarbeitung von Ampow
-
-    28.11.2025 - 15:15
-      
-
+## Original text
 
 Robin Hood und seinen Getreuen steht in diesem Spiel eine gewaltige Übermacht gegenüber. Um nicht einfach überrannt zu werden, müssen sie also im Verborgenen und teilweise mit List und Tücke agieren. Dieser Lösungsweg zeigt euch eine von vielen Möglichkeiten, mit den Mannen des Sheriffs von Nottingham und seinen Verbündeten zurechtzukommen.  
-  
+
 **Mission 1**  
-  
+
 Robins Feldzug gegen die Verschwörer rund um Prinz John beginnt noch recht geruhsam und mit wenigen Kämpfen. Gleich zu Beginn setzt er seine wichtigsten Fähigkeiten ein, indem er sich von hinten an den Wächter heranschleicht, ihn mit einem Faustschlag niederstreckt und dann die Mauer erklimmt. Oben feuert er einen Pfeil auf eine der Zielscheiben ab und sorgt so dafür, dass der Anführer seinen unfähigen Untergebenen endlich eine Pause gönnt. Einer der Soldaten verliert dabei eine ganze Menge Geld, die Robin sich natürlich nicht entgehen lässt. Ein paar Taler davon steckt er dem Bettler zu und erhält dafür einen Tipp, wo ein Geldbeutel zu finden ist. Diese erweisen sich als Wurfgeschosse sehr nützlich, da so mancher Soldat im Angesicht des plötzlichen Reichtums seine Pflichten vollkommen vergisst und sogar Kollegen, die ebenfalls ein Auge darauf geworfen haben, niederschlägt. Ein weiterer dieser Beutel ist übrigens auf dem Hof bei den Soldaten rechts zu finden. Robin klettert also die Wand, auf die der Bettler ihn hingewiesen hat, hoch und landet unterhalb eines Wächters. Also passt er einen Augenblick ab, in dem der Kerl sich links befindet, und schlägt ihn von hinten nieder. Auch der Mann in dem Gebäude nördlich davon sollte auf diese Weise aus dem Weg geräumt werden - falls er den heranschleichenden Robin entdeckt ist er aber auch mit dem Schwert schnell besiegt. Von hier aus geht es weiter nach Westen, wo unser Held auf Godwin trifft. Von hier lohnt sich ein Abstecher zu dem nordwestlichen Turm, in dem ein Haufen Gold in die Taschen des Meisterdiebes wandert. Nun wird es aber Zeit, das Weite zu suchen, wobei wahlweise das östliche oder das westliche Tor benutzt werden kann. Auch wenn der Weg länger ist, bietet sich eine Flucht nach Osten an: Hier trifft Robin nur wenige Gegner, die sich im Allgemeinen mit der Faust ausschalten lassen. Und hat er erst einmal die Mauer überquert, kann er unentdeckt bis zum anderen Tor gelangen, indem er sich in der Nähe der Mauern hält. Einige Meter weiter wartet er, bis sich der Soldat zum Gehen wendet, und schlägt ihn und seine Kollegen dann zu Boden. Nun stehen nur noch die Wächter an der Brücke zwischen Robin und der Freiheit, doch dieses Problem lässt sich mit einem gut gezielten Geldbeutel leicht aus der Welt schaffen.  
-  
+
 **Mission 2**  
-  
+
 Als Erstes geht Robin zu dem Bettler an der Mauer herüber und lässt seine Fäuste zu den beiden unaufmerksamen Torwächtern sprechen. Bevor er den Ort betritt, nimmt er noch den herumliegenden Beutel an sich. Dieser erweist ihm große Dienste: Sobald die Wache gegenüber des Tors mit dem Rücken zu ihm steht, wirft Robin das Gold rechts neben die Gefangenen und zieht sich sofort wieder in den Schatten des Tors zurück. Dort wartet er das Ende der Schlägerei ab und schickt die restlichen Wachen ebenfalls ins Reich der Träume, um sich der Befreiung der Gefangenen zuwenden zu können. Diese verbergen sich sogleich in einem der Häuser. Damit die Bewusstlosen keine Aufmerksamkeit erregen, sollte Stuteley sie fesseln und der starke Kamerad sie in den Hauseingang zerren. Mit der selben Kombination (Faustschlag, fesseln und wegtragen) wird auch der Mann gegenüber dem Eingang der Kirche beiseite geschafft.  
-  
+
 Als Nächstes stellt der starke Kamerad sich mitten auf den Platz, lenkt mit einem Pfiff die Aufmerksamkeit der Wachen auf sich und versteckt sich wieder. Sobald die Patrouille vorbeimarschiert ist, kann die gesamte Mannschaft weitergehen und die Kirche betreten. Während die anderen auf dem Friedhof warten, knackt Stuteley die Tür des nächsten Hauses, in das nun alle umziehen. Wenn die Luft rein ist, geht Robin durch den Hinterausgang und schlägt die Wache davor K.O. (die wie üblich versteckt wird). Nun stehen nur noch zwei Soldaten sowie die beiden Torwächter im Weg. Den ersten kann Robin mit der Faust niederstrecken, doch darauf wird sogleich der zweite aufmerksam, also erledigt er ihn mit einem Pfeil. Auch einen der beiden Männer im Tor kann er mit der Hand erledigen. Sobald der andere im Schwertkampf besiegt ist, wird es für die ganze Gruppe Zeit, in den Sherwood Forest zu flüchten.  
-  
+
 **Überfall**  
-  
+
 Bevor es mit der nächsten Mission weitergeht, stehen ein paar Maßnahmen zur Geldbeschaffung an. Los geht es mit einem Überfall auf eine Kutsche, den Robin ohne die Kameraden im Lager durchführen kann. Schließlich sind im Wald noch so einige Männer verborgen, um ihn zu unterstützen. Unterdessen sollten in Sherwood Forest Pfeile und Geldbeutel hergestellt sowie der Schwertkampf trainiert werden. Nach dem Anhalten der Kutsche schwärmen die Soldaten aus und Robin kann sich daran machen, sie einzeln aus dem Hinterhalt auszuschalten. Dazu löst er erst einmal mit der Zielscheibe bei der Brücke die Netzfalle aus und balanciert dann über den Baumstamm auf die andere Seite des Baches. Hier kann er vorsichtig den einen oder anderen Gegner in die Gruben locken. Als Nächstes sollte er die Falle bei der Kutsche auslösen, um einige Kämpfer zu Hilfe zu rufen; mit einem Schuss auf Zielscheibe dahinter erscheinen zusätzlich einige Bogenschützen zur Unterstützung. Gegebenenfalls übrig gebliebene Gegner sollten nun ohne Probleme im Schwertkampf überwältigt werden können. Die Männer weiter rechts stehen ganz in der Nähe von weiteren verborgenen Schützen, denen Robin nun mit einem Schuss das Signal zum Angriff gibt. Jetzt braucht nur noch die Kutsche geplündert werden, bevor es zurück ins Lager gehen kann.  
-  
+
 Nach einem weiteren Überfall stehen zwei Missionen zur Auswahl: Einerseits muss Robin Lady Marian treffen, andererseits seinen Neffen Will aus dem Kerker in Leicester befreien. Als Gentleman lässt er die Dame selbstverständlich nicht warten und macht sich gleich nach Nottingham auf.  
-  
+
 **Mission 3**  
-  
+
 In dieser Mission sollte Robin wieder im Verborgenen agieren. Daher reichen ihm zwei Begleiter: Der Kamerad mit dem Schnäuzer, der die Fähigkeit hat, bewusstlose Gegner zu fesseln, und ein starker Mann, um sie in eine unbeobachtete Ecke zu tragen. Robin spricht zunächst mit der Frau vor der nahe gelegenen Hütte und zieht dann den Soldaten auf der Straße mit einem Faustschlag aus dem Verkehr. Auch im Folgenden können fast bis zum Ende der Mission alle Soldaten auf diese Weise ausgeschaltet werden (natürlich nicht ohne das Fesseln und Verstecken zu vergessen). Sobald die Patrouille außer Sicht ist, können die drei Helden die Straße überqueren und dort nach und nach alle Gegner erledigen, um den toten Sohn der Bauersfrau zurück nach Hause zu bringen. Nun geht es wieder zurück vor das Stadttor, wo die Wachen einzeln mit einem Pfiff weggelockt und K.O. geschlagen werden. Dabei ist auf Soldaten zu achten, die auf der Suche nach ihren Kollegen vor dem Tor nach dem rechten schauen. Nach einem Gespräch mit dem Bettler betritt Robin die Stadt und setzt auch die beiden Männer in der Nähe des Tors hinterrücks außer Gefecht. Nachdem er einem weiteren Bettler ein paar Taler zugesteckt hat, schleichen die drei in östlicher Richtung weiter, wo ein schlafender Soldat sowie einige Männer in einer Gasse zu sehen sind. Während seine beiden Kollegen in die Gasse stürmen und so die Bogenschützen an der Flucht hindern, schlägt Robin zunächst den Schlafenden und dann die in den Kampf verwickelten Gegner nieder. Um an die Nachricht des Bettlers zu gelangen muss der Anführer der Soldaten auf dem Platz K.O. geschlagen und weggetragen werden, bevor die Patrouille wieder auftaucht. Auch an die Botschaft des nächsten Bettlers gelangt Robin nur, indem er einige Soldaten umboxt, die von seinen Kameraden in ein Gefecht verwickelt wurden. Den letzten der städtischen Bettler erreicht er über die Mauer, wo er eine weitere Wache niederschlägt. Nun erhält er endlich einen Anhaltspunkt, wie er Marian treffen kann. Dazu schickt er den Mönch in der Kirche ins Reich der Träume und schafft den gefesselten Geistlichen mithilfe seiner Kameraden in die Sakristei. Nach einer kurzen Unterredung mit der Lady ist es auch schon an der Zeit, die Stadt zu verlassen. Dazu versteckt sich Robin zunächst einmal in dem Haus gegenüber der Kirche. In der Nähe des Tors sind recht viele Wachen postiert. Daher lockt sein Kamerad den größten Teil davon mit einem Pfiff in die rechte Gasse. Kaum ist der Weg einigermaßen frei, überrennen die drei den Rest und fliehen ins Lager.  
-  
+
 **Mission 4**  
-  
+
 Um den Blicken der zahlreich auf und ab marschierenden Wachen zu entgehen, schlagen sich Robin und sein Gefolge nach rechts auf die Felder. Nachdem sie mit dem Mann bei der Mühle gesprochen haben, folgen sie dem Wassergraben bis zum Beginn des Dorfes. Dort schalten sie alle Wachen aus und zerren sie gefesselt in eins der Häuser. Insbesondere diejenigen, die den Bettler belästigen, sollten so beseitigt werden. Zum Dank für ein paar Goldmünzen gibt er einige Geheimnisse preis, unter anderem den Aufenthaltsort von Will. Hinter der Burg findet sich ein Kleeblatt, das noch mitgenommen werden sollte. Nun trennt sich Robin von seinen Mannen, um bei der Windmühle den Graben zu überwinden und die Mauern zu erklettern. Oben schlägt er den Weg nach links ein, um das Tor zu öffnen und über den gleichen Weg wieder zu verschwinden. Draußen sammelt er seine Gefährten ein, macht die beiden Männer am Tor unschädlich und wartet dann im Schatten des Torbogens, bis die Wachen passieren. Nun kann auch der einzelne Posten umgehauen und mit in das Gebäude auf der linken Seite genommen werden. Von hier trennen die Helden nur noch wenige Gegner bis zum Turm, in dem Will gefangen gehalten wird; sein Kerker befindet sich unter der Falltür im Turm. Nun wird die ganze Truppe unter Umgehung der Wachen zur Kirche herübergeschickt. Wer möchte, kann auch noch einen Abstecher zur Schatzkammer im Turm machen. Dazu können einfach die Soldaten überrannt werden, wobei Wills Kampfkraft gute Dienste leistet und Robin die in den Kampf verwickelten Gegner mit der Faust außer Gefecht setzt. Als Belohnung winkt ein hübsches Sümmchen. Mit diesem in der Tasche geht es zurück zu dem von Will beschriebenen Geheimgang. Es sind zu viele Soldaten in der Nähe, um ihn heimlich zu erreichen, also verwickeln die Kameraden sie wieder grüppchenweise in den Kampf, bis Robin sie zu Boden schlagen kann. Durch den Gang zu entkommen und Sherwood Forest zu erreichen ist nun ein Leichtes.  
-  
+
 **Mission 5**  
-  
+
 Mittlerweile stehen reichlich Kameraden zur Verfügung, sodass Robin mit einem jeden Typs loszieht. In Derby gesellt sich auch Lady Marian zu Robins Schar. Will übt sich unterdessen wie alle anderen Räuber, die nicht für die Produktion benötigt werden, im Nahkampf. Vor dem Stadttor schlägt Robin unterdessen den rechten Wächter nieder. Die restlichen Soldaten lassen sich nicht heimlich Mann für Mann ausschalten, also greifen alle Kameraden gemeinsam an - bis auf Robin, der weiterhin die Fäuste schwingt. Spätestens nun sollte man mit dem Einsatz von Quick Actions beginnen, um derartige Situationen besser zu koordinieren. Dazu wählt man alle Kameraden einzeln aus und weist ihnen mit einem Klick auf das Symbol rechts unten einen Gegner zu. Bei einem Doppelklick auf den Soldaten wird der Angriff rennend ausgeführt, so dass sich insbesondere Schützen überrumpeln lassen. Wenn mehr Gegner als eigene Kämpfer vorhanden sind, sollten vorrangig Nahkämpfer attackiert werden, damit Robin nicht selbst mit dem Schwert eingreifen muss. So kann er nach und nach alle Gegner niederschlagen - dabei sollte natürlich mit den stärksten Kämpfern und Schützen begonnen werden. Auch in dieser Situation sollte mit den Bogenschützen begonnen werden, um sie an der Flucht zu hindern.  
-  
+
 Nun klettert Robin auf die Mauer und geht, da der Durchgang verschlossen ist, in westlicher Richtung weiter. Hier sind nur wenige Wächter postiert, die er mühelos niederschlagen kann. Allerdings sollte er sich von der Patrouille im Hof nicht erblicken lassen, um nicht mit allen Feinden zugleich konfrontiert zu werden. Ist er am Ende der Mauer angelangt, können die Kameraden folgen und dabei seine bewusstlosen Opfer fesseln und knebeln. Nun werden die Wachhabenden am Tor weggelockt und ebenfalls unschädlich gemacht - natürlich erst sobald die patrouillierenden Soldaten vorbeimarschiert sind. Diese werden als Nächstes von allen gemeinsam attackiert und von Robins Fäusten aus dem Verkehr gezogen. Das gleiche Schicksal widerfährt auch dem Wächter an der östlichen Mauer. Robin spricht mit der Frau und heilt ihren Sohn mit Hilfe einiger Kräuter. Nach dieser guten Tat schwingt er wieder die Fäuste, um den Wächter im Tor (der vor den Männern im Hof versteckt werden muss) und seine Kollegen auf der Mauer umzuhauen - nur die Armbrustschützen und den Ritter hebt er sich für später auf. Die Bogenschützen werden durch das Tor gelockt und dort gemeinsam erledigt. Die Männer mit den Armbrüsten und der Ritter sind nun ebenfalls leichte Beute. Von der Mauer können die Kameraden einen Blick auf den gut bewachten nördlichen Hof werfen. Zumindest die marschierenden Schwertkämpfer müssen aus dem Verkehr gezogen werden. Also lockt Robin sie durch das Tor nach Süden, wo schon seine Mannen im Hinterhalt warten. Nachdem alle Gegner gefallen oder bewusstlos sind, kehren Robin und Marian in den östlichen Hof zurück, um auf die Mauer zu steigen. Haben sie sich erst einmal an den Rittern vorbeigeschlichen, warten nur noch einige Männer auf der Mauer, die wenig später K.O. sind. Auf dem Weg durch den Turm befreit Robin den Gefangenen und betritt dann mit Marian das Dach. Auch hier sind nur wenige Feinde zu sehen, sodass die beiden keine große Mühe beim Erreichen des Hauptgebäudes haben. Dort betreten sie den Balkon des Thronsaals und belauschen die Verschwörer. Bevor sie wieder nach unten zurückkehren, statten sie dem Türmchen einen Besuch ab und knöpfen den Soldaten dort einen Batzen Gold ab. Wieder unten auf den Mauern versammeln sich alle vor dem gut bewachten Raum, in dem das Szepter aufbewahrt wird. Der Überfall verläuft wie gehabt: Alle stürmen mit gezogener Waffe auf die Gegner los und Robin schwingt die Fäuste.  
-  
+
 **Mission 6**  
-  
+
 Wie üblich steht zwischen den Missionen wieder der eine oder andere Überfall an. Von Interesse ist dieses mal eine größere Gruppe von Soldaten, die ein Dorf überfallen hat und nun einen Burschen namens Little John gefangen hält. Zum heimlichen durchqueren des Waldes sind zu viele Gegner anwesend, also fallen Robin und seine Kameraden Gruppe für Gruppe über die Soldaten her.  
-  
+
 Nach dem rustikaleren Vorgehen bei der Befreiung Johns müssen Robin und seine Gefolgsleute nun wieder etwas vorsichtiger handeln. Schließlich dürfen keine Soldaten getötet werden, um Ranulph nicht zu erzürnen. Daher sollten außer Robin und Marian wieder einmal ein bärtiger und ein starker Kamerad mit von der Partie sein. Um die Burg zu betreten, wird wieder der geheime Gang benutzt, der schon in der vierten Mission zur Flucht diente. Auf dem Weg dorthin werden alle Wachen mit einem ordentlichen Faustschlag betäubt und gefesselt zurückgelassen - größere Gruppen werden wie üblich gemeinsam attackiert und von Robin niedergeschlagen. Bevor es in die Mühle geht, stattet Robin noch einen Besuch bei der Müllerin und ihren Mann, den er in Derby gerettet hat, ab (sofern diese Aufgabe nicht übersprungen wurde). Beim Betreten der Burg zeigt sich, dass auf dem Hof zu wenige Soldaten vorhanden sind, um die Kameraden vor größere Probleme zu stellen, aber zu viele, um unbemerkt an ihnen vorbeizuschleichen. Also werden zunächst die Wächter vor der Kirche und dem nördlich davon gelegenen Torbogen sowie der Anführer ausgeschaltet. Marian und Robin statten Ranulph einen Besuch ab und gewinnen seine Unterstützung. Zusätzlich gibt er einen Tipp zu einem Gegenstand, der im Westturm bewacht wird. Um diesen zu erreichen, werden die Soldaten in der Nähe des Eingangs ebenfalls niedergeschlagen. So ist kein Angriff von hinten zu befürchten, also stürmen sie den Turm, während Robin erneut die Fäuste schwingt. Schnell sind die Gegner erledigt und das Buch erbeutet, sodass nur noch die Flucht ansteht. Der kürzeste Weg führt durch das Haupttor, also durchtrennt Robin das Seil mit einem Schwertstreich und der Weg ist frei.  
-  
+
 **Mission 7**  
-  
+
 Los geht es diesmal mit einer recht einfachen Mission, bei der Robin von möglichst vielen Kameraden begleitet werden sollte. Dadurch können die Grüppchen von Gegnern leicht in Gefechte verwickelt werden und Robin hat wieder einmal die Möglichkeit, die Feinde mit den Fäusten aus dem Verkehr zu ziehen.  
-  
+
 Gleich zu Beginn überrennt er mit seinen Männern ein paar Soldaten, die einen Bauern gefangen halten, und erhält zum Dank ein weiteres Kleeblatt. Er folgt dem Weg zunächst nach Süden und dann nach Osten, wobei alle weiteren Soldaten k.o. geschlagen werden. Nun klettert Robin mit einem Kameraden die Mauer empor und folgt ihr zum südlichen Tor, das er für seine nicht klettertüchtigen Gefolgsleute öffnet. Im Innenhof werden die nahe stehenden Wachen niedergeschlagen, dann wenden sich die Helden nach Westen. Über eine Treppe gelangen sie ins Hauptgebäude, in dem in einem durch einen Ritter bewachten Raum eine ansehnliche Menge Gold in Robins Tasche wandert. In einem Innenhof westlich davon steht der Verräter Gisbourne, sucht aber sofort das Weite, sobald er Robin auf der Mauer erblickt. Nun ist der Weg zu Sir Godwin, der im Kerker im Westen der Burg schmort, so gut wie frei. Doch Robins Aufgabe ist mit der Befreiung noch nicht erfüllt: Bevor es zurück nach Sherwood geht, müssen Gisbournes Soldaten aus dem Verkehr gezogen werden. Mit Hilfe von Godwins Getreuen, deren Aufenthaltsorte er Robin auf Nachfrage verrät, ist das allerdings schnell erledigt.  
-  
+
 **Mission 8**  
-  
+
 Mittlerweile sollte Little John seine Nahkampfqualitäten perfektioniert haben, was Robins Mannen wesentlich schlagkräftiger macht. Außer ihm und Robin sollte sich noch ein des Fesselns kundiger Kamerad auf nach Derby machen. Unter Einsatz der Fäuste werden zunächst einmal alle Wachen auf dem Mauerabschnitt östlich des Tors betäubt, gefesselt und in dem Wachraum über dem Tor vor neugierigen Blicken verborgen. Nun folgt die große Stunde von John: Er stürmt einfach mitten in die Gruppe der patrouillierenden Soldaten und räumt mit ein bis zwei Rundumschlägen mit dem Kampfstab ordentlich auf. Auch die restlichen Wachen in diesem Hof stellen kein Problem dar. Nachdem alle gefesselt und in einen Hauseingang gezogen wurden, verspricht Robin dem Mann an der Mauer, etwas Essbares aufzutreiben. Nun kann es weiter in den östlichen Bereich gehen. Dort sind einige Schützen auf den Mauern postiert, also gehen Robin und seine Mannen hier vorsichtiger vor: Mit Pfiffen lockt John jeweils einen oder einige wenige der Soldaten heran, bis zumindest die Fernkämpfer aus dem Weg geräumt sind. Der Rest kann dann einfach attackiert und von John und Robin umgehauen werden, womit der Weg zu Bruder Tuck auf dem östlichen Turm frei ist. Bevor es weitergeht, nimmt der Geistliche ein paar nützliche Utensilien wie die Wespennester an sich, stärkt sich in der Festhalle an einem Braten und versorgt auch den hungrigen Dorfbewohner mit Nahrung. Zusammen mit John schleicht er nun auf der Mauer weiter nach Norden, wobei alle Gegner gefesselt in dem Raum über dem Torbogen landen. Das betreten des Gebäudes ist allerdings mit dem Risiko verbunden, von den zahlreichen Wachen entdeckt zu werden. Daher sollten die Wachen im Hof ebenfalls überfallen werden. Da diese deutlich in der Überzahl sind, stiften Bruder Tuck mit seinen Wespennestern und Robin mit Geldbeuteln ein gehöriges Durcheinander, worauf sich alle gemeinsam in den Kampf stürzen.  
-  
+
 Alternativ können die beiden vor den Augen der an der Treppe stehenden Soldaten in den Turm stürmen, worauf sich die Gegner gleich an die Verfolgung machen und die Treppe heraufkommen. Nun kann Little John in ihre Mitte treten und den Großteil mit einem Drehschlag ins Reich der Träume schicken. Den Rest kann Bruder Tuck lange genug aufhalten, damit John die Fäuste schwingen kann. Auf dem Dach kommen die beiden auch ohne Probleme alleine klar. Bevor sie sich in den Thronsaal stehlen, steigt Tuck auf den höchsten Turm. Dort wartet ein recht starker Ritter, der jedoch von John hinterrücks niedergeschlagen wird und dabei den Krönungslöffel fallen lässt. Mit diesem kostbaren Gegenstand im Gepäck belauschen die beiden die Versammlung und kehren dann zu den anderen Männern zurück, um nach Sherwood Forest aufzubrechen.  
-  
+
 **Verteidigung von Lincoln**  
-  
+
 Bevor es in die Offensive gehen kann, müssen Robin und seine Männer den Verbündeten bei der Verteidigung von Lincoln unter die Arme greifen. Dazu müssen insgesamt drei "Schilde" erbeutet werden, was auf drei verschiedene Wege möglich ist: Entweder Robin opfert eine größere Summe Gold oder ein paar seiner Kameraden, um die Verteidiger zu unterstützen, oder er führt einen Überfall auf die gegnerischen Soldaten aus. Auch eine Kombination ist möglich. Da es mittlerweile recht voll in Sherwood Forest geworden sein sollte, kann Robin ruhig sechs Männer abkommandieren und den fehlenden Schild dann in einem Überfall auf die Kutsche erbeuten - auf diese Weise kommt auch noch etwas Gold für das Lösegeld in die Kasse.  
-  
+
 **Mission 9**  
-  
+
 Die nächste Mission ist deutlich schwerer als die vorangegangenen, nicht zuletzt da Robin zunächst einmal alleine unterwegs ist. Nachdem er das Turnier gewonnen hat, wird er entlarvt und vom Sheriff zum Duell herausgefordert. Sobald der Bösewicht geschlagen das Weite sucht, stürmt Robin zu der Treppe in westlicher Richtung und trifft sich auf dem Turm mit Lady Marian. Da sie nicht klettern kann und daher bei der Flucht keine Hilfe ist, kehrt Robin alleine nach unten zurück. Dort wartet er, bis gerade kein Soldat auf der Suche nach ihm in der Nähe ist, klettert die Mauer zu seinem Gegner aus dem Turnier herab und verbündet sich mit ihm. Beide folgen dem Verlauf der Mauer, wobei Robin die Wächter bewusstlos schlägt. Hinter dem Tor zieht sein neuer Kamerad die Aufmerksamkeit aller Wächter auf sich, sodass Robin die Gelegenheit hat, seine Fausthiebe zu verteilen. Mit der gleichen Methode werden auch die Wachen auf dem Marktplatz beseitigt, sodass der Gefangene befreit werden kann. Mit einem weiteren neuen Kamerad im Schlepptau betritt Robin die Kirche, in der das Staatsschwert aufbewahrt wird. Bevor er diesen weiteren Teil der Kronjuwelen an sich nehmen kann, müssen einige gefährliche Gegner aus dem Weg geräumt werden - auch hier kommt wieder die altbekannte Ablenk-und-Faustkampf-Taktik zum Einsatz. Um den starken Kameraden einzusammeln muss eine große Zahl an Soldaten besiegt werden. Dazu bezieht Robin mit seinen Männern in dem Haus nördlich des Platzes Stellung und überfällt zunächst einmal die Schützen-Patrouille in der linken Gasse. Kaum ist der letzte Gegner aus dem Verkehr gezogen, werden auch schon die Lanzenträger auf das Geschehen aufmerksam. Wenn diese ebenfalls gefesselt und geknebelt sind, kann auch die letzte und stärkste Gruppe angegriffen werden. Dazu dezimiert Robin die Gegnerzahl mit seinem Geldbeutel-Trick, worauf alle gemeinsam die Soldaten aufmischen. Auf diese Weise kann der starke Kamerad auch zu Robins Truppe stoßen und seine Nützlichkeit unter Beweis stellen, indem er die herumliegenden Feinde in Hauseingängen versteckt. Auf diese Weise vermeidet er, dass ständig von hysterischen Bürgerinnen nach Soldaten gerufen wird. Ein Gutes hat aber selbst das: Sobald die im Burghof wachenden Männer alarmiert werden, schwärmen sie aus und können ebenfalls leicht aus dem Weg geschafft werden. Nun steht nur noch eine Gruppe am Eingang der Burg im Weg, die jedoch leicht überwunden werden kann, nachdem Robin ihnen einen weiteren Geldbeutel vor die Füße geworfen hat. Die wenigen übrig gebliebenen Wachen sind leicht besiegt, sodass der silberne Pfeil in Robins Besitz wandert und Lady Marian sich der Gruppe anschließen kann.  
-  
+
 **Überfall auf Derby**  
-  
+
 Als Nächstes steht eine Großoffensive an, deren Ziel die Einnahme von Derby ist. Um den Verbündeten unter die Arme zu greifen, hat Robin wieder drei Möglichkeiten: Neben einer finanziellen Unterstützung kann er Männer losschicken oder sich mit seinen Getreuen selber am Sturm auf die Burg beteiligen. Dabei kann relativ leicht die komplette Anzahl an Schilden erbeutet werden, sodass im Allgemeinen von den ersten beiden Alternativen abgesehen werden kann. Einen Nachteil hat diese Mission allerdings: Die verbündeten Soldaten machen keine Gefangenen und töten sogar Feinde, die bereits gefesselt wurden. Wer also die Zahl der gefallenen Gegner niedrig halten will, sollte gefesselte Soldaten so schnell wie möglich in Häuser schaffen und möglichst spät die Schilde nehmen. Auf diese Weise rücken die eigenen Soldaten nicht gleich vor und Robins Leute können die Gegner auf die bewährte Art außer Gefecht setzen. Auf der höchsten Zinne trifft Robin schließlich auf Scathlock, der ein ernstzunehmender Gegner ist. Gelingt es Robin, ihn in eine Ecke zu drängen, kann er mit wiederholten Rundumschlägen und einem Nachsetzen beim Aufstehen besiegt werden.  
-  
+
 **Mission 10**  
-  
+
 Um Lady Marian vor der zwangsweisen Vermählung zu bewahren, müssen sich Robin und seine Gefährten nun nach York wagen. Die Stadt ist groß und wimmelt vor Wachen und dem Prinzen treu ergebenen Bürgern. Andererseits gibt es überall die Möglichkeit, unbemerkt in einem Hauseingang zu verschwinden, sodass zunächst einmal nahezu keine Kämpfe notwendig sind. Der Bettler kann Robin zwar keine allzu wichtigen Hinweise geben, nennt aber die Standorte zweier weiterer Bettler, die als Erstes aufgesucht werden sollten. Bis auf einen Soldaten und eine Bürgerin, die wie üblich betäubt, gefesselt und versteckt werden, sind dazu keine Kämpfe notwendig. Der Mann berichtet von seinem Schicksal mit einem Geldverleiher, worauf Robin ihm mit einer großzügigen Geldspende aus der Patsche hilft und sich das Geld dann von dem Wucherer zurückholt. Auch ein Besuch des dritten Bettlers lohnt sich, weist er doch auf einen hohen Offizier hin, der die sogenannte Ampulla spazieren trägt. Um sich diesen weiteren Staatsschatz anzueignen, schlägt John den Ehemann der Freundin des Offiziers nieder und schafft ihn beiseite. Sobald die beiden Turteltäubchen sich unbeobachtet fühlen und treffen, schlägt John den Soldaten und Robin die Frau nieder. Nun heißt es wieder, sich der eigentlichen Aufgabe zuzuwenden, also zunächst einmal in die Festung einzudringen. Dazu schleicht sich Robin mit Bruder Tuck auf der südlichen Seite des Flusses hinter den Soldaten vorbei und steigt auf die Mauer. Den letzten Soldaten lockt Tuck so weit von der Festung Weg, dass er von oben nicht mehr gesehen werden kann und der Kampf keine Aufmerksamkeit erregt. Das erlaubt es Robin, unbemerkt an der efeubewachsenen Mauer nach oben zu klettern, den Wächter bewusstlos zu schlagen und dem Verlauf der Mauer zu folgen. Bei den anderen Soldaten kommt er nicht um einen Kampf herum, hat so aber bald die Fahne erreicht und kann Richards Banner hissen. Da dies wie gewünscht viel Aufmerksamkeit auf die Festung lenkt, steigt er sofort nach unten. Er wählt den Weg durch das Gebäude und schickt die Soldaten ins Reich der Träume. Auf diese Weise spart er nicht nur Zeit, sondern kann auch ein hübsches Sümmchen kassieren. Zusammen mit dem Mönch begibt er sich auf den Rückweg zu den anderen Kameraden, wobei er aufgrund der ausschwärmenden Feinde häufig in Gebäuden in Deckung gehen muss. Auf diese Weise arbeiten sich alle gemeinsam bis zur nördlichen Brücke vor. Direkt gegenüber liegt die Kathedrale, vor der es noch immer vor Soldaten wimmelt. Nachdem sie das eine oder andere Grüppchen von Gegnern angelockt und ruhig gestellt haben, stürzen sich die Kameraden ins Gefecht. Dabei bedienen sie sich insbesondere der Kampfkraft von John, der mit seinen Rundumschlägen kräftig aufräumt, und den Fausthieben von Robin. Sobald alle Wachen erledigt sind, lockt letzterer die beiden Kämpfer in der Kathedrale ins Freie zu seinen Gefährten, worauf er sich um Guisbourne kümmern kann. Dieser lässt sich wie gehabt mit dem Rundumschlag und abschließendem Zustechen besiegen. Mit Marian und dem herumliegenden Gold stösst Robin zu seinen Kameraden und schlägt den Weg zum Stadttor ein. Auch jetzt kann er den Feinden ausweichen, einzig die Gruppe von Männern am Tor muss überrannt werden.  
-  
+
 **Mission 11**  
-  
+
 In dieser Mission sollten außer Lady Marian wie üblich Bruder Tuck und Little John mit von der Partie sein, außerdem Will Scarlet oder ein weiterer Kamerad, der mit Heilkräutern umzugehen weiß. Als Erstes wird dem Turm vor der Stadt ein Besuch abgestattet. Darin verbirgt sich allerdings nur ein schwarzer Ritter (der durch einen Hieb von John zu Boden geht) und ein Gefangener, der den Aufenthaltsort von Robin verrät. Also begibt sich Marian mit ihren Begleitern zum Stadttor, wo die beiden Wachen und der Offizier ebenfalls betäubt werden. Im Folgenden ist es wichtig, dass kein Alarm gegeben wird, da sonst binnen Kurzem eine große Zahl an Soldaten anrückt. Sobald der Wächter also Verdacht schöpft und in Richtung des Tores geht, sollte er aus der Stadt gelockt und niedergeschlagen werden. Auch mit weiteren Streifen, die in der Nähe auftauchen, wird entsprechend verfahren - zu diesem Zweck bleibt vorerst einer der Kameraden im Tor stehen. Die restlichen Soldaten werden wie üblich in Gruppen ausgeschaltet und versteckt. Auf diese Weise schlagen sich Marian und ihre Begleiter erst nach Osten und dann bis zur Stadtmauer im Norden durch.  
-  
+
 Unterwegs nehmen sie sich allerdings Zeit, um dem Mann, der Robin an die Schergen des Sheriffs verraten hat, die Belohnung von 5000 Pfund abzuknöpfen und mit dem Bettler zu sprechen. Der weißt auf das Siegel des Königs hin, das in den Gemächern des Sheriffs zu finden ist, in Sherwood Forest aber viel besser aufgehoben wäre. Haben die Kameraden die Mauer erreicht, folgen sie ihr nach Westen bis zu dem Turm, in dem Robin in einer Zelle schmachtet. Nachdem er befreit ist, werden die wenigen Soldaten im Innenhof der Burg besiegt, sodass Robin ungestört das Siegel mitnehmen kann. Die Flucht aus der Stadt ist dann ein Kinderspiel.  
-  
+
 **Mission 12**  
-  
+
 In dieser Mission ist es von Vorteil, wenn Robin von Little John, Bruder Tuck sowie zwei Männern begleitet wird, die Mauern erklettern können - beispielsweise von Will Scarlet und einem aggressiven Kamerad. Den Besuch in York beginnen Robin und seine Getreuen dank der Fischer mitten in der Stadt, so dass gleich einige Wächter in der Nähe sind. Little John und Robin passen einen unaufmerksamen Augenblick des Soldaten auf der Mauer ab und betreten die nordöstliche Gasse, um die dort postierten Männer zu vertrimmen. Sobald diese gefesselt und in einem Gebäude verstaut sind, steigen alle zur Kathedrale hinauf, um auch dort die Gegner aus dem Verkehr zu ziehen. Hier reicht es wie üblich aus, möglichst alle zugleich in einen Kampf zu verwickeln, während Robin und John die Fäuste schwingen. Auf diese Weise verfahren die Männer auch mit den Wächtern an der Brücke und in der dahinter liegenden Gasse. Da die Kameraden später nach hier zurück kehren und auch sonst einige Gänge durch die Stadt unternehmen, sollten wie üblich alle bewusstlosen Feinde gefesselt und versteckt werden.  
-  
+
 Ab hier können Robin und seine Leute weitgehend im Verborgenen agieren. Zunächst sollten sie die beiden Bettler aufsuchen, um gegen eine großzügige Goldspende eine ganze Menge Tipps zu erhalten. Der wichtigste davon bezieht sich auf die Kathedrale. Dort finden sich neben ein paar Soldaten, die die Kameraden vor kein nennenswertes Problem stellen, zwei Verstecke, die neben einer stattlichen Summe Gold das letzte der königlichen Insignien, die Krone, enthalten. Ein weiterer Abstecher führt Robin zu dem ehemaligen Bettler, dem er beim letzten Besuch in York finanziell unter die Arme gegriffen hat und der das Geld nun zurückzahlt. Nun sollten sich die Kameraden auf den eigentlichen Grund für den Besuch der Stadt besinnen und Allan aufsuchen. Der weist auf eine wichtige Besprechung in der Festung hin, also begeben sich Robin und alle des Kletterns fähigen Männer auf die Mauer südlich der Festung. Unterdessen nähern sich John und Tuck dem Haupteingang aus südlicher Richtung und verbergen sich dort.  
-  
+
 Unterstützt von seinen Mitstreitern haut Robin die Wächter auf dem Weg zu den Verschwörern K.O., um ungestört die Pläne von Prinz John hören zu können. Zurück bleibt Longchamps, den Robin im Duell bezwingt. Jetzt heißt es nur noch die Leiche unbemerkt aus der Stadt zu schaffen. Dazu muss Little John in die Burg gebracht werden, indem das Haupttor geöffnet wird. Diese Aktion fällt sogar den unaufmerksamen Wachen auf, so dass John und seine Kameraden nicht um eine kleine Klopperei herumkommen. Während John sich mitten zwischen die Gegner stürzt und mit Rundumschlägen die Reihen lichtet, stürmt Robin mit seinen Männern aus der Burg und fällt den Soldaten in den Rücken, um ein paar Faustschläge anzubringen. Der restliche Weg ist dann ein Kinderspiel...  
-  
+
 **Überfall auf York**  
-  
+
 Nun steht ein Angriff auf York an, um die Stadt für die königstreuen Verbündeten zu erorbern. Der Hauptteil der Arbeit muss mal wieder von Robin und seinem Gefolge erledigt werden, so dass eine Menge Arbeit ansteht - insbesondere, wenn zuvor keine Schilde erworben wurden. Der südwestliche Stadtteil ist nicht besonders stark bewacht: Die Soldaten sind schwächer, in kleinen Gruppen verstreut und marschieren nur wenig durch die Gegend, so dass sie oft hinterrücks überfallen und betäubt werden können. Folglich ist das erste Ziel für die Angreifer, die Soldaten im Süden und dann im Westen aus dem Verkehr zu ziehen. Auf diese Weise können Robin und Co. den Platz vor der Kathedrale durch die nördliche Tür betreten und die beiden Wachen davor aus dem Verkehr ziehen, ohne Aufmerksamkeit zu erregen. Nachdem Robin und John die Soldaten in der Kathedrale niedergestreckt haben und alle gut verstaut sind, kann man sich der Brücke zuwenden. Dazu lässt sich folgende Taktik anwenden (über die Quick Actions): Im ersten Schritt nähern sich John und Robin den Gegnern, um zwei der gefährlichsten Männer in der letzten Reihe umzuboxen. Sobald das erledigt ist folgt Schritt zwei: Alle anderen greifen zugleich an (insbesondere natürlich den verbliebenen Paladin), während Robin und John sich rennend zurückziehen. Auf diese Weise werden sie nicht in den Kampf verwickelt und können nach einem Moment zurückkehren und die Armbrustschützen aus dem Weg räumen, bevor diese gefährlich werden können.  
-  
+
 Der nächste Weg führt nach Osten, wo eine Handvoll Gegner erledigt und die Tore geöffnet werden - keine besonders schwierige Aufgabe. Über die Stadtmauer wechseln Robin und seine Begleiter auf das nördliche Ufer und überfallen dort die Patrouille. Die Tür am Flussufer führt sie direkt in die Festung, wo die Wachen auf der Mauer offenbar mit Taubheit geschlagen sind, da sie nichts davon mitbekommen, wie ihre Kollegen unten im Hof vertrimmt werden. Unter den Männern auf der Mauer befindet sich auch der feindliche General, also stellen sie das nächste Ziel dar. Sobald die gesamte Besatzung der Burg gefesselt und geknebelt in den Gebäuden liegt, öffnet Robin das Tor und schlägt mit John die Wachen davor nieder. Auf der Brücke wartet eine große Gruppe Soldaten, doch mit diesen kann wie mit ihren Kollegen auf der nördlichen Brücke verfahren werden. Als letztes gilt es, die Wachen das Nordtores zu besiegen, was ein Leichtes ist, und die Männer Ranulphs durch die verabredeten Zeichen in die Stadt zu schicken.  
-  
+
 **Mission 13**  
-  
+
 Nachdem auch York gefallen ist gibt es nur noch eine Aufgabe für Robin Hood: Dem Sheriff von Nottingham den Garaus zu machen und den Prinzen gefangen zu nehmen, um alles für die Rückkehr des Königs vorzubereiten. Allerdings findet diese Mission unter erschwerten Umständen statt: Während Robin selber sich bereits in die Stadt geschlichen hat, nähern sich zwei seiner Helfer aus nördlicher und zwei weitere aus südlicher Richtung. Daher gilt es diesmal nicht nur zu bedenken, wer mit dieser Aufgabe betraut wird, sondern die Kameraden müssen auch in der passenden Reihenfolge ausgewählt werden. Eine sinnvolle Auswahl wäre (in dieser Reihenfolge) Robin, Little John, Lady Marian, Bruder Tuck und Will Scarlet; auf diese Weise starten John und Tuck im Süden und treffen früh auf Robin.  
-  
+
 Dieses Treffen ist das erste wichtige Missionsziel, also werden zunächst sämtliche Nebenmissionen ignoriert. Statt dessen prügeln sich die beiden mit der gewohnten Arbeitsteilung (Ablenken, Niederschlagen, Fesseln, Wegtragen) in Richtung des Stadttores. Da auf den Mauern einige Bogenschützen postiert sind, locken sie die beiden Posten am Tor weg und erledigen sie außer Sichtweite. Nun schlüpfen sie unbemerkt durch das Tor und bleiben in seinem Schatten stehen. Oberstes Gebot ist es nun, die Aufmerksamkeit der Wachen nicht zu erregen. Als Ablenkungsmanöver wirft Bruder Tuck also ein Wespennest zwischen die beiden am nächsten stehenden Posten. Sobald die beiden mit den angriffslustigen Insekten beschäftigt sind, rennen Tuck, John und natürlich Robin los und verziehen sich zwischen die Häuser östlich vom Tor. Dort wartet zwar ein Soldat, dieser ist jedoch schnell besiegt und in das Haus getragen (auch hier warten Kämpfer). Um Will und Marian so weit wie möglich vor Angriffen durch ausschwärmende Soldaten zu schützen, sollten sie in großer Entfernung vom Tor abwarten. Robin und seine Begleiter versuchen unterdessen, sich ungesehen in Richtung der Kirche durchzuschlagen. Da sie mit großer Wahrscheinlichkeit entdeckt oder von Bürgern verpfiffen werden, sollten sie darauf vorbereitet sein, sich zwischen die Häuser an der südlichen Stadtmauer zurückzuziehen und dort jegliche Soldaten auf der Suche nach den Eindringlingen zu erledigen. Wie immer ist es sinnvoll, mit dem Bettler, einem ehemaligen Wächter, zu sprechen und seine Warnung zu beherzigen, sich von den anderen Bettlern in dieser Mission fern zu halten.  
-  
+
 Haben sie endlich die Kathedrale erreicht, spricht Robin mit dem alten Applegoad, der von seinem dem König ergebenen Sohn bei der Wache spricht. Ein möglicher Weg ist also gefunden, zunächst müssen sich die Drei aber zu Marian und Will durchschlagen. Sie wählen die östliche der beiden Gassen zum Tor, um den verräterischen Bettler zu umgehen, und greifen die Soldaten dort an. Bis auf den Anführer befinden sich dort nur Schützen, also sind sie mit ein paar Fausthieben schnell aus dem Weg geräumt. Zu nahe am nördlichen Tor sollten sich die Drei allerdings nicht blicken lassen, um die Torwächter nicht auch in den Kampf zu verwickeln. Erst einmal sind die Soldaten, die bei dem Bettler im Hinterhalt liegen, an der Reihe. Also betritt Tuck eins der Häuser, holt die Kämpfer heraus und hält sie in Schach, damit John und Robin die Fäuste schwingen können. Genauso wird auch mit den Männern im anderen Haus verfahren, dann sind die Torwächter dran. Mit diesen haben haben Robin und seine Begleiter leichtes Spiel, da ihnen aus nördlicher Richtung Will und Marian zur Hilfe eilen.  
-  
+
 Wieder vereinigt brechen alle zu dem jungen Applegoad auf der Stadtmauer auf, um über die Mauer in die Festung eindringen zu können. Im Wachturm warten nur wenige Gegner, so dass sich auch hier die Ablenkungs- und Niederschlag-Taktik wunderbar anwenden lässt. Die Schützen auf den Türmen können leicht von hinten betäubt werden, allerdings bemerken sie ohnehin nichts von den Vorgängen im Hof. Dort warten nur wenige Soldaten, so dass sich Robin und John wie üblich zunächst vornehm im Hintergrund halten und den Weg ins Hauptgebäude freiboxen können. Dort stellt sich Robin nur noch der Sheriff in den Weg, der im Schwertduell bezwungen werden muss. Sollte Robin im Kampf verwundet werden, kann er sich einfach von seinem Widersacher zurückziehen und von Marian mit ihren Heilkräutern behandeln lassen. Nach kurzer Zeit liegt der Sheriff im Staub und der Verhaftung des Verräters und dem Gewinn des Spiels steht nichts mehr im Wege!
-
-__ Top
-
-* * *
-
-  
-  
-
-
-  *     * [__Start page](/app.php/GTT?sid=30af39b9367362155d43ff4810ab7071)
-    * [#](/app.php/GTT/view/-?sid=30af39b9367362155d43ff4810ab7071)
-    * [A](/app.php/GTT/view/A?sid=30af39b9367362155d43ff4810ab7071)
-    * [B](/app.php/GTT/view/B?sid=30af39b9367362155d43ff4810ab7071)
-    * [C](/app.php/GTT/view/C?sid=30af39b9367362155d43ff4810ab7071)
-    * [D](/app.php/GTT/view/D?sid=30af39b9367362155d43ff4810ab7071)
-    * [E](/app.php/GTT/view/E?sid=30af39b9367362155d43ff4810ab7071)
-    * [F](/app.php/GTT/view/F?sid=30af39b9367362155d43ff4810ab7071)
-    * [G](/app.php/GTT/view/G?sid=30af39b9367362155d43ff4810ab7071)
-    * [H](/app.php/GTT/view/H?sid=30af39b9367362155d43ff4810ab7071)
-    * [I](/app.php/GTT/view/I?sid=30af39b9367362155d43ff4810ab7071)
-    * [J](/app.php/GTT/view/J?sid=30af39b9367362155d43ff4810ab7071)
-    * [K](/app.php/GTT/view/K?sid=30af39b9367362155d43ff4810ab7071)
-    * [L](/app.php/GTT/view/L?sid=30af39b9367362155d43ff4810ab7071)
-    * [M](/app.php/GTT/view/M?sid=30af39b9367362155d43ff4810ab7071)
-    * [N](/app.php/GTT/view/N?sid=30af39b9367362155d43ff4810ab7071)
-    * [O](/app.php/GTT/view/O?sid=30af39b9367362155d43ff4810ab7071)
-    * [P](/app.php/GTT/view/P?sid=30af39b9367362155d43ff4810ab7071)
-    * [Q](/app.php/GTT/view/Q?sid=30af39b9367362155d43ff4810ab7071)
-    * R
-    * [S](/app.php/GTT/view/S?sid=30af39b9367362155d43ff4810ab7071)
-    * [T](/app.php/GTT/view/T?sid=30af39b9367362155d43ff4810ab7071)
-    * [U](/app.php/GTT/view/U?sid=30af39b9367362155d43ff4810ab7071)
-    * [V](/app.php/GTT/view/V?sid=30af39b9367362155d43ff4810ab7071)
-    * [W](/app.php/GTT/view/W?sid=30af39b9367362155d43ff4810ab7071)
-    * [X](/app.php/GTT/view/X?sid=30af39b9367362155d43ff4810ab7071)
-    * [Y](/app.php/GTT/view/Y?sid=30af39b9367362155d43ff4810ab7071)
-    * [Z](/app.php/GTT/view/Z?sid=30af39b9367362155d43ff4810ab7071)
-    * [__Amiga Cheats Updates](/app.php/GTT/new/2026?sid=30af39b9367362155d43ff4810ab7071)
-
-
-
-
-  
-
-
-(C) by APC&TCP;, Andreas Magerl, Postfach 83, DE-83234 Übersee.  
-Amiga is a registered trademark by Amiga Inc. & AMPOW, David Jahn, 52222 Stolberg (Rhld.)
-
-  
-
-
-  * [__Amiga Future](https://www.amigafuture.de) [Community](./../../../../../index.php?sid=30af39b9367362155d43ff4810ab7071)
-  * All times are UTC+02:00
-  * [ __Delete cookies ](/app.php/user/delete_cookies?sid=30af39b9367362155d43ff4810ab7071)
-  * [ __Contact us ](/app.php/contactadmin?sid=30af39b9367362155d43ff4810ab7071)
-
-
-
-Powered by [phpBB](https://www.phpbb.com/)® Forum Software (C) phpBB Limited
-
-[ Privacy ](https://www.amigafuture.de/app.php/privacy/ "Privacy") | [ Terms ](./../../../../../ucp.php?mode=terms&sid=30af39b9367362155d43ff4810ab7071 "Terms")
-
- 
-
-__
-
-###  
-
-__
-
-
-### guides__amiga-future-german.txt
-
-_Source: `originals/guides__amiga-future-german.txt`._
-
-[ ](https://www.amigafuture.de "Amiga Future")
-
-__Search [ __Advanced search ](./../../../../../search.php?sid=30af39b9367362155d43ff4810ab7071 "Advanced search")
-
-[](/app.php/boardheaderads/?ads_id=4&sid=30af39b9367362155d43ff4810ab7071) [](/app.php/boardheaderads/?ads_id=13&sid=30af39b9367362155d43ff4810ab7071) [](/app.php/boardheaderads/?ads_id=6&sid=30af39b9367362155d43ff4810ab7071)
-
-  
-
-
-Weekly Overview
-
-Wednesday, 09. 
-
-Wednesday
-
-09\. 
-
-Thursday, 10. 
-
-Thursday
-
-10\. 
-
-[ DoReCo ](./../../../../../viewtopic.php?d=1788998400&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1788998400&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
-
-
-Friday, 11. 
-
-Friday
-
-11\. 
-
-[ DoReCo ](./../../../../../viewtopic.php?d=1789084800&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1789084800&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
-
-
-Saturday, 12. 
-
-Saturday
-
-12\. 
-
-[ Belgian Retro Computing Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71700&sid=30af39b9367362155d43ff4810ab7071#p71700 "Belgian Retro Computing Meeting") [ Belgian Retro Computing Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71700&sid=30af39b9367362155d43ff4810ab7071#p71700)   
-[ 2\. Dessauer Amiga Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71697&sid=30af39b9367362155d43ff4810ab7071#p71697 "2. Dessauer Amiga Meeting") [ 2\. Dessauer Amiga Meeting ](./../../../../../viewtopic.php?d=1789171200&p=71697&sid=30af39b9367362155d43ff4810ab7071#p71697)   
-[ DoReCo ](./../../../../../viewtopic.php?d=1789171200&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1789171200&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
-
-
-Sunday, 13. 
-
-Sunday
-
-13\. 
-
-[ DoReCo ](./../../../../../viewtopic.php?d=1789257600&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709 "DoReCo") [ DoReCo ](./../../../../../viewtopic.php?d=1789257600&p=71709&sid=30af39b9367362155d43ff4810ab7071#p71709)   
-
-
-Monday, 14. 
-
-Monday
-
-14\. 
-
-[ Amiga-Club Hamburg ](./../../../../../viewtopic.php?d=1789344000&p=70762&sid=30af39b9367362155d43ff4810ab7071#p70762 "Amiga-Club Hamburg wöchentliches Treffen") [ Amiga-Club Hamburg wöchentliches Treffen ](./../../../../../viewtopic.php?d=1789344000&p=70762&sid=30af39b9367362155d43ff4810ab7071#p70762)   
-
-
-Tuesday, 15. 
-
-Tuesday
-
-15\. 
-
-[Events switch off for today ](/app.php/GTT/view/R/1363/5?dc=off&sid=30af39b9367362155d43ff4810ab7071)
-
-  * [__Amiga Future](https://www.amigafuture.de) [Community](./../../../../../index.php?sid=30af39b9367362155d43ff4810ab7071) [Amiga Cheats](/app.php/GTT?sid=30af39b9367362155d43ff4810ab7071) [Software Index R](/app.php/GTT/view/R?sid=30af39b9367362155d43ff4810ab7071) [Solutions](/app.php/GTT/view/R/1363/5?sid=30af39b9367362155d43ff4810ab7071)
-  * [ __Search ](./../../../../../search.php?sid=30af39b9367362155d43ff4810ab7071 "View the advanced search options")
-
-
-
-  
-
-
- 
-
- 
-
- 
-
-__Navigation
-
-**«**  
-
-## Anonymous
-
-  
-
-
-  
-[]()  
-[Register](./../../../../../ucp.php?mode=register&sid=30af39b9367362155d43ff4810ab7071)  
-[Login](./../../../../../ucp.php?mode=login&redirect=app.php%2FGTT%2Fview%2FR%2F1363%2F5&sid=30af39b9367362155d43ff4810ab7071)
-
-**«**  
-
-[Nachrichten Portal](https://www.amigafuture.de)  
-[Heft Mitglied](https://www.amigafuture.de/viewtopic.php?t=1172)  
-[Everywhere](https://www.amigafuture.de/app.php/everywhere/)  
-
-
-**«**  
-
-## Amiga Future
-
-[40](https://www.amigashop.org/index.php?cPath=52)  
-[Info](https://www.amigafuture.de/app.php/info/)  
-[Shop](https://www.amigashop.org)  
-[Inhaltsangaben](https://www.amigafuture.de/app.php/kb/index?c=13)  
-[Patreon](https://www.patreon.com/amigafuture)  
-[Artikeldatenbank](https://www.amigafuture.de/app.php/kb/index)  
-[Downloads](https://www.amigafuture.de/app.php/dlext/index)  
-
-
-**«**  
-
-## Community
-
-[Forum](https://www.amigafuture.de/index.php)  
-[Gallery](https://www.amigafuture.de/app.php/gallery)  
-[Kalender](https://www.amigafuture.de/app.php/calendar/)  
-[Kalendertermin melden](https://www.amigafuture.de/posting.php?mode=post&f=41)  
-
-
-**«**  
-
-## Wissen
-
-[Amiga Software](https://www.amigafuture.de/app.php/asd/)  
-[Amiga Cheats](https://www.amigafuture.de/app.php/GTT)  
-[Amiga FAQ](https://www.amigafuture.de/app.php/kb/index?c=34)  
-[Forum FAQ](https://www.amigafuture.de/app.php/help/faq)  
-[Linksammlung](https://www.amigafuture.de/app.php/links/)  
-
-
-**«**  
-
-## Aktuelles Heft
-
-[](https://www.amigafuture.de/app.php/kb/index?c=13)   
-  
-[](https://www.amigashop.org/index.php?cPath=23&language=de)   
-[](https://www.amigashop.org/index.php?cPath=41&language=de)   
-  
-The Amiga Future 182 was released on the September 4th.   
-[More informations](https://www.amigafuture.de/app.php/kb/index?c=13)
-
-[]()  
-
-
-**«**  
-
-## Service
-
-[Jobs](https://www.amigafuture.de/app.php/jobs/)  
-[Webmaster](https://www.amigafuture.de/app.php/webmaster/)  
-[Werbung](https://www.amigafuture.de/app.php/ads/)  
-[Kontakt/Impressum](https://www.amigafuture.de/app.php/impress/)  
-[Datenschutz](https://www.amigafuture.de/app.php/privacy/)  
-
-
-**«**  
-
-## Suche
-
-  
-Nachrichten  
-Forum  
-ASD  
-Artikel  
-Heft-Index  
-FAQ  
-Gallery  
-Downloads  
-Amazon  
-  
-  
-[Advanced search](./../../../../../search.php?sid=30af39b9367362155d43ff4810ab7071)  
-  
-[Unanswered topics](./../../../../../search.php?search_id=unanswered&sid=30af39b9367362155d43ff4810ab7071)  
-[Active topics](./../../../../../search.php?search_id=active_topics&sid=30af39b9367362155d43ff4810ab7071)
-
-**«**  
-
-## Soziale Medien
-
-[](https://www.twitter.com/AmigaFuture) [](https://www.amigafuture.de/app.php/everywhere/) [](https://www.facebook.com/amigafuture.de) [](https://www.amigafuture.de/app.php/rss_de) [](https://www.amigafuture.de/app.php/rss_en) [](https://www.instagram.com/amigafuture/) [](https://youtube.com/c/AmigaFuture) [](https://whatsapp.com/channel/0029VaZSSr4AjPXJSBFir00n) [](https://www.threads.net/@amigafuture) [](https://bsky.app/profile/amigafuture.bsky.social) [](https://discord.gg/bhvdF5QDc4) [](https://www.patreon.com/amigafuture) [](https://www.twitch.tv/amigafuture)
-
-**«**  
-
-## Newsletter
-
-[Newsletter abonnieren](mailto:news-deutsch-subscribe@as-2.de?subject=Amigafuture-Newsletter abonnieren)  
-
-
-**«**  
-
-## Anzeigen
-
-[](https://www.amazon.de/?_encoding=UTF8&camp=1638&creative=6742&linkCode=ur2&site-redirect=de&tag=amigafuture0a-21)
-
-  
-
-
-[](https://www.patreon.com/amigafuture)
-
-  
-
-
-**«**  
-
-## Partnerlinks
-
-[APC&TCP](http://www.apc-tcp.de)  
-[Amazon](https://www.amazon.de/gp/homepage.html/028-5831194-1965337?ie=UTF8&tag=amigafuture0a-21&link%5Fcode=hom)  
-[CygnusED](http://www.cygnused.de)  
-[DigiBooster](http://www.digibooster.de)  
-[Oxpus](https://www.oxpus.de)  
-[Roadshow](http://roadshow.apc-tcp.de)  
-[RESHOOT R](http://reshootr.richard-loewenstein.de/)  
-[Tippe New Media](https://www.tippenewmedia.com/)  
-[Torque's Amiga Kanal](https://www.youtube.com/Torque_live)  
-[8-Bit-Nirvana](https://www.zock.com/)  
-[AmigaPortal](https://www.amigaportal.de)  
-
-
-## Amiga Cheats :: Solutions
-
-  *     * [__Start page](/app.php/GTT?sid=30af39b9367362155d43ff4810ab7071)
-    * [#](/app.php/GTT/view/-?sid=30af39b9367362155d43ff4810ab7071)
-    * [A](/app.php/GTT/view/A?sid=30af39b9367362155d43ff4810ab7071)
-    * [B](/app.php/GTT/view/B?sid=30af39b9367362155d43ff4810ab7071)
-    * [C](/app.php/GTT/view/C?sid=30af39b9367362155d43ff4810ab7071)
-    * [D](/app.php/GTT/view/D?sid=30af39b9367362155d43ff4810ab7071)
-    * [E](/app.php/GTT/view/E?sid=30af39b9367362155d43ff4810ab7071)
-    * [F](/app.php/GTT/view/F?sid=30af39b9367362155d43ff4810ab7071)
-    * [G](/app.php/GTT/view/G?sid=30af39b9367362155d43ff4810ab7071)
-    * [H](/app.php/GTT/view/H?sid=30af39b9367362155d43ff4810ab7071)
-    * [I](/app.php/GTT/view/I?sid=30af39b9367362155d43ff4810ab7071)
-    * [J](/app.php/GTT/view/J?sid=30af39b9367362155d43ff4810ab7071)
-    * [K](/app.php/GTT/view/K?sid=30af39b9367362155d43ff4810ab7071)
-    * [L](/app.php/GTT/view/L?sid=30af39b9367362155d43ff4810ab7071)
-    * [M](/app.php/GTT/view/M?sid=30af39b9367362155d43ff4810ab7071)
-    * [N](/app.php/GTT/view/N?sid=30af39b9367362155d43ff4810ab7071)
-    * [O](/app.php/GTT/view/O?sid=30af39b9367362155d43ff4810ab7071)
-    * [P](/app.php/GTT/view/P?sid=30af39b9367362155d43ff4810ab7071)
-    * [Q](/app.php/GTT/view/Q?sid=30af39b9367362155d43ff4810ab7071)
-    * R
-    * [S](/app.php/GTT/view/S?sid=30af39b9367362155d43ff4810ab7071)
-    * [T](/app.php/GTT/view/T?sid=30af39b9367362155d43ff4810ab7071)
-    * [U](/app.php/GTT/view/U?sid=30af39b9367362155d43ff4810ab7071)
-    * [V](/app.php/GTT/view/V?sid=30af39b9367362155d43ff4810ab7071)
-    * [W](/app.php/GTT/view/W?sid=30af39b9367362155d43ff4810ab7071)
-    * [X](/app.php/GTT/view/X?sid=30af39b9367362155d43ff4810ab7071)
-    * [Y](/app.php/GTT/view/Y?sid=30af39b9367362155d43ff4810ab7071)
-    * [Z](/app.php/GTT/view/Z?sid=30af39b9367362155d43ff4810ab7071)
-    * [__Amiga Cheats Updates](/app.php/GTT/new/2026?sid=30af39b9367362155d43ff4810ab7071)
-
-
-
-
-  
-
-
-**Robin Hood - Die Legende von Sherwood**
-
-[« back to character R](/app.php/GTT/view/R?sid=30af39b9367362155d43ff4810ab7071#1363)
-
-  
-  
-System: MOS |  Cheats  |  Levelcodes  |  Freezer  |  Maps  |  **Solutions** |  |  Downloads  |    |  [Info](/app.php/GTT/view/R/1363/7?sid=30af39b9367362155d43ff4810ab7071)  
----|---|---|---|---|---|---|---|---|---  
-  
-Diese Komplettlösung wurde erstellt von Georg Breitsprecher  
-(Originaltext aus der AMIGA FUTURE #69/70/71)  
-Überarbeitung von Ampow
-
-    28.11.2025 - 15:15
-      
-
-
-Robin Hood und seinen Getreuen steht in diesem Spiel eine gewaltige Übermacht gegenüber. Um nicht einfach überrannt zu werden, müssen sie also im Verborgenen und teilweise mit List und Tücke agieren. Dieser Lösungsweg zeigt euch eine von vielen Möglichkeiten, mit den Mannen des Sheriffs von Nottingham und seinen Verbündeten zurechtzukommen.  
-  
-**Mission 1**  
-  
-Robins Feldzug gegen die Verschwörer rund um Prinz John beginnt noch recht geruhsam und mit wenigen Kämpfen. Gleich zu Beginn setzt er seine wichtigsten Fähigkeiten ein, indem er sich von hinten an den Wächter heranschleicht, ihn mit einem Faustschlag niederstreckt und dann die Mauer erklimmt. Oben feuert er einen Pfeil auf eine der Zielscheiben ab und sorgt so dafür, dass der Anführer seinen unfähigen Untergebenen endlich eine Pause gönnt. Einer der Soldaten verliert dabei eine ganze Menge Geld, die Robin sich natürlich nicht entgehen lässt. Ein paar Taler davon steckt er dem Bettler zu und erhält dafür einen Tipp, wo ein Geldbeutel zu finden ist. Diese erweisen sich als Wurfgeschosse sehr nützlich, da so mancher Soldat im Angesicht des plötzlichen Reichtums seine Pflichten vollkommen vergisst und sogar Kollegen, die ebenfalls ein Auge darauf geworfen haben, niederschlägt. Ein weiterer dieser Beutel ist übrigens auf dem Hof bei den Soldaten rechts zu finden. Robin klettert also die Wand, auf die der Bettler ihn hingewiesen hat, hoch und landet unterhalb eines Wächters. Also passt er einen Augenblick ab, in dem der Kerl sich links befindet, und schlägt ihn von hinten nieder. Auch der Mann in dem Gebäude nördlich davon sollte auf diese Weise aus dem Weg geräumt werden - falls er den heranschleichenden Robin entdeckt ist er aber auch mit dem Schwert schnell besiegt. Von hier aus geht es weiter nach Westen, wo unser Held auf Godwin trifft. Von hier lohnt sich ein Abstecher zu dem nordwestlichen Turm, in dem ein Haufen Gold in die Taschen des Meisterdiebes wandert. Nun wird es aber Zeit, das Weite zu suchen, wobei wahlweise das östliche oder das westliche Tor benutzt werden kann. Auch wenn der Weg länger ist, bietet sich eine Flucht nach Osten an: Hier trifft Robin nur wenige Gegner, die sich im Allgemeinen mit der Faust ausschalten lassen. Und hat er erst einmal die Mauer überquert, kann er unentdeckt bis zum anderen Tor gelangen, indem er sich in der Nähe der Mauern hält. Einige Meter weiter wartet er, bis sich der Soldat zum Gehen wendet, und schlägt ihn und seine Kollegen dann zu Boden. Nun stehen nur noch die Wächter an der Brücke zwischen Robin und der Freiheit, doch dieses Problem lässt sich mit einem gut gezielten Geldbeutel leicht aus der Welt schaffen.  
-  
-**Mission 2**  
-  
-Als Erstes geht Robin zu dem Bettler an der Mauer herüber und lässt seine Fäuste zu den beiden unaufmerksamen Torwächtern sprechen. Bevor er den Ort betritt, nimmt er noch den herumliegenden Beutel an sich. Dieser erweist ihm große Dienste: Sobald die Wache gegenüber des Tors mit dem Rücken zu ihm steht, wirft Robin das Gold rechts neben die Gefangenen und zieht sich sofort wieder in den Schatten des Tors zurück. Dort wartet er das Ende der Schlägerei ab und schickt die restlichen Wachen ebenfalls ins Reich der Träume, um sich der Befreiung der Gefangenen zuwenden zu können. Diese verbergen sich sogleich in einem der Häuser. Damit die Bewusstlosen keine Aufmerksamkeit erregen, sollte Stuteley sie fesseln und der starke Kamerad sie in den Hauseingang zerren. Mit der selben Kombination (Faustschlag, fesseln und wegtragen) wird auch der Mann gegenüber dem Eingang der Kirche beiseite geschafft.  
-  
-Als Nächstes stellt der starke Kamerad sich mitten auf den Platz, lenkt mit einem Pfiff die Aufmerksamkeit der Wachen auf sich und versteckt sich wieder. Sobald die Patrouille vorbeimarschiert ist, kann die gesamte Mannschaft weitergehen und die Kirche betreten. Während die anderen auf dem Friedhof warten, knackt Stuteley die Tür des nächsten Hauses, in das nun alle umziehen. Wenn die Luft rein ist, geht Robin durch den Hinterausgang und schlägt die Wache davor K.O. (die wie üblich versteckt wird). Nun stehen nur noch zwei Soldaten sowie die beiden Torwächter im Weg. Den ersten kann Robin mit der Faust niederstrecken, doch darauf wird sogleich der zweite aufmerksam, also erledigt er ihn mit einem Pfeil. Auch einen der beiden Männer im Tor kann er mit der Hand erledigen. Sobald der andere im Schwertkampf besiegt ist, wird es für die ganze Gruppe Zeit, in den Sherwood Forest zu flüchten.  
-  
-**Überfall**  
-  
-Bevor es mit der nächsten Mission weitergeht, stehen ein paar Maßnahmen zur Geldbeschaffung an. Los geht es mit einem Überfall auf eine Kutsche, den Robin ohne die Kameraden im Lager durchführen kann. Schließlich sind im Wald noch so einige Männer verborgen, um ihn zu unterstützen. Unterdessen sollten in Sherwood Forest Pfeile und Geldbeutel hergestellt sowie der Schwertkampf trainiert werden. Nach dem Anhalten der Kutsche schwärmen die Soldaten aus und Robin kann sich daran machen, sie einzeln aus dem Hinterhalt auszuschalten. Dazu löst er erst einmal mit der Zielscheibe bei der Brücke die Netzfalle aus und balanciert dann über den Baumstamm auf die andere Seite des Baches. Hier kann er vorsichtig den einen oder anderen Gegner in die Gruben locken. Als Nächstes sollte er die Falle bei der Kutsche auslösen, um einige Kämpfer zu Hilfe zu rufen; mit einem Schuss auf Zielscheibe dahinter erscheinen zusätzlich einige Bogenschützen zur Unterstützung. Gegebenenfalls übrig gebliebene Gegner sollten nun ohne Probleme im Schwertkampf überwältigt werden können. Die Männer weiter rechts stehen ganz in der Nähe von weiteren verborgenen Schützen, denen Robin nun mit einem Schuss das Signal zum Angriff gibt. Jetzt braucht nur noch die Kutsche geplündert werden, bevor es zurück ins Lager gehen kann.  
-  
-Nach einem weiteren Überfall stehen zwei Missionen zur Auswahl: Einerseits muss Robin Lady Marian treffen, andererseits seinen Neffen Will aus dem Kerker in Leicester befreien. Als Gentleman lässt er die Dame selbstverständlich nicht warten und macht sich gleich nach Nottingham auf.  
-  
-**Mission 3**  
-  
-In dieser Mission sollte Robin wieder im Verborgenen agieren. Daher reichen ihm zwei Begleiter: Der Kamerad mit dem Schnäuzer, der die Fähigkeit hat, bewusstlose Gegner zu fesseln, und ein starker Mann, um sie in eine unbeobachtete Ecke zu tragen. Robin spricht zunächst mit der Frau vor der nahe gelegenen Hütte und zieht dann den Soldaten auf der Straße mit einem Faustschlag aus dem Verkehr. Auch im Folgenden können fast bis zum Ende der Mission alle Soldaten auf diese Weise ausgeschaltet werden (natürlich nicht ohne das Fesseln und Verstecken zu vergessen). Sobald die Patrouille außer Sicht ist, können die drei Helden die Straße überqueren und dort nach und nach alle Gegner erledigen, um den toten Sohn der Bauersfrau zurück nach Hause zu bringen. Nun geht es wieder zurück vor das Stadttor, wo die Wachen einzeln mit einem Pfiff weggelockt und K.O. geschlagen werden. Dabei ist auf Soldaten zu achten, die auf der Suche nach ihren Kollegen vor dem Tor nach dem rechten schauen. Nach einem Gespräch mit dem Bettler betritt Robin die Stadt und setzt auch die beiden Männer in der Nähe des Tors hinterrücks außer Gefecht. Nachdem er einem weiteren Bettler ein paar Taler zugesteckt hat, schleichen die drei in östlicher Richtung weiter, wo ein schlafender Soldat sowie einige Männer in einer Gasse zu sehen sind. Während seine beiden Kollegen in die Gasse stürmen und so die Bogenschützen an der Flucht hindern, schlägt Robin zunächst den Schlafenden und dann die in den Kampf verwickelten Gegner nieder. Um an die Nachricht des Bettlers zu gelangen muss der Anführer der Soldaten auf dem Platz K.O. geschlagen und weggetragen werden, bevor die Patrouille wieder auftaucht. Auch an die Botschaft des nächsten Bettlers gelangt Robin nur, indem er einige Soldaten umboxt, die von seinen Kameraden in ein Gefecht verwickelt wurden. Den letzten der städtischen Bettler erreicht er über die Mauer, wo er eine weitere Wache niederschlägt. Nun erhält er endlich einen Anhaltspunkt, wie er Marian treffen kann. Dazu schickt er den Mönch in der Kirche ins Reich der Träume und schafft den gefesselten Geistlichen mithilfe seiner Kameraden in die Sakristei. Nach einer kurzen Unterredung mit der Lady ist es auch schon an der Zeit, die Stadt zu verlassen. Dazu versteckt sich Robin zunächst einmal in dem Haus gegenüber der Kirche. In der Nähe des Tors sind recht viele Wachen postiert. Daher lockt sein Kamerad den größten Teil davon mit einem Pfiff in die rechte Gasse. Kaum ist der Weg einigermaßen frei, überrennen die drei den Rest und fliehen ins Lager.  
-  
-**Mission 4**  
-  
-Um den Blicken der zahlreich auf und ab marschierenden Wachen zu entgehen, schlagen sich Robin und sein Gefolge nach rechts auf die Felder. Nachdem sie mit dem Mann bei der Mühle gesprochen haben, folgen sie dem Wassergraben bis zum Beginn des Dorfes. Dort schalten sie alle Wachen aus und zerren sie gefesselt in eins der Häuser. Insbesondere diejenigen, die den Bettler belästigen, sollten so beseitigt werden. Zum Dank für ein paar Goldmünzen gibt er einige Geheimnisse preis, unter anderem den Aufenthaltsort von Will. Hinter der Burg findet sich ein Kleeblatt, das noch mitgenommen werden sollte. Nun trennt sich Robin von seinen Mannen, um bei der Windmühle den Graben zu überwinden und die Mauern zu erklettern. Oben schlägt er den Weg nach links ein, um das Tor zu öffnen und über den gleichen Weg wieder zu verschwinden. Draußen sammelt er seine Gefährten ein, macht die beiden Männer am Tor unschädlich und wartet dann im Schatten des Torbogens, bis die Wachen passieren. Nun kann auch der einzelne Posten umgehauen und mit in das Gebäude auf der linken Seite genommen werden. Von hier trennen die Helden nur noch wenige Gegner bis zum Turm, in dem Will gefangen gehalten wird; sein Kerker befindet sich unter der Falltür im Turm. Nun wird die ganze Truppe unter Umgehung der Wachen zur Kirche herübergeschickt. Wer möchte, kann auch noch einen Abstecher zur Schatzkammer im Turm machen. Dazu können einfach die Soldaten überrannt werden, wobei Wills Kampfkraft gute Dienste leistet und Robin die in den Kampf verwickelten Gegner mit der Faust außer Gefecht setzt. Als Belohnung winkt ein hübsches Sümmchen. Mit diesem in der Tasche geht es zurück zu dem von Will beschriebenen Geheimgang. Es sind zu viele Soldaten in der Nähe, um ihn heimlich zu erreichen, also verwickeln die Kameraden sie wieder grüppchenweise in den Kampf, bis Robin sie zu Boden schlagen kann. Durch den Gang zu entkommen und Sherwood Forest zu erreichen ist nun ein Leichtes.  
-  
-**Mission 5**  
-  
-Mittlerweile stehen reichlich Kameraden zur Verfügung, sodass Robin mit einem jeden Typs loszieht. In Derby gesellt sich auch Lady Marian zu Robins Schar. Will übt sich unterdessen wie alle anderen Räuber, die nicht für die Produktion benötigt werden, im Nahkampf. Vor dem Stadttor schlägt Robin unterdessen den rechten Wächter nieder. Die restlichen Soldaten lassen sich nicht heimlich Mann für Mann ausschalten, also greifen alle Kameraden gemeinsam an - bis auf Robin, der weiterhin die Fäuste schwingt. Spätestens nun sollte man mit dem Einsatz von Quick Actions beginnen, um derartige Situationen besser zu koordinieren. Dazu wählt man alle Kameraden einzeln aus und weist ihnen mit einem Klick auf das Symbol rechts unten einen Gegner zu. Bei einem Doppelklick auf den Soldaten wird der Angriff rennend ausgeführt, so dass sich insbesondere Schützen überrumpeln lassen. Wenn mehr Gegner als eigene Kämpfer vorhanden sind, sollten vorrangig Nahkämpfer attackiert werden, damit Robin nicht selbst mit dem Schwert eingreifen muss. So kann er nach und nach alle Gegner niederschlagen - dabei sollte natürlich mit den stärksten Kämpfern und Schützen begonnen werden. Auch in dieser Situation sollte mit den Bogenschützen begonnen werden, um sie an der Flucht zu hindern.  
-  
-Nun klettert Robin auf die Mauer und geht, da der Durchgang verschlossen ist, in westlicher Richtung weiter. Hier sind nur wenige Wächter postiert, die er mühelos niederschlagen kann. Allerdings sollte er sich von der Patrouille im Hof nicht erblicken lassen, um nicht mit allen Feinden zugleich konfrontiert zu werden. Ist er am Ende der Mauer angelangt, können die Kameraden folgen und dabei seine bewusstlosen Opfer fesseln und knebeln. Nun werden die Wachhabenden am Tor weggelockt und ebenfalls unschädlich gemacht - natürlich erst sobald die patrouillierenden Soldaten vorbeimarschiert sind. Diese werden als Nächstes von allen gemeinsam attackiert und von Robins Fäusten aus dem Verkehr gezogen. Das gleiche Schicksal widerfährt auch dem Wächter an der östlichen Mauer. Robin spricht mit der Frau und heilt ihren Sohn mit Hilfe einiger Kräuter. Nach dieser guten Tat schwingt er wieder die Fäuste, um den Wächter im Tor (der vor den Männern im Hof versteckt werden muss) und seine Kollegen auf der Mauer umzuhauen - nur die Armbrustschützen und den Ritter hebt er sich für später auf. Die Bogenschützen werden durch das Tor gelockt und dort gemeinsam erledigt. Die Männer mit den Armbrüsten und der Ritter sind nun ebenfalls leichte Beute. Von der Mauer können die Kameraden einen Blick auf den gut bewachten nördlichen Hof werfen. Zumindest die marschierenden Schwertkämpfer müssen aus dem Verkehr gezogen werden. Also lockt Robin sie durch das Tor nach Süden, wo schon seine Mannen im Hinterhalt warten. Nachdem alle Gegner gefallen oder bewusstlos sind, kehren Robin und Marian in den östlichen Hof zurück, um auf die Mauer zu steigen. Haben sie sich erst einmal an den Rittern vorbeigeschlichen, warten nur noch einige Männer auf der Mauer, die wenig später K.O. sind. Auf dem Weg durch den Turm befreit Robin den Gefangenen und betritt dann mit Marian das Dach. Auch hier sind nur wenige Feinde zu sehen, sodass die beiden keine große Mühe beim Erreichen des Hauptgebäudes haben. Dort betreten sie den Balkon des Thronsaals und belauschen die Verschwörer. Bevor sie wieder nach unten zurückkehren, statten sie dem Türmchen einen Besuch ab und knöpfen den Soldaten dort einen Batzen Gold ab. Wieder unten auf den Mauern versammeln sich alle vor dem gut bewachten Raum, in dem das Szepter aufbewahrt wird. Der Überfall verläuft wie gehabt: Alle stürmen mit gezogener Waffe auf die Gegner los und Robin schwingt die Fäuste.  
-  
-**Mission 6**  
-  
-Wie üblich steht zwischen den Missionen wieder der eine oder andere Überfall an. Von Interesse ist dieses mal eine größere Gruppe von Soldaten, die ein Dorf überfallen hat und nun einen Burschen namens Little John gefangen hält. Zum heimlichen durchqueren des Waldes sind zu viele Gegner anwesend, also fallen Robin und seine Kameraden Gruppe für Gruppe über die Soldaten her.  
-  
-Nach dem rustikaleren Vorgehen bei der Befreiung Johns müssen Robin und seine Gefolgsleute nun wieder etwas vorsichtiger handeln. Schließlich dürfen keine Soldaten getötet werden, um Ranulph nicht zu erzürnen. Daher sollten außer Robin und Marian wieder einmal ein bärtiger und ein starker Kamerad mit von der Partie sein. Um die Burg zu betreten, wird wieder der geheime Gang benutzt, der schon in der vierten Mission zur Flucht diente. Auf dem Weg dorthin werden alle Wachen mit einem ordentlichen Faustschlag betäubt und gefesselt zurückgelassen - größere Gruppen werden wie üblich gemeinsam attackiert und von Robin niedergeschlagen. Bevor es in die Mühle geht, stattet Robin noch einen Besuch bei der Müllerin und ihren Mann, den er in Derby gerettet hat, ab (sofern diese Aufgabe nicht übersprungen wurde). Beim Betreten der Burg zeigt sich, dass auf dem Hof zu wenige Soldaten vorhanden sind, um die Kameraden vor größere Probleme zu stellen, aber zu viele, um unbemerkt an ihnen vorbeizuschleichen. Also werden zunächst die Wächter vor der Kirche und dem nördlich davon gelegenen Torbogen sowie der Anführer ausgeschaltet. Marian und Robin statten Ranulph einen Besuch ab und gewinnen seine Unterstützung. Zusätzlich gibt er einen Tipp zu einem Gegenstand, der im Westturm bewacht wird. Um diesen zu erreichen, werden die Soldaten in der Nähe des Eingangs ebenfalls niedergeschlagen. So ist kein Angriff von hinten zu befürchten, also stürmen sie den Turm, während Robin erneut die Fäuste schwingt. Schnell sind die Gegner erledigt und das Buch erbeutet, sodass nur noch die Flucht ansteht. Der kürzeste Weg führt durch das Haupttor, also durchtrennt Robin das Seil mit einem Schwertstreich und der Weg ist frei.  
-  
-**Mission 7**  
-  
-Los geht es diesmal mit einer recht einfachen Mission, bei der Robin von möglichst vielen Kameraden begleitet werden sollte. Dadurch können die Grüppchen von Gegnern leicht in Gefechte verwickelt werden und Robin hat wieder einmal die Möglichkeit, die Feinde mit den Fäusten aus dem Verkehr zu ziehen.  
-  
-Gleich zu Beginn überrennt er mit seinen Männern ein paar Soldaten, die einen Bauern gefangen halten, und erhält zum Dank ein weiteres Kleeblatt. Er folgt dem Weg zunächst nach Süden und dann nach Osten, wobei alle weiteren Soldaten k.o. geschlagen werden. Nun klettert Robin mit einem Kameraden die Mauer empor und folgt ihr zum südlichen Tor, das er für seine nicht klettertüchtigen Gefolgsleute öffnet. Im Innenhof werden die nahe stehenden Wachen niedergeschlagen, dann wenden sich die Helden nach Westen. Über eine Treppe gelangen sie ins Hauptgebäude, in dem in einem durch einen Ritter bewachten Raum eine ansehnliche Menge Gold in Robins Tasche wandert. In einem Innenhof westlich davon steht der Verräter Gisbourne, sucht aber sofort das Weite, sobald er Robin auf der Mauer erblickt. Nun ist der Weg zu Sir Godwin, der im Kerker im Westen der Burg schmort, so gut wie frei. Doch Robins Aufgabe ist mit der Befreiung noch nicht erfüllt: Bevor es zurück nach Sherwood geht, müssen Gisbournes Soldaten aus dem Verkehr gezogen werden. Mit Hilfe von Godwins Getreuen, deren Aufenthaltsorte er Robin auf Nachfrage verrät, ist das allerdings schnell erledigt.  
-  
-**Mission 8**  
-  
-Mittlerweile sollte Little John seine Nahkampfqualitäten perfektioniert haben, was Robins Mannen wesentlich schlagkräftiger macht. Außer ihm und Robin sollte sich noch ein des Fesselns kundiger Kamerad auf nach Derby machen. Unter Einsatz der Fäuste werden zunächst einmal alle Wachen auf dem Mauerabschnitt östlich des Tors betäubt, gefesselt und in dem Wachraum über dem Tor vor neugierigen Blicken verborgen. Nun folgt die große Stunde von John: Er stürmt einfach mitten in die Gruppe der patrouillierenden Soldaten und räumt mit ein bis zwei Rundumschlägen mit dem Kampfstab ordentlich auf. Auch die restlichen Wachen in diesem Hof stellen kein Problem dar. Nachdem alle gefesselt und in einen Hauseingang gezogen wurden, verspricht Robin dem Mann an der Mauer, etwas Essbares aufzutreiben. Nun kann es weiter in den östlichen Bereich gehen. Dort sind einige Schützen auf den Mauern postiert, also gehen Robin und seine Mannen hier vorsichtiger vor: Mit Pfiffen lockt John jeweils einen oder einige wenige der Soldaten heran, bis zumindest die Fernkämpfer aus dem Weg geräumt sind. Der Rest kann dann einfach attackiert und von John und Robin umgehauen werden, womit der Weg zu Bruder Tuck auf dem östlichen Turm frei ist. Bevor es weitergeht, nimmt der Geistliche ein paar nützliche Utensilien wie die Wespennester an sich, stärkt sich in der Festhalle an einem Braten und versorgt auch den hungrigen Dorfbewohner mit Nahrung. Zusammen mit John schleicht er nun auf der Mauer weiter nach Norden, wobei alle Gegner gefesselt in dem Raum über dem Torbogen landen. Das betreten des Gebäudes ist allerdings mit dem Risiko verbunden, von den zahlreichen Wachen entdeckt zu werden. Daher sollten die Wachen im Hof ebenfalls überfallen werden. Da diese deutlich in der Überzahl sind, stiften Bruder Tuck mit seinen Wespennestern und Robin mit Geldbeuteln ein gehöriges Durcheinander, worauf sich alle gemeinsam in den Kampf stürzen.  
-  
-Alternativ können die beiden vor den Augen der an der Treppe stehenden Soldaten in den Turm stürmen, worauf sich die Gegner gleich an die Verfolgung machen und die Treppe heraufkommen. Nun kann Little John in ihre Mitte treten und den Großteil mit einem Drehschlag ins Reich der Träume schicken. Den Rest kann Bruder Tuck lange genug aufhalten, damit John die Fäuste schwingen kann. Auf dem Dach kommen die beiden auch ohne Probleme alleine klar. Bevor sie sich in den Thronsaal stehlen, steigt Tuck auf den höchsten Turm. Dort wartet ein recht starker Ritter, der jedoch von John hinterrücks niedergeschlagen wird und dabei den Krönungslöffel fallen lässt. Mit diesem kostbaren Gegenstand im Gepäck belauschen die beiden die Versammlung und kehren dann zu den anderen Männern zurück, um nach Sherwood Forest aufzubrechen.  
-  
-**Verteidigung von Lincoln**  
-  
-Bevor es in die Offensive gehen kann, müssen Robin und seine Männer den Verbündeten bei der Verteidigung von Lincoln unter die Arme greifen. Dazu müssen insgesamt drei "Schilde" erbeutet werden, was auf drei verschiedene Wege möglich ist: Entweder Robin opfert eine größere Summe Gold oder ein paar seiner Kameraden, um die Verteidiger zu unterstützen, oder er führt einen Überfall auf die gegnerischen Soldaten aus. Auch eine Kombination ist möglich. Da es mittlerweile recht voll in Sherwood Forest geworden sein sollte, kann Robin ruhig sechs Männer abkommandieren und den fehlenden Schild dann in einem Überfall auf die Kutsche erbeuten - auf diese Weise kommt auch noch etwas Gold für das Lösegeld in die Kasse.  
-  
-**Mission 9**  
-  
-Die nächste Mission ist deutlich schwerer als die vorangegangenen, nicht zuletzt da Robin zunächst einmal alleine unterwegs ist. Nachdem er das Turnier gewonnen hat, wird er entlarvt und vom Sheriff zum Duell herausgefordert. Sobald der Bösewicht geschlagen das Weite sucht, stürmt Robin zu der Treppe in westlicher Richtung und trifft sich auf dem Turm mit Lady Marian. Da sie nicht klettern kann und daher bei der Flucht keine Hilfe ist, kehrt Robin alleine nach unten zurück. Dort wartet er, bis gerade kein Soldat auf der Suche nach ihm in der Nähe ist, klettert die Mauer zu seinem Gegner aus dem Turnier herab und verbündet sich mit ihm. Beide folgen dem Verlauf der Mauer, wobei Robin die Wächter bewusstlos schlägt. Hinter dem Tor zieht sein neuer Kamerad die Aufmerksamkeit aller Wächter auf sich, sodass Robin die Gelegenheit hat, seine Fausthiebe zu verteilen. Mit der gleichen Methode werden auch die Wachen auf dem Marktplatz beseitigt, sodass der Gefangene befreit werden kann. Mit einem weiteren neuen Kamerad im Schlepptau betritt Robin die Kirche, in der das Staatsschwert aufbewahrt wird. Bevor er diesen weiteren Teil der Kronjuwelen an sich nehmen kann, müssen einige gefährliche Gegner aus dem Weg geräumt werden - auch hier kommt wieder die altbekannte Ablenk-und-Faustkampf-Taktik zum Einsatz. Um den starken Kameraden einzusammeln muss eine große Zahl an Soldaten besiegt werden. Dazu bezieht Robin mit seinen Männern in dem Haus nördlich des Platzes Stellung und überfällt zunächst einmal die Schützen-Patrouille in der linken Gasse. Kaum ist der letzte Gegner aus dem Verkehr gezogen, werden auch schon die Lanzenträger auf das Geschehen aufmerksam. Wenn diese ebenfalls gefesselt und geknebelt sind, kann auch die letzte und stärkste Gruppe angegriffen werden. Dazu dezimiert Robin die Gegnerzahl mit seinem Geldbeutel-Trick, worauf alle gemeinsam die Soldaten aufmischen. Auf diese Weise kann der starke Kamerad auch zu Robins Truppe stoßen und seine Nützlichkeit unter Beweis stellen, indem er die herumliegenden Feinde in Hauseingängen versteckt. Auf diese Weise vermeidet er, dass ständig von hysterischen Bürgerinnen nach Soldaten gerufen wird. Ein Gutes hat aber selbst das: Sobald die im Burghof wachenden Männer alarmiert werden, schwärmen sie aus und können ebenfalls leicht aus dem Weg geschafft werden. Nun steht nur noch eine Gruppe am Eingang der Burg im Weg, die jedoch leicht überwunden werden kann, nachdem Robin ihnen einen weiteren Geldbeutel vor die Füße geworfen hat. Die wenigen übrig gebliebenen Wachen sind leicht besiegt, sodass der silberne Pfeil in Robins Besitz wandert und Lady Marian sich der Gruppe anschließen kann.  
-  
-**Überfall auf Derby**  
-  
-Als Nächstes steht eine Großoffensive an, deren Ziel die Einnahme von Derby ist. Um den Verbündeten unter die Arme zu greifen, hat Robin wieder drei Möglichkeiten: Neben einer finanziellen Unterstützung kann er Männer losschicken oder sich mit seinen Getreuen selber am Sturm auf die Burg beteiligen. Dabei kann relativ leicht die komplette Anzahl an Schilden erbeutet werden, sodass im Allgemeinen von den ersten beiden Alternativen abgesehen werden kann. Einen Nachteil hat diese Mission allerdings: Die verbündeten Soldaten machen keine Gefangenen und töten sogar Feinde, die bereits gefesselt wurden. Wer also die Zahl der gefallenen Gegner niedrig halten will, sollte gefesselte Soldaten so schnell wie möglich in Häuser schaffen und möglichst spät die Schilde nehmen. Auf diese Weise rücken die eigenen Soldaten nicht gleich vor und Robins Leute können die Gegner auf die bewährte Art außer Gefecht setzen. Auf der höchsten Zinne trifft Robin schließlich auf Scathlock, der ein ernstzunehmender Gegner ist. Gelingt es Robin, ihn in eine Ecke zu drängen, kann er mit wiederholten Rundumschlägen und einem Nachsetzen beim Aufstehen besiegt werden.  
-  
-**Mission 10**  
-  
-Um Lady Marian vor der zwangsweisen Vermählung zu bewahren, müssen sich Robin und seine Gefährten nun nach York wagen. Die Stadt ist groß und wimmelt vor Wachen und dem Prinzen treu ergebenen Bürgern. Andererseits gibt es überall die Möglichkeit, unbemerkt in einem Hauseingang zu verschwinden, sodass zunächst einmal nahezu keine Kämpfe notwendig sind. Der Bettler kann Robin zwar keine allzu wichtigen Hinweise geben, nennt aber die Standorte zweier weiterer Bettler, die als Erstes aufgesucht werden sollten. Bis auf einen Soldaten und eine Bürgerin, die wie üblich betäubt, gefesselt und versteckt werden, sind dazu keine Kämpfe notwendig. Der Mann berichtet von seinem Schicksal mit einem Geldverleiher, worauf Robin ihm mit einer großzügigen Geldspende aus der Patsche hilft und sich das Geld dann von dem Wucherer zurückholt. Auch ein Besuch des dritten Bettlers lohnt sich, weist er doch auf einen hohen Offizier hin, der die sogenannte Ampulla spazieren trägt. Um sich diesen weiteren Staatsschatz anzueignen, schlägt John den Ehemann der Freundin des Offiziers nieder und schafft ihn beiseite. Sobald die beiden Turteltäubchen sich unbeobachtet fühlen und treffen, schlägt John den Soldaten und Robin die Frau nieder. Nun heißt es wieder, sich der eigentlichen Aufgabe zuzuwenden, also zunächst einmal in die Festung einzudringen. Dazu schleicht sich Robin mit Bruder Tuck auf der südlichen Seite des Flusses hinter den Soldaten vorbei und steigt auf die Mauer. Den letzten Soldaten lockt Tuck so weit von der Festung Weg, dass er von oben nicht mehr gesehen werden kann und der Kampf keine Aufmerksamkeit erregt. Das erlaubt es Robin, unbemerkt an der efeubewachsenen Mauer nach oben zu klettern, den Wächter bewusstlos zu schlagen und dem Verlauf der Mauer zu folgen. Bei den anderen Soldaten kommt er nicht um einen Kampf herum, hat so aber bald die Fahne erreicht und kann Richards Banner hissen. Da dies wie gewünscht viel Aufmerksamkeit auf die Festung lenkt, steigt er sofort nach unten. Er wählt den Weg durch das Gebäude und schickt die Soldaten ins Reich der Träume. Auf diese Weise spart er nicht nur Zeit, sondern kann auch ein hübsches Sümmchen kassieren. Zusammen mit dem Mönch begibt er sich auf den Rückweg zu den anderen Kameraden, wobei er aufgrund der ausschwärmenden Feinde häufig in Gebäuden in Deckung gehen muss. Auf diese Weise arbeiten sich alle gemeinsam bis zur nördlichen Brücke vor. Direkt gegenüber liegt die Kathedrale, vor der es noch immer vor Soldaten wimmelt. Nachdem sie das eine oder andere Grüppchen von Gegnern angelockt und ruhig gestellt haben, stürzen sich die Kameraden ins Gefecht. Dabei bedienen sie sich insbesondere der Kampfkraft von John, der mit seinen Rundumschlägen kräftig aufräumt, und den Fausthieben von Robin. Sobald alle Wachen erledigt sind, lockt letzterer die beiden Kämpfer in der Kathedrale ins Freie zu seinen Gefährten, worauf er sich um Guisbourne kümmern kann. Dieser lässt sich wie gehabt mit dem Rundumschlag und abschließendem Zustechen besiegen. Mit Marian und dem herumliegenden Gold stösst Robin zu seinen Kameraden und schlägt den Weg zum Stadttor ein. Auch jetzt kann er den Feinden ausweichen, einzig die Gruppe von Männern am Tor muss überrannt werden.  
-  
-**Mission 11**  
-  
-In dieser Mission sollten außer Lady Marian wie üblich Bruder Tuck und Little John mit von der Partie sein, außerdem Will Scarlet oder ein weiterer Kamerad, der mit Heilkräutern umzugehen weiß. Als Erstes wird dem Turm vor der Stadt ein Besuch abgestattet. Darin verbirgt sich allerdings nur ein schwarzer Ritter (der durch einen Hieb von John zu Boden geht) und ein Gefangener, der den Aufenthaltsort von Robin verrät. Also begibt sich Marian mit ihren Begleitern zum Stadttor, wo die beiden Wachen und der Offizier ebenfalls betäubt werden. Im Folgenden ist es wichtig, dass kein Alarm gegeben wird, da sonst binnen Kurzem eine große Zahl an Soldaten anrückt. Sobald der Wächter also Verdacht schöpft und in Richtung des Tores geht, sollte er aus der Stadt gelockt und niedergeschlagen werden. Auch mit weiteren Streifen, die in der Nähe auftauchen, wird entsprechend verfahren - zu diesem Zweck bleibt vorerst einer der Kameraden im Tor stehen. Die restlichen Soldaten werden wie üblich in Gruppen ausgeschaltet und versteckt. Auf diese Weise schlagen sich Marian und ihre Begleiter erst nach Osten und dann bis zur Stadtmauer im Norden durch.  
-  
-Unterwegs nehmen sie sich allerdings Zeit, um dem Mann, der Robin an die Schergen des Sheriffs verraten hat, die Belohnung von 5000 Pfund abzuknöpfen und mit dem Bettler zu sprechen. Der weißt auf das Siegel des Königs hin, das in den Gemächern des Sheriffs zu finden ist, in Sherwood Forest aber viel besser aufgehoben wäre. Haben die Kameraden die Mauer erreicht, folgen sie ihr nach Westen bis zu dem Turm, in dem Robin in einer Zelle schmachtet. Nachdem er befreit ist, werden die wenigen Soldaten im Innenhof der Burg besiegt, sodass Robin ungestört das Siegel mitnehmen kann. Die Flucht aus der Stadt ist dann ein Kinderspiel.  
-  
-**Mission 12**  
-  
-In dieser Mission ist es von Vorteil, wenn Robin von Little John, Bruder Tuck sowie zwei Männern begleitet wird, die Mauern erklettern können - beispielsweise von Will Scarlet und einem aggressiven Kamerad. Den Besuch in York beginnen Robin und seine Getreuen dank der Fischer mitten in der Stadt, so dass gleich einige Wächter in der Nähe sind. Little John und Robin passen einen unaufmerksamen Augenblick des Soldaten auf der Mauer ab und betreten die nordöstliche Gasse, um die dort postierten Männer zu vertrimmen. Sobald diese gefesselt und in einem Gebäude verstaut sind, steigen alle zur Kathedrale hinauf, um auch dort die Gegner aus dem Verkehr zu ziehen. Hier reicht es wie üblich aus, möglichst alle zugleich in einen Kampf zu verwickeln, während Robin und John die Fäuste schwingen. Auf diese Weise verfahren die Männer auch mit den Wächtern an der Brücke und in der dahinter liegenden Gasse. Da die Kameraden später nach hier zurück kehren und auch sonst einige Gänge durch die Stadt unternehmen, sollten wie üblich alle bewusstlosen Feinde gefesselt und versteckt werden.  
-  
-Ab hier können Robin und seine Leute weitgehend im Verborgenen agieren. Zunächst sollten sie die beiden Bettler aufsuchen, um gegen eine großzügige Goldspende eine ganze Menge Tipps zu erhalten. Der wichtigste davon bezieht sich auf die Kathedrale. Dort finden sich neben ein paar Soldaten, die die Kameraden vor kein nennenswertes Problem stellen, zwei Verstecke, die neben einer stattlichen Summe Gold das letzte der königlichen Insignien, die Krone, enthalten. Ein weiterer Abstecher führt Robin zu dem ehemaligen Bettler, dem er beim letzten Besuch in York finanziell unter die Arme gegriffen hat und der das Geld nun zurückzahlt. Nun sollten sich die Kameraden auf den eigentlichen Grund für den Besuch der Stadt besinnen und Allan aufsuchen. Der weist auf eine wichtige Besprechung in der Festung hin, also begeben sich Robin und alle des Kletterns fähigen Männer auf die Mauer südlich der Festung. Unterdessen nähern sich John und Tuck dem Haupteingang aus südlicher Richtung und verbergen sich dort.  
-  
-Unterstützt von seinen Mitstreitern haut Robin die Wächter auf dem Weg zu den Verschwörern K.O., um ungestört die Pläne von Prinz John hören zu können. Zurück bleibt Longchamps, den Robin im Duell bezwingt. Jetzt heißt es nur noch die Leiche unbemerkt aus der Stadt zu schaffen. Dazu muss Little John in die Burg gebracht werden, indem das Haupttor geöffnet wird. Diese Aktion fällt sogar den unaufmerksamen Wachen auf, so dass John und seine Kameraden nicht um eine kleine Klopperei herumkommen. Während John sich mitten zwischen die Gegner stürzt und mit Rundumschlägen die Reihen lichtet, stürmt Robin mit seinen Männern aus der Burg und fällt den Soldaten in den Rücken, um ein paar Faustschläge anzubringen. Der restliche Weg ist dann ein Kinderspiel...  
-  
-**Überfall auf York**  
-  
-Nun steht ein Angriff auf York an, um die Stadt für die königstreuen Verbündeten zu erorbern. Der Hauptteil der Arbeit muss mal wieder von Robin und seinem Gefolge erledigt werden, so dass eine Menge Arbeit ansteht - insbesondere, wenn zuvor keine Schilde erworben wurden. Der südwestliche Stadtteil ist nicht besonders stark bewacht: Die Soldaten sind schwächer, in kleinen Gruppen verstreut und marschieren nur wenig durch die Gegend, so dass sie oft hinterrücks überfallen und betäubt werden können. Folglich ist das erste Ziel für die Angreifer, die Soldaten im Süden und dann im Westen aus dem Verkehr zu ziehen. Auf diese Weise können Robin und Co. den Platz vor der Kathedrale durch die nördliche Tür betreten und die beiden Wachen davor aus dem Verkehr ziehen, ohne Aufmerksamkeit zu erregen. Nachdem Robin und John die Soldaten in der Kathedrale niedergestreckt haben und alle gut verstaut sind, kann man sich der Brücke zuwenden. Dazu lässt sich folgende Taktik anwenden (über die Quick Actions): Im ersten Schritt nähern sich John und Robin den Gegnern, um zwei der gefährlichsten Männer in der letzten Reihe umzuboxen. Sobald das erledigt ist folgt Schritt zwei: Alle anderen greifen zugleich an (insbesondere natürlich den verbliebenen Paladin), während Robin und John sich rennend zurückziehen. Auf diese Weise werden sie nicht in den Kampf verwickelt und können nach einem Moment zurückkehren und die Armbrustschützen aus dem Weg räumen, bevor diese gefährlich werden können.  
-  
-Der nächste Weg führt nach Osten, wo eine Handvoll Gegner erledigt und die Tore geöffnet werden - keine besonders schwierige Aufgabe. Über die Stadtmauer wechseln Robin und seine Begleiter auf das nördliche Ufer und überfallen dort die Patrouille. Die Tür am Flussufer führt sie direkt in die Festung, wo die Wachen auf der Mauer offenbar mit Taubheit geschlagen sind, da sie nichts davon mitbekommen, wie ihre Kollegen unten im Hof vertrimmt werden. Unter den Männern auf der Mauer befindet sich auch der feindliche General, also stellen sie das nächste Ziel dar. Sobald die gesamte Besatzung der Burg gefesselt und geknebelt in den Gebäuden liegt, öffnet Robin das Tor und schlägt mit John die Wachen davor nieder. Auf der Brücke wartet eine große Gruppe Soldaten, doch mit diesen kann wie mit ihren Kollegen auf der nördlichen Brücke verfahren werden. Als letztes gilt es, die Wachen das Nordtores zu besiegen, was ein Leichtes ist, und die Männer Ranulphs durch die verabredeten Zeichen in die Stadt zu schicken.  
-  
-**Mission 13**  
-  
-Nachdem auch York gefallen ist gibt es nur noch eine Aufgabe für Robin Hood: Dem Sheriff von Nottingham den Garaus zu machen und den Prinzen gefangen zu nehmen, um alles für die Rückkehr des Königs vorzubereiten. Allerdings findet diese Mission unter erschwerten Umständen statt: Während Robin selber sich bereits in die Stadt geschlichen hat, nähern sich zwei seiner Helfer aus nördlicher und zwei weitere aus südlicher Richtung. Daher gilt es diesmal nicht nur zu bedenken, wer mit dieser Aufgabe betraut wird, sondern die Kameraden müssen auch in der passenden Reihenfolge ausgewählt werden. Eine sinnvolle Auswahl wäre (in dieser Reihenfolge) Robin, Little John, Lady Marian, Bruder Tuck und Will Scarlet; auf diese Weise starten John und Tuck im Süden und treffen früh auf Robin.  
-  
-Dieses Treffen ist das erste wichtige Missionsziel, also werden zunächst sämtliche Nebenmissionen ignoriert. Statt dessen prügeln sich die beiden mit der gewohnten Arbeitsteilung (Ablenken, Niederschlagen, Fesseln, Wegtragen) in Richtung des Stadttores. Da auf den Mauern einige Bogenschützen postiert sind, locken sie die beiden Posten am Tor weg und erledigen sie außer Sichtweite. Nun schlüpfen sie unbemerkt durch das Tor und bleiben in seinem Schatten stehen. Oberstes Gebot ist es nun, die Aufmerksamkeit der Wachen nicht zu erregen. Als Ablenkungsmanöver wirft Bruder Tuck also ein Wespennest zwischen die beiden am nächsten stehenden Posten. Sobald die beiden mit den angriffslustigen Insekten beschäftigt sind, rennen Tuck, John und natürlich Robin los und verziehen sich zwischen die Häuser östlich vom Tor. Dort wartet zwar ein Soldat, dieser ist jedoch schnell besiegt und in das Haus getragen (auch hier warten Kämpfer). Um Will und Marian so weit wie möglich vor Angriffen durch ausschwärmende Soldaten zu schützen, sollten sie in großer Entfernung vom Tor abwarten. Robin und seine Begleiter versuchen unterdessen, sich ungesehen in Richtung der Kirche durchzuschlagen. Da sie mit großer Wahrscheinlichkeit entdeckt oder von Bürgern verpfiffen werden, sollten sie darauf vorbereitet sein, sich zwischen die Häuser an der südlichen Stadtmauer zurückzuziehen und dort jegliche Soldaten auf der Suche nach den Eindringlingen zu erledigen. Wie immer ist es sinnvoll, mit dem Bettler, einem ehemaligen Wächter, zu sprechen und seine Warnung zu beherzigen, sich von den anderen Bettlern in dieser Mission fern zu halten.  
-  
-Haben sie endlich die Kathedrale erreicht, spricht Robin mit dem alten Applegoad, der von seinem dem König ergebenen Sohn bei der Wache spricht. Ein möglicher Weg ist also gefunden, zunächst müssen sich die Drei aber zu Marian und Will durchschlagen. Sie wählen die östliche der beiden Gassen zum Tor, um den verräterischen Bettler zu umgehen, und greifen die Soldaten dort an. Bis auf den Anführer befinden sich dort nur Schützen, also sind sie mit ein paar Fausthieben schnell aus dem Weg geräumt. Zu nahe am nördlichen Tor sollten sich die Drei allerdings nicht blicken lassen, um die Torwächter nicht auch in den Kampf zu verwickeln. Erst einmal sind die Soldaten, die bei dem Bettler im Hinterhalt liegen, an der Reihe. Also betritt Tuck eins der Häuser, holt die Kämpfer heraus und hält sie in Schach, damit John und Robin die Fäuste schwingen können. Genauso wird auch mit den Männern im anderen Haus verfahren, dann sind die Torwächter dran. Mit diesen haben haben Robin und seine Begleiter leichtes Spiel, da ihnen aus nördlicher Richtung Will und Marian zur Hilfe eilen.  
-  
-Wieder vereinigt brechen alle zu dem jungen Applegoad auf der Stadtmauer auf, um über die Mauer in die Festung eindringen zu können. Im Wachturm warten nur wenige Gegner, so dass sich auch hier die Ablenkungs- und Niederschlag-Taktik wunderbar anwenden lässt. Die Schützen auf den Türmen können leicht von hinten betäubt werden, allerdings bemerken sie ohnehin nichts von den Vorgängen im Hof. Dort warten nur wenige Soldaten, so dass sich Robin und John wie üblich zunächst vornehm im Hintergrund halten und den Weg ins Hauptgebäude freiboxen können. Dort stellt sich Robin nur noch der Sheriff in den Weg, der im Schwertduell bezwungen werden muss. Sollte Robin im Kampf verwundet werden, kann er sich einfach von seinem Widersacher zurückziehen und von Marian mit ihren Heilkräutern behandeln lassen. Nach kurzer Zeit liegt der Sheriff im Staub und der Verhaftung des Verräters und dem Gewinn des Spiels steht nichts mehr im Wege!
-
-__ Top
-
-* * *
-
-  
-  
-
-
-  *     * [__Start page](/app.php/GTT?sid=30af39b9367362155d43ff4810ab7071)
-    * [#](/app.php/GTT/view/-?sid=30af39b9367362155d43ff4810ab7071)
-    * [A](/app.php/GTT/view/A?sid=30af39b9367362155d43ff4810ab7071)
-    * [B](/app.php/GTT/view/B?sid=30af39b9367362155d43ff4810ab7071)
-    * [C](/app.php/GTT/view/C?sid=30af39b9367362155d43ff4810ab7071)
-    * [D](/app.php/GTT/view/D?sid=30af39b9367362155d43ff4810ab7071)
-    * [E](/app.php/GTT/view/E?sid=30af39b9367362155d43ff4810ab7071)
-    * [F](/app.php/GTT/view/F?sid=30af39b9367362155d43ff4810ab7071)
-    * [G](/app.php/GTT/view/G?sid=30af39b9367362155d43ff4810ab7071)
-    * [H](/app.php/GTT/view/H?sid=30af39b9367362155d43ff4810ab7071)
-    * [I](/app.php/GTT/view/I?sid=30af39b9367362155d43ff4810ab7071)
-    * [J](/app.php/GTT/view/J?sid=30af39b9367362155d43ff4810ab7071)
-    * [K](/app.php/GTT/view/K?sid=30af39b9367362155d43ff4810ab7071)
-    * [L](/app.php/GTT/view/L?sid=30af39b9367362155d43ff4810ab7071)
-    * [M](/app.php/GTT/view/M?sid=30af39b9367362155d43ff4810ab7071)
-    * [N](/app.php/GTT/view/N?sid=30af39b9367362155d43ff4810ab7071)
-    * [O](/app.php/GTT/view/O?sid=30af39b9367362155d43ff4810ab7071)
-    * [P](/app.php/GTT/view/P?sid=30af39b9367362155d43ff4810ab7071)
-    * [Q](/app.php/GTT/view/Q?sid=30af39b9367362155d43ff4810ab7071)
-    * R
-    * [S](/app.php/GTT/view/S?sid=30af39b9367362155d43ff4810ab7071)
-    * [T](/app.php/GTT/view/T?sid=30af39b9367362155d43ff4810ab7071)
-    * [U](/app.php/GTT/view/U?sid=30af39b9367362155d43ff4810ab7071)
-    * [V](/app.php/GTT/view/V?sid=30af39b9367362155d43ff4810ab7071)
-    * [W](/app.php/GTT/view/W?sid=30af39b9367362155d43ff4810ab7071)
-    * [X](/app.php/GTT/view/X?sid=30af39b9367362155d43ff4810ab7071)
-    * [Y](/app.php/GTT/view/Y?sid=30af39b9367362155d43ff4810ab7071)
-    * [Z](/app.php/GTT/view/Z?sid=30af39b9367362155d43ff4810ab7071)
-    * [__Amiga Cheats Updates](/app.php/GTT/new/2026?sid=30af39b9367362155d43ff4810ab7071)
-
-
-
-
-  
-
-
-(C) by APC&TCP;, Andreas Magerl, Postfach 83, DE-83234 Übersee.  
-Amiga is a registered trademark by Amiga Inc. & AMPOW, David Jahn, 52222 Stolberg (Rhld.)
-
-  
-
-
-  * [__Amiga Future](https://www.amigafuture.de) [Community](./../../../../../index.php?sid=30af39b9367362155d43ff4810ab7071)
-  * All times are UTC+02:00
-  * [ __Delete cookies ](/app.php/user/delete_cookies?sid=30af39b9367362155d43ff4810ab7071)
-  * [ __Contact us ](/app.php/contactadmin?sid=30af39b9367362155d43ff4810ab7071)
-
-
-
-Powered by [phpBB](https://www.phpbb.com/)® Forum Software (C) phpBB Limited
-
-[ Privacy ](https://www.amigafuture.de/app.php/privacy/ "Privacy") | [ Terms ](./../../../../../ucp.php?mode=terms&sid=30af39b9367362155d43ff4810ab7071 "Terms")
-
- 
-
-__
-
-###  
-
-__
