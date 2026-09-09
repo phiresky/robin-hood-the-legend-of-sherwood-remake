@@ -1,6 +1,6 @@
 # Robin Hood: The Legend of Sherwood — external research
 
-Checked: **9 September 2026**. This collection contains **106 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
+Checked: **9 September 2026**. This collection contains **114 source records**, with original summaries, attribution, language/date information, and links to the original publications. Additional sources are linked within records. It covers Spellbound's 2002 game and its ports; one user-supplied link concerns a different game and is filed separately.
 
 This is a broad research collection, not an exhaustive archive of the internet. Entries explicitly distinguish inspected article text, search-index excerpts, and links whose bodies could not be retrieved. Summaries are in English; the original sources span English, German, French, Czech, Slovak, Polish, Russian, Spanish, Italian, Turkish, Chinese, and Japanese, plus Portuguese storefront text. These files contain spoilers.
 
@@ -78,6 +78,10 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [PC Games — Nicht ganz der Stoff, aus dem die Helden sind](reviews/pcgames.md) | German | Article page and indexed text inspected; continuation pages not inspected |
 | [Games.cz — Leon's contemporary review](reviews/tiscali-leon.md) | Czech | Article text and verdict inspected |
 | [Jeuxlinux — French Linux overview](reviews/jeuxlinux-french.md) | French | Indexed presentation and section list inspected; direct retrieval failed |
+| [GOGJ — Japanese play impressions](reviews/gogj-japanese.md) | Japanese | Article body and visible comments inspected. |
+| [GameSurf — contemporary Italian review](reviews/gamesurf-italian.md) | Italian | Substantial indexed opening and verdict inspected; direct article retrieval failed. |
+| [Filmweb — Polish retrospective](reviews/filmweb-kruk.md) | Polish | Substantial indexed review text and score inspected; direct retrieval failed. |
+| [Mac Life — German Mac review](reviews/maclife-mac.md) | German | Substantial indexed article and test-result table inspected; direct retrieval failed. |
 
 ## Compatibility and configuration
 
@@ -107,6 +111,10 @@ This is a broad research collection, not an exhaustive archive of the internet. 
 | [RH Mods — Developer Console](technical/rhmods-developer-console.md) | English | Page description inspected |
 | [RH Mods — Profile Tool](technical/rhmods-profile-tool.md) | English | Page description inspected |
 | [RH Mods — Rhuce](technical/rhmods-rhuce.md) | English | Page description inspected |
+| [GOG — intermittent city-mission save crashes](technical/gog-save-crash.md) | English | Opening and substantial indexed replies inspected; browser and search copies expose differing post counts. |
+| [GOG — historical profile-based widescreen experiments](technical/gog-widescreen.md) | English | Substantial indexed first-page discussion inspected; second page not inspected. |
+| [GOG — executable naming and flickering report](technical/gog-flicker-executable-name.md) | English | Indexed opening and all four replies inspected. |
+| [GOG — York mission unlocked after reloading the prior ending](technical/gog-post-ransom-progression.md) | English | Both indexed posts inspected. |
 
 ## Releases, ports, and development
 

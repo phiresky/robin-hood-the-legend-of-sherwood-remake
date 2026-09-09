@@ -88,3 +88,13 @@ The [2019 side-mission report](guides/steam-small-missions-report.md), [2021 kid
 The [Spellforge documentation](technical/rhmods-spellforge.md) and [Rhuce description](technical/rhmods-rhuce.md) provide complementary mission and campaign editing leads. Other inspected pages cover assets, profiles, and a developer console. No software was downloaded or executed.
 
 Remaining leads from this pass include the [resolution discussion](https://steamcommunity.com/app/46560/discussions/0/1729828401702969383/), [windowed-mode discussion](https://steamcommunity.com/app/46560/discussions/0/661593286391397444/), and the command-list PDF linked from the [developer-console page](https://rhmods.com/tools/developer-console/). Their substantive contents still need inspection.
+
+## Further non-Steam research
+
+Added eight records, bringing the collection to 114: Japanese, Italian, Polish, and German reviews, plus four GOG discussions. The previously listed Filmweb lead now has a [substantive record](reviews/filmweb-kruk.md). The [Mac Life review](reviews/maclife-mac.md) adds contemporary Mac reception; its lockpicking attribution is flagged as a discrepancy.
+
+The [post-ransom report](technical/gog-post-ransom-progression.md) supplies a player-confirmed successful retry of a mission transition, without proving why the first attempt failed. The [save-crash discussion](technical/gog-save-crash.md) distinguishes city missions, quicksaves, new filenames, and the installed version. The [widescreen experiments](technical/gog-widescreen.md) and [flicker workaround](technical/gog-flicker-executable-name.md) are historical player findings, not tests of current packages.
+
+Search-index copies exposed more discussion text than the browser reader for some GOG pages, with differing post counts on the save-crash topic. Access descriptions preserve that limitation. No binary patches or suggested configuration changes were applied.
+
+Additional uncompleted leads include the [GameSurf preview](https://www.gamesurf.it/anteprime/gioco/robin-hood-c7494), [Galrung video review](https://www.youtube.com/watch?v=Jx_P5vKl7Uc), and [GOG Siege of Lincoln discussion](https://www.gog.com/forum/robin_hood_legend_of_sherwood/siege_of_lincoln/post3). The video description was located, but the video was not watched. The widescreen thread's second page also remains uninspected.
