@@ -6,7 +6,11 @@ A list of which additional features we have added, which ones we might still wan
 
 - **Campaign manager layout:** fixed 1024×768 presentation with twelve-card
   gallery pages, a navigable progress-tree viewport, wrapped mission titles,
-  separate mission details, and a campaign/lifetime Achievements tab. Both menu
+  separate mission details, and three distinct views: Campaign for the current
+  save, Hall of Deeds for permanent mission badges and best results across
+  attempts, and Achievements for player-wide awards with current campaign
+  progress beneath each. Whole-campaign awards require one qualifying campaign;
+  loading an older save retains earned awards and archived best results. Both menu
   entry points and Sherwood share the layout. An opt-in offscreen GPU capture
   test produces PNGs for visual iteration without a game window; see
   [campaign history](CAMPAIGN_HISTORY.md#campaign-manager-ui-and-offscreen-captures).

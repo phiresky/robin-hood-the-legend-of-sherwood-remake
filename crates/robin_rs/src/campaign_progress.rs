@@ -81,7 +81,9 @@ pub struct CampaignProgressNode {
     pub lane: usize,
     pub attempt_count: usize,
     pub win_count: usize,
+    /// Best recorded results across the current save and archived attempts.
     pub best: MissionBestStats,
+    pub campaign_badges: AchievementSet,
     /// Policy-attested badges earned for this mission across eligible runs.
     pub badges: AchievementSet,
     pub badge_count: usize,
@@ -175,6 +177,15 @@ impl CampaignProgressGraph {
             for attempt in attempts {
                 best.include(attempt);
             }
+            if let Some(history) = lifetime {
+                for entry in history
+                    .attempts()
+                    .iter()
+                    .filter(|entry| entry.mission_id() == profile.id)
+                {
+                    best.include(entry.attempt());
+                }
+            }
             let node_idx = nodes.len();
             mission_to_node.insert(profile.id, node_idx);
             let lifetime_attempt_count = lifetime
@@ -220,6 +231,7 @@ impl CampaignProgressGraph {
                     .filter(|attempt| attempt.outcome() == MissionAttemptOutcome::Won)
                     .count(),
                 best,
+                campaign_badges: mission.achievement_badges(),
                 // Raw calculated results remain on every immutable attempt for
                 // debrief/audit. Only the host-policy-approved achievement
                 // history is allowed to drive awarded badge presentation.
@@ -528,7 +540,11 @@ mod tests {
         let node = &graph.nodes[0];
 
         assert!(node.badges.contains(AchievementId::PileOBones));
+        assert!(node.campaign_badges.is_empty());
         assert_eq!(node.badge_count, 1);
+        assert_eq!(node.best.fastest_win_seconds, Some(60));
+        assert_eq!(node.lifetime_attempt_count, 1);
+        assert_eq!(node.attempt_count, 0);
         assert!(!node.selectable);
         assert!(!node.history_replay);
         assert!(
@@ -559,6 +575,7 @@ mod tests {
             attempt_count: 2,
             win_count: 1,
             best: MissionBestStats::default(),
+            campaign_badges: AchievementSet::empty(),
             badges: robin_engine::achievement::AchievementSet::empty(),
             badge_count: 3,
             lifetime_attempt_count: 2,

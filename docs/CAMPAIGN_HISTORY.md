@@ -29,8 +29,20 @@ awarding an icon.
 At synchronization, native records are also promoted into a versioned
 `ProfileCampaignHistory` owned by the player profile, outside replaceable save
 slots and campaign resets. Promotion is idempotent using the deterministic
-campaign-run id plus attempt sequence. The tree and modal exhibit grid show
-current-campaign and lifetime mission counts separately.
+campaign-run id plus attempt sequence. Campaign shows progress and mission
+badges from the current save. Hall of Deeds shows all recorded attempts,
+permanent mission badges, and best results including archived attempts. Its
+details label the current campaign's mission status separately; an archived
+win does not unlock that mission in a new or earlier save.
+
+Achievements shows each player-wide award once, with an Earned/Not earned
+status and current-campaign progress underneath. Incomplete historical evidence
+is explicitly marked unverified. Earned awards survive loading an older save.
+Clean Hands and Ghost require their mission badge on every required mission
+within one completed campaign; evidence from different campaign runs cannot be
+combined into that award. Pile-o-Bones and All Enemies Stashed require one
+qualifying mission. This uses the existing aggregation policies and does not
+introduce a campaign picker or change award eligibility.
 
 Earlier Rust campaign, replay, and player-profile history schemas are not
 migrated. They fail closed at their schema/version boundary so absent evidence
@@ -78,7 +90,7 @@ Click once to select and read details. Enter, the Inspect button, or a double-cl
 opens an available mission in Sherwood; the main-menu and pause-menu views remain
 browse-only. Arrow keys navigate, Page Up/Down or the mouse wheel change pages,
 and the Previous/Next buttons work with mouse or touch. Tab switches tree/gallery;
-A or the Achievements tab shows campaign and lifetime badge progress. Back/Escape
+A or the Achievements tab shows permanent awards and current campaign progress. Back/Escape
 returns to the originating screen.
 
 An opt-in screenshot test uses the real production renderer with an offscreen
@@ -93,9 +105,11 @@ absolute datadir paths in this test setup). From the worktree root:
 
 Run this capture test alone: it sets its process working directory to the worktree
 root for install-resource lookup. The PNG matrix includes the first, middle, and
-last selections of the real campaign in tree/gallery/achievement views at 1024×768.
+last selections plus an archived-record example in tree/gallery/achievement views at 1024×768.
 Names, fonts, and graph structure come from the supplied data; mission statuses
-are a presentation-only fixture covering all five states. No save is applied or
+are a presentation-only fixture covering all five states, archived mission
+records, permanent awards after an older save is loaded, and incomplete evidence.
+No save is applied or
 written. A wgpu adapter is required; Vulkan software rendering also works when
 provided by the host. Captures fail explicitly if data, fonts, or the adapter are
 missing. The ordinary tests check all 62 selections for non-overlapping cards,

@@ -951,6 +951,39 @@ fn progress_button(
     );
 }
 
+fn permanent_achievement_status(
+    current: robin_engine::achievement::AchievementAggregationProgress,
+    archived: robin_engine::achievement::AchievementAggregationProgress,
+) -> &'static str {
+    use robin_engine::achievement::AchievementAggregationStatus;
+    if current.earned() || archived.earned() {
+        "Earned"
+    } else if current.status == AchievementAggregationStatus::Unverifiable
+        || archived.status == AchievementAggregationStatus::Unverifiable
+    {
+        "Unverified - incomplete records"
+    } else {
+        "Not earned"
+    }
+}
+
+fn current_achievement_status(
+    progress: robin_engine::achievement::AchievementAggregationProgress,
+) -> String {
+    use robin_engine::achievement::AchievementAggregationStatus;
+    let status = match progress.status {
+        AchievementAggregationStatus::Earned => "earned".to_owned(),
+        AchievementAggregationStatus::Unverifiable => "incomplete records".to_owned(),
+        AchievementAggregationStatus::MissingRequirements => "requirements not met".to_owned(),
+        AchievementAggregationStatus::InProgress if progress.required_missions != 0 => format!(
+            "{} / {} missions",
+            progress.earned_missions, progress.required_missions
+        ),
+        AchievementAggregationStatus::InProgress => "in progress".to_owned(),
+    };
+    format!("Current campaign: {status}")
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_campaign_progress(
     renderer: &mut Renderer,
@@ -981,15 +1014,35 @@ fn render_campaign_progress(
         .progress_title_font
         .as_ref()
         .expect("campaign title font");
-    progress_text(renderer, title_font, transform, "Campaign", 32, 30, 480);
+    let gallery = presentation == CampaignPresentationMode::SherwoodMuseum;
+    progress_text(
+        renderer,
+        title_font,
+        transform,
+        "Campaign Manager",
+        32,
+        30,
+        560,
+    );
     progress_text(
         renderer,
         font,
         transform,
-        &format!(
-            "{} / {} missions completed",
-            graph.completed_missions, graph.known_missions
-        ),
+        &if achievement_overview {
+            String::new()
+        } else if gallery {
+            format!(
+                "{} wins / {}h {:02}m recorded",
+                lifetime_totals.wins,
+                lifetime_totals.known_duration_seconds / 3600,
+                lifetime_totals.known_duration_seconds / 60 % 60
+            )
+        } else {
+            format!(
+                "{} / {} missions completed",
+                graph.completed_missions, graph.known_missions
+            )
+        },
         640,
         38,
         352,
@@ -998,7 +1051,7 @@ fn render_campaign_progress(
         renderer,
         font,
         transform,
-        "Progress tree",
+        "Campaign",
         (32, 76, 176, 40),
         presentation == CampaignPresentationMode::ProgressTree && !achievement_overview,
     );
@@ -1025,87 +1078,105 @@ fn render_campaign_progress(
         renderer,
         font,
         transform,
-        "Arrows: navigate   Tab: switch view",
+        if achievement_overview {
+            "Permanent achievements for this player"
+        } else if gallery {
+            "Mission badges and best results across all attempts"
+        } else {
+            "Mission progress in your current saved campaign"
+        },
         32,
         132,
-        480,
-    );
-    progress_text(
-        renderer,
-        font,
-        transform,
-        &format!(
-            "Lifetime: {} attempts / {} wins",
-            lifetime_totals.attempts, lifetime_totals.wins
-        ),
-        544,
-        132,
-        448,
+        960,
     );
     progress_rect(renderer, transform, (32, 162, 960, 1), (70, 79, 59));
 
     if achievement_overview {
-        for (scope, summary, top) in [
-            ("This campaign", graph.campaign_achievements, 178),
-            ("Lifetime", graph.lifetime_achievements, 432),
-        ] {
-            progress_text(renderer, font, transform, scope, 32, top, 960);
-            for (index, item) in
-                crate::achievement_hud::achievement_aggregation_presentations(summary)
-                    .iter()
-                    .enumerate()
-            {
-                let x = 32 + index as i32 % 2 * 496;
-                let y = top + 36 + index as i32 / 2 * 80;
-                progress_rect(renderer, transform, (x, y, 464, 70), (12, 20, 13));
-                draw_achievement_badge_icon(
-                    renderer,
-                    item.badge.id,
-                    item.progress.earned(),
-                    transform.origin_x + x + 10,
-                    transform.origin_y + y + 8,
-                );
+        let mut earned = graph.lifetime_achievements.earned();
+        earned.union_with(graph.campaign_achievements.earned());
+        for (index, badge) in crate::achievement_hud::mission_badge_presentations(earned, |_| None)
+            .iter()
+            .enumerate()
+        {
+            let x = 32 + index as i32 % 2 * 496;
+            let y = 184 + index as i32 / 2 * 216;
+            progress_rect(renderer, transform, (x, y, 464, 196), (12, 20, 13));
+            let current = graph.campaign_achievements.get(badge.id);
+            let archived = graph.lifetime_achievements.get(badge.id);
+            draw_achievement_badge_icon(
+                renderer,
+                badge.id,
+                badge.earned,
+                transform.origin_x + x + 10,
+                transform.origin_y + y + 8,
+            );
+            progress_text(renderer, font, transform, &badge.label, x + 38, y + 6, 412);
+            progress_text(
+                renderer,
+                font,
+                transform,
+                permanent_achievement_status(current, archived),
+                x + 38,
+                y + 40,
+                412,
+            );
+            use robin_engine::achievement::AchievementAggregationPolicy;
+            let requirement = match badge.id.aggregation_policy() {
+                AchievementAggregationPolicy::AllRequiredMissions => {
+                    "Earn this badge on every required mission in one completed campaign."
+                }
+                AchievementAggregationPolicy::AnyMissionOnce => {
+                    "Earn this badge on any one mission."
+                }
+            };
+            let wrapped = layout::wrap_text_for_box_font(font, requirement, 432, 3);
+            for (line, text) in wrapped.lines.iter().enumerate() {
                 progress_text(
                     renderer,
                     font,
                     transform,
-                    &item.badge.label,
-                    x + 38,
-                    y + 6,
-                    412,
-                );
-                progress_text(
-                    renderer,
-                    font,
-                    transform,
-                    &item.compact_status,
-                    x + 38,
-                    y + 40,
-                    412,
+                    text,
+                    x + 16,
+                    y + 78 + line as i32 * 23,
+                    432,
                 );
             }
+            progress_text(
+                renderer,
+                font,
+                transform,
+                &current_achievement_status(current),
+                x + 16,
+                y + 162,
+                432,
+            );
         }
         progress_text(
             renderer,
             font,
             transform,
-            "A: achievements   Esc: back",
+            "Earned achievements stay with this player when you load an older save.",
             32,
-            722,
-            480,
+            634,
+            960,
         );
         progress_text(
             renderer,
             font,
             transform,
-            &format!(
-                "Recorded time: {}h {:02}m",
-                lifetime_totals.known_duration_seconds / 3600,
-                lifetime_totals.known_duration_seconds / 60 % 60
-            ),
-            544,
+            "Campaign awards cannot combine missions from different playthroughs.",
+            32,
+            666,
+            960,
+        );
+        progress_text(
+            renderer,
+            font,
+            transform,
+            "Tab: switch view   A: achievements   Esc: back",
+            32,
             722,
-            448,
+            960,
         );
         return;
     }
@@ -1150,13 +1221,22 @@ fn render_campaign_progress(
             continue;
         }
         let (x, y, w, h) = rect;
-        let (status, color) = match entry.state {
+        let (status, mut color) = match entry.state {
             MissionProgressState::Completed => ("Completed", (102, 157, 101)),
             MissionProgressState::Available => ("Available", (193, 163, 78)),
             MissionProgressState::Lost => ("Lost", (174, 102, 81)),
             MissionProgressState::Expired => ("Expired", (139, 121, 103)),
             MissionProgressState::Locked => ("Locked", (99, 112, 101)),
         };
+        if gallery {
+            color = if entry.lifetime_win_count != 0 {
+                (102, 157, 101)
+            } else if entry.lifetime_attempt_count != 0 {
+                (193, 163, 78)
+            } else {
+                (99, 112, 101)
+            };
+        }
         if index == selected {
             progress_rect(
                 renderer,
@@ -1193,10 +1273,17 @@ fn render_campaign_progress(
                 w - 20,
             );
         }
-        let status = if entry.attempt_count == 0 {
-            status.to_string()
+        let status = if gallery {
+            if entry.lifetime_attempt_count == 0 {
+                "No recorded attempts".to_string()
+            } else {
+                format!(
+                    "Attempts: {} / Wins: {}",
+                    entry.lifetime_attempt_count, entry.lifetime_win_count
+                )
+            }
         } else {
-            format!("{status} / {} attempts", entry.attempt_count)
+            status.to_string()
         };
         progress_text(renderer, font, transform, &status, x + 10, y + 62, w - 20);
     }
@@ -1232,7 +1319,7 @@ fn render_campaign_progress(
         font,
         transform,
         &format!(
-            "{:?} / {} attempts / {} wins",
+            "Current campaign: {:?} / Attempts: {} / Wins: {}",
             node.state, node.attempt_count, node.win_count
         ),
         32,
@@ -1240,7 +1327,7 @@ fn render_campaign_progress(
         960,
     );
     let mut record = format!(
-        "Lifetime: {} attempts / {} wins",
+        "All attempts: {} / Wins: {}",
         node.lifetime_attempt_count, node.lifetime_win_count
     );
     if let Some(seconds) = node.best.fastest_win_seconds {
@@ -1249,12 +1336,32 @@ fn render_campaign_progress(
     if let Some(score) = node.best.highest_score {
         record.push_str(&format!(" / Score: {score}"));
     }
-    progress_text(renderer, font, transform, &record, 32, 616, 960);
+    progress_text(
+        renderer,
+        font,
+        transform,
+        if gallery {
+            &record
+        } else if !show_achievement_badges {
+            "Arrows: navigate   Tab: switch view"
+        } else {
+            "Mission badges earned in this campaign"
+        },
+        32,
+        616,
+        960,
+    );
     if show_achievement_badges {
-        for (index, badge) in
-            crate::achievement_hud::mission_badge_presentations(node.badges, |_| None)
-                .iter()
-                .enumerate()
+        for (index, badge) in crate::achievement_hud::mission_badge_presentations(
+            if gallery {
+                node.badges
+            } else {
+                node.campaign_badges
+            },
+            |_| None,
+        )
+        .iter()
+        .enumerate()
         {
             let x = 32 + index as i32 % 2 * 496;
             let y = 650 + index as i32 / 2 * 27;
@@ -2021,6 +2128,51 @@ mod browser_tests {
     use super::*;
     use robin_engine::{mission::Mission, profiles::MissionProfile};
 
+    #[test]
+    fn permanent_award_survives_older_save_without_fabricating_current_progress() {
+        use robin_engine::achievement::{
+            AchievementAggregationInput, AchievementId, aggregate_achievement,
+        };
+        let current = aggregate_achievement(
+            AchievementId::CleanHands,
+            AchievementAggregationInput {
+                earned_missions: 2,
+                required_missions: 10,
+                ..Default::default()
+            },
+        );
+        let archived = aggregate_achievement(
+            AchievementId::CleanHands,
+            AchievementAggregationInput {
+                envelope_complete: true,
+                earned_missions: 10,
+                required_missions: 10,
+                ..Default::default()
+            },
+        );
+        assert_eq!(permanent_achievement_status(current, archived), "Earned");
+        assert_eq!(
+            current_achievement_status(current),
+            "Current campaign: 2 / 10 missions"
+        );
+        let unknown = aggregate_achievement(
+            AchievementId::CleanHands,
+            AchievementAggregationInput {
+                envelope_unverifiable: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            permanent_achievement_status(current, unknown),
+            "Unverified - incomplete records"
+        );
+        assert_eq!(permanent_achievement_status(unknown, archived), "Earned");
+        assert_eq!(
+            current_achievement_status(unknown),
+            "Current campaign: incomplete records"
+        );
+    }
+
     fn browser() -> CampaignMapModalState {
         let mut profiles = engine_profiles::ProfileManager::new();
         profiles.missions.push(MissionProfile {
@@ -2317,7 +2469,54 @@ mod capture_tests {
                 node.win_count = usize::from(idx % 5 == 0);
                 node.lifetime_attempt_count = node.attempt_count;
                 node.lifetime_win_count = node.win_count;
+                // Older-save fixture: this mission has records but is not yet available here.
+                if idx % 5 == 4 {
+                    node.lifetime_attempt_count = 3;
+                    node.lifetime_win_count = 2;
+                    node.best.fastest_win_seconds = Some(185);
+                    node.badges
+                        .insert(robin_engine::achievement::AchievementId::CleanHands);
+                    node.badge_count = node.badges.len();
+                }
             }
+            use robin_engine::achievement::{
+                AchievementAggregationInput, AchievementAggregationSummary, AchievementId,
+            };
+            state.graph.campaign_achievements =
+                AchievementAggregationSummary::from_inputs(|id| AchievementAggregationInput {
+                    earned_missions: u32::from(id == AchievementId::CleanHands) * 2,
+                    required_missions: 10,
+                    envelope_unverifiable: id == AchievementId::AllEnemiesOneBuilding,
+                    unverifiable_missions: u32::from(id == AchievementId::AllEnemiesOneBuilding),
+                    ..Default::default()
+                });
+            state.graph.lifetime_achievements =
+                AchievementAggregationSummary::from_inputs(|id| AchievementAggregationInput {
+                    envelope_complete: true,
+                    earned_missions: if matches!(
+                        id,
+                        AchievementId::CleanHands | AchievementId::PileOBones
+                    ) {
+                        10
+                    } else {
+                        0
+                    },
+                    required_missions: 10,
+                    unverifiable_missions: u32::from(id == AchievementId::AllEnemiesOneBuilding),
+                    ..Default::default()
+                });
+            state.lifetime_totals.attempts = state
+                .graph
+                .nodes
+                .iter()
+                .map(|node| node.lifetime_attempt_count as u64)
+                .sum();
+            state.lifetime_totals.wins = state
+                .graph
+                .nodes
+                .iter()
+                .map(|node| node.lifetime_win_count as u64)
+                .sum();
             state.graph.completed_missions = state
                 .graph
                 .nodes
@@ -2329,7 +2528,12 @@ mod capture_tests {
                 ("gallery", CampaignPresentationMode::SherwoodMuseum),
                 ("achievements", CampaignPresentationMode::ProgressTree),
             ] {
-                for selected in [0, state.graph.nodes.len() / 2, state.graph.nodes.len() - 1] {
+                for selected in [
+                    0,
+                    4.min(state.graph.nodes.len() - 1),
+                    state.graph.nodes.len() / 2,
+                    state.graph.nodes.len() - 1,
+                ] {
                     renderer.begin_gpu_frame_clear();
                     renderer.begin_ui_only_frame();
                     render_campaign_progress(
