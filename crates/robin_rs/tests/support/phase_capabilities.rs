@@ -51,6 +51,41 @@ fn live_frame_authority_cannot_be_cloned_or_derived_from_diagnostics() {
 }
 
 #[test]
+fn ready_context_is_not_a_deserializable_data_wrapper() {
+    let syntax = syn::parse_file(include_str!("../../src/host.rs")).unwrap();
+    for name in [
+        "ApplicationContext",
+        "ReadyApplicationContext",
+        "ApplicationServices",
+    ] {
+        let owner = syntax
+            .items
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == name => Some(item),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("missing live owner {name}"));
+        for attribute in &owner.attrs {
+            if attribute.path().is_ident("derive") {
+                let derives = attribute
+                    .parse_args_with(
+                        syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                    )
+                    .unwrap();
+                assert!(
+                    !derives.iter().any(|path| path
+                        .segments
+                        .iter()
+                        .any(|segment| segment.ident == "Deserialize")),
+                    "{name} must be composed from real services; deserialize its diagnostic DTO instead"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn mission_journals_and_sprite_publication_are_private() {
     for (source, owner_name, fields) in [
         (
