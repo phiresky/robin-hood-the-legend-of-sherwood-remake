@@ -4115,6 +4115,50 @@ mod application_context_tests {
     }
 
     #[test]
+    fn replay_composition_precedes_sharing_and_diagnostics_do_not_restore_authority() {
+        use std::io::Write;
+        let early = Arc::new(crate::replay_service::ReplayService::default());
+        let mut writer = early.recording().begin_recording();
+        writer.write_all(b"early browser recording\n").unwrap();
+        writer.flush().unwrap();
+        let application = context(0, DifficultyLevel::Medium, KeyCode::F2, "replay.marker")
+            .with_replay_service(early)
+            .unwrap();
+        let sibling = application.clone();
+        assert_eq!(
+            sibling.replay_exports().snapshot_bytes().unwrap(),
+            b"early browser recording\n"
+        );
+        let independent = context(
+            0,
+            DifficultyLevel::Medium,
+            KeyCode::F2,
+            "independent-replay.marker",
+        );
+        assert!(
+            independent
+                .replay_exports()
+                .snapshot_bytes()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            application
+                .with_replay_service(Arc::new(Default::default()))
+                .unwrap_err()
+                .contains("precede sharing")
+        );
+        let diagnostic = serde_json::to_value(&sibling).unwrap();
+        assert!(diagnostic["services"].get("replay").is_none());
+        let decoded: ApplicationContext = serde_json::from_value(diagnostic).unwrap();
+        assert!(decoded.required_services().unwrap().replay.is_none());
+        assert_eq!(
+            sibling.replay_exports().snapshot_bytes().unwrap(),
+            b"early browser recording\n"
+        );
+    }
+
+    #[test]
     fn decoded_ready_host_keeps_profile_storage_unavailable() {
         let ready = ReadyApplicationContext::try_from(context(
             0,

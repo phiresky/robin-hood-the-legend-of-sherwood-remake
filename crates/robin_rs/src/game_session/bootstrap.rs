@@ -2000,7 +2000,6 @@ mod tests {
 
     #[test]
     fn replay_bootstrap_creates_no_restart_recording_or_autosave() {
-        let _spool = crate::replay_service::replay_spool_test_lock();
         let mut bootstrap = scratch_bootstrap_fixture();
         let directory = tempfile::tempdir().unwrap();
         let save_root = directory.path().to_string_lossy().into_owned();
