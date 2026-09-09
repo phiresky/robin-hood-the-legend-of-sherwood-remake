@@ -84,6 +84,8 @@ enum ClickAction {
     /// Open the save/load picker in Load mode; on slot selection, return
     /// [`MainMenuChoice::Load`].
     LoadGame,
+    /// Browse the selected player's campaign without starting a mission.
+    CampaignManager,
     /// Open the serverless matchmaking browser and select/create a game.
     #[cfg(feature = "multiplayer")]
     Multiplayer,
@@ -318,6 +320,8 @@ pub(crate) async fn show_main_menu(
             menu_resources.menu_text.get(MT_BTN_LOAD),
             ClickAction::LoadGame,
         ),
+        // TODO: Localize this label with the campaign history UI.
+        ("Campaign Manager".to_string(), ClickAction::CampaignManager),
         ("Custom Missions".to_string(), ClickAction::CustomMissions),
     ]);
     buttons.extend([
@@ -515,6 +519,7 @@ pub(crate) async fn show_main_menu(
         // dispatching first can reset the campaign or load another mission.
         if let Some(id) = activated.filter(|_| !window.close_requested) {
             let action = buttons[id as usize].1.clone();
+            let browsing_campaign = matches!(action, ClickAction::CampaignManager);
             // Clicking Exit goes through the same confirmation path as
             // Escape below: show the
             // `MT_MSG_RETURN_TO_WINDOWS` yes/no before committing to
@@ -532,9 +537,18 @@ pub(crate) async fn show_main_menu(
                 profiles,
                 application_context,
             )
-            .await
+            .await?
             {
                 return Ok(choice);
+            }
+            if browsing_campaign {
+                // The browser consumed pointer releases; do not carry its
+                // opening press into the restored main menu.
+                input_state = ModalInputState::new();
+                input_state.seed_mouse_from_window(window, transform);
+                for widget in frame.widgets_mut() {
+                    widget.base_mut().state = UiState::Default;
+                }
             }
         }
 
@@ -730,11 +744,46 @@ async fn dispatch_click(
     campaign: &Campaign,
     profiles: &engine_profiles::ProfileManager,
     application_context: &ApplicationContext,
-) -> Option<MainMenuChoice> {
+) -> Result<Option<MainMenuChoice>, String> {
     #[cfg(not(feature = "multiplayer"))]
-    let _ = (campaign, profiles);
-    match action {
+    let _ = campaign;
+    Ok(match action {
         ClickAction::Return(c) => Some(c),
+        ClickAction::CampaignManager => {
+            let mut view_profiles = profiles.clone();
+            let view_campaign = if let Some(index) = save_manager.find_resume_target() {
+                let save = save_manager
+                    .preflight_exact_slot(index)
+                    .map_err(|error| format!("Cannot open Campaign Manager: {error:#}"))?;
+                // Reconstruct only the static descriptor used for presentation.
+                // No mission assets are mounted and no saved simulation is applied.
+                crate::game_session::install_and_validate_saved_profile(&mut view_profiles, &save)?;
+                save.engine.campaign().clone()
+            } else {
+                let profile = application_context.active_profile_snapshot()?;
+                let mut fresh = Campaign::default();
+                fresh.reset(&view_profiles, profile.difficulty);
+                fresh
+            };
+            let mut state = crate::campaign_map::CampaignMapModalState::new_browser(
+                application_context,
+                renderer,
+                &view_campaign,
+                &view_profiles,
+                menu_resources,
+            );
+            loop {
+                let cursor = ModalCursor::new(cursor_renderer, MOUSE_OPACITY_DEFAULT, 0);
+                if let Some(exit) = state.tick_browser(event_pump, renderer, Some(&cursor)) {
+                    break if exit {
+                        Some(MainMenuChoice::Exit)
+                    } else {
+                        None
+                    };
+                }
+                crate::window::sleep_ui_frame().await;
+            }
+        }
         ClickAction::LoadGame => {
             save_load::run_main_menu_load(
                 application_context,
@@ -783,7 +832,7 @@ async fn dispatch_click(
                 crate::save_recovery::OpenedSaveStore::Ready(manager) => *save_manager = manager,
                 crate::save_recovery::OpenedSaveStore::Cancelled
                 | crate::save_recovery::OpenedSaveStore::ExitRequested => {
-                    return Some(MainMenuChoice::Exit);
+                    return Ok(Some(MainMenuChoice::Exit));
                 }
             }
             // If the new active profile carries a different resolution,
@@ -832,7 +881,7 @@ async fn dispatch_click(
             )
             .await;
             if language_changed {
-                return Some(MainMenuChoice::RedisplayOptions);
+                return Ok(Some(MainMenuChoice::RedisplayOptions));
             }
             let profile = application_context
                 .active_profile_snapshot()
@@ -861,7 +910,7 @@ async fn dispatch_click(
             .await
             .map(MainMenuChoice::CustomMission)
         }
-    }
+    })
 }
 
 /// Render every piece of text in the main menu (profile info block on

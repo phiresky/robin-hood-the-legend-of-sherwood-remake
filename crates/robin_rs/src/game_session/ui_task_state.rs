@@ -182,6 +182,7 @@ pub(super) enum UiTaskOutcome {
 }
 
 pub(super) enum ActiveUiTask {
+    CampaignManager(crate::campaign_map::CampaignMapModalState),
     Options(OptionsTaskState),
     SaveLoad(SaveLoadTaskState),
     Quit(YesNoModalState),
@@ -191,6 +192,7 @@ pub(super) enum ActiveUiTask {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum UiTaskKind {
+    CampaignManager,
     Options,
     SaveLoad,
     QuitConfirmation,
@@ -214,6 +216,15 @@ impl ActiveUiTask {
         sample_loader: Option<&SampleLoader>,
     ) -> Option<UiTaskOutcome> {
         match self {
+            Self::CampaignManager(state) => {
+                state.tick_browser(window, renderer, cursor).map(|exit| {
+                    if exit {
+                        UiTaskOutcome::ExitRequested
+                    } else {
+                        UiTaskOutcome::ReturnToPause
+                    }
+                })
+            }
             Self::Options(state) => state.tick(
                 application_context,
                 window,
@@ -276,12 +287,17 @@ impl ActiveUiTask {
     pub(super) fn owns_presentation(&self) -> bool {
         match self {
             Self::MissionEndLeaderboard(state) => state.owns_presentation(),
-            Self::Options(_) | Self::SaveLoad(_) | Self::Quit(_) | Self::QuickLoad(_) => true,
+            Self::CampaignManager(_)
+            | Self::Options(_)
+            | Self::SaveLoad(_)
+            | Self::Quit(_)
+            | Self::QuickLoad(_) => true,
         }
     }
 
     pub(super) fn kind(&self) -> UiTaskKind {
         match self {
+            Self::CampaignManager(_) => UiTaskKind::CampaignManager,
             Self::Options(_) => UiTaskKind::Options,
             Self::SaveLoad(_) => UiTaskKind::SaveLoad,
             Self::Quit(_) => UiTaskKind::QuitConfirmation,
@@ -296,7 +312,9 @@ impl ActiveUiTask {
     pub(super) fn auto_dismiss(&mut self) -> UiTaskOutcome {
         match self {
             Self::QuickLoad(_) => UiTaskOutcome::QuickLoadCancelled,
-            Self::Options(_) | Self::SaveLoad(_) | Self::Quit(_) => UiTaskOutcome::ReturnToPause,
+            Self::CampaignManager(_) | Self::Options(_) | Self::SaveLoad(_) | Self::Quit(_) => {
+                UiTaskOutcome::ReturnToPause
+            }
             Self::MissionEndLeaderboard(_) => {
                 panic!("mission-end leaderboard auto-dismiss must preserve background work")
             }

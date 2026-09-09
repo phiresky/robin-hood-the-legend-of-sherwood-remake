@@ -4,6 +4,37 @@ A list of which additional features we have added, which ones we might still wan
 
 ## Done
 
+- **Campaign story navigation:** the main prerequisite route stays visible above
+  stage-grouped story branches, optional missions, and ambushes. Training and
+  campaign events are labeled separately; unused map placeholders are omitted
+  unless they hold archived results. R / Requirements explains actual money,
+  gang, mission, expiry, and story restrictions, with keyboard and mouse paging.
+  Achievement cards describe exact conditions and campaign-versus-mission scope.
+  These presentation changes preserve campaign selection and award eligibility.
+
+- **Campaign manager layout:** fixed 1024×768 presentation with twelve-card
+  gallery pages, a navigable progress-tree viewport, wrapped mission titles,
+  separate mission details, and three distinct views: Campaign for the current
+  save, Hall of Deeds for permanent mission badges and best results across
+  attempts, and Achievements for player-wide awards with current campaign
+  progress beneath each. Whole-campaign awards require one qualifying campaign;
+  loading an older save retains earned awards and archived best results.
+  The scripted Sherwood ending is labeled Epilogue, placed after the finale in
+  the tree and last in the gallery, without changing mission unlock rules.
+  Both menu entry points and Sherwood share the layout. An opt-in offscreen GPU capture
+  test produces PNGs for visual iteration without a game window; see
+  [campaign history](CAMPAIGN_HISTORY.md#campaign-manager-ui-and-offscreen-captures).
+
+
+- **Campaign manager from menus:** Campaign Manager on the main menu or
+  Escape → Campaign Manager during any mission opens the existing progress
+  tree / Hall of Deeds, including before reaching Sherwood. The main menu
+  reads the selected player's latest resumable save, or a fresh campaign if
+  there is no save. Navigation, history, and badge details use the same UI;
+  mission launching is unavailable in this pause-side view. Escape returns to
+  the originating menu without changing the active mission or campaign.
+
+
 - **Combined leaderboards and custom gameplay settings.** Mission and full-campaign
   boards default to all admitted rulesets, with stable ranking and pagination across
   difficulties. Exact Standard/Original boards remain selectable. Published metadata

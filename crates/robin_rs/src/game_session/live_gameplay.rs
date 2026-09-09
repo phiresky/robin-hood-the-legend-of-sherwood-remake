@@ -418,7 +418,7 @@ pub(super) async fn drive_live_gameplay_input(
         context.callbacks,
         context.window,
         &mut context.presentation.renderer,
-        &context.resources.menu,
+        &mut context.resources.menu,
         &mut context.audio.backend,
         &context.audio.sample_loader,
         &mut context.input.threaded,

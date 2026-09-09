@@ -29,8 +29,20 @@ awarding an icon.
 At synchronization, native records are also promoted into a versioned
 `ProfileCampaignHistory` owned by the player profile, outside replaceable save
 slots and campaign resets. Promotion is idempotent using the deterministic
-campaign-run id plus attempt sequence. The tree and modal exhibit grid show
-current-campaign and lifetime mission counts separately.
+campaign-run id plus attempt sequence. Campaign shows progress and mission
+badges from the current save. Hall of Deeds shows all recorded attempts,
+permanent mission badges, and best results including archived attempts. Its
+details label the current campaign's mission status separately; an archived
+win does not unlock that mission in a new or earlier save.
+
+Achievements shows each player-wide award once, with an Earned/Not earned
+status and current-campaign progress underneath. Incomplete historical evidence
+is explicitly marked unverified. Earned awards survive loading an older save.
+Clean Hands and Ghost require their mission badge on every required mission
+within one completed campaign; evidence from different campaign runs cannot be
+combined into that award. Pile-o-Bones and All Enemies Stashed require one
+qualifying mission. This uses the existing aggregation policies and does not
+introduce a campaign picker or change award eligibility.
 
 Earlier Rust campaign, replay, and player-profile history schemas are not
 migrated. They fail closed at their schema/version boundary so absent evidence
@@ -56,3 +68,70 @@ between exhibits; Enter inspects/launches an available mission or starts an
 isolated replay of a completed one. Classic Map exposes the same history and
 practice flow through its History & Practice action. The freely walkable,
 world-space Hall remains deferred.
+
+During any mission, including before reaching Sherwood, **Escape → Campaign
+Manager** opens the same progress tree and Hall of Deeds. Tab switches views;
+arrows or a click select a mission and display its history and badges. Mission
+launching is disabled in this pause-side view. Escape returns to the pause
+menu; the active mission, campaign checkpoint, and rewards are unchanged.
+
+The main menu also has a **Campaign Manager** entry, using the same browse-only
+UI. It reads the selected player's latest resumable checkpoint; players without
+one see a fresh campaign and their lifetime history. Escape returns to the main
+menu. Viewing the campaign does not start a mission or apply a save.
+
+
+## Campaign manager UI and offscreen captures
+
+The campaign manager uses a fixed **1024×768** canvas. Both entry points and
+the Sherwood history screen share its renderer. The tree keeps fixed-size cards
+and follows the selected stage. A primary prerequisite route runs across the top
+and stays visible while paging through branches underneath. Other story missions,
+ambushes, and optional tactical missions are grouped by their prerequisite stage.
+Training, campaign events, and the epilogue have distinct labels; the scripted
+epilogue follows the finale. Gallery order follows those same story stages.
+Unused `Impossible_mission` field slots are omitted unless they have prior
+results, which remain inspectable without offering a nonexistent map. Field
+mission completion totals exclude campaign events and the epilogue.
+These are presentation rules, not new campaign prerequisites or unlock rules.
+TODO: Replace legacy filename conventions for tutorial/outro/unused slots with
+content-authored presentation metadata when available.
+
+Hall of Deeds shows twelve entries per page.
+Click once to select and read details. Enter, the Inspect button, or a double-click
+opens an available mission in Sherwood; the main-menu and pause-menu views remain
+browse-only. Arrow keys navigate, Page Up/Down or the mouse wheel change pages,
+and the Previous/Next buttons work with mouse or touch. Tab switches tree/gallery;
+A or the Achievements tab shows permanent awards and current campaign progress. Back/Escape
+returns to the originating screen.
+
+**R / Requirements** opens the selected mission's unmet entry conditions with
+actual ransom and gang thresholds, named prerequisite missions, exclusions,
+expiry, and story-state restrictions. Requirements met but not currently offered
+is reported separately: campaign selection has additional filters. Up/Down,
+Page Up/Down, mouse wheel, or Previous/Next page through longer explanations;
+Left/Right selects another mission and R returns to the mission cards. This view
+cannot launch a mission. Achievement cards explain their actual mission
+conditions and whether one completed campaign or a single mission is required.
+
+An opt-in screenshot test uses the real production renderer with an offscreen
+wgpu texture. It creates no window and needs neither a display server nor Xvfb.
+Use a full-game legacy data directory (the shipping loader currently rejects
+absolute datadir paths in this test setup). From the worktree root:
+
+    RUST_LOG=error \
+    ROBINHOOD_DATA_DIR=/absolute/path/to/datadirs/fullgame_gog \
+    ROBIN_UI_CAPTURE_DIR=target/campaign-ui \
+    cargo test -p robin_rs --lib campaign_map::capture_tests::capture_campaign_ui -- --ignored --exact --nocapture
+
+Run this capture test alone: it sets its process working directory to the worktree
+root for install-resource lookup. The PNG matrix includes the first, middle, and
+last selections, an archived-record example, and the most crowded branch in
+tree/gallery/achievement/requirements views at 1024×768. Names, fonts, graph
+structure, current availability, and lock reasons come from the supplied data;
+archived records and achievement summaries are presentation-only fixtures.
+The tool also writes mission-profiles.json and campaign-graph.json for inspecting
+layout metadata. No save is applied or written. A wgpu adapter is required; Vulkan software rendering also works when
+provided by the host. Captures fail explicitly if data, fonts, or the adapter are
+missing. The ordinary tests check all 62 selections for non-overlapping cards,
+viewport visibility, and matching pointer hit targets.

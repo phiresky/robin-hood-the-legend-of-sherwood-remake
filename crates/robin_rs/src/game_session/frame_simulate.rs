@@ -145,9 +145,10 @@ fn ui_task_modal_admission(
         UiTaskKind::QuickLoadConfirmation | UiTaskKind::MissionEndLeaderboard => {
             UiTaskModalAdmission::Suspend
         }
-        UiTaskKind::Options | UiTaskKind::SaveLoad | UiTaskKind::QuitConfirmation => {
-            UiTaskModalAdmission::Cancel
-        }
+        UiTaskKind::CampaignManager
+        | UiTaskKind::Options
+        | UiTaskKind::SaveLoad
+        | UiTaskKind::QuitConfirmation => UiTaskModalAdmission::Cancel,
     }
 }
 
@@ -1921,6 +1922,7 @@ mod tests {
     fn terminal_ownership_does_not_promote_unrelated_pause_tasks() {
         for terminal in [false, true] {
             for task in [
+                UiTaskKind::CampaignManager,
                 UiTaskKind::Options,
                 UiTaskKind::SaveLoad,
                 UiTaskKind::QuitConfirmation,
@@ -1941,6 +1943,7 @@ mod tests {
     fn every_task_runs_when_scripted_modals_do_not_preempt() {
         for terminal in [false, true] {
             for task in [
+                UiTaskKind::CampaignManager,
                 UiTaskKind::Options,
                 UiTaskKind::SaveLoad,
                 UiTaskKind::QuitConfirmation,

@@ -1,7 +1,7 @@
 //! In-game pause menu.
 //!
 //! A full-screen 640x480 menu with the standard six vertical buttons
-//! (Continue / Load / Save / Options / Restart / Quit Game) aligned
+//! (Continue / Load / Save / Options / Restart / Quit Game) and Campaign Manager aligned
 //! bottom-right, plus a conditional Sherwood Trading row for an eligible
 //! host. The short-briefings list is shown on the left half of the window at
 //! `(2,2)..(440,480)`.
@@ -45,6 +45,7 @@ pub const PAUSE_BTN_OPTIONS: u32 = 3;
 pub const PAUSE_BTN_RESTART: u32 = 4;
 pub const PAUSE_BTN_QUIT: u32 = 5;
 pub const PAUSE_BTN_SHERWOOD_TRADING: u32 = 6;
+pub const PAUSE_BTN_CAMPAIGN_MANAGER: u32 = 7;
 
 /// Short briefings area inside the window: `(2, 2)..(440, 480)`.
 const BRIEFINGS_RECT: MenuRect = MenuRect {
@@ -75,6 +76,8 @@ pub enum PauseMenuOutcome {
     OpenSave,
     /// Open the host-only Sherwood item-trading panel.
     OpenSherwoodTrading,
+    /// Browse campaign progress without leaving the current mission.
+    OpenCampaignManager,
     /// Restart the mission.
     Restart,
     /// Quit to the main menu.
@@ -121,6 +124,12 @@ impl PauseMenu {
         if sherwood_trading_available {
             entries.push((PAUSE_BTN_SHERWOOD_TRADING, trading_txt, true));
         }
+        // TODO: Localize the campaign manager label with the history UI.
+        entries.push((
+            PAUSE_BTN_CAMPAIGN_MANAGER,
+            "Campaign Manager".to_string(),
+            true,
+        ));
         entries.extend([
             (PAUSE_BTN_LOAD, load_txt, true),
             (PAUSE_BTN_SAVE, save_txt, true),
@@ -342,6 +351,7 @@ impl PauseMenu {
             PAUSE_BTN_LOAD => PauseMenuOutcome::OpenLoad,
             PAUSE_BTN_SAVE => PauseMenuOutcome::OpenSave,
             PAUSE_BTN_SHERWOOD_TRADING => PauseMenuOutcome::OpenSherwoodTrading,
+            PAUSE_BTN_CAMPAIGN_MANAGER => PauseMenuOutcome::OpenCampaignManager,
             PAUSE_BTN_OPTIONS => PauseMenuOutcome::OpenOptions,
             PAUSE_BTN_RESTART => PauseMenuOutcome::Restart,
             PAUSE_BTN_QUIT => PauseMenuOutcome::Quit,
@@ -388,10 +398,14 @@ impl PauseMenu {
         self.frame.widget_count()
     }
 
-    /// Access the `i`th button's enabled state, for tests.
+    /// Access a button by widget ID, for tests.
     #[cfg(test)]
     pub(crate) fn button_enabled(&self, i: usize) -> bool {
-        self.frame.widget_at(i).is_some_and(|w| w.base().enabled)
+        self.frame
+            .widget(i as u32)
+            .expect("pause button exists")
+            .base()
+            .enabled
     }
 }
 
@@ -405,10 +419,44 @@ mod tests {
     }
 
     #[test]
-    fn pause_menu_has_six_buttons() {
+    fn pause_menu_has_seven_buttons() {
         let resources = stub_resources();
         let menu = PauseMenu::new(&resources, true);
-        assert_eq!(menu.button_count(), 6);
+        assert_eq!(menu.button_count(), 7);
+    }
+
+    #[test]
+    fn campaign_manager_is_available_before_sherwood_and_returns_to_pause() {
+        let resources = stub_resources();
+        for restart_allowed in [false, true] {
+            let mut menu = PauseMenu::new(&resources, restart_allowed);
+            menu.move_keyboard_selection(1);
+            assert_eq!(menu.keyboard_selection, PAUSE_BTN_CAMPAIGN_MANAGER);
+            assert_eq!(
+                menu.handle_event(
+                    &GameEvent::KeyDown {
+                        keycode: Keycode::Return,
+                        physical_key: None,
+                    },
+                    640,
+                    480
+                ),
+                PauseMenuOutcome::OpenCampaignManager
+            );
+            menu.reset_after_side_menu();
+            assert_eq!(menu.outcome(), PauseMenuOutcome::Pending);
+            assert_eq!(
+                menu.handle_event(
+                    &GameEvent::KeyDown {
+                        keycode: Keycode::Escape,
+                        physical_key: None,
+                    },
+                    640,
+                    480
+                ),
+                PauseMenuOutcome::Continue
+            );
+        }
     }
 
     #[test]
@@ -453,7 +501,9 @@ mod tests {
         let resources = stub_resources();
         // restart_allowed = false so Restart is disabled — nav must skip it.
         let mut menu = PauseMenu::new(&resources, false);
-        // Continue → Load → Save → Options → Quit (Restart skipped) → Continue
+        // Continue → Campaign Manager → Load → Save → Options → Quit → Continue
+        menu.move_keyboard_selection(1);
+        assert_eq!(menu.keyboard_selection, PAUSE_BTN_CAMPAIGN_MANAGER);
         menu.move_keyboard_selection(1);
         assert_eq!(menu.keyboard_selection, PAUSE_BTN_LOAD);
         menu.move_keyboard_selection(1);
@@ -482,7 +532,7 @@ mod tests {
 
         let mut sherwood = PauseMenu::new_with_sherwood_trading(&resources, false, true);
         assert!(sherwood.frame.widget(PAUSE_BTN_SHERWOOD_TRADING).is_some());
-        assert_eq!(sherwood.button_count(), 7);
+        assert_eq!(sherwood.button_count(), 8);
 
         sherwood.move_keyboard_selection(1);
         assert_eq!(sherwood.keyboard_selection, PAUSE_BTN_SHERWOOD_TRADING);
