@@ -761,7 +761,6 @@ fn write_job(job: &AutosaveJob) -> Result<AutosaveCompletion> {
         load_manifest(&job.save_directory)?.unwrap_or_else(|| job.manifest_seed.clone());
     existing_manifest.validate()?;
     garbage_collect_orphans(&job.save_directory, &existing_manifest)?;
-    validate_manifest_payloads(&job.save_directory, &existing_manifest)?;
     let manifest = commit_generation(
         existing_manifest,
         job.metadata.clone(),
@@ -816,9 +815,8 @@ fn commit_generation(
 
 /// Merge the independently committed autosave manifest into a save manager.
 pub(crate) fn load_into_manager(manager: &mut SaveGameManager) -> Result<()> {
-    // Never leave stale index entries visible after a corrupt or missing
-    // payload. A validated manifest below is the only authority that may
-    // republish autosave rows into the load menu.
+    // The manifest owns menu metadata. Decode and validate only the selected
+    // payload on load, so opening the menu never reads every saved simulation.
     let legacy_seed = AutosaveManifest {
         version: AUTOSAVE_MANIFEST_VERSION,
         saves: manager
@@ -831,21 +829,14 @@ pub(crate) fn load_into_manager(manager: &mut SaveGameManager) -> Result<()> {
     let manifest = load_manifest(manager.save_directory())?.unwrap_or(legacy_seed);
     manifest.validate()?;
     garbage_collect_orphans(manager.save_directory(), &manifest)?;
-    validate_manifest_payloads(manager.save_directory(), &manifest)?;
     manager.replace_autosaves(manifest.saves)?;
     Ok(())
 }
 
-fn validate_manifest_payloads(save_directory: &str, manifest: &AutosaveManifest) -> Result<()> {
-    for metadata in &manifest.saves {
-        let payload = read_payload(save_directory, &metadata.filename)
-            .with_context(|| format!("validating published autosave {:?}", metadata.filename))?;
-        validate_metadata_payload_binding(metadata, &payload)?;
-    }
-    Ok(())
-}
-
-fn validate_metadata_payload_binding(metadata: &SaveGame, payload: &GameSaveFile) -> Result<()> {
+pub(crate) fn validate_metadata_payload_binding(
+    metadata: &SaveGame,
+    payload: &GameSaveFile,
+) -> Result<()> {
     if !crate::savegame::is_generated_autosave_filename(&metadata.filename) {
         bail!("published autosave metadata has an invalid filename");
     }
@@ -1549,6 +1540,15 @@ mod tests {
         assert_eq!(manifest.saves[0].filename, filename);
         let restored =
             read_payload(&save_directory, &filename).expect("published autosave payload");
+        let mut manager = SaveGameManager::new(save_directory.clone());
+        load_into_manager(&mut manager).unwrap();
+        manager.preflight_exact_slot(0).unwrap();
+        let mut mismatched_manifest = manifest.clone();
+        mismatched_manifest.saves[0].mission_id += 1;
+        persist_manifest(&save_directory, &mismatched_manifest).unwrap();
+        load_into_manager(&mut manager).unwrap();
+        let error = manager.preflight_exact_slot(0).unwrap_err();
+        assert!(format!("{error:#}").contains("mission mismatch"));
         assert!(
             restored
                 .engine
@@ -1783,7 +1783,7 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn missing_published_payload_fails_closed_and_hides_stale_index_row() {
+    fn missing_or_corrupt_payload_is_reported_only_when_selected_for_loading() {
         let directory = tempfile::tempdir().unwrap();
         let save_directory = directory.path().to_str().unwrap();
         let autosave = published_autosave("Autosave_1_0000", 1);
@@ -1798,10 +1798,27 @@ mod tests {
         let manual = SaveGame::new("Savegame_001".into(), "Manual".into(), 1);
         let mut manager = SaveGameManager::new(save_directory.to_owned());
         manager.insert_test_slot(manual.clone(), crate::savegame::SlotState::Published);
-        manager.insert_test_slot(autosave, crate::savegame::SlotState::Published);
+        manager.insert_test_slot(autosave.clone(), crate::savegame::SlotState::Published);
 
-        let error = load_into_manager(&mut manager).unwrap_err();
-        assert!(error.to_string().contains("validating published autosave"));
-        assert!(manager.saves().eq([manual].iter()));
+        for corrupt in [false, true] {
+            if corrupt {
+                std::fs::write(
+                    directory.path().join("Autosave_1_0000.json"),
+                    b"invalid save payload",
+                )
+                .unwrap();
+            }
+            load_into_manager(&mut manager).unwrap();
+            assert_eq!(manager.saves().len(), 2);
+            assert!(manager.saves().any(|save| save == &manual));
+            assert!(manager.saves().any(|save| save == &autosave));
+            let index = manager.find_by_filename(&autosave.filename).unwrap();
+            let error = manager.preflight_exact_slot(index).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("failed to decode exact autosave slot")
+            );
+        }
     }
 }
