@@ -1731,14 +1731,14 @@ mod tests {
             "cross-domain execution registers sequences in input order without draining them"
         );
         assert!(elements.iter().all(|element| element.owner == Some(actor)));
-        assert_eq!(
+        assert!(matches!(
             elements[0].get_property(Field::ActionId),
-            Some(&FieldValue::Integer(3))
-        );
-        assert_eq!(
+            Some(FieldValue::Integer(3))
+        ));
+        assert!(matches!(
             elements[0].get_property(Field::Amount),
-            Some(&FieldValue::Integer(7))
-        );
+            Some(FieldValue::Integer(7))
+        ));
     }
 
     #[test]
