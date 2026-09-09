@@ -178,7 +178,7 @@ impl MissionBootstrap {
     /// Start the campaign segment clock after the lost-Sherwood gate, matching
     /// the original `GameLoop` boundary.
     fn start_campaign_clock(&mut self) {
-        self.loaded.engine.mission_setup().reset_mission_length();
+        self.loaded.engine.finish_mission_bootstrap();
     }
 
     fn prepare_interactive_entry(

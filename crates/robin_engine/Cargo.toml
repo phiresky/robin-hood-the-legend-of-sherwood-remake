@@ -13,6 +13,9 @@ default = []
 # round-trip tests.  Enabled via `[dev-dependencies]` in `robin_rs`
 # so production builds keep the minimal sim-mutation surface.
 test-helpers = []
+# Explicit reconstruction authority for the Original parity tool. Never add
+# this to a gameplay feature bundle: it permits mutations outside frame admission.
+original-parity = []
 
 [dependencies]
 robin_content = { workspace = true, features = ["simulation-codecs"] }
