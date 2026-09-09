@@ -136,15 +136,17 @@ impl QueueStripAnimation {
 /// [`ApplicationContext`]. Separate contexts allocate separate service sets,
 /// which makes tests, headless sessions, and future multi-instance hosts
 /// independent instead of routing through process-wide singletons.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 struct ApplicationServices {
     #[serde(skip)]
-    replay: Option<Arc<crate::replay_service::ReplayService>>,
+    http: Mutex<crate::http_server::HttpTransport>,
+    #[serde(skip)]
+    replay: Arc<crate::replay_service::ReplayService>,
     #[cfg(all(target_arch = "wasm32", feature = "audio"))]
     #[serde(skip)]
     browser_audio: std::cell::RefCell<Option<crate::web_audio_backend::BrowserAudioSession>>,
     #[serde(skip)]
-    asset_cache: Option<crate::process_asset_cache::ApplicationAssetCache>,
+    asset_cache: crate::process_asset_cache::ApplicationAssetCache,
     #[serde(skip)]
     cache_maintenance: crate::cache_maintenance::CacheMaintenance,
     #[serde(skip)]
@@ -155,7 +157,7 @@ struct ApplicationServices {
     key_configs: Mutex<KeyConfigStore>,
     spellforge_trust: Mutex<SpellforgeTrustStore>,
     #[cfg(not(target_arch = "wasm32"))]
-    #[serde(skip, default = "unavailable_distributed_mod_cache")]
+    #[serde(skip)]
     distributed_mod_cache: Mutex<Result<DistributedModCache, String>>,
     localization: Mutex<LocalizationService>,
     shipping: Option<Arc<ShippingDatadir>>,
@@ -175,13 +177,6 @@ impl Drop for ApplicationServices {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn unavailable_distributed_mod_cache() -> Mutex<Result<DistributedModCache, String>> {
-    Mutex::new(Err(
-        "distributed-mod cache is unavailable in a deserialized host context".to_owned(),
-    ))
-}
-
 /// Explicit application-owned configuration and persistence context.
 ///
 /// `CliArgs` initially carries a bootstrap context containing only parsed
@@ -189,7 +184,7 @@ fn unavailable_distributed_mod_cache() -> Mutex<Result<DistributedModCache, Stri
 /// before an async game loop begins. Service accessors take snapshots while
 /// holding a lock and return owned data, so no lock guard can cross an
 /// `.await`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ApplicationContext {
     // Launch overrides belong to this context; profiles and services are shared.
     options: engine_api::GlobalOptions,
@@ -199,12 +194,74 @@ pub struct ApplicationContext {
     services: Option<Arc<ApplicationServices>>,
 }
 
-/// Initialization proof required by application run loops. The transparent
-/// wire representation stays identical to ApplicationContext, while decoding
-/// refuses a launcher-only context without the required services.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(try_from = "ApplicationContext", into = "ApplicationContext")]
+/// Initialization proof required by application run loops. Serialized diagnostics
+/// are not a recovery boundary: only explicit service composition grants authority.
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
 pub struct ReadyApplicationContext(ApplicationContext);
+
+/// Data-only view of an application. Decode this instead of a live context.
+/// There is deliberately no conversion into [`ReadyApplicationContext`].
+///
+/// ```compile_fail
+/// use robin_rs::host::{ApplicationContextDiagnostic, ReadyApplicationContext};
+/// fn restore(snapshot: ApplicationContextDiagnostic) -> ReadyApplicationContext {
+///     snapshot.into()
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationContextDiagnostic {
+    pub options: engine_api::GlobalOptions,
+    pub sim_config: engine_api::SimConfig,
+    pub services: Option<ApplicationServicesDiagnostic>,
+}
+
+impl ApplicationContextDiagnostic {
+    /// Effective configuration including this clone's launch overrides.
+    pub fn sim_config(&self) -> engine_api::SimConfig {
+        effective_sim_config(&self.options, self.sim_config)
+    }
+}
+
+/// Durable-looking fields are observations, not filesystem or runtime handles.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplicationServicesDiagnostic {
+    pub player_profiles: PlayerProfileManager,
+    pub key_configs: KeyConfigStore,
+    pub spellforge_trust: SpellforgeTrustStore,
+    pub localization: LocalizationService,
+    pub shipping: Option<Arc<ShippingDatadir>>,
+}
+
+fn effective_sim_config(
+    options: &engine_api::GlobalOptions,
+    mut config: engine_api::SimConfig,
+) -> engine_api::SimConfig {
+    let launcher = engine_api::SimConfig::from_options(options, config.difficulty);
+    config.script_enabled = launcher.script_enabled;
+    config.highlander = launcher.highlander;
+    config.highlander2 = launcher.highlander2;
+    config.golden_eye = launcher.golden_eye;
+    config.ignore_default_loose = launcher.ignore_default_loose;
+    config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
+    config
+}
+
+impl<'de> Deserialize<'de> for ApplicationContext {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "application authority requires explicit composition; decode ApplicationContextDiagnostic instead",
+        ))
+    }
+}
+
+impl<'de> Deserialize<'de> for ReadyApplicationContext {
+    fn deserialize<D: serde::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Err(serde::de::Error::custom(
+            "ready application authority cannot be deserialized; decode ApplicationContextDiagnostic instead",
+        ))
+    }
+}
 
 impl TryFrom<ApplicationContext> for ReadyApplicationContext {
     type Error = String;
@@ -230,6 +287,13 @@ impl std::ops::Deref for ReadyApplicationContext {
 }
 
 impl ReadyApplicationContext {
+    pub fn adopt_http_transport(
+        self,
+        transport: crate::http_server::HttpTransport,
+    ) -> Result<Self, String> {
+        self.0.adopt_http_transport(transport)?;
+        Ok(self)
+    }
     pub fn with_replay_service(
         self,
         replay: Arc<crate::replay_service::ReplayService>,
@@ -331,6 +395,61 @@ impl FrontendPreferences {
 }
 
 impl ApplicationContext {
+    pub fn start_http_transport(&self, port: u16) -> Result<(), String> {
+        self.required_services()?
+            .http
+            .lock()
+            .map_err(|_| "application HTTP transport lock poisoned".to_owned())?
+            .start(port, self.replay_exports(), self.replay_launches())
+    }
+
+    pub fn stop_http_transport(&self) -> Result<(), String> {
+        self.required_services()?
+            .http
+            .lock()
+            .map_err(|_| "application HTTP transport lock poisoned".to_owned())?
+            .stop();
+        Ok(())
+    }
+
+    pub fn drain_http_pre_engine(&self) -> Result<(), String> {
+        self.required_services()?
+            .http
+            .lock()
+            .map_err(|_| "application HTTP transport lock poisoned".to_owned())?
+            .drain_pre_engine();
+        Ok(())
+    }
+
+    pub fn attach_http_ingress(&self) -> Result<crate::http_server::SessionIngress, String> {
+        Ok(self
+            .required_services()?
+            .http
+            .lock()
+            .map_err(|_| "application HTTP transport lock poisoned".to_owned())?
+            .attach())
+    }
+
+    /// Transfer the early browser listener without manufacturing a second binding.
+    pub fn adopt_http_transport(
+        &self,
+        transport: crate::http_server::HttpTransport,
+    ) -> Result<(), String> {
+        let mut destination = self
+            .required_services()?
+            .http
+            .lock()
+            .map_err(|_| "application HTTP transport lock poisoned".to_owned())?;
+        if destination.is_started() {
+            return Err("application HTTP transport is already started".to_owned());
+        }
+        if !transport.matches_replay(&self.replay_exports(), &self.replay_launches()) {
+            return Err("HTTP transport belongs to different replay capabilities".to_owned());
+        }
+        *destination = transport;
+        Ok(())
+    }
+
     /// Composition-only injection before this application's services are shared.
     /// Browser boot uses this to share the authority installed before async startup.
     pub fn with_replay_service(
@@ -342,31 +461,25 @@ impl ApplicationContext {
         })?;
         Arc::get_mut(services)
             .ok_or_else(|| "replay injection must precede sharing application services".to_owned())?
-            .replay = Some(replay);
+            .replay = replay;
         Ok(self)
     }
     pub(crate) fn replay_recording(&self) -> crate::replay_service::ReplayRecordingControl {
         self.required_services()
             .expect("replay requires initialized application authority")
             .replay
-            .as_ref()
-            .expect("deserialized application has no replay authority")
             .recording()
     }
     pub(crate) fn replay_exports(&self) -> crate::replay_service::ReplayExports {
         self.required_services()
             .expect("replay requires initialized application authority")
             .replay
-            .as_ref()
-            .expect("deserialized application has no replay authority")
             .exports()
     }
     pub(crate) fn replay_launches(&self) -> crate::replay_service::ReplayLaunches {
         self.required_services()
             .expect("replay requires initialized application authority")
             .replay
-            .as_ref()
-            .expect("deserialized application has no replay authority")
             .launches()
     }
     /// Create the pre-initialization context used while parsing launcher
@@ -474,8 +587,9 @@ impl ApplicationContext {
             options,
             sim_config: Arc::new(Mutex::new(sim_config)),
             services: Some(Arc::new(ApplicationServices {
-                replay: Some(Arc::new(Default::default())),
-                asset_cache: Some(Default::default()),
+                http: Mutex::new(Default::default()),
+                replay: Arc::new(Default::default()),
+                asset_cache: Default::default(),
                 cache_maintenance: Default::default(),
                 #[cfg(all(target_arch = "wasm32", feature = "audio"))]
                 browser_audio: Default::default(),
@@ -577,8 +691,9 @@ impl ApplicationContext {
             sim_config: Arc::new(Mutex::new(sim_config)),
             options,
             services: Some(Arc::new(ApplicationServices {
-                replay: Some(Arc::new(Default::default())),
-                asset_cache: Some(Default::default()),
+                http: Mutex::new(Default::default()),
+                replay: Arc::new(Default::default()),
+                asset_cache: Default::default(),
                 cache_maintenance: crate::cache_maintenance::CacheMaintenance::new(),
                 #[cfg(all(target_arch = "wasm32", feature = "audio"))]
                 browser_audio: Default::default(),
@@ -616,12 +731,7 @@ impl ApplicationContext {
         &self,
     ) -> Result<&crate::process_asset_cache::ApplicationAssetCache, String> {
         self.preparation_files()?;
-        self.required_services()?
-            .asset_cache
-            .as_ref()
-            .ok_or_else(|| {
-                "application asset cache is unavailable in a deserialized host context".to_owned()
-            })
+        Ok(&self.required_services()?.asset_cache)
     }
 
     pub fn options(&self) -> &engine_api::GlobalOptions {
@@ -629,18 +739,11 @@ impl ApplicationContext {
     }
 
     pub fn sim_config(&self) -> engine_api::SimConfig {
-        let mut config = *self
+        let config = *self
             .sim_config
             .lock()
             .expect("ApplicationContext sim-config lock poisoned");
-        let launcher = engine_api::SimConfig::from_options(&self.options, config.difficulty);
-        config.script_enabled = launcher.script_enabled;
-        config.highlander = launcher.highlander;
-        config.highlander2 = launcher.highlander2;
-        config.golden_eye = launcher.golden_eye;
-        config.ignore_default_loose = launcher.ignore_default_loose;
-        config.bypass_fog_sprites_crash = launcher.bypass_fog_sprites_crash;
-        config
+        effective_sim_config(&self.options, config)
     }
 
     pub fn shipping(&self) -> Result<Option<&ShippingDatadir>, String> {
@@ -733,12 +836,7 @@ impl ApplicationContext {
 
     pub fn set_language(&self, selection: LanguageSelection) -> Result<LanguageChange, String> {
         let services = self.required_services()?;
-        // Validate runtime ownership before publishing any locale change. Decoded
-        // services also lack localization file authority, but must never silently
-        // skip cache invalidation if that service's recovery rules change later.
-        let cache = services.asset_cache.as_ref().ok_or_else(|| {
-            "application asset cache is unavailable in a deserialized host context".to_owned()
-        })?;
+        let cache = &services.asset_cache;
         let mut localization = services
             .localization
             .lock()
@@ -3877,9 +3975,8 @@ mod application_context_tests {
         );
         let encoded = serde_json::to_value(&first).unwrap();
         assert!(encoded["services"].get("cache_maintenance").is_none());
-        let decoded: ApplicationContext = serde_json::from_value(encoded).unwrap();
-        assert!(decoded.cache_clear_status().is_err());
-        assert!(decoded.begin_distributed_mod_cache_clear().is_err());
+        let _: ApplicationContextDiagnostic = serde_json::from_value(encoded.clone()).unwrap();
+        assert!(serde_json::from_value::<ApplicationContext>(encoded).is_err());
         assert!(ApplicationContext::default().cache_clear_status().is_err());
     }
 
@@ -3908,15 +4005,8 @@ mod application_context_tests {
         ));
         let encoded = serde_json::to_value(&first).unwrap();
         assert!(encoded["services"].get("asset_cache").is_none());
-        let decoded: ApplicationContext = serde_json::from_value(encoded).unwrap();
-        assert!(decoded.asset_cache().is_err());
-        assert!(decoded.preparation_files().is_err());
-        assert!(
-            decoded
-                .set_language(LanguageSelection::Auto)
-                .unwrap_err()
-                .contains("asset cache")
-        );
+        let _: ApplicationContextDiagnostic = serde_json::from_value(encoded.clone()).unwrap();
+        assert!(serde_json::from_value::<ApplicationContext>(encoded).is_err());
         assert!(ApplicationContext::default().asset_cache().is_err());
     }
 
@@ -3962,18 +4052,18 @@ mod application_context_tests {
         );
         let encoded = serde_json::to_value(&original).unwrap();
         assert!(encoded["services"].get("profile_store").is_none());
-        let restored: ApplicationContext = serde_json::from_value(encoded).unwrap();
-        let error = restored
-            .with_player_profiles(|profiles| restored.persist_player_profiles(profiles))
-            .unwrap()
-            .unwrap_err();
-        assert!(error.to_string().contains("deserialized context"));
+        let diagnostic: ApplicationContextDiagnostic =
+            serde_json::from_value(encoded.clone()).unwrap();
         assert!(
-            restored
-                .active_profile_save_directory()
-                .unwrap_err()
-                .contains("deserialized context")
+            diagnostic
+                .services
+                .unwrap()
+                .player_profiles
+                .get_active()
+                .is_some()
         );
+        assert!(serde_json::from_value::<ApplicationContext>(encoded.clone()).is_err());
+        assert!(serde_json::from_value::<ReadyApplicationContext>(encoded).is_err());
     }
 
     fn spellforge_trust_key(value: u8) -> SpellforgeTrustKey {
@@ -4150,8 +4240,8 @@ mod application_context_tests {
         );
         let diagnostic = serde_json::to_value(&sibling).unwrap();
         assert!(diagnostic["services"].get("replay").is_none());
-        let decoded: ApplicationContext = serde_json::from_value(diagnostic).unwrap();
-        assert!(decoded.required_services().unwrap().replay.is_none());
+        let _: ApplicationContextDiagnostic = serde_json::from_value(diagnostic.clone()).unwrap();
+        assert!(serde_json::from_value::<ApplicationContext>(diagnostic).is_err());
         assert_eq!(
             sibling.replay_exports().snapshot_bytes().unwrap(),
             b"early browser recording\n"
@@ -4159,7 +4249,7 @@ mod application_context_tests {
     }
 
     #[test]
-    fn decoded_ready_host_keeps_profile_storage_unavailable() {
+    fn ready_diagnostics_cannot_reconstruct_live_authority() {
         let ready = ReadyApplicationContext::try_from(context(
             0,
             DifficultyLevel::Medium,
@@ -4168,16 +4258,34 @@ mod application_context_tests {
         ))
         .unwrap();
         let bytes = serde_json::to_vec(&ready).unwrap();
-        let decoded: ReadyApplicationContext = serde_json::from_slice(&bytes).unwrap();
-        let host = Host::new(decoded, 800.0, 600.0).unwrap();
-        let error = host
-            .application_context()
-            .with_player_profiles(|profiles| {
-                host.application_context().persist_player_profiles(profiles)
-            })
-            .unwrap()
-            .unwrap_err();
-        assert!(error.to_string().contains("unavailable"), "{error}");
+        let diagnostic: ApplicationContextDiagnostic = serde_json::from_slice(&bytes).unwrap();
+        assert!(diagnostic.services.is_some());
+        assert!(serde_json::from_slice::<ReadyApplicationContext>(&bytes).is_err());
+        assert!(serde_json::from_slice::<ApplicationContext>(&bytes).is_err());
+        assert!(Host::new(ready, 800.0, 600.0).is_ok());
+    }
+
+    #[test]
+    fn bootstrap_diagnostics_preserve_options_without_granting_services() {
+        let options = engine_api::GlobalOptions {
+            highlander: true,
+            script_enabled: false,
+            ..Default::default()
+        };
+        let bootstrap = ApplicationContext::bootstrap(options);
+        let encoded = serde_json::to_value(&bootstrap).unwrap();
+        let diagnostic: ApplicationContextDiagnostic =
+            serde_json::from_value(encoded.clone()).unwrap();
+        assert!(diagnostic.services.is_none());
+        assert_eq!(diagnostic.sim_config(), bootstrap.sim_config());
+        assert_eq!(serde_json::to_value(&diagnostic).unwrap(), encoded);
+        assert!(serde_json::from_value::<ApplicationContext>(encoded).is_err());
+
+        // Retaining launcher options is an explicit construction operation,
+        // not a restore of the diagnostic's recorded application authority.
+        let launch = ApplicationContext::bootstrap(diagnostic.options);
+        assert!(launch.options().highlander);
+        assert!(ReadyApplicationContext::try_from(launch).is_err());
     }
 
     #[test]
@@ -4197,8 +4305,7 @@ mod application_context_tests {
         let context = context(0, DifficultyLevel::Medium, KeyCode::F2, "ready.marker");
         let mut encoded = serde_json::to_value(context).unwrap();
         encoded["services"]["player_profiles"]["profiles"] = serde_json::json!([]);
-        let decoded: ReadyApplicationContext = serde_json::from_value(encoded).unwrap();
-        assert!(Host::new(decoded, 800.0, 600.0).is_err());
+        assert!(serde_json::from_value::<ReadyApplicationContext>(encoded).is_err());
     }
 
     #[cfg(all(feature = "projection-export", not(target_arch = "wasm32")))]
@@ -4335,7 +4442,7 @@ mod application_context_tests {
             "already sealed simulation values are independent copies"
         );
         // The diagnostic wire snapshot must retain the same effective contract.
-        let decoded: ApplicationContext =
+        let decoded: ApplicationContextDiagnostic =
             serde_json::from_value(serde_json::to_value(&changed).unwrap()).unwrap();
         assert_eq!(decoded.sim_config(), changed.sim_config());
     }
