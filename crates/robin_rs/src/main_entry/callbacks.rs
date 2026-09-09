@@ -825,15 +825,15 @@ fn begin_multiplayer_snapshot_transition(
     host: &mut crate::host::Host,
     load: PreparedLoad,
 ) -> Result<bool, String> {
-    let Some(net) = host.transport.net.as_ref() else {
+    let Some(net) = host.transport.net() else {
         return Ok(false);
     };
-    if host.transport.local_seat != robin_engine::player_command::PlayerId::HOST {
+    if host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST {
         return Err(
             "only the multiplayer host can load, restart, or quick-load the session".to_string(),
         );
     }
-    if host.transport.reconnecting || host.transport.snapshot_transition.is_some() {
+    if host.transport.reconnecting() || host.transport.has_snapshot_transition() {
         return Err("a multiplayer snapshot transition is already in progress".to_string());
     }
     let save = load.save();
@@ -846,13 +846,13 @@ fn begin_multiplayer_snapshot_transition(
     let save_bytes = serde_json::to_vec(&save)
         .map_err(|error| format!("encode multiplayer snapshot transition: {error}"))?;
     let id = net.begin_snapshot_transition(mission_id, save_bytes)?;
-    host.transport.snapshot_transition = Some(crate::host::PendingSnapshotTransition::new(
-        id,
-        crate::host::PendingSnapshotTransitionPayload::Save {
-            load: crate::host::SnapshotSave::Local(load),
-        },
-    ));
-    host.transport.reconnecting = true;
+    host.transport
+        .prepare_snapshot_transition(crate::host::PendingSnapshotTransition::new(
+            id,
+            crate::host::PendingSnapshotTransitionPayload::Save {
+                load: crate::host::SnapshotSave::Local(load),
+            },
+        ));
     tracing::info!(
         ?id,
         mission_id,
@@ -1258,7 +1258,8 @@ mod operation_outcome_tests {
         let mut host =
             crate::host::Host::new(context.clone().try_into().unwrap(), 640.0, 480.0).unwrap();
         let (channels, _incoming, _outgoing, _, _) = crate::multiplayer::NetChannels::new();
-        host.transport.net = Some(channels);
+        host.transport =
+            crate::host::HostTransport::test_session(channels, host.transport.local_seat());
         let callbacks = RustCallbacks::new(context).unwrap();
         let mut profiles = ProfileManager::default();
         profiles.missions.push(engine_profiles::MissionProfile {
@@ -1296,7 +1297,7 @@ mod operation_outcome_tests {
         let directory = tempfile::tempdir().unwrap();
         let (mut callbacks, mut host, mut engine, assets, mut game, profiles) =
             diagnostic_callback_fixture(directory.path());
-        host.transport.net = None;
+        host.transport.test_drop_channels();
         let reason = callbacks
             .plan_autosave(true, true, 17, 0, false, false)
             .unwrap();

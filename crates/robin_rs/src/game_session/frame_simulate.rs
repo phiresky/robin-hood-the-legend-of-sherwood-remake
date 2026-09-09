@@ -751,7 +751,7 @@ impl InteractiveFrameSimulation {
                     dev,
                     &mut render_context,
                 );
-                post_render_engine_cleanup(&mut frame, host.transport.local_seat);
+                post_render_engine_cleanup(&mut frame, host.transport.local_seat());
             }
             let menu_resources =
                 required_menu_resources(&resources.menu, "cooperative pause side-screen rendering");
@@ -1403,17 +1403,10 @@ impl InteractiveFrameSimulation {
             host.frontend.engine_display = display;
             frame.mark_post_external_actions_applied();
         }
-        let net = host.transport.net.take();
-        let actions = crate::http_server::drain_global(
-            manager,
-            host,
-            assets,
-            net.as_ref(),
-            &mut frame.post_commands,
-        );
+        let actions =
+            crate::http_server::drain_global(manager, host, assets, &mut frame.post_commands);
         runtime.record_input_taints(crate::http_server::take_pending_replay_taints());
         frame.record_applied_post_external_actions(actions);
-        host.transport.net = net;
 
         // ── Rollback check + rewind buffer commit ──
         // Both are post-tick bookkeeping.  Skipped on paused frames
@@ -1422,8 +1415,8 @@ impl InteractiveFrameSimulation {
         // log — the slot is already populated and would duplicate.
         if frame.timeline_advances(!paused && !rewind_active) {
             let next_frame = runtime.advance_frame().number();
-            if let Some(net) = host.transport.net.as_ref()
-                && host.transport.local_seat == engine_player_command::PlayerId::HOST
+            if let Some(net) = host.transport.net()
+                && host.transport.local_seat() == engine_player_command::PlayerId::HOST
             {
                 net.set_initial_snapshot(next_frame, &manager.engine);
             }
@@ -1550,7 +1543,7 @@ impl InteractiveFrameSimulation {
                 .active_modal
                 .as_ref()
                 .is_some_and(|modal| !modal.is_empty());
-        let keyboard_stepping_allowed = host.transport.net.is_none();
+        let keyboard_stepping_allowed = host.transport.net().is_none();
         if step_forward_pressed
             && keyboard_stepping_allowed
             && !modal_state_pending(host)
@@ -1671,7 +1664,8 @@ mod tests {
 
         let mut host = crate::host::Host::scratch(640.0, 480.0);
         let (channels, _incoming, outgoing, _, _) = NetChannels::new();
-        host.transport.net = Some(channels);
+        host.transport =
+            crate::host::HostTransport::test_session(channels, host.transport.local_seat());
         let mut commands = FrameCommands::new();
         dispatch_active_modal_outcome(
             ActiveModalOutcome::QuitMissionRequested,

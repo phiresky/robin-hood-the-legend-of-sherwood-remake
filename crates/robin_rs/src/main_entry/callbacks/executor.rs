@@ -39,7 +39,7 @@ pub(super) fn execute(
                     return outcome;
                 }
             };
-            if host.transport.net.is_some() {
+            if host.transport.net().is_some() {
                 let target = slot
                     .map(persistence::DiagnosticTarget::Existing)
                     .unwrap_or(persistence::DiagnosticTarget::New("Multiplayer diagnostic"));
@@ -210,7 +210,7 @@ pub(super) fn execute(
                 missing => {
                     tracing::error!("Restart snapshot unavailable: {missing:?}");
                     // Multiplayer cannot unilaterally fall back to LevelRestart.
-                    if host.transport.net.is_none() {
+                    if host.transport.net().is_none() {
                         outcome.completion = OperationCompletion::RestartRequested;
                         game.operation.set(GameCode::LevelRestart);
                     }
@@ -233,7 +233,7 @@ pub(super) fn execute(
             }
         }
         SaveLoadRequest::QuickSave { mission_id } => {
-            if host.transport.net.is_some() {
+            if host.transport.net().is_some() {
                 match persistence::diagnostic(
                     persistence::DiagnosticTarget::New("Multiplayer quick diagnostic"),
                     save_manager,
@@ -374,7 +374,7 @@ fn execute_load(
     thumb_ref: Option<&crate::save_file::Thumbnail>,
 ) -> OperationOutcome {
     let restart = matches!(completion, load::LoadCompletion::Restart);
-    let multiplayer = host.transport.net.is_some();
+    let multiplayer = host.transport.net().is_some();
     let result = (|| -> anyhow::Result<OperationOutcome> {
         if matches!(completion, load::LoadCompletion::Selected(_)) {
             let special = save

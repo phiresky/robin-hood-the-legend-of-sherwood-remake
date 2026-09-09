@@ -453,11 +453,11 @@ impl TerminalDebriefingState {
         context: &'a TerminalDebriefingContext<'_>,
         kind: engine_player_command::ModalKind,
     ) -> Option<crate::ingame_menu::ModalNet<'a>> {
-        context.host.transport.net.as_ref().map(|net| {
+        context.host.transport.net().map(|net| {
             crate::ingame_menu::ModalNet::new(
                 net,
                 kind,
-                context.host.transport.local_seat == engine_player_command::PlayerId::HOST,
+                context.host.transport.local_seat() == engine_player_command::PlayerId::HOST,
             )
         })
     }
@@ -679,7 +679,7 @@ impl TerminalDebriefingState {
                             &context.presentation.renderer,
                             &mut context.callbacks.save_manager,
                             detailed_metadata,
-                            context.host.transport.net.is_some(),
+                            context.host.transport.net().is_some(),
                         ),
                         body: body_remaining,
                         was_on_stat,
@@ -844,7 +844,7 @@ impl TerminalDebriefingState {
                 if self.await_remote_snapshot(
                     &outcome,
                     context.playing_back,
-                    context.host.transport.local_seat,
+                    context.host.transport.local_seat(),
                 ) {
                     context.game.operation.set(GameCode::LevelInProgress);
                     return TerminalDebriefingProgress::Pending;
@@ -890,7 +890,7 @@ fn apply_terminal_debriefing_action(
             // Losing a transport must not turn a former client into local file
             // authority while its host-authored decision is settling.
             let is_client =
-                context.host.transport.local_seat != engine_player_command::PlayerId::HOST;
+                context.host.transport.local_seat() != engine_player_command::PlayerId::HOST;
             let slot = match terminal_load_target(
                 &context.callbacks.save_manager,
                 local_load,
@@ -941,7 +941,7 @@ fn settle_terminal_debriefing(
             .host
             .session_achievement_eligibility()
             .unwrap_or_else(|error| panic!("achievement history promotion failed: {error}"))
-            .promotion_context(context.host.transport.net.is_some());
+            .promotion_context(context.host.transport.net().is_some());
         let update = context
             .manager
             .engine

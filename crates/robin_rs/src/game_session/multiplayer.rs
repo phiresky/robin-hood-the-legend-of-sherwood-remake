@@ -116,7 +116,7 @@ fn attach_snapshot_spellforge_runtime(
 /// frame inputs and apply any required network state corrections.
 ///
 /// Also folds `AssignedLocalSeat` events (late seat-assignment
-/// races) into `host.transport.local_seat` and logs other diagnostic events.
+/// races) into `host.transport.local_seat()` and logs other diagnostic events.
 /// Native and browser disconnects remain synchronized only while their real
 /// transport reconnect loops are active. Both abandon the old prediction
 /// future and wait for an authoritative replacement snapshot.
@@ -132,7 +132,7 @@ pub(crate) fn drain_net_inputs(
 ) -> NetDrainResult {
     use crate::multiplayer::NetEvent;
 
-    let Some(net) = host.transport.net.as_ref() else {
+    if host.transport.net().is_none() {
         // Not in a session — drain anything sitting in pending and
         // return.  Pending should be empty in single-player but is
         // safe to flush.
@@ -147,7 +147,7 @@ pub(crate) fn drain_net_inputs(
             rollback: None,
             adopted_frame: None,
         };
-    };
+    }
 
     // 1. Drain transport into "future" and "late" buckets.
     let mut late_inputs: Vec<(u32, PlayerInput)> = Vec::new();
@@ -157,7 +157,12 @@ pub(crate) fn drain_net_inputs(
     let mut rollback_telemetry = None;
     let mut effective_frame = current_frame;
     loop {
-        let event = match net.try_recv_event() {
+        let event = match host
+            .transport
+            .net()
+            .expect("session channel remains installed during event drain")
+            .try_recv_event()
+        {
             Ok(event) => event,
             Err(std::sync::mpsc::TryRecvError::Empty) => break,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -171,8 +176,8 @@ pub(crate) fn drain_net_inputs(
                 target_frame,
                 input,
             } => {
-                if host.transport.local_seat == robin_engine::player_command::PlayerId::HOST
-                    && host.transport.reconnecting
+                if host.transport.local_seat() == robin_engine::player_command::PlayerId::HOST
+                    && host.transport.reconnecting()
                 {
                     // The replacement snapshot is already published. Events
                     // queued before the outbound disconnect must not mutate
@@ -205,7 +210,7 @@ pub(crate) fn drain_net_inputs(
             }
             NetEvent::AssignedLocalSeat(seat) => {
                 tracing::info!(?seat, "multiplayer: local seat assigned (late)");
-                host.transport.local_seat = seat;
+                host.transport.confirm_local_seat(seat);
             }
             NetEvent::Note(s) => tracing::info!(note = %s, "multiplayer: note"),
             NetEvent::Disconnected => {
@@ -213,7 +218,7 @@ pub(crate) fn drain_net_inputs(
                     "multiplayer: peer disconnected — transport will auto-reconnect; \
                      simulation is held until an authoritative snapshot arrives"
                 );
-                host.transport.reconnecting = true;
+                host.transport.await_authoritative_snapshot();
                 admission_events.push(MultiplayerAdmissionEvent::Disconnected);
                 // Everything derived from the disconnected process's future
                 // is invalid. Events already drained from that generation
@@ -237,19 +242,15 @@ pub(crate) fn drain_net_inputs(
             } => {
                 // Welcome is awaited before Engine construction; retain the
                 // event copy for diagnostics and reconnect validation.
-                if host.transport.mission_id.as_deref() != Some(mission_id.as_str())
-                    || host.transport.mission_seed != Some(rng_seed)
-                    || host.transport.mission_sim_config != Some(sim_config)
-                    || host.transport.speech_timing_locale != speech_timing_locale
+                if host.transport.mission_id() != Some(mission_id.as_str())
+                    || host.transport.mission_seed() != Some(rng_seed)
+                    || host.transport.mission_sim_config() != Some(sim_config)
+                    || host.transport.speech_timing_locale() != speech_timing_locale.as_deref()
                 {
                     panic!(
                         "fatal multiplayer session error: Welcome/reconnect mission construction state changed"
                     );
                 }
-                host.transport.mission_seed = Some(rng_seed);
-                host.transport.mission_sim_config = Some(sim_config);
-                host.transport.speech_timing_locale = speech_timing_locale;
-                host.transport.mission_id = Some(mission_id);
             }
             NetEvent::ContentOffer(offer) => panic!(
                 "fatal multiplayer session error: host offered distributed mod {} after gameplay admission",
@@ -268,7 +269,7 @@ pub(crate) fn drain_net_inputs(
                 frame,
                 engine_bytes,
             } => {
-                let replacing_prediction_future = host.transport.reconnecting;
+                let replacing_prediction_future = host.transport.reconnecting();
                 if frame < effective_frame && !replacing_prediction_future {
                     tracing::debug!(
                         frame,
@@ -297,7 +298,7 @@ pub(crate) fn drain_net_inputs(
                                     "multiplayer: skipping frame-0 snapshot adopt; \
                                      local engine already matches host"
                                 );
-                                if let Some(net) = host.transport.net.as_ref() {
+                                if let Some(net) = host.transport.net() {
                                     net.send_ready_to_sim(frame).unwrap_or_else(|error| {
                                         panic!("fatal multiplayer readiness publication failure: {error}")
                                     });
@@ -354,7 +355,7 @@ pub(crate) fn drain_net_inputs(
                                             peer_hashes.retain(|&f, _| f >= frame);
                                         }
                                         rewrote_sim_state = true;
-                                        if let Some(net) = host.transport.net.as_ref() {
+                                        if let Some(net) = host.transport.net() {
                                             net.send_ready_to_sim(frame).unwrap_or_else(|error| {
                                         panic!("fatal multiplayer readiness publication failure: {error}")
                                     });
@@ -405,7 +406,7 @@ pub(crate) fn drain_net_inputs(
                                     "multiplayer: adopting host's engine snapshot"
                                 );
                                 effective_frame = frame;
-                                if let Some(net) = host.transport.net.as_ref() {
+                                if let Some(net) = host.transport.net() {
                                     net.send_ready_to_sim(frame).unwrap_or_else(|error| {
                                         panic!("fatal multiplayer readiness publication failure: {error}")
                                     });
@@ -451,7 +452,7 @@ pub(crate) fn drain_net_inputs(
                 frame,
                 start_epoch_ms,
             } => {
-                host.transport.reconnecting = false;
+                host.transport.begin_simulation();
                 tracing::info!(
                     frame,
                     start_epoch_ms,
@@ -472,19 +473,23 @@ pub(crate) fn drain_net_inputs(
             }
             NetEvent::PrepareSnapshotTransition { id, payload } => {
                 assert_ne!(
-                    host.transport.local_seat,
+                    host.transport.local_seat(),
                     robin_engine::player_command::PlayerId::HOST,
                     "authoritative host received its own snapshot transition prepare"
                 );
                 assert_eq!(
                     id.session_id,
-                    net.session_id().unwrap_or_else(|error| {
-                        panic!("snapshot transition is missing session identity: {error}")
-                    }),
+                    host.transport
+                        .net()
+                        .expect("admitted session retains its channels")
+                        .session_id()
+                        .unwrap_or_else(|error| {
+                            panic!("snapshot transition is missing session identity: {error}")
+                        }),
                     "snapshot transition prepare belongs to another session"
                 );
                 assert!(
-                    host.transport.snapshot_transition.is_none(),
+                    !host.transport.has_snapshot_transition(),
                     "received a second snapshot transition while one is pending"
                 );
                 let payload = match payload {
@@ -553,31 +558,30 @@ pub(crate) fn drain_net_inputs(
                         }
                     }
                 };
-                host.transport.snapshot_transition =
-                    Some(crate::host::PendingSnapshotTransition::new(id, payload));
-                host.transport.reconnecting = true;
-                net.acknowledge_snapshot_transition(id)
+                host.transport.prepare_snapshot_transition(
+                    crate::host::PendingSnapshotTransition::new(id, payload),
+                );
+                host.transport
+                    .net()
+                    .expect("prepared transition retains session")
+                    .acknowledge_snapshot_transition(id)
                     .unwrap_or_else(|error| {
                         panic!("failed to acknowledge multiplayer snapshot transition: {error}")
                     });
             }
             NetEvent::CommitSnapshotTransition { id } => {
-                let transition = host
-                    .transport
-                    .snapshot_transition
-                    .as_mut()
-                    .unwrap_or_else(|| {
-                        panic!("snapshot transition commit has no prepared payload")
-                    });
-                transition
-                    .commit_authenticated(id)
+                host.transport
+                    .commit_snapshot_transition(id)
                     .unwrap_or_else(|error| panic!("{error}"));
-                host.transport.reconnecting = true;
             }
             event @ (NetEvent::ModalProposal { .. } | NetEvent::ModalDecision { .. }) => {
-                net.defer_modal_event(event).unwrap_or_else(|error| {
-                    panic!("fatal multiplayer modal routing error: {error}")
-                });
+                host.transport
+                    .net()
+                    .expect("admitted session retains its channels")
+                    .defer_modal_event(event)
+                    .unwrap_or_else(|error| {
+                        panic!("fatal multiplayer modal routing error: {error}")
+                    });
             }
             event @ (NetEvent::RankedCoSignContext(_)
             | NetEvent::RankedSubmissionAccepted(_)
@@ -588,7 +592,10 @@ pub(crate) fn drain_net_inputs(
             | NetEvent::RankedContinuationPreflightSignature { .. }
             | NetEvent::LeaderboardCoSignRequest(_)
             | NetEvent::LeaderboardCoSignResponse { .. }) => {
-                net.defer_leaderboard_cosign_event(event)
+                host.transport
+                    .net()
+                    .expect("admitted session retains its channels")
+                    .defer_leaderboard_cosign_event(event)
                     .unwrap_or_else(|error| {
                         panic!("fatal multiplayer leaderboard co-sign routing error: {error}")
                     });
@@ -625,7 +632,7 @@ pub(crate) fn drain_net_inputs(
 
         let mut needs_rewind = false;
         let local_is_peer =
-            host.transport.local_seat != robin_engine::player_command::PlayerId::HOST;
+            host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST;
         let mut local_reconnect_reason = None;
         let mut host_reconnect_reason = None;
         let mut earliest = u32::MAX;
@@ -665,11 +672,14 @@ pub(crate) fn drain_net_inputs(
             }
         }
         if let Some(reason) = local_reconnect_reason {
-            net.reconnect_for_snapshot(host.transport.local_seat, reason.clone())
+            host.transport
+                .net()
+                .expect("admitted session retains its channels")
+                .reconnect_for_snapshot(host.transport.local_seat(), reason.clone())
                 .unwrap_or_else(|error| {
                     panic!("failed to request multiplayer snapshot reconnect: {error}")
                 });
-            host.transport.reconnecting = true;
+            host.transport.await_authoritative_snapshot();
             pending_inputs.clear();
             admission_events.push(MultiplayerAdmissionEvent::Disconnected);
             tracing::warn!(
@@ -744,7 +754,7 @@ pub(crate) fn drain_net_inputs(
             }
         }
         if let Some(reason) = host_reconnect_reason
-            && !host.transport.reconnecting
+            && !host.transport.reconnecting()
         {
             // An earlier ingress batch may already have reset the barrier.
             // Queued obsolete inputs from that abandoned prediction must not
@@ -752,18 +762,27 @@ pub(crate) fn drain_net_inputs(
             admission_events.push(MultiplayerAdmissionEvent::HostResynchronizing {
                 frame: effective_frame,
             });
-            net.set_initial_snapshot(effective_frame, &manager.engine);
-            net.reconnect_all_for_snapshot(reason)
+            host.transport
+                .net()
+                .expect("admitted session retains its channels")
+                .set_initial_snapshot(effective_frame, &manager.engine);
+            host.transport
+                .net()
+                .expect("admitted session retains its channels")
+                .reconnect_all_for_snapshot(reason)
                 .unwrap_or_else(|error| {
                     panic!("failed to require multiplayer snapshot reconnect: {error}")
                 });
             // ReconnectAll resets host readiness as well as peer readiness.
             // Publish this exact held boundary into the replacement barrier.
-            net.send_ready_to_sim(effective_frame)
+            host.transport
+                .net()
+                .expect("admitted session retains its channels")
+                .send_ready_to_sim(effective_frame)
                 .unwrap_or_else(|error| {
                     panic!("fatal multiplayer readiness publication failure: {error}")
                 });
-            host.transport.reconnecting = true;
+            host.transport.await_authoritative_snapshot();
             pending_inputs.clear();
         }
     }
@@ -802,7 +821,7 @@ pub(super) fn drain_mission_network(
     now_epoch_ms: u64,
 ) -> NetDrainResult {
     let current_frame = timeline.frame_number();
-    if let Some(net) = host.transport.net.as_ref() {
+    if let Some(net) = host.transport.net() {
         net.publish_frame(current_frame);
     }
     let mut drain = drain_net_inputs(
@@ -830,8 +849,8 @@ pub(super) fn drain_mission_network(
         timeline.adopt_frame(super::runtime::TimelineFrame::from_wire(frame));
     }
 
-    let local_is_peer = host.transport.net.is_some()
-        && host.transport.local_seat != robin_engine::player_command::PlayerId::HOST;
+    let local_is_peer = host.transport.net().is_some()
+        && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST;
     if local_is_peer
         && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
     {
@@ -869,9 +888,9 @@ pub(super) fn drain_mission_network(
             clock_pause = true;
         }
     }
-    drain.pause_simulation = admission_pause || host.transport.reconnecting || clock_pause;
+    drain.pause_simulation = admission_pause || host.transport.reconnecting() || clock_pause;
 
-    if host.transport.net.is_some() && (checkpoint_always || drain.rewrote_sim_state) {
+    if host.transport.net().is_some() && (checkpoint_always || drain.rewrote_sim_state) {
         timeline
             .rewind_buffer
             .checkpoint_recent(timeline.frame_number(), &manager.engine);
@@ -985,7 +1004,7 @@ pub(super) fn host_scheduled_frame_deadline_ms(
 /// On `--server`: starts the listener thread with this process at
 /// seat 0 ([`PlayerId::HOST`]).
 /// On `--connect`: dials the server, blocks briefly waiting for
-/// the assigned-seat handshake, then sets `host.transport.local_seat` so
+/// the assigned-seat handshake, then sets `host.transport.local_seat()` so
 /// outgoing inputs are stamped correctly.
 ///
 /// Network failures abort multiplayer startup so the caller can return
@@ -1159,13 +1178,16 @@ pub(super) async fn setup_multiplayer_session(
                         "multiplayer: hosting on iroh endpoint {}",
                         handle.endpoint_id()
                     );
-                    host.transport.local_seat = handle.local_seat;
+                    let seat = handle.local_seat;
                     channels.attach_runtime(handle);
-                    host.transport.net = Some(channels);
-                    host.transport.mission_seed = Some(authoritative_rng_seed);
-                    host.transport.mission_sim_config = Some(authoritative_sim_config);
-                    host.transport.speech_timing_locale = speech_timing_locale;
-                    host.transport.mission_id = Some(authoritative_mission_id.to_string());
+                    host.transport.install_session(
+                        channels,
+                        seat,
+                        authoritative_mission_id.to_string(),
+                        authoritative_rng_seed,
+                        authoritative_sim_config,
+                        speech_timing_locale,
+                    );
                 }
                 Err(e) => {
                     return Err(format!("multiplayer: failed to start server: {e}"));
@@ -1229,7 +1251,7 @@ pub(super) async fn setup_multiplayer_session(
                     .map_err(|error| {
                         format!("multiplayer: host-content admission failed: {error}")
                     })?;
-                    host.transport.distributed_mod = Some(admitted);
+                    host.transport.retain_distributed_mod(admitted);
                     let deadline = web_time::Instant::now() + std::time::Duration::from_secs(15);
                     while handle.session_metadata().is_none() && web_time::Instant::now() < deadline
                     {
@@ -1279,7 +1301,6 @@ pub(super) async fn setup_multiplayer_session(
                     .install_session_id(session.session_id)
                     .map_err(|error| format!("multiplayer: {error}"))?;
                 let welcomed_mission = session.mission_id;
-                host.transport.local_seat = session.seat;
                 if welcomed_mission != authoritative_mission_id {
                     return Err(format!(
                         "multiplayer: host mission `{welcomed_mission}` does not match requested mission `{authoritative_mission_id}`"
@@ -1301,17 +1322,13 @@ pub(super) async fn setup_multiplayer_session(
                         ));
                     }
                 }
-                host.transport.mission_id = Some(welcomed_mission.to_string());
-                host.transport.mission_seed = Some(session.mission_seed);
-                host.transport.mission_sim_config = Some(session.sim_config);
-                host.transport.speech_timing_locale = speech_timing_locale;
                 tracing::info!(
                     server = %addr,
                     nickname = %nickname,
                     "multiplayer: connected to {addr}"
                 );
                 // Wait briefly for the AssignedLocalSeat event so
-                // host.transport.local_seat is correct before the mission
+                // host.transport.local_seat() is correct before the mission
                 // starts emitting outgoing inputs.  Long timeouts
                 // get logged but don't abort — inputs queued before
                 // the assignment lands just sit in the channel until
@@ -1326,7 +1343,10 @@ pub(super) async fn setup_multiplayer_session(
                     while Instant::now() < deadline {
                         match channels.incoming.recv_timeout(Duration::from_millis(100)) {
                             Ok(NetEvent::AssignedLocalSeat(seat)) => {
-                                host.transport.local_seat = seat;
+                                assert_eq!(
+                                    seat, session.seat,
+                                    "assigned seat differs from admitted Welcome"
+                                );
                                 tracing::info!(?seat, "multiplayer: assigned seat");
                                 break;
                             }
@@ -1337,7 +1357,14 @@ pub(super) async fn setup_multiplayer_session(
                     }
                 }
                 channels.attach_runtime(handle);
-                host.transport.net = Some(channels);
+                host.transport.install_session(
+                    channels,
+                    session.seat,
+                    welcomed_mission.to_string(),
+                    session.mission_seed,
+                    session.sim_config,
+                    speech_timing_locale,
+                );
             }
             Err(e) => {
                 return Err(format!("multiplayer: failed to connect to {addr}: {e}"));
@@ -1554,8 +1581,7 @@ mod tests {
         let manager = EngineManager::new(engine);
         let (channels, incoming, outgoing, _, _) = NetChannels::new();
         let mut host = Host::default();
-        host.transport.local_seat = PlayerId(1);
-        host.transport.net = Some(channels);
+        host.transport = crate::host::HostTransport::test_session(channels, PlayerId(1));
         (
             host,
             manager,
@@ -1757,7 +1783,7 @@ mod tests {
     #[test]
     fn reconnect_adopts_older_host_snapshot_and_discards_prediction_future() {
         let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
-        host.transport.reconnecting = true;
+        host.transport.await_authoritative_snapshot();
         let engine_bytes = manager.engine.encode_native_snapshot();
         incoming
             .send(NetEvent::InitialSnapshot {
@@ -1785,7 +1811,7 @@ mod tests {
         assert_eq!(drain.adopted_frame, Some(30));
         assert!(drain.rewrote_sim_state);
         assert!(
-            host.transport.reconnecting,
+            host.transport.reconnecting(),
             "controls stay disabled until the ready barrier releases"
         );
         assert!(
@@ -1816,7 +1842,7 @@ mod tests {
             &mut rewind,
             &mut hashes,
         );
-        assert!(!host.transport.reconnecting);
+        assert!(!host.transport.reconnecting());
     }
 
     #[test]
@@ -1876,7 +1902,7 @@ mod tests {
             &mut hashes,
         );
 
-        let net = host.transport.net.as_ref().unwrap();
+        let net = host.transport.net().unwrap();
         assert!(matches!(
             net.try_recv_leaderboard_cosign_event().unwrap(),
             Some(NetEvent::LeaderboardCoSignRequest(decoded)) if decoded == request
@@ -1907,7 +1933,7 @@ mod tests {
             &mut hashes,
         );
 
-        let net = host.transport.net.as_ref().unwrap();
+        let net = host.transport.net().unwrap();
         assert!(matches!(
             net.try_recv_leaderboard_cosign_event().unwrap(),
             Some(NetEvent::RankedCoSignContext(decoded)) if decoded == context
@@ -1979,7 +2005,7 @@ mod tests {
             &mut hashes,
         );
 
-        assert!(host.transport.reconnecting);
+        assert!(host.transport.reconnecting());
         assert!(pending.is_empty());
         assert_eq!(
             drain.admission_events,
@@ -1998,7 +2024,7 @@ mod tests {
     #[test]
     fn host_too_old_peer_input_reconnects_every_predicting_client() {
         let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
-        host.transport.local_seat = PlayerId::HOST;
+        host.transport.test_local_seat(PlayerId::HOST);
         let mut rewind = rewind_with_horizon(&manager, &assets, 25, 35);
         incoming
             .send(NetEvent::Input {
@@ -2021,7 +2047,7 @@ mod tests {
             &mut hashes,
         );
 
-        assert!(host.transport.reconnecting);
+        assert!(host.transport.reconnecting());
         assert_eq!(
             drain.admission_events,
             [MultiplayerAdmissionEvent::HostResynchronizing { frame: 35 }]
