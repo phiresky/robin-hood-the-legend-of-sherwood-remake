@@ -3389,6 +3389,16 @@ mod tests {
     fn interface_stage_fixture() -> ResourceManager {
         let mut value = serde_json::to_value(ResourceManager::new()).unwrap();
         value["strings"] = serde_json::json!({"123": ["stage fixture"]});
+        let picture = robin_assets::picture::Picture {
+            width: 2,
+            height: 1,
+            pitch: 4,
+            pixel_format: robin_assets::picture::PixelFormat::Rgb16,
+            data: vec![0xc0, 0x07, 0xff, 0xff],
+            palette: None,
+        };
+        value["pictures"][resource_ids::RHID_GROUND_FOCUS.to_string()] =
+            serde_json::to_value(vec![Some(picture)]).unwrap();
         serde_json::from_value(value).unwrap()
     }
 
@@ -3408,6 +3418,12 @@ mod tests {
         let mut headless_host = Host::scratch(800.0, 600.0);
         let graphical_metadata = graphical.engine_setup_resources(&mut graphical_host);
         let headless_metadata = headless.engine_setup_resources(&mut headless_host);
+        let ground = graphical_metadata
+            .0
+            .as_ref()
+            .expect("fixture ground geometry");
+        assert_eq!(ground.frame_sizes, vec![(2, 1)]);
+        assert_eq!(ground.per_frame_offsets, vec![(1, 0)]);
         assert_eq!(
             serde_json::to_value(graphical_metadata).unwrap(),
             serde_json::to_value(headless_metadata).unwrap()
