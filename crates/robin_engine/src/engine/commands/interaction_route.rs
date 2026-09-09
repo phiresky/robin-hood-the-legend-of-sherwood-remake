@@ -4,8 +4,8 @@
 use super::object_use::take_seek_tolerance;
 use crate::coordinates::MapPoint;
 use crate::element::{Command, Entity, EntityId};
-use crate::engine::EngineInner;
 use crate::engine::movement::GoalShape;
+use crate::engine::{EngineInner, LevelAssets};
 use crate::sequence::{
     Field, FieldValue, MoveFlags, Sequence, SequenceElement, SequenceElementData,
 };
@@ -991,7 +991,7 @@ pub(crate) fn command_action_distance_animation(cmd: Command) -> Option<crate::o
 /// `Command::Take` deliberately omitted: the per-object `radius + 15`
 /// lookup lives in `take_seek_tolerance` and is consulted at the call
 /// site in `apply_interaction_with_seek`.
-pub(crate) fn interaction_distance(cmd: Command) -> f32 {
+pub(super) fn interaction_distance(cmd: Command) -> f32 {
     match cmd {
         Command::StrangleCmd => 30.0,
         Command::HealCmd => 35.0,
