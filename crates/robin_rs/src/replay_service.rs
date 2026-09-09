@@ -256,12 +256,6 @@ fn try_enqueue_native_replay_export(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn replay_spool_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().expect("replay spool test lock poisoned")
-}
-
 /// Hard local limits for the active JSONL recorder. The public replay service
 /// applies its own admission limits to the canonical compact artifact; these
 /// limits protect the in-process native/browser recording path before export.
