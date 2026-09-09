@@ -81,53 +81,9 @@ pub enum GameKey {
     SherwoodTrading,
 }
 
-impl GameKey {
-    pub const COUNT: usize = 40;
-
-    /// All variants in enum order.
-    pub const ALL: [GameKey; Self::COUNT] = [
-        Self::ZoomIn,
-        Self::ZoomOut,
-        Self::ScrollUp,
-        Self::ScrollDown,
-        Self::ScrollLeft,
-        Self::ScrollRight,
-        Self::DisplayMap,
-        Self::SelectCharacter1,
-        Self::SelectCharacter2,
-        Self::SelectCharacter3,
-        Self::SelectCharacter4,
-        Self::SelectCharacter5,
-        Self::SelectAll,
-        Self::SelectNone,
-        Self::CrouchDown,
-        Self::StandUp,
-        Self::ShowDoors,
-        Self::SwitchHiddenDisplay,
-        Self::Action1,
-        Self::Action2,
-        Self::Action3,
-        Self::MoveDuringAction,
-        Self::RecordQa,
-        Self::StartQa,
-        Self::DeleteQa,
-        Self::ShowViewCone,
-        Self::QuickSave1,
-        Self::QuickLoad1,
-        Self::PlanQuickActions,
-        Self::ToggleCloak,
-        Self::StartMission,
-        Self::DisplayMenu,
-        Self::RecordMovie,
-        Self::PrintScreen,
-        Self::DisplayConsole,
-        Self::SlowMotion,
-        Self::RequestInfo,
-        Self::Teleport,
-        Self::AiInfo,
-        Self::SherwoodTrading,
-    ];
-}
+// The persisted key-config rows occupy the prefix before reserved/debug keys.
+// Fail at compile time if either side gains a slot without updating the other.
+const _: () = assert!(GameKey::StartMission as u16 == REAL_KEY_COUNT);
 
 // ---------------------------------------------------------------------------
 // GameAction — output actions produced by translation
@@ -397,10 +353,8 @@ impl InputTranslator {
     /// Uses index-based loading — a raw copy from the key config's
     /// flat array.
     pub fn load_bindings_from_keyconfig(&mut self, cfg: &KeyConfig) {
-        for i in 0..REAL_KEY_COUNT as usize {
-            if let Some(game_key) = GameKey::ALL.get(i).copied() {
-                self.bindings[game_key] = cfg.get_key_by_index(i as u16);
-            }
+        for (game_key, binding) in self.bindings.iter_mut().take(REAL_KEY_COUNT as usize) {
+            *binding = cfg.get_key_by_index(game_key as u16);
         }
         // Re-apply reserved bindings so they can't be overwritten by config.
         self.set_reserved_bindings();
@@ -426,10 +380,9 @@ impl InputTranslator {
 
     /// Look up which [`GameKey`] a physical key is bound to.
     pub fn translate_key(&self, key: KeyCode) -> Option<GameKey> {
-        GameKey::ALL
+        self.bindings
             .iter()
-            .copied()
-            .find(|&gk| self.bindings[gk] == Some(key))
+            .find_map(|(game_key, binding)| (*binding == Some(key)).then_some(game_key))
     }
 
     // --- Dead zones ---
@@ -1052,12 +1005,46 @@ mod tests {
     }
 
     #[test]
-    fn game_key_count_matches_all() {
-        assert_eq!(GameKey::ALL.len(), GameKey::COUNT);
-        // Verify each variant appears exactly once via its discriminant
-        for (i, key) in GameKey::ALL.iter().enumerate() {
-            assert_eq!(*key as usize, i);
+    fn enum_map_order_matches_persisted_slots_and_reserved_keys_are_not_loaded() {
+        for config in [KeyConfig::default_preset(), KeyConfig::alternate_preset()] {
+            let mut translator = InputTranslator::new(1024.0, 768.0);
+            let reserved_before: Vec<_> = translator
+                .bindings
+                .iter()
+                .skip(REAL_KEY_COUNT as usize)
+                .map(|(key, binding)| (key, *binding))
+                .collect();
+            translator.load_bindings_from_keyconfig(&config);
+            for (index, (key, binding)) in translator.bindings.iter().enumerate() {
+                assert_eq!(key as usize, index);
+                if index < REAL_KEY_COUNT as usize {
+                    assert_eq!(*binding, config.get_key_by_index(index as u16));
+                }
+            }
+            let reserved_after: Vec<_> = translator
+                .bindings
+                .iter()
+                .skip(REAL_KEY_COUNT as usize)
+                .map(|(key, binding)| (key, *binding))
+                .collect();
+            assert_eq!(reserved_after, reserved_before);
         }
+    }
+
+    #[test]
+    fn reverse_lookup_keeps_enum_order_for_shared_bindings() {
+        let mut translator = InputTranslator::default();
+        translator.set_binding(GameKey::PlanQuickActions, Some(KeyCode::ShiftLeft));
+        translator.set_binding(GameKey::ShowDoors, Some(KeyCode::ShiftLeft));
+        assert_eq!(
+            translator.translate_key(KeyCode::ShiftLeft),
+            Some(GameKey::ShowDoors)
+        );
+        translator.set_binding(GameKey::ShowDoors, None);
+        assert_eq!(
+            translator.translate_key(KeyCode::ShiftLeft),
+            Some(GameKey::PlanQuickActions)
+        );
     }
 
     #[test]
