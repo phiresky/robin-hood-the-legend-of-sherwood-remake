@@ -1158,6 +1158,9 @@ mod tests {
         .expect("fixture engine");
         let timeline = super::super::runtime::TimelineRuntime::new(
             super::super::replay_init::ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: None,
                 player: replay_player,
                 rollback_checker: None,
@@ -1247,7 +1250,7 @@ mod tests {
         let mut normal = MissionFrame::new(0);
         timeline.open_frame(&mut normal, &manager.engine, &assets);
         timeline.begin_recording(&mut normal, true);
-        normal.post_commands.push(PlayerInput::new(
+        normal.stage_post_commands().push(PlayerInput::new(
             PlayerId::HOST,
             PlayerCommand::SetLockAlt(true),
         ));
@@ -1993,6 +1996,9 @@ mod tests {
         let mut game = Game::default();
         let mut timeline = super::super::runtime::TimelineRuntime::new(
             super::super::replay_init::ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: None,
                 player: None,
                 rollback_checker: None,

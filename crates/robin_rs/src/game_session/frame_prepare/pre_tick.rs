@@ -440,6 +440,9 @@ mod tests {
             let mut game = crate::game::Game::new(engine_profiles::MissionLocation::Lincoln);
             let mut timeline = TimelineRuntime::new(
                 ReplayAndRollback {
+                    recording_control:
+                        std::sync::Arc::<crate::replay_service::ReplayService>::default()
+                            .recording(),
                     recorder: None,
                     player: None,
                     rollback_checker: None,
@@ -541,6 +544,9 @@ mod tests {
         .unwrap();
         let mut timeline = TimelineRuntime::new(
             ReplayAndRollback {
+                recording_control: std::sync::Arc::<crate::replay_service::ReplayService>::default(
+                )
+                .recording(),
                 recorder: Some(recorder),
                 player: None,
                 rollback_checker: None,
