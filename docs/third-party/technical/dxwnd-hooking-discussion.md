@@ -6,7 +6,7 @@
 - **Created:** 2016-02-04
 - **Updated:** 2021-10-08
 - **Language:** English
-- **Capture:** Page 1 of 2; page 2 was not present in the supplied original
+- **Capture:** Pages 1 and 2 of 2; page 2 recovered from `originals/recovery/dxwnd-hooking-p2.web.txt`
 
 ## Original text
 
@@ -198,6 +198,53 @@ Daniel wrote:
 
 Ok, I have to test the game, I'll do later when at home. See you later ...
 
-### Capture limitation
+#### Daniel — 2021-10-08
 
-The supplied HTML and text contain page 1 only. The thread indicates a second page, but its posts are not present in the supplied originals and are not reproduced here.
+OK, looking forward for an solution. Thank you in advance!
+
+#### gho — 2021-10-08
+
+I tested the game and in effect it behaves in a strange way, but can be managed without changing the suggested configuration. When Alt-Tabbing the game window does not minimize, but the game freezes showing a black window and when you Alt-Tab in again the game resumes from where you left it. The black window can be overlapped by other windows, so the game will stay quiet until you resume it, without interfering with any program that could take control of the desktop.
+
+But the game configuration was pretty old, you could try this one in attach that seems to behave much better, also allowing to minimize the task in the Windows taskbar icons.
+
+p.s. you may need or not need the flags in the Input section. If you have troubles with mouse control you can try to clear these flags.
+
+*Last edit: gho 2021-10-08*
+
+Attachment: `Robin Hood - The Legend of Sherwood (GOG).dxw`
+
+#### Daniel — 2021-10-08
+
+Thank you for the new configuration. This one does crash after the dxwnd logo.
+
+#### gho — 2021-10-08
+
+This is strange and unfortunate. If not done already you may try to upgrade DxWnd to latest release v2.05.75 (maybe in a separate folder, so that you'll have both versions available).
+I think I tested the configuration with an old GOG game version. Maybe I can find a more recent one ...
+
+#### Daniel — 2021-10-08
+
+I tried the new version and have the same problem - it crashes. But one thing is weird:
+I created an new configuration myself and did all the options like in your latest .dxw i imported. Now with "my" configuration the game runs and the "minimize" works (most times). Sometimes i have to alt+tab twice. But that is no problem.
+
+Thank you for your help!
+
+#### gho — 2021-10-08
+
+Uhm... if you didn't set the "Expert mode" there's much more configuration that you don't see. If you want to clarify the mystery you can do a very simple thing: export the bad configuration to one file, then export the good configuration to another file and post them both here. I'll compare them and I will spot the difference.
+
+#### Daniel — 2021-10-08
+
+OK, i missed that. But know i found what is the option which let the game crashes:
+
+In your settings the "Hook" Tab says "Injects suspended process" and the game does not start.
+When i change this to "SetWIndowsHook" the game starts.
+
+#### gho — 2021-10-08
+
+The mystery is revealed: you must have the v1.1 release that is patched in a completely different way from 1.0. The culprit is a retailed ddraw.dll file that is dropped in the game folder and makes the game work, but it is not compatible with some DxWnd use case. Renaming that file makes the game to load the standard ddraw.dll, the game starts but soon it switches to a badly handled 16 bit video mode that shows bad colors and half width. In conclusion, I would stick to your configuration that works!
+
+### Recovery provenance
+
+Page 1 contains 25 posts; the recovered page-2 text contains 8 posts, all dated 2021-10-08. The full discussion now includes all 33 posts in chronological page order. Recovery source: `originals/recovery/dxwnd-hooking-p2.web.txt`, whose source header identifies `https://sourceforge.net/p/dxwnd/discussion/general/thread/f20e2b7e/?page=1`.

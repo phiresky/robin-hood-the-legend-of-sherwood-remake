@@ -6,7 +6,7 @@
 - Language: German
 - Review score: 8/10 (the page's structured review data)
 - Archived copy: [Wayback Machine, 2026-02-20](https://web.archive.org/web/20260220143033/https://www.pcgames.de/Robin-Hood-Die-Legende-von-Sherwood-Spiel-30523/Tests/Nicht-ganz-der-Stoff-aus-dem-die-Helden-sind-100800/)
-- Availability: The supplied capture contains page 1 of 2 of the review. Page 2 (the verdict/score panel) was not retrieved as article text; the 8/10 score is preserved from the page's structured metadata. The supplied source reports 0 comments.
+- Availability: The supplied captures contain pages 1 and 2 of the review, including the verdict/score panel. The apparent page 3 is an image gallery, not another article page, and is out of scope. The supplied source reports 0 comments.
 
 ## English translation
 
@@ -26,6 +26,20 @@ In most missions, Stuteley and the giant therefore clear the way to the objectiv
 
 In keeping with the legend, the story takes place in only five towns and therefore five maps. However, because new locations must continually be visited and certain areas are closed off, a town remains a challenge even after the umpteenth visit. The guards and civilians, always distributed differently across the town, radically change what happens, as the artificial intelligence gives them a pleasantly authentic life: some civilians inform the nearest guard post about Robin's band, and the guard immediately checks what is going on. If the guard discovers one or more enemies, the guard weighs the odds and may ask the next superior for reinforcements.
 
+### Page 2
+
+[![Richard attacks a town and suffers heavy losses. Robin can come to his aid with his men.](https://www.pcgames.de/screenshots/430x/2002/11/sherwood.jpg)](https://www.pcgames.de/Robin-Hood-Die-Legende-von-Sherwood-Spiel-30523/Tests/Nicht-ganz-der-Stoff-aus-dem-die-Helden-sind-100800/galerie/300541/)
+
+The first missions are mainly about freeing the team from the Sheriff's clutches. Afterwards, you steal King Richard's crown jewels, and in the second half of the game you fight alongside Richard's men against the Sheriff and Prince John. Richard's army acts largely autonomously, but the individual squads wait for Robin to clear certain passages or defeat individual knights. Here, the player can choose whether to leave the allied troops to their fate or fight at their side.
+
+Although every playable character has numerous abilities, the controls are pleasantly easy to use. For example, clicking on an unconscious enemy causes the currently selected fighter to stab, tie up, or rob the enemy, depending on the character. So that players do not have to memorize this, a small symbol shows the expected action. In addition, each character has up to three icons at the bottom of the screen for special abilities such as archery or listening. Further convenience features: the outlines of people hidden behind buildings can be made visible at the press of a button, and the automatic pathfinding reliably calculates the shortest route to the destination, even when it leads through several buildings and floors.
+
+The graphics are another strength of *Robin Hood*. There are only a few scenarios, but they are lovingly designed. Every individual house and plant has been drawn in such detail that you feel as if you are looking at a naive painting.
+
+### Rating for Robin Hood: The Legend of Sherwood (PC)
+
+**Score: 8/10**
+
 ## Original text
 
 ### Nicht ganz der Stoff, aus dem die Helden sind
@@ -43,6 +57,20 @@ Da die ganze Stadt von Gegnern nur so wimmelt, fällt die erste Möglichkeit aus
 In den meisten Missionen machen daher Stuteley und der Hüne (später sollte der durch den noch stärkeren Little John ersetzt werden) den Weg zum Ziel frei. Die anderen Spielfiguren sind nur selten zu gebrauchen: Mit Steinen, Wespennestern oder Äpfeln werfende "Einheiten" sind nicht effektiv genug, Bogenschützen und Schwertkämpfer sind zu tödlich. Denn je weniger Opfer zu beklagen sind, desto mehr Zivilisten schließen sich Robin an. In seinem Unterschlupf im Sherwood Forest kann er diese zum Pfeileschnitzen, Kräutersammeln, Trainieren und zu etlichen weiteren Tätigkeiten anstellen - er darf sie aber auch mit in sein maximal fünfköpfiges Kampfteam aufnehmen.
 
 Konform zur Sage spielt sich die Handlung in nur fünf Städten und damit Maps ab. Da man aber immer neue Örtlichkeiten aufsuchen muss und bestimmte Gebiete abgesperrt sind, ist eine Stadt auch nach dem x-ten Besuch noch eine Herausforderung. Vor allem die stets anders auf das Stadtgebiet verteilten Wachen und Zivilisten verändern das Geschehen radikal, da die künstliche Intelligenz sie mit einem erfreulich authentischen Leben erfüllt: Einige Zivilisten verpetzen Robins Bande an den nächsten Wachposten, der auch sofort nach dem Rechten sieht. Entdeckt er einen oder mehrere Gegner, so wägt er seine Chancen ab und bittet eventuell den nächsten Vorgesetzten um Verstärkung.
+
+### Seite 2
+
+[![Richard greift eine Stadt an und erleidet herbe Verluste. Robin kann ihm mit seinen Mannen zu Hilfe eilen.](https://www.pcgames.de/screenshots/430x/2002/11/sherwood.jpg)](https://www.pcgames.de/Robin-Hood-Die-Legende-von-Sherwood-Spiel-30523/Tests/Nicht-ganz-der-Stoff-aus-dem-die-Helden-sind-100800/galerie/300541/)
+
+In den ersten Missionen geht es vor allem darum, das Team aus den Fängen des Sheriffs zu befreien. Anschließend raubt man König Richards Kronjuwelen und in der zweiten Hälfte des Spiels kämpft man an der Seite von Richards Männern gegen den Sheriff und Prinz John. Richards Armee agiert größtenteils autark, die einzelnen Trupps warten jedoch darauf, dass Robin bestimmte Durchgänge freimacht oder einzelne Ritter besiegt. Hier hat der Spieler die Wahl, ob er die befreundeten Truppen ihrem Schicksal überlässt oder an ihrer Seite ficht.
+
+Obwohl jede Spielfigur etliche Fähigkeiten hat, fällt die Bedienung erfreulich leicht. Beispielsweise führt ein Klick auf einen bewusstlosen Gegner je nach aktuell gewähltem Kämpfer zum Abstechen, Fesseln oder Berauben des Gegners. Damit man dies nicht auswendig lernen muss, zeigt ein kleines Sinnbild die zu erwartende Tat an. Zusätzlich stehen für die Spezialfähigkeiten wie Bogenschießen oder Lauschen je Charakter bis zu drei Icons am unteren Bildrand bereit. Weitere Komfort-Features: Der Umriss von hinter Gebäuden versteckte Personen kann auf Knopfdruck sichtbar gemacht werden und die automatische Wegfindung ermittelt garantiert die kürzeste Strecke zum Ziel, selbst wenn dieser durch mehrere Gebäude und Stockwerke führt.
+
+Auch grafisch überzeugt *Robin Hood*. Zwar gibt es nur wenige Szenarien, diese sind dafür aber liebevoll gestaltet. Jedes einzelne Haus und jede Pflanze wurde dermaßen detailliert gezeichnet, dass man sich wie in einem naiven Gemälde fühlt.
+
+### Wertung zu Robin Hood: Die Legende von Sherwood (PC)
+
+**Wertung: 8/10**
 
 ### Comments
 

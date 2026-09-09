@@ -6,7 +6,7 @@
 - Access: Page text captured from the supplied HTML/text renderings; the HTML itself is a JavaScript shell.
 - Checked: 2026-09-09
 - Archived copy: [Wayback Machine, 2025-01-20](https://web.archive.org/web/20250120051028/https://www.speedrun.com/robinhood)
-- Completeness: The available rendering includes the game header, Easy Difficulty leaderboard, game statistics, recent runs, forum index, and moderators. Forum thread bodies and other dynamically loaded tabs were not present in the supplied capture.
+- Completeness: The available rendering includes the game header, Easy Difficulty leaderboard, game statistics, recent runs, forum index, moderators, the four-item Resources tab, and the complete bodies of three forum threads (11 posts total: 3 opening posts and 8 replies). The Game Capture Issues body, detailed Stats view, and other dynamically loaded tabs (Medium/Hard leaderboards, News, Guides, and Streams) remain uncaptured.
 
 ## Robin Hood - The Legend Of Sherwood
 
@@ -62,6 +62,24 @@ The following table is the captured Easy Difficulty view. Times link to submitte
 | [A Logistical Convoy (Blazon)](https://www.speedrun.com/robinhood/leaderboards?h=A_Logistical_Convoy_Blazon-Easy_Difficulty&x=l_xd0xgvmd-7dggg8xd) | [1m 21s](https://www.speedrun.com/robinhood/runs/zg7v33dz) [23Banzaj](https://www.speedrun.com/users/23Banzaj) | — | — |
 | [Walk After Sherwood (Blazon)](https://www.speedrun.com/robinhood/leaderboards?h=Walk_After_Sherwood_Blazon-Easy_Difficulty&x=l_n93708nd-7dggg8xd) | [0m 25s](https://www.speedrun.com/robinhood/runs/me86vv3m) [23Banzaj](https://www.speedrun.com/users/23Banzaj) | — | — |
 
+## Resources
+
+The Resources tab lists four resources. The capture exposes the resource names, managers, and relative ages; individual download URLs were not included in the text rendering, so the resource links below point to the [Speedrun.com Resources tab](https://www.speedrun.com/robinhood/resources).
+
+### Tools
+
+| Resource | Author | Manager | Age | Link |
+| --- | --- | --- | --- | --- |
+| DxWnd | Ghotik | [23Banzaj](https://www.speedrun.com/users/23Banzaj) | 9 years ago | [Speedrun.com resource listing](https://www.speedrun.com/robinhood/resources) |
+
+### Patches
+
+| Resource | Author | Manager | Age | Link |
+| --- | --- | --- | --- | --- |
+| Robin Hood (EU) — Update To Version 1.1 | Spellbound Team | [23Banzaj](https://www.speedrun.com/users/23Banzaj) | 24 years ago | [Speedrun.com resource listing](https://www.speedrun.com/robinhood/resources) |
+| Robin Hood (US) — Update To Version 1.1 | Spellbound Team | [23Banzaj](https://www.speedrun.com/users/23Banzaj) | 24 years ago | [Speedrun.com resource listing](https://www.speedrun.com/robinhood/resources) |
+| Robin Hood — Performance Fix | BertHunter | [23Banzaj](https://www.speedrun.com/users/23Banzaj) | 10 years ago | [Speedrun.com resource listing](https://www.speedrun.com/robinhood/resources) |
+
 ## Game stats
 
 - Followers: 21
@@ -78,12 +96,82 @@ The following table is the captured Easy Difficulty view. Times link to submitte
 
 ## Latest threads
 
-The capture contains the forum index but not the dynamically loaded thread bodies or replies.
-
 - **Game Capture Issues** — [MasterEbro](https://www.speedrun.com/users/MasterEbro), posted 1 year ago, 2 replies ([thread](https://www.speedrun.com/robinhood/forums/mjg89))
 - **Missing the secret Attack on Lincoln level** — [binaryRibbit](https://www.speedrun.com/users/binaryRibbit), posted 1 year ago, 2 replies ([thread](https://www.speedrun.com/robinhood/forums/k0b4g))
 - **Blocking hotkeys** — [Vidyapoky](https://www.speedrun.com/users/Vidyapoky), posted 3 years ago, 2 replies ([thread](https://www.speedrun.com/robinhood/forums/dzixk))
 - **missing an ambush** — [23Banzaj](https://www.speedrun.com/users/23Banzaj), posted 6 years ago, 4 replies ([thread](https://www.speedrun.com/robinhood/forums/sdgfx))
+
+### Missing the secret Attack on Lincoln level
+
+[Thread](https://www.speedrun.com/robinhood/forums/k0b4g) · [binaryRibbit](https://www.speedrun.com/users/binaryRibbit), 2 years ago
+
+> I checked but i could not find a speedrun page for the Attack on Lincoln mission. If i made a speedrun for this level could it possibly be added?
+>
+> It will probably never be in a full speedrun but as a seperate mission it would be fun to speedrun.
+>
+> Here is how to get to the level ingame
+>
+> 1. Get in game to the stage, when on map is defending of the Lincoln mission available
+> 2. Do not buy anything for defense. Instead of it, start doing side missions
+> 3. After start, end every side mission by giving up, with red cross (3 - 4 times), then castle Lincoln is lost
+> 4. Finish one of side missions which appears, now Leicester is under attack, you need to win this defense
+> 5. Another one side mission needs to be finished
+> 6. Time to conquer back Lincoln
+
+*Edited by the author 2 years ago.*
+
+[23Banzaj](https://www.speedrun.com/users/23Banzaj), 2 years ago:
+
+> Hello, Yes, I Will Add Attack On Lincoln To The Single-Levels In The Evening. I Am Sorry For Any Inconvenience. Regards, Matthew
+
+[binaryRibbit](https://www.speedrun.com/users/binaryRibbit), 2 years ago:
+
+> no worries. i just thought it would be fun to speedrun
+
+### Blocking hotkeys
+
+[Thread](https://www.speedrun.com/robinhood/forums/dzixk) · [Vidyapoky](https://www.speedrun.com/users/Vidyapoky), 5 years ago
+
+> Hello, I have been trying to set up the livesplit for this game and obs recording, but the game blocks my hotkeys so I can't start recording or the splits. My obs recording hotkeys are ctrl+R and ctrl+D, while my LiveSplit hotkey is numpad 1 and numpad 3
+>
+> Any solution for this problem?
+
+[binaryRibbit](https://www.speedrun.com/users/binaryRibbit), 5 years ago:
+
+> Did you try running both the game and livesplit / obs with admin rights?
+
+*Edited by the author 5 years ago.*
+
+[Vidyapoky](https://www.speedrun.com/users/Vidyapoky), 5 years ago:
+
+> That solved the issue, many thanks!
+
+### missing an ambush
+
+[Thread](https://www.speedrun.com/robinhood/forums/sdgfx) · [Noobdown](https://www.speedrun.com/users/Noobdown), 7 years ago
+
+> do we miss an ambush in the list? or what is the name off it??
+
+[23Banzaj](https://www.speedrun.com/users/23Banzaj), 7 years ago:
+
+> I Will Check This In 10 Minutes I Will Respond In This Thread.
+
+[23Banzaj](https://www.speedrun.com/users/23Banzaj), 7 years ago:
+
+> This Is Walk After Sherwood This Is The Same As Ambush With Shields But Easier In This Situation I Will Change The Names On The Leaderboard, Sorry For Any Inconvenience.
+
+[Noobdown](https://www.speedrun.com/users/Noobdown), 7 years ago:
+
+> its not Inconvenience, so we have one new run?
+>
+> * run for shield
+> * run without
+
+[23Banzaj](https://www.speedrun.com/users/23Banzaj), 7 years ago:
+
+> Yes We Have New One Level Category - Defense (Mission When You Need To Get The Shields To Do Specific Mission Like March On York) If You Find Any New Levels Share Them And I Will Add Them As Soon As Possible. Thanks For You Help.
+
+*Edited by the author 5 years ago.*
 
 ## Moderators
 

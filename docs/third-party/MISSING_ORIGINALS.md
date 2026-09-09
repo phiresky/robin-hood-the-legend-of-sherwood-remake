@@ -19,10 +19,11 @@ The mappings were checked against `fetch_originals.sh`, canonical URLs in the ma
 | [CodeWeavers CrossOver](technical/codeweavers-crossover.md) | Compatibility page, version ratings, metadata and installation text. |
 | [DxWnd flipchain investigation](technical/dxwnd-flipchain-investigation.md) | Page 3 of 5, with 25 posts and attachment links. |
 | [ModDB cinematic enhancement](technical/moddb-cinematic-enhancement.md) | Mod description, installation instructions, file listing and metadata. |
+| [Gamez.ru walkthrough](guides/gamez-russian.md) | Additional manual combined-page capture, with all eleven captured sections translated. The saved article still ends mid-sentence; see the remaining gap below. |
 
-## Recovered by web fetch and Playwright — pending conversion
+## Recovered by web fetch and Playwright — converted
 
-A recovery pass on 2026-09-09 saved the following additional originals in `originals/recovery/`. **These new captures have not yet been incorporated into the article Markdown or translated.** They are no longer missing source text. Browser result logs retain requested/final URLs and status; web extracts retain source URLs and crawl metadata. Archived and cached pages may reflect different dates from the initial captures.
+A recovery pass on 2026-09-09 saved the following additional originals in `originals/recovery/`. **The recovered text has been incorporated into the linked Markdown files, with English translations above non-English originals.** It is no longer missing source text. Browser result logs retain requested/final URLs and status; web extracts retain source URLs and crawl metadata. Archived and cached pages may reflect different dates from the initial captures.
 
 | Markdown file(s) | Newly available source coverage | Capture names in `originals/recovery/` |
 | --- | --- | --- |
@@ -30,11 +31,11 @@ A recovery pass on 2026-09-09 saved the following additional originals in `origi
 | [GOG edition](history/gog-edition.md) | 36 review pages, 178 distinct review cards. | `gog-reviews.browser.html` and `gog-reviews-p2` through `p36.browser.html`. |
 | [WineHQ mouse-jitter bug](technical/wine-mouse-jitter-57031.md) | Initial message and eight replies/events, including Bugzilla Comment #1. | `wine-thread.browser.html`. |
 | [Sina/Yicai walkthrough](guides/sina-yicai-chinese.md) | Previously missing first article page. | `sina-p1.browser.html`. |
-| [GRYOnline walkthrough](guides/gry-online-walkthrough.md) | Fifteen additional chapter bodies; the other two chapters already have separate Markdown files. | Fifteen `gry-<chapter>.browser.html` files, excluding `gry-index.browser.html`. |
+| [GRYOnline walkthrough](guides/gry-online-walkthrough.md) | Fifteen additional chapter bodies, their map links, and 21 captured guide comments; the other two chapters already have separate Markdown files. | Fifteen `gry-<chapter>.browser.html` files, excluding `gry-index.browser.html`. |
 | [DxWnd flipchain](technical/dxwnd-flipchain-investigation.md) | Pages 1, 2, 4 and 5, complementing the manual page 3. | `dxwnd-flipchain-p1.web.txt`, `p2.web.txt`, `p4.web.txt`, `p5.web.txt`. |
 | [DxWnd hooking](technical/dxwnd-hooking-discussion.md) | Missing second discussion page. | `dxwnd-hooking-p2.web.txt`. |
 | [PC Games review](reviews/pcgames.md) | Second article page, including verdict and rating, from Wayback. The apparent third page redirects to an image gallery. | `pcgames-archive-p2.browser.html`; `pcgames-archive-p3.browser.html` is a gallery capture, not another article page. |
-| [Metacritic](reviews/metacritic.md) | Embedded page data contains 19 user-review records with full quotes, including two spoiler-hidden reviews, and ten critic excerpt records. This does not establish coverage of every review counted by the site. | `metacritic-expanded.browser.html`, `metacritic-critics.browser.html`; extract the `__NUXT_DATA__` records, not only visible text. |
+| [Metacritic](reviews/metacritic.md) | Integrated 19 user-review records with full quotes, including two spoiler-hidden reviews, and ten recovered critic excerpt records (12 retained after merging earlier excerpts). This does not establish coverage of every review counted by the site. | `metacritic-expanded.browser.html`, `metacritic-critics.browser.html`; extract the `__NUXT_DATA__` records, not only visible text. |
 | [Jeuxvideo tips](guides/jeuxvideo-french-tips.md) | Three of eleven linked tips: Les chevaliers, Sherwood, and Cheat codes. | `jv-tip-6.web.txt`, `jv-tip-11.web.txt`, `jv-tip-12.web.txt`. |
 | [Speedrun community](reference/speedrun-community.md) | Resources list and three linked forum discussions: missing secret Attack on Lincoln level, blocking hotkeys, and missing an ambush. | `speedrun-10.web.txt`, `speedrun-87.web.txt`, `speedrun-88.web.txt`, `speedrun-90.web.txt`. |
 
@@ -45,14 +46,7 @@ The archived second [Mod by Gravitr](technical/moddb-gravitr.md) comment page wa
 ## Still unavailable or incomplete after the recovery pass
 
 - [Grouvee player records](reviews/grouvee-player-records.md): full Luitenant_Gruber review and linked comment bodies remain blocked by site verification. A Metacritic LT_Gruber review has matching opening text and date and supplies a possible complete cross-post, but is not verified as the exact Grouvee continuation.
-- [Patient Gamers — SpiderousMenace](reviews/patientgamers-spiderousmenace.md): 23 captured comment nodes versus 25 reported; live browser access returned 403.
-- [Patient Gamers — zehnpae](reviews/patientgamers-zehnpae.md): one deleted/moderator-removed body remains unavailable; live browser access returned 403.
-- [CodeWeavers CrossOver](technical/codeweavers-crossover.md): dynamic per-version submitted-rank details, additional “Show More” entries and linked tutorial remain uncaptured. Browser access was blocked; the web-fetch snapshot was older than the supplied manual capture.
-- [ModDB cinematic enhancement](technical/moddb-cinematic-enhancement.md): full linked file-description text remains unavailable after browser/web-fetch failures. Video contents are not transcribed.
-- [Toronto Computes — Talbot](reviews/toronto-computes-talbot.md): article text is complete, but the screenshot still does not verify its issue/page citation. The issue listing supports May 2003; page 51 was not independently verified.
-- [Gamez.ru walkthrough](guides/gamez-russian.md): pages 2–3 remain unavailable after direct, full-page and archive attempts.
-- [Jeuxvideo tips](guides/jeuxvideo-french-tips.md): eight of eleven linked tip bodies remain unavailable; three recovered above.
-- [Metacritic](reviews/metacritic.md): additional reviews beyond the recovered 19 user records and ten critic excerpts may exist; critic excerpts are not the linked full reviews.
+- [Gamez.ru walkthrough](guides/gamez-russian.md): the newly supplied archived `4233_full.htm` capture is integrated in full, but its article text ends mid-sentence at “Самое время найти” (“It is time to find”), followed by the author/date and footer. The continuation remains unavailable; the filename does not establish completeness.
 - [Magazine references](reference/magazine-indexes.md): issue references are available, not the magazine articles themselves.
 - [Speedrun community](reference/speedrun-community.md): additional leaderboard tabs, run metadata and other linked discussions remain uncaptured; some web-fetch requests failed.
 - [Video walkthrough](reference/video-walkthrough.md): browser capture and description expansion did not expose a transcript, captions or viewer comments.
@@ -60,6 +54,6 @@ The archived second [Mod by Gravitr](technical/moddb-gravitr.md) comment page wa
 - [Mod by Gravitr](technical/moddb-gravitr.md) and [ModDB performance fix](technical/moddb-performance-fix-history.md): approval-hidden comment bodies are not publicly available in the captures.
 - Discussion attachments, linked videos and remaining PC Games gallery images have not been downloaded or transcribed.
 
-No missing text was reconstructed from summaries. Saved HTML contains site chrome; the subsequent Markdown conversion still needs to remove it and add English translations above non-English originals.
+No missing text was reconstructed from summaries. Converted Markdown removes site chrome, retains relevant comments and formatting, and places English translations above non-English originals. Source mappings and per-file conversion status are recorded in `originals/conversion-mapping.json` and `originals/recovery/manifest.json`.
 
 Checked: 2026-09-09.

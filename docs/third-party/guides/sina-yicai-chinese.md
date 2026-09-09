@@ -1,10 +1,10 @@
-# Robin Hood: The Legend of Sherwood — Sina/Yicai campaign guide (page 2)
+# Robin Hood: The Legend of Sherwood — Sina/Yicai campaign guide (pages 1–2)
 
-- Source: [Sina Games / Yicai guide](https://games.sina.com.cn/zhqu/ycqd/luobingong0403_2.shtml), “攻略秘籍” (strategy guide), page 2.
+- Source: [Sina Games / Yicai guide, page 1](https://games.sina.com.cn/zhqu/ycqd/luobingong0403_1.shtml) and [page 2](https://games.sina.com.cn/zhqu/ycqd/luobingong0403_2.shtml), “攻略秘籍” (strategy guide).
 - Publisher/section: 新浪游戏 / 怡采强档; no individual author or publication date is shown. The page footer identifies 武汉怡采科技有限公司.
 - Language: Simplified Chinese. This file preserves the complete guide text below and provides a complete English translation above it.
-- Scope: Missions 9–23, ending, and Sherwood forest building. Missions 1–8 are on the previous page.
-- Retrieved: 2026-09-09. Full page available; navigation, unrelated promotions, and company boilerplate removed.
+- Scope: Missions 1–23, ending, and Sherwood forest building. The first-page recovery supplies Missions 1–8; the existing second-page capture supplies Missions 9–23 and the ending/building notes.
+- Retrieved: 2026-09-09. Both pages are complete; navigation, unrelated promotions, and company boilerplate removed.
 
 ## English translation
 
@@ -19,7 +19,147 @@
 | Release | February 2003 |
 | Requirements | Pentium III 450; 32 MB video memory; 128 MB RAM; DirectX 8.1-compatible 3D and sound cards (32 MB VRAM, hardware T&L, 32-bit colour); Windows 95/98/ME/2000/XP |
 
-The guide’s page continues at Mission 9. Each entry has story, objectives, walkthrough, and scroll hints.
+Each entry has story, objectives, walkthrough, and scroll hints. Page 1 covers Missions 1–8; page 2 continues at Mission 9.
+
+### Missions 1–8
+
+**1 — The Missing Friend (失踪的友人)**
+
+**Story.** When Robin returns to Sherwood, he finds the people suffering under the nobles’ brutality. Godwin has been captured and is said to be held in Lincoln Castle, so Robin goes there alone to rescue his friend. Godwin has already been moved, however, and the whole castle is a trap to catch Robin. Inside, Robin finds Godwin’s old servant, who asks his son to help Robin escape Lincoln. Robin gets away with the son’s help, but greater dangers await.
+
+**Objectives.** Infiltrate the castle to rescue Godwin; find the old servant’s son so that he can help Robin leave Lincoln.
+
+**Walkthrough.** Remove Robin’s disguise and wait for the soldier at the castle gate to turn away; attack from behind. Scrolls around the castle explain skills. Climb the wall and find the commander below. Two arrows on the upper wall are useful against him: aim carefully, because the surrounding soldiers raise their shields when he is attacked. After killing the commander, climb the wall on the left and find the old servant in a roofed room. Speak to him to reveal the village map for his son, then leave the castle. Outside, rescue the man being bullied by four soldiers. Follow the road left; seven enemies must be defeated. Fight the first three in melee, then shoot one of the four who are grouped together and handle the other three. No further enemies appear. In the village, speak to the rescued man outside the upper-left house for healing items, then speak to the old servant’s son beside him to finish.
+
+**Scroll hints.** The scrolls in this mission appear directly on the map, and most of them explain Robin’s skills.
+
+**A.** Robin can use his climbing skill to go up and down enemy walls. You can click the destination directly, or move the mouse onto the wall.
+
+**B.** Robin normally fights in close combat. The trick is to attack when an enemy is facing away from him. During combat, do not keep clicking continuously: moving the mouse in different directions makes Robin use different sword techniques, and varying them makes victory easier.
+
+**C.** Robin’s most powerful weapon is the bow. Normally one arrow can kill one ordinary enemy, but before using the bow you must obtain arrows from the map. Use the bow by clicking the icon at the lower left of the screen, or by using the corresponding G, H, and J shortcut keys.
+
+**D.** Robin needs to obtain information from many non-player characters. Unless an NPC has a special relationship with him, getting information has a cost; normally, you must give the NPC a certain amount of gold.
+
+**E.** After killing an enemy, remember to search the body, because this is a major source of items. When entering a room, remember to search the chests and sacks, which often contain items and equipment.
+
+**F.** When you click a location in the game, a curved arrow or line on the screen means that Robin can jump there. This is one of Robin’s unique skills.
+
+**2 — The Friend on the Gallows (绞架上的朋友)**
+
+**Story.** Stutely, Robin’s old friend, is now hanging in front of the gallows on public display, an object for the nobles to watch and mock, and he is due to be hanged the next day. Robin must rescue his friend, but many guards surround the gallows and none of them is easy to deal with. Several other captured people are with Stutely. Once Robin frees him, Stutely asks him to free them as well because they can help in the future. After they are rescued, Stutely says that everyone must leave quickly and return to Sherwood. Under Robin’s leadership, they break through the enemy pursuit and return to Sherwood.
+
+**Objectives.** Free Stutely from the gallows; take Stutely and the rescued prisoners back to Sherwood.
+
+**Walkthrough.** Robin begins outside the city. Enemies are scattered through the city, and a commander stands outside the gate at upper left. Ignore them and deal with the two enemies at the gate. The left guard is asleep, so attack the right guard from the area by the money pouch. A beggar beside the gate can sell a map, though paying him wakes the sleeping guard. Enter without a frontal fight, climb the wall for arrows, then attack from the rooftops; watch for enemy archers below. Two arrow bags near the gallows replenish ammunition. Kill archers first, then soldiers. Knights cannot be harmed by arrows, so fight them in melee with sweeping mouse strokes. After all enemies are dead, free Stutely; then free the three prisoners beside him. Exit through the northern gate. Guards protect three directions there, at different upper and lower positions, so kill the outermost enemies first and draw out the patrolling guards one at a time. Deal especially with the archer on the wall, since leaving him alive causes heavy losses. Once the main enemies are gone, leave through the gate and follow the road north to the wooden sign.
+
+**Scroll hints.** After the three prisoners are freed, three scrolls appear behind them and explain their skills.
+
+**A.** Merlin Brook is an archer who can use a shield to block enemy arrows.
+
+**B.** Charles Fisher is a healer. His skill scroll is below the bridge to the left of the city gate; defeat the two enemies there first to obtain it. This is the most important skill, because the game cannot heal characters until this scroll has been obtained.
+
+**C.** Harvey Wall is a barbarian-type character who can carry dead enemies into a corner so that other enemies do not discover them. He has two skill scrolls in this mission: one is beside the place where he is rescued, and the other is in the alley to the right of the northern gate exit. The first scroll describes his ability; the second says that he must eat meat to recover health.
+
+**D.** Stutely also has two skill scrolls. After he is rescued, one appears inside the southern wall near an apple. It teaches him to throw an apple at an enemy’s face and then attack while the enemy is distracted. The other is beside the northern gate exit and teaches a throwing skill for attacking multiple enemies.
+
+**E.** The binding-skill scroll is obtained after all the prisoners have been rescued. It lets a character tie an enemy’s hands after that enemy has been stunned.
+
+**F.** The barbed-attack skill lets a character use a special weapon against an enemy who has fallen down.
+
+**G.** The lockpicking skill makes locks anywhere seem useless, but it can be used only by a suitably skilled character.
+
+The guide notes that three ambush missions begin here. An ambush can be skipped when the campaign map shows an enter-castle symbol; later ambushes use the same methods, so only the first examples receive detailed instructions.
+
+**3 — Return to Sherwood (重返舍伍德)**
+
+**Story.** The group returns to a badly deteriorated Sherwood. Stutely asks Robin to rebuild the forest so it can support itself and resist attack. A tax convoy is about to pass through Sherwood, giving the outlaws a chance to strike.
+
+**Objectives.** Develop Sherwood; intercept the nobles’ tax convoy and take the tax money.
+
+**Walkthrough.** This mission has two parts. Gather everyone and inspect the scrolls around the central campfire. Five building tasks can be performed: gather healing-herb materials under the northern tree; make arrows beside the left house; prepare food above the campfire; roast meat at the fire; and gather apples below it. A person on the right trains combat skills; rotate characters through him without risking health. Training can be skipped by gathering everyone and moving across the river. Outside the forest, the party automatically takes up ambush positions and Robin prepares to attack from one side. When the tax collectors pass through the area, a trap hits them and leaves them unable to act. The enemies then take positions all around to prevent the tax money from being taken. Either fight directly—the enemies are not very strong—or use the three prepared traps: Robin shoots the three tree nets, Harvey pushes the rockfall at upper left, and enemies can be lured onto the three marked pits at left. Only arrows kill; other attacks stun, so have Stutely bind stunned enemies immediately. Once all enemies are secured, Robin takes the tax money.
+
+**Scroll hints.** Several scrolls repeat advice from the previous two missions, which the guide does not repeat here.
+
+**A.** There is a river beside the forest, but fishing is not very efficient. It is better to make a fishing net first and then fish.
+
+**B.** The right side of the map has a line of archery targets. It is a good place for the two skilled archers in the party to practise.
+
+**C.** The best way for everyone to recover health is to sit together at the table and eat a proper meal.
+
+**D.** When taking the tax money, do not fight head-on if possible. If you shoot enemies directly with arrows, stand behind the net so that they cannot discover you.
+
+**E.** The tree net is an excellent tool because it can deal with three enemies in different locations at the same time.
+
+**F.** Send one person to attract the enemy and lead him into a trap prepared in advance.
+
+**G.** Have Harvey Wall climb the hill from the opposite side so that he can attack enemies with the rockfall.
+
+**H.** When you find a tree net, someone can climb up and cut it down, bringing the enemy caught in the net to the ground.
+
+**4 — The Robbery Continues (持续的抢劫)**
+
+**Story.** Sherwood’s rebuilding has entered a new stage, and everyone works together diligently through these ordinary days. As news of Sherwood’s resistance to the nobles spreads to other regions, more and more people join Robin’s group and help build Sherwood. Many noble raids still threaten the poor, however, so Robin must advance his chivalrous cause.
+
+**Objectives.** Continue building Sherwood; rob the tax cart passing through Sherwood.
+
+**Walkthrough.** Build first, then gather the party for another tax-cart robbery. Five new companions join, but only five people can be deployed. The five who cross the small wooden bridge first are selected. The ambush positions differ, but this is the same map, so the traps are in the same places as before. The enemies are stronger, so use the traps before fighting. Alternatively, draw the guards away from the cart and take the tax money without fighting.
+
+**Scroll hints.** None.
+
+**5 — The Man Carrying Gold (拿金子的人)**
+
+**Story.** Rumour says that a noble carrying a great deal of money will pass through Sherwood. Robin cannot miss this opportunity and decides to ambush him. The noble is standing there talking with someone; Robin should ignore how many guards he has and take him first.
+
+**Objective.** Take the gold.
+
+**Walkthrough.** Before leaving Sherwood, the seven slots show the required abilities in the first two positions and the five selected companions in the remaining positions. Both ability slots must be checked or the mission cannot begin. Send one person forward; nearby enemies pursue and can be drawn into traps. Use the remaining traps and choose the closest character for each scattered enemy. After defeating the guards, Robin punches and stuns the person carrying the gold, then takes it.
+
+**Scroll hints.** None.
+
+**6 — A Difficult Ambush (吃力的伏击)**
+
+**Story.** Ambushing tax convoys has become routine. Whenever Robin receives word that a tax convoy is passing through Sherwood, he takes his members out to attack it. The enemies he encounters are increasingly strong, however.
+
+**Objective.** Take the gold.
+
+**Walkthrough.** This resembles the previous mission but adds a heavy swordsman and a knight. Watch your characters’ positions: ambushers are positioned both above and below. Draw the road guard behind the rock, then send the upper characters to draw enemies from the bridge. Use the tree bridge to attack the heavy swordsman first, then the knight. Either defeat the knight before taking the gold, or have one character hold him while Robin stuns the gold carrier and takes the money. Circle around rather than fighting the heavy swordsman and knight head-on.
+
+**Scroll hints.** None.
+
+**7 — The Old Lover (旧日情人)**
+
+**Story.** Does Robin remember Marian, the woman who loves him deeply? Robin does not know where she is now, so he goes to Nottingham to find her. As soon as he enters the village, a woman cries to Robin about her misfortune: her son has been captured and is about to be hanged. Robin can help the poor woman by killing the enemies on both sides, rescuing her son from the gallows outside the city on the left, and bringing him back to her. She gives Robin some items in thanks, but she also does not know where Marian is. After Robin enters the city, a beggar says that Marian is not at her house: the Sheriff has invited her to dinner at his castle. The castle is heavily guarded at night, so entering it is unwise. Another beggar says that Marian goes to the church to pray every night. Robin reaches the church, stuns the friar, and disguises himself as the friar so that he can finally meet his beloved Marian. The circumstances allow them to say only a few hurried words before they part, and Robin and his companions withdraw from Nottingham.
+
+**Objectives.** Rescue the old woman’s son; find Marian.
+
+**Walkthrough.** Do not push too far into the city. Rescuing the woman’s son is a side objective and can be skipped. After entering the city, defeat the enemies near the beggar and then pay him for information. The information scroll is a little farther north, and the enemies there must be defeated before it can be collected. Ask the beggar outside the church to learn that Marian is in the Sheriff’s castle, then ask the beggar at the upper right of the map to learn that Marian can be met at the church. At the church, stun the friar and carry him into the room at lower right. Robin should then go to the room at upper right to trigger the story. After meeting Marian, return to Sherwood.
+
+**Scroll hints.**
+
+**A.** Marian’s house is the one on the left after entering the city, but she is not there now.
+
+**B.** The Sheriff has invited Marian to dinner tonight, so Robin must enter the castle to find her.
+
+**C.** Marian habitually goes to the church every day. If Robin waits there, he will certainly meet her.
+
+**8 — The Imprisoned Relative (被囚禁的亲人)**
+
+**Story.** Unpleasant things keep happening: Robin’s nephew Will Scarlet has been captured and imprisoned in the castle dungeon, and Robin must rescue him. At night the castle is completely shut, although it can be entered by climbing; even after getting inside, Robin has no way to know where Will Scarlet is being held. A beggar outside reveals, in exchange for money, that Will is in the lowest level of the western tower. Robin first infiltrates the castle and opens its gate, then brings in his companions to attack the western tower and rescue Will. Will says the Sheriff took everything he had except a book whose writing only Robin can understand. There is no time to discuss it: leaving is more important. A scroll that appears north of the castle reveals a secret passage leading directly out of the city.
+
+**Objective.** Rescue Will Scarlet.
+
+**Walkthrough.** The climbable wall is on the right side of the castle, but many enemies block the route. Defeat them and reach the place marked by the scroll: this is the point for climbing the wall. After climbing, go directly to the house immediately above the castle gate and cut its rope to open the gate. Do not bring the companions in yet: enemies can be drawn out by the people Robin kills, and clearing the interior with everyone would be much harder. Pay attention to the enemies, including many archers, who come out of the door on the right. Have Robin surround the doorway and defeat them all at once; they are much more troublesome once they have dispersed. The companions outside only need to deal with enemies who rush out. After all of this, enter through the left entrance of the castle and cut its rope to reach the wall. Cut the rope on the wall, and the road behind the castle appears. Follow it outside and pay the beggar for a scroll identifying Will’s location. This step and the entry step can be done in the opposite order: Robin may find the beggar from outside before entering, but the castle must ultimately be attacked in the same way. At the western tower, have the character with lockpicking open the door and free Will. If the exit gate was opened at the beginning, leave through it and go to the wooden sign on the east; alternatively, use the passage inside the city to leave through the eastern house.
+
+**Scroll hints.**
+
+**A.** Robin’s climbing technique can be used to enter the castle.
+
+**B.** Will Scarlet is imprisoned in a secret place at the lowest level of the western tower. A character with lockpicking must go there to rescue him.
+
+**C.** Will Scarlet has two types of skill: attacking enemies with a slingshot, and using a grab from behind to squeeze an enemy to death.
+
+**D.** A passage beneath the castle leads out. Have the party enter it and they will make their own way through the secret passage.
 
 ### Missions 9–23
 
@@ -224,7 +364,152 @@ Forest-building tasks vary by area. When characters with different abilities joi
 
 ### 攻略秘籍
 
+### Mission 1：失踪的友人
+
+**剧情攻略**：当Robin再次回到舍伍德森林的时候，发现贵族们的蛮横让这里的人民完全生活在了疾苦之中，而Godwin也被那些该死的家伙给抓走了。据说现在Godwin被关在了Lincoln的城堡里，Robin决定只身前往那里救出自己的朋友。但是当Robin潜入城堡之后才发现，Godwin已经被转移走了，整个Lincoln城堡都成了围捕Robin的圈套。在城堡中Robin找到了Godwin的老仆人，他让他的儿子帮助Robin离开Lincolin。在他的儿子的帮助下，Robin顺利逃离了Lincolin，但是却还有更加危险的事还在等着他。
+
+**任务提示**：潜入城堡营救Godwin；找到老仆人的儿子让他帮Robin离开Lincolin。
+
+**攻略流程**：撤消自己的伪装，等城堡门口的士兵转身后再靠近他，从被后刺杀敌人会容易获胜得多（城堡内外有很多卷轴式的东西，是游戏里相关技能使用的说明，其中的意思笔者会在后面说明）。从城墙爬入城堡，可以看见城堡的指挥官就在下方。上城墙的地方有两支弓箭，这是对付那个指挥官的好道具。这里注意，一定要射得准一些，在他的周围有些士兵保护他，一般他受到攻击，那么他们就会将手中的盾牌举起来，所以两只箭的机会要好好把握。杀死指挥官之后上左边的城墙，在一个有房顶的房间里找到Godwin的老仆人，和他对话后，他儿子所在的村庄地图会打开，这时离开城堡。出去的时候会看见一个人被四个士兵在欺负，上去将这四个士兵解决掉后，那人就会跑掉。再向左沿着路走，中途有7个敌人是必须对付的，开始的三个用肉搏，剩下的四个因为聚在一起，先用弓箭射杀一个，在分别对付其它三个。战胜后就不会再有敌人出现。进入村庄，在左上角的房子外会看见开始那个被你救了的人，和他对话可以得到补血的物品。再和旁边的那个老仆人的儿子对话，就可以结束任务。
+
+**卷轴提示**：本关的卷轴都是直接出现于地图之上，而且大部分是Robin的技能。
+
+A、Robin可以通过攀越技能上下敌人的城墙，可以直接点击目的地，也可以直接将鼠标移到城墙之上。
+
+B、Robin的战斗方式一般是近身肉搏，这里的技巧是，选择敌人背对自己的时候上前攻击，在战斗的时候注意不要一直点击，鼠标不同的划向可以让Robin使用不同的剑术，不断的变化可以让战斗更加容易获胜。
+
+C、Robin威力最大的武器是弓箭，一般一箭可以射杀一个普通敌人，但是使用弓箭之前你必须从地图上获得箭支。使用弓箭可以通过点击屏幕左下角的图标实现，也可以通过快捷键g、h、j的对应实现。
+
+D、Robin需要从很多NPC那里获得信息，但是信息的获得，如果不是有特殊关系的人，则需要付出代价，一般是需要给出一定数量的金子。
+
+E、当杀死一个敌人后，记得在敌人身上进行搜查，因为这是获得物品的一个主要来源。当进入一个房间的时候，记得搜查那些箱子和袋子，这里面往往也有物品和道具。
+
+F、在游戏中，当点击某个地点后，画面上出弯曲的箭头或曲线，表示这些地方Robin可以跳跃过去。这是Robin独有的一项技能。
+
+### Mission 2：绞架上的朋友
+
+**剧情攻略**：Stutely，Robin的老朋友，现在却被挂在绞架前示众，成为那些贵族观赏亵玩的对象，并且在第二天就要被绞死。这一次Robin需要将他的朋友从绞架上救下来，但是那周围看守众多，而且个个都不是那么好对付。和Stutely一起的还有几个被抓住的人，Stutely在你救下他后要你把他们也一起救出去，因为他们可以带给你帮助。救下他们之后Stutely说大家得尽快离开，回到舍伍德森林去。在Robin的带领下，大家冲出了敌人的围追，返回舍伍德森林。
+
+**任务提示**：将Stutely从绞架上救下来；带着Stutely和Robin救下的人找到路回舍伍德森林。
+
+**攻略流程**：任务开始后Robin在城外，城中分散着一些敌人，比较多，而且在城门外左上角有一个指挥官。不要管他们，直接对付城门口的两个人。守城门的左边那个在睡觉，直接对付右边的，站在有一个钱囊的地方刚好可以用弓箭射到。杀死他后可以直接进城，不过在城门边还有一个乞丐，给他一些钱他会给你提供城内的地图。不过过去给钱肯定会惊动那个睡着的守卫，杀死他即可。进城后不能硬拼，躲开那些敌人，上城墙，可以得到弓箭，再上房顶攻击用弓箭攻击敌人就安全过了。不过当心敌人的弓箭手在下面射中你哦！如果弓箭不够的时候，在绞架附近还有两袋弓箭，可以作为补充。一般拿到弓箭后都在房顶上进行攻击，先攻击弓箭手，再攻击其它士兵。这里需要注意的是敌人中有骑士，他们的盔甲让箭是无法射中他们的，所以必须近身肉搏。战斗时用鼠标划弧，用旋转剑更容易击中敌人。杀死所有的敌人再去救下Stutely，他会让你把他身边的三个被抓的人一起救出去。这三个人都有特殊的能力，对以后的战斗会有不小的帮助。
+
+救下所有的人，Stutely说要大家一起尽快离开，回舍伍德森林。回去的道路在城市的北方，有不少士兵看守的那个城门就是出口。敌人在三个方向都有守卫，但是上下位置不同。先将最外面的敌人杀死，再趁敌人巡逻的那几个人出来时，一个个引出来干掉。特别注意城楼上的弓箭手，不解决他的话会有不少的损失。主要的几个敌人解决后出城门就是很容易的事了。出城门向北直走到一有木牌的地方，任务结束！
+
+**卷轴提示**：在救下三个人之后，他们身后会出现三个卷轴，分别说出了他们三个人的技能。其对应关系分别如下（后面还会有同职业的角色加入，名字不同，这里也仅提一次，以后不再累述）。
+
+A、Merlin Brook，弓箭手，可以使用盾牌挡住敌人的弓箭。
+
+B、Charles Fisher，医疗师，他的技能卷轴在进城门左侧桥的下方，先将那里的两个敌人解决后可以获得，这是最重要的一个技能，因为有了这个技能卷轴游戏中才可以进行补血。
+
+C、Harvey Wall，野蛮人类型，其作用是可以将死了的敌人搬到角落里去，以免让敌人发现。他在本关有两个技能卷轴，一个就在救下他后的旁边，另一个在北面城门出口右边的巷道里。第一个技能卷轴指的就是他的能力，第二个技能卷轴是指他必须通过吃肉才能恢复体力。
+
+D、Stutely，他也有两个技能卷轴，救下他后，一个会出现在南面城墙内，有一个苹果的地方，这个技能卷轴的作用是用苹果去投掷敌人的面部，再趁机攻击。另一个在北城门的出口边，是用来进攻多个敌人的投掷技能。
+
+E、捆绑技能卷轴在救下所有人后获得，可以在敌人晕倒后将敌人的双手捆住。
+
+F、倒刺技能，在敌人倒地后用特殊的武器就可以进行攻击。
+
+G、撬锁技能，有了它之后可以让任何地方的锁都形同虚设，需要特殊的人才可使用。
+
+*从这里开始将出现三个埋伏关，这里需要说明的是，并不是每个埋伏关都需要打，当选择关卡的地图上出现可进入城堡的标志的时候就表示可以跳过埋伏关，因为埋伏关的打法是大同小异，所以这里仅以前三关为例详细说明，后面的只针对必须打的埋伏关作简单介绍。
+
+### Mission 3：重返舍伍德
+
+**剧情攻略**：众人回到舍伍德森林，这里的一切都大不如前。Stutely让Robin正式开始森林的重建工作，一方面要让森林能够自己独立地发展下去，另一方面则要有足够的力量来抵御敌人的进攻。正在建造自己森林的过程中，敌人押送税金的队伍就要从舍伍德路过，这正是众多舍伍德好汉一展身手的大好时机，去吧，干掉那些贵族的走狗们！
+
+**任务提示**：操作你的人员将舍伍德森林建设好；阻截贵族的收税队伍，并夺得税金。
+
+**流程攻略**：这一关由两个小任务构成。建造是基本点。任务开始后让你的人员集中，在地图上出现了一些卷轴，可以分别派人去看看。以中央的有篝火的地方散开会有不同的建设方式，只要调一个人在附近，当他头上出现一些建设的标志的时候，他就会自己前去劳动。可以进行的恰好是5个，一个上在北边的大树下，进行疗伤药原料的采集，向下方走按顺序有4个，在左边的房子边是打造弓箭，篝火上方是食物配置，篝火上是烤肉，篝火下的苹果树是采集苹果，另外在右面有一个人是用来锻炼每个人的战斗能力的，轮流让自己的队员上前与他作战就可以了，自己不会有血的损失，所以可以放心大胆地让他们打。这个任务没有特别的要求，如果你认为你的成员们不需要锻炼，可以直接跳过，方法是集合所有的队员，全部移动到河的另一边即可进入下一个任务。
+
+出了森林，队员们会自动埋伏好，Robin先在一边准备进攻。等收税的队员过你们所在的区域时会被你们的陷阱击中而失去行动能力。敌人随后四处站好位置以防止税金被抢。这里过关的方法有两种，一是硬打，敌人不是很强，很容易就可以解决；另一种则是利用先设计好的陷阱攻击。陷阱有三个，一是树网，二是落石，三是地坑。树网的位置分布在三个地方，需要利用Robin的箭射中才能启动；落石在屏幕的左上角，需要使用Harvey Wall的力量去推动；地坑就比较简单了，把敌人引到左边有明显标记的三个圆圈旁就可以了。这里要注意的就是，由于使用的武器只有箭是纯杀伤力的，所以其它攻击都只能将敌人击晕。打晕敌人之后立刻让Stutely用他的技能将敌人全部捆起来，这样就可以将敌人全部制服。解决掉所有的敌人之后再去车的位置，让Robin拿到税金任务就完成了！
+
+**卷轴提示**：这里的卷轴和前两关有不少重复，在这里不再对已经出现的多说。
+
+A、森林旁边有河，但是钓鱼的效率实在不怎么样，还是先做一个鱼网再去为好。
+
+B、地图右边是一排箭靶，这是队伍中两位弓箭好手练箭术的好地方。
+
+C、所有人恢复体力的最好方法是一起到餐桌边好好地吃上一顿。
+
+D、抢夺税金的时候，建议不要硬打，如果用箭直接射敌人呢，则站在网的背后，这样可以避免被敌人发现。
+
+E、树网是很好的道具，这样可以同时解决三个不同位置的敌人。
+
+F、以一个人去吸引敌人，可以将敌人引到事先设计好的陷阱中。
+
+G、让Harvey Wall从另一侧上山，可以用落石攻击敌人。
+
+H、在发现有树网的地方，可以让人爬上去，砍掉树网将被网住的敌人弄到地上。
+
+### Mission 4：持续的抢劫
+
+**剧情攻略**：森林的建设进入了新的阶段，在这平常的日子里，所有的人都在一起辛勤地工作着。随着舍伍德森林对抗贵族的事迹传播到其它地区，越来越多的人加入到了Robin的队伍中。这些人在一起建设着舍伍德。但是还是有很多贵族的抢掠活动威胁着众多的贫民，Robin需要让自己的侠义升级。
+
+**任务提示**：继续建设舍伍德森林；抢劫经过舍伍德的收税车。
+
+**流程攻略**：本关和上一关是大同小异，同样是先建设一阵，然后召集大家去抢劫税金车。不过因为有5个新的伙伴加入，而游戏只允许出动五个人作战，所以需要先决定出动的人。游戏中是以先过小木桥的5个人来规定出动的人员的。
+
+抢劫过程中，人员埋伏的位置各不相同，但是因为是在同一地图上，所以场景中的陷阱位置都是一样的，不过这一次敌人的实力比以前有所增加，所以一定要小心。充分利用陷阱之后再和敌人打。如果实在不想攻击敌人，派人将税车周围的人引开，再让人上去将税金拿走也可以完全任务。
+
+**卷轴提示**：无！
+
+### Mission 5：拿金子的人
+
+**剧情攻略**：传闻有一个权贵带着大量的钱从舍伍德经过，这样的机会不能错过。还是去埋伏他吧。他不是在那里正和某人对话么，别管他多少守卫，先拿下他再说。
+
+**任务提示**：抢夺金子。
+
+**流程攻略**：出舍伍德之前屏幕上有七个格子，后五个代表自己选择的队员。前两个表示本关需要的人的能力。当前两个格子内打上勾后再出动，否则任务就无法完成了。埋伏开始后，先冲一个人上去，他周围的人会冲出来抓你，你的人会自动跑开，将敌人弄进陷阱里。但是敌人还有不少，还有几个陷阱可用。之后就用你的队员来打吧，看到队员的位置和哪里的敌人比较靠近就出动哪个。敌人分得比较散，所以很容易对付。战胜全部的敌人后就剩那个拿金子的人了，让Robin上去给他一拳，将他打晕之后就能得到金子了。
+
+**卷轴提示**：无！
+
+### Mission 6：吃力的伏击
+
+**剧情攻略**：埋伏已经成了家常便饭，一旦收到有什么收税的队伍要从舍伍德经过，Robin总会带着自己的成员们出击。但是遭遇的敌人却是越来越强。
+
+**任务提示**：抢夺金子。
+
+**流程攻略**：这一关和上一关大同小异，不同的是敌人中出现了一个重剑手和一个骑士。这两个人是最棘手的。观察自己队员的位置，上下方向埋伏的都有，先让一个队员将路上的人引到石头后面解决，再让上面的两个队员出动，把桥上的敌人都引过去，这时派两个队员从树桥上过去，先解决掉重剑手，再去对付骑士，这里有两个选择，一是解决掉骑士再去抓拿金子的人，另一个则是用一个人拖住骑士，让Robin去打晕拿金子的人，再抢走金子以完成任务。需要注意的是，重剑手和骑士对付起来很麻烦，一不注意就会死掉一个。多迂回一下，硬碰会很吃亏。
+
+**卷轴提示**：无！
+
+### Mission 7：旧日情人
+
+**剧情攻略**：还记得Marian吗，那么与Robin深深相爱的女人。但是Robin不知道她现在究竟在什么地方了。现在能做的就是前往Nottingham找到她。来到Nottingham，一进村就有一个妇人向Robin哭述自己的不幸，原来她的儿子被抓走，就快处以绞刑了。帮帮这位可怜的妇人吧，她的儿子被绑在城外左边的绞架上，去干掉左右的敌人，把她的儿子救下来带回去给她。为了报答Robin，她给了Robin一些物品，但是她也不知道Marian究竟在什么地方。进城去后会有一个乞丐，给他钱他会告诉你Marian不在她的家里，她被Sheriff请去吃晚饭了，就在Sheriff的城堡里。可是晚上的时候城堡防守重重，进去的话实在是不明智的选择。从另一个乞丐那里知道Marian每天晚上会去教堂做祈祷。来到教堂将神甫打晕了，Robin假扮神甫终于和心爱的Marian见面了，可是此时此景却不允许两人多说，匆匆数语之后两人告别，Robin和自己的伙伴撤出了Nottingham。
+
+**任务提示**：救出老妇人的儿子；找到Marian。
+
+**流程攻略**：这一关不要在城内冲得太深了，救老妇人的儿子属于分支任务，可以不打。进城之后解决乞丐附近的敌人，再给乞丐钱就能得到情报，但是情报的卷轴在北面一点，得过去解决那边的敌人才可以拿到。再询问教堂外的乞丐可以知道Marian在Sheriff的城堡里，再去地图右上角的乞丐那里知道可以去教堂见到Marian。到教堂打晕神甫，把他搬到右下角的房间里，Robin再去右上角的房间就可以触发剧情。与Marian见面之后就可以回舍伍德了。
+
+**卷轴提示**：
+
+A、Marian的房子就在进城后左边的那间，但是这个时候她却不在。
+
+B、Marian今天晚上被Sheriff邀请去吃晚饭了，必须进入城堡才能找到她。
+
+C、Marian每天都会习惯去教堂，只要在那里等待一定可以见到她。
+
+### Mission 8：被囚禁的亲人
+
+**剧情攻略**：最近总是有很多让人不高兴的事，Robin的侄子Will Scarlet被抓去关在了城堡的地牢里，必须得把他救出来才行。城堡到了晚上都关得死死的，但是可以爬进去的，可是进去了也没办法知道Will Scarlet究竟被关在什么地方。在城外找到一个乞丐，给他一些钱终于知道Will Scarlet被关在城堡西边塔楼的最下层。现在考虑如何潜入城堡了。Robin先潜入城堡将城堡的门打开，然后让同伴进去，直接攻向西边的塔楼救出Will Scarlet，但是他告诉你当初自己所有的一切都被Sheriff拿走了，除了一本只有Robin才可以看懂其中文字的书。先不要说这么多了，想办法离开要紧。这时去城堡北面出现卷轴的地方，这里有一条秘密通道可以直接潜出城去。
+
+**任务提示**：救出Will Scarlet。
+
+**流程攻略**：能爬上城墙的位置在城堡的右边，但是路上有不少敌人。解决掉之后在有卷轴的地方就是上城墙点。爬上之后直接去城门正上方的房子，砍掉其中的缆绳就可以将城门打开。不过先别让自己的伙伴进去，因为你杀死的人可以将敌人引出来，如果自己进去消灭敌人的话难度要大得多。这里要注意从右边门里出来的敌人，其中有不少弓箭手，可以先让Robin围在门口一口气将他们全部解决，否则等他们分散了就比较麻烦。城外的伙伴解决冲出城的敌人即可。全部解决之后进城堡左边的门口将缆绳砍断就可以上城楼，城楼上的缆绳砍断后通往城堡背后的道路就会出现。沿着路出去给乞丐钱可以得到一个卷轴，这就会告诉你Will Scarlet究竟被关在什么地方。地点是在西面塔楼的最下层，这里需要注意的是，以上的这一步和以下一步可以颠倒顺序，如果你先不进城，直接从城外去找乞丐也是可以的，但是最后还是要以同样的方法攻进城堡去。到西边的塔楼后让有开锁技能的人去将门打开就可以救出Will Scarlet。如果开始打开了出城的门，可以直接攻出城去，到东边有木标牌的地方即可过关，也可以通过城里的密道直接从东边的房子里出来离开。
+
+**卷轴提示**：
+
+A、通过Robin的攀爬技术就可以进入城堡内。
+
+B、Will Scarlet被关在了一个秘密的地方，这个地方就在西面塔楼的最下层，但是需要有开锁技能的人前往才能将他救出来。
+
+C、Will Scarlet的技能有两大类，一是用弹弓攻击敌人，一是用擒拿手，后者需要从敌人的背后直接将敌人捏杀。
+
+D、城堡下有一条可以潜出城堡的通道，让队员们走进去他们自己就可以通过密道。
+
 ### Mission 9：国王的权杖
+
 **剧情攻略** ：Marian听说John王子来到了Derby，决定前去找王子以寻找营救理查德国王的方法，但是王子是不会接见一般的人的，而且Sheriff公爵还派了很多的人来保护王子。只有除掉那些护卫才能靠近王子了。来到Derby，潜入城中，发现王子和那些权贵们在城堡的顶层上开会。只有强攻进去才是办法，但是当大家都到了那间会议室之外时，Marian偷听到了房间里的谈话，原来敌方要英格兰以10万英镑的赎金去赎回理查德国王，但是大权在握的John王子和Sheriff公爵怎么愿意将到手的权势再让出去呢？在房间里他们决定对此事置若罔闻，并让John王子来做国王。听到这个消息后Robin等人大为震惊，但是唯有救出理查德国王才是可行的方法。Robin决定自己去筹集赎金，但是也不能让John等人的阴谋得惩。所幸的是，象征英格兰国王权利的权杖就在这座城堡内，只要找到他这帮阴险小人就暂时没什么办法了。以最快的速度从城堡里找到了权杖，并带者它离开城堡，其它的让那些阴谋者着急去吧！   
 
 **任务提示** ：偷听John王子的会议谈话；找到并夺取国王的权杖。   
@@ -237,6 +522,7 @@ B、城堡内必须解决的敌人只有左边一线，其它的大部分可以�
 C、国王的权杖放在城堡的大厅中，有不少人守护，得把它夺过来。   
 
 ### Mission 10：筹集赎金
+
 **剧情攻略** ：权杖成功地从John王子那里夺了回来，但是他已经开始派人开始大规模的搜查活动。只拿到去权杖不是长远的办法，得尽快把理查德国王救回来。为了筹集到足够的赎金，只有再次从那些过往舍伍德森里的权贵们的车队入手了。   
 
 **任务提示** ：抢劫税金。   
@@ -247,6 +533,7 @@ C、国王的权杖放在城堡的大厅中，有不少人守护，得把它夺�
 A、保护好权杖，但是更重要的是尽快筹集到需要的赎金。   
 
 ### Mission 11：坚强的勇敢者
+
 **剧情攻略** ：在又一次的抢劫过程中，在那个并不陌生的村子里Robin遇上了一个被处罚的勇敢者，他的名字叫Little John，因为反抗那帮狐假虎威的热正被爪牙们凌辱着。得把他救出来。   
 
 **任务提示** ：把勇敢者John救出来。   
@@ -256,6 +543,7 @@ A、保护好权杖，但是更重要的是尽快筹集到需要的赎金。
 **卷轴提示** ：无！   
 
 ### Mission 12：投降者
+
 **剧情攻略** ：Robin收到Ranulph的来信，希望Robin能亲自前往他的城堡一趟，有要事相商。仔细考虑之后，Robin和Marian还是决定一行，地点就是曾经关押过Will的那个城堡。但是由于这次会见是秘密进行的，所以Robin无法光明正大地进入城堡。好不容易偷偷地潜入后，又避开了大量巡逻的敌人才终于见到了Ranulph。Robin不仅成功地说服了他，还让他帮助自己得到了特殊的道具Dommsday Book。此行的目的也达到了，Robin和Marian离开了城堡。   
 
 **任务提示** ：不伤害一人见到Ranulph；拿到Dommsday Book；不伤一人离开城堡。   
@@ -267,6 +555,7 @@ A、进入城堡的方法有很多种，不过最好先解决掉右边塔楼上�
 B、Dommsday Book很重要，离开之前一定要拿到它。   
 
 ### Mission 13：Godwin的城堡
+
 **剧情攻略** ：Nottingham传来了让人震惊的消息，Cuisbourne发动叛乱，原来的领主Godwin被囚禁了起来，现在的Nottingham陷入了恐慌之中。只有将Godwin救出来这场叛乱才会解决。再次来到久违的Nottingham，通过城外的乞丐知道Godwin被关在Nottingham的地牢里，而那个地牢周围全是硬石头，只有从内部进入。进入城后终于见到了Godwin，但是但是他受了伤无法离开，他发出消息让城内还忠于自己的士兵们一起配合Robin的行动，虽然最后夺取了Nottingham，但是还是被Cuisbourne逃掉了。   
 
 **任务提示** ：找到Godwin，夺取Nottingham。   
@@ -277,6 +566,7 @@ A、关押Godwin的地方只可能有一个，那就是城堡最下端的地牢�
 B、用卷轴召集城堡内的士兵开始反攻。   
 
 ### Mission 14：村庄里的富人
+
 **剧情攻略** ：最近村庄里有一个很有钱的人来到了，从他那里抢上一次一定可以收获不小。现在是村子里保护他的人最少的时候，出发吧。   
 
 **任务提示** ：抢夺金子。   
@@ -286,6 +576,7 @@ B、用卷轴召集城堡内的士兵开始反攻。
 **卷轴提示** ：无！   
 
 ### Mission 15：神甫的召唤
+
 **剧情攻略** ：Marian通知Robin，说以前帮助过自己的神甫被Derby的Scathlock抓起来了，她请求Robin去救出神甫。可是来到Derby才知道这里守卫森严，根本不知道神甫被关在了什么地方。问问城门外Robin的崇拜者才知道在大厅附近可能能得到一些信息。里面守卫太多了，如果一起进去的话实在危险，让Robin和Will一起进去吧。解决掉大部分守卫之后发现神甫就在城堡右上方，他被吊在了空中。上去的时候发现他已经被饿得够呛，赶紧把他放下来，他告诉你John王子还在这里，和他一起来到会议室外，通过偷听知道原来他们阴谋让Godwin用领土为代价来交换国王。这个消息地赶快告诉Godwin，趁着天黑，众人离开了Derby回到了舍伍德。   
 
 **任务提示** ：救出神甫。   
@@ -299,6 +590,7 @@ B、神甫在士兵中一直有比较好的声誉，如果神甫给士兵水喝�
 *以下是力量收集关，因为关卡要求为将三大力量盾（这是为了叙述方便而给出的一个抽象的说法，一个力量之盾代表一个小任务，有时一个任务可以完成多个力量之盾）符号收集齐就可以过关，所以将其作为一关来进行讲解。请注意参考**流程攻略** 中的过关方法。   
 
 ### Mission 16：反攻的力量
+
 **剧情攻略** ：Robin的行为开始让John王子和Sheriff公爵震怒，在Lincoln等地已经开始集结大量的力量来准备攻击Robin，但是Godwin一方也开始着手准备着营救国王的行动。为了保证营救计划顺利，Robin等人必须在John的军队集结之前将所有的力量重新整备！   
 
 **任务提示** ：收集到三个力量之盾。   
@@ -307,6 +599,7 @@ B、神甫在士兵中一直有比较好的声誉，如果神甫给士兵水喝�
 **卷轴提示** ：无！   
 
 ### Mission 17：Marian之吻
+
 **剧情攻略** ：自从神甫被Robin救出来后，还留在Nottingham的Marian就一直处于了Sheriff的监视之中。最近传出消息，Nottingham内将举行一次射箭大赛，获胜者将可以得到Marain的吻。但是这怎么能被Robin所允许呢？Robin独自潜入城去，化装之后与参赛者比赛赢得了冠军，但是这却让别人认出了他的身份，Sheriff认出了他，在自己与Robin的剑术比赛失败后，他的士兵开始追捕Robin，Robin奋力逃离了包围圈找到了Marian，并在她的帮助下找到了另外几个愿意加入舍伍德的人，还在教堂中夺取了权利之剑。在众人的努力下Robin成功回到了舍伍德。   
 
 **任务提示** ：赢得射箭比赛；战胜Sheriff；与Marian一起去找到三个同伴；夺取权利之剑并离开；   
@@ -318,6 +611,7 @@ B、神甫在士兵中一直有比较好的声誉，如果神甫给士兵水喝�
 *以下又是一次力量盾牌的收集关，方法与前面相同，这里不再累述，依据前面的打法即可过关。   
 
 ### Mission 18：无耻的婚姻
+
 **剧情攻略** ：在Robin脱离了Nottingham之后，John王子又想出了一条毒计，让Marian与Guisbourne结婚，这无耻的婚姻让Robin感到气愤，马上前往阻止才行。来到城堡内，却发现婚礼里外的防守都极其森严。问了一个乞丐后知道教堂附近聚集了众多的敌人。这是一场艰苦的战斗，一步步地靠近了教堂，那该死的Guisbourne又来阻止。击败他后，Robin也受了一些轻微的伤，但是因为不是很重，所以不碍事，Marian让大家赶快离开城堡。出去的道路已经被清理了，放心地走吧！   
 
 **任务提示** ：阻止Marian婚礼的举行！   
@@ -349,6 +643,7 @@ A、广场上被示众的是一个可怜人，请一定要救下他。
 B、要救Robin必须进入到城堡内部去寻找。   
 
 ### Mission 21：John的阴谋
+
 **剧情攻略** ：Robin收到来自Allan的来信，让Robin无论无何前往York一趟，有要事相商。Robin和伙伴门趁夜来到了York，见到Allan之后，才知道原来John王子在York正在召开一次秘密会议，但是看情况并不是什么好事。他希望Robin能去知道John究竟有什么样的阴谋。John开会的地方在城堡内，潜入城堡后，Robin一个人来到了会议室外，偷听到了里面的谈话，原来被俘的理查德国王被要求在一个月交付所有的赎金，但是John不但不付，还让Longchamps写信说绝对不会付对方一份钱。这件事最后交给了Longchamps去全权负责。这怎么行，一定要阻止他？在John离开后，Robin冲进了会议室杀死了Longchamps，而Allan也在这时进来，Robin让他穿上Longchamps的衣服继续装成办事的样子以防出现意外，而自己则和伙伴们一起带走Longchamps的尸体，这样就不会留下什么蛛丝马迹。趁着夜幕，Robin一行人离开了York。   
 
 **任务提示** ：去见Allan；偷听John的会议谈话；阻止Longchamps的计划；带走Longchamps的尸体。   
@@ -360,6 +655,7 @@ B、要救Robin必须进入到城堡内部去寻找。
 *接下来是两个埋伏关和一个力量之盾关，打法和前面相同，这里仅提供力量之盾关的任务攻略。   
 
 ### Mission 22：York攻防战
+
 **剧情攻略** ：Godwin的联盟军队终于开始进攻York了，但是他的军队遇到了麻烦，他需要Robin的帮助才能够攻进城堡。Robin带着伙伴来到城堡内，率先打开了三个城门，让Godwin的军队顺利地攻陷了York城。   
 
 **任务提示** ：开启三个主城门；消灭两个主通道桥上的敌人；将己方的旗帜升上城堡的顶端；在教堂敲响胜利的钟声。   
@@ -373,6 +669,7 @@ B、在教堂敲响胜利的钟声。
 *接下来是一个必打的埋伏关和力量之盾关，其中力量之盾关通过打三个小埋伏关可以完成，均没有太大的难度，请读者自行参照前面的方法过关。   
 
 ### Mission 23：Robin的裁决
+
 **剧情攻略** ：John王子终于忍受不了Robin的对抗而下决心要扫平舍伍德，所以他来到了Nottingham准备亲自监督。但是这对Robin等人来说却是最好的机会，因为Nottingham就在舍伍德之外，这是抓住John以他来换取理查德国王的最好时机。但是Nottingham里戒备森严，要靠近城堡中心实在是一件很难的事。这一次Robin将自己的成员们分成了三组，分别从不同的方向进攻以牵制敌人的注意力。在伙伴们的帮助下Robin成功地进入了城堡，杀死Sheriff后，John无奈之下只得心甘情愿地成为了Robin的阶下囚。扰乱国家的政权覆灭了，理查德国王也最终回到了英格兰。   
 
 **任务提示** ：俘虏John；杀死Sheriff。   

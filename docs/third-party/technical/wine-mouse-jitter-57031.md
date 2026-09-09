@@ -7,13 +7,11 @@
 - **Thread last active:** March 19, 2026 (in the retrieved page’s thread data)
 - **Language:** English
 
-## Editorial notes
+## Captured messages
 
-The supplied HyperKitty HTML contains the first message and a JavaScript lazy-load placeholder for the replies. The supplied TXT rendering contains the same first message and thread metadata, but no reply bodies. The Bugzilla page was unavailable behind an Anubis proof-of-work wall in the supplied retrieval.
+The supplied browser capture contains the first message and eight replies/events. The message bodies below retain the captured text, links, authors, dates, and times, with only the Bugzilla mail footer and HyperKitty page chrome removed.
 
-## Original text
-
-#### First message — WineHQ Bugzilla, August 3, 2024, 6:21 p.m.
+### Message 1 — WineHQ Bugzilla — August 3, 2024, 6:21 p.m.
 
 <https://bugs.winehq.org/show_bug.cgi?id=57031>
 
@@ -40,33 +38,137 @@ The supplied HyperKitty HTML contains the first message and a JavaScript lazy-lo
 > WINE-9.1-staging to 9.0 stable version and it doesn't tremble anymore, but now
 > it has some lag when exit from pause: see Bug 39513).
 
-#### End of captured first message
+### Message 2 — WineHQ Bugzilla — August 4, 2024, 10:31 a.m.
 
-### Editorial research notes — unavailable reply bodies
+<https://bugs.winehq.org/show_bug.cgi?id=57031>
 
-The following are **unverified editorial research notes**, retained to record the available thread metadata and findings. They are not captured source text: the mapped HTML contains only a lazy-load placeholder for the replies, and the mapped TXT contains no reply bodies.
+Béla Gyebrószki <gyebro69(a)gmail.com> changed:
 
-1. **August 4, 2024, 10:52 a.m. — Flaubert, Comment #2.** The failing version is also Wine 9.14 staging. Wine 9.0 (the system package on Ubuntu 22.04) works, with only the occasional “lag after pauses” bug.
+```text
+           What    |Removed                     |Added
+----------------------------------------------------------------------------
+                URL|                            |https://archive.org/downloa
+                   |                            |d/RobinHoodTheLegendOfSherw
+                   |                            |oodDemo/Setup_us.exe
+                 CC|                            |gyebro69(a)gmail.com
+           Keywords|                            |download
+```
 
-2. **February 25, 2026, 9:37 p.m. — Lukáš Linhart (`l.linhos@gmail.com`).** Adds himself to CC. No comment text is available in the supplied source files.
+--- Comment #1 from Béla Gyebrószki <gyebro69(a)gmail.com> ---
 
-3. **February 25, 2026, 10:26 p.m. — joaopa (`jeremielapuree@yahoo.fr`), Comment #3.** Adds himself to CC and confirms the bug with Wine 11.3.
+I'm pretty sure the problem is there in vanilla Wine too as anyone can test and
+reproduce the problem with the demo version:
+<https://archive.org/download/RobinHoodTheLegendOfSherwoodDemo/Setup_us.exe>
 
-4. **February 27, 2026, 7:26 p.m. — Lukáš Linhart, Comment #4.** Reverting the changes from commit `5b833c83beadcad2ace5f27e95554c164f6f7c86` on the current master branch and rebuilding makes the problem disappear. He says a fix now needs someone who understands queue processing.
+`Setup_us.exe  (81 M)`
 
-5. **March 15, 2026, 10:58 a.m. — y5kXCS6RgtQp (`jacobbrett+winehqbugs@jacobbrett.id.au`), Comment #5.** Adds himself to CC. He suspects a relation to a similar issue with *Star Trek: Away Team*, which works with Wine 8.6 but breaks similarly under Wine 10/11.
+`md5sum: a8c4df5cbf009f3381ba582e6fe6c5f2`
 
-6. **March 15, 2026, 11:00 a.m. — y5kXCS6RgtQp, Comment #6.** Corrects the previous comment: the similar issue is with *Starship Troopers: Terran Ascendancy*, not *Star Trek: Away Team*; the test results had been mixed up.
+As for being a regression, I ended up my regression test with this (between
+wine-9.3 and 9.4):
 
-7. **March 19, 2026, 10:56 p.m. — Antoine Le Gonidec (`accounts.winehq@vv221.fr`).** Adds himself to CC. No comment text is available in the supplied source files.
+`commit 5b833c83beadcad2ace5f27e95554c164f6f7c86`
 
-### Thread metadata
+`server: Stop waiting on LL-hooks for non-injected input.`
+
+I must say, even before that commit there was something odd about the way the
+mouse pointer moved when I alt-tabbed and back to the game window in virtual
+desktop mode, but commit 5b833c83 is the one which makes the problem highly
+noticeable.
+
+`wine-9.14-99-geb7bbf9858b`
+
+`X.Org X Server 1.21.1.13`
+
+### Message 3 — WineHQ Bugzilla — August 4, 2024, 10:52 a.m.
+
+<https://bugs.winehq.org/show_bug.cgi?id=57031>
+
+--- Comment #2 from Flaubert <flaubertSt(a)gmail.com> ---
+
+Versión that fails forms is also 9.14 (staging). Versión 9.0 (system, in Ubuntu
+22.04) works with just ocasional  "lag after pauses" bug.
+
+### Message 4 — WineHQ Bugzilla — February 25, 2026, 9:37 p.m.
+
+<http://bugs.winehq.org/show_bug.cgi?id=57031>
+
+Lukáš Linhart <l.linhos@gmail.com> changed:
+
+```text
+                 What    |Removed                     |Added
+----------------------------------------------------------------------------
+                 CC|                            |l.linhos@gmail.com
+```
+
+### Message 5 — WineHQ Bugzilla — February 25, 2026, 10:26 p.m.
+
+<http://bugs.winehq.org/show_bug.cgi?id=57031>
+
+joaopa <jeremielapuree@yahoo.fr> changed:
+
+```text
+           What    |Removed                     |Added
+----------------------------------------------------------------------------
+                 CC|                            |jeremielapuree@yahoo.fr
+```
+
+--- Comment #3 from joaopa <jeremielapuree@yahoo.fr> ---
+
+I confirm the bug with wine-11.3
+
+### Message 6 — WineHQ Bugzilla — February 27, 2026, 7:26 p.m.
+
+<http://bugs.winehq.org/show_bug.cgi?id=57031>
+
+--- Comment #4 from Lukáš Linhart <l.linhos@gmail.com> ---
+
+I confirm that after reverting the changes from commit
+5b833c83beadcad2ace5f27e95554c164f6f7c86 and building the current master
+branch, the problem disappeared.
+
+Now it's up to someone who understands queue processing to come up with a fix.
+
+### Message 7 — WineHQ Bugzilla — March 15, 2026, 10:58 a.m.
+
+<http://bugs.winehq.org/show_bug.cgi?id=57031>
+
+y5kXCS6RgtQp <jacobbrett+winehqbugs@jacobbrett.id.au> changed:
+
+```text
+           What    |Removed                     |Added
+----------------------------------------------------------------------------
+                 CC|                            |jacobbrett+winehqbugs@jacob
+                   |                            |brett.id.au
+```
+
+--- Comment #5 from y5kXCS6RgtQp <jacobbrett+winehqbugs@jacobbrett.id.au> ---
+
+I suspect this issue is related to a similar issue with Star Trek: Away Team.
+Working normally with Wine 8.6, but broken in a similar fashion under Wine
+10/11.
+
+### Message 8 — WineHQ Bugzilla — March 15, 2026, 11 a.m.
+
+<http://bugs.winehq.org/show_bug.cgi?id=57031>
+
+--- Comment #6 from y5kXCS6RgtQp <jacobbrett+winehqbugs@jacobbrett.id.au> ---
+
+Excuse my last comment, I meant to say "similar issue with Starship Troopers:
+Terran Ascendancy". -- I mixed up my test results.
+
+### Message 9 — WineHQ Bugzilla — March 19, 2026, 10:56 p.m.
+
+<http://bugs.winehq.org/show_bug.cgi?id=57031>
+
+Antoine Le Gonidec <accounts.winehq@vv221.fr> changed:
+
+```text
+           What    |Removed                     |Added
+----------------------------------------------------------------------------
+                 CC|                            |accounts.winehq@vv221.fr
+```
+
+## Thread metadata
 
 The HyperKitty page reports **8 comments** and **2 participants**, both displayed as “WineHQ Bugzilla.” It also reports an age of 767 days and last activity 174 days ago in the captured page data.
-
-### Gaps and related references
-
-- Bugzilla **Comment #1** is not part of the supplied HyperKitty thread: the thread jumps from the creation mail to Comment #2. The conversion notes attribute to Béla Gyebrószki a reproduction with the demo and a bisection to commit `5b833c83beadcad2ace5f27e95554c164f6f7c86` between Wine 9.3 and 9.4, while noting earlier pointer oddities. That report is not present in the supplied thread files and the Bugzilla page could not be read.
-- No supplied message reports a fix or a status change away from **UNCONFIRMED**.
-- Wine versions named in the available material are 9.0 (works, with pause lag), 9.1 staging and 9.14 staging (fail), and 11.3 (fails). The related-game comparison names Wine 8.6 versus 10/11.
-- Bug 39513 is cited by the first message for the pause-exit lag, but its page was not supplied.

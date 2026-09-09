@@ -145,8 +145,10 @@ El Huevo.
 
 **xXDylanXWithinXx [author] — 8 Oct, 2021 @ 10:22am:** Some of these items are pretty hidden, and they are very easy to miss.
 
-The page reports 11 comments, but the mapped HTML contains these 10 comment entries; no additional comment text is available in the supplied original.
+**clem — 6 Oct, 2021 @ 2:00pm:** didnt expect that sixth item exist ;-;
+
+The page reports 11 comments. The original first-page capture contains 10 comments, and the designated recovery capture `originals/recovery/steam-secret-retry-p2.browser.html` supplies the additional comment above; together they yield 11 unique comments.
 
 ## Source
 
-Steam Community guide: “Robin Hood: How to get the secret ending,” by xXDylanXWithinXx. Converted from `originals/guides__steam-secret-ending.html` (with `originals/guides__steam-secret-ending.txt` used as a rendering aid). Steam navigation, account controls, ratings, awards, and unrelated footer material have been omitted. The source’s Ampulla step-by-step instructions are image-only; the original image is preserved above, but its text cannot be transcribed from the supplied files.
+Steam Community guide: “Robin Hood: How to get the secret ending,” by xXDylanXWithinXx. Converted from `originals/guides__steam-secret-ending.html` (with `originals/guides__steam-secret-ending.txt` used as a rendering aid), with the missing comment recovered from `originals/recovery/steam-secret-retry-p2.browser.html`. Steam navigation, account controls, ratings, awards, and unrelated footer material have been omitted. The source’s Ampulla step-by-step instructions are image-only; the original image is preserved above, but its text cannot be transcribed from the supplied files.

@@ -1,6 +1,8 @@
 # Gamez.ru — Robin Hood: The Legend of Sherwood
 
-**Source:** [Gamez.ru](https://www.gamez.ru/sol/4233.htm) · **Author:** Olegatop · **Date:** 16:7:2004 · **Document type:** Solution · **Available page:** 1 of 3
+**Source:** [Gamez.ru, archived combined page](https://web.archive.org/web/20100227030859/http://www.gamez.ru/sol/4233_full.htm) · **Author:** Olegatop · **Date:** 16:7:2004 · **Document type:** Solution
+
+**Capture:** `originals/guides__gamez-russian-manual.html`, supplied 2026-09-09. All eleven captured sections are included. Despite its `full.htm` name, the article ends mid-sentence at “Самое время найти” (“It is time to find”), followed by the author/date and site footer. No continuation is present or reconstructed.
 
 ## English translation
 
@@ -104,7 +106,7 @@ If you brought several other people on the operation besides Robin, it is better
 
 ### Робин Гуд: Легенда Шервуда
 
-**Тип документа:** Solution · **Страницы:** 1 из 3  
+**Тип документа:** Solution · **Страница:** full (сохранённый текст обрывается)  
 **Автор:** Olegatop  
 **Дата:** 16:7:2004  
 **Источник:** [Gamez.ru](https://www.gamez.ru/sol/4233.htm)
@@ -203,4 +205,4 @@ If you brought several other people on the operation besides Robin, it is better
 
 Если, кроме Робина, вы взяли на операцию еще нескольких человек, лучше оставить их на рыночной площади и некоторое время действовать в одиночку. Шагайте подворотнями до восточного моста через реку, стараясь не ввязываться в склоки с патрулями. Около моста оглушите охранника, подойдите к стенам форпоста и с небольшой балюстрады прыгните на крышу мастерской возле южной стены. С крыши переберитесь на стену форпоста и направляйтесь к северной башне, попутно расстреливая из лука немногочисленных часовых. Оказавшись в башне, быстрым движением руки меняйте флаг и ждите развития событий. Так, отлично, солдаты у церкви заподозрили неладное, "черные стражи" со своим военачальником побежали за подкреплением, а все прочие устремились к форпосту. Самое время найти
 
-_Примечание о доступности источника: сохраненная каноническая full.htm-запись обрывается внутри последнего предложения («Самое время найти»); продолжение, авторская строка и навигация в захвате отсутствуют и не реконструируются здесь._
+_Примечание о доступности источника: текст статьи на сохранённой странице full.htm обрывается внутри последнего предложения («Самое время найти»). Далее следуют имя автора, дата и служебная часть сайта; продолжение статьи отсутствует и не реконструируется здесь._

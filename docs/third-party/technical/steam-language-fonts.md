@@ -4,8 +4,8 @@
 - Author: Psojed
 - Published: 1 April 2018, 3:58 a.m.
 - Source language: English and Czech
-- Retrieval: Full guide body retrieved from `originals/technical__steam-language-fonts.html` on 9 September 2026
-- Comments: 10 comments are present in the captured HTML; the page reports 16 comments total, so six comments are not present in the supplied capture.
+- Retrieval: Full guide body and all comments retrieved from `originals/recovery/steam-fonts-p1.browser.html` and `originals/recovery/steam-fonts-p2.browser.html` on 9 September 2026
+- Comments: 16 unique comments captured across the two paginated sources (16 comments reported).
 
 ## English translation
 
@@ -73,39 +73,39 @@ However, when the game is installed, it defaults to only 800x600 resolution, so 
 
 That's all, enjoy!
 
-### Comments (10 captured of 16 reported)
+### Comments (16 captured of 16 reported)
 
-#### I am Cornholio !!! — 29 January 2026, 2:00 p.m.
+#### I am Cornholio !!! — 29 January 2026, 11:00 p.m.
 
 “Thank you, it works.”
 
-#### sewca7 — 7 December 2025, 10:57 a.m.
+#### sewca7 — 7 December 2025, 7:57 p.m.
 
 “Hi, is it possible that the intro does not work because of the Czech installation?”
 
-#### General_Targus — 1 September 2025, 7:30 a.m.
+#### General_Targus — 1 September 2025, 4:30 p.m.
 
 “It works great for the GOG version too! You are a legend, sir!”
 
-#### Kafkyns — 19 August 2025, 2:23 p.m.
+#### Kafkyns — 19 August 2025, 11:23 p.m.
 
 “Does Czech still exist for the game?”
 
-#### Wala — 26 November 2024, 2:19 p.m.
+#### Wala — 26 November 2024, 11:19 p.m.
 
 “Hi, hopefully you will read this someday, but I have a problem with your Czech installer.
 
 Even after installing it, my game runs in English... could you take a look at it?”
 
-#### TahniDoPekla — 22 June 2024, 2:30 p.m.
+#### TahniDoPekla — 22 June 2024, 11:30 p.m.
 
 “Hi, everything was done according to the instructions and Czech has no diacritics... the two folders Fonts and Fonts_EN are there ... I somehow don't know where to look for the hidden problem..”
 
-#### Macchester92 — 25 May 2023, 6:31 a.m.
+#### Macchester92 — 25 May 2023, 3:31 p.m.
 
 “I'm trying to run the game on MacOS Mojave (10.14), and all seems good but the language is stuck to Deutsch. Steam settings show the language is set to English. I tried to find some config in the files to change it manually, however was unable to find anything. Does anybody know any trick to make it run in English?”
 
-#### Emotikon — 29 May 2020, 11:13 a.m.
+#### Emotikon — 29 May 2020, 8:13 p.m.
 
 “In the end I found a solution for implementing both Czech and the performance fix.
 
@@ -116,15 +116,37 @@ Even after installing it, my game runs in English... could you take a look at it
 5. Confirm and close the program.
 6. Start the game normally from then on — everything is in Czech, including diacritics, and there are no FPS drops.”
 
-#### Emotikon — 29 May 2020, 9:44 a.m.
+#### Emotikon — 29 May 2020, 6:44 p.m.
 
 “Thanks a lot for the guide! However, diacritics do not work for me either. Is it possible that the performance fix is causing trouble? Without it the game is unplayable for me.”
 
-#### Psojed — 13 April 2020, 4:41 a.m. (author)
+#### Psojed — 13 April 2020, 1:41 p.m. (author)
 
 “King slayer. Diacritics require you to use a font that supports Czech characters. My installer includes them. I just tried installing the game on Steam and then installing the contents of my installer, and I have the game in Czech with diacritics and the correct font, so the error must be somewhere on your end.
 
 Look in `Steam\\steamapps\\common\\Robin Hood\\DATA\\Interface`; the fonts are stored there. After applying my installer, there should be two folders there, `Fonts` and `Fonts_EN`.”
+
+#### Psojed — 13 April 2020, 1:25 p.m. (author)
+
+“Fabry911 and sid.sethi91. So you install the game on Steam, start the game, and it is in German? Because I installed the game now, but my game installed in English by default.”
+
+#### královrah — 13 April 2020, 10:44 a.m.
+
+“I installed Czech according to the instructions, but all text is missing diacritical characters, which is quite confusing when reading the scrolls. Can anything be done about it?”
+
+#### thenytfox — 2 April 2020, 10:59 p.m.
+
+“I have the same issue as Fabry911. Any help?”
+
+#### Fabry911 — 24 May 2019, 10:36 p.m.
+
+“Hi, I followed your guide; on Steam, English appears selected as the language, but when I play the game, it is still German... how is that possible?”
+
+#### Psojed — 7 February 2019, 10:32 p.m. (author)
+
+#### dzafi — 6 February 2019, 1:54 a.m.
+
+“Thanks for the Czech translation! I was just looking for whether it existed; otherwise I would have created it.”
 
 ## Original text
 
@@ -194,37 +216,37 @@ That's all, enjoy!
 
 ### Comments
 
-#### I am Cornholio !!! — 29 Jan @ 2:00pm
+#### I am Cornholio !!! — 29 Jan @ 11:00pm
 
 Děkuji, funguje
 
-#### sewca7 — 7 Dec, 2025 @ 10:57am
+#### sewca7 — 7 Dec, 2025 @ 7:57pm
 
 ahoj je možný že kvůli instalaci češtiny nejede intro ?
 
-#### General_Targus — 1 Sep, 2025 @ 7:30am
+#### General_Targus — 1 Sep, 2025 @ 4:30pm
 
 Funguje to skvěle i pro GOG verzi! Jsi legenda, pane!
 
-#### Kafkyns — 19 Aug, 2025 @ 2:23pm
+#### Kafkyns — 19 Aug, 2025 @ 11:23pm
 
 Existuje ještě čeština do hry ?
 
-#### Wala — 26 Nov, 2024 @ 2:19pm
+#### Wala — 26 Nov, 2024 @ 11:19pm
 
 Ahoj, snad si to ještě někdy přečteš, ale mám problém s tvým instalátorem češtiny.
 
 I po jeho instalaci mi hra běží v angličtině...mohl by jsi se na něj podívat?
 
-#### TahniDoPekla — 22 Jun, 2024 @ 2:30pm
+#### TahniDoPekla — 22 Jun, 2024 @ 11:30pm
 
 Ahoj, vše uděláno dle návodu a čeština je bez diakritiky... tyto dvě složky tam jsou Fonts a Fonts_EN ... nějak nevím kde hledat zakopaného psa..
 
-#### Macchester92 — 25 May, 2023 @ 6:31am
+#### Macchester92 — 25 May, 2023 @ 3:31pm
 
 I'm trying to run the game on MacOS Mojave (10.14), and all seems good but the language is stuck to Deutsch. Steam settings show the language is set to English. I tried to find some config in the files to change it manually, however was unable to find anything. Does anybody know any trick to make it run in English?
 
-#### Emotikon — 29 May, 2020 @ 11:13am
+#### Emotikon — 29 May, 2020 @ 8:13pm
 
 Tak nakonec jsem nalezl řešení, jak implementovat češtinu i performance fix.
 
@@ -235,12 +257,34 @@ Tak nakonec jsem nalezl řešení, jak implementovat češtinu i performance fix
 5) potvrdit a zavřít program
 6) spouštět hru už normálním způsobem - vše v češtině včetně diakritiky a bez FPS dropů
 
-#### Emotikon — 29 May, 2020 @ 9:44am
+#### Emotikon — 29 May, 2020 @ 6:44pm
 
 Díky moc za návod! Nicméně mi taktéž nefunguje diakritika. Je možné, že dělá neplechu performance fix? bez něj je pro mne hra nespustitelná.
 
-#### Psojed — 13 Apr, 2020 @ 4:41am (author)
+#### Psojed — 13 Apr, 2020 @ 1:41pm (author)
 
 královrah. Diakritika potřebuje abys používal font který umí české znaky. Můj instalátor je obsahuje. Zkusil jsem teď instalovat hru na Steamu a pak instalovat obsah mého instalátoru, a mám hru česky i s diakritikou a správným fontem, takže chyba bude někde u tebe.
 
 Mrkni se do Steam\\steamapps\\common\\Robin Hood\\DATA\\Interface, tam jsou uložené fonty. Po aplkaci mého instalátoru by tam měly být dvě složky, Fonts a Fonts_EN.
+
+#### Psojed — 13 Apr, 2020 @ 1:25pm (author)
+
+Fabry911 and sid.sethi91. So you install the game on Steam, start the game, it is in German? Beucase I installed the game now, but my game installed in English by default.
+
+#### královrah — 13 Apr, 2020 @ 10:44am
+
+Češtinu jsem si dle návodu nainstaloval, ale veškeré texty postrádají znaky s diakritikou, což je při čtení pergamenů docela matoucí. Dá se s tím něco dělat?
+
+#### thenytfox — 2 Apr, 2020 @ 10:59pm
+
+I have the same issue as Fabry911. Any help?
+
+#### Fabry911 — 24 May, 2019 @ 10:36pm
+
+hii, i followed your guide, on steam english result like the language selected, but when i play the game, it's still german...how it is possible?
+
+#### Psojed — 7 Feb, 2019 @ 10:32pm (author)
+
+#### dzafi — 6 Feb, 2019 @ 1:54am
+
+Díky za tu češtinu! Zrovna jsem hledal jestli to existuje jinak bych ji vytvořil.
