@@ -1,10 +1,61 @@
 //! Native automation routing, independent of the listener lifecycle.
 
+use super::request_decode::{self, RequestKind};
 use super::*;
 use hyper::Method;
 
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+enum Route {
+    Info,
+    Natives,
+    EngineDump,
+    Decompile,
+    Screenshot,
+    Rpc(RequestKind),
+}
+
+/// Route recognition is also the transport's body-acquisition policy. Unknown
+/// paths and unsupported methods never acquire a potentially large body.
+fn classify(method: &Method, path: &str) -> Option<Route> {
+    Some(match (method, path) {
+        (&Method::GET, "/") | (&Method::GET, "/info") => Route::Info,
+        (&Method::GET, "/natives") => Route::Natives,
+        (&Method::GET, "/engine-dump") => Route::EngineDump,
+        (&Method::GET, "/script/decompile") => Route::Decompile,
+        (&Method::GET, "/screenshot") => Route::Screenshot,
+        (&Method::GET, "/state" | "/host-debug" | "/level-assets" | "/script" | "/get-replay")
+        | (
+            &Method::POST,
+            "/native" | "/batch" | "/console" | "/command" | "/step-forward" | "/step-back"
+            | "/go-to-frame" | "/set-paused" | "/load-replay",
+        ) => Route::Rpc(RequestKind::from_method(&path[1..]).expect("classified RPC method")),
+        _ => return None,
+    })
+}
+
+fn replay_body_limit() -> usize {
+    const JSON_OVERHEAD_BYTES: usize = 1024;
+    crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS
+        .max_input_bytes
+        .checked_add(JSON_OVERHEAD_BYTES)
+        .expect("replay JSON transport limit fits usize")
+}
+
+pub(super) fn body_limit(method: &Method, path: &str) -> Option<usize> {
+    let route = classify(method, path)?;
+    Some(if *method == Method::GET {
+        0
+    } else {
+        match route {
+            Route::Rpc(RequestKind::LoadReplay) => replay_body_limit(),
+            Route::Rpc(RequestKind::Batch) => 1024 * 1024,
+            _ => 64 * 1024,
+        }
+    })
+}
+
 pub(super) async fn dispatch(
-    mut req: NativeRequest,
+    req: NativeRequest,
     queue: &Queue,
     listen_port: u16,
 ) -> (u16, ReplyBody) {
@@ -17,176 +68,35 @@ pub(super) async fn dispatch(
         tracing::warn!("script HTTP server: rejected request: {reason}");
         return (403, serde_json::json!({"error": reason}).into());
     }
-
-    let path_full = req.url().to_string();
-    let (path, query) = match path_full.split_once('?') {
-        Some((p, q)) => (p.to_string(), q.to_string()),
-        None => (path_full, String::new()),
+    let (path, query) = req.url().split_once('?').unwrap_or((req.url(), ""));
+    let payload = match classify(req.method(), path) {
+        Some(Route::Info) => return (200, info_json().into()),
+        Some(Route::Natives) => return (200, list_natives_json().into()),
+        Some(Route::EngineDump) => Ok(HttpPayload::EngineDump),
+        Some(Route::Decompile) => Ok(HttpPayload::Decompile {
+            class: query_param(query, "class").map(str::to_string),
+        }),
+        Some(Route::Screenshot) => Ok(HttpPayload::Screenshot(parse_screenshot_query(query))),
+        Some(Route::Rpc(kind)) => {
+            if matches!(kind, RequestKind::LoadReplay)
+                && let Err(error) = validate_replay_headers(&req)
+            {
+                return (400, serde_json::json!({"error": error}).into());
+            }
+            request_decode::decode_json(kind, req.body_bytes())
+        }
+        None => return (404, serde_json::json!({"error": "not found"}).into()),
     };
-    let method = req.method().clone();
-
-    match (method, path.as_str()) {
-        (Method::GET, "/") | (Method::GET, "/info") => (200, info_json().into()),
-        (Method::GET, "/natives") => (200, list_natives_json().into()),
-        (Method::GET, "/state") => relay(queue, HttpPayload::State).await,
-        (Method::GET, "/host-debug") => relay(queue, HttpPayload::HostDebug).await,
-        (Method::GET, "/engine-dump") => relay(queue, HttpPayload::EngineDump).await,
-        (Method::GET, "/level-assets") => relay(queue, HttpPayload::LevelAssets).await,
-        (Method::GET, "/script") => relay(queue, HttpPayload::Script).await,
-        (Method::GET, "/script/decompile") => {
-            let class = query_param(&query, "class").map(str::to_string);
-            relay(queue, HttpPayload::Decompile { class }).await
-        }
-        (Method::GET, "/screenshot") => {
-            relay(
-                queue,
-                HttpPayload::Screenshot(parse_screenshot_query(&query)),
-            )
-            .await
-        }
-        (Method::POST, "/native") => match read_json::<NativeCall>(&mut req) {
-            Ok(c) => {
-                relay(
-                    queue,
-                    HttpPayload::Native {
-                        name: c.op,
-                        args: c.args,
-                        this: c.this,
-                    },
-                )
-                .await
-            }
-            Err(e) => (400, serde_json::json!({"error": e}).into()),
-        },
-        (Method::POST, "/batch") => {
-            #[derive(serde::Serialize, serde::Deserialize)]
-            struct BatchBody {
-                calls: Vec<NativeCall>,
-            }
-            match read_json::<BatchBody>(&mut req) {
-                Ok(b) => relay(queue, HttpPayload::Batch(b.calls)).await,
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            }
-        }
-        (Method::POST, "/console") => {
-            #[derive(serde::Serialize, serde::Deserialize)]
-            struct ConsoleBody {
-                command: String,
-            }
-            match read_json::<ConsoleBody>(&mut req) {
-                Ok(c) => relay(queue, HttpPayload::Console(c.command)).await,
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            }
-        }
-        (Method::POST, "/command") => match read_json::<PlayerCommand>(&mut req) {
-            Ok(c) => relay(queue, HttpPayload::Command(c)).await,
-            Err(e) => (400, serde_json::json!({"error": e}).into()),
-        },
-        (Method::POST, "/step-forward") => match parse_step_body(&mut req) {
-            Ok(request) => relay(queue, HttpPayload::StepForward { request }).await,
-            Err(e) => (400, serde_json::json!({"error": e}).into()),
-        },
-        (Method::POST, "/step-back") => match parse_step_body(&mut req) {
-            Ok(request) => relay(queue, HttpPayload::StepBack { request }).await,
-            Err(e) => (400, serde_json::json!({"error": e}).into()),
-        },
-        (Method::POST, "/go-to-frame") => {
-            #[derive(serde::Serialize, serde::Deserialize)]
-            struct GoToBody {
-                frame: u32,
-                #[serde(flatten)]
-                modal_policy: StepModalPolicy,
-            }
-            match read_json::<GoToBody>(&mut req) {
-                Ok(b) => {
-                    relay(
-                        queue,
-                        HttpPayload::GoToFrame {
-                            target: b.frame,
-                            modal_policy: b.modal_policy,
-                        },
-                    )
-                    .await
-                }
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            }
-        }
-        (Method::POST, "/set-paused") => {
-            #[derive(serde::Serialize, serde::Deserialize)]
-            struct SetPausedBody {
-                paused: bool,
-            }
-            match read_json::<SetPausedBody>(&mut req) {
-                Ok(b) => relay(queue, HttpPayload::SetPaused { paused: b.paused }).await,
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            }
-        }
-        (Method::GET, "/get-replay") => relay(queue, HttpPayload::GetReplay).await,
-        (Method::POST, "/load-replay") => {
-            #[derive(serde::Serialize, serde::Deserialize)]
-            struct LoadReplayBody {
-                data: String,
-                #[serde(default)]
-                paused: bool,
-            }
-            match read_replay_json::<LoadReplayBody>(&mut req) {
-                Ok(b) => match crate::replay_format::preflight_compact_transport(
-                    &b.data,
-                    &crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS,
-                ) {
-                    Ok(_) => {
-                        relay(
-                            queue,
-                            HttpPayload::LoadReplay {
-                                data: b.data,
-                                paused: b.paused,
-                            },
-                        )
-                        .await
-                    }
-                    Err(error) => (
-                        400,
-                        serde_json::json!({"error": format!("invalid compact replay: {error}")})
-                            .into(),
-                    ),
-                },
-                Err(e) => (400, serde_json::json!({"error": e}).into()),
-            }
-        }
-        _ => (404, serde_json::json!({"error": "not found"}).into()),
+    match payload {
+        Ok(payload) => relay(queue, payload).await,
+        Err(error) => (400, serde_json::json!({"error": error}).into()),
     }
-}
-
-/// Empty step bodies mean one tick; explicit counts must be positive.
-fn parse_step_body(req: &mut NativeRequest) -> Result<StepRequest, String> {
-    let mut body = String::new();
-    std::io::Read::read_to_string(req.as_reader(), &mut body)
-        .map_err(|e| format!("body read: {e}"))?;
-    if body.trim().is_empty() {
-        return Ok(StepRequest::default());
-    }
-    let body: StepRequest = serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))?;
-    if body.n == 0 {
-        return Err("n must be >= 1".into());
-    }
-    Ok(body)
-}
-
-fn read_json<T: serde::de::DeserializeOwned>(req: &mut NativeRequest) -> Result<T, String> {
-    let mut body = String::new();
-    std::io::Read::read_to_string(req.as_reader(), &mut body)
-        .map_err(|e| format!("body read: {e}"))?;
-    serde_json::from_str(&body).map_err(|e| format!("bad json: {e}"))
 }
 
 /// Reject unsupported replay framing before acquiring the request body.
 /// Returns the maximum accepted body size for the transport collector.
 pub(super) fn validate_replay_headers(req: &NativeRequest) -> Result<usize, String> {
-    const JSON_OVERHEAD_BYTES: usize = 1024;
-    let limit = crate::replay_format::LOCAL_CUSTOM_REPLAY_ADMISSION_LIMITS
-        .max_input_bytes
-        .checked_add(JSON_OVERHEAD_BYTES)
-        .expect("replay JSON transport limit fits usize");
+    let limit = replay_body_limit();
     if req.header("Transfer-Encoding").is_some() {
         return Err("load-replay does not accept Transfer-Encoding".into());
     }
@@ -211,23 +121,47 @@ pub(super) fn validate_replay_headers(req: &NativeRequest) -> Result<usize, Stri
     Ok(limit)
 }
 
-/// Validate the bounded replay transport before UTF-8/JSON/String allocation.
-fn read_replay_json<T: serde::de::DeserializeOwned>(req: &mut NativeRequest) -> Result<T, String> {
-    use std::io::Read as _;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let limit = validate_replay_headers(req)?;
-    let declared = req
-        .body_length()
-        .expect("validated replay headers contain Content-Length");
-    let mut body = Vec::with_capacity(declared.min(limit));
-    std::io::Read::take(req.as_reader(), (limit + 1) as u64)
-        .read_to_end(&mut body)
-        .map_err(|error| format!("body read: {error}"))?;
-    if body.len() > limit {
-        return Err(format!(
-            "load-replay JSON body observed at least {} bytes, limit is {limit}",
-            body.len()
-        ));
+    #[test]
+    fn route_body_policy_preserves_native_aliases_and_rejects_unknown_routes() {
+        for path in [
+            "/",
+            "/info",
+            "/natives",
+            "/state",
+            "/host-debug",
+            "/engine-dump",
+            "/level-assets",
+            "/script",
+            "/script/decompile",
+            "/screenshot",
+            "/get-replay",
+        ] {
+            assert_eq!(body_limit(&Method::GET, path), Some(0), "{path}");
+            assert_eq!(body_limit(&Method::POST, path), None, "{path}");
+        }
+        for path in [
+            "/native",
+            "/console",
+            "/command",
+            "/step-forward",
+            "/step-back",
+            "/go-to-frame",
+            "/set-paused",
+        ] {
+            assert_eq!(body_limit(&Method::POST, path), Some(64 * 1024), "{path}");
+            assert_eq!(body_limit(&Method::GET, path), None, "{path}");
+        }
+        assert_eq!(body_limit(&Method::POST, "/batch"), Some(1024 * 1024));
+        assert_eq!(
+            body_limit(&Method::POST, "/load-replay"),
+            Some(replay_body_limit())
+        );
+        assert_eq!(body_limit(&Method::GET, "/decompile"), None);
+        assert_eq!(body_limit(&Method::POST, "/unknown"), None);
+        assert_eq!(body_limit(&Method::PUT, "/native"), None);
     }
-    serde_json::from_slice(&body).map_err(|error| format!("bad json: {error}"))
 }
