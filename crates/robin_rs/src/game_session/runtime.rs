@@ -2346,7 +2346,7 @@ mod tests {
 
     #[test]
     fn terminal_restart_exports_new_attempt_and_replays_its_restore_boundary() {
-        let _serial = crate::http_server::replay_spool_test_lock();
+        let _serial = crate::replay_service::replay_spool_test_lock();
         let mut assets = LevelAssets::new();
         let campaign = robin_engine::campaign::Campaign::default();
         let mut engine =
@@ -2379,7 +2379,7 @@ mod tests {
         .unwrap();
         let identity = checkpoint.replay_identity().unwrap();
         let recorder = ReplayRecorder::with_writer(
-            Box::new(crate::http_server::reset_replay_buffer()),
+            Box::new(crate::replay_service::process().begin_recording()),
             "restart".into(),
             test_mission_assets("restart"),
             17,
@@ -2407,7 +2407,7 @@ mod tests {
         terminal.commit_timeline_after(timeline.advance_frame());
         timeline.finish_recording(&mut terminal);
         timeline.seal_terminal_recording(&terminal);
-        let previous = crate::http_server::active_replay_snapshot().unwrap();
+        let previous = crate::replay_service::process().snapshot().unwrap();
         let original = previous.parse_sync().unwrap();
 
         for attempt in 0..2 {
@@ -2445,7 +2445,8 @@ mod tests {
             frame.commit_timeline_after(timeline.advance_frame());
             timeline.finish_recording(&mut frame);
             timeline.seal_terminal_recording(&frame);
-            let restarted = crate::http_server::active_replay_snapshot()
+            let restarted = crate::replay_service::process()
+                .snapshot()
                 .unwrap()
                 .parse_sync()
                 .unwrap();
@@ -2560,7 +2561,8 @@ mod tests {
         );
         assert!(timeline.replay_recorder.is_none());
         assert!(
-            crate::http_server::replay_buffer_snapshot()
+            crate::replay_service::process()
+                .snapshot_bytes()
                 .unwrap_err()
                 .contains("non-bootstrap save")
         );
