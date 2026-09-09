@@ -129,7 +129,7 @@ impl ReplayService {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 let (complete, result) = async_channel::bounded(1);
-                deliver_export(complete, Err(error));
+                deliver_export(complete, Err(ExportError::Unavailable(error)));
                 return result;
             }
         };
@@ -182,13 +182,20 @@ impl ReplayService {
     fn export_browser(&self, snapshot: ReplaySnapshot, complete: ExportCompletion) {
         use std::sync::atomic::Ordering;
         if self.export_closed.load(Ordering::Acquire) {
-            deliver_export(complete, Err("replay export service is shut down".into()));
+            deliver_export(
+                complete,
+                Err(ExportError::Retired(
+                    "replay export service is shut down".into(),
+                )),
+            );
             return;
         }
         if self.export_busy.swap(true, Ordering::AcqRel) {
             deliver_export(
                 complete,
-                Err("replay export is already running; retry after it finishes".into()),
+                Err(ExportError::Capacity(
+                    "replay export is already running; retry after it finishes".into(),
+                )),
             );
             return;
         }
@@ -288,10 +295,23 @@ impl ReplayLaunches {
     }
 }
 
-pub(crate) type ExportResult = async_channel::Receiver<Result<String, String>>;
-type ExportCompletion = async_channel::Sender<Result<String, String>>;
+/// Service-level export failures; transports choose their own wire mapping.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+pub enum ExportError {
+    #[error("{0}")]
+    Capacity(String),
+    #[error("{0}")]
+    Retired(String),
+    #[error("{0}")]
+    Unavailable(String),
+    #[error("{0}")]
+    Internal(String),
+}
 
-fn deliver_export(complete: ExportCompletion, result: Result<String, String>) {
+pub(crate) type ExportResult = async_channel::Receiver<Result<String, ExportError>>;
+type ExportCompletion = async_channel::Sender<Result<String, ExportError>>;
+
+fn deliver_export(complete: ExportCompletion, result: Result<String, ExportError>) {
     // Each private sender has exactly one delivery. A closed receiver simply
     // means that its UI or HTTP consumer no longer needs the frozen artifact.
     if let Err(async_channel::TrySendError::Full(_)) = complete.try_send(result) {
@@ -321,12 +341,16 @@ impl<'de> Deserialize<'de> for NativeExportWorker {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl NativeExportWorker {
-    fn sender(&mut self) -> Result<&std::sync::mpsc::SyncSender<NativeReplayExportJob>, String> {
+    fn sender(
+        &mut self,
+    ) -> Result<&std::sync::mpsc::SyncSender<NativeReplayExportJob>, ExportError> {
         if let Some(error) = &self.failure {
-            return Err(error.clone());
+            return Err(ExportError::Internal(error.clone()));
         }
         if self.closed {
-            return Err("replay export service is shut down".into());
+            return Err(ExportError::Retired(
+                "replay export service is shut down".into(),
+            ));
         }
         if self.sender.is_none() {
             let (sender, receiver) = std::sync::mpsc::sync_channel::<NativeReplayExportJob>(1);
@@ -344,7 +368,7 @@ impl NativeExportWorker {
                 Err(error) => {
                     let error = format!("spawn replay export worker: {error}");
                     self.failure = Some(error.clone());
-                    return Err(error);
+                    return Err(ExportError::Internal(error));
                 }
             }
         }
@@ -404,11 +428,15 @@ fn try_enqueue_native_replay_export(
         Ok(()) => {}
         Err(std::sync::mpsc::TrySendError::Full(job)) => deliver_export(
             job.complete,
-            Err("replay export worker is busy; retry after the current export finishes".into()),
+            Err(ExportError::Capacity(
+                "replay export worker is busy; retry after the current export finishes".into(),
+            )),
         ),
         Err(std::sync::mpsc::TrySendError::Disconnected(job)) => deliver_export(
             job.complete,
-            Err("replay export worker stopped unexpectedly".into()),
+            Err(ExportError::Internal(
+                "replay export worker stopped unexpectedly".into(),
+            )),
         ),
     }
 }
@@ -621,10 +649,16 @@ impl ReplaySnapshot {
         bytes
     }
 
-    pub(crate) fn compact_sync(&self) -> Result<String, String> {
-        let data = self.parse_sync()?;
+    pub(crate) fn compact_sync(&self) -> Result<String, ExportError> {
+        let data = self.parse_sync().map_err(|error| {
+            if self.byte_length == 0 {
+                ExportError::Unavailable(error)
+            } else {
+                ExportError::Internal(error)
+            }
+        })?;
         robin_replay_format::encode_compact(&data, robin_replay_format::ENGINE_VERSION_HASH)
-            .map_err(|error| format!("encode compact replay: {error}"))
+            .map_err(|error| ExportError::Internal(format!("encode compact replay: {error}")))
     }
 
     pub(crate) fn parse_sync(&self) -> Result<engine_replay::ReplayData, String> {
@@ -648,13 +682,9 @@ mod browser_tests {
         let mut admitted = leaderboard.begin().unwrap();
         assert!(admitted.try_take().is_none());
         let rx = service.exports().export();
-        assert!(
-            rx.recv()
-                .await
-                .unwrap()
-                .unwrap_err()
-                .contains("already running")
-        );
+        let error = rx.recv().await.unwrap().unwrap_err();
+        assert!(matches!(error, ExportError::Capacity(_)));
+        assert!(error.to_string().contains("already running"));
         let mut completed = false;
         for _ in 0..100 {
             if let Some(result) = admitted.try_take() {
@@ -682,13 +712,9 @@ mod browser_tests {
                 .unwrap_err()
                 .contains("already running")
         );
-        assert!(
-            rx.recv()
-                .await
-                .unwrap()
-                .unwrap_err()
-                .contains("no active replay")
-        );
+        let error = rx.recv().await.unwrap().unwrap_err();
+        assert!(matches!(error, ExportError::Unavailable(_)));
+        assert!(error.to_string().contains("no active replay"));
         let accepted = service.exports().export();
         service.shutdown().await.unwrap();
         assert!(
@@ -697,18 +723,18 @@ mod browser_tests {
                 .await
                 .unwrap()
                 .unwrap_err()
+                .to_string()
                 .contains("no active replay")
         );
-        assert!(
-            service
-                .exports()
-                .export()
-                .recv()
-                .await
-                .unwrap()
-                .unwrap_err()
-                .contains("shut down")
-        );
+        let error = service
+            .exports()
+            .export()
+            .recv()
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(error, ExportError::Retired(_)));
+        assert!(error.to_string().contains("shut down"));
     }
 }
 
@@ -779,15 +805,14 @@ mod tests {
             let (_, replay) = robin_replay_format::decode_compact(&compact).unwrap();
             assert_eq!(replay.header().mission_id, "frozen-before-shutdown");
         }
-        assert!(
-            service
-                .exports()
-                .export()
-                .recv_blocking()
-                .unwrap()
-                .unwrap_err()
-                .contains("shut down")
-        );
+        let error = service
+            .exports()
+            .export()
+            .recv_blocking()
+            .unwrap()
+            .unwrap_err();
+        assert!(matches!(error, ExportError::Retired(_)));
+        assert_eq!(error.to_string(), "replay export service is shut down");
         futures::executor::block_on(service.shutdown()).unwrap();
         assert!(service.export_worker.lock().unwrap().thread.is_none());
     }
@@ -821,6 +846,31 @@ mod tests {
             error
         );
         assert!(service.export_worker.lock().unwrap().thread.is_none());
+        let export_error = service.export().recv_blocking().unwrap().unwrap_err();
+        assert_eq!(export_error, ExportError::Internal(error));
+    }
+
+    #[test]
+    fn unavailable_snapshot_and_disconnected_worker_keep_distinct_categories() {
+        let service = ReplayService::default();
+        service.invalidate("retired recording");
+        let error = service.export().recv_blocking().unwrap().unwrap_err();
+        assert_eq!(
+            error,
+            ExportError::Unavailable(
+                "active replay spool is unavailable: retired recording".into()
+            )
+        );
+
+        record_export_fixture(&service, "worker-disconnected");
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        drop(receiver);
+        service.export_worker.lock().unwrap().sender = Some(sender);
+        let error = service.export().recv_blocking().unwrap().unwrap_err();
+        assert_eq!(
+            error,
+            ExportError::Internal("replay export worker stopped unexpectedly".into())
+        );
     }
 
     #[test]
@@ -836,13 +886,9 @@ mod tests {
         assert!(first.try_take().is_none());
 
         let http_rx = service.exports().export();
-        assert!(
-            http_rx
-                .recv_blocking()
-                .unwrap()
-                .unwrap_err()
-                .contains("worker is busy")
-        );
+        let error = http_rx.recv_blocking().unwrap().unwrap_err();
+        assert!(matches!(error, ExportError::Capacity(_)));
+        assert!(error.to_string().contains("worker is busy"));
 
         record_export_fixture(&service, "replacement-export");
         let admitted = worker.try_recv().unwrap();
@@ -878,12 +924,9 @@ mod tests {
         writer.write_all(b"not replay json\n").unwrap();
         writer.flush().unwrap();
         let rx = service.exports().export();
-        assert!(
-            rx.recv_blocking()
-                .unwrap()
-                .unwrap_err()
-                .contains("parse mirrored replay")
-        );
+        let error = rx.recv_blocking().unwrap().unwrap_err();
+        assert!(matches!(error, ExportError::Internal(_)));
+        assert!(error.to_string().contains("parse mirrored replay"));
 
         record_export_fixture(&service, "recovered-export");
         // Dropping a UI task must not stop the shared worker.
@@ -1175,7 +1218,11 @@ mod tests {
             Ok(_) => panic!("saturated export queue unexpectedly accepted work"),
             Err(error) => error,
         };
-        assert!(error.contains("worker is busy"), "{error}");
+        assert!(matches!(error, ExportError::Capacity(_)));
+        assert_eq!(
+            error.to_string(),
+            "replay export worker is busy; retry after the current export finishes"
+        );
         drop(held);
     }
 }
