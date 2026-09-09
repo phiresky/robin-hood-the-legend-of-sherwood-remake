@@ -1784,7 +1784,7 @@ mod tests {
         );
         assert!(
             pending
-                .take_due_comparisons(crate::replay::TimelineFrame::from_wire(100))
+                .take_due_comparisons(robin_engine::replay::TimelineFrame::from_wire(100))
                 .is_empty(),
             "old peer hashes must not cross sessions"
         );
