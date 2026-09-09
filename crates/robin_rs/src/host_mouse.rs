@@ -40,6 +40,34 @@ fn set_item_effect_preview(
         }));
 }
 
+/// Populate ground-throw geometry only after the shared hover delay. Item-specific
+/// eligibility and explanations remain with their cursor arms.
+fn prepare_ground_trajectory(
+    engine: &Engine,
+    host: &mut Host,
+    assets: &LevelAssets,
+    pc_id: Option<engine_element::EntityId>,
+    mouse: MapPoint,
+    action: Action,
+    shift_held: bool,
+) {
+    const DISPLAY_DELAY: u32 = 1;
+    if host.frontend.trajectory_preview().hover_ticks() <= DISPLAY_DELAY
+        || host.frontend.trajectory_preview().is_valid()
+    {
+        return;
+    }
+    let Some(pc_id) = pc_id else {
+        return;
+    };
+    let preview = if shift_held {
+        engine.compute_planned_trajectory_preview_ground(assets, pc_id, mouse, action)
+    } else {
+        engine.compute_trajectory_preview_ground(assets, pc_id, mouse)
+    };
+    host.frontend.apply_trajectory_preview(preview);
+}
+
 fn trajectory_landing(host: &Host, fallback: MapPoint) -> MapPoint {
     host.frontend
         .trajectory_preview()
@@ -1335,23 +1363,15 @@ fn cursor_for_stone(
                         }));
                 if ground_allowed {
                     cursor = RHMOUSE_STONE_YES;
-                    const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                    if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                        && !host.frontend.trajectory_preview().is_valid()
-                        && let Some(pid) = pc_id
-                    {
-                        let preview = if shift_held {
-                            engine.compute_planned_trajectory_preview_ground(
-                                assets,
-                                pid,
-                                mouse_map_pt,
-                                Action::Stone,
-                            )
-                        } else {
-                            engine.compute_trajectory_preview_ground(assets, pid, mouse_map_pt)
-                        };
-                        host.frontend.apply_trajectory_preview(preview);
-                    }
+                    prepare_ground_trajectory(
+                        engine,
+                        host,
+                        assets,
+                        pc_id,
+                        mouse_map_pt,
+                        Action::Stone,
+                        shift_held,
+                    );
                 } else {
                     host.frontend.reject_trajectory_hit();
                 }
@@ -1391,23 +1411,15 @@ fn cursor_for_purse(
                 cursor = RHMOUSE_PURSE_YES;
 
                 // Trajectory preview for ground throws.
-                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview().is_valid()
-                    && let Some(pid) = pc_id
-                {
-                    let preview = if shift_held {
-                        engine.compute_planned_trajectory_preview_ground(
-                            assets,
-                            pid,
-                            mouse_elem,
-                            Action::Purse,
-                        )
-                    } else {
-                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
-                    };
-                    host.frontend.apply_trajectory_preview(preview);
-                }
+                prepare_ground_trajectory(
+                    engine,
+                    host,
+                    assets,
+                    pc_id,
+                    mouse_elem,
+                    Action::Purse,
+                    shift_held,
+                );
                 if item_preview_enabled(
                     engine,
                     host.frontend
@@ -1492,23 +1504,15 @@ fn cursor_for_wasp_nest(
             if in_range {
                 cursor = RHMOUSE_WASP_NEST_YES;
 
-                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview().is_valid()
-                    && let Some(pid) = pc_id
-                {
-                    let preview = if shift_held {
-                        engine.compute_planned_trajectory_preview_ground(
-                            assets,
-                            pid,
-                            mouse_elem,
-                            Action::WaspNest,
-                        )
-                    } else {
-                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
-                    };
-                    host.frontend.apply_trajectory_preview(preview);
-                }
+                prepare_ground_trajectory(
+                    engine,
+                    host,
+                    assets,
+                    pc_id,
+                    mouse_elem,
+                    Action::WaspNest,
+                    shift_held,
+                );
                 if item_preview_enabled(
                     engine,
                     host.frontend
@@ -1658,26 +1662,15 @@ fn cursor_for_net(
             if in_range {
                 cursor = RHMOUSE_NET_YES;
 
-                // Gate the YES cursor on a valid trajectory and
-                // render the arc preview when the mouse has been
-                // still long enough.
-                const TIME_TRAJECTORY_DISPLAY: u32 = 1;
-                if host.frontend.trajectory_preview().hover_ticks() > TIME_TRAJECTORY_DISPLAY
-                    && !host.frontend.trajectory_preview().is_valid()
-                    && let Some(pid) = pc_id
-                {
-                    let preview = if shift_held {
-                        engine.compute_planned_trajectory_preview_ground(
-                            assets,
-                            pid,
-                            mouse_elem,
-                            Action::Net,
-                        )
-                    } else {
-                        engine.compute_trajectory_preview_ground(assets, pid, mouse_elem)
-                    };
-                    host.frontend.apply_trajectory_preview(preview);
-                }
+                prepare_ground_trajectory(
+                    engine,
+                    host,
+                    assets,
+                    pc_id,
+                    mouse_elem,
+                    Action::Net,
+                    shift_held,
+                );
                 let preview_capture = item_preview_enabled(
                     engine,
                     host.frontend
@@ -1973,6 +1966,87 @@ mod tests {
             )
             .expect("selection command admission");
         pc
+    }
+
+    #[test]
+    fn ground_preparation_preserves_geometry_until_eligible_for_recomputation() {
+        use robin_engine::coordinates::WorldPoint3D;
+        use robin_engine::element::TrajectoryPoint;
+        use robin_engine::engine::input::TrajectoryPreview;
+
+        for action in [Action::Stone, Action::Purse, Action::WaspNest, Action::Net] {
+            for shift in [false, true] {
+                let (mut engine, assets, _) = fixture();
+                let pc = add_selected_pc(&mut engine, &assets);
+                // Delay not reached, existing valid geometry, and absent selection
+                // are independent reasons not to overwrite the cached arc.
+                for (ticks, valid, selection) in [
+                    (1, false, Some(pc)),
+                    (2, true, Some(pc)),
+                    (2, false, None),
+                    (2, false, Some(pc)),
+                ] {
+                    let mut host = Host::scratch(800.0, 600.0);
+                    for _ in 0..ticks {
+                        host.frontend
+                            .observe_hover_feedback(shift, action, MapPoint::ZERO);
+                    }
+                    host.frontend
+                        .apply_trajectory_preview(TrajectoryPreview::ShowArc {
+                            points: vec![TrajectoryPoint {
+                                position: WorldPoint3D::new(30.0, 40.0, 5.0),
+                                time: 3,
+                            }],
+                            start: WorldPoint3D::new(10.0, 20.0, 0.0),
+                            layer: 4,
+                            crumpled: true,
+                        });
+                    if !valid {
+                        host.frontend.reject_trajectory_hit();
+                    }
+                    let before = serde_json::to_value(host.frontend.trajectory_preview()).unwrap();
+                    prepare_ground_trajectory(
+                        &engine,
+                        &mut host,
+                        &assets,
+                        selection,
+                        MapPoint::ZERO,
+                        action,
+                        shift,
+                    );
+                    if ticks > 1 && !valid && selection.is_some() {
+                        let mut expected: crate::frontend_preview::FrontendTrajectoryPreview =
+                            serde_json::from_value(before.clone()).unwrap();
+                        expected.apply(if shift {
+                            engine.compute_planned_trajectory_preview_ground(
+                                &assets,
+                                pc,
+                                MapPoint::ZERO,
+                                action,
+                            )
+                        } else {
+                            engine.compute_trajectory_preview_ground(&assets, pc, MapPoint::ZERO)
+                        });
+                        let expected = serde_json::to_value(expected).unwrap();
+                        assert_ne!(
+                            expected, before,
+                            "fixture must exercise geometry replacement"
+                        );
+                        assert_eq!(
+                            serde_json::to_value(host.frontend.trajectory_preview()).unwrap(),
+                            expected,
+                            "{action:?}, shift={shift}"
+                        );
+                    } else {
+                        assert_eq!(
+                            serde_json::to_value(host.frontend.trajectory_preview()).unwrap(),
+                            before,
+                            "{action:?}, shift={shift}, ticks={ticks}, valid={valid}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
